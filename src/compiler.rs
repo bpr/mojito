@@ -224,6 +224,9 @@ impl Compiler {
         let mut def_requests: Vec<DefSpecializationRequest> = Vec::new();
         let mut method_requests: Vec<MethodSpecializationRequest> = Vec::new();
         let mut struct_requests: Vec<StructInstanceRequest> = Vec::new();
+        // Hashed vector types beyond the eager width-1 set: each demands a
+        // `_update_with_simd` clone on every hasher.
+        let mut hash_leaf_requests: Vec<crate::types::Ty> = Vec::new();
         // Occurrences whose recordings conflicted across rounds; determinism
         // should preclude this, but a poisoned key must stay abstract rather
         // than oscillate.
@@ -236,7 +239,7 @@ impl Compiler {
                 instances: minted,
             } = {
                 let _elaborate = timing::span("discovery.initial.elaborate");
-                elaborate_with_requests(linked.clone(), &[], &[], &[], &[], &[])
+                elaborate_with_requests(linked.clone(), &[], &[], &[], &[], &[], &[])
                     .map_err(CompilerError::Comptime)?
             };
             struct_requests.extend(minted);
@@ -307,6 +310,13 @@ impl Compiler {
                     Some(_) => {}
                 }
             }
+            for leaf in checked.hash_leaf_types() {
+                if !hash_leaf_requests.contains(leaf) {
+                    last_new_callee = String::from("_update_with_simd");
+                    hash_leaf_requests.push(leaf.clone());
+                    grew = true;
+                }
+            }
             let mut instances_grew = false;
             for request in struct_instance_requests(&checked) {
                 if !struct_requests.contains(&request) {
@@ -344,6 +354,7 @@ impl Compiler {
                     &def_requests,
                     &method_requests,
                     &struct_requests,
+                    &hash_leaf_requests,
                 )
                 .map_err(CompilerError::Comptime)?
             };
@@ -980,6 +991,7 @@ fn tuple_specialization_value_is_closed_in(
         | CtValue::FloatLiteral(_)
         | CtValue::Bool(_)
         | CtValue::Dtype(_)
+        | CtValue::Simd { .. }
         | CtValue::Str(_) => true,
     }
 }

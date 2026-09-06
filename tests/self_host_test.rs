@@ -190,14 +190,83 @@ fn self_hosted_hash_bounded_set() {
 fn hashlib_values_match_the_audited_head() {
     // `hash` runs the stdlib's AHasher (`default_hasher`) and Fnv1a
     // (`default_comp_time_hasher`); the printed values are current Mojo's.
+    // The multi-lane leaves need the discovery loop (their hasher clones
+    // are minted on demand), so this runs the authoritative pipeline.
     let directory = TempDir::new();
     let main = directory.write(
         "main.mojo",
         include_str!("../assets/ok/hashlib_values.mojo"),
     );
     assert_eq!(
-        run(&main).unwrap(),
-        "int42 6298619649789039366\nint0 14824966480498192933\nintneg1 3480139124131340807\nuint7 7638567382403041238\nuint123 4498397628805512285\ntrue 7121024052126637824\nuint8_1 7121024052126637824\nf1.5 5099020174652265565\nfneg2.25 6219117112318796250\nzero_fold True\nint32neg1 3690585083486137738\nhello 15194610732995203403\nempty 11583516797109448887\nmojo 17357937956458713381\nabcdefghi 3705427243736962859\nfox 6372487330289112038\npoint12 14896942961954214815\npoint00 2853251017295103874\nfnv_int1 12638152016183539244\nfnv_int42 12638128926439346813\nfnv_f1.5 15000291120250992607\nfnv_hello 11831194018420276491\nfnv_point12 589729691727335466\n"
+        run_compiled(&main).unwrap(),
+        "int42 6298619649789039366\nint0 14824966480498192933\nintneg1 3480139124131340807\nuint7 7638567382403041238\nuint123 4498397628805512285\ntrue 7121024052126637824\nuint8_1 7121024052126637824\nf1.5 5099020174652265565\nfneg2.25 6219117112318796250\nzero_fold True\nint32neg1 3690585083486137738\nhello 15194610732995203403\nempty 11583516797109448887\nmojo 17357937956458713381\nabcdefghi 3705427243736962859\nfox 6372487330289112038\npoint12 14896942961954214815\npoint00 2853251017295103874\nfnv_int1 12638152016183539244\nfnv_int42 12638128926439346813\nfnv_f1.5 15000291120250992607\nfnv_hello 11831194018420276491\nfnv_point12 589729691727335466\nsimd2 3394753275432765353\nsimd2u 3394753275432765353\nint8neg1 True\nf32 13132675331935815936\nbits 255 1069547520 9223372036854775808 18446744073709551615\nlanes [1, 2] 2\n"
+    );
+}
+
+#[test]
+fn container_hashes_match_the_audited_head() {
+    // List/Array/Set/Dict `__hash__` are upstream's bodies; the printed
+    // values are current Mojo's. Dict constructs its per-entry hasher from
+    // the inferred method-level `H2`, which needs the authoritative pipeline.
+    let directory = TempDir::new();
+    let main = directory.write(
+        "main.mojo",
+        include_str!("../assets/ok/container_hashable.mojo"),
+    );
+    assert_eq!(
+        run_compiled(&main).unwrap(),
+        "list123 15835895694046543931\nlist_empty 3490686451900604568\nlist_ab 4925734196656799469\nfnv_list12 589729691727335466\narray123 15835895694046543931\nlist_eq_array True\nset123 1110098021471938507\ndict_ab 354986227879111154\ndict_order_independent True\nopt3 7967685112901876051\nopt_none 14824966480498192933\nvar_int7 2743178779280096195\nvar_str7 6896363592936384996\ntuple 17083941330892161820\n"
+    );
+}
+
+#[test]
+fn keyed_ahasher_matches_the_audited_head() {
+    // Upstream's `AHasher[key: U256]`: `default_hasher` is the zero-keyed
+    // specialization and `hash_seeded` folds a seed into the key; `repr(set)`
+    // spells the keyed hasher exactly as upstream.
+    let directory = TempDir::new();
+    let main = directory.write(
+        "main.mojo",
+        include_str!("../assets/ok/hashlib_keyed_ahasher.mojo"),
+    );
+    assert_eq!(
+        run_compiled(&main).unwrap(),
+        "15194610732995203403\n16710763981309024367\nTrue\nTrue\n"
+    );
+    let repr = directory.write(
+        "repr.mojo",
+        include_str!("../conformance/fixtures/set_repr_keyed_hasher.mojo"),
+    );
+    assert_eq!(
+        run_compiled(&repr).unwrap(),
+        "Set[SIMD[DType.int, 1], Hasher=AHasher[[0, 0, 0, 0] : SIMD[DType.uint64, 4]]]({Int(1), Int(2), Int(3)})\nSet[SIMD[DType.int, 1], Hasher=Fnv1a]({Int(1)})\n"
+    );
+}
+
+#[test]
+fn bytes_hash_overloads_match_the_audited_head() {
+    // `hash(bytes, n)` over an `ImmPointer[UInt8, _]` and `hash_seeded_bytes`
+    // agree with hashing the String those bytes spell.
+    let directory = TempDir::new();
+    let main = directory.write(
+        "main.mojo",
+        include_str!("../assets/ok/hashlib_bytes_hash.mojo"),
+    );
+    assert_eq!(
+        run_compiled(&main).unwrap(),
+        "15194610732995203403\nTrue\n16710763981309024367\nTrue\n"
+    );
+}
+
+#[test]
+fn compile_time_hash_matches_the_runtime_values() {
+    // `comptime CT = hash[...](x)` folds through VM CTFE for scalar, Bool,
+    // Float64, and string arguments under both bundled hashers.
+    let directory = TempDir::new();
+    let main = directory.write("main.mojo", include_str!("../assets/ok/comptime_hash.mojo"));
+    assert_eq!(
+        run_compiled(&main).unwrap(),
+        "12638152016183539244\n7121024052126637824\n11831194018420276491\n5099020174652265565 7121024052126637824\nTrue True\n"
     );
 }
 

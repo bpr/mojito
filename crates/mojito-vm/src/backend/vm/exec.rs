@@ -112,7 +112,15 @@ impl VmBackend {
             MirInstr::ConstructTypeParam { dest, param } => {
                 // A constructible type parameter is reified at runtime as the
                 // bound struct's name.
-                let bound = bound_type_parameter(prog, function, vars, param);
+                let bound = match bound_type_parameter(prog, function, vars, param) {
+                    Some(reference @ Value::Ref { .. }) => {
+                        match self.read_reference(&reference, frame_id, vars)? {
+                            Value::Struct { name, .. } => Some(Value::Str(name)),
+                            _ => None,
+                        }
+                    }
+                    other => other,
+                };
                 let Some(Value::Str(type_name)) = bound else {
                     return Err(RuntimeError::Unsupported(format!(
                         "vm: constructing type parameter '{param}' requires a reified type argument"
@@ -1375,6 +1383,12 @@ impl VmBackend {
                 dest, value, dtype, ..
             } => {
                 regs[dest.0 as usize] = crate::runtime::simd_cast(*dtype, &regs[value.0 as usize])?;
+            }
+            MirInstr::SimdBitcast {
+                dest, value, dtype, ..
+            } => {
+                regs[dest.0 as usize] =
+                    crate::runtime::simd_to_bits(*dtype, &regs[value.0 as usize])?;
             }
             MirInstr::SimdShuffle { dest, value, mask } => {
                 regs[dest.0 as usize] =

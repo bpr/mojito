@@ -177,8 +177,36 @@ pub(super) fn math_dunder_bound(method: &str, argc: usize) -> &'static [&'static
 pub(super) fn builtin_hashable_ty(ty: &Ty) -> bool {
     matches!(
         ty,
-        Ty::Int | Ty::UInt | Ty::Bool | Ty::StringLiteral | Ty::Float64 | Ty::Simd { width: 1, .. }
+        Ty::Int | Ty::UInt | Ty::Bool | Ty::StringLiteral | Ty::Float64 | Ty::Simd { .. }
     )
+}
+
+/// Whether `ty` is a SIMD value — a native scalar (a width-1 vector) or a
+/// `SIMD[dtype, width]` — the types the hidden `$SIMD` bound admits.
+pub(super) fn simd_valued_ty(ty: &Ty) -> bool {
+    mojito_types::types::simd_shape(ty).is_some()
+}
+
+/// The bit width of one lane of `dtype` (`bool` is one bit).
+pub(super) fn dtype_bit_width(dtype: Dtype) -> u32 {
+    match dtype {
+        Dtype::Bool => 1,
+        Dtype::Int8 | Dtype::UInt8 => 8,
+        Dtype::Int16 | Dtype::UInt16 => 16,
+        Dtype::Int32 | Dtype::UInt32 | Dtype::Float32 => 32,
+        Dtype::Int | Dtype::Int64 | Dtype::UInt64 | Dtype::Float64 => 64,
+    }
+}
+
+/// `SIMD.to_bits`'s default target: the unsigned dtype of the source lane's
+/// width (a `bool` lane reads through `uint8`, as upstream casts it first).
+pub(super) fn unsigned_dtype_of_width(bits: u32) -> Dtype {
+    match bits {
+        16 => Dtype::UInt16,
+        32 => Dtype::UInt32,
+        64 => Dtype::UInt64,
+        _ => Dtype::UInt8,
+    }
 }
 
 pub(super) fn is_numeric_like(ty: &Ty) -> bool {

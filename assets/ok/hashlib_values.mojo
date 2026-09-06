@@ -32,3 +32,13 @@ def main():
     print("fnv_f1.5", hash[default_comp_time_hasher](Float64(1.5)))
     print("fnv_hello", hash[default_comp_time_hasher](String("hello")))
     print("fnv_point12", hash[default_comp_time_hasher](Point(1, 2)))
+    # Every leaf reaches `_update_with_simd` as its own vector type: a
+    # multi-lane vector hashes lane pairs, narrow integers hash their
+    # zero-extended bits, and `Float32` its own IEEE pattern.
+    print("simd2", hash(SIMD[DType.int32, 2](1, 2)))
+    print("simd2u", hash(SIMD[DType.uint64, 2](1, 2)))
+    print("int8neg1", hash(Int8(-1)) == hash(UInt8(255)))
+    print("f32", hash(Float32(1.5)))
+    # `to_bits` / `.length` are the lane accessors the hasher bodies use.
+    print("bits", Int8(-1).to_bits(), Float32(1.5).to_bits[DType.uint64](), Float64(-0.0).to_bits(), Int(-1).to_bits())
+    print("lanes", SIMD[DType.int32, 2](1, 2).to_bits(), SIMD[DType.uint64, 2](1, 2).length)

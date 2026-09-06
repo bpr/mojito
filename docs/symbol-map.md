@@ -346,6 +346,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   friends), struct-specialization argument resolution, and the t-string
   desugar into its `TString` specialization's construction.
 - `comptime/rewrite.rs` owns AST substitution and value materialization.
+- `comptime/synth.rs` also owns the `SIMD[_, _]` parameter desugar
+  (`desugar_simd_keyed_methods`), the vector-alias bound fold, and the eager
+  per-leaf `_update_with_simd` clone requests (`hasher_leaf_requests`).
+- `crates/mojito-symbol/src/symbol.rs` owns the hasher leaf clone name
+  (`simd_update_clone_name`) every backend's `__hash__` leaf dispatch
+  computes, and the value-specialization demangler
+  (`demangle_specialization`, `unqualified_instance_name`) behind
+  `_unqualified_type_name`'s spelling of a minted clone.
 - `crates/mojito-symbol/src/symbol.rs` also owns the string bridge identities
   (`is_stdlib_string_struct`/`is_stdlib_string_span_struct`, re-exported from
   `mojito-types`; `string_ctor_overload_struct`/`string_span_ctor_overload_struct`

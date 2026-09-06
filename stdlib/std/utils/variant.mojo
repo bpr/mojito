@@ -56,7 +56,7 @@ struct Variant[*Ts: AnyType](
         comptime for i in range(Self.Ts.length):
             comptime T = Self.Ts[i]
             if self._storage.isa[T]():
-                hasher.update(UInt64(i))
+                hasher.update(UInt8(i))
                 hasher.update(self._storage.unsafe_get[T]())
                 return
 

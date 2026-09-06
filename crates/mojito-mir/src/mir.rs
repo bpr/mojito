@@ -2346,6 +2346,9 @@ fn close_register_types(
                     }
                     | MirInstr::SimdCast {
                         dest, dtype, width, ..
+                    }
+                    | MirInstr::SimdBitcast {
+                        dest, dtype, width, ..
                     } => Some((
                         dest,
                         Some(Ty::Simd {

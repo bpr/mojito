@@ -7,6 +7,7 @@
 
 from std.memory import unsafe_alloc
 
+from std.hashlib import Hasher
 from std.iterable import Iterable, IterableOwned, Iterator, StopIteration
 
 @fieldwise_init
@@ -73,6 +74,7 @@ struct Array[T: AnyType, length: Int](
     Copyable where conforms_to(T, Copyable),
     Deinitable where conforms_to(T, Deinitable),
     Equatable where conforms_to(T, Equatable),
+    Hashable where conforms_to(T, Hashable),
     Iterable where conforms_to(T, Copyable),
     IterableOwned where conforms_to(T, Movable) and conforms_to(T, Deinitable),
     Movable where conforms_to(T, Movable),
@@ -149,6 +151,11 @@ struct Array[T: AnyType, length: Int](
     ) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
         return self.data[index]
 
+    def unsafe_get(
+        ref self, idx: Int
+    ) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
+        return self.data[idx]
+
     def __eq__(self, other: Self) -> Bool where conforms_to(
         Self.T, Equatable
     ):
@@ -163,6 +170,14 @@ struct Array[T: AnyType, length: Int](
         Self.T, Equatable
     ):
         return not self == other
+
+    # Upstream feeds each element to the caller's hasher, no length prefix
+    # (`element.__hash__(hasher)`; `update` dispatches the same method).
+    def __hash__[H: Hasher](self, mut hasher: H) where conforms_to(Self.T, Hashable):
+        var i = 0
+        while i < Self.length:
+            hasher.update(self.unsafe_get(i))
+            i += 1
 
     # Lexicographic ordering (upstream 2026-08): elements compare pairwise
     # and the first differing pair decides the result.

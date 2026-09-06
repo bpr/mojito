@@ -1364,14 +1364,14 @@ impl Checker {
                                 }
                     })
                 });
+                // `_update_with_simd(mut self, value: SIMD[_, _])`: the vector
+                // parameter is the inferred `$SIMD`-bounded type parameter
+                // the elaborator desugars the wildcard spelling to.
                 let simd_updates = info.methods.get("_update_with_simd").is_some_and(|methods| {
                     methods.iter().any(|method| {
                         method.self_convention == Some(ArgConvention::Mut)
-                            && method.params
-                                == [Ty::Simd {
-                                    dtype: mojito_ast::ast::Dtype::UInt64,
-                                    width: 1,
-                                }]
+                            && matches!(method.params.as_slice(), [Ty::Param { bounds, .. }]
+                                if bounds.iter().any(|bound| bound == "$SIMD"))
                             && method.ret == Ty::None
                     })
                 });
@@ -1594,6 +1594,10 @@ impl Checker {
             CtValue::Bool(_) => Some(Ty::Bool),
             CtValue::Str(_) => Some(Ty::StringLiteral),
             CtValue::Dtype(_) => Some(Ty::Dtype),
+            CtValue::Simd { dtype, lanes } => Some(mojito_types::types::canonical_simd_ty(
+                *dtype,
+                lanes.len() as i64,
+            )),
             CtValue::Struct { name, .. } => Some(Ty::Struct(name.clone(), Vec::new())),
             CtValue::Tuple(values) => values
                 .iter()
@@ -1648,6 +1652,7 @@ impl Checker {
                 "Movable" => self.is_movable(ty),
                 "Deinitable" => self.is_deinitable(ty),
                 "Hashable" => self.is_hashable(ty),
+                "$SIMD" => simd_valued_ty(ty),
                 "Writable" => {
                     // The discovery check runs before a `t"…"` occurrence's
                     // variadic `TString` specialization exists.  Preserve the
@@ -1758,6 +1763,20 @@ impl Checker {
         args: &[TyArg],
         required: &str,
     ) -> bool {
+        // A minted value specialization not registered here (the
+        // specialization oracle predates the clone) answers as its template
+        // applied to the baked values.
+        let demangled;
+        let (name, args) = match self.structs.get(name) {
+            Some(_) => (name, args),
+            None => match mojito_symbol::symbol::demangle_specialization(name) {
+                Some((template, values)) if self.structs.contains_key(template) => {
+                    demangled = values.into_iter().map(TyArg::Val).collect::<Vec<_>>();
+                    (template, demangled.as_slice())
+                }
+                _ => return false,
+            },
+        };
         let Some(info) = self.structs.get(name) else {
             return false;
         };
@@ -1942,6 +1961,11 @@ impl Checker {
     /// prevents fieldwise synthesis, while operation traits name the operation
     /// promised by the bound.
     pub(super) fn trait_failure_reason(&self, ty: &Ty, tr: &str) -> Option<String> {
+        if tr == "$SIMD" {
+            return Some(
+                "expected a SIMD value (a scalar or a `SIMD[dtype, width]` vector)".to_string(),
+            );
+        }
         let Ty::Struct(name, arguments) = ty else {
             return builtin_trait_operation(tr)
                 .map(|operation| format!("missing required operation '{operation}'"));
@@ -2009,13 +2033,33 @@ impl Checker {
             }
             "Hasher" => {
                 let has = |method: &str| info.methods.contains_key(method);
+                let retired_leaf = info
+                    .methods
+                    .get("_update_with_simd")
+                    .is_some_and(|methods| {
+                        methods.iter().any(|method| {
+                            method.params
+                                == [Ty::Simd {
+                                    dtype: mojito_ast::ast::Dtype::UInt64,
+                                    width: 1,
+                                }]
+                        })
+                    });
                 ["__init__", "_update_with_bytes", "_update_with_simd", "update", "finish"]
                     .into_iter()
                     .find(|method| !has(method))
                     .map(|method| format!("missing required Hasher member '{method}'"))
                     .or_else(|| {
+                        retired_leaf.then(|| {
+                            "'_update_with_simd(mut self, value: UInt64)' is the retired Mojito \
+                             spelling; spell 'def _update_with_simd(mut self, value: SIMD[_, _])' \
+                             and read the lanes with 'value.to_bits[DType.uint64]()'"
+                                .to_string()
+                        })
+                    })
+                    .or_else(|| {
                         Some(
-                            "a Hasher member has the wrong shape (expected '_update_with_simd(mut self, UInt64)', \
+                            "a Hasher member has the wrong shape (expected '_update_with_simd(mut self, SIMD[_, _])', \
                              '_update_with_bytes(mut self, Span[Byte, _])', 'update(mut self, Some[Hashable])', \
                              and 'finish(var self) -> UInt64')"
                                 .to_string(),
@@ -2362,7 +2406,26 @@ impl Checker {
         match ty {
             Ty::Struct(name, args) => self.struct_conformance_applies(name, args, "Hashable"),
             Ty::Param { bounds, .. } => bounds.iter().any(|b| b == "Hashable"),
-            _ => builtin_hashable_ty(ty),
+            _ => {
+                let hashable = builtin_hashable_ty(ty);
+                if hashable {
+                    self.record_hash_leaf(ty);
+                }
+                hashable
+            }
+        }
+    }
+
+    /// Record a hashed SIMD leaf type outside the eager width-1 set: every
+    /// hasher needs a `_update_with_simd` clone for it, which the driver
+    /// requests from elaboration on the next discovery round.
+    pub(super) fn record_hash_leaf(&self, ty: &Ty) {
+        if !matches!(ty, Ty::Simd { width, .. } if *width > 1) {
+            return;
+        }
+        let mut recorded = self.hash_leaf_types.borrow_mut();
+        if !recorded.contains(ty) {
+            recorded.push(ty.clone());
         }
     }
 
@@ -2509,9 +2572,10 @@ impl Checker {
                     Some(ArgConvention::Mut),
                 )),
                 ("_update_with_simd", 1) => Some((
-                    Ty::Simd {
-                        dtype: mojito_ast::ast::Dtype::UInt64,
-                        width: 1,
+                    Ty::Param {
+                        name: "$simd".to_string(),
+                        bounds: vec!["$SIMD".to_string()],
+                        callable_bound: None,
                     },
                     Ty::None,
                     Some(ArgConvention::Mut),

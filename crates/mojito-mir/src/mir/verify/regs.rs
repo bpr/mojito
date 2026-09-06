@@ -34,6 +34,7 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::MakeVariant { dest, .. }
         | MirInstr::MakeSimd { dest, .. }
         | MirInstr::SimdCast { dest, .. }
+        | MirInstr::SimdBitcast { dest, .. }
         | MirInstr::SimdShuffle { dest, .. }
         | MirInstr::MakeClosure { dest, .. }
         | MirInstr::VariantIs { dest, .. }
@@ -275,7 +276,9 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         MirInstr::MakeTuple { elems, .. } | MirInstr::MakeSimd { elems, .. } => {
             out.extend(elems.iter().copied())
         }
-        MirInstr::SimdCast { value, .. } | MirInstr::SimdShuffle { value, .. } => out.push(*value),
+        MirInstr::SimdCast { value, .. }
+        | MirInstr::SimdBitcast { value, .. }
+        | MirInstr::SimdShuffle { value, .. } => out.push(*value),
         MirInstr::MakeVariant { value, .. } => out.push(*value),
         MirInstr::MakeClosure { captures, .. } => {
             for capture in captures {

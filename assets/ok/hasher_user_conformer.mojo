@@ -1,5 +1,6 @@
-# A user `Hasher`: the compiler feeds every scalar leaf as one normalized
-# `UInt64` (`_update_with_simd`), a string's bytes as a `Span[Byte, _]`
+# A user `Hasher` in upstream's spelling: every scalar leaf reaches
+# `_update_with_simd(mut self, value: SIMD[_, _])` as its own vector type
+# (`to_bits` reads the lanes), a string's bytes arrive as a `Span[Byte, _]`
 # (`_update_with_bytes`), and `update` dispatches a Hashable value's own
 # `__hash__`. The conformer works through `hash[H]` and as a `Dict` hasher.
 from std.hashlib import Hasher
@@ -14,8 +15,8 @@ struct SumHasher(Defaultable, Hasher):
         for i in range(len(data)):
             self.total += data[i].cast[DType.uint64]()
 
-    def _update_with_simd(mut self, value: UInt64):
-        self.total += value
+    def _update_with_simd(mut self, value: SIMD[_, _]):
+        self.total += value.to_bits[DType.uint64]().reduce_add()
 
     def update(mut self, value: Some[Hashable]):
         value.__hash__(self)

@@ -345,6 +345,24 @@ impl PointerOrigin {
             },
         }
     }
+
+    /// Whether a pointer of this provenance may bind a parameter declared
+    /// with `expected`: an unsafe-any expectation (`ImmPointer[T, _]`, the
+    /// placeholder origin of a free function's raw-pointer parameter) accepts
+    /// any provenance whose permission is at least the expected one, an
+    /// immutable untracked expectation accepts the mutable untracked
+    /// provenance (dropping capability), and every other expectation binds
+    /// exactly.
+    pub fn coerces_to(&self, expected: &PointerOrigin) -> bool {
+        match expected {
+            PointerOrigin::UnsafeAny { mutable: false } => true,
+            PointerOrigin::UnsafeAny { mutable: true } => self.statically_mutable() == Some(true),
+            PointerOrigin::Untracked { mutable: false } => {
+                matches!(self, PointerOrigin::Untracked { .. })
+            }
+            _ => self == expected,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -11,9 +11,13 @@ struct Fnv1a(Defaultable, Hasher):
             self._value *= UInt64(0x100000001B3)
             i += 1
 
-    def _update_with_simd(mut self, value: UInt64):
-        self._value ^= value
-        self._value *= UInt64(0x100000001B3)
+    def _update_with_simd(mut self, value: SIMD[_, _]):
+        var bits = value.to_bits[DType.uint64]()
+        var i = 0
+        while i < bits.length:
+            self._value ^= bits[i]
+            self._value *= UInt64(0x100000001B3)
+            i += 1
 
     def update(mut self, value: Some[Hashable]):
         value.__hash__(self)

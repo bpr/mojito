@@ -67,6 +67,8 @@ pub(super) fn bind_explicit_value_arguments(
     constant_values: &HashMap<u32, CtValue>,
     bindings: &mut Bindings,
     target: &str,
+    is_struct: &dyn Fn(&str) -> bool,
+    enclosing_types: &HashMap<String, Ty>,
 ) -> Result<(), MonoError> {
     let mut positional = 0;
     for argument in arguments {
@@ -76,24 +78,66 @@ pub(super) fn bind_explicit_value_arguments(
             }
             continue;
         };
+        // Positional compile-time arguments skip the inferred-only
+        // declarations (`hash[T: Hashable, //, HasherType]` binds
+        // `HasherType` first), as the checker's binder does.
+        let explicit: Vec<&ParamDecl> = decls
+            .iter()
+            .filter(|declaration| {
+                !matches!(
+                    declaration,
+                    ParamDecl::Type {
+                        infer_only: true,
+                        ..
+                    } | ParamDecl::Value {
+                        infer_only: true,
+                        ..
+                    }
+                )
+            })
+            .collect();
         let declaration = if let Some(name) = &argument.name {
             decls.iter().find(|declaration| declaration.name() == name)
         } else {
-            let declaration = decls.get(positional);
+            let declaration = explicit.get(positional).copied();
             positional += 1;
             declaration
         };
-        let Some(ParamDecl::Value { name, .. }) = declaration else {
-            continue;
-        };
-        let value = constant_values
-            .get(&value_reg.0)
-            .cloned()
-            .ok_or_else(|| MonoError {
-                function: Some(target.to_string()),
-                construct: format!("value parameter `{name}` is not compile-time constant"),
-            })?;
-        bindings.values.insert(name.clone(), value);
+        match declaration {
+            Some(ParamDecl::Value { name, .. }) => {
+                let value =
+                    constant_values
+                        .get(&value_reg.0)
+                        .cloned()
+                        .ok_or_else(|| MonoError {
+                            function: Some(target.to_string()),
+                            construct: format!(
+                                "value parameter `{name}` is not compile-time constant"
+                            ),
+                        })?;
+                bindings.values.insert(name.clone(), value);
+            }
+            // A supplied constructible type argument (`hash[Fnv1a](x)`)
+            // reifies as a string register naming the bound struct; an
+            // erased body forwarding its own binder (`hash[Self.H](key)`)
+            // spells that binder, which the enclosing instance's bindings
+            // resolve. An unresolvable spelling leaves the slot to its
+            // default.
+            Some(ParamDecl::Type { name, .. }) => {
+                let Some(CtValue::Str(spelling)) = constant_values.get(&value_reg.0) else {
+                    continue;
+                };
+                let bound = if is_struct(spelling) {
+                    Some(Ty::Struct(spelling.clone(), Vec::new()))
+                } else {
+                    enclosing_types.get(spelling).cloned()
+                };
+                if let Some(bound) = bound {
+                    bindings.types.insert(name.clone(), bound);
+                }
+            }
+            _ => {}
+        }
     }
     Ok(())
 }

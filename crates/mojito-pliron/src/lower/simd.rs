@@ -198,6 +198,117 @@ impl<'a> FnLowering<'a> {
         Ok(())
     }
 
+    /// `SimdBitcast` (`x.to_bits[DType.<dt>]()`) — the VM's
+    /// `runtime::simd_to_bits`: each lane's bit pattern zero-extended into
+    /// the unsigned target lane (floats through `bitcast`, `bool` as 0/1).
+    pub(super) fn lower_simd_bitcast(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        value: Reg,
+        dtype: Dtype,
+        width: usize,
+    ) -> Result<(), PlironError> {
+        if width > 1 {
+            let Some(Ty::Simd {
+                dtype: source_dtype,
+                width: source_width,
+            }) = self.func.reg_types.get(&value.0).cloned()
+            else {
+                return Err(self.unsupported_reg("SIMD to_bits source type".into(), dest));
+            };
+            if source_width != width as i64 {
+                return Err(self.unsupported_reg("SIMD to_bits width mismatch".into(), dest));
+            }
+            let source_ty = ScalarTy::of_dtype(source_dtype);
+            let source_ptr = self.reg_ptr(ctx, value)?;
+            let source_lane = self
+                .layout
+                .layout_of(&Ty::Simd {
+                    dtype: source_dtype,
+                    width: 1,
+                })
+                .expect("SIMD lane layout");
+            let target_ty = Ty::Simd {
+                dtype,
+                width: width as i64,
+            };
+            let target_layout = self.layout.layout_of(&target_ty).expect("SIMD layout");
+            let target_lane = self
+                .layout
+                .layout_of(&Ty::Simd { dtype, width: 1 })
+                .expect("SIMD lane layout");
+            let storage = self.entry_alloca(ctx, target_layout.size, target_layout.align);
+            let source_handle = source_ty.handle(ctx);
+            for lane in 0..width {
+                let source_address =
+                    self.offset_address(ctx, source_ptr, source_lane.size * lane as u64);
+                let load = LoadOp::new(ctx, source_address, source_handle);
+                self.append(ctx, load.get_operation(), Some(dest));
+                let bits =
+                    self.simd_bits_lane(ctx, load.get_result(ctx), source_ty, dtype, dest)?;
+                let target_address =
+                    self.offset_address(ctx, storage, target_lane.size * lane as u64);
+                let store = StoreOp::new(ctx, bits, target_address);
+                self.append(ctx, store.get_operation(), Some(dest));
+            }
+            self.reg_values.insert(dest.0, storage);
+            return Ok(());
+        }
+        let source = self.concrete_scalar_ty(value)?.ok_or_else(|| {
+            self.unsupported_reg("SIMD to_bits of an unmaterialized literal".into(), dest)
+        })?;
+        let lane = self.reg_value(ctx, value, source)?;
+        let bits = self.simd_bits_lane(ctx, lane, source, dtype, dest)?;
+        self.reg_values.insert(dest.0, bits);
+        Ok(())
+    }
+
+    /// One lane's bit pattern as the unsigned `dtype` lane: a float lane
+    /// bitcasts to its own width, an integer/bool lane is already its bits;
+    /// a narrower source zero-extends.
+    fn simd_bits_lane(
+        &mut self,
+        ctx: &mut Context,
+        lane: Value,
+        source: ScalarTy,
+        dtype: Dtype,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        let (target_bits, _) = ScalarTy::of_dtype(dtype)
+            .int_shape()
+            .ok_or_else(|| self.unsupported_reg("SIMD to_bits target".into(), dest))?;
+        let (raw, raw_bits) = match source {
+            ScalarTy::Float64 => {
+                let int_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+                let cast = BitcastOp::new(ctx, lane, int_ty);
+                self.append(ctx, cast.get_operation(), Some(dest));
+                (cast.get_result(ctx), 64)
+            }
+            ScalarTy::Sized(Dtype::Float32) => {
+                let int_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Signless).into();
+                let cast = BitcastOp::new(ctx, lane, int_ty);
+                self.append(ctx, cast.get_operation(), Some(dest));
+                (cast.get_result(ctx), 32)
+            }
+            ScalarTy::Bool => (lane, 1),
+            ScalarTy::Ptr => {
+                return Err(self.unsupported_reg("SIMD to_bits of a pointer lane".into(), dest));
+            }
+            integer => {
+                let (bits, _) = integer.int_shape().expect("integer lane shape");
+                (lane, bits)
+            }
+        };
+        if raw_bits == target_bits {
+            return Ok(raw);
+        }
+        let target_ty: TypeHandle = IntegerType::get(ctx, target_bits, Signedness::Signless).into();
+        let widened = ZExtOp::new_with_nneg(ctx, raw, target_ty, false);
+        self.append(ctx, widened.get_operation(), Some(dest));
+        Ok(widened.get_result(ctx))
+    }
+
     pub(super) fn simd_cast_lane(
         &mut self,
         ctx: &mut Context,
@@ -415,6 +526,13 @@ impl<'a> FnLowering<'a> {
         method: &str,
     ) -> Result<(), PlironError> {
         let lane_ty = ScalarTy::of_dtype(dtype);
+        // A width-1 vector is a scalar register: every reduction is the
+        // lane itself.
+        if width == 1 {
+            let value = self.reg_value(ctx, recv, lane_ty)?;
+            self.reg_values.insert(dest.0, value);
+            return Ok(());
+        }
         let handle = lane_ty.handle(ctx);
         let lane_layout = self
             .layout

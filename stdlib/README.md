@@ -103,14 +103,20 @@ only from their authoritative `std` modules.
   `C.Element` through an opaque iterable bound.
 - `std/hashlib/` — current Mojo's hashing package: `hash.mojo` is the
   `Hashable` home and defines `hash[T: Hashable, //, HasherType: Hasher =
-  default_hasher](x) -> UInt64`; `hasher.mojo` is the `Hasher` home and
-  defines `default_hasher` (`AHasher`) and `default_comp_time_hasher`
-  (`Fnv1a`); `_ahash.mojo` and `_fnv1a.mojo` port the two algorithms (a
-  32-bit-limb folded multiply stands in for the 128-bit product; the
-  rotation is spelled inline). `Hashable` and `Hasher` are compiler-known
-  traits; the compiler feeds every scalar leaf as one normalized `UInt64`
-  (`_update_with_simd`) and a string's bytes as a `Span[Byte, _]`
-  (`_update_with_bytes`). Values match the audited head.
+  default_hasher](x) -> UInt64` and the bytes overload `hash[HasherType](bytes:
+  ImmPointer[UInt8, _], n: Int)`; `hasher.mojo` is the `Hasher` home and
+  defines `default_hasher` (the zero-keyed `AHasher[SIMD[DType.uint64,
+  4](0)]`) and `default_comp_time_hasher` (`Fnv1a`); `_ahash.mojo` (the
+  keyed `AHasher[key: U256]`, `hash_seeded`, `hash_seeded_bytes`) and
+  `_fnv1a.mojo` port the two algorithms in upstream's `_update_with_simd(mut
+  self, value: SIMD[_, _])` spelling over `to_bits`/`.length` (a 32-bit-limb
+  folded multiply stands in for the 128-bit product; the rotation is spelled
+  inline). `Hashable` and `Hasher` are compiler-known traits; the compiler
+  clones `_update_with_simd` per hashed vector type and feeds every leaf as
+  itself (`-0.0` folded), a string's bytes as a `Span[Byte, _]`
+  (`_update_with_bytes`). The containers (`List`, `Array`, `Set`, `Dict`,
+  `Optional`, `Variant`, `Tuple`) conform to `Hashable` conditionally in
+  upstream's bodies. Values match the audited head on both backends.
 - `std/bit.mojo` — `rotate_bits_left[shift: Int](x: UInt64)`, the `std.bit`
   subset (a `UInt64` instance of upstream's SIMD-generic helper).
 - `std/math.mojo` — self-hosted numeric rounding helpers `floor`/`ceil`/`trunc`/`ceildiv`,

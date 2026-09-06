@@ -9,6 +9,7 @@ from std.string import check_slice_bounds
 from std.memory import unsafe_alloc
 
 from std.reflection.type_info import _unqualified_type_name
+from std.hashlib import Hasher
 from std.iterable import Iterable, IterableOwned, Iterator, StopIteration
 
 from std.optional import Optional
@@ -109,6 +110,7 @@ struct _ListOwnedIter[T: AnyType](
 struct List[T: AnyType](
     Copyable where conforms_to(T, Copyable),
     Deinitable where conforms_to(T, Deinitable),
+    Hashable where conforms_to(T, Hashable),
     Iterable where conforms_to(T, Copyable),
     IterableOwned where conforms_to(T, Deinitable) and conforms_to(T, Movable),
     Movable,
@@ -333,6 +335,18 @@ struct List[T: AnyType](
     ) and conforms_to(Self.T, Movable):
         self.data.unsafe_offset(idx).unsafe_deinit_pointee()
         self.data[idx] = value^
+
+    # Upstream feeds each element to the caller's hasher with no length
+    # prefix (`element.__hash__(hasher)`; `update` dispatches the same
+    # method). The walk indexes through `unsafe_get`: the borrowed `for
+    # element in self` loop would need `Copyable` (`_ListIter` is `Iterator
+    # where conforms_to(T, Copyable)`), while the conformance is
+    # Hashable-only as upstream's.
+    def __hash__[H: Hasher](self, mut hasher: H) where conforms_to(Self.T, Hashable):
+        var i = 0
+        while i < len(self):
+            hasher.update(self.unsafe_get(i))
+            i += 1
 
     def __contains__(self, value: Self.T) -> Bool where conforms_to(
         Self.T, Equatable

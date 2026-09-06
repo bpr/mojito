@@ -528,6 +528,12 @@ impl Decoder {
                 dtype: self.req(value, fields, "dtype", Self::dtype)?,
                 width: self.req(value, fields, "width", Self::uint)?,
             }),
+            "simd.bits" => Some(MirInstr::SimdBitcast {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                value: self.req(value, fields, "value", Self::reg)?,
+                dtype: self.req(value, fields, "dtype", Self::dtype)?,
+                width: self.req(value, fields, "width", Self::uint)?,
+            }),
             "simd.shuffle" => Some(MirInstr::SimdShuffle {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 value: self.req(value, fields, "value", Self::reg)?,

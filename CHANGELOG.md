@@ -8,6 +8,34 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Hashing parity with current Mojo: `Hasher._update_with_simd(mut self,
+  value: SIMD[_, _])` (one per-type clone per hashed scalar/vector; the
+  retired `UInt64` leaf is a conformance error), `SIMD.to_bits[dtype]()` and
+  `.length`, the keyed `AHasher[key: U256]` with `default_hasher` as its
+  zero-keyed specialization (`repr(set)` spells `Hasher=AHasher[[0, 0, 0,
+  0] : SIMD[DType.uint64, 4]]`), the bytes `hash(bytes: ImmPointer[UInt8, _],
+  n)` overload and `hash_seeded_bytes`, conditional `Hashable` on `List`,
+  `Array`, `Set`, and `Dict` in upstream's bodies (`Variant` tags with a
+  `UInt8`), and compile-time `hash[...](x)` through VM CTFE for scalar,
+  Bool, Float64, and string arguments (`case:hasher-upstream-spellings`,
+  `case:container-hashable`, `case:hashlib-keyed-ahasher`,
+  `case:set-repr-keyed-hasher`, `case:hashlib-bytes-hash`,
+  `case:comptime-hash`, `case:dict-hasher-forwarding`).
+- Compile-time SIMD values (`CtValue::Simd`), SIMD-typed struct value
+  parameters (a vector alias as a bound), typed scalar constructors and SIMD
+  construction in compile-time evaluation, a placeholder-origin pointer
+  parameter in free functions (`ImmPointer[T, _]`/`MutPointer[T, _]`; the
+  bare `Pointer[T, _]` asks for the permission), and a `where`-assumed
+  `Hashable` proving `element.__hash__(hasher)` on an unbounded `T`.
+
+### Fixed
+
+- Native lane: a supplied constructible type argument (`hash[Fnv1a](x)`)
+  and an erased body forwarding its own binder (`hash[Self.H](key)` in
+  Dict) bind the hasher the source names instead of the declaration default;
+  width-1 vector registers index and reduce as scalars; the VM reifies a
+  method-level `Hasher` binder inferred from its `mut` argument (`H2()`).
+
 - `StringSpan` parameters in upstream's shape: the String result APIs
   (search, affix tests, `replace`, `split`/`splitlines`, case, predicates,
   justification, the strip family) live on `StringSpan` with `StringSpan`

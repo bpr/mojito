@@ -42,10 +42,10 @@ pub use mojito_symbol::symbol::{
 
 use mojito_ast::call::{CallVariadics, effective_keyword_only_index, match_call_slots};
 use mojito_common::token::{SourceSpan, Span};
-use mojito_types::ct::{CtExpr, CtValue};
+use mojito_types::ct::{CtExpr, CtLane, CtValue};
 use mojito_types::types::{ParamDecl, Ty, TyArg, list_type, tuple_type};
 use mojito_vm::backend::VmBackend;
-use mojito_vm::runtime::Value;
+use mojito_vm::runtime::{SimdLanes, Value};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -497,7 +497,8 @@ impl std::fmt::Display for ComptimeError {
 
 /// Elaborate all compile-time constructs in a program, returning an ordinary AST.
 pub fn elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
-    elaborate_with_requests(program, &[], &[], &[], &[], &[]).map(|elaborated| elaborated.program)
+    elaborate_with_requests(program, &[], &[], &[], &[], &[], &[])
+        .map(|elaborated| elaborated.program)
 }
 
 /// An elaborated program plus the generic-struct instances the specializer
@@ -548,6 +549,7 @@ pub fn elaborate_with_requests(
     def_requests: &[DefSpecializationRequest],
     method_requests: &[MethodSpecializationRequest],
     struct_requests: &[StructInstanceRequest],
+    hash_leaf_types: &[Ty],
 ) -> Result<Elaborated, ComptimeError> {
     let mut method_requests_by_owner: HashMap<String, Vec<MethodSpecializationRequest>> =
         HashMap::new();
@@ -566,6 +568,18 @@ pub fn elaborate_with_requests(
     }
     synthesize_copyable_copy(&mut program);
     synthesize_hashable_hash(&mut program);
+    desugar_simd_keyed_methods(&mut program);
+    fold_simd_alias_bounds(&mut program);
+    // Every `Hasher` conformer's `_update_with_simd` is cloned per hashed
+    // vector type: the closed width-1 set eagerly, wider vectors on demand.
+    for statement in &program {
+        for request in hasher_leaf_requests(statement, hash_leaf_types) {
+            method_requests_by_owner
+                .entry(request.owner().to_string())
+                .or_default()
+                .push(request);
+        }
+    }
     let conformance =
         mojito_checker::checker::ConformanceOracle::from_program(&program).map_err(|error| {
             ComptimeError::NotComptime(format!(
@@ -614,6 +628,8 @@ pub fn elaborate_with_requests(
         bound_generics,
         method_requests: method_requests_by_owner,
         instance_requests,
+        hash_leaf_types: hash_leaf_types.to_vec(),
+        pending_struct_instances: RefCell::new(HashMap::new()),
         conformance,
         tuple_universe,
         tuple_transforms,
@@ -904,6 +920,10 @@ fn ct_param_source_type(source: &Type) -> Option<Ty> {
             })
             .collect::<Option<Vec<_>>>()
             .map(tuple_type),
+        // A vector-typed value parameter (`[key: SIMD[DType.uint64, 4]]`).
+        Type::Named(name, args) if name == "SIMD" => {
+            simd_source_dims(args).map(|(dtype, width)| Ty::Simd { dtype, width })
+        }
         _ => None,
     }
 }
@@ -988,6 +1008,13 @@ fn source_type_from_ty_with_origins(
                 })
                 .collect::<Option<Vec<_>>>()?,
         ),
+        Ty::Simd { dtype, width } => Type::Named(
+            "SIMD".to_string(),
+            vec![
+                ParamArg::Value(CtValue::Dtype(*dtype).materialize((0, 0))?),
+                ParamArg::Value(CtValue::Int(*width).materialize((0, 0))?),
+            ],
+        ),
         Ty::Ref(reference) => {
             let origin_name = match &reference.origin {
                 mojito_types::origin::Origin::Param(id) => origin_names.get(id)?.clone(),
@@ -1032,6 +1059,50 @@ fn ct_to_vm(value: &CtValue) -> Result<Value, ComptimeError> {
                 .collect::<Result<Vec<_>, _>>()?,
             value_params: Vec::new(),
         }),
+        CtValue::Simd { dtype, lanes } => {
+            let lanes = match lanes.first() {
+                Some(CtLane::Float(_)) => SimdLanes::Float(
+                    lanes
+                        .iter()
+                        .map(|lane| match lane {
+                            CtLane::Float(bits) => Some(f64::from_bits(*bits)),
+                            _ => None,
+                        })
+                        .collect::<Option<Vec<_>>>()
+                        .ok_or_else(|| {
+                            ComptimeError::NotComptime("mixed SIMD lane kinds".to_string())
+                        })?,
+                ),
+                Some(CtLane::Bool(_)) => SimdLanes::Bool(
+                    lanes
+                        .iter()
+                        .map(|lane| match lane {
+                            CtLane::Bool(value) => Some(*value),
+                            _ => None,
+                        })
+                        .collect::<Option<Vec<_>>>()
+                        .ok_or_else(|| {
+                            ComptimeError::NotComptime("mixed SIMD lane kinds".to_string())
+                        })?,
+                ),
+                _ => SimdLanes::Int(
+                    lanes
+                        .iter()
+                        .map(|lane| match lane {
+                            CtLane::Int(value) => Some(*value),
+                            _ => None,
+                        })
+                        .collect::<Option<Vec<_>>>()
+                        .ok_or_else(|| {
+                            ComptimeError::NotComptime("mixed SIMD lane kinds".to_string())
+                        })?,
+                ),
+            };
+            Ok(Value::Simd {
+                dtype: *dtype,
+                lanes,
+            })
+        }
         CtValue::Dtype(_) | CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Param(_) => {
             Err(ComptimeError::NotComptime(
                 "type-valued or symbolic values cannot cross into VM CTFE".to_string(),
@@ -1061,6 +1132,17 @@ fn vm_to_ct(value: Value) -> Result<CtValue, ComptimeError> {
                 .map(vm_to_ct)
                 .collect::<Result<Vec<_>, _>>()?,
         )),
+        Value::Simd { dtype, lanes } => Ok(CtValue::Simd {
+            dtype,
+            lanes: match lanes {
+                SimdLanes::Int(values) => values.into_iter().map(CtLane::Int).collect(),
+                SimdLanes::Float(values) => values
+                    .into_iter()
+                    .map(|x| CtLane::Float(x.to_bits()))
+                    .collect(),
+                SimdLanes::Bool(values) => values.into_iter().map(CtLane::Bool).collect(),
+            },
+        }),
         Value::None => Err(ComptimeError::NotComptime(
             "VM CTFE function returned None; a compile-time value is required".to_string(),
         )),
@@ -1131,11 +1213,15 @@ fn is_specializable_declaration_in(
             type_params
                 .iter()
                 .any(|parameter| parameter.name.starts_with('*'))
-                // DType- and struct-typed value parameters can only check
-                // concretely, so the struct monomorphizes per application.
+                // DType-, struct-, and vector-typed value parameters can only
+                // check concretely, so the struct monomorphizes per
+                // application.
                 || type_params.iter().any(|parameter| {
                     matches!(parameter.bounds.as_slice(), [only]
                         if only == "DType" || is_value_struct(only))
+                        || parameter.value_type.as_ref().is_some_and(|source| {
+                            matches!(ct_param_source_type(source), Some(Ty::Simd { .. }))
+                        })
                 })
         }
         _ => false,
@@ -1187,6 +1273,15 @@ struct Elab<'a> {
     /// annotations. The compiler independently passes the forward map to the
     /// second checker pass.
     materialized_callables: Vec<(Ty, String)>,
+    /// The checker-demanded hashed vector types beyond the eager width-1
+    /// set; the VM-CTFE subprogram mints the same hasher clones from them.
+    hash_leaf_types: Vec<Ty>,
+    /// Fully concrete applications of vector-keyed value templates named by
+    /// compile-time type expressions (`comptime default_hasher =
+    /// AHasher[SIMD[DType.uint64, 4](0)]`), by mangled clone name: each is
+    /// one specialization identity for every consumer, and monomorphization
+    /// mints them alongside the call-site applications.
+    pending_struct_instances: RefCell<HashMap<String, (String, Vec<CtValue>)>>,
     fuel: Cell<usize>,
     top_consts: RefCell<HashMap<String, CtValue>>,
     /// Module-scope generic `comptime` aliases in declaration order, name →
@@ -1672,8 +1767,8 @@ fn lit_result(val: &CtValue, span: Span) -> Result<Expr, ComptimeError> {
 fn vm_ctfe_safe_builtin(name: &str) -> bool {
     matches!(
         name,
-        "range" | "abs" | "min" | "max" | "round" | "Int" | "UInt" | "Float64"
-    )
+        "range" | "abs" | "min" | "max" | "round" | "Int" | "UInt" | "Float64" | "SIMD"
+    ) || mojito_ast::ast::Dtype::from_scalar_alias(name).is_some()
 }
 
 mod ctfe;
@@ -1765,6 +1860,7 @@ mod tuple_request_tests {
             &[],
             &[],
             &[],
+            &[],
         )
         .expect("materialize checked Tuple specialization")
         .program;
@@ -1802,6 +1898,7 @@ mod tuple_request_tests {
             &[],
             &[],
             &[],
+            &[],
         )
         .expect("materialize contextual Tuple declaration")
         .program;
@@ -1828,6 +1925,7 @@ mod tuple_request_tests {
         let elaborated = elaborate_with_requests(
             parsed,
             &[TupleSpecializationRequest::declaration(outer_elements)],
+            &[],
             &[],
             &[],
             &[],
@@ -1935,7 +2033,7 @@ mod def_request_tests {
             vec![TyArg::Ty(Ty::Int)],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[], &[])
+        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[], &[], &[])
             .expect("materialize the requested specialization")
             .program;
 
@@ -1964,7 +2062,7 @@ mod def_request_tests {
             vec![TyArg::Val(CtValue::Int(1))],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[], &[])
+        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[], &[], &[])
             .expect("a skipped request must not fail elaboration")
             .program;
 
@@ -1989,7 +2087,7 @@ mod def_request_tests {
             vec![TyArg::Ty(Ty::Int)],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[], &[])
+        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[], &[], &[])
             .expect("materialize the requested specialization")
             .program;
 

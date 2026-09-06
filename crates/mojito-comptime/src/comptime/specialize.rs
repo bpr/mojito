@@ -77,6 +77,20 @@ impl<'a> Elab<'a> {
                 .collect(),
         );
         mono.value_scopes.push(module_bindings);
+        // Vector-keyed specializations named by compile-time type expressions
+        // (`comptime default_hasher = AHasher[...]`) mint like call-site
+        // applications; the alias already spells the clone.
+        for (mangled, (orig, vals)) in self.pending_struct_instances.borrow().iter() {
+            if mono.done.insert(mangled.clone()) {
+                mono.queue.push_back(Job {
+                    orig: orig.clone(),
+                    vals: vals.clone(),
+                    site: "a compile-time type alias".to_string(),
+                    output_name: mangled.clone(),
+                    whole_pack_abi: false,
+                });
+            }
+        }
         for request in tuple_requests {
             let vals = tuple_specialization_values(request.elements());
             let output_name = tuple_specialization_symbol(request.elements());
@@ -941,8 +955,26 @@ impl<'a> Elab<'a> {
             member.value = materialize_expression(&member.value, &member_subs);
         }
         let mut specialized_methods = Vec::with_capacity(methods.len());
+        let mut simd_clones = Vec::new();
         for method in methods {
             let mut method = method.clone();
+            // A SIMD-keyed method (`_update_with_simd(mut self, value:
+            // SIMD[_, _])`) checks only as per-leaf clones, minted here for
+            // this specialization; its template body is the trap stub.
+            if super::synth::is_simd_keyed_method(&method) {
+                let requests = super::synth::hasher_leaf_requests(template, &self.hash_leaf_types);
+                simd_clones.extend(self.per_call_method_clones(
+                    &method,
+                    &requests,
+                    &[],
+                    &[],
+                    None,
+                    &env,
+                ));
+                method.body = vec![unspecialized_method_stub(orig, &method)];
+                specialized_methods.push(method);
+                continue;
+            }
             // A regular runtime parameter shadows a same-named compile-time
             // binding inside its own body.
             let mut method_env = env.clone();
@@ -979,6 +1011,7 @@ impl<'a> Elab<'a> {
             }
             specialized_methods.push(method);
         }
+        specialized_methods.extend(simd_clones);
         let mangled = mangle(orig, vals);
         let mut spec = mk(
             StmtKind::Struct {

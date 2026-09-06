@@ -140,6 +140,8 @@ pub(super) fn const_reg_value_inner(
                         Const::IntLiteral(literal) => literal.to_i64().map(CtValue::Int),
                         Const::Bool(value) => Some(CtValue::Bool(*value)),
                         Const::Function(function) => Some(CtValue::Str(function.clone())),
+                        // A reified type argument names its struct as a string.
+                        Const::Str(text) => Some(CtValue::Str(text.clone())),
                         _ => None,
                     };
                 }

@@ -175,6 +175,7 @@ pub fn check_program_with_materialized_callables(
         checker.generic_instantiations.into_inner(),
         checker.method_instantiations.into_inner(),
         checker.struct_instantiations.into_inner(),
+        checker.hash_leaf_types.into_inner(),
         checker.call_transfers.into_inner(),
         checker.implicit_conversions.into_inner(),
         checker.implicit_conversion_types.into_inner(),
@@ -399,6 +400,9 @@ pub struct Checker {
     /// method-call receiver, retained for per-instantiation method-clone
     /// discovery (the driver keeps the closed ones).
     struct_instantiations: RefCell<Vec<mojito_checked::checked::StructInstantiation>>,
+    /// SIMD leaf types hashed outside the eager width-1 set (multi-lane
+    /// vectors): each needs a `_update_with_simd` clone on every hasher.
+    hash_leaf_types: RefCell<Vec<Ty>>,
     /// Per-body accumulation frames for inferred loan-transfer effects.
     transfer_frames: RefCell<Vec<TransferFrame>>,
     /// Inferred per-callable transfer effects, keyed by callable name
@@ -625,6 +629,7 @@ impl Checker {
             generic_instantiations: RefCell::new(HashMap::new()),
             method_instantiations: RefCell::new(HashMap::new()),
             struct_instantiations: RefCell::new(Vec::new()),
+            hash_leaf_types: RefCell::new(Vec::new()),
             transfer_frames: RefCell::new(Vec::new()),
             transfer_effects: RefCell::new(transfer_effects),
             call_transfers: RefCell::new(HashMap::new()),

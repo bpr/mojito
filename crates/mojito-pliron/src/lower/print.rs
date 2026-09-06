@@ -138,11 +138,11 @@ impl<'a> FnLowering<'a> {
     }
 
     /// Contribute one scalar/literal Hashable leaf to a caller-owned hasher —
-    /// the VM's non-struct `__hash__` intrinsic. Scalars are normalized to
-    /// their unsigned bit pattern zero-extended to `UInt64` (`-0.0` folds to
-    /// `0.0`) and passed to the hasher's compiled `_update_with_simd`; a
-    /// string literal materializes as a nominal `String` and dispatches to
-    /// that struct's `__hash__` instance bound to the hasher.
+    /// the VM's non-struct `__hash__` intrinsic. A scalar or vector leaf
+    /// passes itself (`-0.0` folded to `0.0`, as upstream's `SIMD.__hash__`)
+    /// to the hasher's compiled `_update_with_simd` clone for the leaf's own
+    /// vector type; a string literal materializes as a nominal `String` and
+    /// dispatches to that struct's `__hash__` instance bound to the hasher.
     pub(super) fn lower_hash_leaf(
         &mut self,
         ctx: &mut Context,
@@ -163,104 +163,96 @@ impl<'a> FnLowering<'a> {
         };
         let place = place.clone();
         let hasher_ptr = self.place_address(ctx, &place, dest)?.0;
-        let unique_instance = |this: &Self, prefix: &str, by_hasher: bool| {
-            this.unique_hash_instance(dest, &hasher_name, prefix, by_hasher)
-        };
-        let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
-        let bits = match receiver {
-            Ty::StringLiteral => {
-                // Materialize the literal as an owned nominal String, hash it
-                // through the struct's own `__hash__`, and release the copy.
-                let target = unique_instance(self, "String.__hash__", true)?;
-                let storage = self.entry_alloca(ctx, 24, 8);
-                if let Some(bytes) = self.str_consts.get(&recv.0).cloned() {
-                    let len = bytes.len() as u64;
-                    let global = self.shared.intern_string(ctx, &bytes);
-                    let len_value = self.uint_constant(ctx, len);
-                    let data = self.emit_alloc(ctx, len_value, 1, dest);
-                    if len > 0 {
-                        let literal = self.global_address(ctx, &global, dest);
-                        self.mem_copy(ctx, data, literal, len, dest);
-                    }
-                    self.store_string_fields(ctx, storage, data, len_value, len_value, dest);
-                } else if let Some(descriptor) = self.str_runtime.get(&recv.0).copied() {
-                    let data = self.emit_alloc(ctx, descriptor.len, 1, dest);
-                    self.mem_copy_dynamic(ctx, data, descriptor.data, descriptor.len, dest);
-                    self.store_string_fields(
-                        ctx,
-                        storage,
-                        data,
-                        descriptor.len,
-                        descriptor.len,
-                        dest,
-                    );
-                } else {
-                    let ptr = self.reg_ptr(ctx, recv)?;
-                    let (src_data, len) = self.string_parts(ctx, ptr, dest);
-                    let data = self.emit_alloc(ctx, len, 1, dest);
-                    self.mem_copy_dynamic(ctx, data, src_data, len, dest);
-                    self.store_string_fields(ctx, storage, data, len, len, dest);
+        if matches!(receiver, Ty::StringLiteral) {
+            // Materialize the literal as an owned nominal String, hash it
+            // through the struct's own `__hash__`, and release the copy.
+            let target = self.unique_hash_instance(dest, &hasher_name, "String.__hash__", true)?;
+            let storage = self.entry_alloca(ctx, 24, 8);
+            if let Some(bytes) = self.str_consts.get(&recv.0).cloned() {
+                let len = bytes.len() as u64;
+                let global = self.shared.intern_string(ctx, &bytes);
+                let len_value = self.uint_constant(ctx, len);
+                let data = self.emit_alloc(ctx, len_value, 1, dest);
+                if len > 0 {
+                    let literal = self.global_address(ctx, &global, dest);
+                    self.mem_copy(ctx, data, literal, len, dest);
                 }
-                self.emit_bound_call(ctx, dest, &target, vec![storage, hasher_ptr])?;
-                let (data, _) = self.string_parts(ctx, storage, dest);
-                self.emit_free(ctx, data);
-                return Ok(());
+                self.store_string_fields(ctx, storage, data, len_value, len_value, dest);
+            } else if let Some(descriptor) = self.str_runtime.get(&recv.0).copied() {
+                let data = self.emit_alloc(ctx, descriptor.len, 1, dest);
+                self.mem_copy_dynamic(ctx, data, descriptor.data, descriptor.len, dest);
+                self.store_string_fields(ctx, storage, data, descriptor.len, descriptor.len, dest);
+            } else {
+                let ptr = self.reg_ptr(ctx, recv)?;
+                let (src_data, len) = self.string_parts(ctx, ptr, dest);
+                let data = self.emit_alloc(ctx, len, 1, dest);
+                self.mem_copy_dynamic(ctx, data, src_data, len, dest);
+                self.store_string_fields(ctx, storage, data, len, len, dest);
             }
-            Ty::Int => self.reg_value(ctx, recv, ScalarTy::Int)?,
-            Ty::UInt => self.reg_value(ctx, recv, ScalarTy::UInt)?,
-            Ty::Bool => {
-                let value = self.reg_value(ctx, recv, ScalarTy::Bool)?;
-                let cast = ZExtOp::new_with_nneg(ctx, value, i64_ty, false);
-                self.append(ctx, cast.get_operation(), Some(dest));
-                cast.get_result(ctx)
-            }
+            self.emit_bound_call(ctx, dest, &target, vec![storage, hasher_ptr])?;
+            let (data, _) = self.string_parts(ctx, storage, dest);
+            self.emit_free(ctx, data);
+            return Ok(());
+        }
+        if mojito_types::types::simd_shape(receiver).is_none() && !matches!(receiver, Ty::Bool) {
+            return Err(self.unsupported_reg(format!("hashing a `{receiver}` leaf"), dest));
+        }
+        let clone = format!(
+            "{hasher_name}.{}",
+            mojito_symbol::symbol::simd_update_clone_name(receiver)
+        );
+        let target = self.unique_hash_instance(dest, &hasher_name, &clone, false)?;
+        let Some(expected) = self.signatures[&target].params.get(1).cloned() else {
+            return Err(self.unsupported_reg(format!("`{target}` takes no leaf"), dest));
+        };
+        let operand = match receiver {
             Ty::Float64 => {
                 let value = self.reg_value(ctx, recv, ScalarTy::Float64)?;
-                self.folded_float_bits(ctx, value, ScalarTy::Float64, dest)
+                self.folded_float(ctx, value, ScalarTy::Float64, dest)
             }
-            Ty::Simd { dtype, width: 1 } => match ScalarTy::of_dtype(*dtype) {
-                ScalarTy::Int => self.reg_value(ctx, recv, ScalarTy::Int)?,
-                ScalarTy::Float64 => {
-                    let value = self.reg_value(ctx, recv, ScalarTy::Float64)?;
-                    self.folded_float_bits(ctx, value, ScalarTy::Float64, dest)
-                }
-                ScalarTy::Bool => {
-                    let value = self.reg_value(ctx, recv, ScalarTy::Bool)?;
-                    let cast = ZExtOp::new_with_nneg(ctx, value, i64_ty, false);
-                    self.append(ctx, cast.get_operation(), Some(dest));
-                    cast.get_result(ctx)
-                }
-                ScalarTy::Sized(Dtype::Float32) => {
-                    let value = self.reg_value(ctx, recv, ScalarTy::Sized(Dtype::Float32))?;
-                    self.folded_float_bits(ctx, value, ScalarTy::Sized(Dtype::Float32), dest)
-                }
-                scalar @ ScalarTy::Sized(sized) => {
-                    let value = self.reg_value(ctx, recv, scalar)?;
-                    let (bits, _) =
-                        mojito_vm::runtime::integer_dtype_bits(sized).expect("sized integer lane");
-                    if bits == 64 {
-                        value
-                    } else {
-                        let cast = ZExtOp::new_with_nneg(ctx, value, i64_ty, false);
-                        self.append(ctx, cast.get_operation(), Some(dest));
-                        cast.get_result(ctx)
-                    }
-                }
-                ScalarTy::UInt | ScalarTy::Ptr => {
-                    return Err(self.unsupported_reg(format!("hashing a `{receiver}` leaf"), dest));
-                }
-            },
-            other => {
-                return Err(self.unsupported_reg(format!("hashing a `{other}` leaf"), dest));
+            Ty::Simd {
+                dtype: Dtype::Float32,
+                width: 1,
+            } => {
+                let value = self.reg_value(ctx, recv, ScalarTy::Sized(Dtype::Float32))?;
+                self.folded_float(ctx, value, ScalarTy::Sized(Dtype::Float32), dest)
             }
+            Ty::Simd { dtype, width } if *width > 1 && dtype.is_float() => {
+                // A float vector folds each lane into a fresh copy.
+                let scalar = ScalarTy::of_dtype(*dtype);
+                let handle = scalar.handle(ctx);
+                let lane_layout = self
+                    .layout
+                    .layout_of(&Ty::Simd {
+                        dtype: *dtype,
+                        width: 1,
+                    })
+                    .expect("SIMD lane layout");
+                let layout = self.layout.layout_of(receiver).expect("SIMD layout");
+                let source_ptr = self.reg_ptr(ctx, recv)?;
+                let storage = self.entry_alloca(ctx, layout.size, layout.align);
+                for lane in 0..*width as usize {
+                    let source_address =
+                        self.offset_address(ctx, source_ptr, lane_layout.size * lane as u64);
+                    let load = LoadOp::new(ctx, source_address, handle);
+                    self.append(ctx, load.get_operation(), Some(dest));
+                    let folded = self.folded_float(ctx, load.get_result(ctx), scalar, dest);
+                    let target_address =
+                        self.offset_address(ctx, storage, lane_layout.size * lane as u64);
+                    let store = StoreOp::new(ctx, folded, target_address);
+                    self.append(ctx, store.get_operation(), Some(dest));
+                }
+                storage
+            }
+            _ => self.arg_value(ctx, recv, &expected, false, dest)?,
         };
-        let target = unique_instance(self, &format!("{hasher_name}._update_with_simd"), false)?;
-        self.emit_bound_call(ctx, dest, &target, vec![hasher_ptr, bits])
+        self.emit_bound_call(ctx, dest, &target, vec![hasher_ptr, operand])
     }
 
-    /// The unique compiled instance whose symbol starts with `prefix` (a
-    /// `String.` prefix matches the module-qualified nominal String owner);
-    /// with `by_hasher` the instance's second parameter must be the hasher.
+    /// The unique compiled instance named `prefix` or one of its `$`-suffixed
+    /// monomorphic instances (a `String.` prefix matches the module-qualified
+    /// nominal String owner); with `by_hasher` the instance's second
+    /// parameter must be the hasher.
     pub(super) fn unique_hash_instance(
         &self,
         dest: Reg,
@@ -279,7 +271,9 @@ impl<'a> FnLowering<'a> {
                         && (rest.is_empty() || rest.starts_with('$'))
                 })
             } else {
-                fname.starts_with(prefix)
+                fname
+                    .strip_prefix(prefix)
+                    .is_some_and(|rest| rest.is_empty() || rest.starts_with('$'))
             }
         };
         let mut candidates = self.signatures.iter().filter(|(fname, signature)| {
@@ -302,43 +296,27 @@ impl<'a> FnLowering<'a> {
         Ok(name.clone())
     }
 
-    /// The IEEE bit pattern of a float leaf zero-extended to i64, with
-    /// `-0.0` folded to `0.0` (the two compare equal, so they hash alike).
-    pub(super) fn folded_float_bits(
+    /// A float leaf with `-0.0` folded to `0.0` (the two compare equal, so
+    /// they hash alike), at the lane's own float type.
+    pub(super) fn folded_float(
         &mut self,
         ctx: &mut Context,
         value: Value,
         scalar: ScalarTy,
         dest: Reg,
     ) -> Value {
-        let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
-        let (zero, int_ty): (Value, TypeHandle) = match scalar {
+        let zero = match scalar {
             ScalarTy::Sized(Dtype::Float32) => {
                 let f64_zero = self.float_constant(ctx, 0.0);
-                let f32_ty: TypeHandle = FP32Type::get(ctx).into();
-                let narrowed = FPTruncOp::new(ctx, f64_zero, f32_ty);
-                self.append(ctx, narrowed.get_operation(), Some(dest));
-                (
-                    narrowed.get_result(ctx),
-                    IntegerType::get(ctx, 32, Signedness::Signless).into(),
-                )
+                self.f64_to_f32(ctx, f64_zero, dest)
             }
-            _ => (self.float_constant(ctx, 0.0), i64_ty),
+            _ => self.float_constant(ctx, 0.0),
         };
         let is_zero = self.fcmp(ctx, FCmpPredicateAttr::OEQ, value, zero);
         self.append(ctx, is_zero.get_operation(), Some(dest));
         let folded = SelectOp::new(ctx, is_zero.get_result(ctx), zero, value);
         self.append(ctx, folded.get_operation(), Some(dest));
-        let cast = BitcastOp::new(ctx, folded.get_result(ctx), int_ty);
-        self.append(ctx, cast.get_operation(), Some(dest));
-        let raw = cast.get_result(ctx);
-        if matches!(scalar, ScalarTy::Sized(Dtype::Float32)) {
-            let widened = ZExtOp::new_with_nneg(ctx, raw, i64_ty, false);
-            self.append(ctx, widened.get_operation(), Some(dest));
-            widened.get_result(ctx)
-        } else {
-            raw
-        }
+        folded.get_result(ctx)
     }
 
     /// The builtin-string writer's `write`: grow-and-append each argument's

@@ -1126,6 +1126,34 @@ pub fn value_coerces(from: &Ty, to: &Ty) -> bool {
     coerces(from, to)
 }
 
+/// The (canonicalized) `Ty` for a SIMD of `dtype`/`width`: a width-1 `int`
+/// is the native `Ty::Int` and a width-1 `float64` the native `Ty::Float64`
+/// (Mojo unifies `Int`/`Float64` with their `SIMD[..., 1]` spellings);
+/// everything else is a `Ty::Simd`. Every phase that names a SIMD leaf type
+/// (checker annotations, the VM's runtime leaf classification, the hasher
+/// clone names) agrees through this one function.
+pub fn canonical_simd_ty(dtype: Dtype, width: i64) -> Ty {
+    match (dtype, width) {
+        (Dtype::Int, 1) => Ty::Int,
+        (Dtype::Float64, 1) => Ty::Float64,
+        _ => Ty::Simd { dtype, width },
+    }
+}
+
+/// The `(dtype, width)` shape of a SIMD-valued type — the native numeric
+/// scalars are width-1 vectors of their dtype (`UInt` reports `uint64`, its
+/// bit width) — or `None` for a non-SIMD type. `Bool` is not a SIMD value
+/// (upstream's `Bool` is its own struct; `Scalar[DType.bool]` is the vector).
+pub fn simd_shape(ty: &Ty) -> Option<(Dtype, i64)> {
+    Some(match ty {
+        Ty::Int | Ty::IntLiteral => (Dtype::Int, 1),
+        Ty::UInt => (Dtype::UInt64, 1),
+        Ty::Float64 | Ty::FloatLiteral => (Dtype::Float64, 1),
+        Ty::Simd { dtype, width } => (*dtype, *width),
+        _ => return None,
+    })
+}
+
 /// The runtime type an exact literal materializes to when no context selects
 /// another (`IntLiteral` → `Int`, `FloatLiteral` → `Float64`), applied through
 /// struct arguments, packs, and variants.
@@ -1226,7 +1254,7 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
                 element: b,
                 origin: bo,
             },
-        ) => coerces(a, b) && ao == bo,
+        ) => coerces(a, b) && ao.coerces_to(bo),
         (
             Ty::Func {
                 environment: from_environment,

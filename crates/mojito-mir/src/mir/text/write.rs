@@ -1049,6 +1049,12 @@ fn instruction_value(instruction: &MirInstr) -> String {
             value,
             dtype,
             width,
+        }
+        | MirInstr::SimdBitcast {
+            dest,
+            value,
+            dtype,
+            width,
         } => record(
             tag,
             &[
@@ -1826,6 +1832,22 @@ fn ct_value(value: &CtValue) -> String {
         CtValue::Tuple(v) => positional("ct_tuple", list(v.iter().map(ct_value))),
         CtValue::List(v) => positional("ct_list", list(v.iter().map(ct_value))),
         CtValue::Dtype(v) => positional("ct_dtype", v.name().into()),
+        CtValue::Simd { dtype, lanes } => record(
+            "ct_simd",
+            &[
+                ("dtype", dtype.name().into()),
+                (
+                    "lanes",
+                    list(lanes.iter().map(|lane| match lane {
+                        mojito_types::ct::CtLane::Int(v) => positional("lane_int", v.to_string()),
+                        mojito_types::ct::CtLane::Float(v) => {
+                            positional("lane_float_bits", format!("{v:016x}"))
+                        }
+                        mojito_types::ct::CtLane::Bool(v) => positional("lane_bool", v.to_string()),
+                    })),
+                ),
+            ],
+        ),
         CtValue::Struct { name, fields } => record(
             "ct_struct",
             &[

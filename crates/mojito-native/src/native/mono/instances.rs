@@ -54,7 +54,13 @@ impl<'a> Specializer<'a> {
         if !matches!(hasher_ty, Ty::Struct(..)) {
             return Ok(());
         }
-        self.enqueue_nominal_method_instance(owner, &hasher_ty, "_update_with_simd", 1, &[])?;
+        // A scalar/vector leaf calls the hasher's clone for its own vector
+        // type; a literal/Variant receiver reaches the hasher through the
+        // nominal `__hash__` bodies enqueued below.
+        if mojito_types::types::simd_shape(receiver).is_some() || matches!(receiver, Ty::Bool) {
+            let clone = mojito_symbol::symbol::simd_update_clone_name(receiver);
+            self.enqueue_nominal_method_instance(owner, &hasher_ty, &clone, 1, &[])?;
+        }
         if matches!(receiver, Ty::StringLiteral) {
             let string = Ty::Struct(
                 mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),

@@ -26,7 +26,7 @@ use mojito_ast::ast::{
     ArgConvention, Expr, ExprKind, FnParam, Method, ParamArg, ParamKind, Stmt, StmtKind, Type,
     TypeParam,
 };
-use mojito_types::ct::CtValue;
+use mojito_types::ct::{CtLane, CtValue};
 use mojito_types::types::{ParamDecl, Ty, TyArg, contains_string_literal, default_literal};
 
 /// One declaration visible to phase-neutral runtime/backend dispatch.
@@ -130,6 +130,26 @@ pub fn materialized_instantiation_argument(argument: &TyArg) -> TyArg {
         TyArg::Ty(ty) => TyArg::Ty(default_literal(ty)),
         other => other.clone(),
     }
+}
+
+/// The name of a hasher's `_update_with_simd` clone for one SIMD leaf type
+/// (`_update_with_simd$y3:Int`, `_update_with_simd$y21:SIMD[DType.int32, 2]`).
+/// The declaration `_update_with_simd(mut self, value: SIMD[_, _])` carries
+/// the vector type as an inferred type parameter, so the clone is keyed by
+/// the leaf's own checked type through the ordinary `mangle`; the checker's
+/// retargeting, the elaborator's minting, and every backend's leaf dispatch
+/// agree through this one function.
+pub fn simd_update_clone_name(leaf: &Ty) -> String {
+    // A `Bool` leaf hashes as `Scalar[DType.bool]` (upstream's `Bool.__hash__`
+    // passes `Scalar[.bool](self)`); every other leaf is its own vector type.
+    let leaf = match default_literal(leaf) {
+        Ty::Bool => Ty::Simd {
+            dtype: mojito_ast::ast::Dtype::Bool,
+            width: 1,
+        },
+        other => other,
+    };
+    mangle("_update_with_simd", &[CtValue::Type(Box::new(leaf))])
 }
 
 /// The specialization values of a method or struct instantiation in
@@ -880,12 +900,15 @@ fn ast_raw(
             simd_annotation_raw(dtype, width)
         }
         // Mirror `ty_raw`: every pointer annotation (`UnsafePointer[T]`,
-        // `Pointer[T, origin]`) mangles as `UnsafePointer$<element>` — the
-        // origin argument erases from the runtime ABI, so a call site's
-        // `Ty::Pointer` key and the declaration agree.
+        // `Pointer[T, origin]`, the `ImmPointer`/`MutPointer` permission
+        // aliases) mangles as `UnsafePointer$<element>` — the origin argument
+        // erases from the runtime ABI, so a call site's `Ty::Pointer` key and
+        // the declaration agree.
         Type::Named(name, args)
-            if (name == "Pointer" || name == "UnsafePointer")
-                && matches!(args.first(), Some(ParamArg::Type(_))) =>
+            if matches!(
+                name.as_str(),
+                "Pointer" | "UnsafePointer" | "ImmPointer" | "MutPointer"
+            ) && matches!(args.first(), Some(ParamArg::Type(_))) =>
         {
             let Some(ParamArg::Type(element)) = args.first() else {
                 unreachable!("guard established a type argument");
@@ -1359,6 +1382,176 @@ pub fn tuple_specialization_values(elements: &[Ty]) -> Vec<CtValue> {
     )]
 }
 
+/// Current Mojo's unqualified spelling of a checked type where a minted
+/// value specialization spells its baked arguments (`AHasher[[0, 0, 0, 0] :
+/// SIMD[DType.uint64, 4]]` for the clone `mangle` named); every other type
+/// spells as `unqualified_type_name`.
+pub fn unqualified_instance_name(ty: &Ty) -> String {
+    if let Ty::Struct(name, arguments) = ty
+        && arguments.is_empty()
+        && let Some((template, values)) = demangle_specialization(name)
+    {
+        let base = mojito_types::types::unqualified_type_name(&Ty::Struct(
+            template.to_string(),
+            Vec::new(),
+        ));
+        let arguments = values
+            .iter()
+            .map(|value| match value {
+                CtValue::Type(ty) => mojito_types::types::unqualified_type_name(ty),
+                other => other.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        return format!("{base}[{arguments}]");
+    }
+    mojito_types::types::unqualified_type_name(ty)
+}
+
+/// The inverse of [`mangle`] for a self-delimiting value suffix: the template
+/// name and the baked values, or `None` when the symbol carries no
+/// specialization suffix or one of the text-only codes (a type spelling
+/// cannot be rebuilt into a `Ty`). A module-qualified template
+/// (`__module$$ahash$AHasher$v…`) keeps its qualification.
+pub fn demangle_specialization(symbol: &str) -> Option<(&str, Vec<CtValue>)> {
+    let mut cursor = 0;
+    while let Some(offset) = symbol[cursor..].find('$') {
+        let split = cursor + offset;
+        let suffix = &symbol[split..];
+        if let Some(values) = decode_specialization_suffix(suffix)
+            && !values.is_empty()
+            && split > 0
+        {
+            return Some((&symbol[..split], values));
+        }
+        cursor = split + 1;
+    }
+    None
+}
+
+fn decode_specialization_suffix(suffix: &str) -> Option<Vec<CtValue>> {
+    let bytes = suffix.as_bytes();
+    let mut position = 0;
+    let mut values = Vec::new();
+    while position < bytes.len() {
+        if bytes[position] != b'$' {
+            return None;
+        }
+        position += 1;
+        let (value, next) = decode_specialization_value(suffix, position)?;
+        values.push(value);
+        position = next;
+    }
+    Some(values)
+}
+
+/// Decode one encoded value at `position`, returning it and the position past
+/// its terminator.
+fn decode_specialization_value(text: &str, position: usize) -> Option<(CtValue, usize)> {
+    let bytes = text.as_bytes();
+    let code = *bytes.get(position)?;
+    let body = position + 1;
+    let until = |end: u8| -> Option<(&str, usize)> {
+        let length = text[body..].find(end as char)?;
+        Some((&text[body..body + length], body + length + 1))
+    };
+    Some(match code {
+        b'i' => {
+            let (digits, next) = until(b';')?;
+            (CtValue::Int(digits.parse().ok()?), next)
+        }
+        b'u' => {
+            let (digits, next) = until(b';')?;
+            (CtValue::UInt(digits.parse().ok()?), next)
+        }
+        b'b' => {
+            let (digit, next) = until(b';')?;
+            (CtValue::Bool(digit == "1"), next)
+        }
+        b'f' => {
+            let (hex, next) = until(b';')?;
+            (CtValue::Float(u64::from_str_radix(hex, 16).ok()?), next)
+        }
+        b'd' => {
+            let (name, next) = until(b';')?;
+            (
+                CtValue::Dtype(mojito_ast::ast::Dtype::from_name(name)?),
+                next,
+            )
+        }
+        b'v' => {
+            let (dtype, after_dtype) = until(b':')?;
+            let dtype = mojito_ast::ast::Dtype::from_name(dtype)?;
+            let width_end = text[after_dtype..].find(';')?;
+            let width: usize = text[after_dtype..after_dtype + width_end].parse().ok()?;
+            let mut cursor = after_dtype + width_end + 1;
+            if bytes.get(cursor) != Some(&b'[') {
+                return None;
+            }
+            cursor += 1;
+            let mut lanes = Vec::with_capacity(width);
+            for _ in 0..width {
+                let (lane, next) = decode_specialization_value(text, cursor)?;
+                lanes.push(match lane {
+                    CtValue::Int(value) => CtLane::Int(i128::from(value)),
+                    CtValue::Float(bits) => CtLane::Float(bits),
+                    CtValue::Bool(value) => CtLane::Bool(value),
+                    _ => return None,
+                });
+                cursor = next;
+            }
+            if bytes.get(cursor) != Some(&b']') {
+                return None;
+            }
+            (CtValue::Simd { dtype, lanes }, cursor + 1)
+        }
+        b'S' => {
+            let (length, after_length) = until(b':')?;
+            let length: usize = length.parse().ok()?;
+            let name = text.get(after_length..after_length + length)?;
+            let mut cursor = after_length + length;
+            if bytes.get(cursor) != Some(&b'{') {
+                return None;
+            }
+            cursor += 1;
+            let mut fields = Vec::new();
+            while bytes.get(cursor) != Some(&b'}') {
+                let (value, next) = decode_specialization_value(text, cursor)?;
+                fields.push((String::new(), value));
+                cursor = next;
+            }
+            (
+                CtValue::Struct {
+                    name: name.to_string(),
+                    fields,
+                },
+                cursor + 1,
+            )
+        }
+        b't' | b'l' => {
+            let (count, after_count) = until(b'[')?;
+            let count: usize = count.parse().ok()?;
+            let mut cursor = after_count;
+            let mut items = Vec::with_capacity(count);
+            for _ in 0..count {
+                let (value, next) = decode_specialization_value(text, cursor)?;
+                items.push(value);
+                cursor = next;
+            }
+            if bytes.get(cursor) != Some(&b']') {
+                return None;
+            }
+            let value = if code == b't' {
+                CtValue::Tuple(items)
+            } else {
+                CtValue::List(items)
+            };
+            (value, cursor + 1)
+        }
+        _ => return None,
+    })
+}
+
 /// The specialized name for `orig` at value arguments `vals` — e.g. `f$0`, `f$1`.
 /// `$` cannot appear in a source identifier, so a specialization never collides
 /// with a user-written name.
@@ -1376,6 +1569,17 @@ fn encode_specialization_value(value: &CtValue, out: &mut String) {
         CtValue::Int(value) => out.push_str(&format!("i{value};")),
         CtValue::UInt(value) => out.push_str(&format!("u{value};")),
         CtValue::Dtype(dtype) => out.push_str(&format!("d{};", dtype.name())),
+        CtValue::Simd { dtype, lanes } => {
+            out.push_str(&format!("v{}:{};[", dtype.name(), lanes.len()));
+            for lane in lanes {
+                match lane {
+                    CtLane::Int(value) => out.push_str(&format!("i{value};")),
+                    CtLane::Float(bits) => out.push_str(&format!("f{bits:016x};")),
+                    CtLane::Bool(value) => out.push_str(if *value { "b1;" } else { "b0;" }),
+                }
+            }
+            out.push(']');
+        }
         CtValue::Struct { name, fields } => {
             out.push_str(&format!("S{}:{name}{{", name.len()));
             for (_, value) in fields {

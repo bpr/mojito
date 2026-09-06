@@ -17,3 +17,15 @@ def hash[T: Hashable, //, HasherType: Hasher = default_hasher](
     var hasher = HasherType()
     hasher.update(hashable)
     return hasher^.finish()
+
+
+# Upstream's raw-bytes overload: hash `n` bytes behind `bytes` under
+# `HasherType` (`Span(unsafe_ptr=, length=)` over the untracked view).
+def hash[HasherType: Hasher = default_hasher](
+    bytes: ImmPointer[UInt8, _], n: Int
+) -> UInt64:
+    var hasher = HasherType()
+    hasher._update_with_bytes(
+        Span[Byte](unsafe_ptr=bytes.unsafe_origin_cast[ImmUntrackedOrigin](), length=n)
+    )
+    return hasher^.finish()

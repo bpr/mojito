@@ -701,7 +701,7 @@ impl Checker {
                             mojito_types::origin::PointerOrigin::Place { mutable, .. },
                             mojito_types::origin::PointerOrigin::Param { mutability, .. },
                         ) => *mutable || *mutability == mojito_types::origin::Mutability::Immutable,
-                        _ => actual_origin == expected_origin,
+                        _ => actual_origin.coerces_to(expected_origin),
                     }
             }
             (actual, expected)
@@ -1031,7 +1031,9 @@ impl Checker {
                 args,
                 kwargs,
             } => self.infer_call(expr.source_span(), name, param_args, args, kwargs),
-            ExprKind::Member { object, field } => self.infer_member(object, field),
+            ExprKind::Member { object, field } => {
+                self.infer_member(expr.source_span(), object, field)
+            }
             ExprKind::MethodCall {
                 object,
                 method,

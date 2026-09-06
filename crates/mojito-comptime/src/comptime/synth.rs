@@ -1,5 +1,6 @@
 //! Synthesized conformance methods: `Copyable.copy` and
-//! `Hashable.__hash__` bodies.
+//! `Hashable.__hash__` bodies, plus the `Hasher` protocol's wildcard vector
+//! parameter desugar and its eager per-leaf clone requests.
 
 use super::*;
 
@@ -181,5 +182,204 @@ pub(super) fn synthesize_hashable_hash(program: &mut [Stmt]) {
             self_ty: None,
             body,
         });
+    }
+}
+
+/// The hidden vector parameter `_update_with_simd(mut self, value: SIMD[_, _])`
+/// desugars to — an infer-only type parameter bounded by the compiler's
+/// `$SIMD` (any SIMD-valued type). `$` keeps both names unspellable in source.
+pub(super) const SIMD_WILDCARD_PARAM: &str = "$simd";
+pub(super) const SIMD_WILDCARD_BOUND: &str = "$SIMD";
+
+/// Whether a struct method carries the desugared wildcard vector parameter.
+pub(super) fn is_simd_keyed_method(method: &mojito_ast::ast::Method) -> bool {
+    method
+        .type_params
+        .iter()
+        .any(|parameter| parameter.name == SIMD_WILDCARD_PARAM)
+}
+
+/// Desugar upstream's `value: SIMD[_, _]` parameter spelling on a struct
+/// method into an inferred type parameter: the argument's own vector type
+/// keys a per-call clone (`_update_with_simd$y3:Int`), the only shape under
+/// which the body's `to_bits`/`.length` spellings check concretely. The
+/// template body never checks — elaboration installs a trap stub in its
+/// place. A method with more than one wildcard parameter is left alone (the
+/// checker rejects the spelling).
+pub(super) fn desugar_simd_keyed_methods(program: &mut [Stmt]) {
+    for statement in program {
+        let StmtKind::Struct { methods, .. } = &mut statement.kind else {
+            continue;
+        };
+        for method in methods.iter_mut() {
+            if is_simd_keyed_method(method) {
+                continue;
+            }
+            let wildcards: Vec<usize> = method
+                .params
+                .iter()
+                .enumerate()
+                .filter(|(_, parameter)| is_simd_wildcard_type(&parameter.ty))
+                .map(|(index, _)| index)
+                .collect();
+            let [index] = wildcards.as_slice() else {
+                continue;
+            };
+            method.params[*index].ty = Type::Named(SIMD_WILDCARD_PARAM.to_string(), Vec::new());
+            method.type_params.insert(
+                0,
+                TypeParam {
+                    name: SIMD_WILDCARD_PARAM.to_string(),
+                    bounds: vec![SIMD_WILDCARD_BOUND.to_string()],
+                    value_type: None,
+                    callable_bound: None,
+                    origin_mutability: None,
+                    infer_only: true,
+                    default: None,
+                    constraints: Vec::new(),
+                },
+            );
+        }
+    }
+}
+
+/// The width-1 vector types every hasher's `_update_with_simd` is cloned for
+/// eagerly: the native scalars plus one lane of every dtype. Hashing reaches
+/// the hasher through erased paths (`hash[T]`, `update(Some[Hashable])`) that
+/// record no call-site instantiation, and the VM-CTFE subprogram has no
+/// discovery loop at all, so the closed scalar set is minted up front; wider
+/// vectors arrive through the checker's `hash_leaf_types` demand channel.
+pub(super) fn eager_hash_leaf_types() -> Vec<Ty> {
+    use mojito_ast::ast::Dtype;
+    let mut leaves = vec![Ty::Int, Ty::UInt, Ty::Float64];
+    for dtype in [
+        Dtype::Int,
+        Dtype::Int8,
+        Dtype::Int16,
+        Dtype::Int32,
+        Dtype::Int64,
+        Dtype::UInt8,
+        Dtype::UInt16,
+        Dtype::UInt32,
+        Dtype::UInt64,
+        Dtype::Float32,
+        Dtype::Float64,
+        Dtype::Bool,
+    ] {
+        let leaf = mojito_types::types::canonical_simd_ty(dtype, 1);
+        if !leaves.contains(&leaf) {
+            leaves.push(leaf);
+        }
+    }
+    leaves
+}
+
+/// The per-call clone requests for a `Hasher` conformer's SIMD-keyed
+/// `_update_with_simd`: one per eager leaf type plus the program's demanded
+/// wider vectors; empty for any other statement.
+pub(super) fn hasher_leaf_requests(
+    statement: &Stmt,
+    extra_leaves: &[Ty],
+) -> Vec<MethodSpecializationRequest> {
+    let StmtKind::Struct {
+        name,
+        conforms,
+        methods,
+        ..
+    } = &statement.kind
+    else {
+        return Vec::new();
+    };
+    if !conforms.iter().any(|conformance| conformance == "Hasher") {
+        return Vec::new();
+    }
+    let Some(method) = methods
+        .iter()
+        .find(|method| method.name == "_update_with_simd" && is_simd_keyed_method(method))
+    else {
+        return Vec::new();
+    };
+    let parameter_names: Vec<String> = method
+        .params
+        .iter()
+        .filter(|parameter| parameter.kind == ParamKind::Regular)
+        .map(|parameter| parameter.name.clone())
+        .collect();
+    eager_hash_leaf_types()
+        .into_iter()
+        .chain(extra_leaves.iter().cloned())
+        .map(|leaf| {
+            MethodSpecializationRequest::new(
+                SourceSpan::new(None, mojito_common::token::DUMMY_SPAN),
+                name.clone(),
+                "_update_with_simd".to_string(),
+                parameter_names.clone(),
+                vec![TyArg::Ty(leaf)],
+            )
+        })
+        .collect()
+}
+
+fn is_simd_wildcard_type(ty: &Type) -> bool {
+    matches!(ty, Type::Named(name, args)
+    if name == "SIMD"
+        && args.len() == 2
+        && args.iter().all(|argument| {
+            matches!(argument, ParamArg::Value(Expr { kind: ExprKind::Identifier(id), .. }) if id == "_")
+        }))
+}
+
+/// Fold a module-scope vector alias (`comptime U256 = SIMD[DType.uint64, 4]`)
+/// used as a struct parameter's bound (`[key: U256]`) into the spelling the
+/// parser gives `[key: SIMD[DType.uint64, 4]]` — a value parameter of the
+/// vector type — before the specialization registry classifies it. Uses in
+/// annotations and constructions fold through the ordinary alias machinery.
+pub(super) fn fold_simd_alias_bounds(program: &mut [Stmt]) {
+    let aliases: HashMap<String, Vec<ParamArg>> = program
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            StmtKind::Comptime {
+                name,
+                type_params,
+                value,
+                ..
+            } if type_params.is_empty() => match &value.kind {
+                ExprKind::TypeApply {
+                    name: applied,
+                    args,
+                } if applied == "SIMD" && simd_source_dims(args).is_some() => {
+                    Some((name.clone(), args.clone()))
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    if aliases.is_empty() {
+        return;
+    }
+    for statement in program {
+        let StmtKind::Struct { type_params, .. } = &mut statement.kind else {
+            continue;
+        };
+        for parameter in type_params {
+            if parameter.value_type.is_none()
+                && let [only] = parameter.bounds.as_slice()
+                && let Some(args) = aliases.get(only)
+            {
+                parameter.value_type = Some(Type::Named("SIMD".to_string(), args.clone()));
+                parameter.bounds = vec!["SIMD".to_string()];
+            }
+        }
+    }
+}
+
+/// Replace every SIMD-keyed method body of a struct with the trap stub: the
+/// template never checks with its vector type unbound.
+pub(super) fn stub_simd_keyed_methods(owner: &str, methods: &mut [mojito_ast::ast::Method]) {
+    for method in methods {
+        if is_simd_keyed_method(method) {
+            method.body = vec![super::specialize::unspecialized_method_stub(owner, method)];
+        }
     }
 }

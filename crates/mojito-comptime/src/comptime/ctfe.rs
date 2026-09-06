@@ -85,10 +85,12 @@ impl<'a> Elab<'a> {
         // The ordinary checker validates retained nominal method/default bodies
         // even when the CTFE entry does not invoke them. Seed their actual free
         // callees rather than retaining every `$`-qualified linked symbol.
+        // A vector-keyed template crosses as its minted clones (`AHasher`
+        // for `default_hasher`), whose bodies are the template's.
         for statement in self.program {
             if matches!(&statement.kind, StmtKind::Trait { .. })
-                || matches!(&statement.kind, StmtKind::Struct { .. })
-                    && !self.is_specializable(statement)
+                || matches!(&statement.kind, StmtKind::Struct { name, .. }
+                    if !self.is_specializable(statement) || self.simd_keyed_struct_template(name))
             {
                 let mut calls = HashSet::new();
                 collect_vm_ctfe_stmt_calls(statement, &mut calls);
@@ -275,6 +277,186 @@ impl<'a> Elab<'a> {
         self.vm_value_to_ct(value)
     }
 
+    /// Evaluate a call to a type-parameterized free function
+    /// (`hash[default_comp_time_hasher](Int(1))`) through a synthesized VM-CTFE
+    /// entry: the entry spells the call with its type arguments folded to
+    /// their bound types and its arguments as typed literals, so the checked
+    /// boundary selects the overload, infers the inferred-only parameters,
+    /// and reifies the constructible hasher type exactly as a runtime call.
+    /// Every same-arity overload must pass the purity walk (the registry is
+    /// name-keyed; the boundary picks among them).
+    pub(super) fn ctfe_generic_def_entry(
+        &self,
+        name: &str,
+        param_args: &[ParamArg],
+        args: &[Expr],
+        span: Span,
+        scope: &HashMap<String, CtValue>,
+    ) -> Result<CtValue, ComptimeError> {
+        self.burn()?;
+        let overloads: Vec<(&[TypeParam], &[Stmt], Option<&Type>)> = self
+            .program
+            .iter()
+            .filter_map(|statement| match &statement.kind {
+                StmtKind::Def {
+                    name: candidate,
+                    type_params,
+                    params,
+                    ret,
+                    body,
+                    ..
+                } if candidate == name
+                    && params
+                        .iter()
+                        .filter(|parameter| parameter.kind == ParamKind::Regular)
+                        .count()
+                        == args.len() =>
+                {
+                    Some((type_params.as_slice(), body.as_slice(), ret.as_ref()))
+                }
+                _ => None,
+            })
+            .collect();
+        if overloads.is_empty() {
+            return Err(ComptimeError::NotComptime(format!(
+                "'{name}' has no overload taking {} argument(s)",
+                args.len()
+            )));
+        }
+        let mut visiting = HashSet::new();
+        let mut needed = HashSet::new();
+        needed.insert(name.to_string());
+        for (type_params, body, _) in &overloads {
+            // A constructible type parameter (`HasherType()`) constructs the
+            // bound struct, whose own constructors the walk checks by name
+            // when the binding is known; the parameter call itself is pure.
+            let guards: Vec<String> = type_params
+                .iter()
+                .filter(|parameter| {
+                    parameter
+                        .bounds
+                        .iter()
+                        .any(|bound| bound == "Hasher" || bound == "Defaultable")
+                })
+                .map(|parameter| format!("$ctor${}", parameter.name))
+                .collect();
+            for guard in &guards {
+                visiting.insert(guard.clone());
+            }
+            let safe = self.vm_ctfe_safe_block(body, &mut visiting, &mut needed);
+            for guard in &guards {
+                visiting.remove(guard);
+            }
+            if !safe {
+                return Err(ComptimeError::NotComptime(format!(
+                    "'{name}' is not safe for VM-backed compile-time execution"
+                )));
+            }
+        }
+        let ret = overloads
+            .iter()
+            .find_map(|(_, _, ret)| ret.cloned())
+            .ok_or_else(|| {
+                ComptimeError::NotComptime(format!("'{name}' returns no compile-time value"))
+            })?;
+        // The bound hasher types must also construct purely.
+        for argument in param_args {
+            if let Ok(Ty::Struct(struct_name, _)) = self.param_arg_type(argument, scope) {
+                let template = self
+                    .pending_struct_instances
+                    .borrow()
+                    .get(&struct_name)
+                    .map(|(orig, _)| orig.clone())
+                    .unwrap_or(struct_name);
+                if !self.vm_ctfe_safe_struct_ctors(&template, &mut visiting, &mut needed) {
+                    return Err(ComptimeError::NotComptime(format!(
+                        "'{template}' is not safe for VM-backed compile-time execution"
+                    )));
+                }
+            }
+        }
+        let expr = |kind: ExprKind| Expr {
+            kind,
+            span,
+            source: None,
+            syntax_id: mojito_common::token::SyntaxId::fresh(),
+        };
+        // Typed literals keep the argument's scalar type (`Int(1)` stays an
+        // `Int`, not an exact literal the callee would re-materialize).
+        let mut literal_args = Vec::with_capacity(args.len());
+        for argument in args {
+            let value = self.eval(argument, scope)?;
+            let literal = value.materialize(span).ok_or_else(|| {
+                ComptimeError::NotComptime(format!(
+                    "compile-time argument {value} has no runtime form"
+                ))
+            })?;
+            let wrapper = match value {
+                CtValue::Int(_) => Some("Int"),
+                CtValue::UInt(_) => Some("UInt"),
+                CtValue::Float(_) => Some("Float64"),
+                _ => None,
+            };
+            literal_args.push(match wrapper {
+                Some(wrapper) => expr(ExprKind::Call {
+                    name: wrapper.to_string(),
+                    param_args: Vec::new(),
+                    args: vec![literal],
+                    kwargs: Vec::new(),
+                }),
+                None => literal,
+            });
+        }
+        let mut folded_params = Vec::with_capacity(param_args.len());
+        for argument in param_args {
+            let ty = self.param_arg_type(argument, scope)?;
+            let source = source_type_from_ty(&ty).ok_or_else(|| {
+                ComptimeError::NotComptime(format!(
+                    "compile-time type argument '{ty}' has no source spelling"
+                ))
+            })?;
+            folded_params.push(ParamArg::Type(source));
+        }
+        let call = expr(ExprKind::Call {
+            name: name.to_string(),
+            param_args: folded_params,
+            args: literal_args,
+            kwargs: Vec::new(),
+        });
+        let entry = mk(
+            StmtKind::Def {
+                name: CTFE_STRUCT_ENTRY.to_string(),
+                decorators: Vec::new(),
+                type_params: Vec::new(),
+                params: Vec::new(),
+                positional_only: None,
+                keyword_only: None,
+                captures: None,
+                raises: false,
+                raises_type: None,
+                ret: Some(ret),
+                where_clauses: Vec::new(),
+                body: vec![mk(StmtKind::Return(Some(call)), span)],
+            },
+            span,
+        );
+        let mut vm = VmBackend::new();
+        let declarations = self.vm_ctfe_declaration_closure(&needed);
+        let mut program = self.vm_ctfe_subprogram(&declarations);
+        program.push(entry);
+        let (value, remaining_fuel) = vm
+            .run_function_value(
+                &program,
+                CTFE_STRUCT_ENTRY,
+                Vec::new(),
+                &[],
+                self.fuel.get(),
+            )
+            .map_err(|e| ComptimeError::NotComptime(format!("VM CTFE failed for '{name}': {e}")))?;
+        self.fuel.set(remaining_fuel);
+        self.vm_value_to_ct(value)
+    }
+
     /// The declared return type of a `@staticmethod`, with `Self` resolved to
     /// the owning struct.
     fn struct_static_method_ret(&self, struct_name: &str, method: &str) -> Option<Type> {
@@ -334,8 +516,12 @@ impl<'a> Elab<'a> {
             return true;
         }
         let safe = self.program.iter().any(|stmt| match &stmt.kind {
+            // A vector-keyed template (`AHasher[key: U256]`) crosses as its
+            // clones, whose constructors are the template's.
             StmtKind::Struct { name, methods, .. }
-                if name == struct_name && !self.is_specializable(stmt) =>
+                if name == struct_name
+                    && (!self.is_specializable(stmt)
+                        || self.simd_keyed_struct_template(struct_name)) =>
             {
                 methods
                     .iter()
@@ -806,15 +992,63 @@ impl<'a> Elab<'a> {
                         .all(|e| self.vm_ctfe_safe_expr(e, visiting, needed))
                     && (name == "is_same_type"
                         || vm_ctfe_safe_builtin(name)
+                        // A constructible type parameter of the entry
+                        // (`HasherType()`); the bound struct's constructors
+                        // are checked where the binding is known.
+                        || visiting.contains(&format!("$ctor${name}"))
+                        // A vector alias's construction (`U256(...)`).
+                        || self.vector_alias(name)
                         || self.vm_ctfe_safe_fn(name, visiting, needed)
                         // A struct construction is safe when its constructor
                         // bodies are.
                         || self.vm_ctfe_safe_struct_ctors(name, visiting, needed))
             }
-            ExprKind::MethodCall { .. }
-            | ExprKind::BraceLit(_)
+            // The hasher protocol is CTFE-transparent: its bodies are
+            // retained-struct arithmetic the fuel-bounded VM executes
+            // (`hasher.update(x)`, `value.__hash__(hasher)`,
+            // `hasher^.finish()`, and the bundled hashers' own mixing steps).
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+                kwargs,
+            } => {
+                kwargs.is_empty()
+                    && matches!(
+                        method.as_str(),
+                        "update"
+                            | "_update_with_simd"
+                            | "_update_with_bytes"
+                            | "finish"
+                            | "__hash__"
+                            | "_update"
+                            | "_large_update"
+                    )
+                    && self.vm_ctfe_safe_expr(object, visiting, needed)
+                    && args
+                        .iter()
+                        .all(|e| self.vm_ctfe_safe_expr(e, visiting, needed))
+            }
+            // `v.to_bits[DType.d]()` / `v.cast[DType.d]()`: lane intrinsics.
+            ExprKind::Invoke {
+                callee,
+                param_args,
+                args,
+                kwargs,
+            } => {
+                kwargs.is_empty()
+                    && args.is_empty()
+                    && matches!(&callee.kind, ExprKind::Member { object, field }
+                        if matches!(field.as_str(), "to_bits" | "cast")
+                            && self.vm_ctfe_safe_expr(object, visiting, needed))
+                    && param_args.iter().all(|arg| match arg {
+                        ParamArg::Value(e) => self.vm_ctfe_safe_expr(e, visiting, needed),
+                        ParamArg::Type(_) => true,
+                        ParamArg::Named { .. } => false,
+                    })
+            }
+            ExprKind::BraceLit(_)
             | ExprKind::Comprehension { .. }
-            | ExprKind::Invoke { .. }
             | ExprKind::TypeValue(_)
             | ExprKind::TypeApply { .. }
             | ExprKind::Named { .. }
@@ -924,7 +1158,68 @@ impl Elab<'_> {
                 }
             }
         }
+        // A SIMD-keyed hasher method crosses as its stub plus the eager
+        // per-leaf clones: the subprogram has no discovery loop to mint them.
+        let consts = self.top_consts.borrow().clone();
+        for statement in &mut program {
+            let requests = super::synth::hasher_leaf_requests(statement, &self.hash_leaf_types);
+            let StmtKind::Struct { name, methods, .. } = &mut statement.kind else {
+                continue;
+            };
+            let mut clones = Vec::new();
+            for method in methods.iter_mut() {
+                if super::synth::is_simd_keyed_method(method) {
+                    clones.extend(self.per_call_method_clones(
+                        method,
+                        &requests,
+                        &[],
+                        &[],
+                        None,
+                        &consts,
+                    ));
+                    method.body = vec![super::specialize::unspecialized_method_stub(name, method)];
+                }
+            }
+            methods.extend(clones);
+        }
+        // Evaluating the aliases registers the vector-keyed specializations
+        // they name (`comptime default_hasher = AHasher[...]`); a retained
+        // declaration reaches such a clone through the alias (`H: Hasher =
+        // default_hasher`), so the clone crosses too — the template itself is
+        // a monomorphizer input excluded above.
         let type_aliases = self.vm_ctfe_type_aliases();
+        let pending: Vec<(String, Vec<CtValue>)> = self
+            .pending_struct_instances
+            .borrow()
+            .values()
+            .cloned()
+            .collect();
+        for (orig, vals) in pending {
+            let Ok(spec) = self.generate_value_struct_spec(&orig, &vals) else {
+                continue;
+            };
+            // The clone sits where its template was declared, so a retained
+            // declaration that names it resolves in order at the boundary.
+            let template_position = self
+                .program
+                .iter()
+                .position(|statement| {
+                    matches!(&statement.kind, StmtKind::Struct { name, .. } if *name == orig)
+                })
+                .unwrap_or(usize::MAX);
+            let original_index = |statement: &Stmt| {
+                self.program.iter().position(|original| {
+                    original.span == statement.span && original.module == statement.module
+                })
+            };
+            let insert_at = program
+                .iter()
+                .position(|statement| {
+                    original_index(statement).is_some_and(|index| index > template_position)
+                })
+                .unwrap_or(program.len());
+            program.insert(insert_at, spec);
+        }
         if !type_aliases.is_empty() {
             let subs = |alias: &str| type_aliases.get(alias).cloned();
             for statement in &mut program {
@@ -950,10 +1245,15 @@ impl Elab<'_> {
             else {
                 continue;
             };
+            // A single non-scalar bracket argument parses as indexing
+            // (`AHasher[SIMD[DType.uint64, 4](0)]`); that is a type alias too.
             if !type_params.is_empty()
                 || !matches!(
                     value.kind,
-                    ExprKind::Identifier(_) | ExprKind::TypeApply { .. } | ExprKind::TypeValue(_)
+                    ExprKind::Identifier(_)
+                        | ExprKind::TypeApply { .. }
+                        | ExprKind::TypeValue(_)
+                        | ExprKind::Index { .. }
                 )
             {
                 continue;
@@ -964,5 +1264,16 @@ impl Elab<'_> {
             }
         }
         aliases
+    }
+}
+
+impl Elab<'_> {
+    /// Whether `name` is a module alias of a vector type (`U256`), whose
+    /// application constructs `SIMD[DType.d, w](...)`.
+    pub(super) fn vector_alias(&self, name: &str) -> bool {
+        matches!(
+            self.top_consts.borrow().get(name),
+            Some(CtValue::Type(ty)) if matches!(**ty, Ty::Simd { .. })
+        )
     }
 }

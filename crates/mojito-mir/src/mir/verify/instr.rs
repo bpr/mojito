@@ -44,7 +44,9 @@ pub(super) fn verify_instruction(
     match instruction {
         // Widths are validated during checked elaboration; this is the
         // phase-boundary backstop for assembled artifacts.
-        MirInstr::MakeSimd { width, .. } | MirInstr::SimdCast { width, .. } => {
+        MirInstr::MakeSimd { width, .. }
+        | MirInstr::SimdCast { width, .. }
+        | MirInstr::SimdBitcast { width, .. } => {
             if !valid_simd_width(*width) {
                 errors.push(format!(
                     "{prefix}: SIMD width {width} is not a positive power of two"

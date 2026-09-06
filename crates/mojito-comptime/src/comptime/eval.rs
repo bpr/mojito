@@ -122,6 +122,20 @@ impl<'a> Elab<'a> {
                     };
                     return self.apply_generic_alias(name, &args, scope);
                 }
+                // A struct application whose single non-scalar bracket
+                // argument parses as indexing (`AHasher[SIMD[DType.uint64,
+                // 4](0)]`) is a compile-time type value.
+                if let ExprKind::Identifier(name) = &object.kind
+                    && self.structs.contains_key(name.as_str())
+                {
+                    let args: Vec<ParamArg> = match &index.kind {
+                        ExprKind::TupleLit(elements) => {
+                            elements.iter().cloned().map(ParamArg::Value).collect()
+                        }
+                        _ => vec![ParamArg::Value((**index).clone())],
+                    };
+                    return self.type_value(name, &args, scope);
+                }
                 if let ExprKind::Member {
                     object: reflected,
                     field,
@@ -338,11 +352,73 @@ impl<'a> Elab<'a> {
                     self.param_arg_type(&param_args[0], scope)?,
                 )))
             }
+            // `SIMD[DType.d, w](lanes...)`, or an alias application of a
+            // vector type (`U256(0)`), builds a compile-time vector: one lane
+            // per element, or one element splatted across the width.
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if kwargs.is_empty()
+                && let Some((dtype, width)) =
+                    self.simd_constructor_shape(name, param_args, scope) =>
+            {
+                let values = self.eval_all(args, scope)?;
+                let width = width as usize;
+                let values = if values.len() == 1 && width != 1 {
+                    vec![values[0].clone(); width]
+                } else if values.len() == width {
+                    values
+                } else {
+                    return Err(ComptimeError::Arity(format!(
+                        "SIMD[DType.{}, {width}] construction expects one lane or {width} lanes, got {}",
+                        dtype.name(),
+                        values.len()
+                    )));
+                };
+                let lanes = values
+                    .iter()
+                    .map(|value| mojito_types::ct::CtLane::from_value(value, dtype))
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or_else(|| {
+                        ComptimeError::NotComptime(format!(
+                            "a SIMD[DType.{}, {width}] lane needs a compile-time scalar",
+                            dtype.name()
+                        ))
+                    })?;
+                Ok(CtValue::Simd { dtype, lanes })
+            }
             ExprKind::Call { name, args, .. } if name == "len" && args.len() == 1 => {
                 let sequence = self
                     .eval(&args[0], scope)?
                     .as_sequence("len() of a compile-time collection")?;
                 Ok(CtValue::Int(sequence.len() as i64))
+            }
+            // A typed scalar construction (`Int(1)`, `Float64(2.5)`) is the
+            // literal materialized at that type.
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if kwargs.is_empty()
+                && param_args.is_empty()
+                && args.len() == 1
+                && !self.fns.contains_key(name.as_str())
+                && !self.structs.contains_key(name.as_str())
+                && matches!(
+                    scalar_type_name(name),
+                    Some(Ty::Int | Ty::UInt | Ty::Float64 | Ty::Bool)
+                ) =>
+            {
+                let ty = scalar_type_name(name).expect("guard established a scalar type");
+                let value = self.eval(&args[0], scope)?;
+                value.clone().materialize_as(&ty).ok_or_else(|| {
+                    ComptimeError::NotComptime(format!(
+                        "'{name}({value})' is not a compile-time value"
+                    ))
+                })
             }
             // Constructing a struct at compile time → VM CTFE through a
             // synthesized entry, freezing the resulting instance.
@@ -358,6 +434,24 @@ impl<'a> Elab<'a> {
             {
                 let literal_args = self.eval_to_literals(args, e.span, scope)?;
                 self.ctfe_struct_entry(name, None, literal_args, e.span)
+            }
+            // A call into a type-parameterized top-level function
+            // (`hash[default_comp_time_hasher](Int(1))`) → VM CTFE through a
+            // synthesized entry: the checked boundary selects the overload,
+            // infers the type parameters, and binds the hasher type.
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if kwargs.is_empty()
+                && self.fns.get(name.as_str()).is_some_and(|f| {
+                    f.ct_params
+                        .iter()
+                        .any(mojito_types::types::constructible_type_parameter)
+                }) =>
+            {
+                self.ctfe_generic_def_entry(name, param_args, args, e.span, scope)
             }
             // A call into a pure top-level function → CTFE.
             ExprKind::Call {
@@ -939,6 +1033,43 @@ impl<'a> Elab<'a> {
             return Ok(CtValue::Bool(compare_numeric_values(op, &left, &right)?));
         }
         match (left, right) {
+            // Lane-wise integer arithmetic on compile-time vectors (a hasher
+            // key mixes with its constants: `Self.key ^ U256(...)`).
+            (
+                CtValue::Simd { dtype, lanes: a },
+                CtValue::Simd {
+                    dtype: other,
+                    lanes: b,
+                },
+            ) if dtype == other && a.len() == b.len() => {
+                let lanes = a
+                    .iter()
+                    .zip(&b)
+                    .map(|(x, y)| match (x, y) {
+                        (mojito_types::ct::CtLane::Int(x), mojito_types::ct::CtLane::Int(y)) => {
+                            let value = match op {
+                                BitXor => x ^ y,
+                                BitAnd => x & y,
+                                BitOr => x | y,
+                                Add => x.wrapping_add(*y),
+                                Sub => x.wrapping_sub(*y),
+                                Mul => x.wrapping_mul(*y),
+                                _ => return None,
+                            };
+                            Some(mojito_types::ct::CtLane::Int(mojito_types::ct::wrap_lane(
+                                dtype, value,
+                            )))
+                        }
+                        _ => None,
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or_else(|| {
+                        ComptimeError::NotComptime(
+                            "unsupported compile-time SIMD operator".to_string(),
+                        )
+                    })?;
+                Ok(CtValue::Simd { dtype, lanes })
+            }
             (CtValue::Int(a), CtValue::Int(b)) => match op {
                 Add => a
                     .checked_add(b)
@@ -1096,5 +1227,34 @@ fn make_typelist(types: Vec<CtValue>) -> CtValue {
     CtValue::Struct {
         name: "TypeList".to_string(),
         fields: vec![("values".to_string(), CtValue::Tuple(types))],
+    }
+}
+
+impl Elab<'_> {
+    /// The `(dtype, width)` a call constructs when it names `SIMD[DType.d, w]`
+    /// explicitly or applies a vector-type alias bound in scope (`U256(0)`).
+    fn simd_constructor_shape(
+        &self,
+        name: &str,
+        param_args: &[ParamArg],
+        scope: &HashMap<String, CtValue>,
+    ) -> Option<(mojito_ast::ast::Dtype, i64)> {
+        if name == "SIMD" {
+            return simd_source_dims(param_args);
+        }
+        if !param_args.is_empty() {
+            return None;
+        }
+        let bound = scope
+            .get(name)
+            .cloned()
+            .or_else(|| self.top_consts.borrow().get(name).cloned())?;
+        match bound {
+            CtValue::Type(ty) => match *ty {
+                Ty::Simd { dtype, width } => Some((dtype, width)),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 }

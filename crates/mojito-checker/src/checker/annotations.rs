@@ -73,11 +73,7 @@ pub(super) fn int_literal_materializes_to_dtype(dtype: Dtype) -> bool {
 /// is the native `Ty::Float64` (Mojo unifies `Float64` with `SIMD[DType.float64,
 /// 1]`); everything else is a `Ty::Simd`.
 pub(super) fn simd_ty(dtype: Dtype, width: i64) -> Ty {
-    match (dtype, width) {
-        (Dtype::Int, 1) => Ty::Int,
-        (Dtype::Float64, 1) => Ty::Float64,
-        _ => Ty::Simd { dtype, width },
-    }
+    mojito_types::types::canonical_simd_ty(dtype, width)
 }
 
 /// The scalar `Ty` a value-parameter type name denotes, or `None` if the name is

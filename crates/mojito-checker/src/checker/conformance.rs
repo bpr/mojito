@@ -114,10 +114,16 @@ impl ConformanceOracle {
             else {
                 continue;
             };
+            // A single non-scalar bracket argument parses as indexing
+            // (`AHasher[SIMD[DType.uint64, 4](0)]`), so that shape is a type
+            // alias body too.
             if type_params.is_empty()
                 && !matches!(
                     value.kind,
-                    ExprKind::Identifier(_) | ExprKind::TypeApply { .. } | ExprKind::TypeValue(_)
+                    ExprKind::Identifier(_)
+                        | ExprKind::TypeApply { .. }
+                        | ExprKind::TypeValue(_)
+                        | ExprKind::Index { .. }
                 )
             {
                 continue;

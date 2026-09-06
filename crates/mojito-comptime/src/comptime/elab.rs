@@ -321,15 +321,27 @@ impl<'a> Elab<'a> {
             } => {
                 // A variadic struct template's members reference the unbound pack;
                 // keep it verbatim for monomorphization (mirrors def templates).
-                // DType-/struct-valued parameter templates are kept the same way.
+                // DType-/struct-valued parameter templates are kept the same way
+                // (a SIMD-keyed method's body crosses as its stub).
                 if self.is_specializable(stmt) {
-                    out.push(stmt.clone());
+                    let mut template = stmt.clone();
+                    if let StmtKind::Struct { name, methods, .. } = &mut template.kind {
+                        super::synth::stub_simd_keyed_methods(name, methods);
+                    }
+                    out.push(template);
                     return Ok(());
                 }
                 let mut methods = methods
                     .iter()
                     .map(|m| {
                         let mut m = m.clone();
+                        // A SIMD-keyed method (`value: SIMD[_, _]`) checks
+                        // only as a per-call clone with its vector type
+                        // bound; the template body is a trap stub.
+                        if super::synth::is_simd_keyed_method(&m) {
+                            m.body = vec![super::specialize::unspecialized_method_stub(name, &m)];
+                            return Ok(m);
+                        }
                         m.body = match self.block(&m.body, env, true) {
                             Ok(body) => body,
                             // A method whose body only elaborates with the
@@ -627,6 +639,17 @@ impl<'a> Elab<'a> {
             if let Some(ty) = scalar_type_name(name) {
                 return Ok(ty);
             }
+            // A minted vector-keyed specialization named by an alias fold
+            // (`TypeValue(Named("AHasher$v…"))`) is its own identity.
+            if self.pending_struct_instances.borrow().contains_key(name) {
+                return Ok(Ty::Struct(name.to_string(), Vec::new()));
+            }
+        }
+        // `SIMD[DType.d, w]` is a compile-time type (a vector alias's value).
+        if name == "SIMD"
+            && let Some((dtype, width)) = simd_source_dims(args)
+        {
+            return Ok(Ty::Simd { dtype, width });
         }
         // In type-argument grammar, `types[i]` is represented as a named type
         // application. A reflected `field_types()` result is a compile-time
@@ -720,7 +743,42 @@ impl<'a> Elab<'a> {
                 }
             })
             .collect::<Result<Vec<_>, _>>()?;
+        // A fully concrete application of a vector-keyed value template
+        // (`AHasher[SIMD[DType.uint64, 4](0)]`) names its specialization:
+        // one identity — the mangled clone — for the checker's default fill,
+        // `ConstructTypeParam`, and monomorphization alike.
+        if self.simd_keyed_struct_template(name)
+            && let Some(values) = tyargs
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Val(value) if !matches!(value, CtValue::Param(_)) => Some(value.clone()),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+            && !values.is_empty()
+        {
+            let mangled = mangle(name, &values);
+            self.pending_struct_instances
+                .borrow_mut()
+                .entry(mangled.clone())
+                .or_insert_with(|| (name.to_string(), values));
+            return Ok(Ty::Struct(mangled, Vec::new()));
+        }
         Ok(Ty::Struct(name.to_string(), tyargs))
+    }
+
+    /// Whether `name` is a specializable struct keyed by a vector-typed value
+    /// parameter (`AHasher[key: U256]`).
+    pub(super) fn simd_keyed_struct_template(&self, name: &str) -> bool {
+        self.specializable.get(name).is_some_and(|template| {
+            matches!(&template.kind, StmtKind::Struct { type_params, .. }
+            if type_params.iter().any(|parameter| {
+                parameter.value_type.as_ref().is_some_and(|source| {
+                    matches!(source, Type::Named(applied, args)
+                        if applied == "SIMD" && simd_source_dims(args).is_some())
+                })
+            }))
+        })
     }
 
     pub(super) fn associated_value(

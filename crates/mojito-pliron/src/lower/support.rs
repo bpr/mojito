@@ -682,6 +682,7 @@ pub(crate) fn operand_regs(instr: &MirInstr) -> Vec<Reg> {
         | MirInstr::VariantGet { variant: value, .. }
         | MirInstr::VariantTake { variant: value, .. }
         | MirInstr::SimdCast { value, .. }
+        | MirInstr::SimdBitcast { value, .. }
         | MirInstr::SimdShuffle { value, .. } => out.push(*value),
         MirInstr::VariantSet { place, value, .. }
         | MirInstr::VariantReplace { place, value, .. } => {
@@ -756,6 +757,7 @@ pub(crate) fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::VariantReplace { .. } => "VariantReplace",
         MirInstr::MakeSimd { .. } => "MakeSimd",
         MirInstr::SimdCast { .. } => "SimdCast",
+        MirInstr::SimdBitcast { .. } => "SimdBitcast",
         MirInstr::SimdShuffle { .. } => "SimdShuffle",
         MirInstr::PointerStorageTake { .. } => "PointerStorageTake",
         MirInstr::PointerStorageDestroy { .. } => "PointerStorageDestroy",

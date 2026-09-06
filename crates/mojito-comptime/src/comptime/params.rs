@@ -191,3 +191,31 @@ pub(super) fn ct_origin_marker(
 pub(super) fn ct_value_has_type(value: &CtValue, ty: &Ty) -> bool {
     materialize_ct_value(value.clone(), ty).is_some()
 }
+
+/// The `(dtype, width)` of a source `SIMD[DType.d, w]` argument list, or
+/// `None` when either argument is not a literal dtype member / width.
+pub(super) fn simd_source_dims(args: &[ParamArg]) -> Option<(mojito_ast::ast::Dtype, i64)> {
+    let [dtype, width] = args else {
+        return None;
+    };
+    let ParamArg::Value(Expr {
+        kind: ExprKind::Member { object, field },
+        ..
+    }) = dtype
+    else {
+        return None;
+    };
+    if !matches!(&object.kind, ExprKind::Identifier(name) if name == "DType") {
+        return None;
+    }
+    let dtype = mojito_ast::ast::Dtype::from_name(field)?;
+    let ParamArg::Value(Expr {
+        kind: ExprKind::Int(width),
+        ..
+    }) = width
+    else {
+        return None;
+    };
+    let width = width.wrapping_signed(64)?;
+    (width >= 1 && (width & (width - 1)) == 0).then_some((dtype, width))
+}

@@ -535,6 +535,19 @@ pub enum SemanticAdjustment {
         dtype: mojito_ast::ast::Dtype,
         width: i64,
     },
+    /// `v.to_bits[DType.target]()` — lane-wise bit reinterpretation of a
+    /// SIMD value as the unsigned `dtype` (at least as wide as the source
+    /// lane; narrower sources zero-extend). Resolved at checking like
+    /// `SimdCast`.
+    SimdToBits {
+        dtype: mojito_ast::ast::Dtype,
+        width: i64,
+    },
+    /// `v.length` on a SIMD value — the checker-resolved lane count, lowered
+    /// as an `Int` constant.
+    SimdLength {
+        width: i64,
+    },
     /// `v.shuffle[*mask]()` — lane gather by checker-resolved compile-time
     /// indices, each within the receiver's width; the result takes the
     /// mask's (power-of-two) width.
@@ -858,6 +871,10 @@ pub struct CheckedProgram {
     generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
     method_instantiations: HashMap<SourceSpan, MethodInstantiation>,
     struct_instantiations: Vec<StructInstantiation>,
+    /// SIMD leaf types hashed by the program beyond the closed width-1 set
+    /// every hasher gets eagerly: each demands a `_update_with_simd` clone
+    /// on every `Hasher` conformer (the driver feeds them to elaboration).
+    hash_leaf_types: Vec<Ty>,
     /// Caller-substituted loan transfers per call occurrence, keyed by the
     /// call expression's span; MIR lowering installs the implied loans.
     call_transfers: HashMap<SourceSpan, Vec<CheckedCallTransfer>>,
@@ -1073,6 +1090,7 @@ impl CheckedProgram {
         generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
         method_instantiations: HashMap<SourceSpan, MethodInstantiation>,
         struct_instantiations: Vec<StructInstantiation>,
+        hash_leaf_types: Vec<Ty>,
         call_transfers: HashMap<SourceSpan, Vec<CheckedCallTransfer>>,
         implicit_conversions: HashMap<SourceSpan, String>,
         implicit_conversion_types: HashMap<SourceSpan, Ty>,
@@ -1152,6 +1170,7 @@ impl CheckedProgram {
             generic_instantiations,
             method_instantiations,
             struct_instantiations,
+            hash_leaf_types,
             call_transfers,
             compatibility_implicit_conversions: implicit_conversions,
             implicit_conversion_types,
@@ -1194,6 +1213,12 @@ impl CheckedProgram {
     /// discovery (the driver keeps the closed ones).
     pub fn struct_instantiations(&self) -> &[StructInstantiation] {
         &self.struct_instantiations
+    }
+
+    /// The SIMD leaf types hashed outside the eager width-1 set, each of
+    /// which needs a `_update_with_simd` clone on every hasher.
+    pub fn hash_leaf_types(&self) -> &[Ty] {
+        &self.hash_leaf_types
     }
 
     /// The caller-substituted loan transfers per call occurrence.

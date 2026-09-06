@@ -13,10 +13,77 @@
 //! literal form; `Type`, `Reflected`, and `Param` are compile-time-only.
 
 use crate::types::{Ty, list_element, tuple_elements};
-use mojito_ast::ast::{Expr, ExprKind};
+use mojito_ast::ast::{Expr, ExprKind, ParamArg};
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_common::token::Span;
 use std::fmt;
+
+/// One lane of a compile-time SIMD value: integer lanes hold the post-wrap
+/// mathematical value (an unsigned lane is non-negative), float lanes their
+/// IEEE bits (so equality is structural).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CtLane {
+    Int(i128),
+    Float(u64),
+    Bool(bool),
+}
+
+impl CtLane {
+    /// Wrap a compile-time scalar into one lane of `dtype`, or `None` when
+    /// the value kind does not fit the lane (a float into an integer lane).
+    pub fn from_value(value: &CtValue, dtype: mojito_ast::ast::Dtype) -> Option<CtLane> {
+        use mojito_ast::ast::Dtype;
+        match dtype {
+            Dtype::Bool => match value {
+                CtValue::Bool(value) => Some(CtLane::Bool(*value)),
+                _ => None,
+            },
+            Dtype::Float32 | Dtype::Float64 => {
+                let value = match value {
+                    CtValue::Float(bits) => f64::from_bits(*bits),
+                    CtValue::FloatLiteral(value) => value.to_f64()?,
+                    CtValue::IntLiteral(value) => value.to_f64()?,
+                    CtValue::Int(value) => *value as f64,
+                    CtValue::UInt(value) => *value as f64,
+                    _ => return None,
+                };
+                let value = if dtype == Dtype::Float32 {
+                    value as f32 as f64
+                } else {
+                    value
+                };
+                Some(CtLane::Float(value.to_bits()))
+            }
+            integer => {
+                let wide: i128 = match value {
+                    CtValue::Int(value) => i128::from(*value),
+                    CtValue::UInt(value) => i128::from(*value),
+                    CtValue::IntLiteral(value) => i128::from(value.wrapping_signed(64)?),
+                    CtValue::Bool(value) => i128::from(*value),
+                    _ => return None,
+                };
+                Some(CtLane::Int(wrap_lane(integer, wide)))
+            }
+        }
+    }
+}
+
+/// Wrap an integer to the mathematical value of a `dtype` lane (two's
+/// complement for signed lanes, modulo 2^bits for unsigned ones).
+pub fn wrap_lane(dtype: mojito_ast::ast::Dtype, value: i128) -> i128 {
+    use mojito_ast::ast::Dtype;
+    match dtype {
+        Dtype::Int | Dtype::Int64 => i128::from(value as i64),
+        Dtype::Int8 => i128::from(value as i8),
+        Dtype::Int16 => i128::from(value as i16),
+        Dtype::Int32 => i128::from(value as i32),
+        Dtype::UInt8 => i128::from(value as u8),
+        Dtype::UInt16 => i128::from(value as u16),
+        Dtype::UInt32 => i128::from(value as u32),
+        Dtype::UInt64 => i128::from(value as u64),
+        Dtype::Float32 | Dtype::Float64 | Dtype::Bool => value,
+    }
+}
 
 /// A compile-time value. Scalar values drive folding; `Tuple`/`List`
 /// let `comptime for` iterate compile-time collections; `Type` carries a
@@ -43,6 +110,15 @@ pub enum CtValue {
     /// value parameter. Materializes as the member spelling, which type
     /// resolution already accepts inside `SIMD[...]`/`Scalar[...]` brackets.
     Dtype(mojito_ast::ast::Dtype),
+    /// A compile-time SIMD vector — the binding of a `[key: SIMD[DType.d, w]]`
+    /// value parameter (`AHasher[key: U256]`). Lanes are already wrapped to
+    /// `dtype`; it displays as upstream's parameter rendering
+    /// (`[0, 0, 0, 0] : SIMD[DType.uint64, 4]`) and materializes as the
+    /// explicit `SIMD[DType.d, w](lanes...)` construction.
+    Simd {
+        dtype: mojito_ast::ast::Dtype,
+        lanes: Vec<CtLane>,
+    },
     /// A frozen struct instance (declaration-ordered fields) — the binding of
     /// a struct-typed value parameter such as `[e: Extent]`. Freezing is
     /// restricted to structs constructible fieldwise from recursively
@@ -237,6 +313,18 @@ impl CtValue {
             | (value @ CtValue::Bool(_), Ty::Bool)
             | (value @ CtValue::Str(_), Ty::StringLiteral) => Some(value),
             (value @ CtValue::Dtype(_), Ty::Dtype) => Some(value),
+            (
+                value @ CtValue::Simd { .. },
+                Ty::Simd {
+                    dtype: target,
+                    width,
+                },
+            ) => {
+                let CtValue::Simd { dtype, lanes } = &value else {
+                    unreachable!("guard established a SIMD value");
+                };
+                (dtype == target && lanes.len() as i64 == *width).then_some(value)
+            }
             (value @ CtValue::Struct { .. }, Ty::Struct(target, _)) => {
                 let CtValue::Struct { name, .. } = &value else {
                     unreachable!("guard established a struct value");
@@ -308,6 +396,26 @@ impl CtValue {
                 }),
                 field: dtype.name().to_string(),
             },
+            // The explicit construction `SIMD[DType.d, w](l0, l1, ...)`.
+            CtValue::Simd { dtype, lanes } => ExprKind::Call {
+                name: "SIMD".to_string(),
+                param_args: vec![
+                    ParamArg::Value(CtValue::Dtype(*dtype).materialize(span)?),
+                    ParamArg::Value(CtValue::Int(lanes.len() as i64).materialize(span)?),
+                ],
+                args: lanes
+                    .iter()
+                    .map(|lane| {
+                        match lane {
+                            CtLane::Int(value) => CtValue::IntLiteral(lane_literal(*value)),
+                            CtLane::Float(bits) => CtValue::Float(*bits),
+                            CtLane::Bool(value) => CtValue::Bool(*value),
+                        }
+                        .materialize(span)
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+                kwargs: Vec::new(),
+            },
             // The fieldwise construction call; freezing guaranteed a matching
             // constructor exists.
             CtValue::Struct { name, fields } => ExprKind::Call {
@@ -331,6 +439,15 @@ impl CtValue {
     }
 }
 
+/// The exact literal of one integer lane (unsigned lanes exceed `i64`).
+fn lane_literal(value: i128) -> IntLiteral {
+    if let Ok(value) = i64::try_from(value) {
+        IntLiteral::from(value)
+    } else {
+        IntLiteral::from(value as u64)
+    }
+}
+
 fn materialize_all(vs: &[CtValue], span: Span) -> Option<Vec<Expr>> {
     vs.iter().map(|v| v.materialize(span)).collect()
 }
@@ -346,6 +463,23 @@ impl fmt::Display for CtValue {
             CtValue::Bool(b) => write!(f, "{b}"),
             CtValue::Str(s) => write!(f, "{s:?}"),
             CtValue::Dtype(dtype) => write!(f, "DType.{}", dtype.name()),
+            // Upstream's rendering of a SIMD parameter value.
+            CtValue::Simd { dtype, lanes } => {
+                write!(f, "[")?;
+                for (index, lane) in lanes.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    match lane {
+                        CtLane::Int(value) => write!(f, "{value}")?,
+                        CtLane::Float(bits) => write!(f, "{:?}", f64::from_bits(*bits))?,
+                        CtLane::Bool(value) => {
+                            write!(f, "{}", if *value { "True" } else { "False" })?
+                        }
+                    }
+                }
+                write!(f, "] : SIMD[DType.{}, {}]", dtype.name(), lanes.len())
+            }
             CtValue::Struct { name, fields } => {
                 write!(f, "{name}(")?;
                 for (index, (_, value)) in fields.iter().enumerate() {

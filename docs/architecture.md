@@ -76,7 +76,10 @@ checked syntax. `CompilerError` identifies the failing
 stage. Individual stage functions and `Backend::run(&CheckedProgram)` remain
 public compatibility seams for tests and diagnostic tools; that stage-composed
 entry re-checks pre-drop ownership but is non-authoritative for whole-program
-discovery and specialization.
+discovery and specialization (a generic body forwarding its own `H` into
+`hash[H](x)` binds the declaration default there, while `Compiler` binds the
+caller's; multi-lane hasher clones exist only through the discovery loop's
+`hash_leaf_types` channel).
 
 The design is an hourglass:
 

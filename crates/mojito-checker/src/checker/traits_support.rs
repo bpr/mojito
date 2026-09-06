@@ -300,6 +300,11 @@ pub(super) const BUILTIN_TRAITS: &[&str] = &[
     "Comparable",
     "Hashable",
     "Hasher",
+    // The hidden bound of the inferred vector parameter that
+    // `_update_with_simd(mut self, value: SIMD[_, _])` desugars to: any
+    // SIMD-valued type (the native scalars are width-1 vectors). `$` keeps
+    // it unspellable in source.
+    "$SIMD",
     "Identifiable",
     "Sized",
     "SizedRaising",

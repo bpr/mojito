@@ -36,10 +36,12 @@ assets/ok/comptime_alias_generic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_ctfe.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_frozen_struct.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_hash.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_generic_specialization.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_shadowed_locals.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_tuple.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/container_hashable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/container_owning_family_apis.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/contextual_member_static.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/copy_return.mojo	-	ineligible	no-scalar-entry-shape
@@ -50,6 +52,7 @@ assets/ok/decorators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/default_args.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/defines_main.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/delegated_ref_return_projection.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/dict_hasher_forwarding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_insert_linear_capable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_methods_growth.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_take_items.mojo	-	ineligible	no-scalar-entry-shape
@@ -84,8 +87,11 @@ assets/ok/generic_struct_instance_bodies.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_struct_instance_dispatch.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/hashable_bucketing.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/hashable_hasher_protocol.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/hasher_upstream_spellings.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/hasher_user_conformer.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/hashlib_bytes_hash.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/hashlib_explicit_hasher_containers.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/hashlib_keyed_ahasher.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/hashlib_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/hello_world.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/implicit_conversion.mojo	-	ineligible	no-scalar-entry-shape

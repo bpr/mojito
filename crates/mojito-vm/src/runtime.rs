@@ -8,6 +8,7 @@ use std::fmt;
 use std::io::{self, Write};
 
 use mojito_ast::ast::{Dtype, InfixOp, PrefixOp, Type};
+use mojito_types::types::{Ty, canonical_simd_ty};
 
 /// A runtime value produced by evaluating an expression.
 #[derive(Debug, Clone)]
@@ -133,7 +134,7 @@ pub enum SimdLanes {
 }
 
 impl SimdLanes {
-    fn width(&self) -> usize {
+    pub fn width(&self) -> usize {
         match self {
             SimdLanes::Int(v) => v.len(),
             SimdLanes::Float(v) => v.len(),
@@ -469,46 +470,83 @@ pub fn values_equal(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
     }
 }
 
-/// Normalize one scalar Hashable leaf to the UInt64 contribution consumed by
-/// the hasher protocol.
-pub fn hash_bits(value: &Value) -> Result<u64, RuntimeError> {
+/// The checked type a runtime Hashable leaf hashes as: the key of the
+/// hasher's `_update_with_simd` clone (`canonical_simd_ty` canonicalizes a
+/// width-1 `int`/`float64` vector to the native scalar, as the checker does).
+pub fn hash_leaf_ty(value: &Value) -> Option<Ty> {
+    Some(match value {
+        Value::Int(_) | Value::IntLiteral(_) => Ty::Int,
+        Value::UInt(_) => Ty::UInt,
+        Value::Bool(_) => Ty::Bool,
+        Value::Float64(_) | Value::FloatLiteral(_) => Ty::Float64,
+        Value::Simd { dtype, lanes } => canonical_simd_ty(*dtype, lanes.width() as i64),
+        _ => return None,
+    })
+}
+
+/// Fold a floating `-0.0` leaf (or lane) to `0.0` before it reaches a
+/// hasher, as upstream's `SIMD.__hash__` does: the two compare equal, so
+/// they hash alike.
+pub fn fold_negative_zero(value: Value) -> Value {
+    let fold = |x: f64| if x == 0.0 { 0.0 } else { x };
     match value {
-        Value::Int(value) => Ok(*value as u64),
-        Value::UInt(value) => Ok(*value),
-        Value::Bool(value) => Ok(u64::from(*value)),
-        Value::Float64(value) => Ok(if *value == 0.0 { 0 } else { value.to_bits() }),
-        Value::IntLiteral(value) => value
-            .wrapping_signed(64)
-            .map(|value| value as u64)
-            .ok_or_else(|| RuntimeError::TypeError("integer literal does not fit Int".into())),
+        Value::Float64(x) => Value::Float64(fold(x)),
         Value::Simd {
             dtype,
-            lanes: SimdLanes::Int(values),
-        } if values.len() == 1 => {
-            let bits = integer_dtype_bits(*dtype).map_or(64, |(bits, _)| bits);
-            let mask = if bits == 64 {
+            lanes: SimdLanes::Float(lanes),
+        } => Value::Simd {
+            dtype,
+            lanes: SimdLanes::Float(lanes.into_iter().map(fold).collect()),
+        },
+        other => other,
+    }
+}
+
+/// Lane-wise bit reinterpretation (`v.to_bits[DType.<target>]()`): each
+/// lane's bit pattern zero-extended into the unsigned `target` lane — an
+/// integer lane masked to its own dtype's width, a float lane as its IEEE
+/// bits, a bool lane as 0/1. The checker guarantees `target` is unsigned and
+/// at least as wide as the source lane.
+pub fn simd_to_bits(target: Dtype, value: &Value) -> Result<Value, RuntimeError> {
+    let (dtype, lanes) = match value {
+        Value::Simd { dtype, lanes } => (*dtype, lanes.clone()),
+        Value::Int(n) => (Dtype::Int, SimdLanes::Int(vec![i128::from(*n)])),
+        Value::UInt(n) => (Dtype::UInt64, SimdLanes::Int(vec![i128::from(*n)])),
+        Value::Bool(b) => (Dtype::Bool, SimdLanes::Bool(vec![*b])),
+        Value::Float64(x) => (Dtype::Float64, SimdLanes::Float(vec![*x])),
+        other => {
+            return Err(RuntimeError::TypeError(format!(
+                "cannot reinterpret {} as SIMD bits",
+                type_name(other)
+            )));
+        }
+    };
+    let bits = match &lanes {
+        SimdLanes::Int(values) => {
+            let width = integer_dtype_bits(dtype).map_or(64, |(bits, _)| bits);
+            let mask = if width == 64 {
                 u64::MAX
             } else {
-                (1_u64 << bits) - 1
+                (1_u64 << width) - 1
             };
-            Ok((values[0] as u64) & mask)
+            values
+                .iter()
+                .map(|lane| i128::from((*lane as u64) & mask))
+                .collect()
         }
-        Value::Simd {
-            lanes: SimdLanes::Bool(values),
-            ..
-        } if values.len() == 1 => Ok(u64::from(values[0])),
-        Value::Simd {
-            dtype: Dtype::Float32,
-            lanes: SimdLanes::Float(values),
-        } if values.len() == 1 => {
-            let value = values[0] as f32;
-            Ok(u64::from(if value == 0.0 { 0 } else { value.to_bits() }))
-        }
-        other => Err(RuntimeError::TypeError(format!(
-            "cannot hash {} as a scalar leaf",
-            type_name(other)
-        ))),
-    }
+        SimdLanes::Float(values) => values
+            .iter()
+            .map(|lane| {
+                if dtype == Dtype::Float32 {
+                    i128::from((*lane as f32).to_bits())
+                } else {
+                    i128::from(lane.to_bits())
+                }
+            })
+            .collect(),
+        SimdLanes::Bool(values) => values.iter().map(|lane| i128::from(*lane)).collect(),
+    };
+    Ok(simd_value(target, SimdLanes::Int(bits)))
 }
 
 /// Apply a unary operator to an already-evaluated operand for VM execution and
@@ -2308,20 +2346,46 @@ mod tests {
     }
 
     #[test]
-    fn hash_bits_fold_negative_zero_and_zero_extend_lanes() {
+    fn simd_to_bits_zero_extends_lanes_and_folds_nothing() {
         assert_eq!(
-            hash_bits(&Value::Float64(-0.0)).unwrap(),
-            hash_bits(&Value::Float64(0.0)).unwrap()
+            simd_to_bits(Dtype::UInt64, &Value::Int(-1)).unwrap(),
+            Value::Simd {
+                dtype: Dtype::UInt64,
+                lanes: SimdLanes::Int(vec![i128::from(u64::MAX)]),
+            }
         );
-        assert_eq!(hash_bits(&Value::Int(-1)).unwrap(), u64::MAX);
-        assert_eq!(hash_bits(&Value::Bool(true)).unwrap(), 1);
         assert_eq!(
-            hash_bits(&Value::Simd {
-                dtype: Dtype::Int8,
-                lanes: SimdLanes::Int(vec![-1]),
-            })
+            simd_to_bits(
+                Dtype::UInt8,
+                &Value::Simd {
+                    dtype: Dtype::Int8,
+                    lanes: SimdLanes::Int(vec![-1]),
+                }
+            )
             .unwrap(),
-            0xFF
+            Value::Simd {
+                dtype: Dtype::UInt8,
+                lanes: SimdLanes::Int(vec![0xFF]),
+            }
+        );
+        assert_eq!(
+            simd_to_bits(Dtype::UInt64, &Value::Float64(-0.0)).unwrap(),
+            Value::Simd {
+                dtype: Dtype::UInt64,
+                lanes: SimdLanes::Int(vec![i128::from(1_u64 << 63)]),
+            }
+        );
+        assert_eq!(
+            fold_negative_zero(Value::Float64(-0.0)),
+            Value::Float64(0.0)
+        );
+        assert_eq!(hash_leaf_ty(&Value::Bool(true)), Some(Ty::Bool));
+        assert_eq!(
+            hash_leaf_ty(&Value::Simd {
+                dtype: Dtype::Int,
+                lanes: SimdLanes::Int(vec![1]),
+            }),
+            Some(Ty::Int)
         );
     }
 }

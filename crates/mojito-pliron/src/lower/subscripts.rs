@@ -246,9 +246,16 @@ impl<'a> FnLowering<'a> {
             let Some(Ty::Simd { dtype, width }) = self.func.reg_types.get(&base.0).cloned() else {
                 return Err(self.unsupported_reg("SIMD subscript base type".into(), dest));
             };
-            let base_ptr = self.reg_ptr(ctx, base)?;
             let element = Ty::Simd { dtype, width: 1 };
             self.emit_simd_index_guard(ctx, index, width as usize, dest)?;
+            // A width-1 vector is a scalar register (`LowerTy::Scalar`): its
+            // only lane is the value itself.
+            if width == 1 {
+                let value = self.reg_value(ctx, base, ScalarTy::of_dtype(dtype))?;
+                self.reg_values.insert(dest.0, value);
+                return Ok(());
+            }
+            let base_ptr = self.reg_ptr(ctx, base)?;
             let address = self.pointer_element_address(ctx, base_ptr, index, &element, dest)?;
             return self.load_from(ctx, address, &element, dest);
         }

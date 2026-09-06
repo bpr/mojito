@@ -239,6 +239,44 @@ impl Checker {
             ExprKind::TypeApply { name, args } => self
                 .ty_value_from_name(name, args)
                 .ok_or_else(|| TypeError::NotComptime(name.clone())),
+            // `SIMD[DType.d, w](lanes...)`, or a vector alias's application
+            // (`U256(0)`), is a compile-time vector — a hasher key: one lane
+            // per element, or one element splatted across the width.
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if kwargs.is_empty()
+                && let Some((dtype, width)) = self.simd_constructor_shape(name, param_args) =>
+            {
+                let values = args
+                    .iter()
+                    .map(|argument| self.eval_associated_ct(argument, associated))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let width = width as usize;
+                let values = if values.len() == 1 && width != 1 {
+                    vec![values[0].clone(); width]
+                } else if values.len() == width {
+                    values
+                } else {
+                    return Err(TypeError::NotComptime(format!(
+                        "SIMD[DType.{}, {width}] construction expects one lane or {width} lanes",
+                        dtype.name()
+                    )));
+                };
+                let lanes = values
+                    .iter()
+                    .map(|value| mojito_types::ct::CtLane::from_value(value, dtype))
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or_else(|| {
+                        TypeError::NotComptime(format!(
+                            "a SIMD[DType.{}, {width}] lane needs a compile-time scalar",
+                            dtype.name()
+                        ))
+                    })?;
+                Ok(CtValue::Simd { dtype, lanes })
+            }
             // A type application whose bracket argument parses as runtime
             // indexing (`Scalar[DType.int32]` — the standing Index-vs-TypeApply
             // parse split for a single non-scalar argument).
@@ -303,6 +341,31 @@ impl Checker {
             _ => Err(TypeError::NotComptime(
                 "not an associated comptime expression".to_string(),
             )),
+        }
+    }
+
+    /// The `(dtype, width)` a call constructs when it names `SIMD[DType.d, w]`
+    /// explicitly or applies a registered vector-type alias (`U256(0)`).
+    fn simd_constructor_shape(
+        &self,
+        name: &str,
+        param_args: &[mojito_ast::ast::ParamArg],
+    ) -> Option<(Dtype, i64)> {
+        if name == "SIMD" {
+            if param_args.len() != 2 {
+                return None;
+            }
+            return mojito_types::types::simd_shape(&self.simd_type(param_args).ok()?);
+        }
+        if !param_args.is_empty() {
+            return None;
+        }
+        match self.ty_value_from_name(name, &[])? {
+            CtValue::Type(ty) => match *ty {
+                Ty::Simd { dtype, width } => Some((dtype, width)),
+                _ => None,
+            },
+            _ => None,
         }
     }
 

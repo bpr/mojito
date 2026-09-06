@@ -165,6 +165,9 @@ struct Dict[
     Copyable,
     Deinitable where conforms_to(K, Deinitable) and conforms_to(V, Deinitable),
     Equatable where conforms_to(V, Equatable),
+    # Upstream: `where conforms_to(K, Copyable) and conforms_to(V, Hashable)`;
+    # `K` is already Copyable in this key bound.
+    Hashable where conforms_to(V, Hashable),
     Iterable,
     Movable,
     Writable where conforms_to(K, Writable) and conforms_to(V, Writable),
@@ -451,6 +454,20 @@ struct Dict[
 
     def __ne__(self, other: Self) -> Bool where conforms_to(Self.V, Equatable):
         return not (self == other)
+
+    # Order-independent (Python's frozenset mixing, as upstream): each entry
+    # hashes key then value into a fresh `H2`, the results are diffused and
+    # XORed, and the combination enters the caller's hasher as one leaf.
+    def __hash__[H2: Hasher](self, mut hasher: H2) where conforms_to(Self.V, Hashable):
+        var combined = UInt64(0)
+        for entry in self.items():
+            var entry_hasher = H2()
+            entry.key.__hash__(entry_hasher)
+            entry.value.__hash__(entry_hasher)
+            var h = entry_hasher^.finish()
+            h = ((h ^ 89869747) ^ (h << 16)) * 3644798167
+            combined ^= h
+        hasher._update_with_simd(combined)
 
     # Merge: `other`'s entries overwrite shared keys in the copied result.
     def __or__(self, other: Self) -> Self where conforms_to(

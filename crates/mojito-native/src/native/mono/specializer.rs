@@ -40,6 +40,7 @@ impl<'a> Specializer<'a> {
             output_structs: Vec::new(),
             constant_values: HashMap::new(),
             callable_targets: HashMap::new(),
+            enclosing_types: HashMap::new(),
         }
     }
 
@@ -213,6 +214,7 @@ impl<'a> Specializer<'a> {
         })?;
         self.constant_values = function_constant_values(&function);
         self.callable_targets = function_callable_targets(&function);
+        self.enclosing_types = bindings.types.clone();
         self.constant_values.extend(
             self.callable_targets
                 .iter()
@@ -525,6 +527,22 @@ impl<'a> Specializer<'a> {
                         let Ty::Struct(receiver_name, _) = peel_refs(receiver) else {
                             continue;
                         };
+                        // An erased `hasher._update_with_simd(x)` (a generic
+                        // `__hash__[H: Hasher]` body now concrete) targets the
+                        // clone for the argument's own vector type: the
+                        // template's body is a stub.
+                        let simd_clone = (resolved.is_none()
+                            && method == "_update_with_simd"
+                            && args.len() == 1
+                            && kwargs.is_empty())
+                        .then(|| function.reg_types.get(&args[0].0))
+                        .flatten()
+                        .filter(|leaf| {
+                            mojito_types::types::simd_shape(leaf).is_some()
+                                || matches!(leaf, Ty::Bool)
+                        })
+                        .map(|leaf| mojito_symbol::symbol::simd_update_clone_name(leaf));
+                        let method: &str = simd_clone.as_deref().unwrap_or(method);
                         // Source methods are declared under the template name;
                         // an instance-named receiver (`List$mono$TInt`) still
                         // resolves against `List.*` and gets its instance

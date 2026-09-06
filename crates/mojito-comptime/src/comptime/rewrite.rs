@@ -165,13 +165,26 @@ fn rewrite_expr(e: &mut Expr, subs: Subs) {
             args,
             kwargs,
         } => {
-            // `H()` on a substituted type parameter constructs the bound struct.
+            // `H()` on a substituted type parameter constructs the bound struct;
+            // a vector alias (`U256(0)`) constructs `SIMD[DType.d, w](...)`.
             if let Some(CtValue::Type(bound)) = subs(name)
-                && let Ty::Struct(struct_name, struct_args) = &*bound
-                && struct_args.is_empty()
                 && param_args.is_empty()
             {
-                *name = struct_name.clone();
+                match &*bound {
+                    Ty::Struct(struct_name, struct_args) if struct_args.is_empty() => {
+                        *name = struct_name.clone();
+                    }
+                    Ty::Simd { dtype, width } => {
+                        if let (Some(dtype), Some(width)) = (
+                            CtValue::Dtype(*dtype).materialize(e.span),
+                            CtValue::Int(*width).materialize(e.span),
+                        ) {
+                            *name = "SIMD".to_string();
+                            *param_args = vec![ParamArg::Value(dtype), ParamArg::Value(width)];
+                        }
+                    }
+                    _ => {}
+                }
             }
             rewrite_param_args(param_args, subs);
             rewrite_exprs(args, subs);
@@ -179,7 +192,22 @@ fn rewrite_expr(e: &mut Expr, subs: Subs) {
                 rewrite_expr(&mut k.value, subs);
             }
         }
-        ExprKind::Member { object, .. } => rewrite_expr(object, subs),
+        ExprKind::Member { object, field } => {
+            // `Self.<binder>` of a baked value parameter (`Self.key`) reads
+            // the bound value inside a specialization body.
+            if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
+                && let Some(value) = subs(field)
+                && !matches!(
+                    value,
+                    CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Param(_)
+                )
+                && let Some(materialized) = value.materialize(e.span)
+            {
+                *e = materialized;
+                return;
+            }
+            rewrite_expr(object, subs)
+        }
         ExprKind::MethodCall {
             object,
             args,
@@ -464,6 +492,15 @@ struct ElabBindingId(u32);
 /// unbound index in an otherwise-unrolled specialization.
 pub(super) fn rewrite_type(ty: &mut Type, subs: Subs) {
     match ty {
+        // A bare name bound to a compile-time type (a module alias such as
+        // `U128`, or a baked type binder) spells the bound type.
+        Type::Named(name, arguments) if arguments.is_empty() => {
+            if let Some(CtValue::Type(bound)) = subs(name)
+                && let Some(source) = source_type_from_ty(&bound)
+            {
+                *ty = source;
+            }
+        }
         Type::Named(_, arguments) => rewrite_param_args(arguments, subs),
         Type::Assoc { base, args, .. } => {
             rewrite_type(base, subs);

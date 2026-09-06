@@ -1,6 +1,6 @@
 from std.collections.list import List, _ListOwnedIter
 from std.reflection.type_info import _unqualified_type_name
-from std.hashlib import Hasher, default_hasher
+from std.hashlib import Hasher, default_hasher, hash
 from std.iterable import Iterable, IterableOwned, Iterator, StopIteration
 from std.memory import unsafe_alloc
 from std.optional import Optional
@@ -38,6 +38,9 @@ struct Set[
     Copyable,
     Deinitable where conforms_to(T, Deinitable),
     Equatable,
+    # Upstream: `Hashable where conforms_to(T, Copyable) and conforms_to(T,
+    # Hashable)`; both are already in this element bound.
+    Hashable,
     Iterable,
     IterableOwned where conforms_to(T, Deinitable),
     Movable,
@@ -244,6 +247,14 @@ struct Set[
     def __gt__(self, other: Self) -> Bool:
         return len(self.items) > len(other.items) and self.issuperset(other)
 
+    # Order-independent, as upstream: XOR of each element's `hash` (the
+    # default hasher, deliberately not `Self.H`), then one UInt64 leaf.
+    def __hash__(self, mut hasher: Some[Hasher]):
+        var hash_value: UInt64 = 0
+        for e in self:
+            hash_value ^= hash(e)
+        hasher.update(hash_value)
+
     def __bool__(self) -> Bool:
         return len(self.items) > 0
 
@@ -283,9 +294,8 @@ struct Set[
             i += 1
         writer.write("}")
 
-    # Upstream's text shape, `Set[SIMD[DType.int, 1], Hasher=...]({Int(3)})`;
-    # the hasher parameter spells Mojito's key-less `AHasher` where upstream
-    # prints its keyed `AHasher[[0, 0, 0, 0] : SIMD[DType.uint64, 4]]`.
+    # Upstream's text shape: `Set[SIMD[DType.int, 1],
+    # Hasher=AHasher[[0, 0, 0, 0] : SIMD[DType.uint64, 4]]]({Int(3)})`.
     def write_repr_to(self, mut writer: Some[Writer]) where conforms_to(
         Self.T, Copyable
     ) and conforms_to(Self.T, Writable):

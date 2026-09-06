@@ -36,10 +36,12 @@ assets/ok/comptime_alias_generic.mojo	main	exe-differential	sanitized
 assets/ok/comptime_ctfe.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for.mojo	main	exe-differential	sanitized
 assets/ok/comptime_frozen_struct.mojo	main	exe-differential	sanitized
+assets/ok/comptime_hash.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_generic_specialization.mojo	main	exe-differential	sanitized
 assets/ok/comptime_shadowed_locals.mojo	main	exe-differential	sanitized
 assets/ok/comptime_tuple.mojo	main	exe-differential	sanitized
+assets/ok/container_hashable.mojo	main	exe-differential	sanitized
 assets/ok/container_owning_family_apis.mojo	main	exe-differential	sanitized
 assets/ok/contextual_member_static.mojo	main	exe-differential	sanitized
 assets/ok/copy_return.mojo	main	exe-differential	sanitized
@@ -50,6 +52,7 @@ assets/ok/decorators.mojo	main	exe-differential	sanitized
 assets/ok/default_args.mojo	main	exe-differential	sanitized
 assets/ok/defines_main.mojo	main	exe-differential	sanitized
 assets/ok/delegated_ref_return_projection.mojo	main	exe-differential	sanitized
+assets/ok/dict_hasher_forwarding.mojo	main	exe-differential	sanitized
 assets/ok/dict_insert_linear_capable.mojo	main	exe-differential	sanitized
 assets/ok/dict_methods_growth.mojo	main	exe-differential	sanitized
 assets/ok/dict_take_items.mojo	main	exe-differential	sanitized
@@ -84,8 +87,11 @@ assets/ok/generic_struct_instance_bodies.mojo	main	exe-differential	sanitized
 assets/ok/generic_struct_instance_dispatch.mojo	main	exe-differential	sanitized
 assets/ok/hashable_bucketing.mojo	main	exe-differential	sanitized
 assets/ok/hashable_hasher_protocol.mojo	main	exe-differential	sanitized
+assets/ok/hasher_upstream_spellings.mojo	main	exe-differential	sanitized
 assets/ok/hasher_user_conformer.mojo	main	exe-differential	sanitized
+assets/ok/hashlib_bytes_hash.mojo	main	exe-differential	sanitized
 assets/ok/hashlib_explicit_hasher_containers.mojo	main	exe-differential	sanitized
+assets/ok/hashlib_keyed_ahasher.mojo	main	exe-differential	sanitized
 assets/ok/hashlib_values.mojo	main	exe-differential	sanitized
 assets/ok/hello_world.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion.mojo	main	exe-differential	sanitized

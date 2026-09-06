@@ -325,7 +325,7 @@ impl Checker {
                     self.operation_adjustments.borrow_mut().insert(
                         span,
                         mojito_checked::checked::SemanticAdjustment::TypeName {
-                            text: mojito_types::types::unqualified_type_name(&ty),
+                            text: mojito_symbol::symbol::unqualified_instance_name(&ty),
                         },
                     );
                     return Ok(Ty::StringLiteral);

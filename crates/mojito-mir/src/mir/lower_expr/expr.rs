@@ -695,6 +695,31 @@ impl Flatten<'_> {
                     });
                     return dest;
                 }
+                // `v.to_bits[DType.<dt>]()` lowers like `cast`, as a lane-wise
+                // bit reinterpretation of the member callee's object.
+                let simd_to_bits = self
+                    .checked_adjustments(e)
+                    .into_iter()
+                    .find_map(|adjustment| match adjustment {
+                        mojito_checked::checked::SemanticAdjustment::SimdToBits {
+                            dtype,
+                            width,
+                        } => Some((dtype, width)),
+                        _ => None,
+                    });
+                if let Some((dtype, width)) = simd_to_bits
+                    && let ExprKind::Member { object, .. } = &callee.kind
+                {
+                    let value = self.expr(object);
+                    let dest = self.fresh(span(e), None);
+                    self.emit(MirInstr::SimdBitcast {
+                        dest,
+                        value,
+                        dtype,
+                        width: usize::try_from(width).unwrap_or(0),
+                    });
+                    return dest;
+                }
                 let simd_shuffle = self
                     .checked_adjustments(e)
                     .into_iter()
@@ -1030,6 +1055,33 @@ impl Flatten<'_> {
                         .is_some_and(|ty| mojito_types::types::builtin_copy_is_value_read(&ty))
                 {
                     return self.expr(object);
+                }
+                // `v.to_bits()` with the default target arrives as an ordinary
+                // method call; the parameterized spelling takes the invoke
+                // path above. Both lower to the same lane-wise reinterpret.
+                if method == "to_bits"
+                    && args.is_empty()
+                    && kwargs.is_empty()
+                    && let Some((dtype, width)) =
+                        self.checked_adjustments(e)
+                            .into_iter()
+                            .find_map(|adjustment| match adjustment {
+                                mojito_checked::checked::SemanticAdjustment::SimdToBits {
+                                    dtype,
+                                    width,
+                                } => Some((dtype, width)),
+                                _ => None,
+                            })
+                {
+                    let value = self.expr(object);
+                    let dest = self.fresh(span(e), None);
+                    self.emit(MirInstr::SimdBitcast {
+                        dest,
+                        value,
+                        dtype,
+                        width: usize::try_from(width).unwrap_or(0),
+                    });
+                    return dest;
                 }
                 // `v.set(init_with=…)` infers its alternative from the factory
                 // (no explicit type parameter), so it arrives as an ordinary
@@ -1523,6 +1575,17 @@ impl Flatten<'_> {
                 d
             }
             ExprKind::Member { object, field } => {
+                // `v.length` on a SIMD value is the checker-folded lane count.
+                if let Some(mojito_checked::checked::SemanticAdjustment::SimdLength { width }) =
+                    self.checked_adjustments(e).into_iter().find(|adjustment| {
+                        matches!(
+                            adjustment,
+                            mojito_checked::checked::SemanticAdjustment::SimdLength { .. }
+                        )
+                    })
+                {
+                    return self.constant(e, Const::Int(width));
+                }
                 // A pure field chain rooted at a variable (`p.a`, `p.a.b`) lowers to
                 // a `LoadPlace` (a place read) so the ownership analysis sees *which*
                 // field is read — enabling field-sensitive partial-move checking

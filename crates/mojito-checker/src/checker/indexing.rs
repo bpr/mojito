@@ -99,7 +99,7 @@ impl Checker {
                 // The object must itself be a writable place (a struct value).
                 self.check_place(object)?;
                 // Reuse the field-typing logic (validates the field exists).
-                self.infer_member(object, field)
+                self.infer_member(place.source_span(), object, field)
             }
             // A type-keyed projection target (`v[Int] = x`, `v[Int] += x`,
             // `v[List[Int]][0] = x`): the accessor call's mutable reference
@@ -1777,7 +1777,12 @@ impl Checker {
     /// Type a field access `object.field`. On a generic struct value the field
     /// type has the struct's type arguments substituted in (`Pair[Int].left :
     /// Int`).
-    pub(super) fn infer_member(&self, object: &Expr, field: &str) -> Result<Ty, TypeError> {
+    pub(super) fn infer_member(
+        &self,
+        span: SourceSpan,
+        object: &Expr,
+        field: &str,
+    ) -> Result<Ty, TypeError> {
         // `Self.n` reads the enclosing struct's value parameter (an `Int`).
         if let ExprKind::Identifier(s) = &object.kind
             && s == "Self"
@@ -1788,6 +1793,11 @@ impl Checker {
                     .insert(object.source_span(), self_ty.clone());
             }
             return match self.self_decls.iter().find(|d| d.name() == field) {
+                // A vector-typed value parameter (`AHasher[key: U256]`) reads
+                // as its declared vector; the scalar kinds read as `Int`.
+                Some(ParamDecl::Value { ty, .. }) if matches!(**ty, Ty::Simd { .. }) => {
+                    Ok((**ty).clone())
+                }
                 Some(ParamDecl::Value { .. }) => Ok(Ty::Int),
                 _ => Err(TypeError::UnknownSelfParam(field.to_string())),
             };
@@ -1821,6 +1831,17 @@ impl Checker {
             && matches!(field, "start" | "end" | "step")
         {
             return Ok(Ty::Struct("Optional".to_string(), vec![TyArg::Ty(Ty::Int)]));
+        }
+        // `v.length` on a SIMD value (a native scalar is a width-1 vector)
+        // is upstream's lane-count parameter, folded to an `Int` constant.
+        if field == "length"
+            && let Some((_, width)) = mojito_types::types::simd_shape(&obj_ty)
+        {
+            self.operation_adjustments.borrow_mut().insert(
+                span,
+                mojito_checked::checked::SemanticAdjustment::SimdLength { width },
+            );
+            return Ok(Ty::Int);
         }
         if let Ty::Struct(sname, targs) = &obj_ty {
             let info = self.structs.get(sname).ok_or_else(|| {

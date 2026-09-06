@@ -144,6 +144,8 @@ impl<'a> Specializer<'a> {
             &self.constant_values,
             &mut bindings,
             target,
+            &|name| self.structs.contains_key(name),
+            &self.enclosing_types,
         )?;
         apply_defaults(&declaration.param_decls, &mut bindings)?;
         let names = &declaration.param_names;

@@ -1829,6 +1829,21 @@ impl Checker {
             mojito_types::origin::PointerOrigin::Untracked {
                 mutable: name != "ImmPointer",
             }
+        } else if origin_placeholder(&args[1]) {
+            // A placeholder origin (`ImmPointer[UInt8, _]`, upstream's raw
+            // byte-pointer parameter) accepts any provenance at the alias's
+            // fixed permission; the callee holds no loan. The permission
+            // must be spelled: upstream infers it, Mojito's subset asks.
+            match name {
+                "ImmPointer" => mojito_types::origin::PointerOrigin::UnsafeAny { mutable: false },
+                "MutPointer" => mojito_types::origin::PointerOrigin::UnsafeAny { mutable: true },
+                _ => {
+                    return Err(TypeError::Unsupported(format!(
+                        "spell the pointer permission: `ImmPointer[T, _]` or `MutPointer[T, _]` \
+                         (`{name}[T, _]` leaves it to inference)"
+                    )));
+                }
+            }
         } else {
             self.pointer_origin_arg(&args[1])?
         };

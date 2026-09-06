@@ -718,6 +718,39 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
     Some(match value {
         CtValue::Int(value) => Value::Int(value),
         CtValue::UInt(value) => Value::UInt(value),
+        CtValue::Simd { dtype, lanes } => {
+            use mojito_types::ct::CtLane;
+            let lanes = match lanes.first()? {
+                CtLane::Float(_) => crate::runtime::SimdLanes::Float(
+                    lanes
+                        .iter()
+                        .map(|lane| match lane {
+                            CtLane::Float(bits) => Some(f64::from_bits(*bits)),
+                            _ => None,
+                        })
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+                CtLane::Bool(_) => crate::runtime::SimdLanes::Bool(
+                    lanes
+                        .iter()
+                        .map(|lane| match lane {
+                            CtLane::Bool(value) => Some(*value),
+                            _ => None,
+                        })
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+                CtLane::Int(_) => crate::runtime::SimdLanes::Int(
+                    lanes
+                        .iter()
+                        .map(|lane| match lane {
+                            CtLane::Int(value) => Some(*value),
+                            _ => None,
+                        })
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+            };
+            Value::Simd { dtype, lanes }
+        }
         CtValue::Float(bits) => Value::Float64(f64::from_bits(bits)),
         CtValue::IntLiteral(value) => Value::IntLiteral(value),
         CtValue::FloatLiteral(value) => Value::FloatLiteral(value),
@@ -858,6 +891,7 @@ fn vm_ct_value_is_symbolic(value: &CtValue) -> bool {
         | CtValue::FloatLiteral(_)
         | CtValue::Bool(_)
         | CtValue::Dtype(_)
+        | CtValue::Simd { .. }
         | CtValue::Str(_) => false,
     }
 }
@@ -1057,6 +1091,28 @@ fn bound_type_parameter(
                 .find(|(candidate, _)| candidate == param)
                 .map(|(_, value)| value.clone()),
             _ => None,
+        })
+        // A method-level type parameter inferred from an argument
+        // (`__hash__[H2: Hasher](self, mut hasher: H2)` → `H2()`): the
+        // parameter's runtime struct names the bound type. A `mut` parameter
+        // holds a reference handle; the caller reads through it.
+        .or_else(|| {
+            let signature = prog.sigs.get(&prog.mir.functions[function].0)?;
+            let parameter = signature
+                .param_names
+                .iter()
+                .zip(&signature.param_types)
+                .find(|(_, ty)| matches!(ty, Ty::Param { name, .. } if name == param))
+                .map(|(name, _)| name)?;
+            let slot = definition
+                .var_names
+                .iter()
+                .position(|candidate| candidate == parameter)?;
+            match &variables[slot] {
+                Value::Struct { name, .. } => Some(Value::Str(name.clone())),
+                reference @ Value::Ref { .. } => Some(reference.clone()),
+                _ => None,
+            }
         })
 }
 

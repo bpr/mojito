@@ -82,6 +82,10 @@ struct Specializer<'a> {
     output_structs: Vec<MirStructDeclaration>,
     constant_values: HashMap<u32, CtValue>,
     callable_targets: HashMap<u32, (String, bool)>,
+    /// The type bindings of the instance being specialized: an erased body
+    /// forwarding its own binder as a callee's type argument
+    /// (`hash[Self.H](key)`) resolves that spelling here.
+    enclosing_types: HashMap<String, Ty>,
 }
 
 mod equiv;

@@ -237,6 +237,16 @@ list-concat-transfer	run	conformance/fixtures/list_concat_transfer.mojo
 string-implicit-copy	run	conformance/fixtures/string_implicit_copy.mojo
 hashlib-values	run	assets/ok/hashlib_values.mojo
 hashlib-explicit-hashers	run	assets/ok/hashlib_explicit_hasher_containers.mojo
+hasher-upstream-spellings	run	assets/ok/hasher_upstream_spellings.mojo
+hasher-uint64-leaf-retired	reject	assets/type_error/hasher_uint64_leaf.mojo
+container-hashable	run	assets/ok/container_hashable.mojo
+list-element-not-hashable	reject	assets/type_error/list_element_not_hashable.mojo
+hashlib-keyed-ahasher	run	assets/ok/hashlib_keyed_ahasher.mojo
+set-repr-keyed-hasher	run	conformance/fixtures/set_repr_keyed_hasher.mojo
+hashlib-bytes-hash	run	assets/ok/hashlib_bytes_hash.mojo
+pointer-placeholder-needs-permission	reject	assets/type_error/pointer_placeholder_needs_permission.mojo
+comptime-hash	run	assets/ok/comptime_hash.mojo
+dict-hasher-forwarding	run	assets/ok/dict_hasher_forwarding.mojo
 hashable-user-struct	run	conformance/fixtures/hashable_user_struct.mojo
 parametric-statics	run	assets/ok/parametric_static_methods.mojo
 parametric-static-arity	reject	assets/type_error/parametric_static_arity.mojo

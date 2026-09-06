@@ -718,6 +718,16 @@ pub enum MirInstr {
         dtype: Dtype,
         width: usize,
     },
+    /// Lane-wise bit reinterpretation `v.to_bits[DType.<dt>]()`: each lane's
+    /// bit pattern zero-extended into the unsigned target `dtype` (at least
+    /// as wide as the source lane; `bool` reads as 0/1). The target
+    /// `dtype`/`width` are checker-resolved compile-time parameters.
+    SimdBitcast {
+        dest: Reg,
+        value: Reg,
+        dtype: Dtype,
+        width: usize,
+    },
     /// Lane gather `v.shuffle[*mask]()`: result lane `i` is `value`'s lane
     /// `mask[i]`. The mask is a checker-resolved compile-time parameter —
     /// every index is within the receiver's width and the mask length is a

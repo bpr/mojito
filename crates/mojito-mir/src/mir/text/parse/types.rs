@@ -569,6 +569,38 @@ impl Decoder {
                     None
                 }
             },
+            ValueKind::Record(tag, fields) if tag == "ct_simd" => {
+                let dtype_value = self.required(value, fields, "dtype")?;
+                let dtype = self.dtype(dtype_value)?;
+                let lanes_value = self.required(value, fields, "lanes")?;
+                let mut lanes = Vec::new();
+                if let Ok(values) = self.list(lanes_value) {
+                    for lane in values {
+                        let decoded = match &lane.kind {
+                            ValueKind::Positional(tag, inner) => match tag.as_str() {
+                                "lane_int" => self
+                                    .atom(inner)
+                                    .and_then(|text| text.parse::<i128>().ok())
+                                    .map(mojito_types::ct::CtLane::Int),
+                                "lane_float_bits" => {
+                                    self.float_bits(inner).map(mojito_types::ct::CtLane::Float)
+                                }
+                                "lane_bool" => {
+                                    self.boolean(inner).map(mojito_types::ct::CtLane::Bool)
+                                }
+                                _ => None,
+                            },
+                            _ => None,
+                        };
+                        match decoded {
+                            Some(decoded) => lanes.push(decoded),
+                            None => self.error(lane.span, "expected a SIMD lane value"),
+                        }
+                    }
+                }
+                self.unknown(fields, &["dtype", "lanes"]);
+                Some(CtValue::Simd { dtype, lanes })
+            }
             ValueKind::Record(tag, fields) if tag == "ct_struct" => {
                 let name = self.req(value, fields, "name", Self::symbol)?;
                 let fields_value = self.required(value, fields, "fields")?;

@@ -1,39 +1,67 @@
-# The Hasher Protocol Subset: Where Mojito's `std.hashlib` Narrows Mojo's
+# The Hasher Protocol: How Mojito Reaches Upstream's Spellings
 
-Status: implemented behavior as of the hasher-based `Hashable` alignment
-(2026-09). Book destination: source material for *Mojito Internals* chapters
-on trait intrinsics and monomorphization, and a Part VIII case study in
-matching values while subsetting spellings.
+Status: implemented behavior as of the hashing-parity task (2026-09). Book
+destination: source material for *Mojito Internals* chapters on trait
+intrinsics, per-type method clones, and monomorphization, and a Part VIII
+case study in matching values while subsetting spellings.
 
-`hash(x)` in Mojito prints the same number the pinned upstream Mojo prints
-for scalars, strings, literals, and user conformers in both accepted
-spellings (`conformance/cases.tsv` rows `hashlib-values`,
-`hashlib-explicit-hashers`, `hashable-user-struct`). The protocol and module
-identity are upstream's. Four spellings underneath are narrower; each is a
-deliberate subset position rather than a fork:
+`hash(x)` in Mojito prints the number the pinned upstream Mojo prints for
+scalars, vectors, strings, literals, user conformers in both accepted
+spellings, and the container conformances (`conformance/cases.tsv` rows
+`hashlib-values`, `container-hashable`, `hashlib-keyed-ahasher`,
+`hashlib-bytes-hash`, `comptime-hash`). The protocol, the module identity,
+and the stdlib spellings are upstream's; the mechanisms underneath are
+Mojito's:
 
-1. **`_update_with_simd(mut self, value: UInt64)`** instead of
-   `SIMD[_, _]`. Mojito cannot spell wildcard SIMD parameters and has no
-   `to_bits()`. Both upstream hashers reduce every lane of at most eight
-   bytes to one `u64` mix (Fnv1a: `rounds = max(1, size // 8) = 1`; AHasher:
-   `to_bits[.uint64]()[0]`), so the compiler normalizes each leaf to its
-   unsigned bit pattern zero-extended to `UInt64` (`-0.0` folded to `0.0`,
-   as upstream folds on the bit pattern) and the values are identical. A
-   user hasher written in the upstream spelling is rejected (a subset gap);
-   one written in Mojito's spelling would not conform upstream (recorded in
-   `docs/features.md`). Width-greater-than-one SIMD is not hashable here.
-2. **Key-less `AHasher`.** Upstream's `AHasher[key: U256]` needs a
-   SIMD-typed value parameter; Mojito's `AHasher` folds the key to zero,
-   which is `default_hasher`'s key, and keeps the seeded initializer and
-   `hash_seeded`. `AHasher[U256(0)]` spelled by a user is rejected.
-3. **Pure-Mojo `_folded_multiply`.** No 128-bit dtype exists, so the
-   128-bit product is assembled from 32-bit limbs with wrapping `UInt64`
-   arithmetic; the rotation is spelled inline (a value-parameterized helper
-   cannot cross the compile-time execution boundary). Both were checked
-   bit-for-bit against upstream's test vectors.
-4. **`StringSpan.__hash__` copies its bytes** into a `List[Byte]` before
-   `_update_with_bytes`, because `Span` has no pointer-backed constructor
-   yet; `String.__hash__` delegates to `StringSpan` as upstream does.
+1. **`_update_with_simd(mut self, value: SIMD[_, _])` is a per-type clone
+   family.** The type lattice has only concrete SIMD types, so the
+   elaborator desugars the wildcard parameter to an infer-only type
+   parameter bounded by the hidden `$SIMD` (any SIMD-valued type) and mints
+   one clone per hashed vector type through the ordinary method-clone
+   machinery (`_update_with_simd$y3:Int`). The closed width-1 leaf set is
+   minted eagerly for every `Hasher` conformer — hashing reaches the hasher
+   through erased paths (`hash[T]`, `update(Some[Hashable])`) that record no
+   call site, and the VM-CTFE subprogram has no discovery loop — while wider
+   vectors arrive through the checker's `hash_leaf_types` demand channel.
+   The template body is a trap stub; every backend's leaf dispatch computes
+   the exact clone name (`simd_update_clone_name`), passes the value itself
+   with `-0.0` folded (upstream's `SIMD.__hash__`), and a `Bool` leaf as
+   `Scalar[DType.bool]`. Bodies read lanes with `to_bits[DType.uint64]()`
+   and `.length` (both compiler intrinsics), in `while` loops because
+   `range` is not visible inside `std.hashlib`; pinned Mojo rejects a
+   conformer that names the parameters instead (`[dtype: DType, width:
+   Int]`), so the bundled bodies spell the wildcard.
+2. **`AHasher[key: U256]` is a vector-keyed value specialization.** A
+   `comptime U256 = SIMD[DType.uint64, 4]` alias used as a parameter bound
+   folds to the parser's value-type spelling; the struct monomorphizes per
+   application like a DType-keyed one, with a compile-time SIMD value
+   (`CtValue::Simd`, lane-wise `^ & |`) baking `Self.key` into clone bodies.
+   A concrete application (`comptime default_hasher = AHasher[SIMD[DType.
+   uint64, 4](0)]`, an `Index` parse shape) resolves to one canonical
+   identity — the mangled clone — for the checker's default fill,
+   `ConstructTypeParam`, monomorphization, and the specialization oracle
+   (which answers for a clone through `demangle_specialization`), and
+   `_unqualified_type_name` spells the clone with its baked values, so
+   `repr(set)` prints upstream's `Hasher=AHasher[[0, 0, 0, 0] :
+   SIMD[DType.uint64, 4]]`. The zero-keyed hasher is spelled once in
+   `_ahash.mojo` for the seeded entry points.
+3. **Pure-Mojo `_folded_multiply`.** No 128-bit dtype exists, so the 128-bit
+   product is assembled from 32-bit limbs with wrapping `UInt64` arithmetic;
+   the rotation is spelled inline. Both were checked bit-for-bit against
+   upstream's test vectors. This is the one remaining narrowing.
+4. **The bytes overloads bind a placeholder-origin pointer.** `ImmPointer[T,
+   _]` in a free function resolves to the unsafe-any provenance at the
+   alias's permission (any pointer binds it; the callee holds no loan), Span's
+   raw constructor takes an immutable untracked pointer (a mutable one binds
+   by capability drop), and the bare `Pointer[T, _]` asks for the permission
+   upstream infers.
+5. **Compile-time hashing runs the VM.** A call to a type-parameterized free
+   function with a constructible parameter routes through a synthesized
+   checked entry (folded type arguments, typed literal arguments), the purity
+   walk admits the hasher protocol's method calls and the bundled hashers'
+   mixing steps, and the VM-CTFE subprogram carries the keyed `default_hasher`
+   clone at its template's position. Scalar, Bool, Float64, and string
+   arguments fold; compile-time Dict/Set values are a roadmap task.
 
 Two leniencies remain on the acceptance side, both recorded: `Hasher`, like
 `Writer`, resolves without `from std.hashlib import Hasher`; and

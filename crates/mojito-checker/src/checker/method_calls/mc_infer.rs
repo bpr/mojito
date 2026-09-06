@@ -260,6 +260,42 @@ impl Checker {
                 return self.infer_tuple_method(&span, object, method, &elements, call);
             }
         }
+        // `v.to_bits[DType.target]()` — upstream's lane-wise bit
+        // reinterpretation of a SIMD value (the native scalars are width-1
+        // vectors; `Bool` has no `to_bits` upstream, `Scalar[DType.bool]`
+        // does). The target must be unsigned and at least as wide as the
+        // source lane; it defaults to the unsigned dtype of the source width.
+        if method == "to_bits"
+            && args.is_empty()
+            && param_args.len() <= 1
+            && !matches!(obj_ty, Ty::Bool | Ty::IntLiteral | Ty::FloatLiteral)
+            && let Some((source, width)) = mojito_types::types::simd_shape(&obj_ty)
+        {
+            reject_kwargs(kwargs)?;
+            let target = match param_args.first() {
+                Some(argument) => dtype_from_arg(argument)?,
+                None => unsigned_dtype_of_width(dtype_bit_width(source)),
+            };
+            if !matches!(
+                target,
+                Dtype::UInt8 | Dtype::UInt16 | Dtype::UInt32 | Dtype::UInt64
+            ) || dtype_bit_width(target) < dtype_bit_width(source)
+            {
+                return Err(TypeError::TypeMismatch {
+                    expected: "an unsigned dtype at least as wide as the source lane".to_string(),
+                    found: format!("DType.{}", target.name()),
+                    context: "SIMD.to_bits".to_string(),
+                });
+            }
+            self.operation_adjustments.borrow_mut().insert(
+                span,
+                mojito_checked::checked::SemanticAdjustment::SimdToBits {
+                    dtype: target,
+                    width,
+                },
+            );
+            return Ok(simd_ty(target, width));
+        }
         if let Ty::Simd { dtype, width } = &obj_ty {
             let (dtype, width) = (*dtype, *width);
             reject_kwargs(kwargs)?;
@@ -480,17 +516,17 @@ impl Checker {
                 "_update_with_simd" => {
                     self.check_place(object)?;
                     let tys = self.builtin_args("Hasher._update_with_simd", 1, args)?;
-                    let expected = Ty::Simd {
-                        dtype: Dtype::UInt64,
-                        width: 1,
-                    };
-                    if !coerces(&tys[0], &expected) {
+                    // The argument's own vector type keys the hasher's clone
+                    // (`SIMD[_, _]` infers per call); the runtime dispatch
+                    // computes the same clone name from the value.
+                    if !simd_valued_ty(&tys[0]) {
                         return Err(TypeError::TypeMismatch {
-                            expected: expected.to_string(),
+                            expected: "SIMD[_, _]".to_string(),
                             found: tys[0].to_string(),
                             context: "Hasher._update_with_simd".to_string(),
                         });
                     }
+                    self.record_hash_leaf(&tys[0]);
                     return Ok(Ty::None);
                 }
                 "finish" if args.is_empty() => {
@@ -704,6 +740,16 @@ impl Checker {
                 {
                     effective_bounds.push("Copyable".to_string());
                 }
+                // Likewise `Hashable.__hash__`: a `where conforms_to(Self.T,
+                // Hashable)` assumption proves `element.__hash__(hasher)` on
+                // an otherwise unbounded `T` (upstream's container bodies).
+                if method == "__hash__"
+                    && args.len() == 1
+                    && self.is_hashable(receiver)
+                    && !effective_bounds.iter().any(|bound| bound == "Hashable")
+                {
+                    effective_bounds.push("Hashable".to_string());
+                }
                 let signatures = self.lookup_trait_methods(&effective_bounds, method, args.len());
                 if signatures.is_empty() {
                     return Err(TypeError::NoSuchMethod {
@@ -872,15 +918,18 @@ impl Checker {
                     parameter_names: Vec::new(),
                 }))
             }
-            // Hashable scalar leaves contribute their normalized bits to the
-            // caller-provided hasher. The `mut` argument is a place so its
-            // updated state is committed by ordinary call lowering.
+            // Hashable scalar leaves contribute themselves to the
+            // caller-provided hasher's `_update_with_simd` clone for their
+            // own vector type (`-0.0` folded first, as upstream's
+            // `SIMD.__hash__`). The `mut` argument is a place so its updated
+            // state is committed by ordinary call lowering.
             _ if method == "__hash__"
                 && args.len() == 1
                 && kwargs.is_empty()
                 && param_args.is_empty()
                 && builtin_hashable_ty(&obj_ty) =>
             {
+                self.record_hash_leaf(&obj_ty);
                 let hasher = self.infer(&args[0])?;
                 if !self.conforms_to(&hasher, "Hasher") {
                     return Err(TypeError::TraitNotSatisfied {

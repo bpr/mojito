@@ -400,8 +400,10 @@ impl VmBackend {
         // its own implementation still dispatches to its method below.
         if !matches!(recv, Value::Struct { .. }) {
             match (method, args.len()) {
-                // Hashable scalar leaf: normalize its bits and contribute them
-                // to the caller-owned hasher through `_update_with_simd`.
+                // Hashable scalar leaf: contribute the value itself (`-0.0`
+                // folded, as upstream's `SIMD.__hash__`) to the caller-owned
+                // hasher through its `_update_with_simd` clone for the leaf's
+                // own vector type.
                 ("__hash__", 1) => {
                     // A string literal hashes as the nominal `String` it
                     // materializes to, so literal and nominal keys agree.
@@ -446,17 +448,22 @@ impl VmBackend {
                             crate::runtime::type_name(&hasher)
                         )));
                     };
-                    let fname = prog.runtime_method_name(name, "_update_with_simd", None, 1);
+                    let leaf = crate::runtime::hash_leaf_ty(&recv).ok_or_else(|| {
+                        RuntimeError::TypeError(format!(
+                            "cannot hash {} as a scalar leaf",
+                            crate::runtime::type_name(&recv)
+                        ))
+                    })?;
+                    let fname = format!(
+                        "{name}.{}",
+                        mojito_symbol::symbol::simd_update_clone_name(&leaf)
+                    );
                     let fidx = prog.index_of(&fname).ok_or_else(|| {
                         RuntimeError::Unsupported(format!(
                             "vm: Hasher implementation has no '{fname}'"
                         ))
                     })?;
-                    let bits = crate::runtime::hash_bits(&recv)?;
-                    let contribution = Value::Simd {
-                        dtype: mojito_ast::ast::Dtype::UInt64,
-                        lanes: crate::runtime::SimdLanes::Int(vec![i128::from(bits)]),
-                    };
+                    let contribution = crate::runtime::fold_negative_zero(recv.clone());
                     let (_, variables) =
                         self.call_frame(prog, fidx, vec![hasher, contribution], &[])?;
                     let updated = variables.into_iter().next().unwrap_or(Value::None);
@@ -588,7 +595,26 @@ impl VmBackend {
             Value::Struct { name, .. } => {
                 let method_argc = args.len();
                 let source_fname = format!("{name}.{method}");
-                let fname = prog.runtime_method_name(name, method, resolved, method_argc);
+                // An erased `hasher._update_with_simd(x)` (a generic
+                // `__hash__[H: Hasher]` body) targets the clone for the
+                // argument's own vector type: the template body is a stub.
+                let simd_clone = (resolved.is_none()
+                    && method == "_update_with_simd"
+                    && args.len() == 1
+                    && kwargs.is_empty())
+                .then(|| crate::runtime::hash_leaf_ty(&args[0]))
+                .flatten()
+                .map(|leaf| {
+                    format!(
+                        "{name}.{}",
+                        mojito_symbol::symbol::simd_update_clone_name(&leaf)
+                    )
+                })
+                .filter(|clone| prog.index_of(clone).is_some());
+                let fname = match simd_clone {
+                    Some(clone) => clone,
+                    None => prog.runtime_method_name(name, method, resolved, method_argc),
+                };
                 let fidx = prog.index_of(&fname).ok_or_else(|| {
                     RuntimeError::Unsupported(format!("vm: unknown method '{fname}'"))
                 })?;
