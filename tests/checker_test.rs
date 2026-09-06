@@ -2869,6 +2869,48 @@ fn infers_parametric_struct_static_parameters() {
 }
 
 #[test]
+fn statics_through_origin_applications_partition_and_bind_origins() {
+    // The origin slot partitions out of the receiver application as it does
+    // for construction; a static binding `ref [Self.o]` arguments checks the
+    // explicit origin against the argument that binds the slot.
+    let view = "struct View[o: Origin[mut=True]]:\n    var r: Pointer[Int, Self.o]\n\n    def __init__(out self, ref [Self.o] x: Int):\n        self.r = Pointer(to=x)\n\n    @staticmethod\n    def make(ref [Self.o] x: Int) -> View[Self.o]:\n        return View[Self.o](x)\n\n    @staticmethod\n    def two() -> Int:\n        return 2\n\n";
+    ok(&format!(
+        "{view}var w = 4\nvar n: Int = View[origin_of(w)].two()\nvar v = View[origin_of(w)].make(w)\nvar z = 1\nvar u = View.make(z)\n"
+    ));
+    assert!(matches!(
+        err(&format!(
+            "{view}var w = 4\nvar z = 9\nvar v = View[origin_of(z)].make(w)\n"
+        )),
+        TypeError::TypeMismatch { .. }
+    ));
+}
+
+#[test]
+fn bounded_and_builtin_write_to_lower_as_writer_write() {
+    // `x.write_to(writer)` on a `Writable`-bounded parameter or a builtin
+    // Writable value is the `writer.write(x)` shape; an unbounded parameter
+    // has no such method and the argument must be a Writer.
+    ok(
+        "struct Wrap[T: Writable & ImplicitlyCopyable & Deinitable](Writable):\n    var value: Self.T\n\n    def __init__(out self, value: Self.T):\n        self.value = value\n\n    def write_to[W: Writer](self, mut writer: W):\n        writer.write(\"Wrap(\")\n        self.value.write_to(writer)\n        Int(3).write_to(writer)\n        writer.write(\")\")\n\nvar w = Wrap(8)\n",
+    );
+    assert!(matches!(
+        err("def show[T: Copyable, W: Writer](x: T, mut out: W):\n    x.write_to(out)\n"),
+        TypeError::NoSuchMethod { .. }
+    ));
+    assert!(matches!(
+        err("var n = 3\nInt(7).write_to(n)\n"),
+        TypeError::TypeMismatch { .. }
+    ));
+}
+
+#[test]
+fn struct_parameter_bounds_may_name_a_later_user_trait() {
+    ok(
+        "struct Boxed[T: Show & Copyable & Deinitable]:\n    var value: Self.T\n\n    def __init__(out self, var value: Self.T):\n        self.value = value^\n\n    def shown(self) -> Int:\n        return self.value.show()\n\ntrait Show:\n    def show(self) -> Int:\n        ...\n\n@fieldwise_init\nstruct Num(Show, Copyable):\n    var n: Int\n    def show(self) -> Int:\n        return self.n\n\nvar b = Boxed(Num(4))\nvar s: Int = b.shown()\n",
+    );
+}
+
+#[test]
 fn checks_generic_trait_method_signatures_in_their_parameter_scope() {
     ok(
         "trait Echoer:\n    def echo[T: Copyable](self, value: T) -> T:\n        ...\n\n@fieldwise_init\nstruct Echo(Echoer):\n    var marker: Int\n    def echo[T: Copyable](self, value: T) -> T:\n        return value.copy()\n\nvar echo = Echo(0)\nvar answer: Int = echo.echo(42)\n",

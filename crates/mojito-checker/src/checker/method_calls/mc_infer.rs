@@ -76,6 +76,7 @@ impl Checker {
                 return self.infer_struct_static_method(span, sname, &[], method, call);
             }
             let mut matches = Vec::new();
+            let mut candidate_sigs: Vec<(&MethodSig, Vec<Ty>)> = Vec::new();
             let mut availability_failure = None;
             // Preserve established overload diagnostics: a retained constraint
             // message replaces `NoMatch` only when this is the sole callable shape.
@@ -122,6 +123,7 @@ impl Checker {
                     args,
                     kwargs,
                 ) {
+                    candidate_sigs.push((sig, params.clone()));
                     matches.push(MethodCallResolution {
                         conversion_score: scored.rank,
                         slots: scored.slots,
@@ -173,21 +175,17 @@ impl Checker {
                         .to_string(),
                     }
                 })?;
-                self.record_selected_method_conversions(method, &selected, args, kwargs)?;
-                if let Some(target) = selected.lowered_name {
-                    self.overload_targets
-                        .borrow_mut()
-                        .insert(span.clone(), target);
-                }
-                if selected.raises {
-                    let error = selected.error.as_deref().cloned().unwrap_or(Ty::Error);
-                    self.record_call_effect(span.clone(), error.clone());
-                    self.require_error(
-                        format!("call to raising method '{sname}.{method}'"),
-                        error,
-                    )?;
-                }
-                return Ok(selected.return_type);
+                return self.finish_static_call(
+                    span,
+                    sname,
+                    method,
+                    selected,
+                    &candidate_sigs,
+                    &info.source_params,
+                    &[],
+                    args,
+                    kwargs,
+                );
             }
             if let Some(message) = availability_failure {
                 return Err(TypeError::BadCall {
@@ -474,6 +472,50 @@ impl Checker {
                     method: method.to_string(),
                 }),
             };
+        }
+        // `x.write_to(writer)` where `x` has no `write_to` body of its own — a
+        // `Writable`-bounded type parameter (the erased generic body) or a
+        // built-in Writable value (`Int`, `Float64`, `Bool`, a literal, a
+        // SIMD vector, a `StringSpan`) — is `writer.write(x)`: the checker
+        // records the operand swap and MIR lowers the `Writer.write` shape,
+        // whose formatting dispatches a struct argument through its own
+        // `write_to` (instance-clone aware) and a builtin directly. The
+        // nominal String takes the same shape (its `write_to` body is the
+        // literal bridge, which `Writer.write` already spells on both
+        // backends); every other struct receiver keeps the ordinary method
+        // path to its own `write_to`.
+        if method == "write_to"
+            && args.len() == 1
+            && kwargs.is_empty()
+            && param_args.is_empty()
+            && !matches!(
+                match &obj_ty {
+                    Ty::Ref(reference) => &*reference.referent,
+                    other => other,
+                },
+                Ty::Struct(name, targs)
+                    if !(targs.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name))
+            )
+            && self.conforms_to(&obj_ty, "Writable")
+        {
+            let writer_ty = self.infer(&args[0])?;
+            if !self.conforms_to(&writer_ty, "Writer") {
+                return Err(TypeError::TypeMismatch {
+                    expected: "Writer".to_string(),
+                    found: writer_ty.to_string(),
+                    context: "argument 1 to 'write_to'".to_string(),
+                });
+            }
+            self.check_place(&args[0])?;
+            self.borrowed_read_call_places
+                .borrow_mut()
+                .insert(object.source_span());
+            self.infer_print(std::slice::from_ref(object))?;
+            self.operation_adjustments.borrow_mut().insert(
+                span,
+                mojito_checked::checked::SemanticAdjustment::InvertedWrite,
+            );
+            return Ok(Ty::None);
         }
         if self.conforms_to(&obj_ty, "Writer") && method == "write" {
             reject_kwargs(kwargs)?;

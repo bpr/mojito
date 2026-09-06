@@ -506,6 +506,12 @@ pub enum SemanticAdjustment {
     /// → `m.__radd__(1)`): MIR swaps the operands and `BinOp.resolved`
     /// names the reflected method.
     ReflectedOperator,
+    /// `x.write_to(writer)` on a receiver with no `write_to` body of its own
+    /// (a `Writable`-bounded type parameter or a built-in Writable value):
+    /// receiver and argument swap, so MIR lowers the call as
+    /// `writer.write(x)` — the same `Writer.write` shape both backends
+    /// already format through the argument's `write_to` conformance.
+    InvertedWrite,
     /// A condition (`if`/`while`/ternary/comprehension filter) whose value
     /// is a `Boolable` struct: MIR converts it through `Bool(x)`, i.e. the
     /// struct's `__bool__`.

@@ -90,28 +90,12 @@ exempt from the ordering.
   executable oracle first, then everyday spellings that reject today, then
   the native lane, then parity details; no task depends on a later one. A
   task closes when its bullets are done; a residue discovered inside a task
-  moves to the task that owns its fix (or to task 9, the deliberate
-  deferrals), never back to a finished one. Tasks 1 and 4 are one session
-  each (the 2026-09-06 pointer/view/pack residues, clumped by the subsystem
-  that owns the fix); plan first: task 5 (ordering); the rest are direct.
+  moves to the task that owns its fix (or to task 8, the deliberate
+  deferrals), never back to a finished one. Task 3 is one session (the
+  2026-09-06 pack residues, clumped by the subsystem that owns the fix); plan
+  first: task 4 (ordering); the rest are direct.
 
-  1. **Inference and minting through origin-bearing and bound generics.**
-     Checker inference, specialization conformance, and discovery minting
-     for structs and free defs whose parameters carry origins or trait
-     bounds.
-     - A generic struct with a trait-bound parameter and a `write_to`
-       (`struct Wrap[T: Writable](Writable)`) fails the specialization
-       conformance oracle (`unknown type 'T'`) even for `print(Wrap(8))`.
-     - `B2(Pointer(to=w))` cannot infer `T` through a `Pointer[Self.T, …]`
-       field, and `B2[Int](Pointer(to=w))` rejects the tracked pointer
-       against a `MutUntrackedOrigin` field.
-     - `reversed(list)` stays the method spelling (`xs.__reversed__()`):
-       `reversed` is an overload set, and overloaded names keep the abstract
-       path, so the origin-bearing generic free def is not minted.
-     - A static-method call through an origin-bearing type application
-       (`Span[Int, origin_of(xs)].method()`) does not partition the origin
-       slot (`method_calls/statics.rs`).
-  2. **Optional, Tuple, and Slice odds and ends.** Self-contained.
+  1. **Optional, Tuple, and Slice odds and ends.** Self-contained.
      - The raising `opt[]` subscript: empty-subscript form on nominal
        receivers plus `EmptyOptionalError`'s `TypeNames` text.
      - A `ref self` method on a call temporary (`s.split(",")[1]`) rejects
@@ -134,7 +118,15 @@ exempt from the ordering.
      - `Slice(...)` reads only `Int`/`None` argument expressions; an
        `Optional[Int]` variable needs the nominal slot read.
      - Explicit `.write_to(writer)` on a slice descriptor is not wired.
-  3. **Native-lane follow-ups.** The VM runs all of these; monomorphizer
+     - `write_repr_to` on a `Writable`-bounded parameter
+       (`self.value.write_repr_to(writer)`; upstream prints `Wrap(Int(8))`)
+       reports no such method: `write_to` lowers as `writer.write(x)`, and
+       the repr form needs the same swap with repr formatting.
+     - An instance method called through the type with the receiver as the
+       first argument (`Span[Int, origin_of(xs)].__len__(s)`, accepted
+       upstream) reports no such method; statics are the only receiver-less
+       path.
+  2. **Native-lane follow-ups.** The VM runs all of these; monomorphizer
      and native-drop bug fixes.
      - `repr` lowers natively only for Strings, without escapes; no user
        `write_repr_to` runs natively, so the collection repr texts are
@@ -158,7 +150,7 @@ exempt from the ordering.
      - The generic `next[T: Iterator](mut it: T)` body fails natively
        (`unsupported reference-result method adapter`); `next` is pinned by
        conformance/fixtures/next_builtin.mojo only.
-  4. **Parameter kinds in nested positions.** Value parameters, type packs,
+  3. **Parameter kinds in nested positions.** Value parameters, type packs,
      and type names classified through an alias, a nested call, or a
      display rather than a top-level application. Everyday loops already
      run (`for x in span`, `xs.__reversed__()`), so these are parity
@@ -172,12 +164,12 @@ exempt from the ordering.
        element); only top-level calls consult the checker's instantiation.
      - `TypeNames[Int]()` prints `SIMD[DType.int, 1]` where upstream prints
        `Int`.
-  5. **Storage-shape items with a known blocker.** Short plan (ordering).
+  4. **Storage-shape items with a known blocker.** Short plan (ordering).
      - Relax K/V/element bounds toward upstream's Movable-only `KeyElement`
        (a per-API `where` pass, as `List[T: AnyType]`).
      - `(*, unsafe_uninit_length)` construction and resize: blocked on an
        uninit-element storage story for List (MaybeUninit-adjacent).
-  6. **String Unicode, iterator, and parsing extras.** Port on demand.
+  5. **String Unicode, iterator, and parsing extras.** Port on demand.
      - `upper`/`lower`: simple-case subset (ASCII, Latin-1, Latin
        Extended-A, Greek, Cyrillic, `ß` → `SS`); upstream ships full Unicode
        simple and special casing tables.
@@ -191,20 +183,21 @@ exempt from the ordering.
      - `len(s)` on a String or StringSpan is accepted (byte length) where
        upstream rejects it as ambiguous (`byte_length()`, `len(s.codepoints())`,
        `len(s.graphemes())`); an extension to drop at the next re-pin.
-  7. **Compile-time collections.** `comptime d = {...}` Dict/Set values
+  6. **Compile-time collections.** `comptime d = {...}` Dict/Set values
      hashed with `default_comp_time_hasher`. `CtValue` has no mapping kind
      (`crates/mojito-types/src/ct.rs`), `Elab::eval` has no dict-display
      arm, and the VM-CTFE purity walk admits only the hasher protocol's
      method calls, so a general compile-time method-call rule comes with it.
-  8. **Diagnostic wording and strictness.**
+  7. **Diagnostic wording and strictness.**
      - An unavailable where-gated method reports `'set' is unavailable for
        Variant[Conn]: its where clause evaluated to False` rather than
        upstream's clause text.
-     - Mojito accepts a bare `T` in a struct field type and a
-       non-`Deinitable` field parameter (`struct Box[T: Copyable &
-       Movable]: var value: T`) where upstream requires `Self.T` and a
-       `Deinitable` bound.
-  9. **Deliberate deferrals.** Nothing depends on these; each is a
+     - A bare `T` in a struct field type (`var value: T`) is rejected only
+       by the specialization conformance oracle (`unknown type 'T'`) and a
+       non-`Deinitable` field parameter (`struct Box[T: Copyable & Movable]:
+       var value: Self.T`) is accepted, where upstream reports `use Self.T`
+       and requires a `Deinitable` bound.
+  8. **Deliberate deferrals.** Nothing depends on these; each is a
      conscious limit, listed here so it is not mistaken for unfinished
      task work.
      - Clones are minted per whole instance (no reachability pruning) and

@@ -1056,6 +1056,45 @@ impl Flatten<'_> {
                 {
                     return self.expr(object);
                 }
+                // `x.write_to(writer)` on a receiver without a `write_to`
+                // body of its own (checker-marked): receiver and argument
+                // swap into the `writer.write(x)` shape, the writer's place
+                // retained for the accumulator write-back.
+                if self.checked_adjustments(e).iter().any(|adjustment| {
+                    matches!(
+                        adjustment,
+                        mojito_checked::checked::SemanticAdjustment::InvertedWrite
+                    )
+                }) {
+                    let writer = args.first().expect("checked write_to has one writer");
+                    let (recv, recv_place) = self.lower_call_receiver(writer);
+                    let saved_anchor_permission = self.allow_argument_anchors;
+                    self.allow_argument_anchors = self.call_anchors_arguments(e);
+                    let (regs, arg_places) =
+                        self.lower_call_arguments(std::slice::from_ref(object.as_ref()), false);
+                    self.allow_argument_anchors = saved_anchor_permission;
+                    let d = self.fresh_typed(span(e), None, Ty::None);
+                    self.emit_interior_invalidations(writer, None);
+                    self.emit(MirInstr::MethodCall {
+                        dest: d,
+                        recv,
+                        method: "write".to_string(),
+                        resolved: None,
+                        raises: None,
+                        reference_result: None,
+                        result_adapter: None,
+                        args: regs,
+                        kwargs: Vec::new(),
+                        recv_place,
+                        recv_writes: true,
+                        arg_places,
+                        kwarg_places: Vec::new(),
+                        capture_accesses: Vec::new(),
+                        param_arg_regs: Vec::new(),
+                        param_decls: Vec::new(),
+                    });
+                    return d;
+                }
                 // `v.to_bits()` with the default target arrives as an ordinary
                 // method call; the parameterized spelling takes the invoke
                 // path above. Both lower to the same lane-wise reinterpret.

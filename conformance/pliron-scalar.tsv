@@ -21,6 +21,7 @@ assets/ok/augmented_bitwise_assignment.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bool_alias_predicate_where.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/boolable_and_divmod.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/borrowed_iteration_temporary_source_drop.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/bound_generic_write_to.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/builtins_numeric.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/callable_element_call_dispatch.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/callable_struct_element_invocation.mojo	-	ineligible	no-scalar-entry-shape
@@ -276,6 +277,7 @@ assets/ok/pointer_empty_deref.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_deref_index.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_iterator_storage.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_view_returned.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_origin_field_inference.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_placeholder_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_temp_argument_loan.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_temp_argument_loan_indirect.mojo	-	ineligible	no-scalar-entry-shape
@@ -318,6 +320,7 @@ assets/ok/reference_yielding_iteration_parametric_mut.mojo	-	ineligible	no-scala
 assets/ok/reflected_operators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/repr_type_names.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reversed_iteration.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/reversed_list.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_dtype_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_range_sequential.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_range_strided.mojo	-	ineligible	no-scalar-entry-shape
@@ -347,6 +350,7 @@ assets/ok/span_pointer_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_temp_method_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_temp_static_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_view_basics.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/static_call_origin_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/static_methods.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/std_traits_origin_imports.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_capacity.mojo	-	ineligible	no-scalar-entry-shape

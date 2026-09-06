@@ -16,9 +16,13 @@ pub(super) enum ConsumeKind {
 }
 
 impl Checker {
-    /// A trait name is valid if it is a built-in or a user trait defined so far.
+    /// A trait name is valid if it is a built-in, a user trait defined so
+    /// far, or a same-module trait predeclared ahead of the struct shells.
     pub(super) fn check_trait_name(&self, name: &str) -> Result<(), TypeError> {
-        if BUILTIN_TRAITS.contains(&name) || self.traits.contains_key(name) {
+        if BUILTIN_TRAITS.contains(&name)
+            || self.traits.contains_key(name)
+            || self.predeclared_traits.contains(name)
+        {
             Ok(())
         } else {
             Err(TypeError::UnknownTrait(name.to_string()))

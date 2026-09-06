@@ -355,6 +355,37 @@ impl Flatten<'_> {
             // domain so container mutation stales it without ordinary reads
             // conflicting.
             ExprKind::Invoke { .. } | ExprKind::MethodCall { .. } => {
+                // A static call binding `ref [Self.o]` arguments (the checker
+                // recorded the argument indexes, as for a view construction)
+                // lends those places to the returned aggregate.
+                if let ExprKind::MethodCall { args, .. } = &expression.kind
+                    && let Some(mojito_checked::checked::SemanticAdjustment::BorrowRefArguments {
+                        arguments,
+                        ..
+                    }) = self
+                        .checked_adjustments(expression)
+                        .into_iter()
+                        .find(|adjustment| {
+                            matches!(
+                                adjustment,
+                                mojito_checked::checked::SemanticAdjustment::BorrowRefArguments { .. }
+                            )
+                        })
+                {
+                    let loans = arguments
+                        .into_iter()
+                        .filter_map(|(index, mutable)| {
+                            args.get(index).map(|argument| MirLoan {
+                                place: self.place(argument),
+                                mutable,
+                                interior: None,
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    if !loans.is_empty() {
+                        return loans;
+                    }
+                }
                 let cast =
                     self.checked_adjustments(expression)
                         .into_iter()

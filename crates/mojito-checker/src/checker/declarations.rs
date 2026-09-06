@@ -1368,7 +1368,7 @@ impl Checker {
     /// alive through the binding's loans (a view constructor's contract).
     /// Positional slots only; keyword-bound reference parameters have no
     /// current stdlib surface.
-    fn record_constructor_reference_borrows(
+    pub(in crate::checker) fn record_constructor_reference_borrows(
         &self,
         span: &SourceSpan,
         ref_params: &[Option<mojito_types::origin::RefSig>],
@@ -1704,6 +1704,7 @@ impl Checker {
                     .collect();
                 let pointer_origins = self.bind_constructor_origins(
                     name,
+                    "__init__",
                     &info.source_params,
                     sig,
                     &bound_slots,
@@ -1827,6 +1828,7 @@ impl Checker {
                 if let Ok((subst, tyargs)) = resolved_use {
                     let pointer_origins = match self.bind_constructor_origins(
                         name,
+                        "__init__",
                         &info.source_params,
                         sig,
                         &bound_slots,

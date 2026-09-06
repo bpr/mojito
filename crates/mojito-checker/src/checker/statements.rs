@@ -53,6 +53,15 @@ impl Checker {
         // checks conformance and method bodies. A struct field or method
         // signature may therefore reference a struct declared later in its
         // module (an iterator holding `ref[o] List[T]` above `List` itself).
+        // Trait names predeclare before the shells: a struct parameter's
+        // bound may name a user trait declared anywhere in the module
+        // (`struct Wrap[T: Show]`); the trait's requirements register in
+        // the trait pass below, before any body needs them.
+        for statement in stmts {
+            if let StmtKind::Trait { name, .. } = &statement.kind {
+                self.predeclared_traits.insert(name.clone());
+            }
+        }
         for statement in stmts {
             let Some(declaration) = struct_declaration(statement) else {
                 continue;

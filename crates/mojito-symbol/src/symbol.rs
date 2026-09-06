@@ -937,6 +937,20 @@ fn ast_raw(
                     ParamArg::Type(t) => {
                         s.push_str(&ast_raw(t, comptimes, type_bounds, self_spelling))
                     }
+                    // The parser cannot tell a type parameter from a value
+                    // in argument position (`List[T]` arrives as a value
+                    // identifier); one naming a declared parameter of the
+                    // signature spells as the checker's `Ty::Param` does, so
+                    // the declaration and its call sites agree.
+                    ParamArg::Value(v)
+                        if matches!(&v.kind, mojito_ast::ast::ExprKind::Identifier(name)
+                            if type_bounds.contains_key(name)) =>
+                    {
+                        let mojito_ast::ast::ExprKind::Identifier(name) = &v.kind else {
+                            unreachable!("guard matched an identifier");
+                        };
+                        s.push_str(&parameter_raw(name, type_bounds));
+                    }
                     ParamArg::Value(v) => {
                         s.push('V');
                         s.push_str(&value_expr_raw(v, comptimes));

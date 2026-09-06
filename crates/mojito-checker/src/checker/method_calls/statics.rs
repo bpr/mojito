@@ -106,6 +106,14 @@ impl Checker {
         let info = self.structs.get(sname).ok_or_else(|| {
             TypeError::InvariantViolation(format!("struct '{sname}' was not registered"))
         })?;
+        // Origin slots partition out of the receiver application once, as
+        // construction does (`Span[Int, origin_of(xs)]`, `V[origin_of(w)]`):
+        // every binder below sees origin-free arguments, and the explicit
+        // origins are checked against the arguments binding those slots
+        // once a static is selected.
+        let partitioned =
+            self.partition_struct_origin_args(sname, &info.source_params, struct_targs)?;
+        let forwarded: &[mojito_ast::ast::ParamArg] = &partitioned.forwarded;
         let receiver_spelling = || {
             if struct_targs.is_empty() {
                 sname.to_string()
@@ -121,6 +129,9 @@ impl Checker {
                 method: method.to_string(),
             })?;
         let mut matches = Vec::new();
+        // The signature behind each match, recovered after selection by its
+        // parameter shape (origin binding needs the declared binders).
+        let mut candidate_sigs: Vec<(&MethodSig, Vec<Ty>)> = Vec::new();
         let mut availability_failure = None;
         let single_candidate = signatures.iter().filter(|sig| !sig.has_self).count() == 1;
         for sig in signatures.iter().filter(|sig| !sig.has_self) {
@@ -135,7 +146,7 @@ impl Checker {
                 method,
                 &info.decls,
                 sig,
-                struct_targs,
+                forwarded,
                 args,
                 kwargs,
             ) {
@@ -204,6 +215,7 @@ impl Checker {
                 args,
                 kwargs,
             ) {
+                candidate_sigs.push((sig, params.clone()));
                 matches.push(MethodCallResolution {
                     conversion_score: scored.rank,
                     slots: scored.slots,
@@ -277,7 +289,7 @@ impl Checker {
             let receiver_targs = (!struct_targs.is_empty())
                 .then(|| {
                     self.structs.get(sname).and_then(|info| {
-                        self.resolve_use_params(sname, &info.decls, struct_targs, &[], &[])
+                        self.resolve_use_params(sname, &info.decls, forwarded, &[], &[])
                             .ok()
                             .map(|(_, tyargs)| tyargs)
                     })
@@ -330,7 +342,7 @@ impl Checker {
         // clone once minted; an inferred receiver keeps the erased path.
         if !struct_targs.is_empty()
             && let Ok((_, tyargs)) =
-                self.resolve_use_params(sname, &info.decls, struct_targs, &[], &[])
+                self.resolve_use_params(sname, &info.decls, forwarded, &[], &[])
         {
             self.record_struct_instantiation(sname, &tyargs, span.source.as_deref());
             if let Some(clone) = self.instance_method_clone(sname, method, &tyargs) {
@@ -349,6 +361,114 @@ impl Checker {
                 );
             }
         }
+        self.finish_static_call(
+            span,
+            sname,
+            method,
+            selected,
+            &candidate_sigs,
+            &info.source_params,
+            &partitioned.explicit_origins,
+            args,
+            kwargs,
+        )
+    }
+
+    /// Complete a selected static call: bind the struct's origin parameters
+    /// from `ref [Self.o]` arguments (a static returning `V[Self.o]` is a
+    /// constructor in all but name — the explicit origins are checked against
+    /// those arguments and the result keeps them lent), retain `mut`/`ref`
+    /// caller places and alias-check as an instance call does (statics return
+    /// before that shared tail), then record the selected conversions, symbol,
+    /// and error effect.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn finish_static_call(
+        &self,
+        span: SourceSpan,
+        sname: &str,
+        method: &str,
+        selected: MethodCallResolution,
+        candidate_sigs: &[(&MethodSig, Vec<Ty>)],
+        source_params: &[mojito_ast::ast::TypeParam],
+        explicit_origins: &[crate::checker::type_resolution::ExplicitStructOrigin],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Result<Ty, TypeError> {
+        if let Some((sig, _)) = candidate_sigs
+            .iter()
+            .find(|(_, params)| *params == selected.param_types)
+            && (sig.origin_binders.iter().any(Option::is_some) || !explicit_origins.is_empty())
+        {
+            let mut bound_slots = Vec::new();
+            let mut arg_tys = Vec::new();
+            for (index, slot) in selected.slots.iter().enumerate() {
+                let expression = match slot {
+                    ArgSlot::Positional(position) => &args[*position],
+                    ArgSlot::Keyword(position) => &kwargs[*position].value,
+                    ArgSlot::Default => continue,
+                };
+                bound_slots.push((index, expression, &selected.param_types[index]));
+                arg_tys.push(self.infer(expression)?);
+            }
+            self.bind_constructor_origins(
+                sname,
+                method,
+                source_params,
+                sig,
+                &bound_slots,
+                &arg_tys,
+                explicit_origins,
+            )?;
+            self.record_constructor_reference_borrows(&span, &selected.ref_params, &selected.slots);
+        }
+        // `mut`/`ref` arguments keep their caller places and alias-check as
+        // on an instance call (statics return before that shared tail).
+        let (effective_conventions, _) = self.solve_call_origins(
+            &selected.slots,
+            &selected.conventions,
+            &selected.ref_params,
+            selected.ref_return.as_ref(),
+            args,
+            kwargs,
+        )?;
+        let copied_reads = selected
+            .slots
+            .iter()
+            .enumerate()
+            .map(|(index, slot)| {
+                let expression = match slot {
+                    ArgSlot::Positional(position) => &args[*position],
+                    ArgSlot::Keyword(position) => &kwargs[*position].value,
+                    ArgSlot::Default => return Ok(false),
+                };
+                let Some(parameter) = selected.param_types.get(index) else {
+                    return Ok(false);
+                };
+                let convention = effective_conventions.get(index).copied().flatten();
+                Ok(
+                    !matches!(convention, Some(ArgConvention::Mut | ArgConvention::Ref))
+                        && self.call_read_is_independent_copy(
+                            &self.infer_with_expected(expression, parameter, true)?,
+                        ),
+                )
+            })
+            .collect::<Result<Vec<_>, TypeError>>()?;
+        crate::checker::places::check_call_aliasing(
+            &selected.slots,
+            &effective_conventions,
+            &copied_reads,
+            args,
+            kwargs,
+        )?;
+        self.borrowed_read_call_places.borrow_mut().extend(
+            crate::checker::places::borrowable_read_arguments(
+                &selected.slots,
+                &effective_conventions,
+                args,
+                kwargs,
+                None,
+            ),
+        );
         self.record_selected_method_conversions(method, &selected, args, kwargs)?;
         if let Some(target) = selected.lowered_name.clone() {
             self.overload_targets

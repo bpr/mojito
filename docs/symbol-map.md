@@ -110,12 +110,21 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   String-slice rejection hint, and member access.
 - `checker/method_calls.rs` (split across
   `method_calls/{mc_infer,selection,statics,builtin_types}.rs`) owns
-  method-call inference, overload scoring
+  method-call inference (including the `Writer.write` intrinsic and its
+  inverse: `x.write_to(writer)` on a bounded parameter, a builtin, or the
+  nominal String records `SemanticAdjustment::InvertedWrite`, which
+  `mir/lower_expr/expr.rs` lowers as `writer.write(x)`), overload scoring
   (score ties on receiver-overloaded methods break by the call's explicit `^`
   transfer), and static/pointer/uninit-storage/List/Tuple method inference
   (`infer_struct_static_method` dispatches statics on parameterized structs —
-  explicit `TypeApply`/subscript-parsed receivers and bare receivers with
-  struct parameters inferred from argument types via `resolve_use_params`;
+  explicit `TypeApply`/subscript-parsed receivers, whose origin slots
+  partition out through `partition_struct_origin_args` as construction does,
+  and bare receivers with struct parameters inferred from argument types via
+  `resolve_use_params`; `finish_static_call` completes every static, on both
+  the parametric and the bare non-parametric path — binding `ref [Self.o]`
+  slots and explicit origins through the constructor's
+  `bind_constructor_origins`/`record_constructor_reference_borrows`, retaining
+  `mut`/`ref` argument places via `solve_call_origins`, and alias-checking;
   both method paths and the constructor paths record
   `checked::MethodInstantiation`s and retarget to an existing per-call
   clone through `specialized_method_clone`, whose value list must agree with

@@ -79,6 +79,33 @@ fn generic_keyword_variadic_role_is_part_of_callable_identity() {
 }
 
 #[test]
+fn parameterized_annotation_type_parameters_spell_their_bounds() {
+    // `Box[T]` in argument position arrives from the parser as a value
+    // identifier; a declared type parameter there mangles as the checker's
+    // `Ty::Param` does, so the overloaded generic member is the symbol its
+    // call names.
+    let source = "struct Box[T: Copyable & Movable]:\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\ndef pick[T: Copyable & Movable](b: Box[T]) -> Int:\n    return 1\n\ndef pick(x: Int) -> Int:\n    return x\n\ndef main():\n    print(pick(Box(7)))\n    print(pick(5))\n";
+    let names = lowered_names(source);
+    assert!(
+        names.contains("pick$ov$Box$T$Copyable$Movable"),
+        "{names:?}"
+    );
+
+    let program = parse(source).expect("parse error");
+    let targets = resolve_overload_targets(&program).expect("check error");
+    let pick_targets: HashSet<_> = targets
+        .values()
+        .filter(|target| target.starts_with("pick$ov$"))
+        .cloned()
+        .collect();
+    assert_eq!(pick_targets.len(), 2, "{pick_targets:?}");
+    assert!(
+        pick_targets.iter().all(|target| names.contains(target)),
+        "{pick_targets:?} vs {names:?}"
+    );
+}
+
+#[test]
 fn non_overloaded_def_keeps_its_source_name() {
     let names = lowered_names("def solo(x: Int) -> Int:\n    return x\n");
     assert!(names.contains("solo"), "{names:?}");

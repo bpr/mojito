@@ -17,9 +17,11 @@ impl Checker {
     /// runs parallel to it. The result maps a struct binder to the pointer
     /// provenance the call binds it to, for substitution into the parameter
     /// types before coercion ([`substitute_pointer_origin_params`]).
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::checker) fn bind_constructor_origins(
         &self,
         struct_name: &str,
+        callee: &str,
         source_params: &[mojito_ast::ast::TypeParam],
         sig: &MethodSig,
         bound: &[(usize, &Expr, &Ty)],
@@ -29,7 +31,7 @@ impl Checker {
         let mut bindings: HashMap<OriginParamId, PointerOrigin> = HashMap::new();
         for ((index, expression, pattern), actual) in bound.iter().zip(arg_tys) {
             let parameter = sig.names.get(*index).map(String::as_str).unwrap_or("?");
-            let context = || format!("argument '{parameter}' to '{struct_name}.__init__'");
+            let context = || format!("argument '{parameter}' to '{struct_name}.{callee}'");
             if let Ty::Pointer {
                 origin:
                     PointerOrigin::Param {

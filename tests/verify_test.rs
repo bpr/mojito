@@ -1194,6 +1194,7 @@ fn verifier_rejects_mismatched_declared_call_arguments() {
         raises: false,
         error_ty: None,
         ref_params: vec![false],
+        param_writes: vec![false],
     });
     expect_finding(
         &prog,
@@ -1252,6 +1253,7 @@ fn verifier_rejects_malformed_direct_compile_time_arguments() {
         raises: false,
         error_ty: None,
         ref_params: Vec::new(),
+        param_writes: Vec::new(),
     });
     expect_finding(&prog, "register type StringLiteral, declared Int");
 
@@ -1551,6 +1553,7 @@ fn verifier_rejects_a_mismatched_iterator_exhaustion_contract() {
         raises: true,
         error_ty: Some(stop_iteration),
         ref_params: Vec::new(),
+        param_writes: Vec::new(),
     });
 
     expect_finding(&prog, "TryNext catches non-StopIteration type OtherError");
@@ -1616,6 +1619,7 @@ fn verifier_rejects_an_iterator_reference_result_abi_mismatch() {
         raises: true,
         error_ty: Some(stop_iteration),
         ref_params: Vec::new(),
+        param_writes: Vec::new(),
     });
 
     expect_finding(&prog, "TryNext result contract does not match");

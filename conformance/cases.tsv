@@ -311,3 +311,8 @@ view-temporaries	run	assets/ok/view_temporaries.mojo
 view-temporary-write	run	conformance/fixtures/view_temporary_write.mojo
 pack-named-repr	run	conformance/fixtures/pack_named_repr.mojo
 joint-map	run	assets/ok/joint_map.mojo
+bound-generic-write-to	run	assets/ok/bound_generic_write_to.mojo
+reversed-list	run	assets/ok/reversed_list.mojo
+static-call-origin-application	run	assets/ok/static_call_origin_application.mojo
+pointer-origin-field-inference	run	assets/ok/pointer_origin_field_inference.mojo
+untracked-pointer-field-tracked-argument	reject	assets/type_error/untracked_pointer_field_tracked_argument.mojo

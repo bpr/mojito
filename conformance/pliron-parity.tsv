@@ -21,6 +21,7 @@ assets/ok/augmented_bitwise_assignment.mojo	main	exe-differential	sanitized
 assets/ok/bool_alias_predicate_where.mojo	main	exe-differential	sanitized
 assets/ok/boolable_and_divmod.mojo	main	exe-differential	sanitized
 assets/ok/borrowed_iteration_temporary_source_drop.mojo	main	exe-differential	sanitized
+assets/ok/bound_generic_write_to.mojo	main	exe-differential	sanitized
 assets/ok/builtins_numeric.mojo	main	exe-differential	sanitized
 assets/ok/callable_element_call_dispatch.mojo	main	exe-differential	sanitized
 assets/ok/callable_struct_element_invocation.mojo	main	exe-differential	sanitized
@@ -276,6 +277,7 @@ assets/ok/pointer_empty_deref.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_deref_index.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_iterator_storage.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_view_returned.mojo	main	exe-differential	sanitized
+assets/ok/pointer_origin_field_inference.mojo	main	exe-differential	sanitized
 assets/ok/pointer_placeholder_parameter.mojo	main	exe-differential	sanitized
 assets/ok/pointer_temp_argument_loan.mojo	main	exe-differential	sanitized
 assets/ok/pointer_temp_argument_loan_indirect.mojo	main	exe-differential	sanitized
@@ -318,6 +320,7 @@ assets/ok/reference_yielding_iteration_parametric_mut.mojo	main	exe-differential
 assets/ok/reflected_operators.mojo	main	exe-differential	sanitized
 assets/ok/repr_type_names.mojo	main	exe-differential	sanitized
 assets/ok/reversed_iteration.mojo	main	exe-differential	sanitized
+assets/ok/reversed_list.mojo	main	exe-differential	sanitized
 assets/ok/scalar_dtype_construction.mojo	main	exe-differential	sanitized
 assets/ok/scalar_range_sequential.mojo	main	exe-differential	sanitized
 assets/ok/scalar_range_strided.mojo	main	exe-differential	sanitized
@@ -347,6 +350,7 @@ assets/ok/span_pointer_construction.mojo	main	exe-differential	sanitized
 assets/ok/span_temp_method_argument.mojo	main	exe-differential	sanitized
 assets/ok/span_temp_static_argument.mojo	main	exe-differential	sanitized
 assets/ok/span_view_basics.mojo	main	exe-differential	sanitized
+assets/ok/static_call_origin_application.mojo	main	exe-differential	sanitized
 assets/ok/static_methods.mojo	main	exe-differential	sanitized
 assets/ok/std_traits_origin_imports.mojo	main	exe-differential	sanitized
 assets/ok/string_capacity.mojo	main	exe-differential	sanitized
