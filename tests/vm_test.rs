@@ -1905,13 +1905,23 @@ fn container_family_owning_apis_execute() {
 #[test]
 fn annotated_local_origin_arguments_are_demands_on_the_initializer() {
     // An explicit origin argument in a `var` annotation is a demand on the
-    // initializer, not just validated and erased: a local place cannot
-    // satisfy `ImmStaticOrigin`, and `origin_of(xs)` rejects a value that
-    // borrows a different list. A view of the named place, a `Span(xs)`
-    // construction, and a literal view (borrowing nothing) satisfy them.
-    let ok_src = "def main():\n    var xs: List[Int] = [1, 2, 3]\n    var a: Span[Int, origin_of(xs)] = xs\n    var b: Span[Int, origin_of(xs)] = Span(xs)\n    var lit: StringSpan[ImmStaticOrigin] = \"abc\"\n    print(a[0], b[2], lit)\n";
-    assert_eq!(parity(ok_src), "1 3 abc\n");
+    // initializer and on every later assignment, not just validated and
+    // erased: a local place cannot satisfy `ImmStaticOrigin`, and
+    // `origin_of(xs)` rejects a value that borrows a different list. A view
+    // of the named place, a `Span(xs)` construction, a sub-view, a call
+    // returning a view of the place, and a literal view (borrowing nothing)
+    // satisfy them.
+    let ok_src = "def view(ref xs: List[Int]) -> Span[Int, origin_of(xs)]:\n    return Span(xs)\n\ndef main():\n    var xs: List[Int] = [1, 2, 3]\n    var a: Span[Int, origin_of(xs)] = xs\n    var b: Span[Int, origin_of(xs)] = Span(xs)\n    var lit: StringSpan[ImmStaticOrigin] = \"abc\"\n    print(a[0], b[2], lit)\n    a = xs\n    a = a[1:3]\n    b = view(xs)\n    lit = \"def\"\n    print(a[0], b[2], lit)\n";
+    assert_eq!(parity(ok_src), "1 3 abc\n2 3 def\n");
     for (src, expected) in [
+        (
+            "def main():\n    var xs: List[Int] = [1]\n    var ys: List[Int] = [2]\n    var v: Span[Int, origin_of(xs)] = xs\n    v = ys\n    print(v[0])\n",
+            "assignment to 'v'",
+        ),
+        (
+            "def main():\n    var v: StringSpan[ImmStaticOrigin] = \"lit\"\n    var s = String(\"abc\")\n    v = s\n    print(v)\n",
+            "cannot satisfy ImmStaticOrigin",
+        ),
         (
             "def main():\n    var s = String(\"hi\")\n    var w: StringSpan[ImmStaticOrigin] = s\n    print(w)\n",
             "cannot satisfy ImmStaticOrigin",

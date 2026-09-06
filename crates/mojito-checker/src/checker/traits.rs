@@ -733,6 +733,10 @@ impl Checker {
                     raises: sig.raises,
                     error: sig.raises.then(|| sig.error.as_deref().cloned()).flatten(),
                     returns_reference: sig.ref_return.is_some(),
+                    param_writes: mojito_checked::checked::DeclarationEffect::param_writes(
+                        &sig.conventions,
+                        &sig.ref_params,
+                    ),
                 },
             );
             let info = self.structs.get_mut(name).ok_or_else(|| {

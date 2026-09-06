@@ -239,12 +239,14 @@ impl Decoder {
             Some(d.option_ty(Some(v)))
         })?;
         let ref_params = self.req(value, fields, "ref_params", |d, v| Some(d.bools(v)))?;
+        let param_writes = self.req(value, fields, "param_writes", |d, v| Some(d.bools(v)))?;
         for (label, length) in [
             ("param_types", param_types.len()),
             ("defaults", defaults.len()),
             ("required", required.len()),
             ("param_conventions", param_conventions.len()),
             ("ref_params", ref_params.len()),
+            ("param_writes", param_writes.len()),
         ] {
             if length != param_names.len() {
                 self.error(
@@ -282,6 +284,7 @@ impl Decoder {
                 "raises",
                 "error_type",
                 "ref_params",
+                "param_writes",
             ],
         );
         Some(MirFunctionDeclaration {
@@ -307,6 +310,7 @@ impl Decoder {
             raises,
             error_ty,
             ref_params,
+            param_writes,
         })
     }
 

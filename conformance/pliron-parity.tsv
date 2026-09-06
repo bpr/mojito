@@ -138,6 +138,7 @@ assets/ok/method_mut_param.mojo	main	exe-differential	sanitized
 assets/ok/movable_where_false_explicit_destroy.mojo	main	exe-differential	sanitized
 assets/ok/mut_owned_params.mojo	-	ineligible	no-main-entry
 assets/ok/mut_ref_writeback.mojo	main	exe-differential	sanitized
+assets/ok/named_shared_views.mojo	main	exe-differential	sanitized
 assets/ok/nested.mojo	main	exe-differential	sanitized
 assets/ok/nested_comprehensions.mojo	main	exe-differential	sanitized
 assets/ok/nested_def_captured_param_store.mojo	main	exe-differential	sanitized
@@ -419,6 +420,7 @@ assets/ownership_ok/subtree_reads_coexist.mojo	main	exe-differential	sanitized
 assets/ownership_ok/subtree_sibling_root_mutation.mojo	main	exe-differential	sanitized
 assets/ownership_ok/subtree_single_write_ok.mojo	main	exe-differential	sanitized
 assets/ownership_ok/transferred_loan_after_last_use.mojo	main	exe-differential	sanitized
+assets/ownership_ok/view_live_across_reading_loop.mojo	main	exe-differential	sanitized
 assets/runtime_error/allocation_use_after_dealloc.mojo	main,__toplevel__	error-differential	category=PointerUseAfterFree
 assets/runtime_error/div_by_zero.mojo	-	ineligible	non-conforming-snippet
 assets/runtime_error/list_contiguous_slice_negative.mojo	main,__toplevel__	error-differential	category=Abort

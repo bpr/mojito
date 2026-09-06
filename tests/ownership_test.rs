@@ -837,3 +837,65 @@ fn transferred_carrier_loans_keep_the_source_alive() {
     let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef main():\n    var sink = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    sink.append(RefBox(alias))\n    print(sink[0].value[0])\n";
     assert!(own(src).is_ok());
 }
+
+#[test]
+fn mutable_element_loop_conflicts_with_a_live_whole_place_view() {
+    // A `for ref` loop lends the list's elements mutably, which is exclusive
+    // against a live whole-place view of the list (a `Span`, or a shared
+    // reference returned by an immutable-origin def), in both orders. A
+    // value loop reads only and coexists with the view; iterating the view
+    // itself writes through to the list; and an interior read inside the
+    // `for ref` loop keeps its generation semantics.
+    let rejected = [
+        "def main():\n    var xs: List[Int] = [1, 2]\n    var view = Span(xs)\n    for ref x in xs:\n        x += 1\n    print(view[0])\n",
+        "def main():\n    var xs: List[Int] = [1, 2]\n    for ref x in xs:\n        var v = Span(xs)\n        x += v[0]\n    print(xs[1])\n",
+    ];
+    for src in rejected {
+        assert!(own_linked(src).is_err(), "accepted: {src}");
+    }
+    let borrowed_view = "def borrow[origin: Origin[mut=False]](ref[origin] values: List[Int]) -> ref[origin] List[Int]:\n    return values\n\ndef main():\n    var values: List[Int] = [1, 2, 3]\n    ref view = borrow(values)\n    for ref x in values:\n        x += 1\n    print(view[0])\n";
+    assert!(matches!(
+        own_linked(borrowed_view),
+        Err(OwnershipError::LoanConflict { place, loan, .. })
+            if place == "values" && loan == "view"
+    ));
+    let accepted = "def main():\n    var xs: List[Int] = [1, 2]\n    var view = Span(xs)\n    var total = 0\n    for x in xs:\n        total += x\n    print(total, view[0])\n    for ref y in view:\n        y += 10\n    print(xs[0], xs[1])\n    for ref z in xs:\n        print(len(xs), z)\n    for ref a in xs:\n        for ref b in xs:\n            b += 1\n        a += 1\n    print(xs[0], xs[1])\n";
+    assert!(own_linked(accepted).is_ok());
+}
+
+#[test]
+fn immutable_ref_arguments_are_shared_reads_at_the_call() {
+    // A place lent to a `ref` parameter under an immutable origin contract
+    // (`Origin[mut=False]`) is a shared read at the call, so two such views
+    // of one place coexist — a single-`__init__` construction (called by its
+    // bare struct name) and a free def alike — while the mutable-origin
+    // twin and a write to the source while the view lives still conflict.
+    let view = "struct View[o: Origin[mut=False]](Copyable, Movable):\n    var _v: Pointer[Int, Self.o]\n    def __init__(out self, ref[Self.o] value: Int):\n        self._v = Pointer(to=value)\n    def get(self) -> Int:\n        return self._v[]\n\ndef borrow[o: Origin[mut=False]](ref[o] value: Int) -> ref[o] Int:\n    return value\n\ndef peek[o: Origin[mut=False]](ref[o] value: Int) -> Int:\n    return value\n\n";
+    let accepted = format!(
+        "{view}def main():\n    var w = 1\n    var a = View(w)\n    var b = View(w)\n    print(a.get(), b.get())\n    ref alias = borrow(w)\n    print(peek(w))\n    print(alias)\n"
+    );
+    assert!(own(&accepted).is_ok());
+    let source_write = format!(
+        "{view}def main():\n    var w = 1\n    var a = View(w)\n    w += 1\n    print(a.get())\n"
+    );
+    assert!(matches!(
+        own(&source_write),
+        Err(OwnershipError::LoanConflict { place, loan, .. })
+            if place == "w" && loan == "a"
+    ));
+    let mutable_twin = "struct MutView[o: Origin[mut=True]](Copyable, Movable):\n    var _v: Pointer[Int, Self.o]\n    def __init__(out self, ref[Self.o] value: Int):\n        self._v = Pointer(to=value)\n    def get(self) -> Int:\n        return self._v[]\n\ndef main():\n    var w = 1\n    var a = MutView(w)\n    var b = MutView(w)\n    print(a.get(), b.get())\n";
+    assert!(matches!(
+        own(mutable_twin),
+        Err(OwnershipError::LoanConflict { .. })
+    ));
+    // Upstream's `Named[T, o: ImmOrigin]`: two over one value, bound or
+    // temporary, print `a=5 b=5`.
+    let named = "from std.format._utils import Named\n\ndef main():\n    var w = 5\n    var a = Named(\"a\", w)\n    var b = Named(\"b\", w)\n    print(a, b)\n    print(Named(\"c\", w), Named(\"d\", w))\n";
+    assert!(own_linked(named).is_ok());
+    let named_write = "from std.format._utils import Named\n\ndef main():\n    var w = 5\n    var a = Named(\"a\", w)\n    w += 1\n    print(a)\n";
+    assert!(matches!(
+        own_linked(named_write),
+        Err(OwnershipError::LoanConflict { place, loan, .. })
+            if place == "w" && loan == "a"
+    ));
+}

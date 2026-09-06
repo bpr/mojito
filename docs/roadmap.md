@@ -86,16 +86,43 @@ exempt from the ordering.
 
 - [ ] **Collection API parity** — grow the tuple, slice, optional/variant,
   and String surfaces toward the audited head (`docs/features.md` records
-  what lands). The tasks below are in implementation order: prioritized by
-  payoff and sorted so that every dependency precedes what needs it. A task
-  closes when its bullets are done; a residue discovered inside a task moves
-  to the task that owns its fix (or to task 6, the deliberate deferrals),
-  never back to a finished one. Plan first: task 4 (ordering); the rest
-  are direct.
+  what lands). The tasks below are in impact order: soundness of the
+  executable oracle first, then everyday spellings that reject today, then
+  the native lane, then parity details; no task depends on a later one. A
+  task closes when its bullets are done; a residue discovered inside a task
+  moves to the task that owns its fix (or to task 9, the deliberate
+  deferrals), never back to a finished one. Tasks 1 and 4 are one session
+  each (the 2026-09-06 pointer/view/pack residues, clumped by the subsystem
+  that owns the fix); plan first: task 5 (ordering); the rest are direct.
 
-  1. **Optional, Tuple, and Slice odds and ends.** Self-contained.
+  1. **Inference and minting through origin-bearing and bound generics.**
+     Checker inference, specialization conformance, and discovery minting
+     for structs and free defs whose parameters carry origins or trait
+     bounds.
+     - A generic struct with a trait-bound parameter and a `write_to`
+       (`struct Wrap[T: Writable](Writable)`) fails the specialization
+       conformance oracle (`unknown type 'T'`) even for `print(Wrap(8))`.
+     - `B2(Pointer(to=w))` cannot infer `T` through a `Pointer[Self.T, …]`
+       field, and `B2[Int](Pointer(to=w))` rejects the tracked pointer
+       against a `MutUntrackedOrigin` field.
+     - `reversed(list)` stays the method spelling (`xs.__reversed__()`):
+       `reversed` is an overload set, and overloaded names keep the abstract
+       path, so the origin-bearing generic free def is not minted.
+     - A static-method call through an origin-bearing type application
+       (`Span[Int, origin_of(xs)].method()`) does not partition the origin
+       slot (`method_calls/statics.rs`).
+  2. **Optional, Tuple, and Slice odds and ends.** Self-contained.
      - The raising `opt[]` subscript: empty-subscript form on nominal
        receivers plus `EmptyOptionalError`'s `TypeNames` text.
+     - A `ref self` method on a call temporary (`s.split(",")[1]`) rejects
+       `reference binding to a non-place expression`; bind the result first.
+     - Explicit method-level value-parameter bindings on a non-pack struct
+       (`w.pick[3]()`, upstream's `s.isspace[single_character=True]()`)
+       fail MIR verification (`nongeneric call carries a compile-time value
+       argument`), and a value-parameterized method on the
+       origin-parameterized `StringSpan` aborts `unspecialized type-keyed
+       method` even for the defaulted call — so `isspace` is declared
+       without upstream's `single_character` parameter.
      - `Tuple`/`Array` `Defaultable`: needs `Ts[i]()`/`Self.T()` element
        default construction.
      - Tuple's static `__len__()` cannot coexist with the instance one under
@@ -107,72 +134,7 @@ exempt from the ordering.
      - `Slice(...)` reads only `Int`/`None` argument expressions; an
        `Optional[Int]` variable needs the nominal slot read.
      - Explicit `.write_to(writer)` on a slice descriptor is not wired.
-     - Explicit method-level value-parameter bindings on a non-pack struct
-       (`w.pick[3]()`, upstream's `s.isspace[single_character=True]()`)
-       fail MIR verification (`nongeneric call carries a compile-time value
-       argument`), and a value-parameterized method on the
-       origin-parameterized `StringSpan` aborts `unspecialized type-keyed
-       method` even for the defaulted call — so `isspace` is declared
-       without upstream's `single_character` parameter.
-     - A `ref self` method on a call temporary (`s.split(",")[1]`) rejects
-       `reference binding to a non-place expression`; bind the result first.
-  2. **String Unicode, iterator, and parsing extras.** Port on demand.
-     - `upper`/`lower`: simple-case subset (ASCII, Latin-1, Latin
-       Extended-A, Greek, Cyrillic, `ß` → `SS`); upstream ships full Unicode
-       simple and special casing tables.
-     - `count_codepoints`/`count_graphemes` `raise` on invalid UTF-8
-       (upstream: non-raising) and decode through an eager `to_string()`
-       copy per step.
-     - Missing: `codepoint_slices_reversed`, `graphemes_reversed`,
-       `__reversed__`, `bytes()`, `split_at_grapheme`, `peek_next`.
-     - `atof` is correctly rounded only while the significand (≤19 digits)
-       and power of ten (≤22) stay exact; NaN prints `NaN` (upstream `nan`).
-     - `len(s)` on a String or StringSpan is accepted (byte length) where
-       upstream rejects it as ambiguous (`byte_length()`, `len(s.codepoints())`,
-       `len(s.graphemes())`); an extension to drop at the next re-pin.
-  3. **Pointer, view, and pack residues.** Found while closing the
-     origin-bearing `Span`/`Pointer` construction task (2026-09-06); each
-     is a real gap with its fix outside that task's scope.
-     - A generic struct with a trait-bound parameter and a `write_to`
-       (`struct Wrap[T: Writable](Writable)`) fails the specialization
-       conformance oracle (`unknown type 'T'`) even for `print(Wrap(8))`.
-     - `B2(Pointer(to=w))` cannot infer `T` through a `Pointer[Self.T, …]`
-       field, and `B2[Int](Pointer(to=w))` rejects the tracked pointer
-       against a `MutUntrackedOrigin` field.
-     - Two `Named` values over one `w` conflict (`print(Named("a", w),
-       Named("b", w))`, or two bound locals): the construction's loan on
-       `w` is minted mutable although `Named`'s origin is `Origin[mut=False]`.
-     - `var view = Span(xs)` then `for ref x in xs: x += 1` is accepted while
-       the view lives (loop write-through does not conflict with the view's
-       loan).
-     - Reassigning an origin-annotated local (`var v: Span[Int,
-       origin_of(xs)] = xs` then `v = ys`) is not judged against the
-       annotation's origin demand (only the declaration is).
-     - `_ArrayIter` and `_SpanIter` do not iterate themselves: an
-       `IteratorType` alias naming the enclosing struct's own value parameter
-       resolves `length` as a type, and the erased `_SpanIter.__next__` body
-       has no VM dispatch for `len(span)`. `_ListIter`/`_SetIter` do.
-     - Nested and whole-pack-forwarded type-pack calls keep the syntactic
-       element-typing path (`not a compile-time value` for a non-evident
-       element); only top-level calls consult the checker's instantiation.
-     - A static-method call through an origin-bearing type application
-       (`Span[Int, origin_of(xs)].method()`) does not partition the origin
-       slot (`method_calls/statics.rs`).
-     - `reversed(list)` stays the method spelling (`xs.__reversed__()`):
-       `reversed` is an overload set, and overloaded names keep the abstract
-       path, so the origin-bearing generic free def is not minted.
-     - `TypeNames[Int]()` prints `SIMD[DType.int, 1]` where upstream prints
-       `Int`.
-     - Casting a tracked pointer to an untracked origin at its source's last
-       use (`s.unsafe_ptr().unsafe_origin_cast[ImmUntrackedOrigin]()`) frees
-       the source before the pointer is read — as upstream would; a note,
-       not a gap.
-  4. **Storage-shape items with a known blocker.** Short plan (ordering).
-     - Relax K/V/element bounds toward upstream's Movable-only `KeyElement`
-       (a per-API `where` pass, as `List[T: AnyType]`).
-     - `(*, unsafe_uninit_length)` construction and resize: blocked on an
-       uninit-element storage story for List (MaybeUninit-adjacent).
-  5. **Native-lane follow-ups.** The VM runs all of these; monomorphizer
+  3. **Native-lane follow-ups.** The VM runs all of these; monomorphizer
      and native-drop bug fixes.
      - `repr` lowers natively only for Strings, without escapes; no user
        `write_repr_to` runs natively, so the collection repr texts are
@@ -196,40 +158,77 @@ exempt from the ordering.
      - The generic `next[T: Iterator](mut it: T)` body fails natively
        (`unsupported reference-result method adapter`); `next` is pinned by
        conformance/fixtures/next_builtin.mojo only.
-  6. **Deliberate deferrals from the generic-clone arc.** Nothing depends
-     on these; each is a conscious limit, listed here so it is not mistaken
-     for unfinished task work.
-     - Clones are minted per whole instance (no reachability pruning) and
-       re-checked each discovery round: `benchmarks/compile/stdlib_heavy` is
-       about 2.2x its pre-clone baseline in release (`docs/performance.md`);
-       the repr methods added 2026-09-05 cost about 5% in debug across the
-       compile benchmarks. Lever: reachability-pruned minting.
-     - An instantiation whose argument mentions `StringLiteral` (`{"a": 1}`
-       is `Dict[StringLiteral, Int]`) keeps the erased path: its values keep
-       the literal runtime representation while an un-annotated binding
-       materializes `String`. Lifting it needs one runtime representation
-       for `StringLiteral` and `String`, or typing the display as
-       `Dict[String, Int]` as Mojo does.
-     - A call inside an unstamped bundled body on a bundled struct's generic
-       method keeps the erased path (requests are admitted from user code,
-       clone bodies, variadic specs, instances, and user structs).
-     - An instance clone whose walk cannot resolve an application (a
-       variadic template over a nested public `Tuple` argument) is dropped
-       to the erased path rather than failing the program.
-  7. **Diagnostic wording and strictness.**
-      - An unavailable where-gated method reports `'set' is unavailable for
-        Variant[Conn]: its where clause evaluated to False` rather than
-        upstream's clause text.
-      - Mojito accepts a bare `T` in a struct field type and a
-        non-`Deinitable` field parameter (`struct Box[T: Copyable &
-        Movable]: var value: T`) where upstream requires `Self.T` and a
-        `Deinitable` bound.
-
-  8. **Compile-time collections.** `comptime d = {...}` Dict/Set values
+  4. **Parameter kinds in nested positions.** Value parameters, type packs,
+     and type names classified through an alias, a nested call, or a
+     display rather than a top-level application. Everyday loops already
+     run (`for x in span`, `xs.__reversed__()`), so these are parity
+     details.
+     - `_ArrayIter` and `_SpanIter` do not iterate themselves: an
+       `IteratorType` alias naming the enclosing struct's own value parameter
+       resolves `length` as a type, and the erased `_SpanIter.__next__` body
+       has no VM dispatch for `len(span)`. `_ListIter`/`_SetIter` do.
+     - Nested and whole-pack-forwarded type-pack calls keep the syntactic
+       element-typing path (`not a compile-time value` for a non-evident
+       element); only top-level calls consult the checker's instantiation.
+     - `TypeNames[Int]()` prints `SIMD[DType.int, 1]` where upstream prints
+       `Int`.
+  5. **Storage-shape items with a known blocker.** Short plan (ordering).
+     - Relax K/V/element bounds toward upstream's Movable-only `KeyElement`
+       (a per-API `where` pass, as `List[T: AnyType]`).
+     - `(*, unsafe_uninit_length)` construction and resize: blocked on an
+       uninit-element storage story for List (MaybeUninit-adjacent).
+  6. **String Unicode, iterator, and parsing extras.** Port on demand.
+     - `upper`/`lower`: simple-case subset (ASCII, Latin-1, Latin
+       Extended-A, Greek, Cyrillic, `ß` → `SS`); upstream ships full Unicode
+       simple and special casing tables.
+     - `count_codepoints`/`count_graphemes` `raise` on invalid UTF-8
+       (upstream: non-raising) and decode through an eager `to_string()`
+       copy per step.
+     - Missing: `codepoint_slices_reversed`, `graphemes_reversed`,
+       `__reversed__`, `bytes()`, `split_at_grapheme`, `peek_next`.
+     - `atof` is correctly rounded only while the significand (≤19 digits)
+       and power of ten (≤22) stay exact; NaN prints `NaN` (upstream `nan`).
+     - `len(s)` on a String or StringSpan is accepted (byte length) where
+       upstream rejects it as ambiguous (`byte_length()`, `len(s.codepoints())`,
+       `len(s.graphemes())`); an extension to drop at the next re-pin.
+  7. **Compile-time collections.** `comptime d = {...}` Dict/Set values
      hashed with `default_comp_time_hasher`. `CtValue` has no mapping kind
      (`crates/mojito-types/src/ct.rs`), `Elab::eval` has no dict-display
      arm, and the VM-CTFE purity walk admits only the hasher protocol's
      method calls, so a general compile-time method-call rule comes with it.
+  8. **Diagnostic wording and strictness.**
+     - An unavailable where-gated method reports `'set' is unavailable for
+       Variant[Conn]: its where clause evaluated to False` rather than
+       upstream's clause text.
+     - Mojito accepts a bare `T` in a struct field type and a
+       non-`Deinitable` field parameter (`struct Box[T: Copyable &
+       Movable]: var value: T`) where upstream requires `Self.T` and a
+       `Deinitable` bound.
+  9. **Deliberate deferrals.** Nothing depends on these; each is a
+     conscious limit, listed here so it is not mistaken for unfinished
+     task work.
+     - Clones are minted per whole instance (no reachability pruning) and
+       re-checked each discovery round: `benchmarks/compile/stdlib_heavy`
+       is about 2.2x its pre-clone baseline in release
+       (`docs/performance.md`); the repr methods added 2026-09-05 cost
+       about 5% in debug across the compile benchmarks. Lever:
+       reachability-pruned minting.
+     - An instantiation whose argument mentions `StringLiteral` (`{"a": 1}`
+       is `Dict[StringLiteral, Int]`) keeps the erased path: its values
+       keep the literal runtime representation while an un-annotated
+       binding materializes `String`. Lifting it needs one runtime
+       representation for `StringLiteral` and `String`, or typing the
+       display as `Dict[String, Int]` as Mojo does.
+     - A call inside an unstamped bundled body on a bundled struct's
+       generic method keeps the erased path (requests are admitted from
+       user code, clone bodies, variadic specs, instances, and user
+       structs).
+     - An instance clone whose walk cannot resolve an application (a
+       variadic template over a nested public `Tuple` argument) is dropped
+       to the erased path rather than failing the program.
+     - Casting a tracked pointer to an untracked origin at its source's
+       last use (`s.unsafe_ptr().unsafe_origin_cast[ImmUntrackedOrigin]()`)
+       frees the source before the pointer is read — as upstream would.
 
 - [ ] **Filesystem and I/O slice** — representative file/path/stream APIs
   on the Writer and explicit-destroy foundations.

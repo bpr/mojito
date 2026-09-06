@@ -1065,6 +1065,7 @@ fn declaration_metadata_reprints_byte_identically() {
         raises: true,
         error_ty: Some(Ty::Error),
         ref_params: vec![false, false, true],
+        param_writes: vec![false, false, true],
     };
     let other = MirFunctionDeclaration {
         lowered_name: "aaa_first".into(),
@@ -1089,6 +1090,7 @@ fn declaration_metadata_reprints_byte_identically() {
         raises: false,
         error_ty: None,
         ref_params: vec![false, false],
+        param_writes: vec![false, false],
     };
     let mut program = program_with(vec![("main".into(), function_with(Vec::new(), Vec::new()))]);
     // Deliberately unsorted: the canonical writer sorts by name, so the

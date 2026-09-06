@@ -145,6 +145,12 @@ pub struct MirFunctionDeclaration {
     /// Whether each runtime parameter is a `mut`/`ref` reference whose final
     /// value writes back through a caller place. Same order as `param_types`.
     pub ref_params: Vec<bool>,
+    /// Whether each runtime parameter writes through that retained caller
+    /// place (`mut`/`var`/`deinit`, or a `ref` under a statically mutable
+    /// origin contract); `ref_params` says only that it needs one. The loan
+    /// analysis classifies a retained argument place by this mask. Same
+    /// order as `param_types`.
+    pub param_writes: Vec<bool>,
 }
 
 pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
@@ -274,6 +280,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             raises: false,
                             error: None,
                             returns_reference: false,
+                            param_writes: Vec::new(),
                         }
                     });
                 declarations.functions.push(MirFunctionDeclaration {
@@ -344,6 +351,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                     raises: effect.raises,
                     error_ty: effect.error.clone(),
                     ref_params: regular.iter().map(|p| is_ref(&p.convention)).collect(),
+                    param_writes: effect.param_writes.clone(),
                 });
                 lower_fn_nested(
                     FunctionLowering {
@@ -490,6 +498,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                                 raises: false,
                                 error: None,
                                 returns_reference: false,
+                                param_writes: Vec::new(),
                             }
                         });
                     let generic_site = GenericSite::Method {
@@ -603,6 +612,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             .iter()
                             .map(|param| is_ref(&param.convention))
                             .collect(),
+                        param_writes: effect.param_writes.clone(),
                     });
                     // A method's receiver `self` is the implicit first parameter,
                     // followed by the declared params.

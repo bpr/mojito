@@ -34,11 +34,30 @@ pub fn check_ownership_checked(
 /// standalone-MIR core the pipeline composes with `mir::verify` so production
 /// MIR is fully verified before execution.
 pub fn check_ownership_program(prog: &MirProgram) -> Result<(), OwnershipError> {
-    let callees: CalleeRefParams<'_> = prog
-        .functions
-        .iter()
-        .map(|(name, function)| (name.as_str(), function.ref_params.as_slice()))
-        .collect();
+    let callees = CalleeRefParams {
+        ref_params: prog
+            .functions
+            .iter()
+            .map(|(name, function)| (name.as_str(), function.ref_params.as_slice()))
+            .collect(),
+        param_writes: prog
+            .declarations
+            .functions
+            .iter()
+            .map(|declaration| {
+                (
+                    declaration.lowered_name.as_str(),
+                    declaration.param_writes.as_slice(),
+                )
+            })
+            .collect(),
+        structs: prog
+            .declarations
+            .structs
+            .iter()
+            .map(|declaration| declaration.name.as_str())
+            .collect(),
+    };
     timing::count("functions", prog.functions.len() as u64);
     for (_name, f) in &prog.functions {
         {
@@ -55,11 +74,52 @@ pub fn check_ownership_program(prog: &MirProgram) -> Result<(), OwnershipError> 
     Ok(())
 }
 
-/// Each program function's `ref_params` mask by lowered name. A retained call
-/// place is an exclusive write only at a `mut`/`ref` parameter; a place
-/// retained at a read-convention slot (a borrowing-view call lending its
-/// argument to the result) is a shared read.
-pub type CalleeRefParams<'a> = HashMap<&'a str, &'a [bool]>;
+/// The program-wide callee contracts the loan analysis classifies retained
+/// call places against. A retained place is an exclusive write only where
+/// the callee's declaration says the parameter writes through it
+/// (`param_writes`: `mut`, or `ref` under a statically mutable origin); a
+/// place lent to any other slot — a read convention, or an immutable,
+/// parametric, or bare `ref` (a borrowing-view constructor, `Named`) — is a
+/// shared read. A callee without a declaration falls back to its function's
+/// `ref_params` mask (receiver at slot zero), and an unknown callee stays
+/// exclusive. `structs` resolves a single-`__init__` construction, which
+/// calls the bare struct name, to its `<name>.__init__` declaration.
+#[derive(Default)]
+pub struct CalleeRefParams<'a> {
+    pub ref_params: HashMap<&'a str, &'a [bool]>,
+    pub param_writes: HashMap<&'a str, &'a [bool]>,
+    pub structs: HashSet<&'a str>,
+}
+
+impl CalleeRefParams<'_> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The access a retained place at positional argument `argument` of
+    /// `callee` performs; `receiver` says the callee is a method whose
+    /// function-level mask carries `self` at slot zero.
+    fn retained_access(&self, callee: &str, argument: usize, receiver: bool) -> LoanAccess {
+        let init_name;
+        let declared = if self.structs.contains(callee) {
+            init_name = format!("{callee}.__init__");
+            init_name.as_str()
+        } else {
+            callee
+        };
+        if let Some(mask) = self.param_writes.get(declared) {
+            return match mask.get(argument) {
+                Some(false) => LoanAccess::Read,
+                _ => LoanAccess::Write,
+            };
+        }
+        let slot = if receiver { argument + 1 } else { argument };
+        match self.ref_params.get(callee).and_then(|mask| mask.get(slot)) {
+            Some(false) => LoanAccess::Read,
+            _ => LoanAccess::Write,
+        }
+    }
+}
 
 // --- Liveness + ASAP drop elaboration ---------------------------------------
 
@@ -176,17 +236,30 @@ mod interior_origin_tests {
     }
 
     fn loan(interior: Option<MirInteriorOrigin>) -> MirLoan {
+        loan_with(true, interior)
+    }
+
+    fn loan_with(mutable: bool, interior: Option<MirInteriorOrigin>) -> MirLoan {
         MirLoan {
             place: MirPlace::root(0, None),
-            mutable: true,
+            mutable,
             interior,
         }
     }
 
     fn establish(reference: VarId, marker: u32, interior: Option<MirInteriorOrigin>) -> MirInstr {
+        establish_with(reference, marker, true, interior)
+    }
+
+    fn establish_with(
+        reference: VarId,
+        marker: u32,
+        mutable: bool,
+        interior: Option<MirInteriorOrigin>,
+    ) -> MirInstr {
         MirInstr::EstablishLoans {
             reference,
-            loans: vec![loan(interior)],
+            loans: vec![loan_with(mutable, interior)],
             marker: Reg(marker),
             dest_interior: None,
         }
@@ -364,11 +437,60 @@ mod interior_origin_tests {
 
     #[test]
     fn overlapping_interior_loans_are_not_exclusive() {
+        // Two element generations over one list, even both mutable (nested
+        // `for ref` loops), are generation-tracked rather than exclusive.
         let f = function(
             vec![block(
                 vec![
                     establish(1, 0, Some(element_origin())),
                     establish(2, 1, Some(element_origin())),
+                    use_reference(1, 2),
+                    use_reference(2, 3),
+                ],
+                MirTerm::Return(None),
+            )],
+            &[],
+        );
+        assert!(analyze_loans(&f, &CalleeRefParams::new()).is_ok());
+    }
+
+    #[test]
+    fn mutable_interior_loan_conflicts_with_a_live_whole_place_loan() {
+        // A `for ref` loop's mutable element loan established while a shared
+        // whole-place view of the list lives, and the symmetric view taken
+        // inside such a loop, both conflict.
+        for (first, second) in [
+            (
+                establish_with(1, 0, false, None),
+                establish_with(2, 1, true, Some(element_origin())),
+            ),
+            (
+                establish_with(1, 0, true, Some(element_origin())),
+                establish_with(2, 1, false, None),
+            ),
+        ] {
+            let f = function(
+                vec![block(
+                    vec![first, second, use_reference(1, 2), use_reference(2, 3)],
+                    MirTerm::Return(None),
+                )],
+                &[],
+            );
+            assert!(matches!(
+                analyze_loans(&f, &CalleeRefParams::new()),
+                Err(OwnershipError::LoanConflict { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn shared_interior_loan_coexists_with_a_shared_whole_place_loan() {
+        // A value loop beside a live view reads only.
+        let f = function(
+            vec![block(
+                vec![
+                    establish_with(1, 0, false, None),
+                    establish_with(2, 1, false, Some(element_origin())),
                     use_reference(1, 2),
                     use_reference(2, 3),
                 ],

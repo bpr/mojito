@@ -138,6 +138,7 @@ assets/ok/method_mut_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/movable_where_false_explicit_destroy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mut_owned_params.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mut_ref_writeback.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/named_shared_views.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_comprehensions.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_def_captured_param_store.mojo	-	ineligible	no-scalar-entry-shape
@@ -403,6 +404,7 @@ assets/ok/waypoints.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/where_message_satisfied.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/where_repeated_clauses.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/while.mojo	-	ineligible	no-scalar-entry-shape
+assets/ownership_ok/view_live_across_reading_loop.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/allocation_use_after_dealloc.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/div_by_zero.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/list_contiguous_slice_negative.mojo	-	ineligible	no-scalar-entry-shape

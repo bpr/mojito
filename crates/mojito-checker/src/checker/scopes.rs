@@ -97,6 +97,7 @@ impl Checker {
         self.owner_scopes.push(HashMap::new());
         self.aggregate_origin_scopes.push(HashMap::new());
         self.aggregate_field_origin_scopes.push(HashMap::new());
+        self.storage_origin_demand_scopes.push(HashMap::new());
         self.reference_parameter_scopes.push(HashMap::new());
         self.callable_origin_scopes.push(HashMap::new());
     }
@@ -113,6 +114,7 @@ impl Checker {
         self.owner_scopes.pop();
         self.aggregate_origin_scopes.pop();
         self.aggregate_field_origin_scopes.pop();
+        self.storage_origin_demand_scopes.pop();
         self.reference_parameter_scopes.pop();
         self.callable_origin_scopes.pop();
     }

@@ -132,6 +132,10 @@ pub enum HirInstr {
         dest: VarId,
         expr: HirExpr,
         origin: mojito_types::origin::OriginPlace,
+        /// Whether the loop binds the yielded references mutably (`for ref x`
+        /// over a mutable source): the retained loan is then exclusive against
+        /// a whole-place loan of the same source, a value loop's is shared.
+        mutable: bool,
     },
     /// A bare expression evaluated for its effect/value (`f(x)`).
     Eval(HirExpr),
@@ -1187,6 +1191,9 @@ impl Lower {
                         dest: it_var,
                         expr: checked_iter,
                         origin,
+                        mutable: binding_plan.action
+                            == mojito_checked::checked::IterationBindingAction::BorrowReference
+                            && binding_plan.mutable,
                     });
                 } else {
                     self.push(HirInstr::Bind {

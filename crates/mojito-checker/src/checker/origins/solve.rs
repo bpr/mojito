@@ -341,7 +341,7 @@ impl Checker {
     /// A value borrowing nothing (a literal view) satisfies any demand.
     pub(in crate::checker) fn check_storage_origin_demands(
         &self,
-        name: &str,
+        context: &str,
         demands: &[(String, mojito_types::origin::Origin)],
         actuals: &[mojito_types::origin::Origin],
     ) -> Result<(), TypeError> {
@@ -370,7 +370,7 @@ impl Checker {
                              argument"
                         ),
                         found: "a value borrowing a different place".to_string(),
-                        context: format!("variable '{name}'"),
+                        context: context.to_string(),
                     });
                 }
                 _ => {}

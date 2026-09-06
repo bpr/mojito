@@ -294,6 +294,35 @@ impl Checker {
         }
     }
 
+    /// The explicit origin demands recorded for an annotated local binding
+    /// (empty for an un-annotated one or one whose annotation names no
+    /// origin), so a reassignment is judged like the declaration.
+    pub(in crate::checker) fn lookup_storage_origin_demands(
+        &self,
+        name: &str,
+    ) -> Vec<(String, mojito_types::origin::Origin)> {
+        self.storage_origin_demand_scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name).cloned())
+            .unwrap_or_default()
+    }
+
+    pub(in crate::checker) fn set_storage_origin_demands(
+        &mut self,
+        name: &str,
+        demands: Vec<(String, mojito_types::origin::Origin)>,
+    ) {
+        let Some(scope) = self.binding_scope(name) else {
+            return;
+        };
+        if demands.is_empty() {
+            self.storage_origin_demand_scopes[scope].remove(name);
+        } else {
+            self.storage_origin_demand_scopes[scope].insert(name.to_string(), demands);
+        }
+    }
+
     pub(in crate::checker) fn lookup_aggregate_field_origins(
         &self,
         name: &str,

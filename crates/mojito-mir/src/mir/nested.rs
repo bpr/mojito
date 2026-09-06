@@ -414,6 +414,7 @@ fn lower_nested_node(
                 raises: false,
                 error: None,
                 returns_reference: false,
+                param_writes: Vec::new(),
             });
         let capture_count = captures.len();
         declarations.functions.push(MirFunctionDeclaration {
@@ -482,6 +483,10 @@ fn lower_nested_node(
                         .iter()
                         .map(|(_, parameter)| is_ref(&parameter.convention)),
                 )
+                .collect(),
+            // Captured places stay exclusive at the call.
+            param_writes: std::iter::repeat_n(true, captures.len())
+                .chain(effect.param_writes.iter().copied())
                 .collect(),
         });
         let immutable_captures: HashSet<String> = captures

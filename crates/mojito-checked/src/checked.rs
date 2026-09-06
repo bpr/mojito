@@ -1039,6 +1039,37 @@ pub struct DeclarationEffect {
     pub raises: bool,
     pub error: Option<Ty>,
     pub returns_reference: bool,
+    /// Whether each explicit runtime parameter (receiver excluded, in
+    /// declaration order) writes through its retained caller place: a
+    /// `mut`/`var`/`deinit` parameter, or a `ref` whose declared origin is
+    /// statically mutable. A `ref` under an immutable, parametric, or bare
+    /// contract only reads (its body cannot prove mutability), so a place
+    /// lent to it stays a shared access for loan checking.
+    pub param_writes: Vec<bool>,
+}
+
+impl DeclarationEffect {
+    /// The `param_writes` mask of a declaration from its parameter
+    /// conventions and checked `ref` contracts (aligned, receiver excluded).
+    pub fn param_writes(
+        conventions: &[Option<mojito_ast::ast::ArgConvention>],
+        ref_params: &[Option<mojito_types::origin::RefSig>],
+    ) -> Vec<bool> {
+        use mojito_ast::ast::ArgConvention;
+        use mojito_types::origin::SigMutability;
+        conventions
+            .iter()
+            .enumerate()
+            .map(|(index, convention)| match convention {
+                Some(ArgConvention::Mut | ArgConvention::Var | ArgConvention::Deinit) => true,
+                Some(ArgConvention::Ref) => ref_params
+                    .get(index)
+                    .and_then(Option::as_ref)
+                    .is_some_and(|signature| signature.mutability == SigMutability::Mutable),
+                _ => false,
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone)]

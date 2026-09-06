@@ -280,6 +280,10 @@ fn write_declarations(output: &mut String, declarations: &[MirFunctionDeclaratio
                     "ref_params",
                     list(declaration.ref_params.iter().map(bool::to_string)),
                 ),
+                (
+                    "param_writes",
+                    list(declaration.param_writes.iter().map(bool::to_string)),
+                ),
             ],
         );
         write!(output, "    {value}").unwrap();

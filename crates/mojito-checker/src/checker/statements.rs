@@ -522,10 +522,17 @@ impl Checker {
                     if conversion_borrows_source && let Ok(place) = self.origin_place(value) {
                         actual_origins.push(mojito_types::origin::Origin::Place(place));
                     }
-                    self.check_storage_origin_demands(name, &origin_demands, &actual_origins)?;
+                    self.check_storage_origin_demands(
+                        &format!("variable '{name}'"),
+                        &origin_demands,
+                        &actual_origins,
+                    )?;
                 }
                 self.declare(name, declared)?;
                 self.record_statement_binding(stmt, name);
+                // Recorded unconditionally: a re-declaration without origin
+                // arguments clears a stale demand.
+                self.set_storage_origin_demands(name, origin_demands);
                 self.set_aggregate_origins(name, aggregate_origins);
                 self.set_aggregate_field_origins(name, aggregate_field_origins);
                 Ok(())
@@ -594,7 +601,9 @@ impl Checker {
                     Ty::Ref(reference) => (*reference.referent).clone(),
                     other => other.clone(),
                 });
-                if !self.storage_conversion_borrows_source(&found, assigned.as_ref()) {
+                let conversion_borrows_source =
+                    self.storage_conversion_borrows_source(&found, assigned.as_ref());
+                if !conversion_borrows_source {
                     self.check_consuming(value, &found, &format!("assignment to '{name}'"))?;
                 }
                 match target {
@@ -630,19 +639,7 @@ impl Checker {
                                 }
                             }
                         }
-                        let (aggregate_origins, aggregate_field_origins) = if !matches!(
-                            target,
-                            Ty::Ref(_)
-                        ) && self
-                            .type_may_carry_loans(&target)
-                        {
-                            (
-                                self.aggregate_origins(value),
-                                self.aggregate_field_origins(value),
-                            )
-                        } else {
-                            (Vec::new(), HashMap::new())
-                        };
+                        let target_is_reference = matches!(target, Ty::Ref(_));
                         let target = match target {
                             Ty::Ref(reference) => *reference.referent,
                             other => other,
@@ -654,12 +651,39 @@ impl Checker {
                         ) {
                             return Err(TypeError::ClosureEscape);
                         }
+                        // Recorded before the origins are read, as at the
+                        // declaration: a view conversion's source place is an
+                        // origin of the assigned value.
                         if !self.record_implicit_conversion(value, &found, &target)? {
                             return Err(TypeError::TypeMismatch {
                                 expected: target.to_string(),
                                 found: found.to_string(),
                                 context: format!("assignment to '{}'", name),
                             });
+                        }
+                        let (aggregate_origins, aggregate_field_origins) =
+                            if !target_is_reference && self.type_may_carry_loans(&target) {
+                                (
+                                    self.aggregate_origins(value),
+                                    self.aggregate_field_origins(value),
+                                )
+                            } else {
+                                (Vec::new(), HashMap::new())
+                            };
+                        // The annotation's explicit origins remain demands on
+                        // every later assignment, exactly as on the initializer.
+                        let origin_demands = self.lookup_storage_origin_demands(name);
+                        if !origin_demands.is_empty() {
+                            let mut actual_origins = aggregate_origins.clone();
+                            if conversion_borrows_source && let Ok(place) = self.origin_place(value)
+                            {
+                                actual_origins.push(mojito_types::origin::Origin::Place(place));
+                            }
+                            self.check_storage_origin_demands(
+                                &format!("assignment to '{name}'"),
+                                &origin_demands,
+                                &actual_origins,
+                            )?;
                         }
                         if let Some(owner) = self.lookup_owner(name) {
                             self.uninitialized.borrow_mut().remove(&owner);
@@ -1996,6 +2020,13 @@ impl Checker {
                 raises: effect_raises,
                 error: effect_raises.then(|| declared_error.clone()).flatten(),
                 returns_reference: ref_return.is_some(),
+                param_writes: mojito_checked::checked::DeclarationEffect::param_writes(
+                    &caller_regular
+                        .iter()
+                        .map(|parameter| parameter.convention)
+                        .collect::<Vec<_>>(),
+                    &ref_params,
+                ),
             },
         );
         let fn_ty = if decls.is_empty() {

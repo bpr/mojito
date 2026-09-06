@@ -169,6 +169,7 @@ fn metadata_program() -> MirProgram {
             raises: false,
             error_ty: None,
             ref_params: vec![false, false],
+            param_writes: vec![false, false],
         }],
     };
     program

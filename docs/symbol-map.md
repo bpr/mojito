@@ -163,7 +163,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `bind_constructor_origins` binds a struct's origin binder from a
   `Pointer[Self.T, Self.origin]` argument and checks an explicitly applied
   origin; `substitute_pointer_origin_params` rewrites the parameter types),
-  the annotation-demand verdict for locals (`check_storage_origin_demands`),
+  the annotation-demand verdict for locals (`check_storage_origin_demands`,
+  replayed on reassignment from the per-binding
+  `storage_origin_demand_scopes` table),
   interior and
   aggregate-origin tracking, capture-origin collection, origin-signature
   lowering (including the shared `SigOrigin` instantiation helpers

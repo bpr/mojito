@@ -175,7 +175,8 @@ decl {
   returns_reference: false,
   raises: false,
   error_type: absent,
-  ref_params: [false, false]
+  ref_params: [false, false],
+  param_writes: [false, false]
 }
 ```
 
@@ -431,7 +432,7 @@ artifact {
     has_receiver: false, receiver_convention: absent,
     param_conventions: [absent], return_type: Int,
     returns_reference: false, raises: false, error_type: absent,
-    ref_params: [false]
+    ref_params: [false], param_writes: [false]
   }],
   functions: [fn {
     name: identity, registers: 1, vars: 1, var_names: [value], params: 1,

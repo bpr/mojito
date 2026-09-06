@@ -267,6 +267,10 @@ pub struct Checker {
     /// Field-specific projection of `aggregate_origin_scopes`. Keeping direct
     /// reference fields separate prevents a write through one stored handle
     /// from invalidating interiors reached through an unrelated field.
+    /// The explicit origin demands of an annotated local (`var v: Span[Int,
+    /// origin_of(xs)]`), parallel to the lexical value scopes, so a later
+    /// reassignment is judged against the same demand as the declaration.
+    storage_origin_demand_scopes: Vec<HashMap<String, Vec<(String, mojito_types::origin::Origin)>>>,
     aggregate_field_origin_scopes:
         Vec<HashMap<String, HashMap<String, Vec<mojito_types::origin::Origin>>>>,
     /// Reference-parameter handle types. Parameter expression typing still
@@ -606,6 +610,7 @@ impl Checker {
             owner_scopes: vec![HashMap::new()],
             aggregate_origin_scopes: vec![HashMap::new()],
             aggregate_field_origin_scopes: vec![HashMap::new()],
+            storage_origin_demand_scopes: vec![HashMap::new()],
             reference_parameter_scopes: vec![HashMap::new()],
             reference_parameter_binders: HashMap::new(),
             callable_origin_scopes: vec![HashMap::new()],

@@ -529,6 +529,7 @@ impl Flatten<'_> {
                         place,
                         value_ty,
                         origin,
+                        false,
                     );
                 } else {
                     if let Some(ty) = iterator_ty.clone() {

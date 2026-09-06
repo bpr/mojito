@@ -219,7 +219,11 @@ pub(super) enum LoanAccess {
 /// backward liveness through `MirPlace::through`, so a loan is active precisely
 /// from `EstablishLoans` through the reference's last use, including CFG
 /// joins/loops. Interior-storage loans have generation semantics instead of
-/// exclusive-owner semantics; the forward interior-origin pass checks those.
+/// exclusive-owner semantics among themselves (the forward interior-origin
+/// pass checks those), but against a whole-place loan of the same storage
+/// they are ordinary borrows: establishing one beside the other conflicts
+/// when either is mutable (a `for ref` loop over a list while a view of the
+/// list lives, or a view taken inside such a loop).
 pub(super) fn analyze_loans(
     f: &MirFunction,
     callees: &CalleeRefParams<'_>,
@@ -290,7 +294,7 @@ pub(super) fn analyze_loans(
                 ..
             } = instr
             {
-                for loan in established.iter().filter(|loan| loan.interior.is_none()) {
+                for loan in established {
                     for other in active.iter().filter(|id| **id != *reference) {
                         if loan.place.through == Some(*other) {
                             // A reborrow derives its permission from this live
@@ -319,11 +323,7 @@ pub(super) fn analyze_loans(
                         }
                         if reaching_loans(&generation_state, &generations, *other)
                             .iter()
-                            .any(|existing| {
-                                existing.interior.is_none()
-                                    && (loan.mutable || existing.mutable)
-                                    && mir_places_overlap(&loan.place, &existing.place)
-                            })
+                            .any(|existing| loans_exclusive(loan, existing))
                         {
                             let span = f
                                 .spans
@@ -373,6 +373,15 @@ pub(super) fn analyze_loans(
     Ok(())
 }
 
+/// Whether establishing `new` beside the live `existing` loan is a conflict:
+/// overlapping places, at most one interior-generation domain (two interior
+/// loans are generation-tracked, never exclusive), and either side mutable.
+fn loans_exclusive(new: &mojito_mir::mir::MirLoan, existing: &Loan) -> bool {
+    !(new.interior.is_some() && existing.interior.is_some())
+        && (new.mutable || existing.mutable)
+        && mir_places_overlap(&new.place, &existing.place)
+}
+
 pub(super) fn mir_places_overlap(left: &MirPlace, right: &MirPlace) -> bool {
     left.root == right.root
         && left.proj.iter().zip(&right.proj).all(|(a, b)| {
@@ -393,14 +402,12 @@ pub(super) fn loan_accesses(
     callees: &CalleeRefParams<'_>,
 ) -> Vec<(MirPlace, LoanAccess, mojito_common::token::SourceSpan)> {
     // The access a retained place at positional parameter `parameter` of
-    // `callee` performs: a write at a declared `mut`/`ref` slot, a shared read
-    // at a read-convention slot. An unknown callee (a builtin, an unresolved
-    // dispatch) stays conservatively exclusive.
+    // `callee` performs: a write where the callee's declaration writes
+    // through that slot, a shared read elsewhere (`CalleeRefParams`). An
+    // unknown callee (a builtin, an unresolved dispatch) stays conservatively
+    // exclusive.
     let retained_access = |callee: &str, parameter: usize| -> LoanAccess {
-        match callees.get(callee).and_then(|mask| mask.get(parameter)) {
-            Some(false) => LoanAccess::Read,
-            _ => LoanAccess::Write,
-        }
+        callees.retained_access(callee, parameter, false)
     };
     let fallback = mojito_common::token::SourceSpan::new(None, mojito_common::token::DUMMY_SPAN);
     let span_for = |reg: Reg| {
@@ -694,7 +701,7 @@ pub(super) fn loan_accesses(
                 LoanAccess::Read
             };
             let argument_access = |argument: usize| match resolved {
-                Some(callee) => retained_access(callee, argument + 1),
+                Some(callee) => callees.retained_access(callee, argument, true),
                 None => LoanAccess::Write,
             };
             let mut accesses = recv_place

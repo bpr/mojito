@@ -1124,7 +1124,11 @@ to the receiver's own place for a plain owner), and `unsafe_origin_cast`/
 `unsafe_offset` results carry their rebound or forwarded origins through the
 aggregate-origin walks. The loans are whole-place and shared, so reads
 coexist while structural mutation of the source conflicts with any live
-view.
+view — including a `for ref` loop over the source, whose element loan is
+mutable and therefore exclusive against the view (a value loop's element
+loan is shared and coexists). A local annotated with an explicit origin
+argument (`var v: Span[Int, origin_of(xs)]`) keeps that demand for every
+later assignment, not only its initializer.
 
 The **conservative subtree form** (`origin._subtree`, current Mojo's
 experimental `Origin._subtree`) is a third origin shape beside precise
@@ -1725,11 +1729,16 @@ pipeline composes it with
 `analysis::check_ownership_program`, which owns the ownership dataflow; the
 compiler rejects findings as `CompilerError::Verify`, and the VM re-verifies
 the drop-elaborated program it actually executes. The loan analysis reads
-each call's retained argument places against the callee's declared
-`ref_params` (a program-wide `CalleeRefParams` table): a place retained at a
-`mut`/`ref` slot is an exclusive write, while a place retained at a
-read-convention slot — a borrowing-view call lending that argument to its
-result — is a shared read; an unknown callee stays exclusive.
+each call's retained argument places against the callee's declaration
+(a program-wide `CalleeRefParams` table): a place retained at a slot whose
+`param_writes` mask is set — a `mut` parameter, or a `ref` whose declared
+origin is statically mutable — is an exclusive write, while a place lent to
+any other slot — a read convention, or a `ref` under an immutable,
+parametric, or bare contract, which no body can write through (a
+borrowing-view constructor, `Named`) — is a shared read. A single-`__init__`
+construction calls its bare struct name and resolves to the
+`<name>.__init__` declaration; a callee without a declaration falls back to
+its function's `ref_params` mask, and an unknown callee stays exclusive.
 
 A place's storage type is distinct from its expression value type. For a field
 declared `ref[origin] T`, the place stores `Ty::Ref`, while an ordinary load
@@ -2306,8 +2315,12 @@ both loan and interior-generation metadata after checking.
 Reference variables participate in backward CFG liveness. A loan is active from
 its binding through its last use, including joins and loop back-edges. While it
 is active, direct or differently-authorized overlapping mutation, replacement,
-move, drop, or mutating call is rejected. Projection overlap is field-sensitive
-and index-conservative. Drop elaboration combines that liveness with the
+move, drop, or mutating call is rejected. Establishing an interior-generation
+loan (a `for ref` loop's element loan) beside a whole-place loan of the same
+storage, or the reverse, conflicts when either side is mutable; two interior
+loans stay generation-tracked rather than exclusive. Projection overlap is
+field-sensitive and index-conservative. Drop elaboration combines that
+liveness with the
 forward reaching `EstablishLoans` generation: every possible owner of a live
 union/reference value remains alive, but rebinding a reference-bearing aggregate
 retires only its old generation instead of permanently retaining every owner
