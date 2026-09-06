@@ -261,11 +261,7 @@ struct Dict[
         self.nbuckets = move.nbuckets
 
     def find_index(self, key: Self.K) -> Int:
-        var bucket = Int(hash[Self.H](key)) & (self.nbuckets - 1)
-        for entry_index in self.index._get_copy(bucket):
-            if self.entries._get_copy(entry_index).key == key:
-                return entry_index
-        return -1
+        return self._find_index(hash[Self.H](key), key)
 
     def __contains__(self, key: Self.K) -> Bool:
         return self.find_index(key) >= 0
@@ -281,11 +277,16 @@ struct Dict[
     def __setitem__(mut self, var key: Self.K, var value: Self.V) where conforms_to(
         Self.K, Deinitable
     ) and conforms_to(Self.V, Deinitable):
-        var i = self.find_index(key)
+        var key_hash = hash[Self.H](key)
+        var i = self._find_index(key_hash, key)
         if i >= 0:
-            self.entries[i] = DictEntry[Self.K, Self.V, Self.H](key^, value^)
+            self.entries[i] = DictEntry[Self.K, Self.V, Self.H](
+                key^, value^, unsafe_hash=key_hash
+            )
         else:
-            self._append_new(DictEntry[Self.K, Self.V, Self.H](key^, value^))
+            self._append_new(
+                DictEntry[Self.K, Self.V, Self.H](key^, value^, unsafe_hash=key_hash)
+            )
 
     # Displacement-returning insertion: replacing an existing key moves the
     # previous entry (key and value) out and returns it; a fresh key returns
@@ -294,14 +295,19 @@ struct Dict[
     def insert(mut self, var key: Self.K, var value: Self.V) -> Optional[
         DictEntry[Self.K, Self.V, Self.H]
     ]:
-        var i = self.find_index(key)
+        var key_hash = hash[Self.H](key)
+        var i = self._find_index(key_hash, key)
         if i >= 0:
             var displaced = Optional[DictEntry[Self.K, Self.V, Self.H]](
                 self.entries.data.unsafe_offset(i).unsafe_take_pointee()
             )
-            self.entries.data[i] = DictEntry[Self.K, Self.V, Self.H](key^, value^)
+            self.entries.data[i] = DictEntry[Self.K, Self.V, Self.H](
+                key^, value^, unsafe_hash=key_hash
+            )
             return displaced^
-        self._append_new(DictEntry[Self.K, Self.V, Self.H](key^, value^))
+        self._append_new(
+            DictEntry[Self.K, Self.V, Self.H](key^, value^, unsafe_hash=key_hash)
+        )
         return Optional[DictEntry[Self.K, Self.V, Self.H]]()
 
     # Drain every entry through a lazily draining borrowed iterator: each
@@ -353,10 +359,13 @@ struct Dict[
     ] Self.V where conforms_to(Self.K, Deinitable) and conforms_to(
         Self.V, Deinitable
     ):
-        var i = self.find_index(key)
+        var key_hash = hash[Self.H](key)
+        var i = self._find_index(key_hash, key)
         if i < 0:
             i = len(self.entries)
-            self._append_new(DictEntry[Self.K, Self.V, Self.H](key^, default^))
+            self._append_new(
+                DictEntry[Self.K, Self.V, Self.H](key^, default^, unsafe_hash=key_hash)
+            )
         return self.entries[i].value
 
     # Copy every entry of `other` into self, overwriting existing keys.
@@ -518,6 +527,16 @@ struct Dict[
 
     # Append an entry known not to be present, growing the index at load
     # factor one.
+    # The probe for a key whose hash is already computed: every insert hashes
+    # the key exactly once (upstream's `_insert`) and stores that hash in the
+    # entry, so a reporting hasher sees one leaf per insert and one per lookup.
+    def _find_index(self, key_hash: UInt64, key: Self.K) -> Int:
+        var bucket = Int(key_hash) & (self.nbuckets - 1)
+        for entry_index in self.index._get_copy(bucket):
+            if self.entries._get_copy(entry_index).key == key:
+                return entry_index
+        return -1
+
     def _append_new(mut self, var entry: DictEntry[Self.K, Self.V, Self.H]):
         var entry_index = len(self.entries)
         var bucket = Int(entry._hash) & (self.nbuckets - 1)

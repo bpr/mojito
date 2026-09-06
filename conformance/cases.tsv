@@ -244,7 +244,7 @@ list-element-not-hashable	reject	assets/type_error/list_element_not_hashable.moj
 hashlib-keyed-ahasher	run	assets/ok/hashlib_keyed_ahasher.mojo
 set-repr-keyed-hasher	run	conformance/fixtures/set_repr_keyed_hasher.mojo
 hashlib-bytes-hash	run	assets/ok/hashlib_bytes_hash.mojo
-pointer-placeholder-needs-permission	reject	assets/type_error/pointer_placeholder_needs_permission.mojo
+pointer-placeholder-needs-permission	mojo-only	assets/type_error/pointer_placeholder_needs_permission.mojo
 comptime-hash	run	assets/ok/comptime_hash.mojo
 dict-hasher-forwarding	run	assets/ok/dict_hasher_forwarding.mojo
 hashable-user-struct	run	conformance/fixtures/hashable_user_struct.mojo

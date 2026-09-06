@@ -138,6 +138,11 @@ exempt from the ordering.
        type-argument count).
      - `Pointer`'s `[unsafe_offset=]` keyword subscript (upstream deprecates
        the positional form).
+     - A placeholder-origin pointer parameter (`bytes: Pointer[UInt8, _]`)
+       must spell its permission (`ImmPointer`/`MutPointer`); upstream
+       infers `mut` from the argument's origin and accepts the bare
+       spelling, so `pointer-placeholder-needs-permission` is a `mojo-only`
+       conformance case.
      - An origin-bearing struct return in a free function (`def view[T](ref
        xs: List[T]) -> Span[T, origin_of(xs)]`) rejects with a type-argument
        count though the same spelling works in a method — this keeps

@@ -1,7 +1,8 @@
 # expect: spell the pointer permission
 # A placeholder-origin pointer parameter states its permission through the
 # `ImmPointer`/`MutPointer` alias; the bare `Pointer[T, _]` spelling leaves
-# it to inference, which Mojito does not do.
+# it to inference, which Mojito does not do (a documented strict-subset
+# gap: current Mojo accepts this program).
 def first(bytes: Pointer[UInt8, _], n: Int) -> Int:
     return n
 

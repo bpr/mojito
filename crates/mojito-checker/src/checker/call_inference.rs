@@ -460,6 +460,7 @@ impl Checker {
         if let Ty::Overload(candidates) = ty {
             let mut matches = Vec::new();
             let mut availability_failures = Vec::new();
+            let mut bound_failures = Vec::new();
             for (index, candidate) in candidates.iter().enumerate() {
                 let saved_conversions = self.implicit_conversions.borrow().clone();
                 let saved_conversion_borrows = self.conversion_source_borrows.borrow().clone();
@@ -538,6 +539,13 @@ impl Checker {
                                     reason.starts_with("constraint failed: ").then_some(reason),
                                 );
                             }
+                        }
+                        // A candidate whose only failure is a trait bound on a
+                        // solved type argument (`hash(x)` over a non-Hashable
+                        // `x` against `hash[T: Hashable, //, ...]`) keeps its
+                        // conformance diagnostic, like a single callable's.
+                        Err(failure @ TypeError::TraitNotSatisfied { .. }) => {
+                            bound_failures.push(failure);
                         }
                         Err(_) => {}
                     }
@@ -635,6 +643,11 @@ impl Checker {
                         && let Some(ty) = self.infer_scalar_range(&span, args)?
                     {
                         return Ok(ty);
+                    }
+                    if availability_failures.is_empty()
+                        && let [failure] = bound_failures.as_slice()
+                    {
+                        return Err(failure.clone());
                     }
                     Err(TypeError::BadCall {
                         func: name.to_string(),

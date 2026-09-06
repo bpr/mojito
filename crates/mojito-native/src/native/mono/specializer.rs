@@ -541,7 +541,7 @@ impl<'a> Specializer<'a> {
                             mojito_types::types::simd_shape(leaf).is_some()
                                 || matches!(leaf, Ty::Bool)
                         })
-                        .map(|leaf| mojito_symbol::symbol::simd_update_clone_name(leaf));
+                        .map(mojito_symbol::symbol::simd_update_clone_name);
                         let method: &str = simd_clone.as_deref().unwrap_or(method);
                         // Source methods are declared under the template name;
                         // an instance-named receiver (`List$mono$TInt`) still

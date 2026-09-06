@@ -1,5 +1,6 @@
 # A Dict's hasher parameter reaches every hashing site on both backends: the
-# bucket probe and the cached entry hash on insert, and the lookup's probe.
+# insert's single hash (shared by its bucket probe and the cached entry hash,
+# as upstream's `_insert`) and the lookup's probe.
 # The hasher reports each leaf it receives, so a fallback to the default
 # hasher anywhere would change the output (or miss the key).
 from std.hashlib import Hasher
