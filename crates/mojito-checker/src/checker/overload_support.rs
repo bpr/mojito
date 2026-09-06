@@ -199,26 +199,13 @@ pub(super) fn guaranteed_conformance_atoms(
     }
 }
 
-/// Overload identity works at the mangled-symbol level: the compile-time
-/// `StringLiteral` and the nominal stdlib `String` deliberately share the
-/// stable `String` symbol spelling, so two overloads differing only in that
-/// pair collide and are rejected as redeclarations.
-pub(super) fn symbol_identity_ty(ty: &Ty) -> std::borrow::Cow<'_, Ty> {
-    match ty {
-        Ty::Struct(name, args)
-            if args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
-        {
-            std::borrow::Cow::Owned(Ty::StringLiteral)
-        }
-        other => std::borrow::Cow::Borrowed(other),
-    }
-}
-
+/// Overload identity works at the mangled-symbol level: two parameter lists
+/// are the same overload when every parameter type mangles identically. The
+/// compile-time `StringLiteral` and the nominal stdlib `String` are distinct
+/// keys, so a pair differing only in that type is a legal overload set (a
+/// literal argument selects the exact `StringLiteral` member).
 pub(super) fn symbol_equivalent_params(a: &[Ty], b: &[Ty]) -> bool {
-    a.len() == b.len()
-        && a.iter()
-            .zip(b)
-            .all(|(a, b)| symbol_identity_ty(a) == symbol_identity_ty(b))
+    a == b
 }
 
 pub(super) fn same_callable_signature(a: &Ty, b: &Ty) -> bool {
@@ -574,12 +561,26 @@ pub(super) fn overload_rank(
         + usize::from(generic)
 }
 
+/// The conversion cost of one argument: 0 for an exact match or a numeric
+/// literal at its contextual default type, 1 for an implicit conversion. A
+/// string literal converting to anything but the nominal `String` costs 2:
+/// `String` is the literal's contextual default type, so it ranks above the
+/// literal's other converting constructors (`StringSpan`), keeping
+/// `s.__eq__("x")` selecting the `String`-typed overload beside the view one.
 pub(super) fn conversion_count(actual: &Ty, expected: &Ty) -> usize {
     if actual == expected
         || matches!(actual, Ty::IntLiteral) && matches!(expected, Ty::Int)
         || matches!(actual, Ty::FloatLiteral) && matches!(expected, Ty::Float64)
     {
         0
+    } else if matches!(actual, Ty::StringLiteral)
+        && !matches!(
+            expected,
+            Ty::Struct(name, args)
+                if args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name)
+        )
+    {
+        2
     } else {
         1
     }

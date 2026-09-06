@@ -1304,30 +1304,38 @@ impl Checker {
         let Some((target, source_borrow)) = self.implicit_conversion_target(from, to)? else {
             return Ok(false);
         };
-        self.record_selected_conversion(expression, target, to, source_borrow);
+        self.record_selected_conversion(expression, target, to, source_borrow)?;
         Ok(true)
     }
 
     /// Install one selected converting constructor plus, for a `ref`-parameter
     /// (view) constructor, the source-borrow fact that refines the conversion
-    /// temporary's origin to the source expression's place.
+    /// temporary's origin to the source expression's place. A temporary
+    /// source has no place to lend: it materializes as an anonymous owned
+    /// binding — the hidden slot an explicit `View(temp)` construction gets —
+    /// so the view borrows real frame storage and the temporary lives as long
+    /// as its borrower.
     fn record_selected_conversion(
         &self,
         expression: &Expr,
         target: String,
         to: &Ty,
         source_borrow: Option<bool>,
-    ) {
+    ) -> Result<(), TypeError> {
         let span = expression.source_span();
         if let Some(mutable) = source_borrow {
             self.conversion_source_borrows
                 .borrow_mut()
                 .insert(span.clone(), mutable);
+            if self.origin_place(expression).is_err() {
+                self.materialize_borrow_owner(expression)?;
+            }
         }
         self.implicit_conversion_types
             .borrow_mut()
             .insert(span.clone(), to.clone());
         self.implicit_conversions.borrow_mut().insert(span, target);
+        Ok(())
     }
 
     fn record_implicit_conversion(
@@ -1374,7 +1382,7 @@ impl Checker {
         let Some((target, source_borrow)) = self.implicit_conversion_target(from, to)? else {
             return Ok(false);
         };
-        self.record_selected_conversion(expression, target, to, source_borrow);
+        self.record_selected_conversion(expression, target, to, source_borrow)?;
         Ok(true)
     }
 

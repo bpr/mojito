@@ -316,7 +316,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `UninitPayload` projection into inline uninit storage (a final payload store
   initializes-or-overwrites raw; reads trap while uninitialized).
 - `backend/vm/values.rs` owns operator application, place stores,
-  construction, string materialization, cloning, and moves.
+  construction, String and StringSpan literal materialization, cloning, and
+  moves.
 - `backend/vm/adapters.rs` owns checked-result adapters and dunder-backed
   index loads.
 - `backend/vm/invoke.rs` owns writeback/synchronous call machinery, argument
@@ -345,8 +346,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   friends), struct-specialization argument resolution, and the t-string
   desugar into its `TString` specialization's construction.
 - `comptime/rewrite.rs` owns AST substitution and value materialization.
-- `crates/mojito-symbol/src/symbol.rs` also owns the instance-clone identity
-  shared by the checker and both backends: `specialized_method_values`,
+- `crates/mojito-symbol/src/symbol.rs` also owns the string bridge identities
+  (`is_stdlib_string_struct`/`is_stdlib_string_span_struct`, re-exported from
+  `mojito-types`; `string_ctor_overload_struct`/`string_span_ctor_overload_struct`
+  over the `.__init__$ov$StringLiteral` constructor symbols) and the
+  instance-clone identity shared by the checker and both backends:
+  `specialized_method_values`,
   `materialized_instantiation_argument`, and `instance_method_clone_name`
   (the VM's `instance_dunder_symbol` in `backend/vm.rs` and the native
   monomorphizer's `instance_dunder_target`/`enqueue_display_instance` in

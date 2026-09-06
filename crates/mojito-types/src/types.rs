@@ -2261,6 +2261,18 @@ pub fn is_stdlib_string_struct(name: &str) -> bool {
     name == "String" || name == STDLIB_STRING_STRUCT
 }
 
+/// The bundled borrowed string view. Unlike `String`, `StringSpan` is
+/// prelude-bare in MIR (no module-qualified takeover identity), so its bare
+/// name is its checked identity — a user struct spelled `StringSpan` shadows
+/// it, the caveat the other stdlib collection name lists share.
+pub const STDLIB_STRING_SPAN_STRUCT: &str = "StringSpan";
+
+/// Whether `name` is the bundled `StringSpan` view struct, whose
+/// `StringLiteral` constructor the backends replace with a literal bridge.
+pub fn is_stdlib_string_span_struct(name: &str) -> bool {
+    name == STDLIB_STRING_SPAN_STRUCT
+}
+
 /// Identity of one checked declaration, stable across the checked program.
 /// Defined here (below the checked handoff) so symbol mangling can spell
 /// declaration-qualified names without depending on the handoff crate.

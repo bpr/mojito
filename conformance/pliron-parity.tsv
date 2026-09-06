@@ -78,8 +78,8 @@ assets/ok/generic_copyable_iterator_refinement.mojo	main	exe-differential	saniti
 assets/ok/generic_ctfe_associated_value.mojo	main	exe-differential	sanitized
 assets/ok/generic_ctfe_value_param.mojo	main	exe-differential	sanitized
 assets/ok/generic_ctor_literal_materialization.mojo	main	exe-differential	sanitized
-assets/ok/generic_method_per_call_clones.mojo	main	exe-differential	sanitized
 assets/ok/generic_equatable_dispatch.mojo	main	exe-differential	sanitized
+assets/ok/generic_method_per_call_clones.mojo	main	exe-differential	sanitized
 assets/ok/generic_struct_instance_bodies.mojo	main	exe-differential	sanitized
 assets/ok/generic_struct_instance_dispatch.mojo	main	exe-differential	sanitized
 assets/ok/hashable_bucketing.mojo	main	exe-differential	sanitized
@@ -102,6 +102,7 @@ assets/ok/input.mojo	main	exe-differential	sanitized
 assets/ok/interior_dest_rebind_releases_loans.mojo	main	exe-differential	sanitized
 assets/ok/invert_operator.mojo	main	exe-differential	sanitized
 assets/ok/iterable_associated_element.mojo	-	ineligible	no-main-entry
+assets/ok/joint_map.mojo	main	exe-differential	sanitized
 assets/ok/keyword_call.mojo	main	exe-differential	sanitized
 assets/ok/keyword_only.mojo	main	exe-differential	sanitized
 assets/ok/keyword_slice_subscripts.mojo	main	exe-differential	sanitized
@@ -340,8 +341,12 @@ assets/ok/std_traits_origin_imports.mojo	main	exe-differential	sanitized
 assets/ok/string_capacity.mojo	main	exe-differential	sanitized
 assets/ok/string_escapes.mojo	main	exe-differential	sanitized
 assets/ok/string_grapheme_iteration.mojo	main	exe-differential	sanitized
+assets/ok/string_literal_overload.mojo	main	exe-differential	sanitized
 assets/ok/string_overload_conversion.mojo	main	exe-differential	sanitized
 assets/ok/string_span_equatable.mojo	main	exe-differential	sanitized
+assets/ok/string_span_implicit_temporary.mojo	main	exe-differential	sanitized
+assets/ok/string_span_literal.mojo	main	exe-differential	sanitized
+assets/ok/string_span_methods.mojo	main	exe-differential	sanitized
 assets/ok/string_view_equality.mojo	main	exe-differential	sanitized
 assets/ok/stropping.mojo	main	exe-differential	sanitized
 assets/ok/struct_value_param_frozen.mojo	main	exe-differential	sanitized
@@ -375,13 +380,13 @@ assets/ok/variadic_args.mojo	main	exe-differential	sanitized
 assets/ok/variadic_method_type_params.mojo	main	exe-differential	sanitized
 assets/ok/variadic_pack_forwarding_generic_def.mojo	main	exe-differential	sanitized
 assets/ok/variadic_pack_upstream_spellings.mojo	main	exe-differential	sanitized
-assets/ok/view_temporaries.mojo	main	exe-differential	sanitized
 assets/ok/variant_deinit_with_linear_payload.mojo	main	exe-differential	sanitized
 assets/ok/variant_hash_dict_key.mojo	main	exe-differential	sanitized
 assets/ok/variant_init_with_constructor.mojo	main	exe-differential	sanitized
 assets/ok/variant_nominal_string_payload.mojo	main	exe-differential	sanitized
 assets/ok/variant_owning_api.mojo	main	exe-differential	sanitized
 assets/ok/variant_unsafe_get_static_supported.mojo	main	exe-differential	sanitized
+assets/ok/view_temporaries.mojo	main	exe-differential	sanitized
 assets/ok/vm_backed_ctfe_recursive_call.mojo	main	exe-differential	sanitized
 assets/ok/vm_backed_ctfe_ternary.mojo	main	exe-differential	sanitized
 assets/ok/waypoints.mojo	main	exe-differential	sanitized

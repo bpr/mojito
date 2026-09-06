@@ -29,7 +29,7 @@ fn free_function_overloads_get_signature_qualified_names() {
     );
     assert!(names.contains("pick$ov$"), "zero-arg overload: {names:?}");
     assert!(names.contains("pick$ov$Int"), "{names:?}");
-    assert!(names.contains("pick$ov$String"), "{names:?}");
+    assert!(names.contains("pick$ov$StringLiteral"), "{names:?}");
 }
 
 #[test]

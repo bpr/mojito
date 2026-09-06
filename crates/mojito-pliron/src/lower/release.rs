@@ -314,6 +314,23 @@ impl<'a> FnLowering<'a> {
         self.append(ctx, cap_store.get_operation(), Some(dest));
     }
 
+    /// Store `{_data, _size}` into `StringSpan` view storage (16 bytes: the
+    /// pointer at 0, the byte length at 8).
+    pub(super) fn store_string_span_fields(
+        &mut self,
+        ctx: &mut Context,
+        storage: Value,
+        data: Value,
+        size: Value,
+        dest: Reg,
+    ) {
+        let data_store = StoreOp::new(ctx, data, storage);
+        self.append(ctx, data_store.get_operation(), Some(dest));
+        let size_address = self.gep_byte(ctx, storage, 8, dest);
+        let size_store = StoreOp::new(ctx, size, size_address);
+        self.append(ctx, size_store.get_operation(), Some(dest));
+    }
+
     /// `mjrt_alloc(size, align)` with a runtime byte count.
     pub(super) fn emit_alloc(
         &mut self,

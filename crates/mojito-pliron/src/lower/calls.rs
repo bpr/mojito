@@ -21,13 +21,19 @@ impl<'a> FnLowering<'a> {
         if intercepted_call(name) {
             return self.lower_unsafe_alloc(ctx, dest, args, kwargs);
         }
-        // Literal→String conversion arrives as the nominal literal/copy
-        // constructor overload symbol, whose declared body is a
-        // never-execute field-contract stub: route it to the native
+        // Literal→String conversion arrives as the nominal String's
+        // `StringLiteral` constructor overload symbol, whose declared body is
+        // a never-execute field-contract stub: route it to the native
         // constructor bridge exactly like the type-name call shape, ahead
         // of the compiled-signature dispatch that would run the stub.
         if mojito_symbol::symbol::string_ctor_overload_struct(name).is_some() {
             return self.lower_string_ctor(ctx, dest, args, kwargs);
+        }
+        // The view's `StringLiteral` constructor is the same kind of stub;
+        // it must be intercepted here, before the compiled-signature
+        // dispatch, or the stub would run and yield an empty view.
+        if mojito_symbol::symbol::string_span_ctor_overload_struct(name).is_some() {
+            return self.lower_string_span_ctor(ctx, dest, args, kwargs);
         }
         if !self.signatures.contains_key(name) {
             if matches!(name, "Int" | "UInt" | "Float64" | "Bool") {
@@ -512,6 +518,16 @@ impl<'a> FnLowering<'a> {
                         {
                             self.string_default_argument(ctx, text, owned, dest)
                         }
+                        // A `StringSpan` parameter defaulting to a literal
+                        // (`fillchar: StringSpan = " "`): the view over the
+                        // interned text, which lives for the whole program.
+                        LowerTy::Aggregate { ty, .. }
+                            if matches!(&*ty, Ty::Struct(struct_name, _)
+                                if mojito_symbol::symbol::is_stdlib_string_span_struct(struct_name))
+                                && let Some(text) = string_default_text(default) =>
+                        {
+                            self.string_span_default_argument(ctx, text, dest)
+                        }
                         _ => {
                             return Err(self.unsupported_reg(
                                 format!("non-scalar default argument in call to `{name}`"),
@@ -546,6 +562,17 @@ impl<'a> FnLowering<'a> {
         }
         let storage = self.entry_alloca(ctx, 24, 8);
         self.store_string_fields(ctx, storage, data, len, len, dest);
+        storage
+    }
+
+    /// The omitted-argument value of a `StringSpan` parameter whose default
+    /// is a literal: the 16-byte view over the interned text (never freed).
+    fn string_span_default_argument(&mut self, ctx: &mut Context, text: &str, dest: Reg) -> Value {
+        let global = self.shared.intern_string(ctx, text.as_bytes());
+        let data = self.global_address(ctx, &global, dest);
+        let len = self.uint_constant(ctx, text.len() as u64);
+        let storage = self.entry_alloca(ctx, 16, 8);
+        self.store_string_span_fields(ctx, storage, data, len, dest);
         storage
     }
 

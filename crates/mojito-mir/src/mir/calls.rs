@@ -67,7 +67,13 @@ impl Flatten<'_> {
         // hand the call that slot's place — the VM/native ref binding then
         // borrows real frame storage, and the slot's loans give the temporary
         // its borrower's lifetime.
-        if let Some(owner) = mojito_checked::checked::materialized_borrow_owner(&adjustments) {
+        // An implicitly converted temporary (`f(String("abc"))` at a view
+        // parameter) materializes inside the conversion lowering instead: the
+        // slot holds the unconverted source and the callee receives the view.
+        let converted = self.implicit_conversion(expression).is_some();
+        if let Some(owner) = mojito_checked::checked::materialized_borrow_owner(&adjustments)
+            && !converted
+        {
             return self.materialize_borrow_source(expression, owner);
         }
         let retains_place = adjustments.iter().any(|adjustment| {
@@ -129,7 +135,13 @@ impl Flatten<'_> {
                     expression.kind,
                     ExprKind::Call { .. } | ExprKind::MethodCall { .. }
                 );
+            // A converted temporary's view is already bound to its
+            // `$conv_view_r` slot by the conversion lowering; a second anchor
+            // would duplicate that loan.
+            let anchored_by_conversion = converted
+                && mojito_checked::checked::materialized_borrow_owner(&adjustments).is_some();
             if (call_temporary || subscript_view)
+                && !anchored_by_conversion
                 && matches!(self.checked_ty(expression), Some(Ty::Struct(..)))
             {
                 let loans = self.aggregate_borrows(expression);
@@ -714,6 +726,20 @@ impl Flatten<'_> {
             }
             return self.anchor_borrowing_temporary(expression, value, loans, "$view_recv_r");
         }
+        // A constructed view temporary (`StringSpan(text).split(",")`) borrows
+        // caller storage through its `ref [origin]` argument; the method body
+        // reads through the view, so the source must outlive the call even at
+        // its last use — the same hidden anchor a chained view result gets.
+        if matches!(expression.kind, ExprKind::Call { .. })
+            && matches!(self.checked_ty(expression), Some(Ty::Struct(..)))
+        {
+            let value = self.expr(expression);
+            let loans = self.aggregate_borrows(expression);
+            if loans.is_empty() {
+                return (value, None);
+            }
+            return self.anchor_borrowing_temporary(expression, value, loans, "$view_recv_r");
+        }
         match self.try_place(expression) {
             Some(place) => {
                 let value = self.fresh(expression.source_span(), Some(place.root));
@@ -741,6 +767,19 @@ impl Flatten<'_> {
         owner: mojito_types::origin::OwnerId,
     ) -> (Reg, Option<MirPlace>) {
         let value = self.expr(expression);
+        self.materialize_borrow_slot(expression, owner, value)
+    }
+
+    /// Bind an already-lowered temporary `value` into its owner's hidden
+    /// `$mat_r` slot (once per owner) and return the value plus the slot's
+    /// place. The conversion lowering uses this with the *unconverted* source
+    /// so the slot holds what the view constructor borrows, not the view.
+    pub(super) fn materialize_borrow_slot(
+        &mut self,
+        expression: &Expr,
+        owner: mojito_types::origin::OwnerId,
+        value: Reg,
+    ) -> (Reg, Option<MirPlace>) {
         let variable = match self.owner_vars.get(&owner).copied() {
             Some(variable) => variable,
             None => {

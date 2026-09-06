@@ -262,6 +262,11 @@ string-search-extras	run	assets/ok/nominal_string_search_extras.mojo
 string-split-forms	run	assets/ok/nominal_string_split_forms.mojo
 string-bool-mul	run	assets/ok/nominal_string_bool_mul.mojo
 string-span-equality	run	assets/ok/string_span_equatable.mojo
+string-literal-overload	run	assets/ok/string_literal_overload.mojo
+string-span-literal	run	assets/ok/string_span_literal.mojo
+string-span-implicit-temporary	run	assets/ok/string_span_implicit_temporary.mojo
+string-span-return-temporary	reject	assets/type_error/string_span_return_temporary.mojo
+string-span-methods	run	assets/ok/string_span_methods.mojo
 string-case-predicates	run	assets/ok/nominal_string_case.mojo
 string-predicates	run	assets/ok/nominal_string_predicates.mojo
 string-justify	run	assets/ok/nominal_string_justify.mojo
@@ -291,3 +296,4 @@ generic-method-per-call-clones	run	assets/ok/generic_method_per_call_clones.mojo
 generic-repr-texts	run	conformance/fixtures/generic_repr_texts.mojo
 view-temporaries	run	assets/ok/view_temporaries.mojo
 view-temporary-write	run	conformance/fixtures/view_temporary_write.mojo
+joint-map	run	assets/ok/joint_map.mojo

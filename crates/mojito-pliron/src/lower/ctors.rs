@@ -22,6 +22,17 @@ impl<'a> FnLowering<'a> {
         if mojito_symbol::symbol::is_stdlib_string_struct(name) {
             return self.lower_string_ctor(ctx, dest, args, kwargs);
         }
+        // `StringSpan(literal)` by type name (the resolved overload symbol is
+        // the usual shape; see `lower_call`): a string-valued single argument
+        // selects the literal bridge, anything else the `ref src: String`
+        // constructor below.
+        if mojito_symbol::symbol::is_stdlib_string_span_struct(name)
+            && kwargs.is_empty()
+            && let [source] = args
+            && self.is_string_source(*source)
+        {
+            return self.lower_string_span_ctor(ctx, dest, args, kwargs);
+        }
         let struct_ty = match self.func.reg_types.get(&dest.0) {
             Some(ty @ Ty::Struct(..)) => ty.clone(),
             _ => Ty::Struct(name.to_string(), Vec::new()),
@@ -234,6 +245,52 @@ impl<'a> FnLowering<'a> {
                 )
             });
         self.mark_owned_temp(dest, ty)?;
+        Ok(())
+    }
+
+    /// The bundled view's `StringLiteral` constructor
+    /// (the view's `StringLiteral` constructor overload symbol, a never-execute stub): the
+    /// 16-byte `{_data, _size}` aggregate over the literal's bytes. A
+    /// compile-time literal aliases its interned constant; a runtime string
+    /// (an owned temporary or a borrowed descriptor) is copied into a
+    /// never-freed allocation, since the view may outlive its source and the
+    /// bytes of upstream's `StaticString` live for the whole program.
+    pub(super) fn lower_string_span_ctor(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        args: &[Reg],
+        kwargs: &[(String, Reg)],
+    ) -> Result<(), PlironError> {
+        if args.len() != 1 || !kwargs.is_empty() {
+            return Err(
+                self.unsupported_reg("StringSpan literal constructor contract".into(), dest)
+            );
+        }
+        let source = args[0];
+        let storage = self.entry_alloca(ctx, 16, 8);
+        let (data, len) = if let Some(bytes) = self.str_consts.get(&source.0).cloned() {
+            let global = self.shared.intern_string(ctx, &bytes);
+            let len = self.uint_constant(ctx, bytes.len() as u64);
+            (self.global_address(ctx, &global, dest), len)
+        } else if let Some(descriptor) = self.str_runtime.get(&source.0).copied() {
+            let data = self.emit_alloc(ctx, descriptor.len, 1, dest);
+            self.mem_copy_dynamic(ctx, data, descriptor.data, descriptor.len, dest);
+            (data, descriptor.len)
+        } else if matches!(self.func.reg_types.get(&source.0), Some(Ty::StringLiteral)) {
+            let ptr = self.reg_ptr(ctx, source)?;
+            let (src_data, len) = self.string_parts(ctx, ptr, dest);
+            let data = self.emit_alloc(ctx, len, 1, dest);
+            self.mem_copy_dynamic(ctx, data, src_data, len, dest);
+            (data, len)
+        } else {
+            return Err(self.unsupported_reg(
+                "StringSpan literal constructor over an unsupported source".into(),
+                dest,
+            ));
+        };
+        self.store_string_span_fields(ctx, storage, data, len, dest);
+        self.reg_values.insert(dest.0, storage);
         Ok(())
     }
 
@@ -459,5 +516,14 @@ impl<'a> FnLowering<'a> {
             return Err(self.unsupported_reg("untyped reference write".into(), value));
         };
         self.store_to(ctx, pointer, &ty, value)
+    }
+
+    /// Whether `reg` carries string bytes in any of the three source shapes
+    /// the string constructors accept (a compile-time literal, a runtime
+    /// `(data, len)` pair, or a `StringLiteral`-typed register).
+    fn is_string_source(&self, reg: Reg) -> bool {
+        self.str_consts.contains_key(&reg.0)
+            || self.str_runtime.contains_key(&reg.0)
+            || matches!(self.func.reg_types.get(&reg.0), Some(Ty::StringLiteral))
     }
 }

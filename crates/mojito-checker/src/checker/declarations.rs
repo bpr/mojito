@@ -2278,10 +2278,21 @@ impl Checker {
             })
             .fold(HashMap::new(), |mut packs, (name, ty)| {
                 // A pack element materializes like any other inferred
-                // instantiation argument (a literal binds `Int`/`String`).
-                let element = match materialized_instantiation_argument(&TyArg::Ty(ty)) {
-                    TyArg::Ty(ty) => ty,
-                    _ => unreachable!("a type argument materializes to a type"),
+                // instantiation argument (a literal binds `Int`/`String`). A
+                // seam without the linked String struct keeps the literal:
+                // materializing to an absent struct would fail every
+                // conformance the literal itself satisfies.
+                let element = if ty == Ty::StringLiteral
+                    && !self
+                        .structs
+                        .contains_key(mojito_symbol::symbol::STDLIB_STRING_STRUCT)
+                {
+                    ty
+                } else {
+                    match materialized_instantiation_argument(&TyArg::Ty(ty)) {
+                        TyArg::Ty(ty) => ty,
+                        _ => unreachable!("a type argument materializes to a type"),
+                    }
                 };
                 packs
                     .entry(name)

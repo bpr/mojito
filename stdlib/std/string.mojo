@@ -548,82 +548,31 @@ struct String(
     def write_string(mut self, chunk: String):
         self._append_bytes_of(chunk, 0, chunk.size)
 
-    def __contains__(self, sub: String) -> Bool:
-        return self._find_from(sub, 0) >= 0
+    # The result APIs (search, affix tests, replace, split, case, predicates,
+    # justification, and the strip family) live on `StringSpan` in upstream's
+    # shape; every String spelling forwards through a view of this buffer.
+    # Needle/affix/separator arguments are `StringSpan`s: a String or a
+    # literal converts implicitly.
+    def __contains__(self, sub: StringSpan) -> Bool:
+        return StringSpan(self).__contains__(sub)
 
-    # Result APIs use byte offsets, like `len` and the byte-wise slice
-    # (upstream `string_span.mojo`).  An empty needle matches everywhere
-    # (Python semantics): `find` reports 0, `rfind` the byte length, the
-    # affix tests True.  A negative `start` counts from the end and clamps.
+    def find(self, substr: StringSpan, start: Int = 0) -> Int:
+        return StringSpan(self).find(substr, start)
 
-    def find(self, substr: String, start: Int = 0) -> Int:
-        if substr.size == 0:
-            return 0
-        if self.size < substr.size + start:
-            return -1
-        return self._find_from(substr, self._search_start(start))
+    def rfind(self, substr: StringSpan, start: Int = 0) -> Int:
+        return StringSpan(self).rfind(substr, start)
 
-    def rfind(self, substr: String, start: Int = 0) -> Int:
-        if substr.size == 0:
-            return self.size
-        if self.size < substr.size + start:
-            return -1
-        var start_byte = self._search_start(start)
-        var at = self.size - substr.size
-        while at >= start_byte:
-            if self._matches_at(substr, at):
-                return at
-            at -= 1
-        return -1
+    def count(self, substr: StringSpan) -> Int:
+        return StringSpan(self).count(substr)
 
-    def count(self, substr: String) -> Int:
-        if substr.size == 0:
-            return self.size + 1
-        var total = 0
-        var at = self._find_from(substr, 0)
-        while at >= 0:
-            total += 1
-            at = self._find_from(substr, at + substr.size)
-        return total
+    def startswith(self, prefix: StringSpan, start: Int = 0, end: Int = -1) -> Bool:
+        return StringSpan(self).startswith(prefix, start, end)
 
-    # `start`/`end` are byte offsets; `end == -1` means the whole string.
-    def startswith(self, prefix: String, start: Int = 0, end: Int = -1) -> Bool:
-        if end == -1:
-            return self.find(prefix, start) == start
-        if start < 0 or end > self.size or end - start < prefix.size:
-            return False
-        return self._matches_at(prefix, start)
+    def endswith(self, suffix: StringSpan, start: Int = 0, end: Int = -1) -> Bool:
+        return StringSpan(self).endswith(suffix, start, end)
 
-    def endswith(self, suffix: String, start: Int = 0, end: Int = -1) -> Bool:
-        if suffix.size > self.size:
-            return False
-        if end == -1:
-            return self.rfind(suffix, start) + suffix.size == self.size
-        if start < 0 or end > self.size or end - start < suffix.size:
-            return False
-        return self._matches_at(suffix, end - suffix.size)
-
-    # Every occurrence of `old` replaced by `new`; an empty `old` interleaves
-    # `new` before every codepoint.
-    def replace(self, old: String, new: String) -> String:
-        var result = String()
-        if old.size == 0:
-            var at = 0
-            while at < self.size:
-                var width = self._lead_width(Int(self.data[at]))
-                result._append_bytes_of(new, 0, new.size)
-                result._append_bytes_of(self, at, width)
-                at += width
-            return result^
-        var start = 0
-        var at = self._find_from(old, 0)
-        while at >= 0:
-            result._append_bytes_of(self, start, at - start)
-            result._append_bytes_of(new, 0, new.size)
-            start = at + old.size
-            at = self._find_from(old, start)
-        result._append_bytes_of(self, start, self.size - start)
-        return result^
+    def replace(self, old: StringSpan, new: StringSpan) -> String:
+        return StringSpan(self).replace(old, new)
 
     # Joins the written text of `elems` with this string between them; a
     # `List[T]` argument converts through Span's implicit constructor.
@@ -637,162 +586,52 @@ struct String(
             i += 1
         return result^
 
-    # Eager owned pieces rather than current Mojo's borrowed StringSlice
-    # views (the recorded eager-result divergence).  An empty separator
-    # yields an empty piece, every codepoint, and an empty piece (upstream
-    # ignores `maxsplit` there); `maxsplit` bounds the number of splits.
-    def split(self, sep: String, maxsplit: Int = -1) -> List[String]:
-        var parts = List[String]()
-        if sep.size == 0:
-            parts.append(String())
-            var at = 0
-            while at < self.size:
-                var width = self._lead_width(Int(self.data[at]))
-                parts.append(self._with_bytes(at, width))
-                at += width
-            parts.append(String())
-            return parts^
-        var start = 0
-        var splits = 0
-        var at = self._find_from(sep, 0) if maxsplit != 0 else -1
-        while at >= 0:
-            parts.append(self._with_bytes(start, at - start))
-            start = at + sep.size
-            splits += 1
-            at = -1
-            if maxsplit < 0 or splits < maxsplit:
-                at = self._find_from(sep, start)
-        parts.append(self._with_bytes(start, self.size - start))
-        return parts^
+    # Eager owned pieces rather than current Mojo's borrowed StringSpan
+    # views (the recorded eager-result divergence); upstream's four overloads.
+    def split(self, sep: StringSpan) -> List[String]:
+        return StringSpan(self).split(sep)
 
-    # Whitespace split: runs of Python-space codepoints (POSIX space plus
-    # U+0085, U+2028, U+2029) separate pieces and never yield empty ones.
-    def split(self, sep: NoneType = None, *, maxsplit: Int = -1) -> List[String]:
-        var parts = List[String]()
-        var at = 0
-        var splits = 0
-        while at < self.size:
-            var width = self._space_width_at(at)
-            if width > 0:
-                at += width
-                continue
-            var end = at
-            if maxsplit >= 0 and splits == maxsplit:
-                end = self.size
-            else:
-                while end < self.size and self._space_width_at(end) == 0:
-                    end += self._lead_width(Int(self.data[end]))
-            parts.append(self._with_bytes(at, end - at))
-            splits += 1
-            at = end
-        return parts^
+    def split(self, sep: StringSpan, maxsplit: Int) -> List[String]:
+        return StringSpan(self).split(sep, maxsplit)
 
-    # Universal-newline line splitting (`\r\n` is one boundary; the set is
-    # upstream's `\t\n\v\f\r\x1c\x1d\x1e\x85\u2028\u2029`); no
-    # trailing empty line.
+    def split(self, sep: NoneType = None) -> List[String]:
+        return StringSpan(self).split()
+
+    def split(self, sep: NoneType = None, *, maxsplit: Int) -> List[String]:
+        return StringSpan(self).split(maxsplit=maxsplit)
+
     def splitlines(self, keepends: Bool = False) -> List[String]:
-        var lines = List[String]()
-        var line_start = 0
-        var at = 0
-        while at < self.size:
-            var width = self._newline_width_at(at)
-            if width == 0:
-                at += self._lead_width(Int(self.data[at]))
-                continue
-            var end = at + width if keepends else at
-            lines.append(self._with_bytes(line_start, end - line_start))
-            at += width
-            line_start = at
-        if line_start < self.size:
-            lines.append(self._with_bytes(line_start, self.size - line_start))
-        return lines^
+        return StringSpan(self).splitlines(keepends)
 
-    # Case conversion over a pure-Mojo simple-case subset: ASCII, Latin-1,
-    # Latin Extended-A, Greek, and Cyrillic letters (plus `ß` -> `SS`);
-    # other scripts pass through unchanged (upstream maps the full Unicode
-    # tables).
     def upper(self) -> String:
-        var result = String()
-        var at = 0
-        while at < self.size:
-            var width = self._lead_width(Int(self.data[at]))
-            var scalar = self._scalar_at(at, width)
-            if scalar == 0xDF:
-                var double_s = String("SS")
-                result._append_bytes_of(double_s, 0, 2)
-            else:
-                var mapped = _upper_scalar(scalar)
-                if mapped == scalar:
-                    result._append_bytes_of(self, at, width)
-                else:
-                    var text = Codepoint._encode_utf8(mapped)
-                    result._append_bytes_of(text, 0, text.size)
-            at += width
-        return result^
+        return StringSpan(self).upper()
 
     def lower(self) -> String:
-        var result = String()
-        var at = 0
-        while at < self.size:
-            var width = self._lead_width(Int(self.data[at]))
-            var scalar = self._scalar_at(at, width)
-            var mapped = _lower_scalar(scalar)
-            if mapped == scalar:
-                result._append_bytes_of(self, at, width)
-            else:
-                var text = Codepoint._encode_utf8(mapped)
-                result._append_bytes_of(text, 0, text.size)
-            at += width
-        return result^
+        return StringSpan(self).lower()
 
-    # Upstream's rule: at least one cased character, and no character of
-    # the other case (a character is uppercase when it has a lowercase
-    # mapping, lowercase when it has an uppercase mapping).
     def isupper(self) -> Bool:
-        return self.size > 0 and self._all_cased_as(True)
+        return StringSpan(self).isupper()
 
     def islower(self) -> Bool:
-        return self.size > 0 and self._all_cased_as(False)
+        return StringSpan(self).islower()
 
-    # Non-empty and made only of Python-space codepoints.
     def isspace(self) -> Bool:
-        var at = 0
-        while at < self.size:
-            var width = self._space_width_at(at)
-            if width == 0:
-                return False
-            at += width
-        return self.size > 0
+        return StringSpan(self).isspace()
 
     def is_ascii_digit(self) -> Bool:
-        var i = 0
-        while i < self.size:
-            var b = Int(self.data[i])
-            if b < 48 or b > 57:
-                return False
-            i += 1
-        return self.size > 0
+        return StringSpan(self).is_ascii_digit()
 
     def is_ascii_printable(self) -> Bool:
-        var i = 0
-        while i < self.size:
-            var b = Int(self.data[i])
-            if b < 32 or b > 126:
-                return False
-            i += 1
-        return True
+        return StringSpan(self).is_ascii_printable()
 
-    # Byte-width justification with a one-byte fill character (upstream's
-    # `ascii_*` family); a string at least `width` bytes long is returned
-    # unchanged, and center puts the extra fill byte on the right.
-    def ascii_rjust(self, width: Int, fillchar: String = " ") -> String:
-        return self._justify(width - self.size, width, fillchar)
+    def ascii_rjust(self, width: Int, fillchar: StringSpan = " ") -> String:
+        return StringSpan(self).ascii_rjust(width, fillchar)
 
-    def ascii_ljust(self, width: Int, fillchar: String = " ") -> String:
-        return self._justify(0, width, fillchar)
+    def ascii_ljust(self, width: Int, fillchar: StringSpan = " ") -> String:
+        return StringSpan(self).ascii_ljust(width, fillchar)
 
-    def ascii_center(self, width: Int, fillchar: String = " ") -> String:
-        return self._justify((width - self.size) >> 1, width, fillchar)
+    def ascii_center(self, width: Int, fillchar: StringSpan = " ") -> String:
+        return StringSpan(self).ascii_center(width, fillchar)
 
     # Byte access: a borrowed `Span[Byte]` over the buffer and the raw
     # interior pointer (current Mojo's `as_bytes`/`unsafe_ptr`).
@@ -846,69 +685,36 @@ struct String(
     def graphemes(self) -> _GraphemeIter[origin_of(self)]:
         return _GraphemeIter(StringSpan(self), 0)
 
-    # The strip family returns borrowed views of this buffer.  The default
-    # set is POSIX space (`" \t\n\v\f\r\x1c\x1d\x1e"`); the `chars` form
-    # strips by codepoint membership in `chars`.
+    # The strip family returns borrowed views of this buffer (the view's
+    # result carries this String's origin).
     def strip(self) -> StringSpan[origin_of(self)]:
-        var start = self._lstrip_bound(0, self.size)
-        return self._byte_view(start, self._rstrip_bound(start, self.size))
+        return StringSpan(self).strip()
 
-    def strip(self, chars: String) -> StringSpan[origin_of(self)]:
-        var start = self._lstrip_chars_bound(chars, 0, self.size)
-        return self._byte_view(start, self._rstrip_chars_bound(chars, start, self.size))
+    def strip(self, chars: StringSpan) -> StringSpan[origin_of(self)]:
+        return StringSpan(self).strip(chars)
 
     def lstrip(self) -> StringSpan[origin_of(self)]:
-        return self._byte_view(self._lstrip_bound(0, self.size), self.size)
+        return StringSpan(self).lstrip()
 
-    def lstrip(self, chars: String) -> StringSpan[origin_of(self)]:
-        return self._byte_view(self._lstrip_chars_bound(chars, 0, self.size), self.size)
+    def lstrip(self, chars: StringSpan) -> StringSpan[origin_of(self)]:
+        return StringSpan(self).lstrip(chars)
 
     def rstrip(self) -> StringSpan[origin_of(self)]:
-        return self._byte_view(0, self._rstrip_bound(0, self.size))
+        return StringSpan(self).rstrip()
 
-    def rstrip(self, chars: String) -> StringSpan[origin_of(self)]:
-        return self._byte_view(0, self._rstrip_chars_bound(chars, 0, self.size))
+    def rstrip(self, chars: StringSpan) -> StringSpan[origin_of(self)]:
+        return StringSpan(self).rstrip(chars)
 
-    def removeprefix(self, prefix: String, /) -> StringSpan[origin_of(self)]:
-        if self.startswith(prefix):
-            return self._byte_view(prefix.size, self.size)
-        return self._byte_view(0, self.size)
+    def removeprefix(self, prefix: StringSpan, /) -> StringSpan[origin_of(self)]:
+        return StringSpan(self).removeprefix(prefix)
 
-    def removesuffix(self, suffix: String, /) -> StringSpan[origin_of(self)]:
-        if suffix.size > 0 and self.endswith(suffix):
-            return self._byte_view(0, self.size - suffix.size)
-        return self._byte_view(0, self.size)
-
-    # Naive forward byte search from byte offset `start`: the offset of the
-    # first match at or after it, or -1.
-    def _find_from(self, sub: String, start: Int) -> Int:
-        var at = start
-        while at + sub.size <= self.size:
-            if self._matches_at(sub, at):
-                return at
-            at += 1
-        return -1
-
-    # Whether `sub`'s bytes appear verbatim at byte offset `at`; the caller
-    # keeps `at + sub.size` within the buffer.
-    def _matches_at(self, sub: String, at: Int) -> Bool:
-        var i = 0
-        while i < sub.size:
-            if Int(self.data[at + i]) != Int(sub.data[i]):
-                return False
-            i += 1
-        return True
-
-    # A negative search start counts from the end and clamps at 0.
-    def _search_start(self, start: Int) -> Int:
-        if start >= 0:
-            return start
-        var from_end = start + self.size
-        return from_end if from_end > 0 else 0
+    def removesuffix(self, suffix: StringSpan, /) -> StringSpan[origin_of(self)]:
+        return StringSpan(self).removesuffix(suffix)
 
     # Append `count` bytes of `src` from byte offset `start`, doubling the
-    # capacity when the buffer is full.
-    def _append_bytes_of(mut self, src: String, start: Int, count: Int):
+    # capacity when the buffer is full. The result builders on `StringSpan`
+    # accumulate into a String through this.
+    def _append_bytes_of(mut self, src: StringSpan, start: Int, count: Int):
         var needed = self.size + count
         if needed > self.cap:
             var new_cap = self.cap * 2
@@ -917,7 +723,7 @@ struct String(
             self.reserve_bytes(new_cap)
         var i = 0
         while i < count:
-            self.data[self.size + i] = src.data[start + i]
+            self.data[self.size + i] = src._data[start + i]
             i += 1
         self.size = needed
 
@@ -928,142 +734,16 @@ struct String(
         view._size = end - start
         return view^
 
-    def _justify(self, start: Int, width: Int, fillchar: String) -> String:
-        if self.size >= width:
-            return self.copy()
-        if fillchar.size != 1:
-            _mojito_abort("fill char needs to be a one byte literal")
-        var result = String(capacity_bytes=width)
-        var i = 0
-        while i < start:
-            result._append_bytes_of(fillchar, 0, 1)
-            i += 1
-        result._append_bytes_of(self, 0, self.size)
-        while result.size < width:
-            result._append_bytes_of(fillchar, 0, 1)
-        return result^
-
-    def _all_cased_as(self, upper: Bool) -> Bool:
-        var found = False
-        var at = 0
-        while at < self.size:
-            var width = self._lead_width(Int(self.data[at]))
-            var scalar = self._scalar_at(at, width)
-            at += width
-            var has_lower = _lower_scalar(scalar) != scalar
-            var has_upper = _upper_scalar(scalar) != scalar or scalar == 0xDF
-            if upper:
-                if has_lower:
-                    found = True
-                elif has_upper:
-                    return False
-            else:
-                if has_upper:
-                    found = True
-                elif has_lower:
-                    return False
-        return found
-
-    # Non-raising scalar decode of the `width`-byte sequence at `at`.
+    # Byte helpers the iterators and the numeric parsers still call on an
+    # owned String; the view owns the algorithms.
     def _scalar_at(self, at: Int, width: Int) -> Int:
-        var lead = Int(self.data[at])
-        if width == 1:
-            return lead
-        var value = lead % 32 if width == 2 else (lead % 16 if width == 3 else lead % 8)
-        var i = 1
-        while i < width:
-            value = value * 64 + Int(self.data[at + i]) % 64
-            i += 1
-        return value
+        return StringSpan(self)._scalar_at(at, width)
 
-    # Non-raising UTF-8 lead-byte width (a stray continuation byte counts as
-    # one so scans always advance).
     def _lead_width(self, lead: Int) -> Int:
-        if lead < 224:
-            return 1 if lead < 192 else 2
-        return 3 if lead < 240 else 4
-
-    def _is_continuation(self, b: Int) -> Bool:
-        return b >= 128 and b < 192
+        return StringSpan(self)._lead_width(lead)
 
     def _is_posix_space_byte(self, b: Int) -> Bool:
-        return b == 32 or (b >= 9 and b <= 13) or (b >= 28 and b <= 30)
-
-    # The byte width of the Python-space codepoint at byte offset `at`, or 0.
-    def _space_width_at(self, at: Int) -> Int:
-        var b = Int(self.data[at])
-        if self._is_posix_space_byte(b):
-            return 1
-        return self._unicode_separator_width_at(at)
-
-    # The byte width of the line boundary at byte offset `at` (`\r\n` counts
-    # as one), or 0.
-    def _newline_width_at(self, at: Int) -> Int:
-        var b = Int(self.data[at])
-        if b == 13:
-            if at + 1 < self.size and Int(self.data[at + 1]) == 10:
-                return 2
-            return 1
-        if (b >= 9 and b <= 13) or (b >= 28 and b <= 30):
-            return 1
-        return self._unicode_separator_width_at(at)
-
-    # U+0085 (C2 85), U+2028 (E2 80 A8), and U+2029 (E2 80 A9).
-    def _unicode_separator_width_at(self, at: Int) -> Int:
-        var b = Int(self.data[at])
-        if b == 0xC2 and at + 1 < self.size and Int(self.data[at + 1]) == 0x85:
-            return 2
-        if b == 0xE2 and at + 2 < self.size and Int(self.data[at + 1]) == 0x80:
-            var b2 = Int(self.data[at + 2])
-            if b2 == 0xA8 or b2 == 0xA9:
-                return 3
-        return 0
-
-    def _lstrip_bound(self, start: Int, end: Int) -> Int:
-        var at = start
-        while at < end and self._is_posix_space_byte(Int(self.data[at])):
-            at += 1
-        return at
-
-    def _rstrip_bound(self, start: Int, end: Int) -> Int:
-        var at = end
-        while at > start and self._is_posix_space_byte(Int(self.data[at - 1])):
-            at -= 1
-        return at
-
-    def _lstrip_chars_bound(self, chars: String, start: Int, end: Int) -> Int:
-        var at = start
-        while at < end:
-            var width = self._lead_width(Int(self.data[at]))
-            if not chars._has_sequence(self, at, width):
-                break
-            at += width
-        return at
-
-    def _rstrip_chars_bound(self, chars: String, start: Int, end: Int) -> Int:
-        var at = end
-        while at > start:
-            var head = at - 1
-            while head > start and self._is_continuation(Int(self.data[head])):
-                head -= 1
-            if not chars._has_sequence(self, head, at - head):
-                break
-            at = head
-        return at
-
-    # Whether the `width` bytes of `other` at `at` occur in this buffer.  In
-    # valid UTF-8 a whole sequence matches only at a codepoint boundary, so
-    # this is codepoint membership.
-    def _has_sequence(self, other: String, at: Int, width: Int) -> Bool:
-        var pos = 0
-        while pos + width <= self.size:
-            var i = 0
-            while i < width and Int(self.data[pos + i]) == Int(other.data[at + i]):
-                i += 1
-            if i == width:
-                return True
-            pos += 1
-        return False
+        return StringSpan(self)._is_posix_space_byte(b)
 
     def __hash__[H: Hasher](self, mut hasher: H):
         hasher.update(StringSpan(self))
@@ -1449,19 +1129,19 @@ struct String(
             if b == 92 or b == 39 or b == 10 or b == 9 or b == 13:
                 out._append_bytes_of(self, run_start, i - run_start)
                 if b == 92:
-                    out._append_bytes_of(String("\\\\"), 0, 2)
+                    out._append_bytes_of("\\\\", 0, 2)
                 elif b == 39:
-                    out._append_bytes_of(String("\\'"), 0, 2)
+                    out._append_bytes_of("\\'", 0, 2)
                 elif b == 10:
-                    out._append_bytes_of(String("\\n"), 0, 2)
+                    out._append_bytes_of("\\n", 0, 2)
                 elif b == 9:
-                    out._append_bytes_of(String("\\t"), 0, 2)
+                    out._append_bytes_of("\\t", 0, 2)
                 else:
-                    out._append_bytes_of(String("\\r"), 0, 2)
+                    out._append_bytes_of("\\r", 0, 2)
                 run_start = i + 1
             i += 1
         out._append_bytes_of(self, run_start, self.size - run_start)
-        out._append_bytes_of(String("'"), 0, 1)
+        out._append_bytes_of("'", 0, 1)
         writer.write(out)
 
 # A decoded Unicode scalar together with its character text.  Produced by
@@ -1592,9 +1272,11 @@ struct Codepoint(
 # String's place, so the source stays alive while any view lives and
 # mutation conflicts. Keyword indexing mirrors String's vocabulary, and the
 # strict keyword slices — including the grapheme slice String itself does
-# not offer — return sub-views of the same buffer. Codepoint- and
-# grapheme-level operations delegate through an eager `to_string()` copy
-# for decoding while the returned views stay borrowed from this buffer.
+# not offer — return sub-views of the same buffer. The result APIs (search,
+# affix tests, replace, split, case, predicates, justification, strip) live
+# here and `String` forwards to them, as upstream. Codepoint- and
+# grapheme-level indexing still decodes through an eager `to_string()` copy
+# while the returned views stay borrowed from this buffer.
 struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     Boolable, Equatable, Hashable, ImplicitlyCopyable, Iterable, Movable, Writable
 ):
@@ -1606,11 +1288,24 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     var _data: Pointer[Byte, Self.origin._get_owned_interior["bytes"]]
     var _size: Int
 
+    @implicit
     def __init__(out self, ref [Self.origin] src: String):
         self._data = src.data.unsafe_origin_cast[
             origin._get_owned_interior["bytes"]
         ]()
         self._size = src.size
+
+    # Upstream's `StaticString` initializer (the origin is erased here). The
+    # compiler replaces this call: `_data`/`_size` view the literal's UTF-8
+    # bytes, which live for the whole program. The body only establishes the
+    # field contract and never executes. `@implicit` lets a literal convert
+    # wherever a view is expected.
+    @implicit
+    def __init__(out self, literal: StringLiteral):
+        self._data = unsafe_alloc[Byte](1).unsafe_origin_cast[
+            origin._get_owned_interior["bytes"]
+        ]()
+        self._size = 0
 
     # Ordinary StringSpan iteration also yields grapheme-cluster sub-views.
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
@@ -1652,45 +1347,242 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     def __ne__(self, rhs: Self) -> Bool:
         return not (self == rhs)
 
-    def __contains__(self, substr: String) -> Bool:
-        return self.to_string()._find_from(substr, 0) >= 0
+    def __contains__(self, substr: StringSpan) -> Bool:
+        return self._find_from(substr, 0) >= 0
 
-    # The strip family and affix removal return sub-views of this buffer
-    # (offsets computed on an eager copy of the bytes).
+    # Result APIs use byte offsets, like `len` and the byte-wise slice
+    # (upstream `string_span.mojo`).  An empty needle matches everywhere
+    # (Python semantics): `find` reports 0, `rfind` the byte length, the
+    # affix tests True.  A negative `start` counts from the end and clamps.
+
+    def find(self, substr: StringSpan, start: Int = 0) -> Int:
+        if substr._size == 0:
+            return 0
+        if self._size < substr._size + start:
+            return -1
+        return self._find_from(substr, self._search_start(start))
+
+    def rfind(self, substr: StringSpan, start: Int = 0) -> Int:
+        if substr._size == 0:
+            return self._size
+        if self._size < substr._size + start:
+            return -1
+        var start_byte = self._search_start(start)
+        var at = self._size - substr._size
+        while at >= start_byte:
+            if self._matches_at(substr, at):
+                return at
+            at -= 1
+        return -1
+
+    def count(self, substr: StringSpan) -> Int:
+        if substr._size == 0:
+            return self._size + 1
+        var total = 0
+        var at = self._find_from(substr, 0)
+        while at >= 0:
+            total += 1
+            at = self._find_from(substr, at + substr._size)
+        return total
+
+    # `start`/`end` are byte offsets; `end == -1` means the whole string.
+    def startswith(self, prefix: StringSpan, start: Int = 0, end: Int = -1) -> Bool:
+        if end == -1:
+            return self.find(prefix, start) == start
+        if start < 0 or end > self._size or end - start < prefix._size:
+            return False
+        return self._matches_at(prefix, start)
+
+    def endswith(self, suffix: StringSpan, start: Int = 0, end: Int = -1) -> Bool:
+        if suffix._size > self._size:
+            return False
+        if end == -1:
+            return self.rfind(suffix, start) + suffix._size == self._size
+        if start < 0 or end > self._size or end - start < suffix._size:
+            return False
+        return self._matches_at(suffix, end - suffix._size)
+
+    # Every occurrence of `old` replaced by `new`; an empty `old` interleaves
+    # `new` before every codepoint.
+    def replace(self, old: StringSpan, new: StringSpan) -> String:
+        var result = String()
+        if old._size == 0:
+            var at = 0
+            while at < self._size:
+                var width = self._lead_width(Int(self._data[at]))
+                result._append_bytes_of(new, 0, new._size)
+                result._append_bytes_of(self, at, width)
+                at += width
+            return result^
+        var start = 0
+        var at = self._find_from(old, 0)
+        while at >= 0:
+            result._append_bytes_of(self, start, at - start)
+            result._append_bytes_of(new, 0, new._size)
+            start = at + old._size
+            at = self._find_from(old, start)
+        result._append_bytes_of(self, start, self._size - start)
+        return result^
+
+    # Eager owned pieces rather than current Mojo's borrowed views (the
+    # recorded eager-result divergence), in upstream's four overloads.  An
+    # empty separator yields an empty piece, every codepoint, and an empty
+    # piece (upstream ignores `maxsplit` there); `maxsplit` bounds the number
+    # of splits.
+    def split(self, sep: StringSpan) -> List[String]:
+        return self._split_on(sep, -1)
+
+    def split(self, sep: StringSpan, maxsplit: Int) -> List[String]:
+        return self._split_on(sep, maxsplit)
+
+    # Whitespace split: runs of Python-space codepoints (POSIX space plus
+    # U+0085, U+2028, U+2029) separate pieces and never yield empty ones.
+    def split(self, sep: NoneType = None) -> List[String]:
+        return self._split_whitespace(-1)
+
+    def split(self, sep: NoneType = None, *, maxsplit: Int) -> List[String]:
+        return self._split_whitespace(maxsplit)
+
+    # Universal-newline line splitting (`\r\n` is one boundary; the set is
+    # upstream's `\t\n\v\f\r\x1c\x1d\x1e\x85\u2028\u2029`); no
+    # trailing empty line.
+    def splitlines(self, keepends: Bool = False) -> List[String]:
+        var lines = List[String]()
+        var line_start = 0
+        var at = 0
+        while at < self._size:
+            var width = self._newline_width_at(at)
+            if width == 0:
+                at += self._lead_width(Int(self._data[at]))
+                continue
+            var end = at + width if keepends else at
+            lines.append(self._with_bytes(line_start, end - line_start))
+            at += width
+            line_start = at
+        if line_start < self._size:
+            lines.append(self._with_bytes(line_start, self._size - line_start))
+        return lines^
+
+    # Case conversion over a pure-Mojo simple-case subset: ASCII, Latin-1,
+    # Latin Extended-A, Greek, and Cyrillic letters (plus `ß` -> `SS`);
+    # other scripts pass through unchanged (upstream maps the full Unicode
+    # tables).
+    def upper(self) -> String:
+        var result = String()
+        var at = 0
+        while at < self._size:
+            var width = self._lead_width(Int(self._data[at]))
+            var scalar = self._scalar_at(at, width)
+            if scalar == 0xDF:
+                result._append_bytes_of("SS", 0, 2)
+            else:
+                var mapped = _upper_scalar(scalar)
+                if mapped == scalar:
+                    result._append_bytes_of(self, at, width)
+                else:
+                    var text = Codepoint._encode_utf8(mapped)
+                    result._append_bytes_of(text, 0, text.size)
+            at += width
+        return result^
+
+    def lower(self) -> String:
+        var result = String()
+        var at = 0
+        while at < self._size:
+            var width = self._lead_width(Int(self._data[at]))
+            var scalar = self._scalar_at(at, width)
+            var mapped = _lower_scalar(scalar)
+            if mapped == scalar:
+                result._append_bytes_of(self, at, width)
+            else:
+                var text = Codepoint._encode_utf8(mapped)
+                result._append_bytes_of(text, 0, text.size)
+            at += width
+        return result^
+
+    # Upstream's rule: at least one cased character, and no character of
+    # the other case (a character is uppercase when it has a lowercase
+    # mapping, lowercase when it has an uppercase mapping).
+    def isupper(self) -> Bool:
+        return self._size > 0 and self._all_cased_as(True)
+
+    def islower(self) -> Bool:
+        return self._size > 0 and self._all_cased_as(False)
+
+    # Non-empty and made only of Python-space codepoints. Upstream's
+    # `[single_character: Bool = False]` fast-path parameter is not declared:
+    # a value-parameterized method on this origin-parameterized struct is not
+    # specialized (see docs/roadmap.md).
+    def isspace(self) -> Bool:
+        var at = 0
+        while at < self._size:
+            var width = self._space_width_at(at)
+            if width == 0:
+                return False
+            at += width
+        return self._size > 0
+
+    def is_ascii_digit(self) -> Bool:
+        var i = 0
+        while i < self._size:
+            var b = Int(self._data[i])
+            if b < 48 or b > 57:
+                return False
+            i += 1
+        return self._size > 0
+
+    def is_ascii_printable(self) -> Bool:
+        var i = 0
+        while i < self._size:
+            var b = Int(self._data[i])
+            if b < 32 or b > 126:
+                return False
+            i += 1
+        return True
+
+    # Byte-width justification with a one-byte fill character (upstream's
+    # `ascii_*` family); a string at least `width` bytes long is returned
+    # unchanged, and center puts the extra fill byte on the right.
+    def ascii_rjust(self, width: Int, fillchar: StringSpan = " ") -> String:
+        return self._justify(width - self._size, width, fillchar)
+
+    def ascii_ljust(self, width: Int, fillchar: StringSpan = " ") -> String:
+        return self._justify(0, width, fillchar)
+
+    def ascii_center(self, width: Int, fillchar: StringSpan = " ") -> String:
+        return self._justify((width - self._size) >> 1, width, fillchar)
+
+    # The strip family and affix removal return sub-views of this buffer.
+    # The default set is POSIX space (`" \t\n\v\f\r\x1c\x1d\x1e"`); the
+    # `chars` form strips by codepoint membership in `chars`.
     def strip(self) -> Self:
-        var text = self.to_string()
-        var start = text._lstrip_bound(0, text.size)
-        return self._sub_view(start, text._rstrip_bound(start, text.size))
+        var start = self._lstrip_bound(0, self._size)
+        return self._sub_view(start, self._rstrip_bound(start, self._size))
 
-    def strip(self, chars: String) -> Self:
-        var text = self.to_string()
-        var start = text._lstrip_chars_bound(chars, 0, text.size)
-        return self._sub_view(start, text._rstrip_chars_bound(chars, start, text.size))
+    def strip(self, chars: StringSpan) -> Self:
+        var start = self._lstrip_chars_bound(chars, 0, self._size)
+        return self._sub_view(start, self._rstrip_chars_bound(chars, start, self._size))
 
     def lstrip(self) -> Self:
-        var text = self.to_string()
-        return self._sub_view(text._lstrip_bound(0, text.size), self._size)
+        return self._sub_view(self._lstrip_bound(0, self._size), self._size)
 
-    def lstrip(self, chars: String) -> Self:
-        var text = self.to_string()
-        return self._sub_view(text._lstrip_chars_bound(chars, 0, text.size), self._size)
+    def lstrip(self, chars: StringSpan) -> Self:
+        return self._sub_view(self._lstrip_chars_bound(chars, 0, self._size), self._size)
 
     def rstrip(self) -> Self:
-        var text = self.to_string()
-        return self._sub_view(0, text._rstrip_bound(0, text.size))
+        return self._sub_view(0, self._rstrip_bound(0, self._size))
 
-    def rstrip(self, chars: String) -> Self:
-        var text = self.to_string()
-        return self._sub_view(0, text._rstrip_chars_bound(chars, 0, text.size))
+    def rstrip(self, chars: StringSpan) -> Self:
+        return self._sub_view(0, self._rstrip_chars_bound(chars, 0, self._size))
 
-    def removeprefix(self, prefix: String, /) -> Self:
-        if self.to_string().startswith(prefix):
-            return self._sub_view(prefix.size, self._size)
+    def removeprefix(self, prefix: StringSpan, /) -> Self:
+        if self.startswith(prefix):
+            return self._sub_view(prefix._size, self._size)
         return self
 
-    def removesuffix(self, suffix: String, /) -> Self:
-        if suffix.size > 0 and self.to_string().endswith(suffix):
-            return self._sub_view(0, self._size - suffix.size)
+    def removesuffix(self, suffix: StringSpan, /) -> Self:
+        if suffix._size > 0 and self.endswith(suffix):
+            return self._sub_view(0, self._size - suffix._size)
         return self
 
     def __hash__[H: Hasher](self, mut hasher: H):
@@ -1804,6 +1696,218 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         if b < 128:
             return True
         return b >= 192
+
+    def _split_on(self, sep: StringSpan, maxsplit: Int) -> List[String]:
+        var parts = List[String]()
+        if sep._size == 0:
+            parts.append(String())
+            var at = 0
+            while at < self._size:
+                var width = self._lead_width(Int(self._data[at]))
+                parts.append(self._with_bytes(at, width))
+                at += width
+            parts.append(String())
+            return parts^
+        var start = 0
+        var splits = 0
+        var at = self._find_from(sep, 0) if maxsplit != 0 else -1
+        while at >= 0:
+            parts.append(self._with_bytes(start, at - start))
+            start = at + sep._size
+            splits += 1
+            at = -1
+            if maxsplit < 0 or splits < maxsplit:
+                at = self._find_from(sep, start)
+        parts.append(self._with_bytes(start, self._size - start))
+        return parts^
+
+    def _split_whitespace(self, maxsplit: Int) -> List[String]:
+        var parts = List[String]()
+        var at = 0
+        var splits = 0
+        while at < self._size:
+            var width = self._space_width_at(at)
+            if width > 0:
+                at += width
+                continue
+            var end = at
+            if maxsplit >= 0 and splits == maxsplit:
+                end = self._size
+            else:
+                while end < self._size and self._space_width_at(end) == 0:
+                    end += self._lead_width(Int(self._data[end]))
+            parts.append(self._with_bytes(at, end - at))
+            splits += 1
+            at = end
+        return parts^
+
+    # Naive forward byte search from byte offset `start`: the offset of the
+    # first match at or after it, or -1.
+    def _find_from(self, sub: StringSpan, start: Int) -> Int:
+        var at = start
+        while at + sub._size <= self._size:
+            if self._matches_at(sub, at):
+                return at
+            at += 1
+        return -1
+
+    # Whether `sub`'s bytes appear verbatim at byte offset `at`; the caller
+    # keeps `at + sub._size` within the buffer.
+    def _matches_at(self, sub: StringSpan, at: Int) -> Bool:
+        var i = 0
+        while i < sub._size:
+            if Int(self._data[at + i]) != Int(sub._data[i]):
+                return False
+            i += 1
+        return True
+
+    # A negative search start counts from the end and clamps at 0.
+    def _search_start(self, start: Int) -> Int:
+        if start >= 0:
+            return start
+        var from_end = start + self._size
+        return from_end if from_end > 0 else 0
+
+    # An owned copy of bytes `[start, start + count)`.
+    def _with_bytes(self, start: Int, count: Int) -> String:
+        return self._sub_view(start, start + count).to_string()
+
+    def _justify(self, start: Int, width: Int, fillchar: StringSpan) -> String:
+        if self._size >= width:
+            return self.to_string()
+        if fillchar._size != 1:
+            _mojito_abort("fill char needs to be a one byte literal")
+        var result = String(capacity_bytes=width)
+        var i = 0
+        while i < start:
+            result._append_bytes_of(fillchar, 0, 1)
+            i += 1
+        result._append_bytes_of(self, 0, self._size)
+        while result.size < width:
+            result._append_bytes_of(fillchar, 0, 1)
+        return result^
+
+    def _all_cased_as(self, upper: Bool) -> Bool:
+        var found = False
+        var at = 0
+        while at < self._size:
+            var width = self._lead_width(Int(self._data[at]))
+            var scalar = self._scalar_at(at, width)
+            at += width
+            var has_lower = _lower_scalar(scalar) != scalar
+            var has_upper = _upper_scalar(scalar) != scalar or scalar == 0xDF
+            if upper:
+                if has_lower:
+                    found = True
+                elif has_upper:
+                    return False
+            else:
+                if has_upper:
+                    found = True
+                elif has_lower:
+                    return False
+        return found
+
+    # Non-raising scalar decode of the `width`-byte sequence at `at`.
+    def _scalar_at(self, at: Int, width: Int) -> Int:
+        var lead = Int(self._data[at])
+        if width == 1:
+            return lead
+        var value = lead % 32 if width == 2 else (lead % 16 if width == 3 else lead % 8)
+        var i = 1
+        while i < width:
+            value = value * 64 + Int(self._data[at + i]) % 64
+            i += 1
+        return value
+
+    # Non-raising UTF-8 lead-byte width (a stray continuation byte counts as
+    # one so scans always advance).
+    def _lead_width(self, lead: Int) -> Int:
+        if lead < 224:
+            return 1 if lead < 192 else 2
+        return 3 if lead < 240 else 4
+
+    def _is_continuation(self, b: Int) -> Bool:
+        return b >= 128 and b < 192
+
+    def _is_posix_space_byte(self, b: Int) -> Bool:
+        return b == 32 or (b >= 9 and b <= 13) or (b >= 28 and b <= 30)
+
+    # The byte width of the Python-space codepoint at byte offset `at`, or 0.
+    def _space_width_at(self, at: Int) -> Int:
+        var b = Int(self._data[at])
+        if self._is_posix_space_byte(b):
+            return 1
+        return self._unicode_separator_width_at(at)
+
+    # The byte width of the line boundary at byte offset `at` (`\r\n` counts
+    # as one), or 0.
+    def _newline_width_at(self, at: Int) -> Int:
+        var b = Int(self._data[at])
+        if b == 13:
+            if at + 1 < self._size and Int(self._data[at + 1]) == 10:
+                return 2
+            return 1
+        if (b >= 9 and b <= 13) or (b >= 28 and b <= 30):
+            return 1
+        return self._unicode_separator_width_at(at)
+
+    # U+0085 (C2 85), U+2028 (E2 80 A8), and U+2029 (E2 80 A9).
+    def _unicode_separator_width_at(self, at: Int) -> Int:
+        var b = Int(self._data[at])
+        if b == 0xC2 and at + 1 < self._size and Int(self._data[at + 1]) == 0x85:
+            return 2
+        if b == 0xE2 and at + 2 < self._size and Int(self._data[at + 1]) == 0x80:
+            var b2 = Int(self._data[at + 2])
+            if b2 == 0xA8 or b2 == 0xA9:
+                return 3
+        return 0
+
+    def _lstrip_bound(self, start: Int, end: Int) -> Int:
+        var at = start
+        while at < end and self._is_posix_space_byte(Int(self._data[at])):
+            at += 1
+        return at
+
+    def _rstrip_bound(self, start: Int, end: Int) -> Int:
+        var at = end
+        while at > start and self._is_posix_space_byte(Int(self._data[at - 1])):
+            at -= 1
+        return at
+
+    def _lstrip_chars_bound(self, chars: StringSpan, start: Int, end: Int) -> Int:
+        var at = start
+        while at < end:
+            var width = self._lead_width(Int(self._data[at]))
+            if not chars._has_sequence(self, at, width):
+                break
+            at += width
+        return at
+
+    def _rstrip_chars_bound(self, chars: StringSpan, start: Int, end: Int) -> Int:
+        var at = end
+        while at > start:
+            var head = at - 1
+            while head > start and self._is_continuation(Int(self._data[head])):
+                head -= 1
+            if not chars._has_sequence(self, head, at - head):
+                break
+            at = head
+        return at
+
+    # Whether the `width` bytes of `other` at `at` occur in this buffer.  In
+    # valid UTF-8 a whole sequence matches only at a codepoint boundary, so
+    # this is codepoint membership.
+    def _has_sequence(self, other: StringSpan, at: Int, width: Int) -> Bool:
+        var pos = 0
+        while pos + width <= self._size:
+            var i = 0
+            while i < width and Int(self._data[pos + i]) == Int(other._data[at + i]):
+                i += 1
+            if i == width:
+                return True
+            pos += 1
+        return False
 
 
 # The grapheme-cluster iterator behind ordinary String/StringSpan

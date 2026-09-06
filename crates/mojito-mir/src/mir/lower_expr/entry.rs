@@ -135,18 +135,35 @@ impl Flatten<'_> {
             // its `ref [origin]` parameter to the source's caller place, and
             // the result register keeps the source root's provenance so the
             // borrowed owner stays live across the consuming expression.
-            let source_place = self
-                .checked_adjustments(e)
-                .iter()
-                .any(|adjustment| {
-                    matches!(
-                        adjustment,
-                        mojito_checked::checked::SemanticAdjustment::BorrowConversionSource { .. }
-                    )
-                })
-                .then(|| self.simple_place(e))
-                .flatten();
-            let argument = self.expr_unconverted(e);
+            // A temporary source (`f(String("abc"))` at a `StringSpan`
+            // parameter) has no place: the checker minted an anonymous owner,
+            // and the unconverted value is stored in that owner's hidden
+            // `$mat_r` slot whose place the constructor borrows.
+            let adjustments = self.checked_adjustments(e);
+            let (argument, source_place) = if let Some(owner) =
+                mojito_checked::checked::materialized_borrow_owner(&adjustments)
+            {
+                let value = self.expr_unconverted(e);
+                // The slot holds the source at its own checked type (a
+                // constructor call's register is typed at its emit site).
+                if let Some(ty) = self.checked_ty(e) {
+                    self.f.reg_types.entry(value.0).or_insert(ty);
+                }
+                let value = self.nominal_string_view_source(e, value, &target);
+                self.materialize_borrow_slot(e, owner, value)
+            } else {
+                let source_place = adjustments
+                        .iter()
+                        .any(|adjustment| {
+                            matches!(
+                                adjustment,
+                                mojito_checked::checked::SemanticAdjustment::BorrowConversionSource { .. }
+                            )
+                        })
+                        .then(|| self.simple_place(e))
+                        .flatten();
+                (self.expr_unconverted(e), source_place)
+            };
             // The conversion result is the constructed type, not the source
             // expression's checked type; targets are concrete constructors.
             // The checker records the converted-to type (with its arguments,
@@ -258,5 +275,40 @@ impl Flatten<'_> {
                         _ => None,
                     })
             })
+    }
+
+    /// A builtin string producer (`String("abc")`, `repr(x)`, `input(...)`)
+    /// is typed as the compile-time string plus a nominal-String wrap
+    /// conversion at its own span; a view conversion of that temporary
+    /// (`f(String("abc"))` at a `StringSpan` parameter) shares the span and
+    /// supersedes the wrap in the recorded conversions. The view constructor
+    /// borrows a nominal `String`, so the wrap is re-emitted here: the
+    /// materialized slot must hold the struct the constructor lends.
+    fn nominal_string_view_source(&mut self, e: &Expr, value: Reg, target: &str) -> Reg {
+        if !matches!(self.f.reg_types.get(&value.0), Some(Ty::StringLiteral))
+            || !mojito_symbol::symbol::single_nominal_string_ctor(target)
+        {
+            return value;
+        }
+        let nominal = self.fresh_typed(
+            span(e),
+            None,
+            Ty::Struct(
+                mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
+                Vec::new(),
+            ),
+        );
+        self.emit(MirInstr::Call {
+            dest: nominal,
+            func: FuncRef::named(&mojito_symbol::symbol::nominal_string_literal_ctor_symbol()),
+            raises: None,
+            args: vec![value],
+            kwargs: Vec::new(),
+            arg_places: vec![None],
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+        });
+        nominal
     }
 }

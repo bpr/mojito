@@ -369,19 +369,22 @@ impl SignatureKey {
     }
 }
 
-/// The lowered symbol of an overloaded free function: `pick$ov$Int`.
 /// The bundled stdlib's nominal `String` struct under its linked module
 /// identity. The checker's construction routing and the VM's
 /// literal-to-struct bridge both key on this exact declaration.
-pub use mojito_types::types::{STDLIB_STRING_STRUCT, is_stdlib_string_struct};
+pub use mojito_types::types::{
+    STDLIB_STRING_SPAN_STRUCT, STDLIB_STRING_STRUCT, is_stdlib_string_span_struct,
+    is_stdlib_string_struct,
+};
 
+/// The lowered symbol of an overloaded free function: `pick$ov$Int`.
 pub fn function_symbol(base: &str, sig: &SignatureKey) -> String {
     format!("{base}{}", sig.suffix())
 }
 
 /// The struct a literal→String conversion constructor symbol targets:
-/// `<name>.__init__$ov$String` collapses StringLiteral and nominal String
-/// under one overload key, and its declared body is a never-execute
+/// `<name>.__init__$ov$StringLiteral` is the nominal String's
+/// `StringLiteral`-typed constructor, whose declared body is a never-execute
 /// field-contract stub, so native lowering routes the call to the string
 /// constructor bridge instead of the compiled signature. Returns the
 /// receiver struct name when `symbol` has that exact shape. Compiled
@@ -389,8 +392,34 @@ pub fn function_symbol(base: &str, sig: &SignatureKey) -> String {
 /// surface does not vary by feature.
 pub fn string_ctor_overload_struct(symbol: &str) -> Option<&str> {
     symbol
-        .strip_suffix(".__init__$ov$String")
+        .strip_suffix(".__init__$ov$StringLiteral")
         .filter(|name| is_stdlib_string_struct(name))
+}
+
+/// The nominal String's `StringLiteral` constructor symbol — the wrap that
+/// materializes a compile-time string result (`String("abc")`, `repr(x)`,
+/// `input(...)`) as the nominal struct.
+pub fn nominal_string_literal_ctor_symbol() -> String {
+    format!("{STDLIB_STRING_STRUCT}.__init__$ov$StringLiteral")
+}
+
+/// Whether `symbol` is a single-parameter constructor whose parameter is the
+/// nominal `String` (`StringSpan.__init__$ov$String`): the shape of an
+/// `@implicit` view constructor borrowing a String.
+pub fn single_nominal_string_ctor(symbol: &str) -> bool {
+    symbol.ends_with(".__init__$ov$String")
+}
+
+/// The view struct a literal→`StringSpan` constructor symbol targets:
+/// `StringSpan.__init__$ov$StringLiteral` is the bundled view's `@implicit`
+/// `StringLiteral` constructor (upstream's `StaticString` initializer), whose
+/// declared body is a never-execute field-contract stub; the backends build
+/// the view over the literal's bytes instead. Returns the struct name when
+/// `symbol` has that exact shape.
+pub fn string_span_ctor_overload_struct(symbol: &str) -> Option<&str> {
+    symbol
+        .strip_suffix(".__init__$ov$StringLiteral")
+        .filter(|name| is_stdlib_string_span_struct(name))
 }
 
 /// The lowered symbol of an overloaded struct method (including `__init__` and
@@ -692,7 +721,7 @@ fn ty_raw(ty: &Ty, self_ty: Option<&Ty>) -> String {
         Ty::UInt => "UInt".to_string(),
         Ty::Float64 | Ty::FloatLiteral => "Float64".to_string(),
         Ty::Bool => "Bool".to_string(),
-        Ty::StringLiteral => "String".to_string(),
+        Ty::StringLiteral => "StringLiteral".to_string(),
         Ty::None => "None".to_string(),
         Ty::ComptimeList(elem) => format!("__ComptimeList${}", ty_raw(elem, self_ty)),
         Ty::Tuple(elems) => format!(
@@ -721,9 +750,9 @@ fn ty_raw(ty: &Ty, self_ty: Option<&Ty>) -> String {
                 .join("$")
         ),
         // The nominal stdlib String keeps the historical `String` symbol
-        // spelling, so overload identities do not churn across the
-        // StringLiteral/String type split. Consequence: an overload set
-        // differing only in StringLiteral-vs-String collides and is rejected.
+        // spelling while the compile-time literal spells `StringLiteral`, so
+        // the two are distinct overload keys (as upstream: a literal argument
+        // selects the exact `StringLiteral` overload beside a `String` one).
         Ty::Struct(name, args) if args.is_empty() && is_stdlib_string_struct(name) => {
             "String".to_string()
         }
@@ -820,7 +849,7 @@ fn ast_raw(
         Type::Int => "Int".to_string(),
         Type::UInt => "UInt".to_string(),
         Type::Bool => "Bool".to_string(),
-        Type::StringLiteral => "String".to_string(),
+        Type::StringLiteral => "StringLiteral".to_string(),
         Type::Float64 => "Float64".to_string(),
         Type::None => "None".to_string(),
         Type::Named(name, args) if args.is_empty() && is_stdlib_string_struct(name) => {
@@ -1185,19 +1214,31 @@ fn signature_from_ast(
 /// The `ty_raw` mangling of a struct's own instance type, reconstructed from its
 /// name and type parameters — the declaration-side spelling of `Self`. Mirrors
 /// `ty_raw(Ty::Struct(name, decls.map(param_as_arg)))`: the struct name followed
-/// by each type parameter (`Pair`, `List$T$AnyType`). Returns `None` when the
-/// struct carries value or origin parameters (whose argument mangling this cheap
-/// reconstruction does not reproduce), leaving those rare `Self`-typed overloads
-/// at their prior behavior rather than risking a mismatched key.
+/// by each type parameter (`Pair`, `List$T$AnyType`). Origin parameters and
+/// the infer-only `Bool` binders of their mutability are erased exactly as the
+/// checker erases them from the struct's declarations, so a view struct such
+/// as `StringSpan[mut: Bool, //, origin: Origin[mut=mut]]` spells `StringSpan`
+/// and its bare-annotation parameters (`sep: StringSpan`) canonicalize to
+/// `Self` on both sides. Returns `None` when the struct carries other value
+/// or callable parameters (whose argument mangling this cheap reconstruction
+/// does not reproduce), leaving those rare `Self`-typed overloads at their
+/// prior behavior rather than risking a mismatched key.
 fn self_struct_spelling(type_name: &str, type_params: &[TypeParam]) -> Option<String> {
     // The nominal String struct already mangles its own type as the stable
     // `String` spelling on both sides (see `ty_raw`/`ast_raw`), so its overload
-    // keys are not asymmetric and must not be rewritten to `Self` — the
-    // literal→String constructor bridge keys on `.__init__$ov$String`.
+    // keys are not asymmetric and must not be rewritten to `Self` — every
+    // String key would churn for no gain.
     if is_stdlib_string_struct(type_name) {
         return None;
     }
-    let all_type_params = type_params.iter().all(|param| {
+    let retained: Vec<&TypeParam> = type_params
+        .iter()
+        .filter(|param| {
+            !matches!(param.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
+                && !param.is_origin_mutability_binder(type_params)
+        })
+        .collect();
+    let all_type_params = retained.iter().all(|param| {
         param.value_type.is_none()
             && param.callable_bound.is_none()
             && param.origin_mutability.is_none()
@@ -1206,12 +1247,12 @@ fn self_struct_spelling(type_name: &str, type_params: &[TypeParam]) -> Option<St
     if !all_type_params {
         return None;
     }
-    let type_bounds: HashMap<String, Vec<String>> = type_params
+    let type_bounds: HashMap<String, Vec<String>> = retained
         .iter()
         .map(|param| (param.name.clone(), param.bounds.clone()))
         .collect();
     let mut spelling = encode_identifier(type_name);
-    for param in type_params {
+    for param in retained {
         spelling.push('$');
         spelling.push_str(&parameter_raw(&param.name, &type_bounds));
     }

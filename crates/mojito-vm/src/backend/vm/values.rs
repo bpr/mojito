@@ -336,6 +336,15 @@ impl VmBackend {
             let literal = literal.clone();
             return self.materialize_string_struct(skeleton, &literal);
         }
+        // The same bridge for the view's `StringLiteral` constructor: the
+        // `ref src: String` overload binds a reference handle, never a
+        // literal, so the argument shape selects the bridge unambiguously.
+        if mojito_symbol::symbol::is_stdlib_string_span_struct(name)
+            && let [Value::Str(literal)] = user_args.as_slice()
+        {
+            let literal = literal.clone();
+            return self.materialize_string_span(skeleton, &literal);
+        }
         let mut bound = Vec::with_capacity(user_args.len() + 1);
         bound.push(skeleton);
         bound.extend(user_args);
@@ -448,19 +457,7 @@ impl VmBackend {
         literal: &str,
     ) -> Result<Value, RuntimeError> {
         let bytes = literal.as_bytes();
-        let pointer = self.heap_alloc(bytes.len() as i64, 1)?;
-        let Value::Pointer { allocation, .. } = pointer else {
-            unreachable!("heap_alloc returns a pointer");
-        };
-        {
-            let slots = &mut self.heap[(allocation - 1) as usize].slots;
-            for (index, byte) in bytes.iter().enumerate() {
-                slots[index] = Value::Simd {
-                    dtype: mojito_ast::ast::Dtype::UInt8,
-                    lanes: crate::runtime::SimdLanes::Int(vec![i128::from(*byte)]),
-                };
-            }
-        }
+        let allocation = self.alloc_utf8_bytes(bytes)?;
         let Value::Struct {
             name,
             mut fields,
@@ -478,6 +475,41 @@ impl VmBackend {
                 "size" => Value::Int(bytes.len() as i64),
                 "cap" => Value::Int(bytes.len() as i64),
                 other => unreachable!("unexpected String field '{other}'"),
+            };
+        }
+        Ok(Value::Struct {
+            name,
+            fields,
+            value_params,
+        })
+    }
+
+    /// Fill a `StringSpan` skeleton from a literal's UTF-8 bytes: a view over
+    /// a never-freed byte buffer (the arena never reclaims, so the bytes live
+    /// as long as the program — upstream's `StaticString` origin).
+    pub(super) fn materialize_string_span(
+        &mut self,
+        skeleton: Value,
+        literal: &str,
+    ) -> Result<Value, RuntimeError> {
+        let bytes = literal.as_bytes();
+        let allocation = self.alloc_utf8_bytes(bytes)?;
+        let Value::Struct {
+            name,
+            mut fields,
+            value_params,
+        } = skeleton
+        else {
+            unreachable!("string view construction starts from a struct skeleton");
+        };
+        for (field, slot) in &mut fields {
+            *slot = match field.as_str() {
+                "_data" => Value::Pointer {
+                    allocation,
+                    offset: 0,
+                },
+                "_size" => Value::Int(bytes.len() as i64),
+                other => unreachable!("unexpected StringSpan field '{other}'"),
             };
         }
         Ok(Value::Struct {
@@ -730,5 +762,22 @@ impl VmBackend {
             return Ok(frame_vars.into_iter().next().unwrap_or(Value::None));
         }
         Ok(v)
+    }
+
+    /// One heap allocation holding `bytes` as width-1 `UInt8` scalars, sized
+    /// exactly; returns its allocation id (offset 0 is the first byte).
+    fn alloc_utf8_bytes(&mut self, bytes: &[u8]) -> Result<u64, RuntimeError> {
+        let pointer = self.heap_alloc(bytes.len() as i64, 1)?;
+        let Value::Pointer { allocation, .. } = pointer else {
+            unreachable!("heap_alloc returns a pointer");
+        };
+        let slots = &mut self.heap[(allocation - 1) as usize].slots;
+        for (index, byte) in bytes.iter().enumerate() {
+            slots[index] = Value::Simd {
+                dtype: mojito_ast::ast::Dtype::UInt8,
+                lanes: crate::runtime::SimdLanes::Int(vec![i128::from(*byte)]),
+            };
+        }
+        Ok(allocation)
     }
 }

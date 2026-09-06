@@ -367,9 +367,24 @@ impl Checker {
             .conversion_source_borrows
             .borrow()
             .contains_key(&expression.source_span())
-            && let Ok(place) = self.origin_place(expression)
         {
-            return vec![Origin::Place(place)];
+            if let Ok(place) = self.origin_place(expression) {
+                return vec![Origin::Place(place)];
+            }
+            // A temporary source lends its materialized anonymous owner (a
+            // frame-local slot), so the view cannot escape the frame.
+            if let Some(mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource {
+                owner,
+            }) = self
+                .operation_adjustments
+                .borrow()
+                .get(&expression.source_span())
+            {
+                return vec![Origin::Place(mojito_types::origin::OriginPlace {
+                    root: *owner,
+                    path: Vec::new(),
+                })];
+            }
         }
 
         match &expression.kind {

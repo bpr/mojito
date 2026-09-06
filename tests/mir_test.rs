@@ -1214,19 +1214,15 @@ fn inferred_generic_method_calls_retain_parameter_declarations() {
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile generic method");
     let mir = mojito::mir::lower_checked_program(compiled.checked());
-    let declaration = mir
-        .declarations
-        .functions
-        .iter()
-        .find(|declaration| declaration.lowered_name == "Counter.size")
-        .expect("generic method declaration");
     let main = &mir
         .functions
         .iter()
         .find(|(name, _)| name == "main")
         .expect("main lowered")
         .1;
-    let call_decls = main
+    // The call selects the per-call generic-method clone (`Counter.size$…`),
+    // whose declaration the call's retained parameter declarations mirror.
+    let (target, call_decls) = main
         .blocks
         .iter()
         .flat_map(|block| &block.instrs)
@@ -1235,10 +1231,16 @@ fn inferred_generic_method_calls_retain_parameter_declarations() {
                 resolved: Some(target),
                 param_decls,
                 ..
-            } if target == "Counter.size" => Some(param_decls),
+            } if target.starts_with("Counter.size") => Some((target, param_decls)),
             _ => None,
         })
         .expect("selected generic method call");
+    let declaration = mir
+        .declarations
+        .functions
+        .iter()
+        .find(|declaration| &declaration.lowered_name == target)
+        .expect("selected method declaration");
     assert_eq!(call_decls, &declaration.param_decls);
     assert!(
         mir.invariant_errors.is_empty(),

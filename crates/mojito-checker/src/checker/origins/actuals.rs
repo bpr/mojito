@@ -151,45 +151,7 @@ impl Checker {
                 if message.contains("reference binding to a non-place expression") =>
             {
                 let referent = self.infer(expr)?;
-                let mut adjustments = self.operation_adjustments.borrow_mut();
-                let owner = match adjustments.get_mut(&expr.source_span()) {
-                    Some(
-                        mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource {
-                            owner,
-                        },
-                    ) => *owner,
-                    // A view construction (`BorrowRefArguments`) used as a
-                    // temporary receiver is also a borrow source: the owner
-                    // rides on the construction's own adjustment.
-                    Some(mojito_checked::checked::SemanticAdjustment::BorrowRefArguments {
-                        materialized,
-                        ..
-                    }) => match materialized {
-                        Some(owner) => *owner,
-                        None => {
-                            let owner = self.fresh_owner()?;
-                            *materialized = Some(owner);
-                            owner
-                        }
-                    },
-                    // Another adjustment already owns this span's lowering
-                    // contract; keep the plain rejection rather than fight it.
-                    Some(_) => {
-                        return Err(TypeError::Unsupported(
-                            "reference binding to a non-place expression".to_string(),
-                        ));
-                    }
-                    None => {
-                        let owner = self.fresh_owner()?;
-                        adjustments.insert(
-                            expr.source_span(),
-                            mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource {
-                                owner,
-                            },
-                        );
-                        owner
-                    }
-                };
+                let owner = self.materialize_borrow_owner(expr)?;
                 Ok(RefTy {
                     referent: Box::new(referent),
                     origin: Origin::Place(OriginPlace {
@@ -200,6 +162,46 @@ impl Checker {
                 })
             }
             other => other,
+        }
+    }
+
+    /// The anonymous owner a temporary expression materializes as when a
+    /// borrow needs a place: minted once per source span and recorded as a
+    /// `MaterializeBorrowSource` adjustment (or on a view construction's own
+    /// `BorrowRefArguments`, whose owner rides on that adjustment). Idempotent
+    /// across re-inference. Rejects when another adjustment already owns the
+    /// span's lowering contract.
+    pub(in crate::checker) fn materialize_borrow_owner(
+        &self,
+        expr: &Expr,
+    ) -> Result<mojito_types::origin::OwnerId, TypeError> {
+        let mut adjustments = self.operation_adjustments.borrow_mut();
+        match adjustments.get_mut(&expr.source_span()) {
+            Some(mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource {
+                owner,
+            }) => Ok(*owner),
+            Some(mojito_checked::checked::SemanticAdjustment::BorrowRefArguments {
+                materialized,
+                ..
+            }) => match materialized {
+                Some(owner) => Ok(*owner),
+                None => {
+                    let owner = self.fresh_owner()?;
+                    *materialized = Some(owner);
+                    Ok(owner)
+                }
+            },
+            Some(_) => Err(TypeError::Unsupported(
+                "reference binding to a non-place expression".to_string(),
+            )),
+            None => {
+                let owner = self.fresh_owner()?;
+                adjustments.insert(
+                    expr.source_span(),
+                    mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource { owner },
+                );
+                Ok(owner)
+            }
         }
     }
 

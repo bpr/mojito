@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `StringSpan` parameters in upstream's shape: the String result APIs
+  (search, affix tests, `replace`, `split`/`splitlines`, case, predicates,
+  justification, the strip family) live on `StringSpan` with `StringSpan`
+  needle parameters and `String` forwards through `StringSpan(self)`; a
+  literal converts to `StringSpan` (upstream's `StaticString` initializer,
+  bridged in the VM and natively), a String temporary converts at a view
+  parameter or binding, and `split(sep)`/`split(sep, maxsplit)` are
+  upstream's two overloads (`case:string-span-methods`,
+  `case:string-span-literal`, `case:string-span-implicit-temporary`).
 - Repr vocabulary: the compile-time `_unqualified_type_name[T]()` intrinsic
   (`std.reflection.type_info`; the checker folds each resolution to current
   Mojo's unqualified spelling, `SIMD[DType.int, 1]`, `Optional[String]`, a
@@ -17,6 +26,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `StringLiteral` and the nominal `String` are distinct overload keys: `def
+  f(x: StringLiteral)` beside `def f(x: String)` is legal and a literal
+  argument selects the `StringLiteral` overload, as upstream
+  (`case:string-literal-overload`; the former redeclaration fixture moved to
+  `assets/ok`).
 - `repr` now writes upstream's texts: `Int(7)`/`UInt(7)`/`Float64(2.5)` for
   scalars, single-quoted Strings with backslash escapes (`'it\\'s'`,
   `'a\\nb'`), `Slice(start=1, end=4, step=None)` for slice descriptors, and

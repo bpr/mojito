@@ -89,17 +89,11 @@ exempt from the ordering.
   what lands). The tasks below are in implementation order: prioritized by
   payoff and sorted so that every dependency precedes what needs it. A task
   closes when its bullets are done; a residue discovered inside a task moves
-  to the task that owns its fix (or to task 9, the deliberate deferrals),
-  never back to a finished one. Plan first: task 7 (ordering); the rest
+  to the task that owns its fix (or to task 7, the deliberate deferrals),
+  never back to a finished one. Plan first: task 5 (ordering); the rest
   are direct.
 
-  1. **`StringSpan` parameters in upstream's shape.** Retarget the String
-     API signatures from `String` to `StringSpan` (mechanical, wide): fixes
-     `StringSpan` arguments not converting (today `to_string()`) and moves
-     the batch-2 members (case, predicates, justification) off `String`
-     only. Ride-alongs: `split(sep, maxsplit=-1)` as upstream's two
-     overloads; `isspace`'s `single_character` parameter.
-  2. **Hashing parity.** Decide up front whether to move the `UInt64` leaf
+  1. **Hashing parity.** Decide up front whether to move the `UInt64` leaf
      to upstream's `to_bits` shape.
      - Container `Hashable` on the hasher protocol
        (`List`/`Optional`/`Array`/`Set`/`Dict.__hash__`; upstream tags
@@ -113,7 +107,7 @@ exempt from the ordering.
      - CTFE `hash`/`default_comp_time_hasher` for compile-time dictionaries.
      - Raw seam only: a generic body forwarding its own `H` into `hash[H](x)`
        with no caller binding falls back to the declaration default.
-  3. **Optional, Tuple, and Slice odds and ends.** Self-contained.
+  2. **Optional, Tuple, and Slice odds and ends.** Self-contained.
      - The raising `opt[]` subscript: empty-subscript form on nominal
        receivers plus `EmptyOptionalError`'s `TypeNames` text.
      - `Tuple`/`Array` `Defaultable`: needs `Ts[i]()`/`Self.T()` element
@@ -127,7 +121,16 @@ exempt from the ordering.
      - `Slice(...)` reads only `Int`/`None` argument expressions; an
        `Optional[Int]` variable needs the nominal slot read.
      - Explicit `.write_to(writer)` on a slice descriptor is not wired.
-  4. **String Unicode, iterator, and parsing extras.** Port on demand.
+     - Explicit method-level value-parameter bindings on a non-pack struct
+       (`w.pick[3]()`, upstream's `s.isspace[single_character=True]()`)
+       fail MIR verification (`nongeneric call carries a compile-time value
+       argument`), and a value-parameterized method on the
+       origin-parameterized `StringSpan` aborts `unspecialized type-keyed
+       method` even for the defaulted call — so `isspace` is declared
+       without upstream's `single_character` parameter.
+     - A `ref self` method on a call temporary (`s.split(",")[1]`) rejects
+       `reference binding to a non-place expression`; bind the result first.
+  3. **String Unicode, iterator, and parsing extras.** Port on demand.
      - `upper`/`lower`: simple-case subset (ASCII, Latin-1, Latin
        Extended-A, Greek, Cyrillic, `ß` → `SS`); upstream ships full Unicode
        simple and special casing tables.
@@ -138,7 +141,10 @@ exempt from the ordering.
        `__reversed__`, `bytes()`, `split_at_grapheme`, `peek_next`.
      - `atof` is correctly rounded only while the significand (≤19 digits)
        and power of ten (≤22) stay exact; NaN prints `NaN` (upstream `nan`).
-  5. **Origin-bearing `Span`/`Pointer` construction.**
+     - `len(s)` on a String or StringSpan is accepted (byte length) where
+       upstream rejects it as ambiguous (`byte_length()`, `len(s.codepoints())`,
+       `len(s.graphemes())`); an extension to drop at the next re-pin.
+  4. **Origin-bearing `Span`/`Pointer` construction.**
      - `Span(unsafe_ptr=, length=)` takes `Pointer[T, MutUntrackedOrigin]`:
        a `Pointer[T, origin]` parameter cannot bind through a constructor
        type application (`Span[Byte, origin_of(self)](...)` rejects with a
@@ -158,12 +164,19 @@ exempt from the ordering.
        'o'`; a free pack def reports `cannot infer type parameter 'T'`);
        `Named` works bound to a local, as a plain argument, and over a
        `self` field.
-  6. **Storage-shape items with a known blocker.** Short plan (ordering).
+     - Two live byte-slice views of one String conflict (`s[byte=1:3]`
+       while a `view` of `s` is live: `access to 's' conflicts with live
+       reference 'view'`) because the parametric `ref self` subscript
+       receiver counts as a mutable access; slice a different String.
+     - `var w: StringSpan[ImmStaticOrigin] = s` is accepted although a local
+       place cannot satisfy a static origin: the `SigOrigin::Static` check
+       covers only `ref` demands.
+  5. **Storage-shape items with a known blocker.** Short plan (ordering).
      - Relax K/V/element bounds toward upstream's Movable-only `KeyElement`
        (a per-API `where` pass, as `List[T: AnyType]`).
      - `(*, unsafe_uninit_length)` construction and resize: blocked on an
        uninit-element storage story for List (MaybeUninit-adjacent).
-  7. **Native-lane follow-ups.** The VM runs all of these; monomorphizer
+  6. **Native-lane follow-ups.** The VM runs all of these; monomorphizer
      and native-drop bug fixes.
      - `repr` lowers natively only for Strings, without escapes; no user
        `write_repr_to` runs natively, so the collection repr texts are
@@ -193,7 +206,7 @@ exempt from the ordering.
      - The generic `next[T: Iterator](mut it: T)` body fails natively
        (`unsupported reference-result method adapter`); `next` is pinned by
        conformance/fixtures/next_builtin.mojo only.
-  8. **Deliberate deferrals from the generic-clone arc.** Nothing depends
+  7. **Deliberate deferrals from the generic-clone arc.** Nothing depends
      on these; each is a conscious limit, listed here so it is not mistaken
      for unfinished task work.
      - Clones are minted per whole instance (no reachability pruning) and
@@ -213,7 +226,7 @@ exempt from the ordering.
      - An instance clone whose walk cannot resolve an application (a
        variadic template over a nested public `Tuple` argument) is dropped
        to the erased path rather than failing the program.
-  9. **Diagnostic wording and strictness.**
+  8. **Diagnostic wording and strictness.**
       - An unavailable where-gated method reports `'set' is unavailable for
         Variant[Conn]: its where clause evaluated to False` rather than
         upstream's clause text.

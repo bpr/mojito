@@ -175,6 +175,14 @@ specialized name). Rules:
   allocates `cap` bytes and copies `size`, preserving `size`/`cap` exactly
   like the stdlib body. `String.__deinit__` compiles from its real MIR
   (`Pointer.unsafe_free()` lowers to `mjrt_free`).
+- The `StringSpan` literal constructor (`StringSpan.__init__$ov$StringLiteral`,
+  also a never-executing stub) is bridged the same way: the view is the
+  ordinary 16/8 aggregate `{ _data: *const u8, _size: i64 }` whose `_data`
+  addresses the interned constant for a compile-time literal, or a
+  never-freed `mjrt_alloc` copy for a runtime string source. A view owns no
+  heap, so no release runs; `mjrt_pointer_status` classifies the constant
+  pool address as live. A `StringSpan` parameter's literal default is filled
+  the same way.
 
 ### Errors and exceptional control flow
 

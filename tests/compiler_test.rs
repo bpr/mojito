@@ -279,6 +279,27 @@ fn view_temporaries_live_for_their_statement() {
 }
 
 #[test]
+fn view_temporary_argument_conflicts_with_a_later_source_mutation() {
+    // A subscript view temporary passed as an argument keeps a loan on its
+    // source for the statement: a later argument mutating the source
+    // conflicts with it. (Pinned here, on the linked pipeline, because the
+    // `assets/ownership_error` seam group checks without the prelude, where
+    // the nominal `String` is not a known type.)
+    let compiler = Compiler::default();
+    let error = compiler
+        .compile_source(
+            "def grow(mut s: String) -> Int:\n    s += \"zz\"\n    return 1\n\ndef main():\n    var s = String(\"hello\")\n    var out = String()\n    out.write(s[byte=1:3], grow(s))\n    print(out)\n",
+            std::path::Path::new("/tmp/mojito_view_temporary_source_mutation.mojo"),
+        )
+        .expect_err("the view temporary's loan must conflict with the mutation");
+    assert!(matches!(error, CompilerError::Ownership(_)), "{error:?}");
+    assert!(
+        error.to_string().contains("conflicts with live reference"),
+        "{error}"
+    );
+}
+
+#[test]
 fn generic_methods_specialize_per_call_on_every_struct() {
     // A method-level type parameter on an ordinary generic instance folds
     // its `comptime if` per call (the clone bakes the instance's argument

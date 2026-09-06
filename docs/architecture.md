@@ -2468,8 +2468,15 @@ declaration identity (`symbol::is_stdlib_string_struct`): the `@implicit`
 literal constructor (`String("...")`) never executes its declared body — the
 VM fills the byte buffer from the literal's UTF-8 bytes — and
 `_as_string_literal(self) -> StringLiteral` reads the buffer back into a
-builtin string value for the Writer path. Everything else (comparison,
-concatenation, membership, hashing, decoding, slicing) is pure library code.
+builtin string value for the Writer path. The borrowed view `StringSpan` has
+the one matching crossing: its `@implicit` `StringLiteral` constructor
+(upstream's `StaticString` initializer, keyed on
+`symbol::is_stdlib_string_span_struct`) is a never-executing stub the VM
+replaces with a view over a never-freed byte buffer and the native backend
+with a view over the interned constant. Everything else (comparison,
+concatenation, membership, hashing, decoding, slicing, and the result APIs,
+which live on the view with `String` forwarding through `StringSpan(self)`)
+is pure library code.
 
 The `StringLiteral`-vs-`String` split is realized at the type level. The
 compile-time literal type is `Ty::StringLiteral` (spelled `StringLiteral` in
@@ -2490,9 +2497,11 @@ nominal String by routing the underlying call to the VM's conversion builtin
 result through the literal constructor. `Error(msg)`/`raise` and the Writer
 `write_string` contract accept either spelling; the VM bridges read a
 nominal message back and materialize a nominal payload for a
-nominally-declared `write_string`. Overload symbols keep the stable
-`String` spelling for both types, so an overload set differing only in
-StringLiteral-vs-String collides and is rejected at declaration. In unlinked
+nominally-declared `write_string`. Overload symbols spell the two types
+distinctly (`String` and `StringLiteral`), so `def f(x: StringLiteral)`
+beside `def f(x: String)` is a legal overload set and a literal argument
+selects the exact `StringLiteral` member (exact matches rank above
+conversions), as upstream. In unlinked
 seam programs (no prelude) a bare `String` annotation fails explicitly as an
 unknown type, and the bare `String(...)` builtin keeps the literal result.
 
