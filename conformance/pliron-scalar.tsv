@@ -57,6 +57,7 @@ assets/ok/delegated_ref_return_projection.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/dict_hasher_forwarding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_insert_linear_capable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_methods_growth.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/dict_movable_only_elements.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_take_items.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_upstream_key_value_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_views_iteration.mojo	-	ineligible	no-scalar-entry-shape
@@ -130,6 +131,7 @@ assets/ok/list_contiguous_slice_strict.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_methods_growth.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_strided_slice_normalizes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_unsafe_ptr_multi_element.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/list_unsafe_uninit_length.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/loop_binding_consuming_copy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mapping_key_iteration_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/math_module_rounding.mojo	-	ineligible	no-scalar-entry-shape

@@ -621,7 +621,7 @@ impl VmBackend {
         value: Value,
     ) -> Result<(), RuntimeError> {
         if projection.is_empty() {
-            self.heap[region].slots[slot] = value;
+            self.heap_store(region, slot, value);
             return Ok(());
         }
         if let Some(ReferencePointerBoundary {

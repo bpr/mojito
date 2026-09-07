@@ -13,7 +13,9 @@ from std.hashlib import default_hasher, hash
 from std.iterable import Iterable
 from std.optional import Optional
 
-struct StringDict[V: Copyable & Movable](Copyable, Iterable):
+struct StringDict[V: Movable](
+    Copyable where conforms_to(V, Copyable), Iterable where conforms_to(V, Copyable)
+):
     comptime Element = StringLiteral
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
@@ -34,26 +36,31 @@ struct StringDict[V: Copyable & Movable](Copyable, Iterable):
             self.index.append(List[Int]())
             i = i + 1
 
-    def __init__(out self, *, copy: Self):
+    def __init__(out self, *, copy: Self) where conforms_to(Self.V, Copyable):
         self.entries = List[DictEntry[StringLiteral, Self.V]](copy: copy.entries)
         self.index = List[List[Int]](copy: copy.index)
         self.nbuckets = copy.nbuckets
         self.count = copy.count
 
-    def copy(self) -> Self:
+    def copy(self) -> Self where conforms_to(Self.V, Copyable):
         return StringDict[Self.V](copy: self)
 
     def find_index(self, key: StringLiteral) -> Int:
         var bucket: Int = Int(hash(key)) & (self.nbuckets - 1)
         for entry_index in self.index._get_copy(bucket):
-            if self.entries._get_copy(entry_index).key == key:
+            ref entry = self.entries[entry_index]
+            if entry.key == key:
                 return entry_index
         return -1
 
     def __contains__(self, key: StringLiteral) -> Bool:
         return self.find_index(key) >= 0
 
-    def __getitem__(self, key: StringLiteral) raises -> Self.V:
+    # A copying read: the `StringLiteral`-keyed entry list keeps the erased
+    # path, where a reference result cannot spell its interior origin.
+    def __getitem__(self, key: StringLiteral) raises -> Self.V where conforms_to(
+        Self.V, Copyable
+    ):
         var i: Int = self.find_index(key)
         if i >= 0:
             return self.entries[i].value.copy()
@@ -85,7 +92,8 @@ struct StringDict[V: Copyable & Movable](Copyable, Iterable):
             i = i + 1
         i = 0
         while i < len(self.entries):
-            var bucket: Int = Int(self.entries._get_copy(i)._hash) & (new_bucket_count - 1)
+            ref entry = self.entries[i]
+            var bucket: Int = Int(entry._hash) & (new_bucket_count - 1)
             var bucket_entries: List[Int] = new_index._get_copy(bucket)
             bucket_entries.append(i)
             new_index[bucket] = bucket_entries^
@@ -134,13 +142,17 @@ struct StringDict[V: Copyable & Movable](Copyable, Iterable):
             var entry = self.entries.pop(0)
             elt_handler(entry.key^, entry.value^)
 
-    def get(self, key: StringLiteral) -> Optional[Self.V]:
+    def get(self, key: StringLiteral) -> Optional[Self.V] where conforms_to(
+        Self.V, Copyable
+    ):
         var i: Int = self.find_index(key)
         if i >= 0:
             return Optional[Self.V](self.entries[i].value.copy())
         return Optional[Self.V]()
 
-    def get(self, key: StringLiteral, default: Self.V) -> Self.V:
+    def get(self, key: StringLiteral, default: Self.V) -> Self.V where conforms_to(
+        Self.V, Copyable
+    ):
         var i: Int = self.find_index(key)
         if i >= 0:
             return self.entries[i].value.copy()
@@ -153,11 +165,12 @@ struct StringDict[V: Copyable & Movable](Copyable, Iterable):
         var result: List[StringLiteral] = List[StringLiteral]()
         var i: Int = 0
         while i < len(self.entries):
-            result.append(self.entries._get_copy(i).key)
+            ref entry = self.entries[i]
+            result.append(entry.key)
             i = i + 1
         return result^
 
-    def values(self) -> List[Self.V]:
+    def values(self) -> List[Self.V] where conforms_to(Self.V, Copyable):
         var result: List[Self.V] = List[Self.V]()
         var i: Int = 0
         while i < len(self.entries):
@@ -165,9 +178,13 @@ struct StringDict[V: Copyable & Movable](Copyable, Iterable):
             i = i + 1
         return result^
 
-    def items(self) -> List[DictEntry[StringLiteral, Self.V]]:
+    def items(self) -> List[DictEntry[StringLiteral, Self.V]] where conforms_to(
+        Self.V, Copyable
+    ):
         return self.entries.copy()
 
-    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
+    def __iter__(ref self) -> Self.IteratorType[origin_of(self)] where conforms_to(
+        Self.V, Copyable
+    ):
         ref source = self.entries
         return _DictKeyIter(_DictEntryIter(source, 0))

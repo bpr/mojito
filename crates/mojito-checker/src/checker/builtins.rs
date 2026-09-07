@@ -374,6 +374,7 @@ impl Checker {
         for (i, arg) in args.iter().enumerate() {
             let ty = self.infer(arg)?;
             self.borrow_reference_result_argument(arg);
+            self.borrow_nominal_place_argument(arg, &ty);
             let runtime_ty = default_literal(&ty);
             if runtime_ty != ty {
                 self.record_literal_materializations(arg, &ty, &runtime_ty)?;
@@ -466,6 +467,21 @@ impl Checker {
     /// read through the retained handle, not copied out.
     pub(super) fn borrow_reference_result_argument(&self, argument: &Expr) {
         if self.infer_reference_value(argument).is_some() {
+            self.borrowed_read_call_places
+                .borrow_mut()
+                .insert(argument.source_span());
+        }
+    }
+
+    /// A read-only builtin (`len`, `print`) over a named nominal-struct place
+    /// reads it in place, as a `read` parameter would, rather than taking
+    /// the lifecycle copy: `len(xs)` never copies the list (and never reads
+    /// slots an `unsafe_uninit_length` construction left unwritten).
+    pub(super) fn borrow_nominal_place_argument(&self, argument: &Expr, ty: &Ty) {
+        if matches!(argument.kind, ExprKind::Identifier(_))
+            && let Ty::Struct(name, _) = ty
+            && self.structs.contains_key(name)
+        {
             self.borrowed_read_call_places
                 .borrow_mut()
                 .insert(argument.source_span());
@@ -599,6 +615,7 @@ impl Checker {
     /// same `Sized`/`__len__ -> Int` contract.
     pub(super) fn infer_len(&self, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args("len", 1, args)?;
+        self.borrow_nominal_place_argument(&args[0], &tys[0]);
         if let Some(result) = self.len_result_for_type(&tys[0])? {
             return Ok(result);
         }

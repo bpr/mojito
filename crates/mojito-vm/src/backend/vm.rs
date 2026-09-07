@@ -150,6 +150,7 @@ impl VmBackend {
         }
         self.heap.push(HeapAllocation {
             slots: vec![Value::Moved; n as usize],
+            never_written: vec![true; n as usize],
             alignment: alignment as usize,
             live: true,
         });
@@ -212,12 +213,16 @@ impl VmBackend {
         }
         region.live = false;
         region.slots.clear();
+        region.never_written.clear();
         Ok(())
     }
 
     /// Read one initialized heap slot. `Moved` is the VM's raw-storage
     /// tombstone: allocation starts uninitialized and take/destroy restore that
-    /// state until an explicit pointer store initializes the slot again.
+    /// state until an explicit pointer store initializes the slot again. A
+    /// slot has three states: never written (a read traps, a take yields the
+    /// tombstone, a destroy is a no-op — `unsafe_uninit_length` storage),
+    /// taken (read, take, and destroy all trap), and initialized.
     fn heap_read(&self, allocation: u64, base: i64, offset: i64) -> Result<Value, RuntimeError> {
         let (region, slot) = self.heap_index(allocation, base, offset)?;
         match &self.heap[region].slots[slot] {
@@ -228,9 +233,19 @@ impl VmBackend {
         }
     }
 
+    /// Every heap-slot store: the one place the never-written mark is kept
+    /// in step with the slot. Storing the tombstone itself (a container's
+    /// reallocation forwarding a never-written slot) re-marks the slot.
+    fn heap_store(&mut self, region: usize, slot: usize, value: Value) {
+        self.heap[region].never_written[slot] = matches!(value, Value::Moved);
+        self.heap[region].slots[slot] = value;
+    }
+
     /// Move one initialized raw-storage value out, leaving an uninitialized
     /// tombstone. This intentionally bypasses `__moveinit__`: ownership of the
     /// existing value is transferred rather than constructing another value.
+    /// A never-written slot yields the tombstone (so `_realloc` forwards the
+    /// state to the new storage) and becomes a taken slot.
     fn heap_take(
         &mut self,
         allocation: u64,
@@ -238,6 +253,9 @@ impl VmBackend {
         offset: i64,
     ) -> Result<Value, RuntimeError> {
         let (region, slot) = self.heap_index(allocation, base, offset)?;
+        if std::mem::replace(&mut self.heap[region].never_written[slot], false) {
+            return Ok(Value::Moved);
+        }
         let value = std::mem::replace(&mut self.heap[region].slots[slot], Value::Moved);
         if matches!(value, Value::Moved) {
             Err(RuntimeError::TypeError(
@@ -248,6 +266,7 @@ impl VmBackend {
         }
     }
 
+    /// Destroy one slot in place; a never-written slot has nothing to destroy.
     fn heap_destroy(
         &mut self,
         prog: &Prog,
@@ -255,6 +274,10 @@ impl VmBackend {
         base: i64,
         offset: i64,
     ) -> Result<(), RuntimeError> {
+        let (region, slot) = self.heap_index(allocation, base, offset)?;
+        if std::mem::replace(&mut self.heap[region].never_written[slot], false) {
+            return Ok(());
+        }
         let value = self.heap_take(allocation, base, offset)?;
         self.drop_value(prog, value)
     }
@@ -993,6 +1016,11 @@ fn bound_argument_place<'a>(
 #[derive(Default)]
 struct HeapAllocation {
     slots: Vec<Value>,
+    /// True for a slot no store has ever initialized — distinct from the
+    /// `Moved` tombstone a take or destroy leaves. `unsafe_uninit_length`
+    /// storage lives here: reading traps, taking yields a tombstone, and
+    /// destroying is a no-op, while a taken slot still traps on both.
+    never_written: Vec<bool>,
     #[allow(dead_code)]
     alignment: usize,
     live: bool,
@@ -1542,6 +1570,44 @@ mod pointer_storage_tests {
         vm.heap_destroy(&empty_program(), allocation, offset, 0)
             .expect("initialized destroy");
         assert!(vm.heap_read(allocation, offset, 0).is_err());
+    }
+
+    #[test]
+    fn never_written_heap_storage_is_destroyable_and_forwards_on_take() {
+        let mut vm = VmBackend::default();
+        let Value::Pointer { allocation, offset } = vm.heap_alloc(2, 8).expect("allocation") else {
+            panic!("allocation did not return a pointer");
+        };
+        // Never written: a read traps, a destroy is a no-op, a take yields the
+        // tombstone once and leaves a taken slot that traps thereafter.
+        assert!(vm.heap_read(allocation, offset, 0).is_err());
+        vm.heap_destroy(&empty_program(), allocation, offset, 0)
+            .expect("destroying a never-written slot is a no-op");
+        assert!(
+            vm.heap_destroy(&empty_program(), allocation, offset, 0)
+                .is_err()
+        );
+        assert!(matches!(
+            vm.heap_take(allocation, offset, 1)
+                .expect("take forwards the tombstone"),
+            Value::Moved
+        ));
+        assert!(vm.heap_take(allocation, offset, 1).is_err());
+        // Storing the tombstone re-marks the slot; storing a value clears it.
+        let (region, slot) = vm.heap_index(allocation, offset, 1).expect("slot");
+        vm.heap_store(region, slot, Value::Moved);
+        vm.heap_destroy(&empty_program(), allocation, offset, 1)
+            .expect("a forwarded never-written slot destroys as a no-op");
+        vm.heap_store(region, slot, Value::Int(3));
+        assert_eq!(
+            vm.heap_read(allocation, offset, 1).expect("read"),
+            Value::Int(3)
+        );
+        assert_eq!(
+            vm.heap_take(allocation, offset, 1).expect("take"),
+            Value::Int(3)
+        );
+        assert!(vm.heap_take(allocation, offset, 1).is_err());
     }
 
     #[test]

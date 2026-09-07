@@ -6161,3 +6161,22 @@ fn accepts_self_qualified_value_parameter_in_a_struct_alias() {
     );
     assert!(e.to_string().contains("not a compile-time"), "got {e:?}");
 }
+
+#[test]
+fn where_clauses_refine_method_signatures() {
+    // A method's `where` clause refines its own signature: a return type the
+    // receiver's bare bounds do not admit checks under the clause and rejects
+    // without it. (The comptime-alias twin needs the linked prelude's
+    // `Iterable`; see comptime_test.)
+    let need = "struct Need[T: Copyable & Movable](Copyable, Movable):\n    var v: Self.T\n\n    def __init__(out self, var v: Self.T):\n        self.v = v^\n\n";
+    ok(&format!(
+        "{need}struct Bag[T: Movable](Movable):\n    var v: Self.T\n\n    def __init__(out self, var v: Self.T):\n        self.v = v^\n\n    def make(self) -> Need[Self.T] where conforms_to(Self.T, Copyable) and conforms_to(Self.T, Movable):\n        return Need[Self.T](self.v.copy())\n"
+    ));
+    let e = err(&format!(
+        "{need}struct Bag[T: Movable](Movable):\n    var v: Self.T\n\n    def __init__(out self, var v: Self.T):\n        self.v = v^\n\n    def make(self) -> Need[Self.T]:\n        return Need[Self.T](self.v^)\n"
+    ));
+    assert!(
+        matches!(&e, TypeError::TraitNotSatisfied { trait_name, .. } if trait_name == "Copyable"),
+        "got {e:?}"
+    );
+}

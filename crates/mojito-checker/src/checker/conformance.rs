@@ -174,6 +174,7 @@ impl ConformanceOracle {
                 type_params,
                 fields,
                 associated,
+                conformance_conditions,
                 methods,
                 ..
             } = &statement.kind
@@ -218,7 +219,7 @@ impl ConformanceOracle {
             // oracle cannot lower is skipped and fails closed at its use
             // site, exactly like the generic-alias registration above.
             if let Ok((associated_values, associated_constraints, parameterized)) =
-                checker.check_struct_associated(associated)
+                checker.check_struct_associated(associated, conformance_conditions)
                 && let Some(info) = checker.structs.get_mut(name)
             {
                 info.associated = associated_values;

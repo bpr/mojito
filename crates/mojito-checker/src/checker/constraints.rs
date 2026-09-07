@@ -121,9 +121,14 @@ impl Checker {
         Ok(CtMemberReq::Value(Box::new(self.ty_from_anno(ty)?)))
     }
 
+    /// `conformance_conditions` are the struct's conditional conformances: a
+    /// member that a conditional trait requires (`Iterable where
+    /// conforms_to(T, Copyable)` → `IteratorType`) resolves under that
+    /// condition's atoms as well as under its own `where` clause.
     pub(super) fn check_struct_associated(
         &mut self,
         associated: &[StructComptime],
+        conformance_conditions: &[(String, Expr)],
     ) -> Result<StructAssociatedMembers, TypeError> {
         let mut out = HashMap::new();
         let mut constraints = HashMap::new();
@@ -139,37 +144,80 @@ impl Checker {
                 // from silently discarding an invalid declared type.
                 self.ct_member_req_from_anno(&member.params, annotation)?;
             }
-            if member.params.is_empty() {
-                let value = self.eval_associated_ct(&member.value, &out)?;
-                if !member.where_clauses.is_empty() {
-                    let compiled = member
-                        .where_clauses
-                        .iter()
-                        .map(|condition| self.compile_where_clause(condition))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    constraints.insert(member.name.clone(), compiled);
+            // The member's own clause and the conditions of the conditional
+            // traits requiring it are assumed while its body resolves; every
+            // application re-checks the clause (`availability`), and a
+            // conditional conformance is verified to imply the member's clause.
+            let compiled = member
+                .where_clauses
+                .iter()
+                .map(|condition| self.compile_where_clause(condition))
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut facts = Vec::new();
+            for constraint in &compiled {
+                guaranteed_conformance_atoms(constraint, &mut facts);
+            }
+            for (trait_name, condition) in conformance_conditions {
+                if self.trait_requires_comptime_member(trait_name, &member.name) {
+                    let constraint = self.compile_where_clause(condition)?;
+                    guaranteed_conformance_atoms(&constraint, &mut facts);
                 }
-                out.insert(member.name.clone(), value);
-            } else {
-                let param_base = self.enclosing_type_params.len();
-                let source_ty = assoc_body_source_type(&member.value)?;
-                let template = self.lower_parameterized_member(&member.params, &source_ty)?;
-                parameterized.insert(
-                    member.name.clone(),
-                    ParameterizedMember {
-                        params: member.params.clone(),
-                        template,
-                        availability: member
-                            .where_clauses
-                            .iter()
-                            .map(|condition| self.compile_where_clause(condition))
-                            .collect::<Result<_, _>>()?,
-                        param_base,
-                    },
-                );
+            }
+            self.assumed_conformances.push(
+                facts
+                    .into_iter()
+                    .map(|(parameter, trait_name)| {
+                        (parameter.trim_start_matches('*').to_string(), trait_name)
+                    })
+                    .collect(),
+            );
+            let resolved = (|| {
+                if member.params.is_empty() {
+                    let value = self.eval_associated_ct(&member.value, &out)?;
+                    Ok::<_, TypeError>((Some(value), None))
+                } else {
+                    let source_ty = assoc_body_source_type(&member.value)?;
+                    let template = self.lower_parameterized_member(&member.params, &source_ty)?;
+                    Ok((None, Some(template)))
+                }
+            })();
+            self.assumed_conformances.pop();
+            match resolved? {
+                (Some(value), _) => {
+                    if !compiled.is_empty() {
+                        constraints.insert(member.name.clone(), compiled);
+                    }
+                    out.insert(member.name.clone(), value);
+                }
+                (_, Some(template)) => {
+                    let param_base = self.enclosing_type_params.len();
+                    parameterized.insert(
+                        member.name.clone(),
+                        ParameterizedMember {
+                            params: member.params.clone(),
+                            template,
+                            availability: compiled,
+                            param_base,
+                        },
+                    );
+                }
+                (None, None) => unreachable!("an associated member is a value or a template"),
             }
         }
         Ok((out, constraints, parameterized))
+    }
+
+    /// Whether `trait_name` (or a trait it refines) declares the comptime
+    /// member `member` — the member a conditional conformance to it requires.
+    fn trait_requires_comptime_member(&self, trait_name: &str, member: &str) -> bool {
+        let Some(info) = self.traits.get(trait_name) else {
+            return false;
+        };
+        info.comptime_members.contains_key(member)
+            || info
+                .refines
+                .iter()
+                .any(|parent| self.trait_requires_comptime_member(parent, member))
     }
 
     /// Lower the type-valued body of a parameterized associated type — or a

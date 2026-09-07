@@ -18,11 +18,11 @@ from std.iterable import Iterable, Iterator, StopIteration
 from std.optional import Optional
 
 struct DictEntry[
-    K: Hashable & Equatable & Copyable & Movable,
-    V: Copyable & Movable,
+    K: Hashable & Equatable & Movable,
+    V: Movable,
     H: Hasher = default_hasher,
 ](
-    Copyable,
+    Copyable where conforms_to(K, Copyable) and conforms_to(V, Copyable),
     Deinitable where conforms_to(K, Deinitable) and conforms_to(V, Deinitable),
     Movable,
 ):
@@ -46,11 +46,11 @@ struct DictEntry[
 @fieldwise_init
 struct _DictEntryIter[
     iterable_mut: Bool, //,
-    K: Hashable & Equatable & Copyable & Movable,
-    V: Copyable & Movable,
+    K: Hashable & Equatable & Movable,
+    V: Movable,
     H: Hasher,
     iterable_origin: Origin[mut=iterable_mut],
-](Copyable, Iterator):
+](Copyable, Iterator where conforms_to(K, Copyable) and conforms_to(V, Copyable)):
     comptime Element = DictEntry[Self.K, Self.V, Self.H]
     comptime IteratorType[
         view_mut: Bool, //, view_origin: Origin[mut=view_mut]
@@ -64,7 +64,9 @@ struct _DictEntryIter[
 
     def __next__(mut self) raises StopIteration -> ref[
         Origin[mut=False].cast_from[Self.iterable_origin._get_owned_interior["element"]]
-    ] DictEntry[Self.K, Self.V, Self.H]:
+    ] DictEntry[Self.K, Self.V, Self.H] where conforms_to(
+        Self.K, Copyable
+    ) and conforms_to(Self.V, Copyable):
         if self.index >= len(self.src):
             raise StopIteration()
         var r = self.index
@@ -76,11 +78,11 @@ struct _DictEntryIter[
 @fieldwise_init
 struct _DictKeyIter[
     iterable_mut: Bool, //,
-    K: Hashable & Equatable & Copyable & Movable,
-    V: Copyable & Movable,
+    K: Hashable & Equatable & Movable,
+    V: Movable,
     H: Hasher,
     iterable_origin: Origin[mut=iterable_mut],
-](Copyable, Iterator):
+](Copyable, Iterator where conforms_to(K, Copyable) and conforms_to(V, Copyable)):
     comptime Element = Self.K
     comptime IteratorType[
         view_mut: Bool, //, view_origin: Origin[mut=view_mut]
@@ -98,7 +100,7 @@ struct _DictKeyIter[
     # (the wrapped entry iterator's yields are already immutable).
     def __next__(mut self) raises StopIteration -> ref[
         self.iter.__next__().key
-    ] Self.K:
+    ] Self.K where conforms_to(Self.K, Copyable) and conforms_to(Self.V, Copyable):
         return self.iter.__next__().key
 
 # The `values` borrowing view wraps the entry iterator, as upstream. Yields
@@ -107,11 +109,11 @@ struct _DictKeyIter[
 @fieldwise_init
 struct _DictValueIter[
     iterable_mut: Bool, //,
-    K: Hashable & Equatable & Copyable & Movable,
-    V: Copyable & Movable,
+    K: Hashable & Equatable & Movable,
+    V: Movable,
     H: Hasher,
     iterable_origin: Origin[mut=iterable_mut],
-](Copyable, Iterator):
+](Copyable, Iterator where conforms_to(K, Copyable) and conforms_to(V, Copyable)):
     comptime Element = Self.V
     comptime IteratorType[
         view_mut: Bool, //, view_origin: Origin[mut=view_mut]
@@ -126,7 +128,7 @@ struct _DictValueIter[
     # conservative subset of upstream's mut-following value references).
     def __next__(mut self) raises StopIteration -> ref[
         self.iter.__next__().value
-    ] Self.V:
+    ] Self.V where conforms_to(Self.K, Copyable) and conforms_to(Self.V, Copyable):
         return self.iter.__next__().value
 
 # The `take_items` draining iterator: borrows the dictionary mutably and
@@ -135,8 +137,8 @@ struct _DictValueIter[
 # exhausted.
 @fieldwise_init
 struct _TakeDictEntryIter[
-    K: Hashable & Equatable & Copyable & Movable,
-    V: Copyable & Movable,
+    K: Hashable & Equatable & Movable,
+    V: Movable,
     H: Hasher,
     origin: Origin[mut=True],
 ](Copyable, Iterator):
@@ -158,19 +160,19 @@ struct _TakeDictEntryIter[
         return entry^
 
 struct Dict[
-    K: Hashable & Equatable & Copyable & Movable,
-    V: Copyable & Movable,
+    K: Hashable & Equatable & Movable,
+    V: Movable,
     H: Hasher = default_hasher,
 ](
-    Copyable,
+    Copyable where conforms_to(K, Copyable) and conforms_to(V, Copyable),
     Deinitable where conforms_to(K, Deinitable) and conforms_to(V, Deinitable),
-    Equatable where conforms_to(V, Equatable),
-    # Upstream: `where conforms_to(K, Copyable) and conforms_to(V, Hashable)`;
-    # `K` is already Copyable in this key bound.
-    Hashable where conforms_to(V, Hashable),
-    Iterable,
+    Equatable where conforms_to(K, Copyable) and conforms_to(V, Equatable),
+    Hashable where conforms_to(K, Copyable) and conforms_to(V, Hashable),
+    Iterable where conforms_to(K, Copyable) and conforms_to(V, Copyable),
     Movable,
-    Writable where conforms_to(K, Writable) and conforms_to(V, Writable),
+    Writable where conforms_to(K, Copyable) and conforms_to(K, Writable) and conforms_to(
+        V, Writable
+    ),
 ):
     comptime Element = Self.K
     comptime IteratorType[
@@ -218,7 +220,7 @@ struct Dict[
         __dict_literal__: NoneType,
     ) where conforms_to(Self.K, Deinitable) and conforms_to(
         Self.V, Deinitable
-    ):
+    ) and conforms_to(Self.K, Copyable) and conforms_to(Self.V, Copyable):
         self.entries = List[DictEntry[Self.K, Self.V, Self.H]]()
         self.index = List[List[Int]]()
         self.nbuckets = 8
@@ -231,12 +233,16 @@ struct Dict[
             self[keys._get_copy(i)] = values._get_copy(i)
             i += 1
 
-    def __init__(out self, *, copy: Self):
+    def __init__(out self, *, copy: Self) where conforms_to(
+        Self.K, Copyable
+    ) and conforms_to(Self.V, Copyable):
         self.entries = List[DictEntry[Self.K, Self.V, Self.H]](copy: copy.entries)
         self.index = List[List[Int]](copy: copy.index)
         self.nbuckets = copy.nbuckets
 
-    def copy(self) -> Self:
+    def copy(self) -> Self where conforms_to(Self.K, Copyable) and conforms_to(
+        Self.V, Copyable
+    ):
         return Dict[Self.K, Self.V, Self.H](copy: self)
 
     # Upstream's `fromkeys` is generic over `Iterable`/`IterableOwned` key
@@ -247,7 +253,7 @@ struct Dict[
         keys: List[Self.K], value: Self.V
     ) -> Self where conforms_to(Self.K, Deinitable) and conforms_to(
         Self.V, Deinitable
-    ):
+    ) and conforms_to(Self.K, Copyable) and conforms_to(Self.V, Copyable):
         var result = Dict[Self.K, Self.V, Self.H]()
         var i = 0
         while i < len(keys):
@@ -371,7 +377,9 @@ struct Dict[
     # Copy every entry of `other` into self, overwriting existing keys.
     def update(mut self, other: Self, /) where conforms_to(
         Self.K, Deinitable
-    ) and conforms_to(Self.V, Deinitable):
+    ) and conforms_to(Self.V, Deinitable) and conforms_to(
+        Self.K, Copyable
+    ) and conforms_to(Self.V, Copyable):
         var i = 0
         while i < len(other.entries):
             self[other.entries[i].key.copy()] = other.entries[i].value.copy()
@@ -406,13 +414,15 @@ struct Dict[
             var entry = self.entries.pop(0)
             elt_handler(entry.key^, entry.value^)
 
-    def get(self, key: Self.K) -> Optional[Self.V]:
+    def get(self, key: Self.K) -> Optional[Self.V] where conforms_to(Self.V, Copyable):
         var i = self.find_index(key)
         if i >= 0:
             return Optional[Self.V](self.entries[i].value.copy())
         return Optional[Self.V]()
 
-    def get(self, key: Self.K, default: Self.V) -> Self.V:
+    def get(self, key: Self.K, default: Self.V) -> Self.V where conforms_to(
+        Self.V, Copyable
+    ):
         var i = self.find_index(key)
         if i >= 0:
             return self.entries[i].value.copy()
@@ -423,20 +433,31 @@ struct Dict[
 
     # Borrowing views: each returns a self-iterable, non-indexable iterator
     # that borrows the entries list, so source mutation while a view lives
-    # is rejected and no elements are copied at call time.
-    def keys(ref self) -> Self.IteratorType[origin_of(self)]:
+    # is rejected and no elements are copied at call time. Each view is
+    # available for copyable keys and values (its yields are copied at the
+    # loop binding); upstream launders the key bound with `downcast`, which
+    # Mojito does not ship, so the guard sits on the accessor instead.
+    def keys(ref self) -> Self.IteratorType[origin_of(self)] where conforms_to(
+        Self.K, Copyable
+    ) and conforms_to(Self.V, Copyable):
         ref source = self.entries
         return _DictKeyIter(_DictEntryIter(source, 0))
 
-    def values(ref self) -> Self.ValuesIterType[origin_of(self)]:
+    def values(ref self) -> Self.ValuesIterType[origin_of(self)] where conforms_to(
+        Self.K, Copyable
+    ) and conforms_to(Self.V, Copyable):
         ref source = self.entries
         return _DictValueIter(_DictEntryIter(source, 0))
 
-    def items(ref self) -> Self.ItemsIterType[origin_of(self)]:
+    def items(ref self) -> Self.ItemsIterType[origin_of(self)] where conforms_to(
+        Self.K, Copyable
+    ) and conforms_to(Self.V, Copyable):
         ref source = self.entries
         return _DictEntryIter[Self.K, Self.V, Self.H](source, 0)
 
-    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
+    def __iter__(ref self) -> Self.IteratorType[origin_of(self)] where conforms_to(
+        Self.K, Copyable
+    ) and conforms_to(Self.V, Copyable):
         ref source = self.entries
         return _DictKeyIter(_DictEntryIter(source, 0))
 
@@ -445,67 +466,74 @@ struct Dict[
 
     # Equal when the same keys map to equal values; insertion order is not
     # part of equality.
-    def __eq__(self, other: Self) -> Bool where conforms_to(Self.V, Equatable):
+    def __eq__(self, other: Self) -> Bool where conforms_to(
+        Self.K, Copyable
+    ) and conforms_to(Self.V, Equatable):
         if len(self.entries) != len(other.entries):
             return False
         var i = 0
         while i < len(self.entries):
-            var j = other.find_index(self.entries._get_copy(i).key)
+            ref mine = self.entries[i]
+            var j = other.find_index(mine.key)
             if j < 0:
                 return False
-            if not (
-                other.entries._get_copy(j).value
-                == self.entries._get_copy(i).value
-            ):
+            ref theirs = other.entries[j]
+            if not (theirs.value == mine.value):
                 return False
             i += 1
         return True
 
-    def __ne__(self, other: Self) -> Bool where conforms_to(Self.V, Equatable):
+    def __ne__(self, other: Self) -> Bool where conforms_to(
+        Self.K, Copyable
+    ) and conforms_to(Self.V, Equatable):
         return not (self == other)
 
     # Order-independent (Python's frozenset mixing, as upstream): each entry
     # hashes key then value into a fresh `H2`, the results are diffused and
     # XORed, and the combination enters the caller's hasher as one leaf.
-    def __hash__[H2: Hasher](self, mut hasher: H2) where conforms_to(Self.V, Hashable):
+    def __hash__[H2: Hasher](self, mut hasher: H2) where conforms_to(
+        Self.K, Copyable
+    ) and conforms_to(Self.V, Hashable):
         var combined = UInt64(0)
-        for entry in self.items():
+        var i = 0
+        while i < len(self.entries):
+            ref entry = self.entries[i]
             var entry_hasher = H2()
             entry.key.__hash__(entry_hasher)
             entry.value.__hash__(entry_hasher)
             var h = entry_hasher^.finish()
             h = ((h ^ 89869747) ^ (h << 16)) * 3644798167
             combined ^= h
+            i += 1
         hasher._update_with_simd(combined)
 
     # Merge: `other`'s entries overwrite shared keys in the copied result.
     def __or__(self, other: Self) -> Self where conforms_to(
         Self.K, Deinitable
-    ) and conforms_to(Self.V, Deinitable):
+    ) and conforms_to(Self.V, Deinitable) and conforms_to(
+        Self.K, Copyable
+    ) and conforms_to(Self.V, Copyable):
         var result = self.copy()
         result.update(other)
         return result^
 
     def write_to(self, mut writer: Some[Writer]) where conforms_to(
-        Self.K, Writable
-    ) and conforms_to(Self.V, Writable):
+        Self.K, Copyable
+    ) and conforms_to(Self.K, Writable) and conforms_to(Self.V, Writable):
         writer.write("{")
         var i = 0
         while i < len(self.entries):
             if i > 0:
                 writer.write(", ")
-            writer.write(
-                self.entries._get_copy(i).key,
-                ": ",
-                self.entries._get_copy(i).value,
-            )
+            ref entry = self.entries[i]
+            writer.write(entry.key, ": ", entry.value)
             i += 1
         writer.write("}")
 
     # Upstream's text: `Dict[String, SIMD[DType.int, 1]]({'a': Int(1)})`.
     def write_repr_to(self, mut writer: Some[Writer]) where conforms_to(
-        Self.K, Writable
-    ) and conforms_to(Self.V, Writable):
+        Self.K, Copyable
+    ) and conforms_to(Self.K, Writable) and conforms_to(Self.V, Writable):
         writer.write(
             "Dict[",
             _unqualified_type_name[Self.K](),
@@ -517,11 +545,8 @@ struct Dict[
         while i < len(self.entries):
             if i > 0:
                 writer.write(", ")
-            writer.write(
-                repr(self.entries._get_copy(i).key),
-                ": ",
-                repr(self.entries._get_copy(i).value),
-            )
+            ref entry = self.entries[i]
+            writer.write(repr(entry.key), ": ", repr(entry.value))
             i += 1
         writer.write("})")
 
@@ -533,7 +558,8 @@ struct Dict[
     def _find_index(self, key_hash: UInt64, key: Self.K) -> Int:
         var bucket = Int(key_hash) & (self.nbuckets - 1)
         for entry_index in self.index._get_copy(bucket):
-            if self.entries._get_copy(entry_index).key == key:
+            ref entry = self.entries[entry_index]
+            if entry.key == key:
                 return entry_index
         return -1
 
@@ -556,7 +582,8 @@ struct Dict[
             i += 1
         i = 0
         while i < len(self.entries):
-            var bucket = Int(self.entries._get_copy(i)._hash) & (new_bucket_count - 1)
+            ref entry = self.entries[i]
+            var bucket = Int(entry._hash) & (new_bucket_count - 1)
             var bucket_entries = new_index._get_copy(bucket)
             bucket_entries.append(i)
             new_index[bucket] = bucket_entries^

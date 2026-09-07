@@ -327,3 +327,5 @@ type-receiver-instance-mismatch	reject	assets/type_error/type_receiver_instance_
 stored-array-span-iterators	run	assets/ok/stored_array_span_iterators.mojo
 tuple-nested-type-arguments	run	assets/ok/tuple_nested_type_arguments.mojo
 nested-type-name-spellings	run	conformance/fixtures/nested_type_name_spellings.mojo
+dict-movable-only-elements	run	assets/ok/dict_movable_only_elements.mojo
+list-unsafe-uninit-length	run	assets/ok/list_unsafe_uninit_length.mojo

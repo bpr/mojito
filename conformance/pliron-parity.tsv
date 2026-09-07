@@ -57,6 +57,7 @@ assets/ok/delegated_ref_return_projection.mojo	main	exe-differential	sanitized
 assets/ok/dict_hasher_forwarding.mojo	main	exe-differential	sanitized
 assets/ok/dict_insert_linear_capable.mojo	main	exe-differential	sanitized
 assets/ok/dict_methods_growth.mojo	main	exe-differential	sanitized
+assets/ok/dict_movable_only_elements.mojo	main	exe-differential	sanitized
 assets/ok/dict_take_items.mojo	main	exe-differential	sanitized
 assets/ok/dict_upstream_key_value_iteration.mojo	main	exe-differential	sanitized
 assets/ok/dict_views_iteration.mojo	main	exe-differential	sanitized
@@ -130,6 +131,7 @@ assets/ok/list_contiguous_slice_strict.mojo	main	exe-differential	sanitized
 assets/ok/list_methods_growth.mojo	main	exe-differential	sanitized
 assets/ok/list_strided_slice_normalizes.mojo	main	exe-differential	sanitized
 assets/ok/list_unsafe_ptr_multi_element.mojo	main	exe-differential	sanitized
+assets/ok/list_unsafe_uninit_length.mojo	main	exe-differential	sanitized
 assets/ok/loop_binding_consuming_copy.mojo	main	exe-differential	sanitized
 assets/ok/mapping_key_iteration_reads.mojo	main	exe-differential	sanitized
 assets/ok/math_module_rounding.mojo	main	exe-differential	sanitized

@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Upstream's Movable-only collection bounds: `Dict[K: Hashable & Equatable &
+  Movable, V: Movable]`, `Set[T: Hashable & Equatable & Movable]`, and
+  `StringDict[V: Movable]`, with the copying APIs `where`-guarded on
+  `Copyable` (a method's `where` clause now refines its own signature, a
+  comptime alias resolves under its clause or the conditional conformance
+  requiring it, and a conditional `Copyable` conformance verifies under its
+  condition); a violated struct-parameter bound at construction names the
+  bound. `List`/`String` gain `(*, unsafe_uninit_length)` construction and
+  resize plus `String.unsafe_ptr_mut()`: the VM tracks never-written heap
+  slots (reads trap, destroys are no-ops) and `len`/`print` read a named
+  struct place in place rather than copying it.
 - Parameter kinds in nested positions: the bundled Array and Span iterators
   iterate themselves (a stored `arr.__iter__()`/`span.__iter__()` drives a
   loop and keeps its source view alive — a view-returning method lends a

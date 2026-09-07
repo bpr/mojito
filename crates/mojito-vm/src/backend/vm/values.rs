@@ -212,7 +212,7 @@ impl VmBackend {
             Target::Pointer(allocation, base, index) => {
                 let offset = value_as_index(&regs[index.0 as usize])?;
                 let (region, slot) = self.heap_index(allocation, base, offset)?;
-                self.heap[region].slots[slot] = value;
+                self.heap_store(region, slot, value);
                 Ok(())
             }
             Target::StructIndex(parent, index) => {
@@ -783,12 +783,16 @@ impl VmBackend {
         let Value::Pointer { allocation, .. } = pointer else {
             unreachable!("heap_alloc returns a pointer");
         };
-        let slots = &mut self.heap[(allocation - 1) as usize].slots;
+        let region = (allocation - 1) as usize;
         for (index, byte) in bytes.iter().enumerate() {
-            slots[index] = Value::Simd {
-                dtype: mojito_ast::ast::Dtype::UInt8,
-                lanes: crate::runtime::SimdLanes::Int(vec![i128::from(*byte)]),
-            };
+            self.heap_store(
+                region,
+                index,
+                Value::Simd {
+                    dtype: mojito_ast::ast::Dtype::UInt8,
+                    lanes: crate::runtime::SimdLanes::Int(vec![i128::from(*byte)]),
+                },
+            );
         }
         Ok(allocation)
     }

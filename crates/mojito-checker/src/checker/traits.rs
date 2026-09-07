@@ -536,8 +536,8 @@ impl Checker {
         // own comptime alias (`var iter: Self.dict_entry_iter`). Member bodies
         // reference only `Self` parameters and registered struct shells, never
         // fields, so this ordering is well-founded.
-        let (associated_values, associated_constraints, parameterized_associated) =
-            self.check_struct_associated(declaration.associated)?;
+        let (associated_values, associated_constraints, parameterized_associated) = self
+            .check_struct_associated(declaration.associated, declaration.conformance_conditions)?;
         if let Some(info) = self.structs.get_mut(name) {
             info.associated = associated_values.clone();
             info.associated_constraints = associated_constraints.clone();
@@ -678,11 +678,22 @@ impl Checker {
             let saved_self_ty = receiver_override
                 .as_ref()
                 .map(|ty| self.self_ty.replace(ty.clone()));
-            let signature = (|| {
-                let all_types = self.param_tys(&m.params)?;
-                let sig = self.method_sig(m, method_decls, &all_types)?;
-                Ok::<_, TypeError>((all_types, sig))
-            })();
+            // The method's own `where` clause refines its signature exactly as
+            // it refines its body: a conditionally available method may name
+            // types its receiver's bare bounds do not admit.
+            let signature = match self.method_where_assumptions(m) {
+                Ok(assumptions) => {
+                    self.assumed_conformances.push(assumptions);
+                    let signature = (|| {
+                        let all_types = self.param_tys(&m.params)?;
+                        let sig = self.method_sig(m, method_decls, &all_types)?;
+                        Ok::<_, TypeError>((all_types, sig))
+                    })();
+                    self.assumed_conformances.pop();
+                    signature
+                }
+                Err(error) => Err(error),
+            };
             if let Some(saved) = saved_self_ty {
                 self.self_ty = saved;
             }
@@ -961,22 +972,24 @@ impl Checker {
         tr: &str,
         self_ty: &Ty,
     ) -> Result<(), TypeError> {
-        if let Some(condition) = self
+        // Validate the declaration shape even for builtin marker traits.
+        // Truth is evaluated at each concrete use, but a malformed
+        // `(condition, message)` tuple is always a declaration error. The
+        // compiled condition is the premise a conditional builtin
+        // conformance (`Copyable where conforms_to(K, Copyable)` over a
+        // `var key: Self.K` field) verifies under.
+        let declared_condition = self
             .structs
             .get(name)
             .and_then(|info| info.conformance_conditions.get(tr))
-        {
-            // Validate the declaration shape even for builtin marker traits.
-            // Truth is evaluated at each concrete use, but a malformed
-            // `(condition, message)` tuple is always a declaration error.
-            self.compile_where_clause(condition)?;
-        }
+            .map(|condition| self.compile_where_clause(condition))
+            .transpose()?;
         // The focused checker can recognize protocol bounds without linking the
         // implicit prelude, but a registered nominal trait is authoritative.
         // In production `Iterator`/`Iterable` are ordinary stdlib traits; the
         // builtin compatibility spelling must not bypass their requirements.
         if BUILTIN_TRAITS.contains(&tr) && !self.traits.contains_key(tr) {
-            return self.verify_builtin_conformance(name, tr, self_ty);
+            return self.verify_builtin_conformance(name, tr, self_ty, declared_condition.as_ref());
         }
         let trait_info = match self.traits.get(tr) {
             Some(info) => info,
@@ -1317,9 +1330,10 @@ impl Checker {
         name: &str,
         tr: &str,
         self_ty: &Ty,
+        assumption: Option<&GenericConstraint>,
     ) -> Result<(), TypeError> {
         let ok = match tr {
-            "Copyable" => self.struct_copyable_conformance_ok(name),
+            "Copyable" => self.struct_copyable_conformance_ok(name, assumption),
             "ImplicitlyCopyable" => self.struct_implicitly_copyable_conformance_ok(name),
             // A declared narrowing conformance (`Movable where False`) must
             // verify at declaration like `Deinitable where False`;
@@ -2491,12 +2505,21 @@ impl Checker {
         }
     }
 
-    pub(super) fn struct_copyable_conformance_ok(&self, name: &str) -> bool {
+    /// `assumption` is a conditional conformance's premise: a field of a
+    /// parameter type the premise makes copyable counts as copyable.
+    pub(super) fn struct_copyable_conformance_ok(
+        &self,
+        name: &str,
+        assumption: Option<&GenericConstraint>,
+    ) -> bool {
         let Some(info) = self.structs.get(name) else {
             return false;
         };
         info.methods.contains_key("__copyinit__")
-            || info.fields.iter().all(|(_, ty)| self.is_copyable(ty))
+            || info
+                .fields
+                .iter()
+                .all(|(_, ty)| self.is_copyable_under_assumption(ty, assumption))
     }
 
     pub(super) fn struct_implicitly_copyable_conformance_ok(&self, name: &str) -> bool {

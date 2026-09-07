@@ -90,16 +90,10 @@ exempt from the ordering.
   executable oracle first, then everyday spellings that reject today, then
   parity details; no task depends on a later one. A
   task closes when its bullets are done; a residue discovered inside a task
-  moves to the task that owns its fix (or to task 5, the deliberate
-  deferrals), never back to a finished one. Plan first: task 1 (ordering);
-  the rest are direct.
+  moves to the task that owns its fix (or to task 4, the deliberate
+  deferrals), never back to a finished one. The remaining tasks are direct.
 
-  1. **Storage-shape items with a known blocker.** Short plan (ordering).
-     - Relax K/V/element bounds toward upstream's Movable-only `KeyElement`
-       (a per-API `where` pass, as `List[T: AnyType]`).
-     - `(*, unsafe_uninit_length)` construction and resize: blocked on an
-       uninit-element storage story for List (MaybeUninit-adjacent).
-  2. **String Unicode, iterator, and parsing extras.** Port on demand.
+  1. **String Unicode, iterator, and parsing extras.** Port on demand.
      - `upper`/`lower`: simple-case subset (ASCII, Latin-1, Latin
        Extended-A, Greek, Cyrillic, `ß` → `SS`); upstream ships full Unicode
        simple and special casing tables.
@@ -113,12 +107,12 @@ exempt from the ordering.
      - `len(s)` on a String or StringSpan is accepted (byte length) where
        upstream rejects it as ambiguous (`byte_length()`, `len(s.codepoints())`,
        `len(s.graphemes())`); an extension to drop at the next re-pin.
-  3. **Compile-time collections.** `comptime d = {...}` Dict/Set values
+  2. **Compile-time collections.** `comptime d = {...}` Dict/Set values
      hashed with `default_comp_time_hasher`. `CtValue` has no mapping kind
      (`crates/mojito-types/src/ct.rs`), `Elab::eval` has no dict-display
      arm, and the VM-CTFE purity walk admits only the hasher protocol's
      method calls, so a general compile-time method-call rule comes with it.
-  4. **Diagnostic wording and strictness.**
+  3. **Diagnostic wording and strictness.**
      - An unavailable where-gated method reports `'set' is unavailable for
        Variant[Conn]: its where clause evaluated to False` rather than
        upstream's clause text.
@@ -134,7 +128,7 @@ exempt from the ordering.
      - `Counter[Self.index]` (a field, not a parameter) in a bracket slot
        reports `not a compile-time Int constant: Counter` rather than
        naming the field.
-  5. **Deliberate deferrals.** Nothing depends on these; each is a
+  4. **Deliberate deferrals.** Nothing depends on these; each is a
      conscious limit, listed here so it is not mistaken for unfinished
      task work.
      - Clones are minted per whole instance (no reachability pruning) and
@@ -193,6 +187,13 @@ exempt from the ordering.
        upstream keeps a non-prelude struct's module path
        (`Optional[std.collections.dict.Dict[...]]`, `List[up.Flag[True]]`)
        while `List`/`Optional`/`String`/`SIMD` stay bare.
+     - No `std.builtin.rebind.downcast`: `Dict`/`Set` guard `keys`/`values`/
+       `items`/`__iter__` (and `Dict.keys` needs copyable values as well as
+       keys, since the key view wraps the entry view) with `where
+       conforms_to(K, Copyable)` instead of laundering the parameter, and
+       `StringDict.__getitem__` stays a `Copyable`-guarded copy: its
+       `StringLiteral`-keyed entry list keeps the erased path, where a
+       reference result cannot spell its interior origin.
      - A non-parameterized struct alias mentioning a value parameter
        (`comptime Alias = S[Self.T, Self.length]`) resolved through an
        instance (`S[Int, 3].Alias`) keeps `length` symbolic (`expected

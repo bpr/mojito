@@ -8,9 +8,9 @@ from std.optional import Optional
 @fieldwise_init
 struct _SetIter[
     iterable_mut: Bool, //,
-    T: Hashable & Equatable & Copyable & Movable,
+    T: Hashable & Equatable & Movable,
     iterable_origin: Origin[mut=iterable_mut],
-](Iterator):
+](Iterator where conforms_to(T, Copyable)):
     comptime Element = Self.T
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
@@ -34,7 +34,7 @@ struct _SetIter[
     # uniqueness invariants.
     def __next__(mut self) raises StopIteration -> ref[
         Origin[mut=False].cast_from[Self.iterable_origin._get_owned_interior["element"]]
-    ] Self.T:
+    ] Self.T where conforms_to(Self.T, Copyable):
         if self.index >= len(self.src):
             raise StopIteration()
         var r = self.index
@@ -42,18 +42,16 @@ struct _SetIter[
         return self.src[r]
 
 struct Set[
-    T: Hashable & Equatable & Copyable & Movable, H: Hasher = default_hasher
+    T: Hashable & Equatable & Movable, H: Hasher = default_hasher
 ](
-    Copyable,
+    Copyable where conforms_to(T, Copyable),
     Deinitable where conforms_to(T, Deinitable),
-    Equatable,
-    # Upstream: `Hashable where conforms_to(T, Copyable) and conforms_to(T,
-    # Hashable)`; both are already in this element bound.
-    Hashable,
-    Iterable,
+    Equatable where conforms_to(T, Copyable),
+    Hashable where conforms_to(T, Copyable),
+    Iterable where conforms_to(T, Copyable),
     IterableOwned where conforms_to(T, Deinitable),
     Movable,
-    Writable where conforms_to(T, Writable),
+    Writable where conforms_to(T, Copyable) and conforms_to(T, Writable),
 ):
     comptime Element = Self.T
     comptime IteratorType[
@@ -74,10 +72,10 @@ struct Set[
         for var value in values^:
             self.add(value^)
 
-    def __init__(out self, *, copy: Self):
+    def __init__(out self, *, copy: Self) where conforms_to(Self.T, Copyable):
         self.items = copy.items.copy()
 
-    def copy(self) -> Self:
+    def copy(self) -> Self where conforms_to(Self.T, Copyable):
         return Set[Self.T, Self.H](copy: self)
 
     def __init__(out self, *, deinit move: Self):
@@ -99,7 +97,7 @@ struct Set[
     # previously stored one, a fresh element returns an empty Optional.
     def insert(mut self, var value: Self.T) -> Optional[Self.T] where conforms_to(
         Self.T, Deinitable
-    ):
+    ) and conforms_to(Self.T, Copyable):
         var i = self._find(value)
         if i >= 0:
             var displaced = Optional[Self.T](self.items._get_copy(i))
@@ -144,7 +142,9 @@ struct Set[
             elt_handler(self.items.pop(0))
 
     # In-place union with `other`.
-    def update(mut self, other: Self) where conforms_to(Self.T, Deinitable):
+    def update(mut self, other: Self) where conforms_to(
+        Self.T, Deinitable
+    ) and conforms_to(Self.T, Copyable):
         var i = 0
         while i < len(other.items):
             self.add(other.items._get_copy(i))
@@ -152,30 +152,32 @@ struct Set[
 
     def intersection_update(mut self, other: Self) where conforms_to(
         Self.T, Deinitable
-    ):
+    ) and conforms_to(Self.T, Copyable):
         var result = self.intersection(other)
         self.items = result.items^
 
     def difference_update(mut self, other: Self) where conforms_to(
         Self.T, Deinitable
-    ):
+    ) and conforms_to(Self.T, Copyable):
         var result = self.difference(other)
         self.items = result.items^
 
     def symmetric_difference_update(mut self, other: Self) where conforms_to(
         Self.T, Deinitable
-    ):
+    ) and conforms_to(Self.T, Copyable):
         var result = self.symmetric_difference(other)
         self.items = result.items^
 
-    def union(self, other: Self) -> Self where conforms_to(Self.T, Deinitable):
+    def union(self, other: Self) -> Self where conforms_to(
+        Self.T, Deinitable
+    ) and conforms_to(Self.T, Copyable):
         var result = self.copy()
         result.update(other)
         return result^
 
     def intersection(self, other: Self) -> Self where conforms_to(
         Self.T, Deinitable
-    ):
+    ) and conforms_to(Self.T, Copyable):
         var result = Set[Self.T, Self.H]()
         var i = 0
         while i < len(self.items):
@@ -186,7 +188,7 @@ struct Set[
 
     def difference(self, other: Self) -> Self where conforms_to(
         Self.T, Deinitable
-    ):
+    ) and conforms_to(Self.T, Copyable):
         var result = Set[Self.T, Self.H]()
         var i = 0
         while i < len(self.items):
@@ -197,27 +199,39 @@ struct Set[
 
     def symmetric_difference(self, other: Self) -> Self where conforms_to(
         Self.T, Deinitable
-    ):
+    ) and conforms_to(Self.T, Copyable):
         var result = self.difference(other)
         result.update(other.difference(self))
         return result^
 
-    def __and__(self, other: Self) -> Self where conforms_to(Self.T, Deinitable):
+    def __and__(self, other: Self) -> Self where conforms_to(
+        Self.T, Deinitable
+    ) and conforms_to(Self.T, Copyable):
         return self.intersection(other)
 
-    def __or__(self, other: Self) -> Self where conforms_to(Self.T, Deinitable):
+    def __or__(self, other: Self) -> Self where conforms_to(
+        Self.T, Deinitable
+    ) and conforms_to(Self.T, Copyable):
         return self.union(other)
 
-    def __sub__(self, other: Self) -> Self where conforms_to(Self.T, Deinitable):
+    def __sub__(self, other: Self) -> Self where conforms_to(
+        Self.T, Deinitable
+    ) and conforms_to(Self.T, Copyable):
         return self.difference(other)
 
-    def __xor__(self, other: Self) -> Self where conforms_to(Self.T, Deinitable):
+    def __xor__(self, other: Self) -> Self where conforms_to(
+        Self.T, Deinitable
+    ) and conforms_to(Self.T, Copyable):
         return self.symmetric_difference(other)
 
-    def __isub__(mut self, other: Self) where conforms_to(Self.T, Deinitable):
+    def __isub__(mut self, other: Self) where conforms_to(
+        Self.T, Deinitable
+    ) and conforms_to(Self.T, Copyable):
         self.difference_update(other)
 
-    def issubset(self, other: Self) -> Bool:
+    # The comparisons, hashing, and printing are available for copyable
+    # elements, upstream's conditions on the corresponding conformances.
+    def issubset(self, other: Self) -> Bool where conforms_to(Self.T, Copyable):
         if len(self.items) > len(other.items):
             return False
         var i = 0
@@ -227,10 +241,10 @@ struct Set[
             i += 1
         return True
 
-    def issuperset(self, other: Self) -> Bool:
+    def issuperset(self, other: Self) -> Bool where conforms_to(Self.T, Copyable):
         return other.issubset(self)
 
-    def isdisjoint(self, other: Self) -> Bool:
+    def isdisjoint(self, other: Self) -> Bool where conforms_to(Self.T, Copyable):
         var i = 0
         while i < len(self.items):
             if other.contains(self.items._get_copy(i)):
@@ -238,27 +252,27 @@ struct Set[
             i += 1
         return True
 
-    def __eq__(self, other: Self) -> Bool:
+    def __eq__(self, other: Self) -> Bool where conforms_to(Self.T, Copyable):
         return len(self.items) == len(other.items) and self.issubset(other)
 
-    def __ne__(self, other: Self) -> Bool:
+    def __ne__(self, other: Self) -> Bool where conforms_to(Self.T, Copyable):
         return not (self == other)
 
-    def __le__(self, other: Self) -> Bool:
+    def __le__(self, other: Self) -> Bool where conforms_to(Self.T, Copyable):
         return self.issubset(other)
 
-    def __ge__(self, other: Self) -> Bool:
+    def __ge__(self, other: Self) -> Bool where conforms_to(Self.T, Copyable):
         return self.issuperset(other)
 
-    def __lt__(self, other: Self) -> Bool:
+    def __lt__(self, other: Self) -> Bool where conforms_to(Self.T, Copyable):
         return len(self.items) < len(other.items) and self.issubset(other)
 
-    def __gt__(self, other: Self) -> Bool:
+    def __gt__(self, other: Self) -> Bool where conforms_to(Self.T, Copyable):
         return len(self.items) > len(other.items) and self.issuperset(other)
 
     # Order-independent, as upstream: XOR of each element's `hash` (the
     # default hasher, deliberately not `Self.H`), then one UInt64 leaf.
-    def __hash__(self, mut hasher: Some[Hasher]):
+    def __hash__(self, mut hasher: Some[Hasher]) where conforms_to(Self.T, Copyable):
         var hash_value: UInt64 = 0
         for e in self:
             hash_value ^= hash(e)
@@ -270,7 +284,9 @@ struct Set[
     def __len__(self) -> Int:
         return len(self.items)
 
-    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
+    def __iter__(ref self) -> Self.IteratorType[origin_of(self)] where conforms_to(
+        Self.T, Copyable
+    ):
         # Construct the borrowed iterator directly: an explicit
         # `self.items.__iter__()` call is ambiguous between the borrowed and
         # owned List overloads.
@@ -289,8 +305,8 @@ struct Set[
         return result^
 
     def write_to(self, mut writer: Some[Writer]) where conforms_to(
-        Self.T, Writable
-    ):
+        Self.T, Copyable
+    ) and conforms_to(Self.T, Writable):
         if len(self) == 0:
             writer.write("{}")
             return
@@ -328,7 +344,8 @@ struct Set[
     def _find(self, value: Self.T) -> Int:
         var i = 0
         while i < len(self.items):
-            if self.items._get_copy(i) == value:
+            ref candidate = self.items[i]
+            if candidate == value:
                 return i
             i += 1
         return -1

@@ -1101,3 +1101,24 @@ fn stored_array_and_span_iterators_iterate_themselves() {
     let err = run(mutation).unwrap_err();
     assert!(err.contains("conflicts with live reference"), "{err}");
 }
+
+#[test]
+fn conditional_conformance_refines_a_comptime_alias_body() {
+    // A comptime alias a conditional trait requires (`Iterable where
+    // conforms_to(T, Copyable)` → `IteratorType`) resolves under that
+    // condition; without the conditional trait the alias body rejects.
+    let iter = "from std.iterable import Iterable, Iterator, StopIteration\n\nstruct MyIter[T: Copyable & Movable, o: Origin[mut=False]](Iterator, Copyable, Movable):\n    comptime Element = Self.T\n    var src: Pointer[Self.T, Self.o]\n    var done: Bool\n\n    def __init__(out self, ref[Self.o] src: Self.T):\n        self.src = Pointer(to=src)\n        self.done = False\n\n    def __next__(mut self) raises StopIteration -> Self.T:\n        if self.done:\n            raise StopIteration()\n        self.done = True\n        return self.src[].copy()\n\n";
+    let alias = "    comptime IteratorType[\n        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]\n    ] = MyIter[Self.T, iterable_origin]\n";
+    let src = format!(
+        "{iter}struct Bag[T: Movable](Iterable where conforms_to(T, Copyable), Movable):\n    comptime Element = Self.T\n{alias}    var v: Self.T\n\n    def __init__(out self, var v: Self.T):\n        self.v = v^\n\n    def __iter__(ref self) -> Self.IteratorType[origin_of(self)] where conforms_to(Self.T, Copyable):\n        return MyIter(self.v)\n\ndef main():\n    var b = Bag(7)\n    for x in b:\n        print(x)\n"
+    );
+    assert_eq!(run(&src).unwrap(), "7\n");
+    let negative = format!(
+        "{iter}struct Bag[T: Movable](Movable):\n{alias}    var v: Self.T\n\n    def __init__(out self, var v: Self.T):\n        self.v = v^\n\ndef main():\n    print(1)\n"
+    );
+    let err = run(&negative).unwrap_err();
+    assert!(
+        err.contains("does not conform to trait 'Copyable'"),
+        "{err}"
+    );
+}

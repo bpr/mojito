@@ -1,5 +1,7 @@
-# A self-hosted growable List.  Heap slots in `[0, size)` are initialized;
-# slots in `[size, cap)` are not.  `unsafe_offset(i).unsafe_take_pointee()`
+# A self-hosted growable List.  Heap slots in `[0, size)` are initialized —
+# or, after an `unsafe_uninit_length` construction or resize, owed an
+# initialization by the caller — and slots in `[size, cap)` are not.
+# `unsafe_offset(i).unsafe_take_pointee()`
 # moves an initialized slot out and `unsafe_offset(i).unsafe_deinit_pointee()`
 # destroys one in place — the public raw-pointer vocabulary over storage this
 # List owns.
@@ -149,6 +151,16 @@ struct List[T: AnyType](
         self.size = 0
         self.data = unsafe_alloc[Self.T](self.cap)
 
+    # Length without initialization: the caller writes every slot in
+    # `[0, length)` through raw pointer stores before it is read, copied, or
+    # destroyed. The VM keeps a never-written slot distinct from a taken one
+    # (reads trap, a take yields a tombstone, a destroy is a no-op); native
+    # storage is raw bytes, as upstream.
+    def __init__(out self, *, unsafe_uninit_length: Int):
+        self.cap = unsafe_uninit_length
+        self.size = unsafe_uninit_length
+        self.data = unsafe_alloc[Self.T](self.cap)
+
     def __init__(out self, *, length: Int, fill: Self.T) where conforms_to(
         Self.T, Copyable
     ):
@@ -244,6 +256,17 @@ struct List[T: AnyType](
         while self.size < length:
             self.data.unsafe_offset(self.size).unsafe_write(copy=fill)
             self.size += 1
+
+    # Grow to `unsafe_uninit_length` leaving the new slots uninitialized (the
+    # caller's raw-pointer stores initialize them), or discard the tail.
+    def resize(mut self, *, unsafe_uninit_length: Int) where conforms_to(
+        Self.T, Deinitable
+    ) and conforms_to(Self.T, Movable):
+        if unsafe_uninit_length <= self.size:
+            self.shrink(unsafe_uninit_length)
+            return
+        self.reserve(unsafe_uninit_length)
+        self.size = unsafe_uninit_length
 
     # Discard elements at the end; aborts when `new_length` exceeds the
     # current length.

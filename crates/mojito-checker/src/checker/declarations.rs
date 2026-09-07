@@ -850,6 +850,27 @@ impl Checker {
         Ok(CallableDefault::Symbol(symbol))
     }
 
+    /// The conformance atoms a method's `where` clauses guarantee, assumed
+    /// while checking its body and, in `register_struct_method_signatures`,
+    /// while resolving its own signature (`-> Need[Self.T] where
+    /// conforms_to(Self.T, Copyable)` on a `T: Movable` struct).
+    pub(super) fn method_where_assumptions(
+        &self,
+        m: &Method,
+    ) -> Result<HashSet<(String, String)>, TypeError> {
+        let mut facts = Vec::new();
+        for condition in &m.where_clauses {
+            let constraint = self.compile_where_clause(condition)?;
+            guaranteed_conformance_atoms(&constraint, &mut facts);
+        }
+        Ok(facts
+            .into_iter()
+            .map(|(parameter, trait_name)| {
+                (parameter.trim_start_matches('*').to_string(), trait_name)
+            })
+            .collect())
+    }
+
     pub(super) fn check_method(
         &mut self,
         self_ty: &Ty,
@@ -865,19 +886,7 @@ impl Checker {
         let saved = self.enclosing_type_params.clone();
         let saved_struct_count = self.enclosing_struct_type_params.replace(saved.len());
         self.enclosing_type_params.extend(m.type_params.clone());
-        let assumptions = (|| {
-            let mut facts = Vec::new();
-            for condition in &m.where_clauses {
-                let constraint = self.compile_where_clause(condition)?;
-                guaranteed_conformance_atoms(&constraint, &mut facts);
-            }
-            Ok(facts
-                .into_iter()
-                .map(|(parameter, trait_name)| {
-                    (parameter.trim_start_matches('*').to_string(), trait_name)
-                })
-                .collect::<HashSet<_>>())
-        })();
+        let assumptions = self.method_where_assumptions(m);
         let result = match assumptions {
             Ok(assumptions) => {
                 self.assumed_conformances.push(assumptions);
@@ -1770,6 +1779,10 @@ impl Checker {
             // call that matches no constructor because of an explicit-origin
             // or pointer-permission mismatch reports that, not a bare miss.
             let mut origin_failure: Option<TypeError> = None;
+            // The first candidate whose struct-parameter bound the arguments
+            // violate (`Dict[Key, Int]` over a non-`Hashable` key), so the
+            // miss names the bound instead of a bare "no overload".
+            let mut bound_failure: Option<TypeError> = None;
             for sig in sigs {
                 let Ok(matched) = mojito_ast::call::match_call_slots(
                     &sig.names,
@@ -1825,6 +1838,11 @@ impl Checker {
                     .collect();
                 let resolved_use =
                     self.resolve_use_params(name, &decls, param_args, &patterns, &arg_tys);
+                if let Err(error @ TypeError::TraitNotSatisfied { .. }) = &resolved_use
+                    && bound_failure.is_none()
+                {
+                    bound_failure = Some(error.clone());
+                }
                 if let Ok((subst, tyargs)) = resolved_use {
                     let pointer_origins = match self.bind_constructor_origins(
                         name,
@@ -1993,7 +2011,7 @@ impl Checker {
             }
             return Err(TypeError::BadCall {
                 func: name.to_string(),
-                reason: match origin_failure {
+                reason: match bound_failure.or(origin_failure) {
                     Some(error) => {
                         format!("no constructor overload matches the supplied arguments ({error})")
                     }

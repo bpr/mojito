@@ -410,6 +410,13 @@ struct String(
         self.cap = capacity_bytes if capacity_bytes > 0 else 1
         self.data = unsafe_alloc[Byte](self.cap)
 
+    # Length without initialization: the caller writes every byte in
+    # `[0, length)` through `unsafe_ptr_mut()` before the text is read.
+    def __init__(out self, *, unsafe_uninit_length: Int):
+        self.size = unsafe_uninit_length
+        self.cap = unsafe_uninit_length if unsafe_uninit_length > 0 else 1
+        self.data = unsafe_alloc[Byte](self.cap)
+
     def __init__(out self, *, copy: Self):
         self.size = copy.size
         self.cap = copy.cap
@@ -438,7 +445,10 @@ struct String(
         var new_data = unsafe_alloc[Byte](new_capacity_bytes)
         var i = 0
         while i < self.size:
-            new_data[i] = self.data[i]
+            # Move rather than read: a never-written byte (an
+            # `unsafe_uninit_length` slot) forwards its state instead of
+            # trapping on the VM.
+            new_data[i] = self.data.unsafe_offset(i).unsafe_take_pointee()
             i += 1
         self.data.unsafe_free()
         self.data = new_data
@@ -641,6 +651,14 @@ struct String(
     def unsafe_ptr(ref self) -> Pointer[Byte, origin_of(self)._get_owned_interior["bytes"]]:
         return self.data.unsafe_origin_cast[origin_of(self)._get_owned_interior["bytes"]]()
 
+    # Upstream's mutable byte pointer: reserves `capacity` bytes first (0 is
+    # no growth) so the caller may write through the returned pointer.
+    def unsafe_ptr_mut(
+        mut self, capacity: Int = 0
+    ) -> Pointer[Byte, origin_of(self)._get_owned_interior["bytes"]]:
+        self.reserve_bytes(capacity)
+        return self.data.unsafe_origin_cast[origin_of(self)._get_owned_interior["bytes"]]()
+
     def capacity_bytes(self) -> Int:
         return self.cap
 
@@ -662,6 +680,21 @@ struct String(
             )
             _mojito_abort(message)
         self.size = length
+
+    # Grow leaving the new bytes uninitialized (written through
+    # `unsafe_ptr_mut()`), or shrink to a codepoint boundary.
+    def resize(mut self, *, unsafe_uninit_length: Int):
+        if unsafe_uninit_length > self.size:
+            self.reserve_bytes(unsafe_uninit_length)
+        elif not self._is_codepoint_boundary(unsafe_uninit_length):
+            var message = String()
+            message.write(
+                "String shrunk to length ",
+                unsafe_uninit_length,
+                " which does not lie on a codepoint boundary.",
+            )
+            _mojito_abort(message)
+        self.size = unsafe_uninit_length
 
     def append(mut self, codepoint: Codepoint):
         self._append_bytes_of(codepoint._text, 0, codepoint._text.size)

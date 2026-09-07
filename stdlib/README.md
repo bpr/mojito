@@ -86,7 +86,7 @@ only from their authoritative `std` modules.
   `_ListIter`. It conforms to
   `Iterable`.
 - `std/collections/dict.mojo` — a generic, hash-backed, insertion-ordered
-  `Dict[K: Hashable & Equatable & Copyable & Movable, V, H: Hasher = default_hasher]`: dense entries
+  `Dict[K: Hashable & Equatable & Movable, V: Movable, H: Hasher = default_hasher]`: dense entries
   (each caching its `UInt64` hash under `H`) preserve order while
   `List[List[Int]]` buckets index them by the hash's low bits, doubling when
   the load factor reaches one. It supports subscripts, overloaded `get`,
