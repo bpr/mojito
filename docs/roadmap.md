@@ -81,6 +81,23 @@ exempt from the ordering.
 - The `a79fbdf59f2` pass (2026-08-26, Mojo `1.1.0.dev2026082605`) is
   complete (`docs/mojo-nightly.md`); the next re-pin recreates this
   section's checkbox.
+- [ ] **Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
+  any order)* — places where Mojito's stdlib leans on the Rust runtime
+  where upstream is pure Mojo. Each is a candidate port, preferred over any
+  new bridge (2026-09-07 direction):
+  - the literal-filled `String.__init__(literal)` and
+    `StringSpan.__init__(literal)` constructors and the
+    `String._as_string_literal()` struct-to-literal bridge behind
+    `String.write_to` (upstream: `StringLiteral` is a `StaticString`
+    and `write_to` writes the bytes);
+  - number formatting in Rust — the VM's `Display for Value` and the
+    native `mjrt_fmt_i64`/`mjrt_fmt_u64`/`mjrt_fmt_f64` (upstream formats
+    `Int`/`Float64` in Mojo: `_write_int`, Dragonbox in `format_float`);
+  - `mjrt_repr_string` for the native string repr (the VM side is already
+    Mojo, `String.write_repr_to`);
+  - `mjrt_pow` for integer `**` (upstream's `Int.__pow__` is Mojo).
+  Runtime services with an upstream analogue stay: `_mojito_abort`
+  (`os.abort`), `mjrt_read_line` (`input`), allocation, traps.
 
 ### 3. Grow The CPU Standard Library *(demand-first)*
 
@@ -90,29 +107,15 @@ exempt from the ordering.
   executable oracle first, then everyday spellings that reject today, then
   parity details; no task depends on a later one. A
   task closes when its bullets are done; a residue discovered inside a task
-  moves to the task that owns its fix (or to task 4, the deliberate
+  moves to the task that owns its fix (or to task 3, the deliberate
   deferrals), never back to a finished one. The remaining tasks are direct.
 
-  1. **String Unicode, iterator, and parsing extras.** Port on demand.
-     - `upper`/`lower`: simple-case subset (ASCII, Latin-1, Latin
-       Extended-A, Greek, Cyrillic, `ß` → `SS`); upstream ships full Unicode
-       simple and special casing tables.
-     - `count_codepoints`/`count_graphemes` `raise` on invalid UTF-8
-       (upstream: non-raising) and decode through an eager `to_string()`
-       copy per step.
-     - Missing: `codepoint_slices_reversed`, `graphemes_reversed`,
-       `__reversed__`, `bytes()`, `split_at_grapheme`, `peek_next`.
-     - `atof` is correctly rounded only while the significand (≤19 digits)
-       and power of ten (≤22) stay exact; NaN prints `NaN` (upstream `nan`).
-     - `len(s)` on a String or StringSpan is accepted (byte length) where
-       upstream rejects it as ambiguous (`byte_length()`, `len(s.codepoints())`,
-       `len(s.graphemes())`); an extension to drop at the next re-pin.
-  2. **Compile-time collections.** `comptime d = {...}` Dict/Set values
+  1. **Compile-time collections.** `comptime d = {...}` Dict/Set values
      hashed with `default_comp_time_hasher`. `CtValue` has no mapping kind
      (`crates/mojito-types/src/ct.rs`), `Elab::eval` has no dict-display
      arm, and the VM-CTFE purity walk admits only the hasher protocol's
      method calls, so a general compile-time method-call rule comes with it.
-  3. **Diagnostic wording and strictness.**
+  2. **Diagnostic wording and strictness.**
      - An unavailable where-gated method reports `'set' is unavailable for
        Variant[Conn]: its where clause evaluated to False` rather than
        upstream's clause text.
@@ -128,7 +131,7 @@ exempt from the ordering.
      - `Counter[Self.index]` (a field, not a parameter) in a bracket slot
        reports `not a compile-time Int constant: Counter` rather than
        naming the field.
-  4. **Deliberate deferrals.** Nothing depends on these; each is a
+  3. **Deliberate deferrals.** Nothing depends on these; each is a
      conscious limit, listed here so it is not mistaken for unfinished
      task work.
      - Clones are minted per whole instance (no reachability pruning) and
@@ -200,6 +203,27 @@ exempt from the ordering.
        S[Int, length], found S[Int, 3]`): `associated_type_from_base`
        substitutes type parameters only. Parameterized aliases substitute
        both.
+     - Destructuring a returned `Tuple` of origin-bearing views (`var a, b
+       = s.split_at_grapheme(n)`) reports `use after Pointer deallocation`
+       on the VM while a bound pair read by index (`pair[0]`, `pair[1]`) and
+       a returned tuple literal of views both run; `split_at_grapheme`
+       also returns the receiver's origin where upstream returns `ImmOrigin`
+       views. An overloaded free def over a temporary view argument
+       (`reversed(StringSpan(s))`; bind the view first, or call
+       `graphemes_reversed()`) frees the view before the loop runs, and
+       `value()` on a temporary `Optional` holding a view
+       (`it.peek_next().value()`) is rejected as a reference to a non-place
+       (bind the Optional first); both are the same temp-view-anchoring
+       family.
+     - Grapheme segmentation is the documented UAX #29 essentials subset
+       (hand-maintained Control/Extend/SpacingMark ranges, no
+       Extended_Pictographic or Prepend data); reverse iteration re-scans
+       forward from the nearest CR/LF/Control boundary.
+     - String literals have no methods (`"abc".byte_length()` rejects):
+       a literal-typed value converts through `String(...)` first.
+     - `if`/`while` accept a width-1 bool lane through the `Bool(x)`
+       truthiness conversion, but `and`/`or` still demand `Bool` operands
+       (`a == b or c < d` over `UInt64`s rejects; nest the tests).
 
 - [ ] **Filesystem and I/O slice** — representative file/path/stream APIs
   on the Writer and explicit-destroy foundations.

@@ -32,7 +32,7 @@ def main():
     print(total)
     var s = String(\"repro\")
     s += \"-check\"
-    print(s, len(s))
+    print(s, s.byte_length())
 ";
 
 fn host_target() -> NativeTarget {

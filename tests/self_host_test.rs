@@ -659,9 +659,98 @@ fn self_hosted_tstring_explicit_construction() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "def main():\n    var t = TString[String, Int](\"x=\", 42)\n    print(t)\n    var s: String = String(t)\n    print(s, len(s))\n",
+        "def main():\n    var t = TString[String, Int](\"x=\", 42)\n    print(t)\n    var s: String = String(t)\n    print(s, s.byte_length())\n",
     );
     assert_eq!(run_compiled(&main).unwrap(), "x=42\nx=42 4\n");
+}
+
+#[test]
+fn self_hosted_string_full_unicode_case_mapping() {
+    // The generated Unicode 16 tables: SpecialCasing multi-codepoint uppers,
+    // titlecase digraphs mapping both ways, Turkish dotted/dotless i, and
+    // the isupper/islower rule over characters with both mappings.
+    let d = TempDir::new();
+    let main = d.write(
+        "main.mojo",
+        "def main():\n    print(String(\"straße ﬁne ﬃ ŉ\").upper())\n    print(String(\"ǆ ǅ Ǆ\").lower(), String(\"ı İ\").lower(), String(\"և\").upper())\n    print(String(\"ǅ\").isupper(), String(\"ǅ\").islower(), String(\"ẞ\").isupper())\n",
+    );
+    assert_eq!(
+        run_compiled(&main).unwrap(),
+        "STRASSE FINE FFI ʼN\nǆ ǆ ǆ ı i ԵՒ\nTrue True True\n"
+    );
+}
+
+#[test]
+fn self_hosted_string_reversed_iteration_and_byte_views() {
+    // `reversed(s)` keeps CR LF, ZWJ sequences, and flag pairs whole while
+    // walking back; `bytes()` and the reversed codepoint views are Sized;
+    // `peek_next` does not advance; `split_at_grapheme` splits at a cluster.
+    let d = TempDir::new();
+    let main = d.write(
+        "main.mojo",
+        "def main():\n    var s = String(\"a\\r\\n\\U0001f468\\u200d\\U0001f469b\\U0001f1eb\\U0001f1f7\")\n    for g in reversed(s):\n        print(g.byte_length())\n    print(len(s.graphemes_reversed()), len(s.codepoint_slices_reversed()), len(s.bytes()))\n    var it = String(\"héllo\").codepoint_slices()\n    var first = it.peek_next()\n    var again = it.peek_next()\n    print(first.value(), again.value(), len(it))\n    var pair = s.split_at_grapheme(2)\n    print(pair[0].byte_length(), pair[1].byte_length())\n",
+    );
+    assert_eq!(
+        run_compiled(&main).unwrap(),
+        "8\n1\n11\n2\n1\n5 9 23\nh h 5\n3 20\n"
+    );
+}
+
+#[test]
+fn self_hosted_string_counts_do_not_raise_on_invalid_utf8() {
+    // Upstream's non-raising counts: a buffer that is not valid UTF-8 counts
+    // lead bytes rather than raising, on the String and on its view.
+    let d = TempDir::new();
+    let main = d.write(
+        "main.mojo",
+        "def main():\n    var bad = String(unsafe_uninit_length=3)\n    var ptr = bad.unsafe_ptr_mut()\n    ptr[0] = Byte(0xE2)\n    ptr[1] = Byte(0x80)\n    ptr[2] = Byte(0x41)\n    print(bad.count_codepoints(), bad.count_graphemes(), StringSpan(bad).count_codepoints())\n",
+    );
+    assert_eq!(run_compiled(&main).unwrap(), "2 1 2\n");
+}
+
+#[test]
+fn self_hosted_atof_is_correctly_rounded() {
+    // Clinger's fast path and Eisel-Lemire: the halfway case above 2**53,
+    // the subnormal boundary, overflow to inf, `f` suffix and `+` prefix,
+    // `nan` spelled as upstream prints it, and upstream's limit texts.
+    let d = TempDir::new();
+    let main = d.write(
+        "main.mojo",
+        "def main() raises:\n    print(atof(\"9007199254740993\"), atof(\"2.4703282292062328e-324\"), atof(\"2.4703282292062327e-324\"))\n    print(atof(\"1e23\"), atof(\"1.7976931348623159e308\"), atof(\"1.5f\"), atof(\"+2.5\"), atof(\"nan\"))\n    try:\n        print(atof(\"1234567890123456789012345\"))\n    except e:\n        print(e)\n",
+    );
+    assert_eq!(
+        run_compiled(&main).unwrap(),
+        "9007199254740992.0 5e-324 0.0\n1e23 inf 1.5 2.5 nan\nString is not convertible to float: '1234567890123456789012345'. The number is too long, it's not supported yet. '1234567890123456789012345'\n"
+    );
+}
+
+#[test]
+fn self_hosted_string_len_is_unavailable() {
+    // Upstream's `@unavailable` `__len__`: a UTF-8 length names its unit.
+    let d = TempDir::new();
+    let main = d.write(
+        "main.mojo",
+        "def main():\n    var s = String(\"héllo\")\n    print(len(s))\n",
+    );
+    let error = run_compiled(&main).unwrap_err();
+    assert!(
+        error.contains("String does not support `__len__`"),
+        "got {error}"
+    );
+    let view = d.write(
+        "view.mojo",
+        "def main():\n    var s = String(\"héllo\")\n    var v = StringSpan(s)\n    print(len(v))\n",
+    );
+    let error = run_compiled(&view).unwrap_err();
+    assert!(
+        error.contains("StringSpan does not support `__len__`"),
+        "got {error}"
+    );
+    let units = d.write(
+        "units.mojo",
+        "def main():\n    var s = String(\"héllo\")\n    print(s.byte_length(), len(s.codepoints()), len(s.graphemes()), len(s.bytes()))\n",
+    );
+    assert_eq!(run_compiled(&units).unwrap(), "6 5 5 6\n");
 }
 
 #[test]

@@ -8,7 +8,7 @@ struct Sink(Writer):
         self.seen = 0
 
     def write_string(mut self, text: String):
-        self.seen = self.seen + len(text)
+        self.seen = self.seen + text.byte_length()
 
 struct LitSink(Writer):
     var seen: Int
@@ -17,7 +17,7 @@ struct LitSink(Writer):
         self.seen = 0
 
     def write_string(mut self, text: StringLiteral):
-        self.seen = self.seen + len(text)
+        self.seen = self.seen + String(text).byte_length()
 
 def main():
     var sink = Sink()

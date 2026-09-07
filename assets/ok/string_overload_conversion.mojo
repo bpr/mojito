@@ -4,7 +4,7 @@ def pick(x: Int) -> Int:
     return x
 
 def pick(x: String) -> Int:
-    return len(x)
+    return x.byte_length()
 
 def main():
     print(pick(7), pick("four"))

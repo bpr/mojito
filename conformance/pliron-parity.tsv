@@ -150,9 +150,11 @@ assets/ok/nested_def_captured_param_store.mojo	main	exe-differential	sanitized
 assets/ok/nested_index_store.mojo	main	exe-differential	sanitized
 assets/ok/nested_recursive_call.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_affix.mojo	main	exe-differential	sanitized
+assets/ok/nominal_string_atof_rounding.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_basics.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_bool_mul.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_bytes_capacity.mojo	main	exe-differential	sanitized
+assets/ok/nominal_string_bytes_peek_split.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_case.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_codepoint_from_u32.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_codepoint_iter.mojo	main	exe-differential	sanitized
@@ -172,10 +174,12 @@ assets/ok/nominal_string_parse_errors.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_predicates.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_protocols.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_replace.mojo	main	exe-differential	sanitized
+assets/ok/nominal_string_reversed_iteration.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_search_extras.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_split.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_split_forms.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_strip.mojo	main	exe-differential	sanitized
+assets/ok/nominal_string_unicode_case.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_writer.mojo	main	exe-differential	sanitized
 assets/ok/number_and_string_literals.mojo	main	exe-differential	sanitized
 assets/ok/numeric_operation_traits.mojo	main	exe-differential	sanitized

@@ -164,6 +164,9 @@ impl<'a> FnLowering<'a> {
                     _ => unreachable!(),
                 }
             }
+            InfixOp::FloorDiv | InfixOp::Mod => {
+                self.lower_sized_floor_divmod(ctx, op, dest, lhs, rhs, dtype)
+            }
             other => Err(self.unsupported_reg(
                 format!(
                     "operator `{other:?}` on {} operands",
@@ -172,6 +175,105 @@ impl<'a> FnLowering<'a> {
                 dest,
             )),
         }
+    }
+
+    /// `//` and `%` on a sized integer lane: upstream's integer
+    /// `SIMD.__floordiv__`/`__mod__` — floor semantics, and a zero divisor
+    /// selects a zero lane instead of trapping. The divisor is replaced by
+    /// `1` when it is zero or in the single overflowing signed case
+    /// (`MIN // -1`), where LLVM division is poison but the wrapped results
+    /// (`MIN`, `0`) are exactly what a divisor of `1` produces.
+    pub(super) fn lower_sized_floor_divmod(
+        &mut self,
+        ctx: &mut Context,
+        op: InfixOp,
+        dest: Reg,
+        lhs: Value,
+        rhs: Value,
+        dtype: Dtype,
+    ) -> Result<(), PlironError> {
+        let (bits, signed) =
+            mojito_vm::runtime::integer_dtype_bits(dtype).expect("sized integer SIMD dtype");
+        let zero = self.sized_int_constant(ctx, dtype, 0);
+        let one = self.sized_int_constant(ctx, dtype, 1);
+        let is_zero = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, rhs, zero);
+        self.append(ctx, is_zero.get_operation(), Some(dest));
+        let mut poison = is_zero.get_result(ctx);
+        if signed {
+            let min = self.sized_int_constant(ctx, dtype, 1u64 << (bits - 1));
+            let minus_one = self.sized_int_constant(ctx, dtype, u64::MAX);
+            let lhs_min = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, lhs, min);
+            self.append(ctx, lhs_min.get_operation(), Some(dest));
+            let rhs_minus_one = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, rhs, minus_one);
+            self.append(ctx, rhs_minus_one.get_operation(), Some(dest));
+            let overflow = AndOp::new(ctx, lhs_min.get_result(ctx), rhs_minus_one.get_result(ctx));
+            self.append(ctx, overflow.get_operation(), Some(dest));
+            let either = OrOp::new(ctx, poison, overflow.get_result(ctx));
+            self.append(ctx, either.get_operation(), Some(dest));
+            poison = either.get_result(ctx);
+        }
+        let safe = SelectOp::new(ctx, poison, one, rhs);
+        self.append(ctx, safe.get_operation(), Some(dest));
+        let divisor = safe.get_result(ctx);
+        let value = if signed {
+            let quotient = SDivOp::new(ctx, lhs, divisor);
+            self.append(ctx, quotient.get_operation(), Some(dest));
+            let remainder = SRemOp::new(ctx, lhs, divisor);
+            self.append(ctx, remainder.get_operation(), Some(dest));
+            // Floor adjustment: a non-zero remainder whose sign differs from
+            // the divisor's (equivalently, operands of different signs).
+            let signs = XorOp::new(ctx, lhs, divisor);
+            self.append(ctx, signs.get_operation(), Some(dest));
+            let differ = ICmpOp::new(ctx, ICmpPredicateAttr::SLT, signs.get_result(ctx), zero);
+            self.append(ctx, differ.get_operation(), Some(dest));
+            let nonzero = ICmpOp::new(ctx, ICmpPredicateAttr::NE, remainder.get_result(ctx), zero);
+            self.append(ctx, nonzero.get_operation(), Some(dest));
+            let adjust = AndOp::new(ctx, differ.get_result(ctx), nonzero.get_result(ctx));
+            self.append(ctx, adjust.get_operation(), Some(dest));
+            if op == InfixOp::FloorDiv {
+                let less = SubOp::new_with_overflow_flag(
+                    ctx,
+                    quotient.get_result(ctx),
+                    one,
+                    no_overflow_flags(),
+                );
+                self.append(ctx, less.get_operation(), Some(dest));
+                let select = SelectOp::new(
+                    ctx,
+                    adjust.get_result(ctx),
+                    less.get_result(ctx),
+                    quotient.get_result(ctx),
+                );
+                self.append(ctx, select.get_operation(), Some(dest));
+                select.get_result(ctx)
+            } else {
+                let more = AddOp::new_with_overflow_flag(
+                    ctx,
+                    remainder.get_result(ctx),
+                    divisor,
+                    no_overflow_flags(),
+                );
+                self.append(ctx, more.get_operation(), Some(dest));
+                let select = SelectOp::new(
+                    ctx,
+                    adjust.get_result(ctx),
+                    more.get_result(ctx),
+                    remainder.get_result(ctx),
+                );
+                self.append(ctx, select.get_operation(), Some(dest));
+                select.get_result(ctx)
+            }
+        } else if op == InfixOp::FloorDiv {
+            let quotient = UDivOp::new(ctx, lhs, divisor);
+            self.append(ctx, quotient.get_operation(), Some(dest));
+            quotient.get_result(ctx)
+        } else {
+            let remainder = URemOp::new(ctx, lhs, divisor);
+            self.append(ctx, remainder.get_operation(), Some(dest));
+            remainder.get_result(ctx)
+        };
+        let result = SelectOp::new(ctx, is_zero.get_result(ctx), zero, value);
+        self.define(ctx, dest, result.get_operation(), result.get_result(ctx))
     }
 
     /// `Float32` arithmetic: the VM computes each operation at f64 and rounds

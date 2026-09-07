@@ -202,7 +202,7 @@ fn pliron_debug_handles_non_ascii_sources() {
 # comentário: divisão com acentuação — ünïcödé ✓
 def main():
     var s = String(\"héllo wörld ✓\")
-    print(len(s))
+    print(s.byte_length())
 ";
     let mut module = native_compile(src);
     let dir = tempfile::tempdir().expect("tempdir");

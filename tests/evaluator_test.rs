@@ -170,7 +170,7 @@ fn generic_function_value_rejects_contextual_specialization() {
 fn overloaded_function_value_uses_its_contextual_signature() {
     assert_eq!(
         output(
-            "def choose(value: Int) -> Int:\n    return value + 1\n\ndef choose(value: StringLiteral) -> Int:\n    return len(value)\n\ndef main():\n    var callback: def(Int) thin -> Int = choose\n    print(callback(41))\n"
+            "def choose(value: Int) -> Int:\n    return value + 1\n\ndef choose(value: StringLiteral) -> Int:\n    return String(value).byte_length()\n\ndef main():\n    var callback: def(Int) thin -> Int = choose\n    print(callback(41))\n"
         ),
         "42\n"
     );

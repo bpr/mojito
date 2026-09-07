@@ -18,9 +18,9 @@ struct Cells:
 def main() raises:
     var s = String("héllo")
     var first = s[byte=0:1]
-    print(first, len(first))
+    print(first, first.byte_length())
     var second = s[codepoint=1:2]
-    print(second, len(second))
+    print(second, second.byte_length())
     var pair = s[codepoint=0:2]
     print(pair)
     var c = Cells(3, 4)

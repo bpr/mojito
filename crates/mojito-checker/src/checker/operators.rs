@@ -573,6 +573,11 @@ impl Checker {
         match op {
             // Elementwise arithmetic on numeric lanes preserves the type.
             Add | Sub | Mul if dtype != Dtype::Bool => Ok(simd_ty(dtype, width)),
+            // Floor division and remainder on integer lanes (upstream defines
+            // them on every numeric dtype; float lanes stay a recorded gap).
+            FloorDiv | Mod if dtype != Dtype::Bool && !dtype.is_float() => {
+                Ok(simd_ty(dtype, width))
+            }
             BitAnd | BitOr | BitXor if !dtype.is_float() => Ok(simd_ty(dtype, width)),
             Shl | Shr if dtype != Dtype::Bool && !dtype.is_float() => Ok(simd_ty(dtype, width)),
             // True division is defined on float lanes only.

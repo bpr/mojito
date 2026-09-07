@@ -9,14 +9,14 @@ def main():
     var bytes = 0
     for g in s:
         pieces += 1
-        bytes += len(g)
+        bytes += g.byte_length()
     print(pieces, bytes)
     var family = String("👨‍👩‍👧")
     var sp = StringSpan(family)
     var clusters = 0
     for g in sp:
         clusters += 1
-        print(len(g))
+        print(g.byte_length())
     print(clusters)
     for g in "ab":
         print(g)

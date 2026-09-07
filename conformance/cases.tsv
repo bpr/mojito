@@ -181,7 +181,7 @@ string-positional-slice	reject	conformance/fixtures/string_positional_slice.mojo
 string-literal-slice	reject	conformance/fixtures/string_literal_slice.mojo
 owned-pointer-deref	mojo-only	conformance/fixtures/owned_pointer_deref.mojo
 span-parameter-bare-element	reject	conformance/fixtures/span_parameter_bare_element.mojo
-len-string-units	mojito-only	conformance/fixtures/len_string_units.mojo
+len-string-units	reject	assets/type_error/string_len_ambiguous.mojo
 subtree-origin-cast	mojito-only	conformance/fixtures/subtree_origin_cast.mojo
 simd-size-removed	reject	assets/type_error/simd_size_removed_alias.mojo
 typelist-size-removed	reject	assets/type_error/typelist_size_removed_alias.mojo

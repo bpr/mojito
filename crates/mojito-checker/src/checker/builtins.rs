@@ -64,6 +64,28 @@ pub(super) fn has_order_bound(ty: &Ty) -> bool {
 /// `SizedRaising` (`__len__(self) raises -> Int`) both do — mojito's effect
 /// analysis is deferred, so the two are not distinguished at the call site; a
 /// plain `T: AnyType` grants no length.
+/// Upstream's `@unavailable` text for `len` over a string: a UTF-8 length
+/// is ambiguous between bytes, codepoints, and grapheme clusters, so
+/// `String`, `StringSpan`, and a literal name the unit instead.
+pub(super) fn string_len_unavailable(ty: &Ty) -> Option<String> {
+    let name = match ty {
+        Ty::StringLiteral => "StringLiteral",
+        Ty::Struct(name, _) if mojito_types::types::is_stdlib_string_struct(name) => "String",
+        Ty::Struct(name, _) if name == mojito_types::types::STDLIB_STRING_SPAN_STRUCT => {
+            "StringSpan"
+        }
+        _ => return None,
+    };
+    Some(format!(
+        "{name} does not support `__len__` because Mojo strings are UTF-8 encoded, so a \
+         single length is ambiguous: it could mean the number of UTF-8 bytes, the number \
+         of Unicode code points, or the number of user-visible characters (grapheme \
+         clusters). Use `s.byte_length()` or `len(s.bytes())` for the number of UTF-8 \
+         bytes, `len(s.codepoints())` for Unicode code points, or `len(s.graphemes())` \
+         for grapheme clusters."
+    ))
+}
+
 pub(super) fn has_len_bound(ty: &Ty) -> bool {
     match ty {
         Ty::Param { bounds, .. } => bounds
@@ -574,13 +596,12 @@ impl Checker {
             }
             return Ok(Some(Ty::Int));
         }
+        if string_len_unavailable(ty).is_some() {
+            return Ok(None);
+        }
         if matches!(
             ty,
-            Ty::StringLiteral
-                | Ty::ComptimeList(_)
-                | Ty::Tuple(_)
-                | Ty::RuntimePack(_)
-                | Ty::VariadicPack(_)
+            Ty::ComptimeList(_) | Ty::Tuple(_) | Ty::RuntimePack(_) | Ty::VariadicPack(_)
         ) {
             return Ok(Some(Ty::Int));
         }
@@ -615,6 +636,9 @@ impl Checker {
     /// same `Sized`/`__len__ -> Int` contract.
     pub(super) fn infer_len(&self, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args("len", 1, args)?;
+        if let Some(message) = string_len_unavailable(&tys[0]) {
+            return Err(TypeError::Unsupported(message));
+        }
         self.borrow_nominal_place_argument(&args[0], &tys[0]);
         if let Some(result) = self.len_result_for_type(&tys[0])? {
             return Ok(result);

@@ -7,8 +7,8 @@ def main():
     print(s.startswith("h"))
     var t = s + "llo"
     print(t)
-    print(len(t))
+    print(String(t).byte_length())
     print("llo" in t)
     print(s < t)
-    var picked = "b" if len(t) > 3 else "a"
+    var picked = "b" if String(t).byte_length() > 3 else "a"
     print(picked.endswith("b"))

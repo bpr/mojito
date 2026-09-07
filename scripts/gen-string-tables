@@ -1,0 +1,169 @@
+#!/usr/bin/env python3
+"""Generate `stdlib/std/_string_tables.mojo` from the pinned upstream source.
+
+Usage: scripts/gen-string-tables [--upstream DIR] [--out FILE]
+
+DIR is upstream's `mojo/stdlib/std/collections/string` directory at the
+audited commit (`docs/mojo-nightly.md`); it defaults to the pinned worktree.
+The script reads the Unicode case-mapping lookups (`_unicode_lookups.mojo`)
+and the Eisel-Lemire power-of-five table (`_parsing_numbers/constants.mojo`)
+and writes one Mojo module whose functions return the tables as fixed-width
+lowercase-hex records inside string literals: record `i` of a table with
+record width `w` starts at byte `i * w`, so the bundled `string.mojo` can
+binary-search and decode records without a compile-time array constant.
+
+The script refuses to write when an array's literal count disagrees with its
+declared length or a `has_*` lookup is not strictly ascending (the runtime
+binary search depends on the order). Re-run it at every re-pin and review
+the diff like any other stdlib change.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import subprocess
+import sys
+
+DEFAULT_UPSTREAM = os.path.expanduser(
+    "~/src/mojo/repos/modular-a79fbdf5/mojo/stdlib/std/collections/string"
+)
+DEFAULT_OUT = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "stdlib",
+    "std",
+    "_string_tables.mojo",
+)
+
+ARRAY_RE = re.compile(
+    r"comptime\s+(?P<name>\w+)\s*:\s*Array\[(?P<ty>(?:[^\[\]]|\[[^\]]*\])*),\s*(?P<len>\d+)\]\s*=\s*\[(?P<body>.*?)\n\]",
+    re.S,
+)
+TABLE_RE = re.compile(
+    r"comptime\s+(?P<name>powers_of_5_table)\s*:\s*Array\[T=UInt64,\s*length=(?P<len>\d+)\]\s*=\s*\[(?P<body>.*?)\n\s*\]",
+    re.S,
+)
+HEX_RE = re.compile(r"0[xX][0-9a-fA-F]+")
+
+
+def strip_comments(text: str) -> str:
+    return "\n".join(line.split("#", 1)[0] for line in text.splitlines())
+
+
+def parse_arrays(text: str, pattern: re.Pattern[str]) -> dict[str, tuple[int, list[str]]]:
+    arrays: dict[str, tuple[int, list[str]]] = {}
+    for match in pattern.finditer(text):
+        body = strip_comments(match.group("body"))
+        arrays[match.group("name")] = (int(match.group("len")), HEX_RE.findall(body))
+    return arrays
+
+
+def scalar_list(arrays, name: str) -> list[int]:
+    declared, literals = arrays[name]
+    values = [int(lit, 16) for lit in literals]
+    if len(values) != declared:
+        sys.exit(f"{name}: found {len(values)} literals, declared {declared}")
+    return values
+
+
+def vector_list(arrays, name: str, lanes: int) -> list[list[int]]:
+    declared, literals = arrays[name]
+    values = [int(lit, 16) for lit in literals]
+    if len(values) != declared * lanes:
+        sys.exit(f"{name}: found {len(values)} literals, expected {declared}x{lanes}")
+    return [values[i : i + lanes] for i in range(0, len(values), lanes)]
+
+
+def check_ascending(name: str, keys: list[int]) -> None:
+    for prev, cur in zip(keys, keys[1:]):
+        if cur <= prev:
+            sys.exit(f"{name}: not strictly ascending at 0x{prev:x} -> 0x{cur:x}")
+
+
+def records(rows: list[list[int]], width: int) -> str:
+    return "".join("".join(f"{v:0{width}x}" for v in row) for row in rows)
+
+
+def upstream_commit(upstream: str) -> str:
+    try:
+        return subprocess.run(
+            ["git", "-C", upstream, "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--upstream", default=DEFAULT_UPSTREAM)
+    parser.add_argument("--out", default=DEFAULT_OUT)
+    args = parser.parse_args()
+
+    with open(os.path.join(args.upstream, "_unicode_lookups.mojo"), encoding="utf-8") as f:
+        lookups = parse_arrays(f.read(), ARRAY_RE)
+    with open(
+        os.path.join(args.upstream, "_parsing_numbers", "constants.mojo"), encoding="utf-8"
+    ) as f:
+        constants = parse_arrays(f.read(), TABLE_RE)
+
+    has_upper = scalar_list(lookups, "has_uppercase_mapping")
+    upper = scalar_list(lookups, "uppercase_mapping")
+    has_lower = scalar_list(lookups, "has_lowercase_mapping")
+    lower = scalar_list(lookups, "lowercase_mapping")
+    has_upper2 = scalar_list(lookups, "has_uppercase_mapping2")
+    upper2 = vector_list(lookups, "uppercase_mapping2", 2)
+    has_upper3 = scalar_list(lookups, "has_uppercase_mapping3")
+    upper3 = vector_list(lookups, "uppercase_mapping3", 3)
+    pow5 = scalar_list(constants, "powers_of_5_table")
+    for name, keys, values in (
+        ("uppercase", has_upper, upper),
+        ("lowercase", has_lower, lower),
+        ("uppercase2", has_upper2, upper2),
+        ("uppercase3", has_upper3, upper3),
+    ):
+        if len(keys) != len(values):
+            sys.exit(f"{name}: {len(keys)} keys but {len(values)} mappings")
+        check_ascending(name, keys)
+
+    tables = [
+        ("_upper_table", "Simple uppercase mappings: source, target.", 12,
+         [[k, v] for k, v in zip(has_upper, upper)]),
+        ("_lower_table", "Simple lowercase mappings: source, target.", 12,
+         [[k, v] for k, v in zip(has_lower, lower)]),
+        ("_upper2_table", "Two-codepoint SpecialCasing uppercase mappings: source, t1, t2.", 18,
+         [[k, *v] for k, v in zip(has_upper2, upper2)]),
+        ("_upper3_table", "Three-codepoint SpecialCasing uppercase mappings: source, t1, t2, t3.", 24,
+         [[k, *v] for k, v in zip(has_upper3, upper3)]),
+        ("_pow5_table", "Eisel-Lemire 128-bit powers of five, high then low word per power.", 16,
+         [[v] for v in pow5]),
+    ]
+
+    out = []
+    out.append("# GENERATED by scripts/gen-string-tables — do not edit.")
+    out.append(f"# Source: upstream {upstream_commit(args.upstream)}")
+    out.append("#   collections/string/_unicode_lookups.mojo (Unicode 16.0.0 UnicodeData +")
+    out.append("#   SpecialCasing) and collections/string/_parsing_numbers/constants.mojo.")
+    out.append("#")
+    out.append("# Each table is a string literal of fixed-width lowercase-hex records with")
+    out.append("# no separators: record `i` starts at byte `i * width`, every field is six")
+    out.append("# hex digits (a codepoint) or sixteen (a UInt64). Source columns ascend, so")
+    out.append("# `string.mojo` binary-searches them; the literal stays static data on both")
+    out.append("# backends and costs no compile-time evaluation.")
+    out.append("")
+    for name, doc, width, rows in tables:
+        out.append(f"# {doc} Record width {width}, {len(rows)} records.")
+        out.append(f"def {name}() -> StringSpan:")
+        out.append(f'    return """{records(rows, 6 if width != 16 else 16)}"""')
+        out.append("")
+        out.append("")
+    with open(args.out, "w", encoding="utf-8") as f:
+        f.write("\n".join(out).rstrip("\n") + "\n")
+    print(f"wrote {args.out}: " + ", ".join(f"{n} {len(r)}" for n, _, _, r in tables))
+
+
+if __name__ == "__main__":
+    main()

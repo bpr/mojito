@@ -290,7 +290,7 @@ fn pliron_opt_preserves_runtime_calls() {
 def main():
     var s = String(\"hello\")
     s += \" world\"
-    print(len(s))
+    print(s.byte_length())
     print(s.find(\"wor\"))
     print(s)
 ",

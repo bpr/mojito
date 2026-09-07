@@ -6,18 +6,18 @@
 def main() raises:
     var s = String("héllo🙂")
     var b = s[byte=0:1]
-    print(b, len(b))
+    print(b, b.byte_length())
     var full = s[byte=:]
-    print(len(full))
+    print(full.byte_length())
     var cp = s[codepoint=1:3]
-    print(cp, len(cp))
+    print(cp, cp.byte_length())
     var sub = cp[byte=0:2]
     print(sub)
     var t = String("héllo🙂")
     var sp = StringSpan(t)
-    print(len(sp), sp.count_graphemes(), sp.count_codepoints())
+    print(sp.byte_length(), sp.count_graphemes(), sp.count_codepoints())
     var g = sp[grapheme=5:6]
-    print(g, len(g))
+    print(g, g.byte_length())
     var head = sp[codepoint=:2]
     print(head)
     print(sp[byte=0], g[grapheme=0])

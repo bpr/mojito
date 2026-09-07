@@ -264,7 +264,9 @@ fn reference_iteration_binding_modes_borrow_or_copy_the_referent() {
 #[test]
 fn string_concat_and_builtins() {
     assert_eq!(
-        parity("var s: String = \"ab\" + \"cd\"\nprint(s)\nprint(len(s))\nprint(String(42))\n"),
+        parity(
+            "var s: String = \"ab\" + \"cd\"\nprint(s)\nprint(s.byte_length())\nprint(String(42))\n"
+        ),
         "abcd\n4\n42\n"
     );
 }

@@ -57,7 +57,7 @@ fn compiler_rejects_executable_file_scope() {
 fn checked_boundary_carries_types_categories_edges_and_adjustments() {
     let program = Compiler::default()
         .compile_unlinked(
-            "def choose(value: Int) -> Int:\n    return value\ndef choose(value: String) -> Int:\n    return len(value)\ndef main():\n    var result: Int = choose(42)\n    print(result)\n",
+            "def choose(value: Int) -> Int:\n    return value\ndef choose(value: String) -> Int:\n    return value.byte_length()\ndef main():\n    var result: Int = choose(42)\n    print(result)\n",
         )
         .expect("compile");
     let expressions = program.checked().expressions();

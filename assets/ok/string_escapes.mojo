@@ -5,4 +5,4 @@ def main():
     var greeting: String = "café"                 # "café"
     var tab: String = "a\tb"                           # a real tab
     print(letters, greeting, tab)
-    print(len(greeting))                               # 5 bytes (é is 2)
+    print(greeting.byte_length())                               # 5 bytes (é is 2)

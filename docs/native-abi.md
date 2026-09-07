@@ -112,6 +112,13 @@ JIT execution additionally requires `target == host`.
 | `Bool` | `i1` in SSA | At ABI boundaries (returns read through the JIT, future by-value fields) the storage unit is one byte and producers zero-extend; consumers may rely only on the low bit. Layout is size 1, align 1. |
 | `Float64` | `double` | IEEE 754 binary64, no fast-math flags. `!=` is the **UNE** predicate and every other comparison is ordered — so `NaN != x` is True (`Bool(NaN)` is True via `fcmp une 0.0`) and other NaN comparisons are False. Signed zero follows IEEE (`0.0 == -0.0`; displays keep the sign). `//` and `%` are `floor`-based expansions (`fdiv` + `llvm.floor`, `x - y*floor(x/y)`) with **no zero trap** — infinities and NaN flow through. `**` lowers to `llvm.pow`; cross-libm bit-exactness is an explicit **non-claim** (VM and native may differ in the last ulp on some hosts; fixtures avoid such inputs). |
 
+Sized integer lanes (`UInt64`, `Int32`, … as width-1 `SIMD`) add `//` and
+`%` with upstream's integer-`SIMD` rule: floor semantics for signed dtypes,
+a zero divisor selects a zero lane instead of trapping, and the single
+overflowing signed case (`MIN // -1`) wraps to `MIN` / `0` (the lowering
+substitutes a divisor of `1` where LLVM division is poison). Their `*`
+wraps at the dtype width on both backends.
+
 Conversions: `Int(f)`/`UInt(f)` are the saturating `llvm.fptosi.sat.i64.f64`/
 `llvm.fptoui.sat.i64.f64` intrinsics (NaN → 0) matching the VM's `as`-cast
 semantics; integer→float are `sitofp`/`uitofp`; `Bool(x)` is `x != 0` under

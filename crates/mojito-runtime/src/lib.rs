@@ -354,7 +354,8 @@ pub unsafe extern "C" fn mjrt_fmt_u64(value: u64, out: *mut u8) -> u64 {
 
 /// Formats `value` as the VM displays `Float64` — Rust's `{:?}`: the shortest
 /// text that round-trips, always keeping a decimal point or exponent (`3.0`,
-/// `1e300`, `NaN`, `inf`) — into `out` and returns the byte length written.
+/// `1e300`, `inf`), with NaN spelled `nan` as Mojo prints it — into `out` and
+/// returns the byte length written.
 /// `out` must hold at least 32 bytes. No NUL terminator.
 ///
 /// # Safety
@@ -362,7 +363,12 @@ pub unsafe extern "C" fn mjrt_fmt_u64(value: u64, out: *mut u8) -> u64 {
 /// `out` must point to at least 32 writable bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mjrt_fmt_f64(value: f64, out: *mut u8) -> u64 {
-    unsafe { copy_out(&format!("{value:?}"), out) }
+    let text = if value.is_nan() {
+        "nan".to_string()
+    } else {
+        format!("{value:?}")
+    };
+    unsafe { copy_out(&text, out) }
 }
 
 /// Writes the VM's single-quoted, backslash-escaped string repr into `out`.

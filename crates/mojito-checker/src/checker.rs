@@ -1587,15 +1587,21 @@ impl Checker {
     /// its truth value (`if collection:`), recorded for MIR to convert.
     fn expect_bool(&self, expr: &Expr, context: &str) -> Result<(), TypeError> {
         let ty = self.infer(expr)?;
-        if ty == Ty::Bool
-            || matches!(
-                ty,
-                Ty::Simd {
-                    dtype: mojito_ast::ast::Dtype::Bool,
-                    width: 1
-                }
-            )
-        {
+        if ty == Ty::Bool {
+            Ok(())
+        } else if matches!(
+            ty,
+            Ty::Simd {
+                dtype: mojito_ast::ast::Dtype::Bool,
+                width: 1
+            }
+        ) {
+            // A width-1 bool lane (`if a == b` over `UInt64`s) is Boolable:
+            // the condition converts through `Bool(x)` like a struct's
+            // `__bool__`, so the branch sees a `Bool` register.
+            self.truthiness_conditions
+                .borrow_mut()
+                .insert(expr.source_span());
             Ok(())
         } else if let Some(result) = self.struct_dunder(&ty, "__bool__", &[]) {
             require_dunder_ret(result?, &Ty::Bool, "__bool__")?;

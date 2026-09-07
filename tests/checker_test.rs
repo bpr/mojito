@@ -3356,7 +3356,7 @@ fn callable_type_bounds_reject_structural_generic_overloaded_and_stronger_effect
     assert!(matches!(generic, TypeError::TraitNotSatisfied { .. }));
 
     let overloaded = err(
-        "def choose(value: Int) -> Int:\n    return value\n\ndef choose(value: StringLiteral) -> Int:\n    return len(value)\n\ndef apply[F: def(Int) -> Int](callback: F) -> Int:\n    return callback(1)\n\ndef main():\n    print(apply(choose))\n",
+        "def choose(value: Int) -> Int:\n    return value\n\ndef choose(value: StringLiteral) -> Int:\n    return String(value).byte_length()\n\ndef apply[F: def(Int) -> Int](callback: F) -> Int:\n    return callback(1)\n\ndef main():\n    print(apply(choose))\n",
     );
     assert!(matches!(overloaded, TypeError::TraitNotSatisfied { .. }));
 }
@@ -3442,7 +3442,7 @@ fn contextual_type_selects_an_origin_specialized_overload_value() {
 #[test]
 fn contextually_selects_an_overloaded_callable_value() {
     ok(
-        "def choose(value: Int) -> Int:\n    return value + 1\n\ndef choose(value: StringLiteral) -> Int:\n    return len(value)\n\ndef main():\n    var callback: def(Int) thin -> Int = choose\n    var result: Int = callback(41)\n",
+        "def choose(value: Int) -> Int:\n    return value + 1\n\ndef choose(value: StringLiteral) -> Int:\n    return String(value).byte_length()\n\ndef main():\n    var callback: def(Int) thin -> Int = choose\n    var result: Int = callback(41)\n",
     );
 }
 
@@ -4074,6 +4074,17 @@ fn operator_without_dunder_is_rejected() {
         "@fieldwise_init\nstruct Q:\n    var x: Int\n    def __eq__(self, o: Q) -> Bool:\n        return self.x == o.x\n\ndef main():\n    var m: Bool = Q(1) != Q(2)\n",
     );
     assert!(matches!(e, TypeError::BadOperator { .. }), "got {e:?}");
+}
+
+#[test]
+fn len_of_a_string_literal_is_unavailable() {
+    // Upstream marks string `__len__` `@unavailable` (bytes, codepoints, or
+    // grapheme clusters?); the literal rejects like `String`/`StringSpan`.
+    let e = err("def main():\n    var n: Int = len(\"abc\")\n");
+    assert!(
+        matches!(&e, TypeError::Unsupported(message) if message.contains("does not support `__len__`")),
+        "got {e:?}"
+    );
 }
 
 #[test]

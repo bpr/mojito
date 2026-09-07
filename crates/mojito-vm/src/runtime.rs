@@ -237,13 +237,25 @@ impl PartialEq for Value {
     }
 }
 
+/// The display text of a `Float64`: Rust's shortest round-trip `{:?}` (which
+/// keeps a decimal point or exponent and spells infinities `inf`/`-inf`),
+/// with NaN spelled `nan` as Mojo prints it.
+pub fn float_display(value: f64) -> String {
+    if value.is_nan() {
+        "nan".to_string()
+    } else {
+        format!("{value:?}")
+    }
+}
+
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Value::Int(n) => write!(f, "{}", n),
             Value::UInt(n) => write!(f, "{}", n),
-            // `{:?}` keeps the decimal point (e.g. `3.0`), distinguishing from Int.
-            Value::Float64(x) => write!(f, "{:?}", x),
+            // `{:?}` keeps the decimal point (e.g. `3.0`), distinguishing from
+            // Int; NaN spells `nan` as upstream prints it.
+            Value::Float64(x) => write!(f, "{}", float_display(*x)),
             Value::IntLiteral(value) => write!(f, "{value}"),
             Value::FloatLiteral(value) => write!(f, "{value}"),
             Value::Bool(b) => write!(f, "{}", if *b { "True" } else { "False" }),
@@ -297,7 +309,7 @@ impl fmt::Display for Value {
             Value::Simd { lanes, .. } => {
                 let strs: Vec<String> = match lanes {
                     SimdLanes::Int(v) => v.iter().map(|n| n.to_string()).collect(),
-                    SimdLanes::Float(v) => v.iter().map(|x| format!("{:?}", x)).collect(),
+                    SimdLanes::Float(v) => v.iter().map(|x| float_display(*x)).collect(),
                     SimdLanes::Bool(v) => v
                         .iter()
                         .map(|b| {
@@ -2125,7 +2137,29 @@ fn int_arith(op: InfixOp, dtype: Dtype, a: i128, b: i128) -> i128 {
     match op {
         InfixOp::Add => a + b,
         InfixOp::Sub => a - b,
-        InfixOp::Mul => a * b,
+        // Two 64-bit lanes can overflow the i128 product; the caller wraps to
+        // the dtype width, which the wrapped product preserves.
+        InfixOp::Mul => a.wrapping_mul(b),
+        // Upstream's integer `SIMD.__floordiv__`/`__mod__`: floor semantics,
+        // and a zero divisor selects a zero lane rather than trapping.
+        InfixOp::FloorDiv if b == 0 => 0,
+        InfixOp::FloorDiv => {
+            let q = a.wrapping_div(b);
+            if (a % b != 0) && ((a < 0) != (b < 0)) {
+                q - 1
+            } else {
+                q
+            }
+        }
+        InfixOp::Mod if b == 0 => 0,
+        InfixOp::Mod => {
+            let r = a.wrapping_rem(b);
+            if r != 0 && ((r < 0) != (b < 0)) {
+                r + b
+            } else {
+                r
+            }
+        }
         InfixOp::BitAnd => a & b,
         InfixOp::BitOr => a | b,
         InfixOp::BitXor => a ^ b,
@@ -2331,6 +2365,39 @@ mod tests {
             uint(u64::MAX - 1)
         );
         assert!(uint_op(InfixOp::Mod, 1, 0).is_err());
+    }
+
+    /// Sized integer lanes wrap like the scalars, and `//`/`%` follow
+    /// upstream's integer `SIMD` rule: floor semantics with a zero divisor
+    /// selecting a zero lane.
+    #[test]
+    fn simd_integer_lanes_wrap_and_floor_divide() {
+        let lane = |dtype, value: i128| Value::Simd {
+            dtype,
+            lanes: SimdLanes::Int(vec![value]),
+        };
+        let u64_max = i128::from(u64::MAX);
+        let product = simd_binop(
+            InfixOp::Mul,
+            &lane(Dtype::UInt64, u64_max),
+            &lane(Dtype::UInt64, u64_max),
+        )
+        .unwrap();
+        assert_eq!(product, lane(Dtype::UInt64, 1));
+        let floor =
+            |op, a, b| simd_binop(op, &lane(Dtype::Int64, a), &lane(Dtype::Int64, b)).unwrap();
+        assert_eq!(floor(InfixOp::FloorDiv, -7, 2), lane(Dtype::Int64, -4));
+        assert_eq!(floor(InfixOp::Mod, -7, 2), lane(Dtype::Int64, 1));
+        assert_eq!(floor(InfixOp::FloorDiv, 7, -2), lane(Dtype::Int64, -4));
+        assert_eq!(floor(InfixOp::Mod, 7, 0), lane(Dtype::Int64, 0));
+        assert_eq!(floor(InfixOp::FloorDiv, 7, 0), lane(Dtype::Int64, 0));
+        let unsigned = simd_binop(
+            InfixOp::FloorDiv,
+            &lane(Dtype::UInt64, u64_max),
+            &lane(Dtype::UInt64, 3),
+        )
+        .unwrap();
+        assert_eq!(unsigned, lane(Dtype::UInt64, u64_max / 3));
     }
 
     #[test]

@@ -14,7 +14,7 @@ struct Carrier:
 
 
 def taken(var s: String) -> Int:
-    return len(s)
+    return s.byte_length()
 
 
 def probe(flag: Bool) -> Int:

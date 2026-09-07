@@ -19,7 +19,7 @@ def main():
     print(rt"raw \n {value}")
     print(t"")
     var s: String = String(t"v={value}")
-    print(s, len(s))
+    print(s, s.byte_length())
     var inner = 1
     print(t"outer={t"inner={inner}"}|")
     var stored = t"kept={value}"

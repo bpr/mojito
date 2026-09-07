@@ -3,7 +3,7 @@
 # literal-to-struct bridge (the byte buffer is filled from the literal's
 # UTF-8 bytes at the call); every other operation is ordinary library code
 # over the byte buffer.  Slicing and the result APIs (`find`/`rfind`/
-# `startswith`/`endswith`/`split`) work in byte offsets, like `len`.
+# `startswith`/`endswith`/`split`) work in byte offsets, like `byte_length`.
 #
 # `s[codepoint=i]` yields a `Codepoint` value carrying both the decoded
 # scalar and the character's text.  `s[grapheme=i]` and `count_graphemes()`
@@ -18,6 +18,7 @@ from std.optional import Optional
 from std.span import Span
 
 from std.iterable import Iterable, Iterator, StopIteration
+from std._string_tables import _lower_table, _pow5_table, _upper_table, _upper2_table, _upper3_table
 
 # Shared strict contiguous-slice bounds checking with the audited head's
 # abort messages (upstream std/collections/check_bounds.mojo): start
@@ -56,71 +57,107 @@ def check_slice_bounds(start: Int, end: Int, length: Int):
         _mojito_abort(message.text)
 
 
-# Simple case mappings for the bundled subset: ASCII, Latin-1 Supplement,
-# Latin Extended-A (alternating pairs, with the `ı`/`ſ` specials), Greek
-# (final sigma folds to capital sigma), and Cyrillic (including the
-# `Ѐ`-`Џ` row). Every other scalar maps to itself.
-def _upper_scalar(cp: Int) -> Int:
-    if cp >= 0x61 and cp <= 0x7A:
-        return cp - 0x20
-    if cp < 0xE0:
-        return cp
-    if cp <= 0xFE:
-        return cp if cp == 0xF7 else cp - 0x20
-    if cp == 0xFF:
-        return 0x178
-    if cp >= 0x100 and cp <= 0x137:
-        if cp == 0x131:
-            return 0x49
-        return cp - 1 if cp % 2 == 1 else cp
-    if cp >= 0x139 and cp <= 0x148:
-        return cp - 1 if cp % 2 == 0 else cp
-    if cp >= 0x14A and cp <= 0x177:
-        return cp - 1 if cp % 2 == 1 else cp
-    if cp >= 0x17A and cp <= 0x17E:
-        return cp - 1 if cp % 2 == 0 else cp
-    if cp == 0x17F:
-        return 0x53
-    if cp >= 0x3B1 and cp <= 0x3C9:
-        return 0x3A3 if cp == 0x3C2 else cp - 0x20
-    if cp >= 0x430 and cp <= 0x44F:
-        return cp - 0x20
-    if cp >= 0x450 and cp <= 0x45F:
-        return cp - 0x50
-    return cp
+# Fixed-width hex-record tables (`std._string_tables`, generated from the
+# pinned upstream lookups): a table is a string literal of `width`-byte
+# records whose first six hex digits are an ascending codepoint key, so a
+# lookup is a binary search over the literal's bytes with no compile-time
+# array constant behind it.
+def _hex_at(table: StringSpan, at: Int, width: Int) -> Int:
+    var value = 0
+    var i = 0
+    while i < width:
+        var b = Int(table._data[at + i])
+        value = value * 16 + (b - 48 if b <= 57 else b - 87)
+        i += 1
+    return value
 
 
-def _lower_scalar(cp: Int) -> Int:
-    if cp >= 0x41 and cp <= 0x5A:
-        return cp + 0x20
-    if cp < 0xC0:
-        return cp
-    if cp <= 0xDE:
-        return cp if cp == 0xD7 else cp + 0x20
-    if cp == 0x178:
-        return 0xFF
-    if cp >= 0x100 and cp <= 0x137:
-        if cp == 0x130:
-            return 0x69
-        return cp + 1 if cp % 2 == 0 else cp
-    if cp >= 0x139 and cp <= 0x148:
-        return cp + 1 if cp % 2 == 1 else cp
-    if cp >= 0x14A and cp <= 0x177:
-        return cp + 1 if cp % 2 == 0 else cp
-    if cp >= 0x179 and cp <= 0x17E:
-        return cp + 1 if cp % 2 == 1 else cp
-    if cp >= 0x391 and cp <= 0x3A9:
-        return cp if cp == 0x3A2 else cp + 0x20
-    if cp >= 0x410 and cp <= 0x42F:
-        return cp + 0x20
-    if cp >= 0x400 and cp <= 0x40F:
-        return cp + 0x50
-    return cp
+def _hex_u64_at(table: StringSpan, at: Int) -> UInt64:
+    var value = UInt64(0)
+    var i = 0
+    while i < 16:
+        var b = Int(table._data[at + i])
+        value = value * UInt64(16) + UInt64(b - 48 if b <= 57 else b - 87)
+        i += 1
+    return value
 
 
-# Message helpers return fresh temporaries: the parsers keep no heap-owning
-# local live at a raise site (see the native raise-path residue in
-# docs/roadmap.md).
+# The index of the record keyed by `scalar`, or -1.
+def _table_find(table: StringSpan, width: Int, scalar: Int) -> Int:
+    var low = 0
+    var high = table.byte_length() // width
+    while low < high:
+        var mid = (low + high) // 2
+        var key = _hex_at(table, mid * width, 6)
+        if key == scalar:
+            return mid
+        if key < scalar:
+            low = mid + 1
+        else:
+            high = mid
+    return -1
+
+
+# Unicode 16 case mapping (upstream `_unicode.mojo`): the simple lowercase
+# table, and the simple uppercase table plus the two- and three-codepoint
+# SpecialCasing uppercase tables (`ß` -> `SS`, `ﬃ` -> `FFI`, ...).
+def _lower_mapping(lower: StringSpan, scalar: Int) -> Int:
+    var index = _table_find(lower, 12, scalar)
+    if index < 0:
+        return scalar
+    return _hex_at(lower, index * 12 + 6, 6)
+
+
+def _has_lower_mapping(lower: StringSpan, scalar: Int) -> Bool:
+    return _table_find(lower, 12, scalar) >= 0
+
+
+def _has_upper_mapping(
+    upper: StringSpan, upper2: StringSpan, upper3: StringSpan, scalar: Int
+) -> Bool:
+    if _table_find(upper, 12, scalar) >= 0:
+        return True
+    if _table_find(upper2, 18, scalar) >= 0:
+        return True
+    return _table_find(upper3, 24, scalar) >= 0
+
+
+def _append_scalar(mut out: String, scalar: Int):
+    var text = Codepoint._encode_utf8(scalar)
+    out._append_bytes_of(text, 0, text.size)
+
+
+# Append the uppercase mapping of `scalar` (the `width` bytes of `src` at
+# `at`) to `out`: one to three codepoints, or the original bytes when the
+# tables have no entry.
+def _append_uppercased(
+    mut out: String,
+    upper: StringSpan,
+    upper2: StringSpan,
+    upper3: StringSpan,
+    src: StringSpan,
+    at: Int,
+    width: Int,
+    scalar: Int,
+):
+    var index = _table_find(upper, 12, scalar)
+    if index >= 0:
+        _append_scalar(out, _hex_at(upper, index * 12 + 6, 6))
+        return
+    index = _table_find(upper2, 18, scalar)
+    if index >= 0:
+        _append_scalar(out, _hex_at(upper2, index * 18 + 6, 6))
+        _append_scalar(out, _hex_at(upper2, index * 18 + 12, 6))
+        return
+    index = _table_find(upper3, 24, scalar)
+    if index >= 0:
+        _append_scalar(out, _hex_at(upper3, index * 24 + 6, 6))
+        _append_scalar(out, _hex_at(upper3, index * 24 + 12, 6))
+        _append_scalar(out, _hex_at(upper3, index * 24 + 18, 6))
+        return
+    out._append_bytes_of(src, at, width)
+
+
 def _too_large_suffix() -> String:
     return " String expresses an integer too large to store in Int."
 
@@ -266,102 +303,287 @@ def _float_nan() -> Float64:
     return inf - inf
 
 
-# Floating-point parsing (upstream `atof`'s decimal core): POSIX-space
-# padding, an optional sign, `inf`/`nan`, and a digits[.digits][e[+-]digits]
-# body evaluated as an integer significand scaled by an exact power of ten
-# (correctly rounded while the significand and the scale stay exact; the
-# extended-precision fallback for longer inputs is a recorded gap).
-# 1 for `nan`, 2 for `inf`/`infinity` (case-insensitive), else 0.
-def _float_special(str: String, start: Int, end: Int) -> Int:
-    var lowered = str._with_bytes(start, end - start).lower()
-    if lowered == "nan":
-        return 1
-    if lowered == "inf" or lowered == "infinity":
-        return 2
-    return 0
-
-
+# Floating-point parsing: upstream `atof` (`_parsing_numbers`). The text is
+# stripped (POSIX space, a `+` prefix, an `f`/`F` suffix) and signed,
+# checked for `nan`/`inf`/`infinity`, then scanned right to left into
+# 24-digit significand and exponent buffers (upstream's `CONTAINER_SIZE`,
+# so longer numbers raise) that Clinger's fast path or the Eisel-Lemire
+# algorithm (arXiv 2101.11408, algorithm 1) converts with correct rounding
+# over the generated 128-bit power-of-five table.
 def _float_error(str: String) -> String:
     return "String is not convertible to float: '" + str + "'"
 
 
-def _float_edge_error(str: String, start: Int, end: Int, which: String) -> String:
+def _atof_is_nan(text: StringSpan) -> Bool:
+    if text._size != 3:
+        return False
     return (
-        _float_error(str) + ". The " + which + " character of '"
-        + str._with_bytes(start, end - start)
-        + "' should be a digit or dot to convert it to a float."
+        (Int(text._data[0]) | 32) == 110
+        and (Int(text._data[1]) | 32) == 97
+        and (Int(text._data[2]) | 32) == 110
     )
+
+
+# The suffix strip has already taken the `f` of `inf` (upstream's quirk).
+def _atof_is_inf(text: StringSpan) -> Bool:
+    if text._size == 2:
+        return (Int(text._data[0]) | 32) == 105 and (Int(text._data[1]) | 32) == 110
+    if text._size != 8:
+        return False
+    return text.lower() == "infinity"
+
+
+def _atof_zero_digits() -> List[Int]:
+    var digits = List[Int]()
+    var i = 0
+    while i < 24:
+        digits.append(0)
+        i += 1
+    return digits^
+
+
+# The value of a 24-digit buffer (upstream `to_integer`); above `UInt64`'s
+# range it raises with the digits sans leading zeros.
+def _atof_to_integer(digits: List[Int]) raises -> UInt64:
+    var limit = UInt64(0) - UInt64(1)
+    var value = UInt64(0)
+    var i = 0
+    while i < 24:
+        var digit = UInt64(digits[i])
+        if value > (limit - digit) // UInt64(10):
+            var text = String()
+            var j = 0
+            while j < 24 and digits[j] == 0:
+                j += 1
+            while j < 24:
+                text.write(digits[j])
+                j += 1
+            raise Error("The string is too large to be converted to an integer: '" + text + "'.")
+        value = value * UInt64(10) + digit
+        i += 1
+    return value
+
+
+# Upstream `_get_w_and_q_from_float_string`: read right to left, filling
+# the exponent buffer until a dot or `e` proves the digits belong to the
+# significand; the dot's position becomes a negative exponent adjustment.
+def _atof_scan(text: StringSpan) raises -> Tuple[UInt64, Int]:
+    var size = text._size
+    var first = 0 if size == 0 else Int(text._data[0])
+    if not ((first >= 48 and first <= 57) or first == 46):
+        raise Error(
+            "The first character of '"
+            + text.to_string()
+            + "' should be a digit or dot to convert it to a float."
+        )
+    var last = Int(text._data[size - 1])
+    if not ((last >= 48 and last <= 57) or last == 46):
+        raise Error(
+            "The last character of '"
+            + text.to_string()
+            + "' should be a digit or dot to convert it to a float."
+        )
+    var exponent = _atof_zero_digits()
+    var significand = _atof_zero_digits()
+    var writing_exponent = True
+    var array_index = 24
+    var additional_exponent = 0
+    var exponent_multiplier = 1
+    var dot_or_e_found = False
+    var i = size - 1
+    while i >= 0:
+        array_index -= 1
+        if array_index < 0:
+            raise Error("The number is too long, it's not supported yet. '" + text.to_string() + "'")
+        var b = Int(text._data[i])
+        if b == 46:
+            dot_or_e_found = True
+            if writing_exponent:
+                # The digits so far were the significand, not an exponent.
+                significand = exponent.copy()
+                exponent = _atof_zero_digits()
+                writing_exponent = False
+            additional_exponent = 24 - array_index - 1
+            array_index += 1
+        elif b == 45:
+            exponent_multiplier = -1
+        elif b == 43:
+            pass
+        elif b == 101 or b == 69:
+            dot_or_e_found = True
+            writing_exponent = False
+            array_index = 24
+        elif b >= 48 and b <= 57:
+            if writing_exponent:
+                exponent[array_index] = b - 48
+            else:
+                significand[array_index] = b - 48
+        else:
+            raise Error("Invalid character(s) in the number: '" + text.to_string() + "'")
+        i -= 1
+    if not dot_or_e_found:
+        significand = exponent.copy()
+        exponent = _atof_zero_digits()
+    var q = exponent_multiplier * Int(_atof_to_integer(exponent)) - additional_exponent
+    var w = _atof_to_integer(significand)
+    return (w, q)
+
+
+# Powers of ten and integers below 2**53 are exact, so their product or
+# quotient rounds once.
+def _atof_clinger(w: UInt64, q: Int) -> Float64:
+    if q >= 0:
+        return Float64(w) * _pow10(q)
+    return Float64(w) / _pow10(-q)
+
+
+def _count_leading_zeros(value: UInt64) -> Int:
+    if value == UInt64(0):
+        return 64
+    var count = 0
+    var v = value
+    while (v >> UInt64(63)) == UInt64(0):
+        v = v << UInt64(1)
+        count += 1
+    return count
+
+
+# The 128-bit product of two 64-bit words as (high, low), via 32-bit limbs.
+def _mul_u64_wide(a: UInt64, b: UInt64) -> Tuple[UInt64, UInt64]:
+    var mask = UInt64(0xFFFFFFFF)
+    var a_lo = a & mask
+    var a_hi = a >> UInt64(32)
+    var b_lo = b & mask
+    var b_hi = b >> UInt64(32)
+    var ll = a_lo * b_lo
+    var lh = a_lo * b_hi
+    var hl = a_hi * b_lo
+    var hh = a_hi * b_hi
+    var mid = (ll >> UInt64(32)) + (lh & mask) + (hl & mask)
+    var low = (ll & mask) | ((mid & mask) << UInt64(32))
+    var high = hh + (lh >> UInt64(32)) + (hl >> UInt64(32)) + (mid >> UInt64(32))
+    return (high, low)
+
+
+# Upstream `get_128_bit_truncated_product`: `w` times the 128-bit power of
+# five for `q`, refined by the next word when the top 55 bits are all set.
+def _atof_truncated_product(w: UInt64, q: Int) -> Tuple[UInt64, UInt64]:
+    var table = _pow5_table()
+    var index = 2 * (q + 342)
+    var product = _mul_u64_wide(w, _hex_u64_at(table, 16 * index))
+    var high = product[0]
+    var low = product[1]
+    var precision_mask = (UInt64(1) << UInt64(55)) - UInt64(1)
+    if (high & precision_mask) == precision_mask:
+        var second = _mul_u64_wide(w, _hex_u64_at(table, 16 * (index + 1)))
+        low = low + second[0]
+        if second[0] > low:
+            high = high + UInt64(1)
+    return (high, low)
+
+
+# `m * 2**exponent` exactly: the result is representable by construction,
+# so every power-of-two step stays exact.
+def _ldexp(m: UInt64, exponent: Int) -> Float64:
+    var value = Float64(m)
+    var two64 = 1.0
+    var i = 0
+    while i < 64:
+        two64 = two64 * 2.0
+        i += 1
+    var e = exponent
+    while e >= 64:
+        value = value * two64
+        e -= 64
+    while e <= -64:
+        value = value / two64
+        e += 64
+    var rest = 1.0
+    var steps = e if e >= 0 else -e
+    i = 0
+    while i < steps:
+        rest = rest * 2.0
+        i += 1
+    if e >= 0:
+        return value * rest
+    return value / rest
+
+
+def _atof_lemire(significand: UInt64, q: Int) -> Float64:
+    var w = significand
+    if w == UInt64(0):
+        return 0.0
+    if q < -342:
+        return 0.0
+    if q > 308:
+        return _float_inf()
+    var l = _count_leading_zeros(w)
+    w = w << UInt64(l)
+    var product = _atof_truncated_product(w, q)
+    var high = product[0]
+    var low = product[1]
+    var upper_bit = Int(high >> UInt64(63))
+    var m = high >> UInt64(upper_bit + 9)
+    var p = (((152170 + 65536) * q) >> 16) + 63 - l + upper_bit
+    if p <= (-1022 - 64):
+        return 0.0
+    if p < -1022:
+        # Subnormal: shift the mantissa down, rounding half up.
+        var shift = -1022 - p
+        m = m >> UInt64(shift)
+        if (m & UInt64(1)) == UInt64(1):
+            m += UInt64(1)
+        m = m >> UInt64(1)
+        return _ldexp(m, -1074)
+    # Round ties to even where the truncated product could be exactly half.
+    if q >= -4 and q <= 23:
+        if low <= UInt64(1):
+            if (m & UInt64(3)) == UInt64(1):
+                var ratio = high // m
+                if ratio != UInt64(0):
+                    if (ratio & (ratio - UInt64(1))) == UInt64(0):
+                        m -= UInt64(2)
+    if (m & UInt64(1)) == UInt64(1):
+        m += UInt64(1)
+    m = m >> UInt64(1)
+    if m == (UInt64(1) << UInt64(53)):
+        m = m >> UInt64(1)
+        p += 1
+    if p > 1023:
+        return _float_inf()
+    return _ldexp(m, p - 52)
 
 
 def atof(str: String) raises -> Float64:
     if str.size == 0 or (str.size == 1 and Int(str.data[0]) == 46):
         raise Error(_float_error(str))
-    var start = 0
-    var end = str.size
-    while start < end and str._is_posix_space_byte(Int(str.data[start])):
-        start += 1
-    while end > start and str._is_posix_space_byte(Int(str.data[end - 1])):
-        end -= 1
+    var whole = StringSpan(str)
+    var trimmed = whole.strip()
+    var unplussed = trimmed.removeprefix("+")
+    var unsuffixed = unplussed.removesuffix("f")
+    var text = unsuffixed.removesuffix("F")
     var sign = 1.0
-    if start < end and (Int(str.data[start]) == 43 or Int(str.data[start]) == 45):
-        if Int(str.data[start]) == 45:
-            sign = -1.0
-        start += 1
-    var special = _float_special(str, start, end)
-    if special == 1:
+    if text.startswith("-"):
+        sign = -1.0
+        text = text._sub_view(1, text._size)
+    if _atof_is_nan(text):
         return _float_nan()
-    if special == 2:
+    if _atof_is_inf(text):
         return _float_inf() * sign
-    if start >= end:
-        raise Error(_float_error(str))
-    var first = Int(str.data[start])
-    if not ((first >= 48 and first <= 57) or first == 46):
-        raise Error(_float_edge_error(str, start, end, "first"))
-    var last = Int(str.data[end - 1])
-    if not ((last >= 48 and last <= 57) or last == 46):
-        raise Error(_float_edge_error(str, start, end, "last"))
-    var significand = 0
-    var digits = 0
-    var scale = 0
-    var seen_dot = False
-    var exponent = 0
-    var exponent_sign = 1
-    var in_exponent = False
-    var i = start
-    while i < end:
-        var b = Int(str.data[i])
-        if b >= 48 and b <= 57:
-            if in_exponent:
-                exponent = exponent * 10 + (b - 48)
-            else:
-                if digits < 19:
-                    significand = significand * 10 + (b - 48)
-                    digits += 1
-                    if seen_dot:
-                        scale -= 1
-                elif not seen_dot:
-                    scale += 1
-        elif b == 46 and not seen_dot and not in_exponent:
-            seen_dot = True
-        elif (b == 101 or b == 69) and not in_exponent:
-            in_exponent = True
-            if i + 1 < end and (Int(str.data[i + 1]) == 43 or Int(str.data[i + 1]) == 45):
-                if Int(str.data[i + 1]) == 45:
-                    exponent_sign = -1
-                i += 1
-        else:
-            raise Error(
-                _float_error(str) + ". Invalid character(s) in the number: '"
-                + str._with_bytes(start, end - start) + "'"
-            )
-        i += 1
-    var power = scale + exponent_sign * exponent
-    var value = Float64(significand)
-    if power > 0:
-        value = value * _pow10(power)
-    elif power < 0:
-        value = value / _pow10(-power)
-    return value * sign
+    var w = UInt64(0)
+    var q = 0
+    try:
+        var parts = _atof_scan(text)
+        w = parts[0]
+        q = parts[1]
+    except e:
+        var message = String()
+        message.write(_float_error(str), ". ", e)
+        raise Error(message)
+    if q >= -22 and q <= 22:
+        if w <= (UInt64(1) << UInt64(53)):
+            return _atof_clinger(w, q) * sign
+    return _atof_lemire(w, q) * sign
 
 
 struct String(
@@ -454,9 +676,9 @@ struct String(
         self.data = new_data
         self.cap = new_capacity_bytes
 
-    def __len__(self) -> Int:
-        return self.size
-
+    # No `__len__`: a UTF-8 length is ambiguous (upstream `@unavailable`);
+    # spell the unit — `byte_length()`, `len(s.codepoints())`, or
+    # `len(s.graphemes())`.
     def byte_length(self) -> Int:
         return self.size
 
@@ -788,278 +1010,44 @@ struct String(
             raise Error("String byte index out of range")
         return self.data[byte]
 
+    # Codepoint and grapheme indexing and counting live on the view;
+    # counting never raises (upstream), indexing raises on a bad index.
     def __getitem__(self, *, codepoint: Int) raises -> Codepoint:
-        if codepoint < 0:
-            raise Error("String codepoint index out of range")
-        var index = 0
-        var seen = 0
-        while index < self.size:
-            var lead = Int(self.data[index])
-            var width = self._sequence_width(lead)
-            var value = self._decode_at(index, width)
-            if seen == codepoint:
-                var text = self._with_bytes(index, width)
-                return Codepoint(value, text: text^)
-            seen += 1
-            index += width
-        raise Error("String codepoint index out of range")
+        var view = StringSpan(self)
+        return view[codepoint=codepoint]
 
-    def count_codepoints(self) raises -> Int:
-        var index = 0
-        var count = 0
-        while index < self.size:
-            var lead = Int(self.data[index])
-            index += self._sequence_width(lead)
-            count += 1
-        if index != self.size:
-            raise Error("String buffer ends inside a UTF-8 sequence")
-        return count
+    def count_codepoints(self) -> Int:
+        return StringSpan(self).count_codepoints()
 
     def __getitem__(self, *, grapheme: Int) raises -> Self:
-        if grapheme < 0:
-            raise Error("String grapheme index out of range")
-        var index = 0
-        var seen = 0
-        while index < self.size:
-            var end = self._next_grapheme_end(index)
-            if seen == grapheme:
-                return self._with_bytes(index, end - index)
-            seen += 1
-            index = end
-        raise Error("String grapheme index out of range")
+        var view = StringSpan(self)
+        return view[grapheme=grapheme]
 
-    def count_graphemes(self) raises -> Int:
-        var index = 0
-        var count = 0
-        while index < self.size:
-            index = self._next_grapheme_end(index)
-            count += 1
-        return count
+    def count_graphemes(self) -> Int:
+        return StringSpan(self).count_graphemes()
 
     # Ordinary String iteration yields borrowed grapheme-cluster StringSpan
-    # views (current Mojo).
+    # views (current Mojo); `reversed(s)` walks the clusters back to front.
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return _GraphemeIter(StringSpan(self), 0)
 
-    # UTF-8 leading-byte arithmetic: the sequence width a lead byte declares.
-    def _sequence_width(self, lead: Int) raises -> Int:
-        if lead < 128:
-            return 1
-        if lead < 192:
-            raise Error("String buffer is not valid UTF-8")
-        if lead < 224:
-            return 2
-        if lead < 240:
-            return 3
-        if lead < 248:
-            return 4
-        raise Error("String buffer is not valid UTF-8")
+    def __reversed__(self) -> _GraphemeReversedIter[origin_of(self)]:
+        return _GraphemeReversedIter(StringSpan(self), self.size, 0, False)
 
-    # Decode the scalar value of the `width`-byte sequence at `start`.
-    def _decode_at(self, start: Int, width: Int) raises -> Int:
-        if start + width > self.size:
-            raise Error("String buffer ends inside a UTF-8 sequence")
-        var lead = Int(self.data[start])
-        var value = lead
-        if width == 2:
-            value = lead - 192
-        elif width == 3:
-            value = lead - 224
-        elif width == 4:
-            value = lead - 240
-        var i = 1
-        while i < width:
-            var continuation = Int(self.data[start + i])
-            if continuation < 128:
-                raise Error("String buffer is not valid UTF-8")
-            if continuation >= 192:
-                raise Error("String buffer is not valid UTF-8")
-            value = value * 64 + (continuation - 128)
-            i += 1
-        return value
+    def codepoint_slices_reversed(self) -> _CodepointSliceReversedIter[origin_of(self)]:
+        return _CodepointSliceReversedIter(StringSpan(self), self.size)
 
-    # The byte offset one past the extended grapheme cluster starting at
-    # `start`: decode the first codepoint, then extend while the pair rules
-    # join, tracking the run of consecutive regional indicators (class 7).
-    def _next_grapheme_end(self, start: Int) raises -> Int:
-        var index = start
-        var lead = Int(self.data[index])
-        var width = self._sequence_width(lead)
-        var prev_class = self._grapheme_class(self._decode_at(index, width))
-        index += width
-        var ri_run = 0
-        if prev_class == 7:
-            ri_run = 1
-        while index < self.size:
-            lead = Int(self.data[index])
-            width = self._sequence_width(lead)
-            var next_class = self._grapheme_class(self._decode_at(index, width))
-            if not self._grapheme_joins(prev_class, next_class, ri_run):
-                return index
-            if next_class == 7:
-                ri_run += 1
-            else:
-                ri_run = 0
-            prev_class = next_class
-            index += width
-        return index
+    def graphemes_reversed(self) -> _GraphemeReversedIter[origin_of(self)]:
+        return _GraphemeReversedIter(StringSpan(self), self.size, 0, False)
 
-    # Whether UAX #29 keeps `next_class` in the cluster after `prev_class`,
-    # using the `_grapheme_class` codes.  `ri_run` is the count of consecutive
-    # regional indicators ending at the previous codepoint.  GB11 is
-    # simplified to "never break after ZWJ" (no Extended_Pictographic data);
-    # GB9b (Prepend) is omitted.
-    def _grapheme_joins(self, prev_class: Int, next_class: Int, ri_run: Int) -> Bool:
-        # GB3: CR x LF.
-        if prev_class == 1 and next_class == 2:
-            return True
-        # GB4/GB5: otherwise break around Control, CR, and LF.
-        if prev_class == 3 or prev_class == 1 or prev_class == 2:
-            return False
-        if next_class == 3 or next_class == 1 or next_class == 2:
-            return False
-        # GB6: L x (L | V | LV | LVT).
-        if prev_class == 8:
-            if next_class == 8 or next_class == 9:
-                return True
-            if next_class == 11 or next_class == 12:
-                return True
-        # GB7: (LV | V) x (V | T).
-        if prev_class == 11 or prev_class == 9:
-            if next_class == 9 or next_class == 10:
-                return True
-        # GB8: (LVT | T) x T.
-        if prev_class == 12 or prev_class == 10:
-            if next_class == 10:
-                return True
-        # GB9/GB9a: x (Extend | ZWJ | SpacingMark).
-        if next_class == 4 or next_class == 5 or next_class == 6:
-            return True
-        # GB11 simplified: ZWJ x anything.
-        if prev_class == 5:
-            return True
-        # GB12/GB13: regional indicators join in pairs.
-        if prev_class == 7 and next_class == 7:
-            return ri_run % 2 == 1
-        # GB999.
-        return False
+    def bytes(self) -> _BytesIter[origin_of(self)]:
+        return _BytesIter(StringSpan(self), 0)
 
-    # Grapheme_Cluster_Break class of `cp`: the documented essentials subset —
-    # hand-maintained Control/Extend/SpacingMark ranges, regional indicators,
-    # and fully arithmetic Hangul.  Class codes (comptime constants would echo
-    # in the CLI's final-bindings listing, so the codes stay literal):
-    #   0 Other, 1 CR, 2 LF, 3 Control, 4 Extend, 5 ZWJ, 6 SpacingMark,
-    #   7 Regional_Indicator, 8 L, 9 V, 10 T, 11 LV, 12 LVT.
-    # Unlisted codepoints are 0 (Other).
-    def _grapheme_class(self, cp: Int) -> Int:
-        if cp == 0x0D:
-            return 1
-        if cp == 0x0A:
-            return 2
-        # Control essentials (non-exhaustive): C0/C1, soft hyphen, zero-width
-        # space, line/paragraph separators and directional formatting, word
-        # joiner and invisible operators, byte-order mark.
-        if cp < 0x20:
-            return 3
-        if cp >= 0x7F and cp <= 0x9F:
-            return 3
-        if cp == 0xAD or cp == 0x200B or cp == 0xFEFF:
-            return 3
-        if cp >= 0x2028 and cp <= 0x202E:
-            return 3
-        if cp >= 0x2060 and cp <= 0x2064:
-            return 3
-        if cp == 0x200D:
-            return 5
-        # Extend essentials (non-exhaustive): ZWNJ, combining-mark blocks for
-        # Latin/Cyrillic/Hebrew/Arabic/Devanagari/Thai, combining diacritical
-        # extensions/supplement, combining marks for symbols, variation
-        # selectors (plus supplement), emoji skin-tone modifiers, and tags.
-        if cp == 0x200C:
-            return 4
-        if cp >= 0x0300 and cp <= 0x036F:
-            return 4
-        if cp >= 0x0483 and cp <= 0x0489:
-            return 4
-        if cp >= 0x0591 and cp <= 0x05BD:
-            return 4
-        if cp == 0x05BF or cp == 0x05C7:
-            return 4
-        if cp >= 0x05C1 and cp <= 0x05C2:
-            return 4
-        if cp >= 0x05C4 and cp <= 0x05C5:
-            return 4
-        if cp >= 0x0610 and cp <= 0x061A:
-            return 4
-        if cp >= 0x064B and cp <= 0x065F:
-            return 4
-        if cp == 0x0670:
-            return 4
-        if cp >= 0x06D6 and cp <= 0x06DC:
-            return 4
-        if cp >= 0x0900 and cp <= 0x0902:
-            return 4
-        if cp == 0x093C or cp == 0x094D:
-            return 4
-        if cp >= 0x0941 and cp <= 0x0948:
-            return 4
-        if cp >= 0x0951 and cp <= 0x0957:
-            return 4
-        if cp == 0x0E31:
-            return 4
-        if cp >= 0x0E34 and cp <= 0x0E3A:
-            return 4
-        if cp >= 0x0E47 and cp <= 0x0E4E:
-            return 4
-        if cp >= 0x1AB0 and cp <= 0x1AFF:
-            return 4
-        if cp >= 0x1DC0 and cp <= 0x1DFF:
-            return 4
-        if cp >= 0x20D0 and cp <= 0x20FF:
-            return 4
-        if cp >= 0xFE00 and cp <= 0xFE0F:
-            return 4
-        if cp >= 0xFE20 and cp <= 0xFE2F:
-            return 4
-        if cp >= 0x1F3FB and cp <= 0x1F3FF:
-            return 4
-        if cp >= 0xE0020 and cp <= 0xE007F:
-            return 4
-        if cp >= 0xE0100 and cp <= 0xE01EF:
-            return 4
-        # SpacingMark essentials (non-exhaustive): Devanagari and Thai/Lao
-        # spacing vowel signs.
-        if cp == 0x0903 or cp == 0x093B:
-            return 6
-        if cp >= 0x093E and cp <= 0x0940:
-            return 6
-        if cp >= 0x0949 and cp <= 0x094C:
-            return 6
-        if cp >= 0x094E and cp <= 0x094F:
-            return 6
-        if cp == 0x0E33 or cp == 0x0EB3:
-            return 6
-        if cp >= 0x1F1E6 and cp <= 0x1F1FF:
-            return 7
-        # Hangul is fully arithmetic: conjoining jamo blocks and the
-        # precomposed-syllable block, where LV syllables sit every 28 steps.
-        if cp >= 0x1100 and cp <= 0x115F:
-            return 8
-        if cp >= 0xA960 and cp <= 0xA97C:
-            return 8
-        if cp >= 0x1160 and cp <= 0x11A7:
-            return 9
-        if cp >= 0xD7B0 and cp <= 0xD7C6:
-            return 9
-        if cp >= 0x11A8 and cp <= 0x11FF:
-            return 10
-        if cp >= 0xD7CB and cp <= 0xD7FB:
-            return 10
-        if cp >= 0xAC00 and cp <= 0xD7A3:
-            if (cp - 0xAC00) % 28 == 0:
-                return 11
-            return 12
-        return 0
+    # The views before and after the `n`-th grapheme-cluster boundary.
+    def split_at_grapheme(
+        self, n: Int
+    ) -> Tuple[StringSpan[origin_of(self)], StringSpan[origin_of(self)]]:
+        return StringSpan(self).split_at_grapheme(n)
 
     # Strict keyword slices (current Mojo bounds): positional String slicing
     # was removed upstream, so byte and codepoint ranges are spelled
@@ -1080,18 +1068,13 @@ struct String(
         return view^
 
     def __getitem__(ref self, *, codepoint: ContiguousSlice) -> StringSpan[origin_of(self)]:
-        var start_byte = 0
-        var end_byte = 0
-        try:
-            var total = self.count_codepoints()
-            var start = codepoint.start.or_else(0)
-            var end = codepoint.end.or_else(total)
-            check_slice_bounds(start, end, total)
-            start_byte = self._codepoint_offset(start)
-            end_byte = self._codepoint_offset(end)
-        except e:
-            _mojito_abort("String buffer is not valid UTF-8")
         var view = StringSpan(self)
+        var total = view.count_codepoints()
+        var start = codepoint.start.or_else(0)
+        var end = codepoint.end.or_else(total)
+        check_slice_bounds(start, end, total)
+        var start_byte = view._codepoint_offset(start)
+        var end_byte = view._codepoint_offset(end)
         view._data = view._data.unsafe_offset(start_byte)
         view._size = end_byte - start_byte
         return view^
@@ -1105,30 +1088,6 @@ struct String(
         if b < 128:
             return True
         return b >= 192
-
-    # The byte offset after `count` codepoints (strict: `count` must not
-    # exceed the codepoint count).
-    def _codepoint_offset(self, count: Int) raises -> Int:
-        var index = 0
-        var seen = 0
-        while seen < count:
-            if index >= self.size:
-                _mojito_abort("String codepoint slice bounds out of range")
-            var lead = Int(self.data[index])
-            index += self._sequence_width(lead)
-            seen += 1
-        return index
-
-    # The byte offset after `count` extended grapheme clusters (strict).
-    def _grapheme_offset(self, count: Int) raises -> Int:
-        var index = 0
-        var seen = 0
-        while seen < count:
-            if index >= self.size:
-                _mojito_abort("String grapheme slice bounds out of range")
-            index = self._next_grapheme_end(index)
-            seen += 1
-        return index
 
     def _with_bytes(self, start: Int, count: Int) -> Self:
         var result = String("")
@@ -1307,9 +1266,9 @@ struct Codepoint(
 # strict keyword slices — including the grapheme slice String itself does
 # not offer — return sub-views of the same buffer. The result APIs (search,
 # affix tests, replace, split, case, predicates, justification, strip) live
-# here and `String` forwards to them, as upstream. Codepoint- and
-# grapheme-level indexing still decodes through an eager `to_string()` copy
-# while the returned views stay borrowed from this buffer.
+# here and `String` forwards to them, as upstream, including the codepoint
+# and grapheme scans (indexing, counting, slicing, forward and reverse
+# iteration) that run in place over this buffer.
 struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     Boolable, Equatable, Hashable, ImplicitlyCopyable, Iterable, Movable, Writable
 ):
@@ -1343,9 +1302,6 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     # Ordinary StringSpan iteration also yields grapheme-cluster sub-views.
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return _GraphemeIter(self, 0)
-
-    def __len__(self) -> Int:
-        return self._size
 
     def byte_length(self) -> Int:
         return self._size
@@ -1496,40 +1452,34 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
             lines.append(self._with_bytes(line_start, self._size - line_start))
         return lines^
 
-    # Case conversion over a pure-Mojo simple-case subset: ASCII, Latin-1,
-    # Latin Extended-A, Greek, and Cyrillic letters (plus `ß` -> `SS`);
-    # other scripts pass through unchanged (upstream maps the full Unicode
-    # tables).
+    # Case conversion over the full Unicode 16 simple and SpecialCasing
+    # tables (upstream `to_uppercase`/`to_lowercase`); the table views are
+    # built once per call.
     def upper(self) -> String:
+        var upper = _upper_table()
+        var upper2 = _upper2_table()
+        var upper3 = _upper3_table()
         var result = String()
         var at = 0
         while at < self._size:
-            var width = self._lead_width(Int(self._data[at]))
+            var width = self._width_at(at)
             var scalar = self._scalar_at(at, width)
-            if scalar == 0xDF:
-                result._append_bytes_of("SS", 0, 2)
-            else:
-                var mapped = _upper_scalar(scalar)
-                if mapped == scalar:
-                    result._append_bytes_of(self, at, width)
-                else:
-                    var text = Codepoint._encode_utf8(mapped)
-                    result._append_bytes_of(text, 0, text.size)
+            _append_uppercased(result, upper, upper2, upper3, self, at, width, scalar)
             at += width
         return result^
 
     def lower(self) -> String:
+        var lower = _lower_table()
         var result = String()
         var at = 0
         while at < self._size:
-            var width = self._lead_width(Int(self._data[at]))
+            var width = self._width_at(at)
             var scalar = self._scalar_at(at, width)
-            var mapped = _lower_scalar(scalar)
+            var mapped = _lower_mapping(lower, scalar)
             if mapped == scalar:
                 result._append_bytes_of(self, at, width)
             else:
-                var text = Codepoint._encode_utf8(mapped)
-                result._append_bytes_of(text, 0, text.size)
+                _append_scalar(result, mapped)
             at += width
         return result^
 
@@ -1651,18 +1601,65 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         return self._data[byte]
 
     def __getitem__(self, *, codepoint: Int) raises -> Codepoint:
-        var text = self.to_string()
-        return text[codepoint=codepoint]
+        if codepoint < 0:
+            raise Error("StringSpan codepoint index out of range")
+        var index = 0
+        var seen = 0
+        while index < self._size:
+            var width = self._width_at(index)
+            if seen == codepoint:
+                var text = self._with_bytes(index, width)
+                return Codepoint(self._scalar_at(index, width), text: text^)
+            seen += 1
+            index += width
+        raise Error("StringSpan codepoint index out of range")
 
     def __getitem__(self, *, grapheme: Int) raises -> String:
-        var text = self.to_string()
-        return text[grapheme=grapheme]
+        if grapheme < 0:
+            raise Error("StringSpan grapheme index out of range")
+        var index = 0
+        var seen = 0
+        while index < self._size:
+            var end = self._next_grapheme_end(index)
+            if seen == grapheme:
+                return self._with_bytes(index, end - index)
+            seen += 1
+            index = end
+        raise Error("StringSpan grapheme index out of range")
 
-    def count_codepoints(self) raises -> Int:
-        return self.to_string().count_codepoints()
+    # Non-raising counts (upstream): one codepoint per non-continuation
+    # byte, and one extended grapheme cluster per forward scan step.
+    def count_codepoints(self) -> Int:
+        return self._codepoints_before(self._size)
 
-    def count_graphemes(self) raises -> Int:
-        return self.to_string().count_graphemes()
+    def count_graphemes(self) -> Int:
+        return self._graphemes_between(0, self._size)
+
+    def __reversed__(self) -> _GraphemeReversedIter[Self.origin]:
+        return _GraphemeReversedIter(self, self._size, 0, False)
+
+    def codepoint_slices_reversed(self) -> _CodepointSliceReversedIter[Self.origin]:
+        return _CodepointSliceReversedIter(self, self._size)
+
+    def graphemes_reversed(self) -> _GraphemeReversedIter[Self.origin]:
+        return _GraphemeReversedIter(self, self._size, 0, False)
+
+    def bytes(self) -> _BytesIter[Self.origin]:
+        return _BytesIter(self, 0)
+
+    # The views before and after the `n`-th grapheme-cluster boundary
+    # (`n == 0` yields `("", self)`, `n` past the end `(self, "")`).
+    def split_at_grapheme(
+        self, n: Int
+    ) -> Tuple[StringSpan[Self.origin], StringSpan[Self.origin]]:
+        if n < 0:
+            _mojito_abort("grapheme split index must be non-negative")
+        var at = 0
+        var seen = 0
+        while seen < n and at < self._size:
+            at = self._next_grapheme_end(at)
+            seen += 1
+        return (self._sub_view(0, at), self._sub_view(at, self._size))
 
     def __getitem__(self, *, byte: ContiguousSlice) -> Self:
         var start = byte.start.or_else(0)
@@ -1675,34 +1672,18 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         return self._sub_view(start, end)
 
     def __getitem__(self, *, codepoint: ContiguousSlice) -> Self:
-        var start_byte = 0
-        var end_byte = 0
-        try:
-            var text = self.to_string()
-            var total = text.count_codepoints()
-            var start = codepoint.start.or_else(0)
-            var end = codepoint.end.or_else(total)
-            check_slice_bounds(start, end, total)
-            start_byte = text._codepoint_offset(start)
-            end_byte = text._codepoint_offset(end)
-        except e:
-            _mojito_abort("StringSpan buffer is not valid UTF-8")
-        return self._sub_view(start_byte, end_byte)
+        var total = self.count_codepoints()
+        var start = codepoint.start.or_else(0)
+        var end = codepoint.end.or_else(total)
+        check_slice_bounds(start, end, total)
+        return self._sub_view(self._codepoint_offset(start), self._codepoint_offset(end))
 
     def __getitem__(self, *, grapheme: ContiguousSlice) -> Self:
-        var start_byte = 0
-        var end_byte = 0
-        try:
-            var text = self.to_string()
-            var total = text.count_graphemes()
-            var start = grapheme.start.or_else(0)
-            var end = grapheme.end.or_else(total)
-            check_slice_bounds(start, end, total)
-            start_byte = text._grapheme_offset(start)
-            end_byte = text._grapheme_offset(end)
-        except e:
-            _mojito_abort("StringSpan buffer is not valid UTF-8")
-        return self._sub_view(start_byte, end_byte)
+        var total = self.count_graphemes()
+        var start = grapheme.start.or_else(0)
+        var end = grapheme.end.or_else(total)
+        check_slice_bounds(start, end, total)
+        return self._sub_view(self._grapheme_offset(start), self._grapheme_offset(end))
 
     def write_to(self, mut writer: Some[Writer]):
         writer.write(self.to_string())
@@ -1817,14 +1798,18 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         return result^
 
     def _all_cased_as(self, upper: Bool) -> Bool:
+        var lower_table = _lower_table()
+        var upper_table = _upper_table()
+        var upper2 = _upper2_table()
+        var upper3 = _upper3_table()
         var found = False
         var at = 0
         while at < self._size:
-            var width = self._lead_width(Int(self._data[at]))
+            var width = self._width_at(at)
             var scalar = self._scalar_at(at, width)
             at += width
-            var has_lower = _lower_scalar(scalar) != scalar
-            var has_upper = _upper_scalar(scalar) != scalar or scalar == 0xDF
+            var has_lower = _has_lower_mapping(lower_table, scalar)
+            var has_upper = _has_upper_mapping(upper_table, upper2, upper3, scalar)
             if upper:
                 if has_lower:
                     found = True
@@ -1836,6 +1821,255 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
                 elif has_lower:
                     return False
         return found
+
+    def _codepoints_before(self, end: Int) -> Int:
+        var count = 0
+        var i = 0
+        while i < end:
+            if not self._is_continuation(Int(self._data[i])):
+                count += 1
+            i += 1
+        return count
+
+    def _graphemes_between(self, start: Int, end: Int) -> Int:
+        var count = 0
+        var at = start
+        while at < end:
+            at = self._next_grapheme_end(at)
+            count += 1
+        return count
+
+    # The byte offset after `count` codepoints (strict: `count` must not
+    # exceed the codepoint count).
+    def _codepoint_offset(self, count: Int) -> Int:
+        var index = 0
+        var seen = 0
+        while seen < count:
+            if index >= self._size:
+                _mojito_abort("StringSpan codepoint slice bounds out of range")
+            index += self._width_at(index)
+            seen += 1
+        return index
+
+    # The byte offset after `count` extended grapheme clusters (strict).
+    def _grapheme_offset(self, count: Int) -> Int:
+        var index = 0
+        var seen = 0
+        while seen < count:
+            if index >= self._size:
+                _mojito_abort("StringSpan grapheme slice bounds out of range")
+            index = self._next_grapheme_end(index)
+            seen += 1
+        return index
+
+    # The byte offset one past the extended grapheme cluster starting at
+    # `start`: decode the first codepoint, then extend while the pair rules
+    # join, tracking the run of consecutive regional indicators (class 7).
+    def _next_grapheme_end(self, start: Int) -> Int:
+        var index = start
+        var width = self._width_at(index)
+        var prev_class = self._grapheme_class(self._scalar_at(index, width))
+        index += width
+        var ri_run = 0
+        if prev_class == 7:
+            ri_run = 1
+        while index < self._size:
+            width = self._width_at(index)
+            var next_class = self._grapheme_class(self._scalar_at(index, width))
+            if not self._grapheme_joins(prev_class, next_class, ri_run):
+                return index
+            if next_class == 7:
+                ri_run += 1
+            else:
+                ri_run = 0
+            prev_class = next_class
+            index += width
+        return index
+
+    # A boundary at or before `end` from which forward segmentation is
+    # canonical: the start of the nearest preceding CR, LF, or Control
+    # codepoint (a break always precedes one, GB5; a CR LF pair starts at
+    # the CR, GB3), else the buffer start.
+    def _safe_grapheme_start(self, end: Int) -> Int:
+        var at = end
+        while at > 0:
+            var head = at - 1
+            while head > 0 and self._is_continuation(Int(self._data[head])):
+                head -= 1
+            var cls = self._grapheme_class(self._scalar_at(head, self._width_at(head)))
+            if cls == 2 and head > 0 and Int(self._data[head - 1]) == 13:
+                return head - 1
+            if cls == 1 or cls == 2 or cls == 3:
+                return head
+            at = head
+        return 0
+
+    # The start of the last extended grapheme cluster ending at `end`, found
+    # by forward-scanning from `safe_start` (a `_safe_grapheme_start`).
+    def _prev_grapheme_start(self, end: Int, safe_start: Int) -> Int:
+        var at = safe_start
+        var last = at
+        while at < end:
+            last = at
+            at = self._next_grapheme_end(at)
+        return last
+
+    # Whether UAX #29 keeps `next_class` in the cluster after `prev_class`,
+    # using the `_grapheme_class` codes.  `ri_run` is the count of consecutive
+    # regional indicators ending at the previous codepoint.  GB11 is
+    # simplified to "never break after ZWJ" (no Extended_Pictographic data);
+    # GB9b (Prepend) is omitted.
+    def _grapheme_joins(self, prev_class: Int, next_class: Int, ri_run: Int) -> Bool:
+        # GB3: CR x LF.
+        if prev_class == 1 and next_class == 2:
+            return True
+        # GB4/GB5: otherwise break around Control, CR, and LF.
+        if prev_class == 3 or prev_class == 1 or prev_class == 2:
+            return False
+        if next_class == 3 or next_class == 1 or next_class == 2:
+            return False
+        # GB6: L x (L | V | LV | LVT).
+        if prev_class == 8:
+            if next_class == 8 or next_class == 9:
+                return True
+            if next_class == 11 or next_class == 12:
+                return True
+        # GB7: (LV | V) x (V | T).
+        if prev_class == 11 or prev_class == 9:
+            if next_class == 9 or next_class == 10:
+                return True
+        # GB8: (LVT | T) x T.
+        if prev_class == 12 or prev_class == 10:
+            if next_class == 10:
+                return True
+        # GB9/GB9a: x (Extend | ZWJ | SpacingMark).
+        if next_class == 4 or next_class == 5 or next_class == 6:
+            return True
+        # GB11 simplified: ZWJ x anything.
+        if prev_class == 5:
+            return True
+        # GB12/GB13: regional indicators join in pairs.
+        if prev_class == 7 and next_class == 7:
+            return ri_run % 2 == 1
+        # GB999.
+        return False
+
+    # Grapheme_Cluster_Break class of `cp`: the documented essentials subset —
+    # hand-maintained Control/Extend/SpacingMark ranges, regional indicators,
+    # and fully arithmetic Hangul.  Class codes (comptime constants would echo
+    # in the CLI's final-bindings listing, so the codes stay literal):
+    #   0 Other, 1 CR, 2 LF, 3 Control, 4 Extend, 5 ZWJ, 6 SpacingMark,
+    #   7 Regional_Indicator, 8 L, 9 V, 10 T, 11 LV, 12 LVT.
+    # Unlisted codepoints are 0 (Other).
+    def _grapheme_class(self, cp: Int) -> Int:
+        if cp == 0x0D:
+            return 1
+        if cp == 0x0A:
+            return 2
+        # Control essentials (non-exhaustive): C0/C1, soft hyphen, zero-width
+        # space, line/paragraph separators and directional formatting, word
+        # joiner and invisible operators, byte-order mark.
+        if cp < 0x20:
+            return 3
+        if cp >= 0x7F and cp <= 0x9F:
+            return 3
+        if cp == 0xAD or cp == 0x200B or cp == 0xFEFF:
+            return 3
+        if cp >= 0x2028 and cp <= 0x202E:
+            return 3
+        if cp >= 0x2060 and cp <= 0x2064:
+            return 3
+        if cp == 0x200D:
+            return 5
+        # Extend essentials (non-exhaustive): ZWNJ, combining-mark blocks for
+        # Latin/Cyrillic/Hebrew/Arabic/Devanagari/Thai, combining diacritical
+        # extensions/supplement, combining marks for symbols, variation
+        # selectors (plus supplement), emoji skin-tone modifiers, and tags.
+        if cp == 0x200C:
+            return 4
+        if cp >= 0x0300 and cp <= 0x036F:
+            return 4
+        if cp >= 0x0483 and cp <= 0x0489:
+            return 4
+        if cp >= 0x0591 and cp <= 0x05BD:
+            return 4
+        if cp == 0x05BF or cp == 0x05C7:
+            return 4
+        if cp >= 0x05C1 and cp <= 0x05C2:
+            return 4
+        if cp >= 0x05C4 and cp <= 0x05C5:
+            return 4
+        if cp >= 0x0610 and cp <= 0x061A:
+            return 4
+        if cp >= 0x064B and cp <= 0x065F:
+            return 4
+        if cp == 0x0670:
+            return 4
+        if cp >= 0x06D6 and cp <= 0x06DC:
+            return 4
+        if cp >= 0x0900 and cp <= 0x0902:
+            return 4
+        if cp == 0x093C or cp == 0x094D:
+            return 4
+        if cp >= 0x0941 and cp <= 0x0948:
+            return 4
+        if cp >= 0x0951 and cp <= 0x0957:
+            return 4
+        if cp == 0x0E31:
+            return 4
+        if cp >= 0x0E34 and cp <= 0x0E3A:
+            return 4
+        if cp >= 0x0E47 and cp <= 0x0E4E:
+            return 4
+        if cp >= 0x1AB0 and cp <= 0x1AFF:
+            return 4
+        if cp >= 0x1DC0 and cp <= 0x1DFF:
+            return 4
+        if cp >= 0x20D0 and cp <= 0x20FF:
+            return 4
+        if cp >= 0xFE00 and cp <= 0xFE0F:
+            return 4
+        if cp >= 0xFE20 and cp <= 0xFE2F:
+            return 4
+        if cp >= 0x1F3FB and cp <= 0x1F3FF:
+            return 4
+        if cp >= 0xE0020 and cp <= 0xE007F:
+            return 4
+        if cp >= 0xE0100 and cp <= 0xE01EF:
+            return 4
+        # SpacingMark essentials (non-exhaustive): Devanagari and Thai/Lao
+        # spacing vowel signs.
+        if cp == 0x0903 or cp == 0x093B:
+            return 6
+        if cp >= 0x093E and cp <= 0x0940:
+            return 6
+        if cp >= 0x0949 and cp <= 0x094C:
+            return 6
+        if cp >= 0x094E and cp <= 0x094F:
+            return 6
+        if cp == 0x0E33 or cp == 0x0EB3:
+            return 6
+        if cp >= 0x1F1E6 and cp <= 0x1F1FF:
+            return 7
+        # Hangul is fully arithmetic: conjoining jamo blocks and the
+        # precomposed-syllable block, where LV syllables sit every 28 steps.
+        if cp >= 0x1100 and cp <= 0x115F:
+            return 8
+        if cp >= 0xA960 and cp <= 0xA97C:
+            return 8
+        if cp >= 0x1160 and cp <= 0x11A7:
+            return 9
+        if cp >= 0xD7B0 and cp <= 0xD7C6:
+            return 9
+        if cp >= 0x11A8 and cp <= 0x11FF:
+            return 10
+        if cp >= 0xD7CB and cp <= 0xD7FB:
+            return 10
+        if cp >= 0xAC00 and cp <= 0xD7A3:
+            if (cp - 0xAC00) % 28 == 0:
+                return 11
+            return 12
+        return 0
 
     # Non-raising scalar decode of the `width`-byte sequence at `at`.
     def _scalar_at(self, at: Int, width: Int) -> Int:
@@ -1855,6 +2089,14 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         if lead < 224:
             return 1 if lead < 192 else 2
         return 3 if lead < 240 else 4
+
+    # The width of the sequence at `at`, clamped to the buffer so a
+    # truncated tail never reads past the end.
+    def _width_at(self, at: Int) -> Int:
+        var width = self._lead_width(Int(self._data[at]))
+        if at + width > self._size:
+            return self._size - at
+        return width
 
     def _is_continuation(self, b: Int) -> Bool:
         return b >= 128 and b < 192
@@ -1953,35 +2195,53 @@ struct _GraphemeIter[
     var src: StringSpan[Self.iterable_origin]
     var index: Int
 
-    # An iterator is its own iterable (`for x in s.codepoints()`).
+    # An iterator is its own iterable (`for x in s.graphemes()`).
     def __iter__(self) -> Self:
         return self
 
     def __next__(mut self) raises StopIteration -> StringSpan[Self.iterable_origin]:
-        if self.index >= len(self.src):
+        if self.index >= self.src.byte_length():
             raise StopIteration()
         var start = self.index
-        var end = start
-        try:
-            var text = self.src.to_string()
-            end = text._next_grapheme_end(start)
-        except e:
-            _mojito_abort("String buffer is not valid UTF-8")
+        var end = self.src._next_grapheme_end(start)
         self.index = end
         return self.src._sub_view(start, end)
 
     # Remaining grapheme clusters (`Sized`, as upstream's iterator).
     def __len__(self) -> Int:
-        var count = 0
-        var at = self.index
-        try:
-            var text = self.src.to_string()
-            while at < text.size:
-                at = text._next_grapheme_end(at)
-                count += 1
-        except e:
-            _mojito_abort("String buffer is not valid UTF-8")
-        return count
+        return self.src._graphemes_between(self.index, self.src.byte_length())
+
+
+# `graphemes_reversed()` / `reversed(s)`: the clusters back to front. The
+# UAX #29 rules scan forward, so each step forward-scans from a cached safe
+# boundary (`_safe_grapheme_start`) to the cluster ending at `end`.
+@fieldwise_init
+struct _GraphemeReversedIter[
+    iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
+](Copyable, ImplicitlyCopyable, Iterator, Movable):
+    comptime Element = StringSpan[Self.iterable_origin]
+
+    var src: StringSpan[Self.iterable_origin]
+    var end: Int
+    var safe_start: Int
+    var safe_known: Bool
+
+    def __iter__(self) -> Self:
+        return self
+
+    def __next__(mut self) raises StopIteration -> StringSpan[Self.iterable_origin]:
+        if self.end <= 0:
+            raise StopIteration()
+        if not self.safe_known or self.safe_start >= self.end:
+            self.safe_start = self.src._safe_grapheme_start(self.end)
+            self.safe_known = True
+        var start = self.src._prev_grapheme_start(self.end, self.safe_start)
+        var end = self.end
+        self.end = start
+        return self.src._sub_view(start, end)
+
+    def __len__(self) -> Int:
+        return self.src._graphemes_between(0, self.end)
 
 
 # `String.codepoints()`: decoded `Codepoint` values over a borrowed view.
@@ -1999,23 +2259,26 @@ struct _CodepointIter[
         return self
 
     def __next__(mut self) raises StopIteration -> Codepoint:
-        if self.index >= len(self.src):
+        if self.index >= self.src.byte_length():
             raise StopIteration()
-        var text = self.src.to_string()
-        var width = text._lead_width(Int(text.data[self.index]))
-        var scalar = text._scalar_at(self.index, width)
-        var piece = text._with_bytes(self.index, width)
+        var width = self.src._width_at(self.index)
+        var scalar = self.src._scalar_at(self.index, width)
+        var piece = self.src._with_bytes(self.index, width)
         self.index += width
         return Codepoint(scalar, text: piece^)
 
+    # The next codepoint without advancing, or None at the end.
+    def peek_next(self) -> Optional[Codepoint]:
+        if self.index >= self.src.byte_length():
+            return None
+        var width = self.src._width_at(self.index)
+        var piece = self.src._with_bytes(self.index, width)
+        var value = Codepoint(self.src._scalar_at(self.index, width), text: piece^)
+        return Optional[Codepoint](value^)
+
     def __len__(self) -> Int:
-        var text = self.src.to_string()
-        var count = 0
-        var at = self.index
-        while at < text.size:
-            at += text._lead_width(Int(text.data[at]))
-            count += 1
-        return count
+        var total = self.src._codepoints_before(self.src.byte_length())
+        return total - self.src._codepoints_before(self.index)
 
 
 # `String.codepoint_slices()`: one-codepoint sub-views of the source buffer.
@@ -2028,24 +2291,75 @@ struct _CodepointSliceIter[
     var src: StringSpan[Self.iterable_origin]
     var index: Int
 
-    # An iterator is its own iterable (`for x in s.codepoints()`).
+    # An iterator is its own iterable (`for x in s.codepoint_slices()`).
     def __iter__(self) -> Self:
         return self
 
     def __next__(mut self) raises StopIteration -> StringSpan[Self.iterable_origin]:
-        if self.index >= len(self.src):
+        if self.index >= self.src.byte_length():
             raise StopIteration()
-        var text = self.src.to_string()
         var start = self.index
-        var end = start + text._lead_width(Int(text.data[start]))
+        var end = start + self.src._width_at(start)
         self.index = end
         return self.src._sub_view(start, end)
 
+    # The next codepoint's view without advancing, or None at the end.
+    def peek_next(self) -> Optional[StringSpan[Self.iterable_origin]]:
+        if self.index >= self.src.byte_length():
+            return None
+        return self.src._sub_view(self.index, self.index + self.src._width_at(self.index))
+
     def __len__(self) -> Int:
-        var text = self.src.to_string()
-        var count = 0
+        var total = self.src._codepoints_before(self.src.byte_length())
+        return total - self.src._codepoints_before(self.index)
+
+
+# `codepoint_slices_reversed()`: the one-codepoint sub-views back to front.
+@fieldwise_init
+struct _CodepointSliceReversedIter[
+    iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
+](Copyable, ImplicitlyCopyable, Iterator, Movable):
+    comptime Element = StringSpan[Self.iterable_origin]
+
+    var src: StringSpan[Self.iterable_origin]
+    var end: Int
+
+    def __iter__(self) -> Self:
+        return self
+
+    def __next__(mut self) raises StopIteration -> StringSpan[Self.iterable_origin]:
+        if self.end <= 0:
+            raise StopIteration()
+        var start = self.end - 1
+        while start > 0 and self.src._is_continuation(Int(self.src._data[start])):
+            start -= 1
+        var end = self.end
+        self.end = start
+        return self.src._sub_view(start, end)
+
+    def __len__(self) -> Int:
+        return self.src._codepoints_before(self.end)
+
+
+# `bytes()`: the raw UTF-8 bytes of a borrowed view.
+@fieldwise_init
+struct _BytesIter[
+    iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
+](Copyable, ImplicitlyCopyable, Iterator, Movable):
+    comptime Element = Byte
+
+    var src: StringSpan[Self.iterable_origin]
+    var index: Int
+
+    def __iter__(self) -> Self:
+        return self
+
+    def __next__(mut self) raises StopIteration -> Byte:
+        if self.index >= self.src.byte_length():
+            raise StopIteration()
         var at = self.index
-        while at < text.size:
-            at += text._lead_width(Int(text.data[at]))
-            count += 1
-        return count
+        self.index += 1
+        return self.src._data[at]
+
+    def __len__(self) -> Int:
+        return self.src.byte_length() - self.index

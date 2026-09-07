@@ -32,6 +32,6 @@ def main():
     var lazy = Lazy[String, Int]("x=", 42)
     print(lazy)
     var s: String = String(lazy)
-    print(s, len(s))
+    print(s, s.byte_length())
     var mixed = Lazy[String, Once, String]("[", Once(7), "]")
     print(mixed)

@@ -15,4 +15,4 @@ def main():
     acc += a
     acc += "-"
     acc += b
-    print(acc, len(acc))
+    print(acc, acc.byte_length())
