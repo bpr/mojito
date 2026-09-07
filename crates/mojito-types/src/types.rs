@@ -406,10 +406,31 @@ pub fn tuple_type(elements: Vec<Ty>) -> Ty {
     nominal_type(TUPLE_TYPE_NAME, elements)
 }
 
+/// Current Mojo's spelling of a value argument inside a type name: a scalar
+/// spells `value : Type` (`3 : SIMD[DType.int, 1]`, a vector key
+/// `[0, 0, 0, 0] : SIMD[DType.uint64, 4]`), a `Bool` spells bare
+/// `True`/`False`, and a type-valued argument spells as a type name.
+pub fn unqualified_value_argument(value: &CtValue) -> String {
+    match value {
+        CtValue::Bool(value) => (if *value { "True" } else { "False" }).to_string(),
+        CtValue::Int(_) | CtValue::IntLiteral(_) => format!("{value} : SIMD[DType.int, 1]"),
+        CtValue::UInt(value) => format!("{value} : SIMD[DType.uint, 1]"),
+        CtValue::Float(bits) => {
+            format!("{:?} : SIMD[DType.float64, 1]", f64::from_bits(*bits))
+        }
+        CtValue::FloatLiteral(_) => format!("{value} : SIMD[DType.float64, 1]"),
+        CtValue::Type(ty) => unqualified_type_name(ty),
+        other => other.to_string(),
+    }
+}
+
 /// Current Mojo's unqualified type-name spelling (`_unqualified_type_name`)
 /// for the proof subset: the scalar aliases spell through their `SIMD`
 /// identity (`Int` is `SIMD[DType.int, 1]`), nominal structs drop their
 /// module qualification, and applied arguments are spelled recursively.
+/// A minted value specialization reached here spells its symbol's base name
+/// only; `mojito_symbol::symbol::unqualified_instance_name` is the spelling
+/// that decodes the baked arguments at every nesting level.
 pub fn unqualified_type_name(ty: &Ty) -> String {
     match ty {
         Ty::Int | Ty::IntLiteral => "SIMD[DType.int, 1]".to_string(),
@@ -450,13 +471,11 @@ pub fn unqualified_type_name(ty: &Ty) -> String {
                         {
                             values
                                 .iter()
-                                .map(|value| match value {
-                                    CtValue::Type(ty) => unqualified_type_name(ty),
-                                    other => other.to_string(),
-                                })
+                                .map(unqualified_value_argument)
                                 .collect::<Vec<_>>()
                                 .join(", ")
                         }
+                        TyArg::Val(value) => unqualified_value_argument(value),
                         other => other.to_string(),
                     })
                     .collect::<Vec<_>>()

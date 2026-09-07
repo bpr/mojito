@@ -1079,3 +1079,25 @@ fn module_comptime_binding_does_not_shadow_specialized_type_parameters() {
     let output = run(src).expect("a module comptime binding named T must elaborate");
     assert!(output.starts_with("5\n"), "unexpected output: {output}");
 }
+
+#[test]
+fn nested_tuple_type_arguments_resolve_in_every_position() {
+    // A `Tuple[...]` application resolves as a nested type argument (the
+    // nullary default over a nested element, a `T: Defaultable` bound), and
+    // bare `Tuple(...)` calls nest without an annotation: the specialization
+    // key spells a minted element canonically across discovery rounds.
+    let src = "def make[T: Defaultable]() -> T:\n    return T()\n\ndef main():\n    var t = Tuple[Int, Tuple[Int, Bool]]()\n    print(t[0], t[1][0], t[1][1])\n    var x = Tuple(1, True)\n    var u = Tuple(x, 2)\n    print(u[0][0], u[0][1], u[1])\n    var v = Tuple(Tuple(3, False), 4)\n    print(v[1])\n    var m = make[Tuple[Int, Tuple[Int]]]()\n    print(m[1][0])\n";
+    assert_eq!(run_compiled(src).unwrap(), "0 0 False\n1 True 2\n4\n0\n");
+    let err = run_compiled("def main():\n    var t = Tuple[Int, Tuple[3]]()\n    print(t[0])\n")
+        .unwrap_err();
+    assert!(err.contains("expected a type, found a value"), "{err}");
+}
+
+#[test]
+fn stored_array_and_span_iterators_iterate_themselves() {
+    let src = "def main():\n    var a = [1, 2]\n    var ai = a.__iter__()\n    for x in ai:\n        print(x)\n    var xs: List[Int] = [5, 6]\n    var sp = Span(xs)\n    var it = sp.__iter__()\n    for y in it:\n        print(y)\n";
+    assert_eq!(run(src).unwrap(), "1\n2\n5\n6\n");
+    let mutation = "def main():\n    var xs: List[Int] = [1, 2]\n    var sp = Span(xs)\n    var it = sp.__iter__()\n    xs.append(9)\n    print(it.__len__())\n";
+    let err = run(mutation).unwrap_err();
+    assert!(err.contains("conflicts with live reference"), "{err}");
+}

@@ -1639,8 +1639,10 @@ impl Checker {
 
     /// Resolve one supplied parameter argument against its declared parameter: a
     /// type parameter takes a type (bound-checked); a value parameter takes a
-    /// comptime `Int`. A lone-identifier value argument is reinterpreted as a
-    /// type when the parameter is a type parameter.
+    /// comptime `Int` or the enclosing struct's own value parameter spelled
+    /// `Self.n` (upstream's required spelling inside a struct body). A
+    /// lone-identifier value argument is reinterpreted as a type when the
+    /// parameter is a type parameter.
     pub(super) fn resolve_param_arg(
         &self,
         decl: &ParamDecl,
@@ -1773,6 +1775,26 @@ impl Checker {
                         }
                     })?;
                     Ok(TyArg::Val(value))
+                }
+                // `Self.n` names the enclosing struct's own value parameter:
+                // symbolic while checking the template (exactly the bare
+                // spelling `eval_associated_ct` resolves), bound to the
+                // instance value inside a per-instantiation clone.
+                ParamArg::Type(SourceType::SelfParam(param))
+                    if matches!(self.self_param_ct_value(param), Some(CtValue::Param(_))) =>
+                {
+                    if let Some(Ty::Struct(_, arguments)) = &self.self_ty
+                        && arguments.len() == self.self_decls.len()
+                        && let Some(index) = self
+                            .self_decls
+                            .iter()
+                            .position(|d| d.name() == param && matches!(d, ParamDecl::Value { .. }))
+                        && let Some(TyArg::Val(bound)) = arguments.get(index)
+                        && !matches!(bound, CtValue::Param(_))
+                    {
+                        return Ok(TyArg::Val(bound.clone()));
+                    }
+                    Ok(TyArg::Val(CtValue::Param(param.clone())))
                 }
                 ParamArg::Type(_) => Err(TypeError::TypeMismatch {
                     expected: "a value".to_string(),

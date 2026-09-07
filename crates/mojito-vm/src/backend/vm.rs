@@ -1256,8 +1256,13 @@ fn navigate_reference_mut<'a>(
     for segment in projection {
         value = match segment {
             RefProjection::Field(name) => match value {
-                Value::Struct { fields, .. } => fields
+                Value::Struct {
+                    fields,
+                    value_params,
+                    ..
+                } => fields
                     .iter_mut()
+                    .chain(value_params.iter_mut())
                     .find(|(field, _)| field == name)
                     .map(|(_, value)| value)
                     .ok_or_else(|| RuntimeError::TypeError(format!("no field '{name}'")))?,

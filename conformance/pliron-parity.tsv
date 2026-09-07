@@ -356,6 +356,7 @@ assets/ok/span_view_basics.mojo	main	exe-differential	sanitized
 assets/ok/static_call_origin_application.mojo	main	exe-differential	sanitized
 assets/ok/static_methods.mojo	main	exe-differential	sanitized
 assets/ok/std_traits_origin_imports.mojo	main	exe-differential	sanitized
+assets/ok/stored_array_span_iterators.mojo	main	exe-differential	sanitized
 assets/ok/string_capacity.mojo	main	exe-differential	sanitized
 assets/ok/string_escapes.mojo	main	exe-differential	sanitized
 assets/ok/string_grapheme_iteration.mojo	main	exe-differential	sanitized
@@ -385,9 +386,11 @@ assets/ok/tstring_generic_interpolation.mojo	main	exe-differential	sanitized
 assets/ok/tstring_lazy.mojo	main	exe-differential	sanitized
 assets/ok/tuple_array_defaultable.mojo	main	exe-differential	sanitized
 assets/ok/tuple_hashable_dict_key.mojo	main	exe-differential	sanitized
+assets/ok/tuple_nested_type_arguments.mojo	main	exe-differential	sanitized
 assets/ok/tuple_struct_element_equality.mojo	main	exe-differential	sanitized
 assets/ok/tuple_unpack.mojo	main	exe-differential	sanitized
 assets/ok/tuple_unpack_call.mojo	main	exe-differential	sanitized
+assets/ok/type_names_applied_elements.mojo	main	exe-differential	sanitized
 assets/ok/type_predicate_comptime_if.mojo	main	exe-differential	sanitized
 assets/ok/type_receiver_instance_call.mojo	main	exe-differential	sanitized
 assets/ok/typelist_comptime_vocabulary.mojo	main	exe-differential	sanitized

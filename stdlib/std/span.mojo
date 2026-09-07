@@ -115,18 +115,26 @@ struct Span[mut: Bool, //, T: Movable, origin: Origin[mut=mut]](
 # The borrowed Span iterator: borrows its source span (whose loans keep the
 # underlying List alive) and yields element references at the span's
 # interior-generation granularity, so structural mutation of the source
-# during iteration invalidates the yielded references.
+# during iteration invalidates the yielded references. It iterates itself
+# (upstream's `IteratorType = Self`), so a stored iterator drives a loop.
 @fieldwise_init
 struct _SpanIter[
     iterable_mut: Bool, //, T: Movable, iterable_origin: Origin[mut=iterable_mut]
 ](Iterator where conforms_to(T, Copyable)):
     comptime Element = Self.T
+    comptime IteratorType[
+        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
+    ] = _SpanIter[Self.T, iterable_origin]
 
     var src: ref[iterable_origin] Span[Self.T, Self.iterable_origin]
     var index: Int
 
     def __len__(self) -> Int:
         return len(self.src) - self.index
+
+    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
+        ref source = self.src
+        return _SpanIter[Self.T](source, self.index)
 
     def __next__(mut self) raises StopIteration -> ref[
         Self.iterable_origin._get_owned_interior["element"]

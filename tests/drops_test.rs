@@ -694,3 +694,11 @@ fn named_destructor_call_skips_the_whole_value_deinit() {
     let src = "struct Item(Movable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __init__(out self, *, deinit move: Self):\n        self.id = move.id\n    def __deinit__(deinit self):\n        print(\"drop item\", self.id)\n\nstruct Holder(Movable):\n    var item: Item\n    def __init__(out self, id: Int):\n        self.item = Item(id)\n    def __deinit__(deinit self):\n        print(\"drop holder\", self.item.id)\n    def finish(deinit self):\n        print(\"finish\", self.item.id)\n\ndef main():\n    var h = Holder(1)\n    h^.finish()\n    print(\"done\")\n";
     assert_eq!(vm(src), "finish 1\ndrop item 1\ndone\n");
 }
+
+#[test]
+fn stored_span_iterator_keeps_the_span_alive() {
+    let out = vm(
+        "def main():\n    var xs: List[Int] = [1, 2, 3]\n    var sp = Span(xs)\n    var it = sp.__iter__()\n    print(it.__len__())\n    for y in it:\n        print(y)\n",
+    );
+    assert_eq!(out, "3\n1\n2\n3\n");
+}

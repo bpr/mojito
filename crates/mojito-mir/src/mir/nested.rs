@@ -19,6 +19,9 @@ pub(super) struct FunctionLowering<'a> {
     /// They are predeclared for name/type resolution but do not increase the
     /// function's ordinary runtime parameter count.
     pub(super) value_parameter_locals: Vec<(String, Ty)>,
+    /// The enclosing struct's non-callable value parameters (a method), for
+    /// `Self.n` bracket-slot reads; empty for a free function.
+    pub(super) receiver_value_parameters: Vec<(String, Ty)>,
     pub(super) owned_parameters: Vec<bool>,
     pub(super) deinit_parameters: Vec<bool>,
     pub(super) reference_parameters: Vec<bool>,
@@ -43,6 +46,7 @@ pub(super) fn lower_fn_nested(
         parameter_names: param_names,
         parameter_types: param_types,
         value_parameter_locals,
+        receiver_value_parameters,
         owned_parameters: owned_params,
         deinit_parameters: deinit_params,
         reference_parameters: ref_params,
@@ -80,6 +84,7 @@ pub(super) fn lower_fn_nested(
         &ref_params,
         &[],
         checked.call_transfers(),
+        &receiver_value_parameters,
     );
     f.n_params = param_types.len();
     for (slot, ty) in param_types.iter().enumerate() {
@@ -522,6 +527,7 @@ fn lower_nested_node(
                 .map(|capture| capture.binding)
                 .collect::<Vec<_>>(),
             checked.call_transfers(),
+            &[],
         );
         nf.n_params = ptys.len();
         for (slot, ty) in ptys.iter().enumerate() {

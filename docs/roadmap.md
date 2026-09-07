@@ -90,35 +90,16 @@ exempt from the ordering.
   executable oracle first, then everyday spellings that reject today, then
   parity details; no task depends on a later one. A
   task closes when its bullets are done; a residue discovered inside a task
-  moves to the task that owns its fix (or to task 6, the deliberate
-  deferrals), never back to a finished one. Task 1 is one session (the
-  2026-09-06 pack residues, clumped by the subsystem that owns the fix); plan
-  first: task 2 (ordering); the rest are direct.
+  moves to the task that owns its fix (or to task 5, the deliberate
+  deferrals), never back to a finished one. Plan first: task 1 (ordering);
+  the rest are direct.
 
-  1. **Parameter kinds in nested positions.** Value parameters, type packs,
-     and type names classified through an alias, a nested call, or a
-     display rather than a top-level application. Everyday loops already
-     run (`for x in span`, `xs.__reversed__()`), so these are parity
-     details.
-     - `_ArrayIter` and `_SpanIter` do not iterate themselves: an
-       `IteratorType` alias naming the enclosing struct's own value parameter
-       resolves `length` as a type, and the erased `_SpanIter.__next__` body
-       has no VM dispatch for `len(span)`. `_ListIter`/`_SetIter` do.
-     - Nested and whole-pack-forwarded type-pack calls keep the syntactic
-       element-typing path (`not a compile-time value` for a non-evident
-       element); only top-level calls consult the checker's instantiation.
-       The nullary default construction with a nested Tuple type argument
-       (`Tuple[Int, Tuple[Int, Bool]]()`) takes that path too and reports
-       `'Tuple' expects 2 argument(s), got 0`; `Tuple(1, inner)` and a
-       bound generic's `T()` over the same type run.
-     - `TypeNames[Int]()` prints `SIMD[DType.int, 1]` where upstream prints
-       `Int`.
-  2. **Storage-shape items with a known blocker.** Short plan (ordering).
+  1. **Storage-shape items with a known blocker.** Short plan (ordering).
      - Relax K/V/element bounds toward upstream's Movable-only `KeyElement`
        (a per-API `where` pass, as `List[T: AnyType]`).
      - `(*, unsafe_uninit_length)` construction and resize: blocked on an
        uninit-element storage story for List (MaybeUninit-adjacent).
-  3. **String Unicode, iterator, and parsing extras.** Port on demand.
+  2. **String Unicode, iterator, and parsing extras.** Port on demand.
      - `upper`/`lower`: simple-case subset (ASCII, Latin-1, Latin
        Extended-A, Greek, Cyrillic, `ß` → `SS`); upstream ships full Unicode
        simple and special casing tables.
@@ -132,12 +113,12 @@ exempt from the ordering.
      - `len(s)` on a String or StringSpan is accepted (byte length) where
        upstream rejects it as ambiguous (`byte_length()`, `len(s.codepoints())`,
        `len(s.graphemes())`); an extension to drop at the next re-pin.
-  4. **Compile-time collections.** `comptime d = {...}` Dict/Set values
+  3. **Compile-time collections.** `comptime d = {...}` Dict/Set values
      hashed with `default_comp_time_hasher`. `CtValue` has no mapping kind
      (`crates/mojito-types/src/ct.rs`), `Elab::eval` has no dict-display
      arm, and the VM-CTFE purity walk admits only the hasher protocol's
      method calls, so a general compile-time method-call rule comes with it.
-  5. **Diagnostic wording and strictness.**
+  4. **Diagnostic wording and strictness.**
      - An unavailable where-gated method reports `'set' is unavailable for
        Variant[Conn]: its where clause evaluated to False` rather than
        upstream's clause text.
@@ -146,7 +127,14 @@ exempt from the ordering.
        non-`Deinitable` field parameter (`struct Box[T: Copyable & Movable]:
        var value: Self.T`) is accepted, where upstream reports `use Self.T`
        and requires a `Deinitable` bound.
-  6. **Deliberate deferrals.** Nothing depends on these; each is a
+     - A struct's own value parameter spelled bare (`n` rather than
+       `Self.n`) in an expression-position bracket slot reaches MIR as an
+       untyped `UseVar`; upstream rejects the bare spelling ("use
+       `Self.n`"), so it should be a checker error.
+     - `Counter[Self.index]` (a field, not a parameter) in a bracket slot
+       reports `not a compile-time Int constant: Counter` rather than
+       naming the field.
+  5. **Deliberate deferrals.** Nothing depends on these; each is a
      conscious limit, listed here so it is not mistaken for unfinished
      task work.
      - Clones are minted per whole instance (no reachability pruning) and
@@ -171,6 +159,46 @@ exempt from the ordering.
      - Casting a tracked pointer to an untracked origin at its source's
        last use (`s.unsafe_ptr().unsafe_origin_cast[ImmUntrackedOrigin]()`)
        frees the source before the pointer is read — as upstream would.
+     - Type-pack calls inside a nested `def` and whole-pack-forwarded calls
+       keep the syntactic element-typing path (`a heterogeneous pack
+       specialization needs an expression whose type is statically evident
+       before checking` for `take(b, 1)` over a local `b`); top-level calls
+       consult the checker's instantiation. Lifting it needs four pieces:
+       nested templates live only in `NestedMono` and are deleted by
+       `replace_templates` before the checker sees them, the checker would
+       have to accept a nested variadic shell abstractly,
+       `def_specialization_requests` is top-level only, and
+       `Mono.def_call_targets` must reach `NestedMono::scan_expression`
+       with a `def_request_target` fallback.
+     - A user variadic struct application as a pack element
+       (`Tuple[TypeNames[Int]]`) keeps the fixed-arity diagnostic: its
+       erased shell has no sound nominal form (the public `Tuple` is the one
+       compiler-known template whose `*Ts` absorbs every argument).
+     - A standalone nullary vector construction `SIMD[d, w]()` rejects
+       (`SIMD construction expects w element(s) or 1 to splat, got 0`);
+       only a Tuple element defaults to zero lanes.
+     - A public Tuple as an explicit type argument does not conform to
+       `Deinitable` (`make[T: Defaultable & Deinitable]()` over
+       `Tuple[Int, Bool]` reports the bound failure) while the inferred
+       shape runs.
+     - Value-parameterized structs get no instance clones, so an erased
+       body's `_unqualified_type_name[Self.T]()` spells `T`
+       (`repr([1, 2])` prints `Array[T, 2]([Int(1), Int(2)])` where
+       upstream prints the element type), and a `Self.n` bracket argument
+       inside such a body (`Counter[Self.length](i)`) is VM-only: native
+       monomorphization needs a compile-time-constant value argument
+       (`unsupported value parameter 'length' is not compile-time
+       constant`).
+     - `_unqualified_type_name` spells nested structs unqualified where
+       upstream keeps a non-prelude struct's module path
+       (`Optional[std.collections.dict.Dict[...]]`, `List[up.Flag[True]]`)
+       while `List`/`Optional`/`String`/`SIMD` stay bare.
+     - A non-parameterized struct alias mentioning a value parameter
+       (`comptime Alias = S[Self.T, Self.length]`) resolved through an
+       instance (`S[Int, 3].Alias`) keeps `length` symbolic (`expected
+       S[Int, length], found S[Int, 3]`): `associated_type_from_base`
+       substitutes type parameters only. Parameterized aliases substitute
+       both.
 
 - [ ] **Filesystem and I/O slice** — representative file/path/stream APIs
   on the Writer and explicit-destroy foundations.

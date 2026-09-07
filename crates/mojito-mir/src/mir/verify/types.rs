@@ -426,7 +426,12 @@ pub(super) fn contains_type_param(ty: &Ty) -> bool {
         Ty::Ref(reference) => contains_type_param(&reference.referent),
         Ty::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
             mojito_types::types::TyArg::Ty(inner) => contains_type_param(inner),
-            mojito_types::types::TyArg::Val(_) | mojito_types::types::TyArg::Origin(_) => false,
+            // A symbolic value argument (`Counter[Self.length]` in an erased
+            // method's signature) is an ABI slot the instance binds.
+            mojito_types::types::TyArg::Val(value) => {
+                matches!(value, mojito_types::ct::CtValue::Param(_))
+            }
+            mojito_types::types::TyArg::Origin(_) => false,
         }),
         Ty::Func {
             params,

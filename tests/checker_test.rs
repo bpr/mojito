@@ -6143,3 +6143,21 @@ fn variant_storage_is_compiler_private() {
         ));
     }
 }
+
+#[test]
+fn accepts_self_qualified_value_parameter_in_a_struct_alias() {
+    // `Self.length` names the enclosing struct's own value parameter inside
+    // its aliases (upstream's required spelling); a field or a type slot in
+    // that position still rejects.
+    ok(
+        "struct Counter[length: Int](Copyable, Movable):\n    comptime Alias[iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]] = Counter[Self.length]\n    comptime Plain = Counter[Self.length]\n    var index: Int\n\n    def __init__(out self):\n        self.index = 0\n",
+    );
+    let e = err(
+        "struct Counter[length: Int](Copyable, Movable):\n    comptime Alias = Counter[Self.index]\n    var index: Int\n\n    def __init__(out self):\n        self.index = 0\n",
+    );
+    assert!(e.to_string().contains("not a compile-time"), "got {e:?}");
+    let e = err(
+        "struct P[T: AnyType, n: Int](Copyable, Movable):\n    comptime Alias = P[Self.n, Self.n]\n    var index: Int\n\n    def __init__(out self):\n        self.index = 0\n",
+    );
+    assert!(e.to_string().contains("not a compile-time"), "got {e:?}");
+}

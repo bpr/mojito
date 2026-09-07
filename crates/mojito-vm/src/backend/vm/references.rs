@@ -362,8 +362,18 @@ impl VmBackend {
                 value = self.read_reference(&value, current, current_variables)?;
             }
             value = match (segment, value) {
-                (RefProjection::Field(name), Value::Struct { fields, .. }) => fields
+                // Declared fields first, then reified value parameters (a
+                // `Self.n` read through a `ref self` receiver), as `get_field`.
+                (
+                    RefProjection::Field(name),
+                    Value::Struct {
+                        fields,
+                        value_params,
+                        ..
+                    },
+                ) => fields
                     .into_iter()
+                    .chain(value_params)
                     .find(|(field, _)| field == name)
                     .map(|(_, value)| value)
                     .ok_or_else(|| RuntimeError::TypeError(format!("no field '{name}'")))?,
@@ -494,9 +504,17 @@ impl VmBackend {
                         suffix: &projection[position + 1..],
                     }));
                 }
-                (RefProjection::Field(name), Value::Struct { fields, .. }) => {
+                (
+                    RefProjection::Field(name),
+                    Value::Struct {
+                        fields,
+                        value_params,
+                        ..
+                    },
+                ) => {
                     value = fields
                         .into_iter()
+                        .chain(value_params)
                         .find(|(field, _)| field == name)
                         .map(|(_, value)| value)
                         .ok_or_else(|| RuntimeError::TypeError(format!("no field '{name}'")))?;

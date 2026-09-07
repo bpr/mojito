@@ -324,3 +324,6 @@ call-temporary-ref-receiver	run	assets/ok/call_temporary_ref_receiver.mojo
 write-repr-to-bounded	run	conformance/fixtures/write_repr_to_bounded.mojo
 slice-optional-bounds	run	conformance/fixtures/slice_optional_bounds.mojo
 type-receiver-instance-mismatch	reject	assets/type_error/type_receiver_instance_mismatch.mojo
+stored-array-span-iterators	run	assets/ok/stored_array_span_iterators.mojo
+tuple-nested-type-arguments	run	assets/ok/tuple_nested_type_arguments.mojo
+nested-type-name-spellings	run	conformance/fixtures/nested_type_name_spellings.mojo

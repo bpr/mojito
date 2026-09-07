@@ -943,3 +943,24 @@ fn compiled_program_caches_one_elaborated_backend_artifact() {
     assert_eq!(execution.output, "42\n");
     assert!(emitted.starts_with("mojito-mir"));
 }
+
+#[test]
+fn type_names_accept_applied_pack_elements_and_nested_spellings() {
+    // A `Tuple[...]` or `SIMD[...]` application as a type-pack element, and
+    // `_unqualified_type_name` spelling a minted value specialization at
+    // every nesting level with `True`/`False` value arguments.
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            "from std.format._utils import TypeNames\nfrom std.reflection.type_info import _unqualified_type_name\n\nstruct Flag[b: Bool](Copyable, Movable):\n    var v: Int\n\n    def __init__(out self):\n        self.v = 0\n\ndef main():\n    print(TypeNames[Tuple[Int, Bool]]())\n    print(TypeNames[SIMD[DType.int, 4]]())\n    print(_unqualified_type_name[Dict[String, Int]]())\n    print(_unqualified_type_name[Optional[Set[Int]]]())\n    print(_unqualified_type_name[List[Flag[True]]]())\n",
+            std::path::Path::new("/tmp/mojito_type_names_applied.mojo"),
+        )
+        .expect("compile the applied pack elements");
+    let output = compiler
+        .execute(&program)
+        .expect("run the applied pack elements");
+    assert_eq!(
+        output.output,
+        "Tuple[SIMD[DType.int, 1], Bool]\nSIMD[DType.int, 4]\nDict[String, SIMD[DType.int, 1], AHasher[[0, 0, 0, 0] : SIMD[DType.uint64, 4]]]\nOptional[Set[SIMD[DType.int, 1], AHasher[[0, 0, 0, 0] : SIMD[DType.uint64, 4]]]]\nList[Flag[True]]\n"
+    );
+}

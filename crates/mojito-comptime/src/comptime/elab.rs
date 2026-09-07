@@ -448,6 +448,18 @@ impl<'a> Elab<'a> {
                         ))
                     })
                 }
+                // `Self.n` names the enclosing struct's own value parameter;
+                // a walk that bound it to a value materializes that value.
+                ParamArg::Type(Type::SelfParam(param)) => match scope.get(param) {
+                    Some(CtValue::Type(_)) | None => Err(ComptimeError::NotComptime(format!(
+                        "value parameter '{name}' expects a compile-time {ty}, got Self.{param}"
+                    ))),
+                    Some(value) => materialize_ct_value(value.clone(), ty).ok_or_else(|| {
+                        ComptimeError::NotComptime(format!(
+                            "value parameter '{name}' expects {ty}, got {value}"
+                        ))
+                    }),
+                },
                 ParamArg::Type(_) => Err(ComptimeError::NotComptime(format!(
                     "value parameter '{name}' expects a compile-time {ty}, got a type argument"
                 ))),
@@ -674,6 +686,21 @@ impl<'a> Elab<'a> {
                 "'{name}' is not a compile-time type"
             )));
         };
+        // The compiler-known public Tuple's single `*Ts` declaration absorbs
+        // every argument: a nested application (`Tuple[Int, Tuple[Int,
+        // Bool]]`, `Optional[Tuple[Int, Bool]]`, a `TypeNames` element) stays
+        // the nominal `Tuple[...]` type — the spelling the checker canonicalizes
+        // onto the minted specialization — rather than tripping the fixed-arity
+        // check below.
+        if name == mojito_types::types::TUPLE_TYPE_NAME
+            && let [ParamDecl::Type { variadic: true, .. }] = info.decls.as_slice()
+        {
+            let elements = args
+                .iter()
+                .map(|argument| self.param_arg_type(argument, scope).map(TyArg::Ty))
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(Ty::Struct(name.to_string(), elements));
+        }
         // Omitted trailing arguments fill from declared type-parameter
         // defaults (`Set[Int]` is `Set[Int, default_hasher]`), matching the
         // def-template default fill in `resolve_spec_args_for`. A default

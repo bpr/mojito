@@ -53,6 +53,7 @@ pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
         &[],
         &[],
         &HashMap::new(),
+        &[],
     )
 }
 
@@ -360,6 +361,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         parameter_names: &names,
                         parameter_types: ptys,
                         value_parameter_locals,
+                        receiver_value_parameters: Vec::new(),
                         owned_parameters: owned,
                         deinit_parameters: deinit,
                         reference_parameters: refp,
@@ -527,6 +529,29 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         param_decls = struct_decls.iter().cloned().chain(param_decls).collect();
                     }
                     let value_parameter_locals = value_parameter_locals(&param_decls);
+                    let receiver_value_parameters: Vec<(String, Ty)> = checked
+                        .generic_parameters_at(&GenericSite::Struct {
+                            module: s.module.clone(),
+                            declaration: name.clone(),
+                        })
+                        .unwrap_or(&[])
+                        .iter()
+                        .filter_map(|decl| match decl {
+                            ParamDecl::Value {
+                                name,
+                                ty,
+                                variadic: false,
+                                ..
+                            } if !matches!(
+                                ty.as_ref(),
+                                Ty::Func { .. } | Ty::GenericFunc { .. }
+                            ) =>
+                            {
+                                Some((name.clone(), (**ty).clone()))
+                            }
+                            _ => None,
+                        })
+                        .collect();
                     declarations.functions.push(MirFunctionDeclaration {
                         lowered_name: mangled.clone(),
                         param_names: regular.iter().map(|param| param.name.clone()).collect(),
@@ -670,6 +695,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             parameter_names: &names,
                             parameter_types: ptys,
                             value_parameter_locals,
+                            receiver_value_parameters,
                             owned_parameters: owned,
                             deinit_parameters: deinit,
                             reference_parameters: refp,
@@ -705,6 +731,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
             &[],
             &[],
             checked.call_transfers(),
+            &[],
         )
     };
     // The synthetic module initializer returns nothing and never raises.
@@ -905,6 +932,10 @@ struct Flatten<'a> {
     /// Checker-substituted loan transfers per call occurrence: after the
     /// call, the destination actual's root receives the sources' loans.
     call_transfers: HashMap<SourceSpan, Vec<mojito_checked::checked::CheckedCallTransfer>>,
+    /// The enclosing struct's non-callable value parameters when lowering a
+    /// method: `Self.n` in a bracket slot reads the receiver's reified
+    /// parameter (`self.n`) instead of reifying a binder spelling.
+    receiver_value_parameters: Vec<(String, Ty)>,
     /// Names rebound more than once, or captured by a nested `def`. A pointer
     /// variable outside this set keeps one statically known loan place for its
     /// whole live range, so deref sites may substitute the owner place.
@@ -1621,6 +1652,11 @@ impl Flatten<'_> {
                 ParamArg::Type(t) => return self.reified_type_argument(t, site),
                 ParamArg::Named { .. } => unreachable!(),
             },
+            ParamArg::Type(mojito_ast::ast::Type::SelfParam(name))
+                if let Some(reg) = self.receiver_value_parameter_read(name, site) =>
+            {
+                return Some(reg);
+            }
             ParamArg::Type(t) => return self.reified_type_argument(t, site),
         };
         let adjustments = self.checked_adjustments(expression);
@@ -1675,6 +1711,28 @@ impl Flatten<'_> {
                     mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument
                 )
             })
+    }
+
+    /// `Self.n` in a bracket slot, where `n` is the enclosing struct's own
+    /// value parameter (`Counter[Self.length](i)`): read the receiver's
+    /// reified parameter exactly as the expression `Self.n` does (the field
+    /// projection `self.n`, which every backend's field navigation resolves
+    /// through the struct's value parameters). `None` when the frame has no
+    /// receiver or `n` is not one of its value parameters.
+    fn receiver_value_parameter_read(&mut self, name: &str, site: &SourceSpan) -> Option<Reg> {
+        let ty = self
+            .receiver_value_parameters
+            .iter()
+            .find(|(candidate, _)| candidate == name)
+            .map(|(_, ty)| ty.clone())?;
+        if !self.vars.iter().any(|var| var == "self") {
+            return None;
+        }
+        let mut place = self.resolved_place("self");
+        place.project(Proj::Field(name.to_string()), ty.clone());
+        let dest = self.fresh_typed(site.clone(), Some(place.root), ty);
+        self.emit(MirInstr::LoadPlace { dest, place });
+        Some(dest)
     }
 
     /// A concrete nominal type argument may bind a runtime-constructible type
@@ -1780,6 +1838,7 @@ struct ExprFacts {
 /// [`lower_cfg`] with a nested-`def` registry in scope: a call to a registered
 /// nested `def` is rewritten to its lifted function (captures prepended) and the
 /// nested `def` statement lowers to nothing.
+#[allow(clippy::too_many_arguments)]
 fn lower_cfg_nested(
     cfg: &Cfg,
     nested: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
@@ -1788,6 +1847,7 @@ fn lower_cfg_nested(
     reference_parameters: &[bool],
     capture_bindings: &[mojito_types::origin::OwnerId],
     call_transfers: &HashMap<SourceSpan, Vec<mojito_checked::checked::CheckedCallTransfer>>,
+    receiver_value_parameters: &[(String, Ty)],
 ) -> MirFunction {
     let mut mir = MirFunction {
         blocks: Vec::new(),
@@ -1833,6 +1893,7 @@ fn lower_cfg_nested(
                 .map(|(slot, binding)| (binding, slot as VarId))
                 .collect(),
             nested: nested.clone(),
+            receiver_value_parameters: receiver_value_parameters.to_vec(),
             overloads: overloads.clone(),
             checked: std::sync::Arc::clone(&cfg.checked),
             call_transfers: call_transfers.clone(),

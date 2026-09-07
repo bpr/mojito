@@ -9,6 +9,7 @@ from std.memory import unsafe_alloc
 
 from std.hashlib import Hasher
 from std.iterable import Iterable, IterableOwned, Iterator, StopIteration
+from std.reflection.type_info import _unqualified_type_name
 
 @fieldwise_init
 struct _ArrayIter[
@@ -18,12 +19,21 @@ struct _ArrayIter[
     iterable_origin: Origin[mut=iterable_mut],
 ](Iterator where conforms_to(T, Copyable)):
     comptime Element = Self.T
+    comptime IteratorType[
+        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
+    ] = _ArrayIter[Self.T, Self.length, iterable_origin]
 
-    var src: ref[iterable_origin] Array[Self.T, length]
+    var src: ref[iterable_origin] Array[Self.T, Self.length]
     var index: Int
 
     def __len__(self) -> Int:
         return len(self.src) - self.index
+
+    # The iterator iterates itself (upstream's `IteratorType = Self`): a
+    # stored iterator drives a loop directly.
+    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
+        ref source = self.src
+        return _ArrayIter(source, self.index)
 
     def __next__(mut self) raises StopIteration -> ref[
         Self.iterable_origin._get_owned_interior["element"]
@@ -84,7 +94,7 @@ struct Array[T: AnyType, length: Int](
     comptime Element = Self.T
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = _ArrayIter[Self.T, length, iterable_origin]
+    ] = _ArrayIter[Self.T, Self.length, iterable_origin]
     comptime IteratorOwnedType = _ArrayOwnedIter[Self.T]
 
     var data: UnsafePointer[Self.T]
@@ -239,3 +249,16 @@ struct Array[T: AnyType, length: Int](
             writer.write(self.data[i])
             i += 1
         writer.write("]")
+
+    # Upstream's text: `Array[SIMD[DType.int, 1], 2]([Int(1), Int(2)])`.
+    def write_repr_to(self, mut writer: Some[Writer]) where conforms_to(
+        Self.T, Writable
+    ):
+        writer.write("Array[", _unqualified_type_name[Self.T](), ", ", Self.length, "]([")
+        var i = 0
+        while i < Self.length:
+            if i > 0:
+                writer.write(", ")
+            writer.write(repr(self.data[i]))
+            i += 1
+        writer.write("])")

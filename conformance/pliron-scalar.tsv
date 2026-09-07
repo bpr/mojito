@@ -356,6 +356,7 @@ assets/ok/span_view_basics.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/static_call_origin_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/static_methods.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/std_traits_origin_imports.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/stored_array_span_iterators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_capacity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_escapes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_grapheme_iteration.mojo	-	ineligible	no-scalar-entry-shape
@@ -385,9 +386,11 @@ assets/ok/tstring_generic_interpolation.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tstring_lazy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_array_defaultable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_hashable_dict_key.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/tuple_nested_type_arguments.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_struct_element_equality.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_unpack.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_unpack_call.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/type_names_applied_elements.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_predicate_comptime_if.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_receiver_instance_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/typelist_comptime_vocabulary.mojo	-	ineligible	no-scalar-entry-shape

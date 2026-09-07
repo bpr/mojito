@@ -3672,3 +3672,53 @@ fn multi_index_element_call_lowers_variadic_subscript_then_indirect_call() {
         mir.invariant_errors
     );
 }
+
+#[test]
+fn stored_span_iterator_lends_the_span_place() {
+    // A view-returning method on a named view receiver lends the receiver
+    // place itself (the Span local) beside the storage the view borrows (the
+    // List), so the stored iterator keeps its source view alive.
+    let source = "def main():\n    var xs: List[Int] = [1, 2, 3]\n    var sp = Span(xs)\n    var it = sp.__iter__()\n    print(it.__len__())\n";
+    let compiler = Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile the stored Span iterator");
+    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let main = &mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main MIR")
+        .1;
+    let var = |name: &str| {
+        main.var_names
+            .iter()
+            .position(|candidate| candidate == name)
+            .expect("named variable")
+    };
+    let (xs, sp, it) = (var("xs"), var("sp"), var("it"));
+    let loans = main
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .find_map(|instruction| match instruction {
+            MirInstr::EstablishLoans {
+                reference, loans, ..
+            } if *reference as usize == it => Some(loans),
+            _ => None,
+        })
+        .expect("the stored iterator establishes loans");
+    assert!(
+        loans.iter().any(|loan| {
+            loan.place.root as usize == sp
+                && loan.place.proj.is_empty()
+                && !loan.mutable
+                && loan.interior.is_none()
+        }),
+        "the iterator lends the Span place itself: {loans:#?}"
+    );
+    assert!(
+        loans.iter().any(|loan| loan.place.root as usize == xs),
+        "and still the List the Span borrows: {loans:#?}"
+    );
+}

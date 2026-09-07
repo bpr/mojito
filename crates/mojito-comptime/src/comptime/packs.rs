@@ -420,6 +420,26 @@ fn default_constructor_call(ty: &Type, semantic: &Ty, span: Span) -> Option<Expr
             span,
         ));
     }
+    // A SIMD element default-constructs to zero lanes: the checker accepts one
+    // lane to splat, not a nullary construction, so spell the zero explicitly.
+    if let (Ty::Simd { dtype, .. }, Type::Named(name, arguments)) = (semantic, ty) {
+        let zero = if matches!(dtype, mojito_ast::ast::Dtype::Bool) {
+            ExprKind::Bool(false)
+        } else if dtype.is_float() {
+            ExprKind::Float(0.0.into())
+        } else {
+            ExprKind::Int(0.into())
+        };
+        return Some(Expr::new(
+            ExprKind::Call {
+                name: name.clone(),
+                param_args: arguments.clone(),
+                args: vec![Expr::new(zero, span)],
+                kwargs: Vec::new(),
+            },
+            span,
+        ));
+    }
     let literal = match ty {
         Type::Int | Type::UInt => Some(ExprKind::Int(0.into())),
         Type::Bool => Some(ExprKind::Bool(false)),

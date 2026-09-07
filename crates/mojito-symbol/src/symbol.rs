@@ -1444,6 +1444,46 @@ pub fn is_tuple_specialization_symbol(name: &str) -> bool {
         .is_some_and(|rest| rest.starts_with('t'))
 }
 
+/// The specialization-key spelling of a type: a minted public-Tuple instance
+/// that carries its element arguments (`Tuple$t2[...]` over `[Int, Bool]`)
+/// spells as the canonical `Tuple[Int, Bool]` application, so a key nesting
+/// it is the same before and after that inner specialization is declared.
+/// Argument-erased symbols (`Tuple$t2[...]` over `[]`) carry no elements to
+/// respell and stay verbatim.
+pub fn canonical_specialization_type(ty: &Ty) -> Ty {
+    let respell = |inner: &Ty| canonical_specialization_type(inner);
+    match ty {
+        Ty::Struct(name, args)
+            if !args.is_empty()
+                && name != mojito_types::types::TUPLE_TYPE_NAME
+                && mojito_types::types::tuple_elements(ty).is_some() =>
+        {
+            Ty::Struct(
+                mojito_types::types::TUPLE_TYPE_NAME.to_string(),
+                mojito_types::types::map_tyargs(args, respell),
+            )
+        }
+        Ty::Struct(name, args) => {
+            Ty::Struct(name.clone(), mojito_types::types::map_tyargs(args, respell))
+        }
+        Ty::ComptimeList(element) => Ty::ComptimeList(Box::new(respell(element))),
+        Ty::Tuple(elements) => Ty::Tuple(elements.iter().map(respell).collect()),
+        Ty::RuntimePack(elements) => Ty::RuntimePack(elements.iter().map(respell).collect()),
+        Ty::VariadicPack(element) => Ty::VariadicPack(Box::new(respell(element))),
+        Ty::Variant(alternatives) => Ty::Variant(alternatives.iter().map(respell).collect()),
+        Ty::Pointer { element, origin } => Ty::Pointer {
+            element: Box::new(respell(element)),
+            origin: origin.clone(),
+        },
+        Ty::Ref(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = Box::new(respell(&reference.referent));
+            Ty::Ref(reference)
+        }
+        other => other.clone(),
+    }
+}
+
 /// Canonical concrete symbol selected for public `Tuple[*Ts]` element types.
 pub fn tuple_specialization_symbol(elements: &[Ty]) -> String {
     mangle("Tuple", &tuple_specialization_values(elements))
@@ -1466,28 +1506,71 @@ pub fn tuple_specialization_values(elements: &[Ty]) -> Vec<CtValue> {
 
 /// Current Mojo's unqualified spelling of a checked type where a minted
 /// value specialization spells its baked arguments (`AHasher[[0, 0, 0, 0] :
-/// SIMD[DType.uint64, 4]]` for the clone `mangle` named); every other type
-/// spells as `unqualified_type_name`.
+/// SIMD[DType.uint64, 4]]` for the clone `mangle` named) at every nesting
+/// level (`Dict[String, SIMD[DType.int, 1], AHasher[...]]`); every other
+/// type spells as `unqualified_type_name`.
 pub fn unqualified_instance_name(ty: &Ty) -> String {
-    if let Ty::Struct(name, arguments) = ty
-        && arguments.is_empty()
-        && let Some((template, values)) = demangle_specialization(name)
-    {
-        let base = mojito_types::types::unqualified_type_name(&Ty::Struct(
-            template.to_string(),
-            Vec::new(),
-        ));
-        let arguments = values
-            .iter()
-            .map(|value| match value {
-                CtValue::Type(ty) => mojito_types::types::unqualified_type_name(ty),
-                other => other.to_string(),
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        return format!("{base}[{arguments}]");
+    use mojito_types::types::{unqualified_type_name, unqualified_value_argument};
+
+    let spell_value = |value: &CtValue| match value {
+        CtValue::Type(ty) => unqualified_instance_name(ty),
+        other => unqualified_value_argument(other),
+    };
+    match ty {
+        Ty::Struct(name, arguments) => {
+            if let Some(elements) = mojito_types::types::tuple_elements(ty) {
+                let elements = elements
+                    .into_iter()
+                    .map(unqualified_instance_name)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return format!("Tuple[{elements}]");
+            }
+            let (base, baked) = match demangle_specialization(name) {
+                Some((template, values)) => (
+                    unqualified_type_name(&Ty::Struct(template.to_string(), Vec::new())),
+                    values,
+                ),
+                None => (
+                    unqualified_type_name(&Ty::Struct(name.clone(), Vec::new())),
+                    Vec::new(),
+                ),
+            };
+            let mut spelled: Vec<String> = baked.iter().map(spell_value).collect();
+            spelled.extend(arguments.iter().map(|argument| {
+                match argument {
+                    TyArg::Ty(ty) => unqualified_instance_name(ty),
+                    // A bound type pack (`TypeNames[Int, String]`) spells its
+                    // element types.
+                    TyArg::Val(CtValue::Tuple(values))
+                        if values.iter().all(|value| matches!(value, CtValue::Type(_))) =>
+                    {
+                        values
+                            .iter()
+                            .map(spell_value)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    }
+                    TyArg::Val(value) => spell_value(value),
+                    other => other.to_string(),
+                }
+            }));
+            if spelled.is_empty() {
+                base
+            } else {
+                format!("{base}[{}]", spelled.join(", "))
+            }
+        }
+        Ty::Variant(alternatives) => format!(
+            "Variant[{}]",
+            alternatives
+                .iter()
+                .map(unqualified_instance_name)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        other => unqualified_type_name(other),
     }
-    mojito_types::types::unqualified_type_name(ty)
 }
 
 /// The inverse of [`mangle`] for a self-delimiting value suffix: the template
@@ -1695,7 +1778,7 @@ fn encode_specialization_value(value: &CtValue, out: &mut String) {
             out.push(']');
         }
         CtValue::Type(ty) => {
-            let rendered = ty.to_string();
+            let rendered = canonical_specialization_type(ty).to_string();
             out.push_str(&format!("y{}:{rendered}", rendered.len()));
         }
         CtValue::Reflected(ty) => {

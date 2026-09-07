@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Parameter kinds in nested positions: the bundled Array and Span iterators
+  iterate themselves (a stored `arr.__iter__()`/`span.__iter__()` drives a
+  loop and keeps its source view alive — a view-returning method lends a
+  named view receiver itself), a struct's own value parameter spells
+  `Self.n` in its aliases and bracket arguments, a `Tuple[...]` application
+  resolves in every type-argument position (`Tuple[Int, Tuple[Int, Bool]]()`,
+  `TypeNames[Tuple[Int, Bool]]()`, a `T: Defaultable` bound) with bare
+  `Tuple(...)` calls nesting without an annotation and SIMD elements
+  defaulting to zero lanes, `_unqualified_type_name` spells minted value
+  specializations at every nesting level plus `value : Type` / `True`
+  value arguments, and `Array` gains `write_repr_to`.
 - Origin-bearing `Span`/`Pointer` construction in upstream's shape:
   `Span(unsafe_ptr=, length=)` takes `Pointer[Self.T, Self.origin]` — a
   tracked pointer (`xs.unsafe_ptr()`, `Pointer(to=x)`) binds and loans the

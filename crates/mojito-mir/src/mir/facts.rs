@@ -425,10 +425,13 @@ impl Flatten<'_> {
                 }
                 // A method returning a ref-field struct (a borrowing
                 // view/iterator) lends its receiver to the result, exactly as
-                // a view-typed slice result does: recurse for chained
-                // temporaries, else loan the owning receiver place. Its
-                // aggregate-typed place arguments lend the same way (the
-                // free-function rule above).
+                // a view-typed slice result does: a chained temporary
+                // (`Span(xs).__iter__()`) forwards only what it borrowed, and
+                // a named receiver place is lent itself as well — a view
+                // receiver (`sp.__iter__()`) must outlive the result, not
+                // only the storage the view borrows. Its aggregate-typed
+                // place arguments lend the same way (the free-function rule
+                // above).
                 if let (
                     true,
                     ExprKind::MethodCall {
@@ -449,21 +452,37 @@ impl Flatten<'_> {
                     &expression.kind,
                 ) {
                     let lent = |source: &Expr, this: &mut Self| -> Vec<MirLoan> {
-                        let loans = this.aggregate_borrows(source);
-                        if !loans.is_empty() {
-                            return loans;
-                        }
-                        if matches!(
+                        let mut loans = this.aggregate_borrows(source);
+                        if !matches!(
                             source.kind,
                             ExprKind::Identifier(_) | ExprKind::Member { .. }
                         ) {
-                            return vec![MirLoan {
-                                place: this.place(source),
-                                mutable: false,
-                                interior: None,
-                            }];
+                            return loans;
                         }
-                        Vec::new()
+                        let place = this.place(source);
+                        // A `ref` parameter's own slot is not an owner; its
+                        // carried loan already covers the referent.
+                        if this.runtime_aliases.contains(&place.root)
+                            || loans.iter().any(|loan| {
+                                loan.place.root == place.root
+                                    && loan.place.proj.is_empty()
+                                    && place.proj.is_empty()
+                            })
+                        {
+                            return loans;
+                        }
+                        let mutable = this.checked_adjustments(source).iter().any(|adjustment| {
+                            matches!(
+                                adjustment,
+                                mojito_checked::checked::SemanticAdjustment::BorrowMutable
+                            )
+                        });
+                        loans.push(MirLoan {
+                            place,
+                            mutable,
+                            interior: None,
+                        });
+                        loans
                     };
                     let mut loans = lent(object, self);
                     for argument in args.iter().chain(kwargs.iter().map(|kw| &kw.value)) {
