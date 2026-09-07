@@ -41,6 +41,7 @@ fn runtime_jit_symbols() -> Vec<(&'static str, u64)> {
         address!(mjrt_fmt_i64),
         address!(mjrt_fmt_u64),
         address!(mjrt_fmt_f64),
+        address!(mjrt_repr_string),
         address!(mjrt_trap),
         address!(mjrt_read_line),
     ]
@@ -1484,6 +1485,7 @@ mod native_abi_cross_checks {
             declare i64 @mjrt_fmt_i64(i64, ptr)
             declare i64 @mjrt_fmt_u64(i64, ptr)
             declare i64 @mjrt_fmt_f64(double, ptr)
+            declare i64 @mjrt_repr_string(ptr, i64, ptr)
             declare void @mjrt_trap(i32) noreturn
             declare void @mjrt_unhandled_error(ptr, i64) noreturn
             declare void @mjrt_abort(ptr, i64) noreturn

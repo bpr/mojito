@@ -2189,6 +2189,22 @@ fn build_checked_declarations(
     declarations
 }
 
+/// The anonymous owner a temporary expression materializes as (a
+/// `MaterializeBorrowSource`, or a `BorrowRefArguments` construction that is
+/// also a borrow source), or `None` when the expression is not materialized.
+pub fn materialized_borrow_owner(
+    adjustments: &[SemanticAdjustment],
+) -> Option<mojito_types::origin::OwnerId> {
+    adjustments.iter().find_map(|adjustment| match adjustment {
+        SemanticAdjustment::MaterializeBorrowSource { owner } => Some(*owner),
+        SemanticAdjustment::BorrowRefArguments {
+            materialized: Some(owner),
+            ..
+        } => Some(*owner),
+        _ => None,
+    })
+}
+
 #[cfg(test)]
 mod transfer_set_tests {
     use super::*;
@@ -2205,20 +2221,4 @@ mod transfer_set_tests {
         };
         assert_eq!(TransferSet(vec![effect]), TransferSet(Vec::new()));
     }
-}
-
-/// The anonymous owner a temporary expression materializes as (a
-/// `MaterializeBorrowSource`, or a `BorrowRefArguments` construction that is
-/// also a borrow source), or `None` when the expression is not materialized.
-pub fn materialized_borrow_owner(
-    adjustments: &[SemanticAdjustment],
-) -> Option<mojito_types::origin::OwnerId> {
-    adjustments.iter().find_map(|adjustment| match adjustment {
-        SemanticAdjustment::MaterializeBorrowSource { owner } => Some(*owner),
-        SemanticAdjustment::BorrowRefArguments {
-            materialized: Some(owner),
-            ..
-        } => Some(*owner),
-        _ => None,
-    })
 }

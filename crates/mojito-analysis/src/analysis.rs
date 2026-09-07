@@ -235,10 +235,6 @@ mod interior_origin_tests {
         origin(vec![OriginSeg::Interior("element".into())])
     }
 
-    fn loan(interior: Option<MirInteriorOrigin>) -> MirLoan {
-        loan_with(true, interior)
-    }
-
     fn loan_with(mutable: bool, interior: Option<MirInteriorOrigin>) -> MirLoan {
         MirLoan {
             place: MirPlace::root(0, None),

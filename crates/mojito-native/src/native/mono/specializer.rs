@@ -423,6 +423,11 @@ impl<'a> Specializer<'a> {
                                     self.enqueue_display_instance(owner, function, arg)?;
                                 }
                             }
+                            if func.0 == "repr" {
+                                for arg in args.clone() {
+                                    self.enqueue_repr_instance(owner, function, arg)?;
+                                }
+                            }
                             if self.structs.contains_key(func.0.as_str())
                                 && !mojito_symbol::symbol::is_stdlib_string_struct(&func.0)
                             {
@@ -827,11 +832,19 @@ impl<'a> Specializer<'a> {
                     MirInstr::Index {
                         dest,
                         base,
+                        index,
                         call: Some(call),
                         ..
                     } => {
-                        let (dest, base) = (*dest, *base);
-                        self.rewrite_subscript_call(owner, function, base, Some(dest), call)?;
+                        let (dest, base, index) = (*dest, *base, *index);
+                        self.rewrite_subscript_call(
+                            owner,
+                            function,
+                            base,
+                            &[index],
+                            Some(dest),
+                            call,
+                        )?;
                     }
                     MirInstr::Slice {
                         dest,
@@ -846,11 +859,18 @@ impl<'a> Specializer<'a> {
                         ..
                     } => {
                         let (dest, object) = (*dest, *object);
-                        self.rewrite_subscript_call(owner, function, object, Some(dest), call)?;
+                        self.rewrite_subscript_call(
+                            owner,
+                            function,
+                            object,
+                            &[],
+                            Some(dest),
+                            call,
+                        )?;
                     }
                     MirInstr::MultiSet { receiver, call, .. } => {
                         let receiver = *receiver;
-                        self.rewrite_subscript_call(owner, function, receiver, None, call)?;
+                        self.rewrite_subscript_call(owner, function, receiver, &[], None, call)?;
                     }
                     // An untyped iterator slot passes through: it belongs to
                     // a compiler-private pack loop the backend rejects at its

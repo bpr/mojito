@@ -47,7 +47,10 @@ use std::sync::Mutex;
 /// [`mjrt_pointer_status`] exposes that check. [`mjrt_abort`] preserves an
 /// abort's dynamic message, and trap categories 7 through 13 cover abort,
 /// pointer-lifetime, and `MaybeUninit` failures.
-pub const ABI_VERSION: u32 = 6;
+///
+/// Version 7: [`mjrt_repr_string`] writes the VM's escaped string repr into a
+/// caller-owned buffer, and trap category 14 identifies Variant tag mismatch.
+pub const ABI_VERSION: u32 = 7;
 
 /// Trap categories understood by [`mjrt_trap`]. Values match the backend's
 /// trap numbering; the process exit code is `64 + category`.
@@ -64,6 +67,7 @@ pub const TRAP_POINTER_DOUBLE_FREE: u32 = 10;
 pub const TRAP_UNINIT_READ: u32 = 11;
 pub const TRAP_UNINIT_TAKE: u32 = 12;
 pub const TRAP_UNINIT_DESTROY: u32 = 13;
+pub const TRAP_VARIANT_TAG_MISMATCH: u32 = 14;
 
 /// Tag values for tagged success/error outcomes.
 pub const MJ_TAG_OK: u32 = 0;
@@ -361,6 +365,43 @@ pub unsafe extern "C" fn mjrt_fmt_f64(value: f64, out: *mut u8) -> u64 {
     unsafe { copy_out(&format!("{value:?}"), out) }
 }
 
+/// Writes the VM's single-quoted, backslash-escaped string repr into `out`.
+/// Returns the byte length written, without a NUL terminator.
+///
+/// # Safety
+///
+/// `data` must point to `len` readable bytes and `out` must point to at least
+/// `2 * len + 2` writable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mjrt_repr_string(data: *const u8, len: u64, out: *mut u8) -> u64 {
+    let input = unsafe { std::slice::from_raw_parts(data, len as usize) };
+    let mut cursor = 0usize;
+    unsafe { out.add(cursor).write(b'\'') };
+    cursor += 1;
+    for &byte in input {
+        let escape = match byte {
+            b'\\' => Some(b'\\'),
+            b'\'' => Some(b'\''),
+            b'\n' => Some(b'n'),
+            b'\t' => Some(b't'),
+            b'\r' => Some(b'r'),
+            _ => None,
+        };
+        if let Some(escaped) = escape {
+            unsafe {
+                out.add(cursor).write(b'\\');
+                out.add(cursor + 1).write(escaped);
+            }
+            cursor += 2;
+        } else {
+            unsafe { out.add(cursor).write(byte) };
+            cursor += 1;
+        }
+    }
+    unsafe { out.add(cursor).write(b'\'') };
+    (cursor + 1) as u64
+}
+
 /// Reports the trap `category` on stderr and exits the process with
 /// `64 + category` (categories above 63 clamp so the code stays in exit-code
 /// range). Never returns; runs no destructors.
@@ -499,6 +540,7 @@ pub fn trap_message(category: u32) -> &'static str {
         TRAP_UNINIT_READ => "vm: read of uninitialized MaybeUninit storage",
         TRAP_UNINIT_TAKE => "vm: take of uninitialized MaybeUninit storage",
         TRAP_UNINIT_DESTROY => "vm: destroy of uninitialized MaybeUninit storage",
+        TRAP_VARIANT_TAG_MISMATCH => "Variant tag mismatch",
         _ => "unknown trap",
     }
 }
@@ -628,6 +670,16 @@ mod tests {
     }
 
     #[test]
+    fn string_repr_matches_vm_escapes() {
+        let input = b"a\nit's\\tab\there";
+        let mut output = vec![0; input.len() * 2 + 2];
+        let len =
+            unsafe { mjrt_repr_string(input.as_ptr(), input.len() as u64, output.as_mut_ptr()) }
+                as usize;
+        assert_eq!(&output[..len], b"'a\\nit\\'s\\\\tab\\there'");
+    }
+
+    #[test]
     fn write_stdout_zero_len_ignores_data() {
         unsafe { mjrt_write_stdout(std::ptr::null(), 0) };
     }
@@ -658,6 +710,7 @@ mod tests {
         assert_eq!(trap_exit_code(TRAP_UNINIT_READ), 75);
         assert_eq!(trap_exit_code(TRAP_UNINIT_TAKE), 76);
         assert_eq!(trap_exit_code(TRAP_UNINIT_DESTROY), 77);
+        assert_eq!(trap_exit_code(TRAP_VARIANT_TAG_MISMATCH), 78);
         assert_eq!(trap_exit_code(u32::MAX), 64 + 63);
         assert_eq!(
             trap_message(TRAP_DIV_MOD_ZERO),

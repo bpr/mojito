@@ -15,6 +15,7 @@ impl<'a> Specializer<'a> {
         owner: &str,
         function: &MirFunction,
         receiver: Reg,
+        actuals: &[Reg],
         dest: Option<Reg>,
         call: &mut mojito_mir::mir::MirSubscriptCall,
     ) -> Result<(), MonoError> {
@@ -48,8 +49,35 @@ impl<'a> Specializer<'a> {
         // bare implicit-view receiver can recover its owner element type from
         // `ref Int` without confusing it with a reference-valued element.
         let result = Some(&call.result_ty);
-        let (mut bindings, mut arguments, _) =
-            self.infer_receiver_call(owner, &target, &receiver_ty, result)?;
+        let callable_parameter =
+            self.declarations[target.as_str()]
+                .param_decls
+                .iter()
+                .any(|decl| {
+                    matches!(
+                        decl,
+                        ParamDecl::Type {
+                            callable_bound: Some(_),
+                            ..
+                        }
+                    )
+                });
+        let (target, mut bindings, mut arguments) = if callable_parameter {
+            self.infer_call(
+                owner,
+                function,
+                &target,
+                Some(receiver),
+                dest.unwrap_or(receiver),
+                actuals,
+                &[],
+                &call.param_arg_regs,
+            )?
+        } else {
+            let (bindings, arguments, _) =
+                self.infer_receiver_call(owner, &target, &receiver_ty, result)?;
+            (target, bindings, arguments)
+        };
         // A comptime-specialized accessor (`Tuple$tN.__getitem__[i: Int]`)
         // varies by its value parameter: the constant index joins the
         // instance identity — sharing on the receiver alone would collapse
@@ -180,6 +208,26 @@ impl<'a> Specializer<'a> {
             };
             if let Some(actual_reg) = actual_reg {
                 let actual = reg_ty(caller, actual_reg, owner)?;
+                // A callable-bounded method parameter is represented by its
+                // structural callable contract in the runtime signature, so
+                // ordinary `Ty::Param` unification has no binder spelling to
+                // recover. The declaration still carries that spelling;
+                // bind the (unique) callable type parameter from the actual.
+                let unresolved_callable_decls = declaration
+                    .param_decls
+                    .iter()
+                    .filter_map(|decl| match decl {
+                        ParamDecl::Type {
+                            name,
+                            callable_bound: Some(_),
+                            ..
+                        } if !bindings.types.contains_key(name.as_str()) => Some(name),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                if let [parameter] = unresolved_callable_decls.as_slice() {
+                    bindings.types.insert((*parameter).clone(), actual.clone());
+                }
                 // Explicit value parameters may resolve a dependent pattern;
                 // an ordinary unresolved type parameter must remain available
                 // for structural inference from this runtime argument.
@@ -203,13 +251,8 @@ impl<'a> Specializer<'a> {
                         }
                 ) && let Some((callable, captures_are_empty)) =
                     self.callable_targets.get(&actual_reg.0)
+                    && *captures_are_empty
                 {
-                    if !captures_are_empty {
-                        return Err(self.error(
-                            Some(owner),
-                            format!("generic retained callable `{callable}` has captures"),
-                        ));
-                    }
                     bindings.values.insert(
                         declaration.param_names[index].clone(),
                         CtValue::Str(callable.clone()),

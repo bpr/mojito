@@ -180,6 +180,20 @@ fn enter(name: &'static str, round: Option<usize>) -> Span {
     Span { armed: true }
 }
 
+/// Close the innermost open span at `at`, folding it into its record and
+/// its parent's child time.
+fn close(stack: &mut Vec<OpenSpan>, records: &mut HashMap<String, Record>, at: Instant) {
+    let open = stack.pop().expect("exit without enter");
+    let inclusive = at.duration_since(open.start).as_micros();
+    let record = records.entry(open.path).or_default();
+    record.inclusive += inclusive;
+    record.self_time += inclusive.saturating_sub(open.children);
+    record.count += 1;
+    if let Some(parent) = stack.last_mut() {
+        parent.children += inclusive;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,19 +260,5 @@ mod tests {
                 assert!(self_time <= inclusive, "{line}");
             }
         }
-    }
-}
-
-/// Close the innermost open span at `at`, folding it into its record and
-/// its parent's child time.
-fn close(stack: &mut Vec<OpenSpan>, records: &mut HashMap<String, Record>, at: Instant) {
-    let open = stack.pop().expect("exit without enter");
-    let inclusive = at.duration_since(open.start).as_micros();
-    let record = records.entry(open.path).or_default();
-    record.inclusive += inclusive;
-    record.self_time += inclusive.saturating_sub(open.children);
-    record.count += 1;
-    if let Some(parent) = stack.last_mut() {
-        parent.children += inclusive;
     }
 }

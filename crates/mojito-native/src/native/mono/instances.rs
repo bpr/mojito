@@ -199,6 +199,25 @@ impl<'a> Specializer<'a> {
         function: &MirFunction,
         arg: Reg,
     ) -> Result<(), MonoError> {
+        self.enqueue_format_instance(owner, function, arg, "write_to")
+    }
+
+    pub(super) fn enqueue_repr_instance(
+        &mut self,
+        owner: &str,
+        function: &MirFunction,
+        arg: Reg,
+    ) -> Result<(), MonoError> {
+        self.enqueue_format_instance(owner, function, arg, "write_repr_to")
+    }
+
+    fn enqueue_format_instance(
+        &mut self,
+        owner: &str,
+        function: &MirFunction,
+        arg: Reg,
+        method: &str,
+    ) -> Result<(), MonoError> {
         let Some(ty) = function.reg_types.get(&arg.0) else {
             return Ok(());
         };
@@ -209,6 +228,23 @@ impl<'a> Specializer<'a> {
         if mojito_symbol::symbol::is_stdlib_string_struct(name) {
             return Ok(());
         }
+        let exact = format!("{name}.{method}");
+        if self.functions.contains_key(exact.as_str()) {
+            let (mut bindings, arguments, _) =
+                self.infer_receiver_call(owner, &exact, &ty, None)?;
+            if let Some(declaration) = self.declarations.get(exact.as_str()) {
+                for parameter in &declaration.param_types {
+                    if let Ty::Param { name, .. } = parameter {
+                        bindings
+                            .types
+                            .entry(name.clone())
+                            .or_insert(Ty::StringLiteral);
+                    }
+                }
+            }
+            self.enqueue(&exact, bindings, arguments)?;
+            return Ok(());
+        }
         // A closed instance displays through its per-instantiation
         // `write_to` clone when the checker minted one; otherwise the
         // template's erased `write_to` is instantiated for the receiver.
@@ -217,7 +253,7 @@ impl<'a> Specializer<'a> {
             .get(nominal_template(name))
             .and_then(|struct_decl| {
                 mojito_symbol::symbol::instance_method_clone_name(
-                    "write_to",
+                    method,
                     &struct_decl.param_decls,
                     arguments,
                 )
@@ -231,7 +267,7 @@ impl<'a> Specializer<'a> {
                     n_params: f.n_params,
                 }),
                 nominal_template(name),
-                "write_to",
+                method,
                 None,
                 1,
             )

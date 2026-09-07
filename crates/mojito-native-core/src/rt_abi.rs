@@ -19,7 +19,7 @@ use crate::target::NativeTarget;
 /// The runtime ABI version this compiler emits against. Must equal
 /// `mojito_runtime::ABI_VERSION`; the linked runtime exports it as the
 /// inspectable data symbol [`ABI_VERSION_SYMBOL`].
-pub const MJRT_ABI_VERSION: u32 = 6;
+pub const MJRT_ABI_VERSION: u32 = 7;
 
 /// The exported `u32` data symbol carrying the runtime's ABI version.
 pub const ABI_VERSION_SYMBOL: &str = "mjrt_abi_version";
@@ -40,6 +40,7 @@ pub const TRAP_POINTER_DOUBLE_FREE: u32 = 10;
 pub const TRAP_UNINIT_READ: u32 = 11;
 pub const TRAP_UNINIT_TAKE: u32 = 12;
 pub const TRAP_UNINIT_DESTROY: u32 = 13;
+pub const TRAP_VARIANT_TAG_MISMATCH: u32 = 14;
 
 /// Tag values of tagged success/error outcomes.
 pub const MJ_TAG_OK: u32 = 0;
@@ -190,6 +191,19 @@ pub const RT_SYMBOLS: &[RtSig] = &[
         ownership: "borrows out (>= 32 writable bytes, caller-owned); returns \
                     bytes written, no NUL terminator; text matches the VM's \
                     Float64 display",
+        failure: "never fails",
+    },
+    RtSig {
+        symbol: "mjrt_repr_string",
+        params: &[
+            ("data", CAbiTy::PtrConstU8),
+            ("len", CAbiTy::U64),
+            ("out", CAbiTy::PtrMutU8),
+        ],
+        ret: Some(CAbiTy::U64),
+        noreturn: false,
+        since: 7,
+        ownership: "borrows data and out; out must hold at least 2 * len + 2 bytes; returns single-quoted, escaped bytes written, no NUL terminator",
         failure: "never fails",
     },
     RtSig {

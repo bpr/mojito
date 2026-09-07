@@ -332,7 +332,7 @@ impl<'a> FnLowering<'a> {
         self.emit_trap_guard(
             ctx,
             mismatch.get_result(ctx),
-            TrapCategory::UnhandledError,
+            TrapCategory::VariantTagMismatch,
             anchor,
         )
     }

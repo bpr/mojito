@@ -533,10 +533,11 @@ pub enum TrapCategory {
     UninitRead,
     UninitTake,
     UninitDestroy,
+    VariantTagMismatch,
 }
 
 impl TrapCategory {
-    const ALL: [TrapCategory; 13] = [
+    const ALL: [TrapCategory; 14] = [
         TrapCategory::DivModZero,
         TrapCategory::PowExponent,
         TrapCategory::AllocFailure,
@@ -550,6 +551,7 @@ impl TrapCategory {
         TrapCategory::UninitRead,
         TrapCategory::UninitTake,
         TrapCategory::UninitDestroy,
+        TrapCategory::VariantTagMismatch,
     ];
 
     /// Stable small code of this category (used in exit codes and manifests),
@@ -570,6 +572,7 @@ impl TrapCategory {
             TrapCategory::UninitRead => rt_abi::TRAP_UNINIT_READ,
             TrapCategory::UninitTake => rt_abi::TRAP_UNINIT_TAKE,
             TrapCategory::UninitDestroy => rt_abi::TRAP_UNINIT_DESTROY,
+            TrapCategory::VariantTagMismatch => rt_abi::TRAP_VARIANT_TAG_MISMATCH,
         };
         code as u8
     }
@@ -606,6 +609,7 @@ impl TrapCategory {
             TrapCategory::UninitRead => "vm: read of uninitialized MaybeUninit storage",
             TrapCategory::UninitTake => "vm: take of uninitialized MaybeUninit storage",
             TrapCategory::UninitDestroy => "vm: destroy of uninitialized MaybeUninit storage",
+            TrapCategory::VariantTagMismatch => "Variant tag mismatch",
         }
     }
 
@@ -622,6 +626,7 @@ impl TrapCategory {
                 | TrapCategory::UninitRead
                 | TrapCategory::UninitTake
                 | TrapCategory::UninitDestroy
+                | TrapCategory::VariantTagMismatch
         )
         .then(|| self.runtime_message())
     }
@@ -637,12 +642,18 @@ impl TrapCategory {
             TrapCategory::UninitRead,
             TrapCategory::UninitTake,
             TrapCategory::UninitDestroy,
+            TrapCategory::VariantTagMismatch,
         ]
         .into_iter()
         .find(|category| {
             category
                 .vm_message()
                 .is_some_and(|text| message.contains(text))
+        })
+        .or_else(|| {
+            message
+                .contains("Variant holds '")
+                .then_some(TrapCategory::VariantTagMismatch)
         })
     }
 }
@@ -898,6 +909,20 @@ fn visit_call_edges<'p>(
                     for arg in args {
                         if let Some(Ty::Struct(name, _)) = function.reg_types.get(&arg.0) {
                             let prefix = format!("{name}.write_to");
+                            for (fname, _) in functions.iter() {
+                                if fname.starts_with(prefix.as_str()) {
+                                    targets.push(*fname);
+                                }
+                            }
+                        }
+                    }
+                }
+                // `repr` of a nominal struct calls its `write_repr_to`
+                // instance in the lowered expansion.
+                MirInstr::Call { func, args, .. } if func.0 == "repr" => {
+                    for arg in args {
+                        if let Some(Ty::Struct(name, _)) = function.reg_types.get(&arg.0) {
+                            let prefix = format!("{name}.write_repr_to");
                             for (fname, _) in functions.iter() {
                                 if fname.starts_with(prefix.as_str()) {
                                     targets.push(*fname);

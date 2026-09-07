@@ -19,7 +19,7 @@ part of any native ABI, and `mojito-runtime` must never depend on the
 
 ## ABI versioning
 
-- `ABI_VERSION` (currently **6**) is a monotonic `u32` declared identically in
+- `ABI_VERSION` (currently **7**) is a monotonic `u32` declared identically in
   `mojito_runtime::ABI_VERSION` and `native::rt_abi::MJRT_ABI_VERSION`. Bump
   it on any change to an exported symbol's signature or semantics, an
   exported `#[repr(C)]` type's layout, a trap category's meaning, or any rule
@@ -37,7 +37,7 @@ part of any native ABI, and `mojito-runtime` must never depend on the
   stdlib's `unsafe_alloc[T](0)` neutralization idiom abandons nothing.
   Version 6 added runtime layout/lifetime tracking alongside allocation
   headers and added `mjrt_pointer_status`,
-  dynamic-message `mjrt_abort`, and trap categories 7–13 for abort, pointer
+  dynamic-message `mjrt_abort`, and trap categories 7–14 for abort, pointer
   lifetime, and `MaybeUninit` failures.
 - Every linked runtime exports the inspectable `u32` data symbol
   `mjrt_abi_version` and the function `mjrt_version() -> u32`; the
@@ -306,6 +306,7 @@ failure behavior. Summary (authoritative rows in `native::rt_abi`):
 | `mjrt_write_stdout(data, len)` | Borrows; full write with interrupt retry; traps (category 4) on failure. |
 | `mjrt_fmt_i64/u64(value, out) -> u64` | Borrows `out` (≥ 20 bytes); returns bytes written; no NUL. |
 | `mjrt_fmt_f64(value, out) -> u64` | Borrows `out` (≥ 32 bytes); VM display text. |
+| `mjrt_repr_string(data, len, out) -> u64` | Borrows `data` and `out` (≥ `2 * len + 2` bytes); returns the VM's single-quoted, escaped string repr; no NUL. |
 | `mjrt_trap(category) -> !` | Reports on stderr, exits `64 + category` (clamped to 127); runs no destructors. |
 | `mjrt_unhandled_error(data, len) -> !` | Borrows the raised UTF-8 message; reports `unhandled error: <message>` on stderr and exits `64 + 5`; runs no destructors. |
 | `mjrt_abort(data, len) -> !` | Borrows the abort's UTF-8 message; reports `abort: <message>` on stderr and exits `64 + 7`; runs no destructors. |
@@ -318,8 +319,8 @@ codes `64 + category`): 1 div/mod by zero (exit 65), 2 `**` exponent range
 5 unhandled error (exit 69), 6 stdin failure (exit 70), 7 abort (exit 71),
 8 dangling-pointer dereference (exit 72), 9 use after pointer deallocation
 (exit 73), 10 double free (exit 74), 11 uninitialized storage read (exit 75),
-12 uninitialized storage take (exit 76), and 13 uninitialized storage destroy
-(exit 77). Categories 1–2 and 8–13 reuse the VM's runtime-error message text;
+12 uninitialized storage take (exit 76), 13 uninitialized storage destroy
+(exit 77), and 14 Variant tag mismatch (exit 78). Categories 1–2 and 8–14 reuse the VM's runtime-error category;
 dynamic categories 5 and 7 preserve their executable stderr message.
 
 ## Mechanical checks

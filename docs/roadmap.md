@@ -88,45 +88,14 @@ exempt from the ordering.
   and String surfaces toward the audited head (`docs/features.md` records
   what lands). The tasks below are in impact order: soundness of the
   executable oracle first, then everyday spellings that reject today, then
-  the native lane, then parity details; no task depends on a later one. A
+  parity details; no task depends on a later one. A
   task closes when its bullets are done; a residue discovered inside a task
-  moves to the task that owns its fix (or to task 7, the deliberate
-  deferrals), never back to a finished one. Task 2 is one session (the
+  moves to the task that owns its fix (or to task 6, the deliberate
+  deferrals), never back to a finished one. Task 1 is one session (the
   2026-09-06 pack residues, clumped by the subsystem that owns the fix); plan
-  first: task 3 (ordering); the rest are direct.
+  first: task 2 (ordering); the rest are direct.
 
-  1. **Native-lane follow-ups.** The VM runs all of these; monomorphizer
-     and native-drop bug fixes.
-     - `repr` lowers natively only for Strings, without escapes; no user
-       `write_repr_to` runs natively (nor the `Writable`-bounded
-       `value.write_repr_to(writer)` inversion), so the collection repr
-       texts and conformance/fixtures/write_repr_to_bounded.mojo are pinned
-       by conformance fixtures only.
-     - `Slice(...)` over `Optional[Int]` bound arguments rejects natively
-       (`unsupported Slice constructor with an Optional[Int] bound`): the
-       native descriptor's presence flags are static, while the VM reads the
-       nominal slot at construction; pinned by
-       conformance/fixtures/slice_optional_bounds.mojo on the VM only.
-     - Monomorphization cannot resolve a method-level parameter for a
-       parameterized `@staticmethod` through a non-variadic generic instance
-       (`p.pick[Int]()`) or for a method whose only parameter is
-       callable-bounded (`__getitem__[F: def() -> Int]` in
-       conformance/fixtures/subscript_call_contracts.mojo).
-     - conformance/fixtures/tuple_consume_elements.mojo prints correctly,
-       then traps `use after Pointer deallocation` at teardown (also on the
-       da4d129 baseline): a native drop gap.
-     - Projection tag-mismatch trap categories differ (VM `TypeError`
-       `Variant holds 'Int', not 'String'`; native `UnhandledError`), so no
-       error-differential fixture pins it.
-     - `Writer.write` of a `StringSpan` or struct argument
-       (`out.write(s[byte=1:3])`, `text.write(Named("n", w))`, bound or
-       temporary) fails natively with `unsupported type`, while `print` of
-       the same values lowers; pinned by
-       conformance/fixtures/view_temporary_write.mojo on the VM only.
-     - The generic `next[T: Iterator](mut it: T)` body fails natively
-       (`unsupported reference-result method adapter`); `next` is pinned by
-       conformance/fixtures/next_builtin.mojo only.
-  2. **Parameter kinds in nested positions.** Value parameters, type packs,
+  1. **Parameter kinds in nested positions.** Value parameters, type packs,
      and type names classified through an alias, a nested call, or a
      display rather than a top-level application. Everyday loops already
      run (`for x in span`, `xs.__reversed__()`), so these are parity
@@ -144,12 +113,12 @@ exempt from the ordering.
        bound generic's `T()` over the same type run.
      - `TypeNames[Int]()` prints `SIMD[DType.int, 1]` where upstream prints
        `Int`.
-  3. **Storage-shape items with a known blocker.** Short plan (ordering).
+  2. **Storage-shape items with a known blocker.** Short plan (ordering).
      - Relax K/V/element bounds toward upstream's Movable-only `KeyElement`
        (a per-API `where` pass, as `List[T: AnyType]`).
      - `(*, unsafe_uninit_length)` construction and resize: blocked on an
        uninit-element storage story for List (MaybeUninit-adjacent).
-  4. **String Unicode, iterator, and parsing extras.** Port on demand.
+  3. **String Unicode, iterator, and parsing extras.** Port on demand.
      - `upper`/`lower`: simple-case subset (ASCII, Latin-1, Latin
        Extended-A, Greek, Cyrillic, `ß` → `SS`); upstream ships full Unicode
        simple and special casing tables.
@@ -163,12 +132,12 @@ exempt from the ordering.
      - `len(s)` on a String or StringSpan is accepted (byte length) where
        upstream rejects it as ambiguous (`byte_length()`, `len(s.codepoints())`,
        `len(s.graphemes())`); an extension to drop at the next re-pin.
-  5. **Compile-time collections.** `comptime d = {...}` Dict/Set values
+  4. **Compile-time collections.** `comptime d = {...}` Dict/Set values
      hashed with `default_comp_time_hasher`. `CtValue` has no mapping kind
      (`crates/mojito-types/src/ct.rs`), `Elab::eval` has no dict-display
      arm, and the VM-CTFE purity walk admits only the hasher protocol's
      method calls, so a general compile-time method-call rule comes with it.
-  6. **Diagnostic wording and strictness.**
+  5. **Diagnostic wording and strictness.**
      - An unavailable where-gated method reports `'set' is unavailable for
        Variant[Conn]: its where clause evaluated to False` rather than
        upstream's clause text.
@@ -177,7 +146,7 @@ exempt from the ordering.
        non-`Deinitable` field parameter (`struct Box[T: Copyable & Movable]:
        var value: Self.T`) is accepted, where upstream reports `use Self.T`
        and requires a `Deinitable` bound.
-  7. **Deliberate deferrals.** Nothing depends on these; each is a
+  6. **Deliberate deferrals.** Nothing depends on these; each is a
      conscious limit, listed here so it is not mistaken for unfinished
      task work.
      - Clones are minted per whole instance (no reachability pruning) and

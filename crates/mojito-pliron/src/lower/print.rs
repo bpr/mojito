@@ -4,6 +4,42 @@
 use super::*;
 
 impl<'a> FnLowering<'a> {
+    pub(super) fn append_string_pair(
+        &mut self,
+        ctx: &mut Context,
+        descriptor: Value,
+        chunk: Value,
+        chunk_len: Value,
+        dest: Reg,
+    ) {
+        let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+        let ptr_handle: TypeHandle = PointerType::get(ctx, 0).into();
+        let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
+        let data = LoadOp::new(ctx, descriptor, ptr_handle);
+        self.append(ctx, data.get_operation(), Some(dest));
+        let len_address = self.offset_address(ctx, descriptor, 8);
+        let len = LoadOp::new(ctx, len_address, i64_handle);
+        self.append(ctx, len.get_operation(), Some(dest));
+        let total =
+            AddOp::new_with_overflow_flag(ctx, len.get_result(ctx), chunk_len, no_overflow_flags());
+        self.append(ctx, total.get_operation(), Some(dest));
+        let merged = self.emit_alloc(ctx, total.get_result(ctx), 1, dest);
+        self.mem_copy_dynamic(ctx, merged, data.get_result(ctx), len.get_result(ctx), dest);
+        let tail = GetElementPtrOp::new(
+            ctx,
+            merged,
+            vec![GepIndex::Value(len.get_result(ctx))],
+            i8_ty,
+        );
+        self.append(ctx, tail.get_operation(), Some(dest));
+        self.mem_copy_dynamic(ctx, tail.get_result(ctx), chunk, chunk_len, dest);
+        self.emit_free(ctx, data.get_result(ctx));
+        let store = StoreOp::new(ctx, merged, descriptor);
+        self.append(ctx, store.get_operation(), Some(dest));
+        let store = StoreOp::new(ctx, total.get_result(ctx), len_address);
+        self.append(ctx, store.get_operation(), Some(dest));
+    }
+
     /// `print(args…)`: format each argument through the runtime `mjrt_fmt_*`
     /// family (string-literal, Bool, and None text comes from the constant
     /// pool), joined by single spaces with a trailing newline — composing the
@@ -40,11 +76,14 @@ impl<'a> FnLowering<'a> {
         // The instance's per-instantiation clone (`write_to$y3:Int`) wins
         // over the template's erased `write_to` instantiated for the same
         // receiver.
-        let mut candidates: Vec<_> = self
-            .signatures
-            .iter()
-            .filter(|(fname, _)| fname.starts_with(&prefix))
-            .collect();
+        let mut candidates: Vec<_> = self.signatures.get_key_value(&prefix).into_iter().collect();
+        if candidates.is_empty() {
+            candidates = self
+                .signatures
+                .iter()
+                .filter(|(fname, _)| fname.starts_with(&prefix))
+                .collect();
+        }
         if candidates.len() > 1 {
             candidates.retain(|(fname, _)| fname.as_str() != prefix);
         }
@@ -99,11 +138,14 @@ impl<'a> FnLowering<'a> {
         // The instance's per-instantiation clone (`write_to$y3:Int`) wins
         // over the template's erased `write_to` instantiated for the same
         // receiver.
-        let mut candidates: Vec<_> = self
-            .signatures
-            .iter()
-            .filter(|(fname, _)| fname.starts_with(&prefix))
-            .collect();
+        let mut candidates: Vec<_> = self.signatures.get_key_value(&prefix).into_iter().collect();
+        if candidates.is_empty() {
+            candidates = self
+                .signatures
+                .iter()
+                .filter(|(fname, _)| fname.starts_with(&prefix))
+                .collect();
+        }
         if candidates.len() > 1 {
             candidates.retain(|(fname, _)| fname.as_str() != prefix);
         }
@@ -343,6 +385,7 @@ impl<'a> FnLowering<'a> {
         for arg in args {
             if let Some(Ty::Struct(name, _)) = self.func.reg_types.get(&arg.0).cloned()
                 && !mojito_symbol::symbol::is_stdlib_string_struct(&name)
+                && !mojito_symbol::symbol::is_stdlib_string_span_struct(&name)
             {
                 self.append_struct_via_write_to(ctx, *arg, &name, descriptor, dest)?;
                 continue;

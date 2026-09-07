@@ -104,7 +104,9 @@ impl<'a> FnLowering<'a> {
                     self.emit_trace_text(ctx, mojito_native::native::rt_abi::TRACE_CONSUME, &name);
                 }
                 let fully_drained_tuple = matches!(ty.as_ref(), Ty::Struct(name, _)
-                    if name.starts_with("Tuple$t") && self.name.contains(".deinit_with"));
+                    if name.starts_with("Tuple$t")
+                        && (self.name.contains(".deinit_with")
+                            || self.name.contains(".consume_elements")));
                 if self.fields_need_drop(&ty) && !fully_drained_tuple {
                     // The named explicit destructor consumed the aggregate;
                     // its surviving fields still receive their ordinary

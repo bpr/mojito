@@ -8,7 +8,6 @@ impl<'a> FnLowering<'a> {
     /// back to the caller's receiver place afterwards — the VM's
     /// `store_at_call_place` write-back.
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_method_call(
         &mut self,
         ctx: &mut Context,
@@ -289,15 +288,176 @@ impl<'a> FnLowering<'a> {
         Ok(())
     }
 
-    /// `repr(String)`: an owned runtime StringLiteral containing the nominal
-    /// String bytes between quotes. The temporary follows the same invisible
-    /// release rule as other runtime string descriptors.
+    /// `repr(value)`: an owned runtime StringLiteral matching the VM's scalar
+    /// vocabulary or a nominal value's compiled `write_repr_to`.
     pub(super) fn lower_repr_builtin(
         &mut self,
         ctx: &mut Context,
         dest: Reg,
         arg: Reg,
     ) -> Result<(), PlironError> {
+        if self
+            .func
+            .reg_types
+            .get(&arg.0)
+            .and_then(slice_struct_name)
+            .is_some()
+        {
+            let (data, len) = self.slice_string(ctx, arg, dest, true)?;
+            self.str_runtime.insert(
+                dest.0,
+                RuntimeStr {
+                    data,
+                    len,
+                    owned: true,
+                },
+            );
+            return self.mark_owned_temp(dest, Ty::StringLiteral);
+        }
+        if matches!(self.func.reg_types.get(&arg.0), Some(Ty::None)) {
+            let global = self.shared.intern_string(ctx, b"None");
+            let source = self.global_address(ctx, &global, dest);
+            let len = self.uint_constant(ctx, 4);
+            let data = self.emit_alloc(ctx, len, 1, dest);
+            self.mem_copy_dynamic(ctx, data, source, len, dest);
+            self.str_runtime.insert(
+                dest.0,
+                RuntimeStr {
+                    data,
+                    len,
+                    owned: true,
+                },
+            );
+            return self.mark_owned_temp(dest, Ty::StringLiteral);
+        }
+        if let Some(literal_scalar) = match self.func.reg_types.get(&arg.0) {
+            Some(Ty::IntLiteral) => Some(ScalarTy::Int),
+            Some(Ty::FloatLiteral) => Some(ScalarTy::Float64),
+            _ => None,
+        } {
+            let value = self.reg_value(ctx, arg, literal_scalar)?;
+            let (source, len) = self.format_scalar(ctx, literal_scalar, value, dest)?;
+            let label = match literal_scalar {
+                ScalarTy::Int => Some("Int("),
+                ScalarTy::Float64 => Some("Float64("),
+                _ => None,
+            };
+            let (source, len) = if let Some(label) = label {
+                self.wrap_repr_scalar(ctx, source, len, label, dest)
+            } else {
+                (source, len)
+            };
+            let data = self.emit_alloc(ctx, len, 1, dest);
+            self.mem_copy_dynamic(ctx, data, source, len, dest);
+            self.str_runtime.insert(
+                dest.0,
+                RuntimeStr {
+                    data,
+                    len,
+                    owned: true,
+                },
+            );
+            return self.mark_owned_temp(dest, Ty::StringLiteral);
+        }
+        if !matches!(
+            self.func.reg_types.get(&arg.0),
+            Some(Ty::Struct(..) | Ty::Ref(..))
+        ) && let Some(scalar) = self.concrete_scalar_ty(arg)?
+        {
+            let value = self.reg_value(ctx, arg, scalar)?;
+            let (source, len) = self.format_scalar(ctx, scalar, value, dest)?;
+            let label = match scalar {
+                ScalarTy::Int => Some("Int("),
+                ScalarTy::UInt => Some("UInt("),
+                ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float32) => Some("Float64("),
+                _ => None,
+            };
+            let (source, len) = if let Some(label) = label {
+                self.wrap_repr_scalar(ctx, source, len, label, dest)
+            } else {
+                (source, len)
+            };
+            let data = self.emit_alloc(ctx, len, 1, dest);
+            self.mem_copy_dynamic(ctx, data, source, len, dest);
+            self.str_runtime.insert(
+                dest.0,
+                RuntimeStr {
+                    data,
+                    len,
+                    owned: true,
+                },
+            );
+            return self.mark_owned_temp(dest, Ty::StringLiteral);
+        }
+        if let Some(Ty::Ref(reference)) = self.func.reg_types.get(&arg.0).cloned()
+            && let LowerTy::Scalar(scalar) = lower_ty(
+                self.name,
+                &reference.referent,
+                &self.layout,
+                self.reg_span(arg),
+            )?
+        {
+            let pointer = self.reg_value(ctx, arg, ScalarTy::Ptr)?;
+            let handle = scalar.handle(ctx);
+            let value = LoadOp::new(ctx, pointer, handle);
+            self.append(ctx, value.get_operation(), Some(dest));
+            let (source, len) = self.format_scalar(ctx, scalar, value.get_result(ctx), dest)?;
+            let data = self.emit_alloc(ctx, len, 1, dest);
+            self.mem_copy_dynamic(ctx, data, source, len, dest);
+            self.str_runtime.insert(
+                dest.0,
+                RuntimeStr {
+                    data,
+                    len,
+                    owned: true,
+                },
+            );
+            return self.mark_owned_temp(dest, Ty::StringLiteral);
+        }
+        if let Some(Ty::Struct(name, _)) = self.func.reg_types.get(&arg.0).cloned()
+            && !mojito_symbol::symbol::is_stdlib_string_struct(&name)
+        {
+            let prefix = format!("{name}.write_repr_to");
+            let mut candidates: Vec<_> = self
+                .signatures
+                .iter()
+                .filter(|(candidate, _)| candidate.starts_with(&prefix))
+                .collect();
+            if candidates.len() > 1 {
+                candidates.retain(|(candidate, _)| candidate.as_str() != prefix);
+            }
+            if let [(_, signature)] = candidates.as_slice() {
+                let writer = self.entry_alloca(ctx, 16, 8);
+                self.mem_zero(ctx, writer, 16);
+                let receiver = self.reg_ptr(ctx, arg)?;
+                let callee: Identifier = signature
+                    .mangled
+                    .as_str()
+                    .try_into()
+                    .expect("mangled names are identifier-safe");
+                let call = CallOp::new(
+                    ctx,
+                    CallOpCallable::Direct(callee),
+                    signature.func_ty,
+                    vec![receiver, writer],
+                );
+                self.append(ctx, call.get_operation(), Some(dest));
+                let (data, len) = self.string_parts(ctx, writer, dest);
+                self.str_runtime.insert(
+                    dest.0,
+                    RuntimeStr {
+                        data,
+                        len,
+                        owned: true,
+                    },
+                );
+                return self.mark_owned_temp(dest, Ty::StringLiteral);
+            }
+            return Err(self.unsupported_reg(
+                format!("repr of `{name}` without compiled write_repr_to"),
+                dest,
+            ));
+        }
         let string = matches!(self.func.reg_types.get(&arg.0), Some(Ty::Struct(name, _))
             if mojito_symbol::symbol::is_stdlib_string_struct(name));
         if !string {
@@ -306,18 +466,60 @@ impl<'a> FnLowering<'a> {
         let source = self.reg_ptr(ctx, arg)?;
         let (data, len) = self.string_parts(ctx, source, dest);
         let two = self.uint_constant(ctx, 2);
-        let total = AddOp::new_with_overflow_flag(ctx, len, two, no_overflow_flags());
+        let doubled = MulOp::new_with_overflow_flag(ctx, len, two, no_overflow_flags());
+        self.append(ctx, doubled.get_operation(), Some(dest));
+        let capacity =
+            AddOp::new_with_overflow_flag(ctx, doubled.get_result(ctx), two, no_overflow_flags());
+        self.append(ctx, capacity.get_operation(), Some(dest));
+        let output = self.emit_alloc(ctx, capacity.get_result(ctx), 1, dest);
+        let symbol = "mjrt_repr_string";
+        let func_ty = self.shared.ensure_rt(ctx, symbol);
+        let identifier: Identifier = symbol.try_into().expect("runtime names are identifiers");
+        let call = CallOp::new(
+            ctx,
+            CallOpCallable::Direct(identifier),
+            func_ty,
+            vec![data, len, output],
+        );
+        self.append(ctx, call.get_operation(), Some(dest));
+        let escaped_len = call.get_result(ctx);
+        self.str_runtime.insert(
+            dest.0,
+            RuntimeStr {
+                data: output,
+                len: escaped_len,
+                owned: true,
+            },
+        );
+        self.mark_owned_temp(dest, Ty::StringLiteral)
+    }
+
+    fn wrap_repr_scalar(
+        &mut self,
+        ctx: &mut Context,
+        data: Value,
+        len: Value,
+        label: &str,
+        dest: Reg,
+    ) -> (Value, Value) {
+        let extra = self.uint_constant(ctx, (label.len() + 1) as u64);
+        let total = AddOp::new_with_overflow_flag(ctx, len, extra, no_overflow_flags());
         self.append(ctx, total.get_operation(), Some(dest));
         let output = self.emit_alloc(ctx, total.get_result(ctx), 1, dest);
-        let quote = self.shared.intern_string(ctx, b"'");
-        let quote = self.global_address(ctx, &quote, dest);
-        let one = self.uint_constant(ctx, 1);
-        self.mem_copy_dynamic(ctx, output, quote, one, dest);
+        let prefix = self.shared.intern_string(ctx, label.as_bytes());
+        let prefix = self.global_address(ctx, &prefix, dest);
+        let prefix_len = self.uint_constant(ctx, label.len() as u64);
+        self.mem_copy_dynamic(ctx, output, prefix, prefix_len, dest);
         let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
-        let body = GetElementPtrOp::new(ctx, output, vec![GepIndex::Constant(1)], i8_ty);
+        let body = GetElementPtrOp::new(
+            ctx,
+            output,
+            vec![GepIndex::Constant(label.len() as u32)],
+            i8_ty,
+        );
         self.append(ctx, body.get_operation(), Some(dest));
         self.mem_copy_dynamic(ctx, body.get_result(ctx), data, len, dest);
-        let end = AddOp::new_with_overflow_flag(ctx, len, one, no_overflow_flags());
+        let end = AddOp::new_with_overflow_flag(ctx, len, prefix_len, no_overflow_flags());
         self.append(ctx, end.get_operation(), Some(dest));
         let tail = GetElementPtrOp::new(
             ctx,
@@ -326,16 +528,11 @@ impl<'a> FnLowering<'a> {
             i8_ty,
         );
         self.append(ctx, tail.get_operation(), Some(dest));
-        self.mem_copy_dynamic(ctx, tail.get_result(ctx), quote, one, dest);
-        self.str_runtime.insert(
-            dest.0,
-            RuntimeStr {
-                data: output,
-                len: total.get_result(ctx),
-                owned: true,
-            },
-        );
-        self.mark_owned_temp(dest, Ty::StringLiteral)
+        let close = self.shared.intern_string(ctx, b")");
+        let close = self.global_address(ctx, &close, dest);
+        let one = self.uint_constant(ctx, 1);
+        self.mem_copy_dynamic(ctx, tail.get_result(ctx), close, one, dest);
+        (output, total.get_result(ctx))
     }
 
     /// `_mojito_abort(message)` — the `std.os.abort` crossing: report the
@@ -365,6 +562,62 @@ impl<'a> FnLowering<'a> {
         self.current = Some(dead);
         self.erased.insert(dest.0);
         Ok(())
+    }
+
+    fn slice_string(
+        &mut self,
+        ctx: &mut Context,
+        arg: Reg,
+        dest: Reg,
+        repr: bool,
+    ) -> Result<(Value, Value), PlironError> {
+        let output = self.entry_alloca(ctx, 16, 8);
+        self.mem_zero(ctx, output, 16);
+        let descriptor = self.reg_ptr(ctx, arg)?;
+        let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+        let flags_address = self.offset_address(ctx, descriptor, 24);
+        let flags = LoadOp::new(ctx, flags_address, i64_ty);
+        self.append(ctx, flags.get_operation(), Some(dest));
+        let labels: [&[u8]; 3] = if repr {
+            [b"Slice(start=", b", end=", b", step="]
+        } else {
+            [b"Slice(", b", ", b", "]
+        };
+        let none = self.shared.intern_string(ctx, b"None");
+        for (index, ((offset, bit), label)) in [(0u64, 1i64), (8, 2), (16, 4)]
+            .into_iter()
+            .zip(labels)
+            .enumerate()
+        {
+            let label_global = self.shared.intern_string(ctx, label);
+            let label_data = self.global_address(ctx, &label_global, dest);
+            let label_len = self.uint_constant(ctx, label.len() as u64);
+            self.append_string_pair(ctx, output, label_data, label_len, dest);
+            let address = self.offset_address(ctx, descriptor, offset);
+            let word = LoadOp::new(ctx, address, i64_ty);
+            self.append(ctx, word.get_operation(), Some(dest));
+            let mask = self.int_constant(ctx, bit);
+            let masked = AndOp::new(ctx, flags.get_result(ctx), mask);
+            self.append(ctx, masked.get_operation(), Some(dest));
+            let zero = self.int_constant(ctx, 0);
+            let present = ICmpOp::new(ctx, ICmpPredicateAttr::NE, masked.get_result(ctx), zero);
+            self.append(ctx, present.get_operation(), Some(dest));
+            let (int_data, int_len) =
+                self.format_scalar(ctx, ScalarTy::Int, word.get_result(ctx), dest)?;
+            let none_data = self.global_address(ctx, &none, dest);
+            let none_len = self.uint_constant(ctx, 4);
+            let data = SelectOp::new(ctx, present.get_result(ctx), int_data, none_data);
+            self.append(ctx, data.get_operation(), Some(dest));
+            let len = SelectOp::new(ctx, present.get_result(ctx), int_len, none_len);
+            self.append(ctx, len.get_operation(), Some(dest));
+            self.append_string_pair(ctx, output, data.get_result(ctx), len.get_result(ctx), dest);
+            let _ = index;
+        }
+        let close = self.shared.intern_string(ctx, b")");
+        let close = self.global_address(ctx, &close, dest);
+        let one = self.uint_constant(ctx, 1);
+        self.append_string_pair(ctx, output, close, one, dest);
+        Ok(self.string_parts(ctx, output, dest))
     }
 
     /// The VM-synthesized `Writer.write` dispatch: each argument's display
@@ -409,7 +662,69 @@ impl<'a> FnLowering<'a> {
         let place = place.clone();
         let writer_address = self.place_address(ctx, &place, dest)?.0;
         for arg in args {
-            let (data, len) = self.writer_argument_text(ctx, *arg, dest)?;
+            let mut temporary = None;
+            let (data, len) = if self
+                .func
+                .reg_types
+                .get(&arg.0)
+                .and_then(slice_struct_name)
+                .is_some()
+            {
+                let parts = self.slice_string(ctx, *arg, dest, false)?;
+                temporary = Some(parts.0);
+                parts
+            } else if let Some(Ty::Struct(name, _)) = self.func.reg_types.get(&arg.0).cloned()
+                && !mojito_symbol::symbol::is_stdlib_string_struct(&name)
+            {
+                if mojito_symbol::symbol::is_stdlib_string_span_struct(&name) {
+                    let span = self.reg_ptr(ctx, *arg)?;
+                    self.string_parts(ctx, span, dest)
+                } else if name.contains("$Named$mono$") || name.ends_with("$Named") {
+                    let named_ty = self.func.reg_types[&arg.0].clone();
+                    let base = self.reg_ptr(ctx, *arg)?;
+                    let (name_offset, _) = self.field_offset(&named_ty, "_name", dest)?;
+                    let name_address = self.offset_address(ctx, base, name_offset);
+                    let (name_data, name_len) = self.string_parts(ctx, name_address, dest);
+                    let descriptor = self.entry_alloca(ctx, 16, 8);
+                    self.mem_zero(ctx, descriptor, 16);
+                    self.append_string_pair(ctx, descriptor, name_data, name_len, dest);
+                    let equals = self.shared.intern_string(ctx, b"=");
+                    let equals = self.global_address(ctx, &equals, dest);
+                    let one = self.uint_constant(ctx, 1);
+                    self.append_string_pair(ctx, descriptor, equals, one, dest);
+                    let (value_offset, value_ty) = self.field_offset(&named_ty, "_value", dest)?;
+                    let Ty::Pointer { element, .. } = value_ty else {
+                        return Err(self.unsupported_reg("Named value pointer".into(), dest));
+                    };
+                    let pointer_address = self.offset_address(ctx, base, value_offset);
+                    let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
+                    let pointer = LoadOp::new(ctx, pointer_address, ptr_ty);
+                    self.append(ctx, pointer.get_operation(), Some(dest));
+                    let LowerTy::Scalar(scalar) =
+                        lower_ty(self.name, &element, &self.layout, self.reg_span(dest))?
+                    else {
+                        return Err(self.unsupported_reg("aggregate Named value".into(), dest));
+                    };
+                    let handle = scalar.handle(ctx);
+                    let value = LoadOp::new(ctx, pointer.get_result(ctx), handle);
+                    self.append(ctx, value.get_operation(), Some(dest));
+                    let (value_data, value_len) =
+                        self.format_scalar(ctx, scalar, value.get_result(ctx), dest)?;
+                    self.append_string_pair(ctx, descriptor, value_data, value_len, dest);
+                    let parts = self.string_parts(ctx, descriptor, dest);
+                    temporary = Some(parts.0);
+                    parts
+                } else {
+                    let descriptor = self.entry_alloca(ctx, 16, 8);
+                    self.mem_zero(ctx, descriptor, 16);
+                    self.append_struct_via_write_to(ctx, *arg, &name, descriptor, dest)?;
+                    let parts = self.string_parts(ctx, descriptor, dest);
+                    temporary = Some(parts.0);
+                    parts
+                }
+            } else {
+                self.writer_argument_text(ctx, *arg, dest)?
+            };
             let payload = self.entry_alloca(ctx, if nominal_payload { 24 } else { 16 }, 8);
             if nominal_payload {
                 self.store_string_fields(ctx, payload, data, len, len, dest);
@@ -427,6 +742,9 @@ impl<'a> FnLowering<'a> {
                 vec![writer_address, payload],
             );
             self.append(ctx, call.get_operation(), Some(dest));
+            if let Some(allocation) = temporary {
+                self.emit_free(ctx, allocation);
+            }
         }
         self.erased.insert(dest.0);
         Ok(())
@@ -455,6 +773,12 @@ impl<'a> FnLowering<'a> {
                 return Ok(self.string_parts(ctx, ptr, dest));
             }
             Some(Ty::Struct(name, _)) if mojito_symbol::symbol::is_stdlib_string_struct(name) => {
+                let ptr = self.reg_ptr(ctx, arg)?;
+                return Ok(self.string_parts(ctx, ptr, dest));
+            }
+            Some(Ty::Struct(name, _))
+                if mojito_symbol::symbol::is_stdlib_string_span_struct(name) =>
+            {
                 let ptr = self.reg_ptr(ctx, arg)?;
                 return Ok(self.string_parts(ctx, ptr, dest));
             }

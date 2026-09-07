@@ -449,18 +449,6 @@ impl<'a> FnLowering<'a> {
         name: &str,
         args: &[Reg],
     ) -> Result<(), PlironError> {
-        // The VM also reads a nominal `Optional[Int]` bound (a runtime
-        // presence); the native descriptor's presence flags are static, so
-        // that spelling is a recorded native gap rather than a miscompile.
-        if args
-            .iter()
-            .any(|reg| matches!(self.func.reg_types.get(&reg.0), Some(Ty::Struct(..))))
-        {
-            return Err(self.unsupported_reg(
-                format!("`{name}` constructor with an `Optional[Int]` bound"),
-                dest,
-            ));
-        }
         let bound = |lowering: &Self, reg: Reg| {
             (!matches!(lowering.func.reg_types.get(&reg.0), Some(Ty::None))).then_some(reg)
         };
@@ -472,9 +460,77 @@ impl<'a> FnLowering<'a> {
                 return Err(self.unsupported_reg(format!("`{name}` constructor arity"), dest));
             }
         };
-        let storage = self.build_slice_descriptor(ctx, dest, lower, upper, step)?;
+        let storage = if [lower, upper, step].iter().flatten().any(|reg| {
+            matches!(self.func.reg_types.get(&reg.0), Some(Ty::Struct(name, _))
+                if name == "Optional"
+                    || name.ends_with("$Optional")
+                    || name.starts_with("Optional$mono$"))
+        }) {
+            self.build_dynamic_slice_descriptor(ctx, dest, lower, upper, step)?
+        } else {
+            self.build_slice_descriptor(ctx, dest, lower, upper, step)?
+        };
         self.reg_values.insert(dest.0, storage);
         Ok(())
+    }
+
+    fn build_dynamic_slice_descriptor(
+        &mut self,
+        ctx: &mut Context,
+        anchor: Reg,
+        lower: Option<Reg>,
+        upper: Option<Reg>,
+        step: Option<Reg>,
+    ) -> Result<Value, PlironError> {
+        let storage = self.entry_alloca(ctx, 32, 8);
+        let zero = self.int_constant(ctx, 0);
+        let mut flags = zero;
+        let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
+        let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+        for (index, (bound, bit)) in [(lower, 1i64), (upper, 2), (step, 4)]
+            .into_iter()
+            .enumerate()
+        {
+            let (value, present) = match bound {
+                None => (zero, self.bool_constant(ctx, false)),
+                Some(reg)
+                    if matches!(self.func.reg_types.get(&reg.0), Some(Ty::Struct(name, _))
+                        if name == "Optional"
+                            || name.ends_with("$Optional")
+                            || name.starts_with("Optional$mono$")) =>
+                {
+                    let optional = self.reg_ptr(ctx, reg)?;
+                    let data = LoadOp::new(ctx, optional, ptr_ty);
+                    self.append(ctx, data.get_operation(), Some(anchor));
+                    let value = LoadOp::new(ctx, data.get_result(ctx), i64_ty);
+                    self.append(ctx, value.get_operation(), Some(anchor));
+                    let size_address = self.offset_address(ctx, optional, 8);
+                    let size = LoadOp::new(ctx, size_address, i64_ty);
+                    self.append(ctx, size.get_operation(), Some(anchor));
+                    let present =
+                        ICmpOp::new(ctx, ICmpPredicateAttr::NE, size.get_result(ctx), zero);
+                    self.append(ctx, present.get_operation(), Some(anchor));
+                    (value.get_result(ctx), present.get_result(ctx))
+                }
+                Some(reg) => (
+                    self.reg_value(ctx, reg, ScalarTy::Int)?,
+                    self.bool_constant(ctx, true),
+                ),
+            };
+            let address = self.offset_address(ctx, storage, index as u64 * 8);
+            let store = StoreOp::new(ctx, value, address);
+            self.append(ctx, store.get_operation(), Some(anchor));
+            let bit = self.int_constant(ctx, bit);
+            let masked = SelectOp::new(ctx, present, bit, zero);
+            self.append(ctx, masked.get_operation(), Some(anchor));
+            let merged = OrOp::new(ctx, flags, masked.get_result(ctx));
+            self.append(ctx, merged.get_operation(), Some(anchor));
+            flags = merged.get_result(ctx);
+        }
+        let address = self.offset_address(ctx, storage, 24);
+        let store = StoreOp::new(ctx, flags, address);
+        self.append(ctx, store.get_operation(), Some(anchor));
+        Ok(storage)
     }
 
     /// `Slice.__eq__`/`__ne__`: the descriptors are equal when all four raw
