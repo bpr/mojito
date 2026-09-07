@@ -472,6 +472,31 @@ impl Prog {
     /// absent or its abstract callable-contract suffix retargets to a plain,
     /// non-overloaded nominal `__call__`. Checker-resolved concrete overloads
     /// carry their exact lowered callee and never depend on this fallback.
+    /// The compiled `__init__` a construction of `struct_name` with `argc`
+    /// positional arguments executes: the exact name, else the unique
+    /// same-arity overload, else the unique variadic overload whose
+    /// runtime-pack collector binds any element count (current Tuple's
+    /// `__init__(out self, var *args: *Ts)` beside its nullary constructor,
+    /// which arity-keyed selection cannot see).
+    fn constructor_name(&self, struct_name: &str, argc: usize) -> String {
+        let init = format!("{struct_name}.__init__");
+        let resolved = self.overload_name(&init, argc);
+        if self.index_of(&resolved).is_some() {
+            return resolved;
+        }
+        let mut packs = self.mir.functions.iter().filter(|(fname, _)| {
+            mojito_symbol::symbol::is_overload_of(fname, &init)
+                && self
+                    .sigs
+                    .get(fname.as_str())
+                    .is_some_and(|signature| matches!(signature.variadic, Some(Ty::RuntimePack(_))))
+        });
+        match (packs.next(), packs.next()) {
+            (Some((fname, _)), None) => fname.clone(),
+            _ => resolved,
+        }
+    }
+
     fn overload_name(&self, name: &str, argc: usize) -> String {
         mojito_symbol::symbol::resolve_callable_symbol(
             self.mir.functions.iter().map(|(name, function)| {
@@ -642,15 +667,13 @@ fn reify_value_parameters(
                 let ParamDecl::Type { name, default, .. } = declaration else {
                     return None;
                 };
-                if !constructible_type_parameter(declaration) {
-                    return None;
-                }
                 let value = match resolved.get(index).cloned().flatten() {
                     Some(value @ Value::Str(_)) => value,
-                    _ => match default.as_deref() {
+                    _ if constructible_type_parameter(declaration) => match default.as_deref() {
                         Some(Ty::Struct(struct_name, _)) => Value::Str(struct_name.clone()),
                         _ => return None,
                     },
+                    _ => return None,
                 };
                 return Some((name.clone(), value));
             };
@@ -838,10 +861,16 @@ fn resolve_value_parameter_slots(
             ..
         } = declaration
         else {
-            // A reified type argument passes through as the bound struct name.
-            if constructible_type_parameter(declaration) {
-                resolved[index] = supplied.get(index).cloned().flatten();
-            }
+            // A reified type argument passes through as the bound type's
+            // name. The declaration's own bounds do not gate it: a
+            // constructor may default-construct `Self.T` under a
+            // `where conforms_to(Self.T, Defaultable)` clause on an
+            // `AnyType` binder (current Array's nullary `__init__`).
+            resolved[index] = supplied
+                .get(index)
+                .cloned()
+                .flatten()
+                .filter(|value| matches!(value, Value::Str(_)));
             continue;
         };
         let value = supplied

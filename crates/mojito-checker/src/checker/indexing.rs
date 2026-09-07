@@ -1241,9 +1241,24 @@ impl Checker {
             other => other,
         };
         // The empty subscript `p[]` dereferences a pointer at offset 0 (always
-        // in provenance, so no offset check); any other receiver rejects here
-        // rather than dispatching an accessor with the marker as its argument.
+        // in provenance, so no offset check). A nominal receiver may declare a
+        // zero-argument `__getitem__` (current Optional's raising extraction);
+        // the EmptySubscript node is syntax-only and is not passed as an
+        // ordinary argument.
         if matches!(index.kind, ExprKind::EmptySubscript) {
+            if matches!(&obj_ty, Ty::Struct(name, _)
+            if self.structs.get(name).is_some_and(|info| {
+                info.methods.get("__getitem__").is_some_and(|methods| {
+                    methods.iter().any(|method| method.has_self && method.params.is_empty())
+                })
+            })) {
+                return self.infer_method_call(
+                    span,
+                    object,
+                    "__getitem__",
+                    MethodCallArguments::ordinary(&[], &[]),
+                );
+            }
             return match &obj_ty {
                 Ty::Pointer { element, .. } => Ok((**element).clone()),
                 other => Err(TypeError::Unsupported(format!(

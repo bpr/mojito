@@ -8,6 +8,7 @@ from std.reflection.type_info import _unqualified_type_name
 struct Tuple[*Ts: Movable](
     Comparable where conforms_to(Ts.values, Comparable) and conforms_to(Ts.values, Equatable),
     Copyable where conforms_to(Ts.values, Copyable),
+    Defaultable where conforms_to(Ts.values, Defaultable),
     Equatable where conforms_to(Ts.values, Equatable),
     Hashable where conforms_to(Ts.values, Hashable),
     ImplicitlyCopyable where conforms_to(Ts.values, ImplicitlyCopyable),
@@ -30,6 +31,10 @@ struct Tuple[*Ts: Movable](
 
     def __len__(self) -> Int:
         return len(self.storage)
+
+    @staticmethod
+    def __len__() -> Int:
+        return Ts.length
 
     def __eq__(self, other: Self) -> Bool where conforms_to(
         Ts.values, Equatable

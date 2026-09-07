@@ -1567,6 +1567,21 @@ impl<'a> Elab<'a> {
             elaborated_methods.push(method);
         }
         if orig == "Tuple" {
+            if semantic_types
+                .iter()
+                .all(|ty| self.conformance.require(ty, "Defaultable").is_ok())
+                && let Some(variadic_constructor) = elaborated_methods
+                    .iter()
+                    .find(|method| method.name == "__init__" && !method.params.is_empty())
+                && let Some(constructor) = tuple_default_constructor(
+                    variadic_constructor,
+                    &source_types,
+                    &semantic_types,
+                    template.span,
+                )
+            {
+                elaborated_methods.push(constructor);
+            }
             self.append_tuple_transform_methods(
                 &mut elaborated_methods,
                 &semantic_types,

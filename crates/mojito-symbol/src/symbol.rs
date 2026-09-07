@@ -233,7 +233,7 @@ pub fn instance_symbol(template: &str, arguments: &[InstanceArg]) -> String {
             // String, but generic instances cannot: their native layouts are
             // a 16-byte borrowed descriptor versus a 24-byte owning value.
             InstanceArg::Ty(Ty::StringLiteral) => "TStringLiteral".to_string(),
-            InstanceArg::Ty(ty) => format!("T{}", ty_raw(ty, None)),
+            InstanceArg::Ty(ty) => format!("T{}", ty_raw_in(ty, None, KeyMode::Instance)),
             InstanceArg::Value(value) => format!("V{value}"),
         };
         result.push_str(&sanitize(&raw));
@@ -456,7 +456,7 @@ pub fn method_symbol(type_name: &str, method: &str, sig: &SignatureKey) -> Strin
 pub fn receiver_overloaded_method(method: &str) -> bool {
     matches!(
         method.split('$').next().unwrap_or(method),
-        "__iter__" | "unsafe_assume_init"
+        "__iter__" | "__len__" | "unsafe_assume_init"
     )
 }
 
@@ -470,6 +470,19 @@ pub fn receiver_method_symbol(
     sig: &SignatureKey,
 ) -> String {
     method_symbol(type_name, method, &sig.with_receiver(convention))
+}
+
+/// Callable identity for a static overload sharing its explicit parameter
+/// shape with an instance method (current Tuple's two `__len__` spellings).
+pub fn static_method_symbol(type_name: &str, method: &str, sig: &SignatureKey) -> String {
+    // Static methods have no source receiver convention. `SelfOut` is an
+    // identity-only discriminator which cannot collide with a real static or
+    // instance `__len__` declaration.
+    method_symbol(
+        type_name,
+        method,
+        &sig.with_receiver(Some(ArgConvention::Out)),
+    )
 }
 
 /// Convention-qualified symbol for `__iter__` overloads. Current Mojo permits
@@ -637,6 +650,7 @@ pub fn lowered_method_name(
     type_params: &[TypeParam],
     params: &[FnParam],
     keyword_only: Option<usize>,
+    has_self: bool,
     self_convention: Option<ArgConvention>,
     sets: &OverloadSets,
 ) -> String {
@@ -659,7 +673,11 @@ pub fn lowered_method_name(
             .filter(|(_, method)| receiver_overloaded_method(method))
         {
             Some((type_name, method)) => {
-                receiver_method_symbol(type_name, method, self_convention, &signature)
+                if has_self {
+                    receiver_method_symbol(type_name, method, self_convention, &signature)
+                } else {
+                    static_method_symbol(type_name, method, &signature)
+                }
             }
             None => format!("{source_name}{}", signature.suffix()),
         }
@@ -727,7 +745,22 @@ pub fn init_overload_struct(symbol: &str) -> Option<&str> {
     rest.starts_with(OV_SEP).then_some(struct_name)
 }
 
+/// Which identity a mangled type spelling serves. Overload keys spell a
+/// minted Tuple instance bare (its elements are baked into the symbol, and
+/// the declaration annotation carries no arguments); a generic instance name
+/// keeps the elements, so the checked `Tuple$t2[…]` with and without retained
+/// element arguments stay distinct native instances.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KeyMode {
+    Overload,
+    Instance,
+}
+
 fn ty_raw(ty: &Ty, self_ty: Option<&Ty>) -> String {
+    ty_raw_in(ty, self_ty, KeyMode::Overload)
+}
+
+fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
     // Canonicalize the enclosing struct type to `Self` however it is spelled
     // (`Self`, `Pair`, or `List[Self.T]` inside `List`). The declaration side
     // does the same (see `ast_raw`), so both agree on one key for a same-arity
@@ -743,12 +776,12 @@ fn ty_raw(ty: &Ty, self_ty: Option<&Ty>) -> String {
         Ty::Bool => "Bool".to_string(),
         Ty::StringLiteral => "StringLiteral".to_string(),
         Ty::None => "None".to_string(),
-        Ty::ComptimeList(elem) => format!("__ComptimeList${}", ty_raw(elem, self_ty)),
+        Ty::ComptimeList(elem) => format!("__ComptimeList${}", ty_raw_in(elem, self_ty, mode)),
         Ty::Tuple(elems) => format!(
             "Tuple${}",
             elems
                 .iter()
-                .map(|elem| ty_raw(elem, self_ty))
+                .map(|elem| ty_raw_in(elem, self_ty, mode))
                 .collect::<Vec<_>>()
                 .join("$")
         ),
@@ -756,16 +789,16 @@ fn ty_raw(ty: &Ty, self_ty: Option<&Ty>) -> String {
             "$pack${}",
             elems
                 .iter()
-                .map(|elem| ty_raw(elem, self_ty))
+                .map(|elem| ty_raw_in(elem, self_ty, mode))
                 .collect::<Vec<_>>()
                 .join("$")
         ),
-        Ty::VariadicPack(element) => format!("$variadic${}", ty_raw(element, self_ty)),
+        Ty::VariadicPack(element) => format!("$variadic${}", ty_raw_in(element, self_ty, mode)),
         Ty::Variant(alternatives) => format!(
             "Variant${}",
             alternatives
                 .iter()
-                .map(|alt| ty_raw(alt, self_ty))
+                .map(|alt| ty_raw_in(alt, self_ty, mode))
                 .collect::<Vec<_>>()
                 .join("$")
         ),
@@ -776,6 +809,13 @@ fn ty_raw(ty: &Ty, self_ty: Option<&Ty>) -> String {
         Ty::Struct(name, args) if args.is_empty() && is_stdlib_string_struct(name) => {
             "String".to_string()
         }
+        // A minted Tuple instance's overload key is its bare symbol (see
+        // `KeyMode`).
+        Ty::Struct(name, _)
+            if mode == KeyMode::Overload && is_tuple_specialization_symbol(name) =>
+        {
+            encode_identifier(name)
+        }
         // A struct type spells as its annotation does (`Point`, `Pair$Int`) —
         // no `Struct$` marker, so the MIR definition name matches.
         Ty::Struct(name, args) => {
@@ -783,7 +823,7 @@ fn ty_raw(ty: &Ty, self_ty: Option<&Ty>) -> String {
             for arg in args {
                 s.push('$');
                 match arg {
-                    TyArg::Ty(t) => s.push_str(&ty_raw(t, self_ty)),
+                    TyArg::Ty(t) => s.push_str(&ty_raw_in(t, self_ty, mode)),
                     TyArg::Val(v) => s.push_str(&format!("V{v}")),
                     // Origins erase from the runtime ABI: every origin argument
                     // mangles to one marker so origin-differing types share a
@@ -806,7 +846,7 @@ fn ty_raw(ty: &Ty, self_ty: Option<&Ty>) -> String {
             }
             if let Some(callable) = callable_bound {
                 result.push_str("$Callable$");
-                result.push_str(&ty_raw(callable, self_ty));
+                result.push_str(&ty_raw_in(callable, self_ty, mode));
             }
             result
         }
@@ -816,20 +856,22 @@ fn ty_raw(ty: &Ty, self_ty: Option<&Ty>) -> String {
         // user-facing name is `Pointer`: this string is internal callable
         // identity, and renaming it would churn every symbol golden for no
         // user-visible gain.
-        Ty::Pointer { element, .. } => format!("UnsafePointer${}", ty_raw(element, self_ty)),
+        Ty::Pointer { element, .. } => {
+            format!("UnsafePointer${}", ty_raw_in(element, self_ty, mode))
+        }
         // Application arguments participate in the mangled identity (so
         // `IteratorType[a]` and `IteratorType[b]` are distinct), except origins,
         // which erase from the runtime ABI like `Ty::Pointer` origins above.
         Ty::Assoc { base, name, args } => {
             let mut s = format!(
                 "Assoc${}${}",
-                ty_raw(base, self_ty),
+                ty_raw_in(base, self_ty, mode),
                 encode_identifier(name)
             );
             for arg in args {
                 s.push('$');
                 match arg {
-                    TyArg::Ty(t) => s.push_str(&ty_raw(t, self_ty)),
+                    TyArg::Ty(t) => s.push_str(&ty_raw_in(t, self_ty, mode)),
                     TyArg::Val(v) => s.push_str(&format!("V{v}")),
                     // Origins erase from the runtime ABI: every origin argument
                     // mangles to one marker so origin-differing types share a
@@ -918,6 +960,21 @@ fn ast_raw(
                 ast_raw(element, comptimes, type_bounds, self_spelling)
             )
         }
+        // The runtime-pack collector of a specialized variadic (`*args: *Ts`
+        // after `Ts` is bound) is the `$pack` annotation over its element
+        // types; mirror `ty_raw`'s `Ty::RuntimePack` spelling so the
+        // declaration and its call sites agree.
+        Type::Named(name, args) if name == "$pack" => format!(
+            "$pack${}",
+            args.iter()
+                .map(|arg| match arg {
+                    ParamArg::Type(t) => ast_raw(t, comptimes, type_bounds, self_spelling),
+                    ParamArg::Value(v) => value_expr_raw(v, comptimes),
+                    ParamArg::Named { .. } => String::new(),
+                })
+                .collect::<Vec<_>>()
+                .join("$")
+        ),
         Type::Named(name, args) => {
             let mut s = parameter_raw(name, type_bounds);
             for arg in args {
@@ -1374,6 +1431,17 @@ pub fn callable_contract_target(ty: &Ty) -> Option<String> {
     let signature =
         SignatureKey::from_tys(signature_types).with_kw_variadic(kw_variadic.as_deref());
     Some(method_symbol("__trait_dispatch", "__call__", &signature))
+}
+
+/// Whether `name` is a minted `Tuple`/`TString` specialization symbol
+/// (`Tuple$t2[y3:Inty4:Bool]`): its element types are baked into the name.
+/// The checked instance type also carries them as arguments while the
+/// annotation does not, so an overload key spells the bare symbol
+/// (`KeyMode::Overload`).
+pub fn is_tuple_specialization_symbol(name: &str) -> bool {
+    name.strip_prefix("Tuple$")
+        .or_else(|| name.strip_prefix("TString$"))
+        .is_some_and(|rest| rest.starts_with('t'))
 }
 
 /// Canonical concrete symbol selected for public `Tuple[*Ts]` element types.

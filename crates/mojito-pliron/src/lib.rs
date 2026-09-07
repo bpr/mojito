@@ -1161,8 +1161,25 @@ fn constructor_init_target<'p>(
     let mut matches = functions.iter().filter(|(fname, function)| {
         mojito_symbol::symbol::is_overload_of(fname, &init) && function.n_params == argc + 1
     });
-    let first = *matches.next()?.0;
-    matches.next().is_none().then_some(first)
+    if let Some((first, _)) = matches.next() {
+        let first = *first;
+        return matches.next().is_none().then_some(first);
+    }
+    // The unique variadic overload whose runtime-pack collector binds any
+    // element count (current Tuple's `*args: *Ts` constructor beside its
+    // nullary one), the `constructor_init` selection lowering makes. The
+    // compiled function binds the collector as its one parameter after
+    // `out self`, typed as the private pack storage.
+    let mut packs = functions.iter().filter(|(fname, function)| {
+        mojito_symbol::symbol::is_overload_of(fname, &init)
+            && function.n_params == 2
+            && matches!(
+                function.param_types.get(1),
+                Some(Ty::Tuple(_) | Ty::RuntimePack(_))
+            )
+    });
+    let first = *packs.next()?.0;
+    packs.next().is_none().then_some(first)
 }
 
 /// Record every declared struct name `ty` mentions — transitively through

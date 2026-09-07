@@ -90,47 +90,23 @@ exempt from the ordering.
   executable oracle first, then everyday spellings that reject today, then
   the native lane, then parity details; no task depends on a later one. A
   task closes when its bullets are done; a residue discovered inside a task
-  moves to the task that owns its fix (or to task 8, the deliberate
-  deferrals), never back to a finished one. Task 3 is one session (the
+  moves to the task that owns its fix (or to task 7, the deliberate
+  deferrals), never back to a finished one. Task 2 is one session (the
   2026-09-06 pack residues, clumped by the subsystem that owns the fix); plan
-  first: task 4 (ordering); the rest are direct.
+  first: task 3 (ordering); the rest are direct.
 
-  1. **Optional, Tuple, and Slice odds and ends.** Self-contained.
-     - The raising `opt[]` subscript: empty-subscript form on nominal
-       receivers plus `EmptyOptionalError`'s `TypeNames` text.
-     - A `ref self` method on a call temporary (`s.split(",")[1]`) rejects
-       `reference binding to a non-place expression`; bind the result first.
-     - Explicit method-level value-parameter bindings on a non-pack struct
-       (`w.pick[3]()`, upstream's `s.isspace[single_character=True]()`)
-       fail MIR verification (`nongeneric call carries a compile-time value
-       argument`), and a value-parameterized method on the
-       origin-parameterized `StringSpan` aborts `unspecialized type-keyed
-       method` even for the defaulted call — so `isspace` is declared
-       without upstream's `single_character` parameter.
-     - `Tuple`/`Array` `Defaultable`: needs `Ts[i]()`/`Self.T()` element
-       default construction.
-     - Tuple's static `__len__()` cannot coexist with the instance one under
-       arity-keyed selection (re-probe after 2026-09-05's same-arity operand
-       selection).
-     - An explicit dunder call other than comparisons/`__len__` on a Tuple
-       whose specialization is not yet minted (`t.__contains__(x)`) reports
-       no such method; the operator spelling works.
-     - `Slice(...)` reads only `Int`/`None` argument expressions; an
-       `Optional[Int]` variable needs the nominal slot read.
-     - Explicit `.write_to(writer)` on a slice descriptor is not wired.
-     - `write_repr_to` on a `Writable`-bounded parameter
-       (`self.value.write_repr_to(writer)`; upstream prints `Wrap(Int(8))`)
-       reports no such method: `write_to` lowers as `writer.write(x)`, and
-       the repr form needs the same swap with repr formatting.
-     - An instance method called through the type with the receiver as the
-       first argument (`Span[Int, origin_of(xs)].__len__(s)`, accepted
-       upstream) reports no such method; statics are the only receiver-less
-       path.
-  2. **Native-lane follow-ups.** The VM runs all of these; monomorphizer
+  1. **Native-lane follow-ups.** The VM runs all of these; monomorphizer
      and native-drop bug fixes.
      - `repr` lowers natively only for Strings, without escapes; no user
-       `write_repr_to` runs natively, so the collection repr texts are
-       pinned by conformance fixtures only.
+       `write_repr_to` runs natively (nor the `Writable`-bounded
+       `value.write_repr_to(writer)` inversion), so the collection repr
+       texts and conformance/fixtures/write_repr_to_bounded.mojo are pinned
+       by conformance fixtures only.
+     - `Slice(...)` over `Optional[Int]` bound arguments rejects natively
+       (`unsupported Slice constructor with an Optional[Int] bound`): the
+       native descriptor's presence flags are static, while the VM reads the
+       nominal slot at construction; pinned by
+       conformance/fixtures/slice_optional_bounds.mojo on the VM only.
      - Monomorphization cannot resolve a method-level parameter for a
        parameterized `@staticmethod` through a non-variadic generic instance
        (`p.pick[Int]()`) or for a method whose only parameter is
@@ -150,7 +126,7 @@ exempt from the ordering.
      - The generic `next[T: Iterator](mut it: T)` body fails natively
        (`unsupported reference-result method adapter`); `next` is pinned by
        conformance/fixtures/next_builtin.mojo only.
-  3. **Parameter kinds in nested positions.** Value parameters, type packs,
+  2. **Parameter kinds in nested positions.** Value parameters, type packs,
      and type names classified through an alias, a nested call, or a
      display rather than a top-level application. Everyday loops already
      run (`for x in span`, `xs.__reversed__()`), so these are parity
@@ -162,14 +138,18 @@ exempt from the ordering.
      - Nested and whole-pack-forwarded type-pack calls keep the syntactic
        element-typing path (`not a compile-time value` for a non-evident
        element); only top-level calls consult the checker's instantiation.
+       The nullary default construction with a nested Tuple type argument
+       (`Tuple[Int, Tuple[Int, Bool]]()`) takes that path too and reports
+       `'Tuple' expects 2 argument(s), got 0`; `Tuple(1, inner)` and a
+       bound generic's `T()` over the same type run.
      - `TypeNames[Int]()` prints `SIMD[DType.int, 1]` where upstream prints
        `Int`.
-  4. **Storage-shape items with a known blocker.** Short plan (ordering).
+  3. **Storage-shape items with a known blocker.** Short plan (ordering).
      - Relax K/V/element bounds toward upstream's Movable-only `KeyElement`
        (a per-API `where` pass, as `List[T: AnyType]`).
      - `(*, unsafe_uninit_length)` construction and resize: blocked on an
        uninit-element storage story for List (MaybeUninit-adjacent).
-  5. **String Unicode, iterator, and parsing extras.** Port on demand.
+  4. **String Unicode, iterator, and parsing extras.** Port on demand.
      - `upper`/`lower`: simple-case subset (ASCII, Latin-1, Latin
        Extended-A, Greek, Cyrillic, `ß` → `SS`); upstream ships full Unicode
        simple and special casing tables.
@@ -183,12 +163,12 @@ exempt from the ordering.
      - `len(s)` on a String or StringSpan is accepted (byte length) where
        upstream rejects it as ambiguous (`byte_length()`, `len(s.codepoints())`,
        `len(s.graphemes())`); an extension to drop at the next re-pin.
-  6. **Compile-time collections.** `comptime d = {...}` Dict/Set values
+  5. **Compile-time collections.** `comptime d = {...}` Dict/Set values
      hashed with `default_comp_time_hasher`. `CtValue` has no mapping kind
      (`crates/mojito-types/src/ct.rs`), `Elab::eval` has no dict-display
      arm, and the VM-CTFE purity walk admits only the hasher protocol's
      method calls, so a general compile-time method-call rule comes with it.
-  7. **Diagnostic wording and strictness.**
+  6. **Diagnostic wording and strictness.**
      - An unavailable where-gated method reports `'set' is unavailable for
        Variant[Conn]: its where clause evaluated to False` rather than
        upstream's clause text.
@@ -197,7 +177,7 @@ exempt from the ordering.
        non-`Deinitable` field parameter (`struct Box[T: Copyable & Movable]:
        var value: Self.T`) is accepted, where upstream reports `use Self.T`
        and requires a `Deinitable` bound.
-  8. **Deliberate deferrals.** Nothing depends on these; each is a
+  7. **Deliberate deferrals.** Nothing depends on these; each is a
      conscious limit, listed here so it is not mistaken for unfinished
      task work.
      - Clones are minted per whole instance (no reachability pruning) and

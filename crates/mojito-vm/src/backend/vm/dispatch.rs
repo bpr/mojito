@@ -335,6 +335,26 @@ impl VmBackend {
                         })
                     }
                     Value::None => Ok(None),
+                    // A nominal `Optional[Int]` bound: read its owned slot.
+                    Value::Struct { .. } => {
+                        let size = value_as_index(&get_field(value, "_size")?)?;
+                        if size == 0 {
+                            return Ok(None);
+                        }
+                        let Value::Pointer { allocation, offset } = get_field(value, "data")?
+                        else {
+                            return Err(RuntimeError::TypeError(
+                                "slice bound Optional storage requires Pointer".to_string(),
+                            ));
+                        };
+                        match self.heap_read(allocation, offset, 0)? {
+                            Value::Int(value) => Ok(Some(value)),
+                            other => Err(RuntimeError::TypeError(format!(
+                                "slice bound must be Int or None, got {}",
+                                crate::runtime::type_name(&other)
+                            ))),
+                        }
+                    }
                     other => Err(RuntimeError::TypeError(format!(
                         "slice bound must be Int or None, got {}",
                         crate::runtime::type_name(other)
@@ -437,19 +457,17 @@ impl VmBackend {
             // takes precedence over the fieldwise constructor: build an uninitialized
             // `self` skeleton, run `__init__`, and return the initialized value.
             _ if prog.structs.contains_key(name) => {
-                let init_name = format!("{name}.__init__");
                 if (!args.is_empty() || kwargs.len() != 1 || kwargs[0].0 != "copy")
-                    && (prog.index_of(&init_name).is_some()
-                        || prog
-                            .index_of(&prog.overload_name(&init_name, args.len()))
-                            .is_some())
+                    && prog
+                        .index_of(&prog.constructor_name(name, args.len()))
+                        .is_some()
                 {
                     return self.construct_via_init(prog, name, None, args, kwargs, param_vals);
                 }
                 if !kwargs.is_empty() {
                     self.construct_via_copy(prog, name, args, kwargs, param_vals)
                 } else if prog
-                    .index_of(&prog.overload_name(&init_name, args.len()))
+                    .index_of(&prog.constructor_name(name, args.len()))
                     .is_some()
                 {
                     self.construct_via_init(prog, name, None, args, Vec::new(), param_vals)

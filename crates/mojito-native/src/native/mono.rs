@@ -86,6 +86,13 @@ struct Specializer<'a> {
     /// forwarding its own binder as a callee's type argument
     /// (`hash[Self.H](key)`) resolves that spelling here.
     enclosing_types: HashMap<String, Ty>,
+    /// Instance names enqueued only by struct discovery's eager `__init__`
+    /// walk, never by a call site. A conditional constructor (`__init__(out
+    /// self) where conforms_to(Self.T, Defaultable)`) has no MIR-visible
+    /// clause, so discovery over-approximates; an instance that cannot
+    /// materialize is dropped instead of rejecting the program, exactly
+    /// because the checker admitted no call to it.
+    speculative: HashSet<String>,
 }
 
 mod equiv;

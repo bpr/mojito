@@ -660,6 +660,19 @@ impl Checker {
             // check round reaches the specialization, whose real methods
             // answer in the next round.
             "__len__" if args.is_empty() && param_args.is_empty() => Ok(Ty::Int),
+            "__contains__" if args.len() == 1 && param_args.is_empty() => {
+                let value = self.infer(&args[0])?;
+                if self.conforms_to(&value, "Equatable") {
+                    Ok(Ty::Bool)
+                } else {
+                    Err(TypeError::TraitNotSatisfied {
+                        param: "value".to_string(),
+                        ty: value.to_string(),
+                        trait_name: "Equatable".to_string(),
+                        reason: self.trait_failure_reason(&value, "Equatable"),
+                    })
+                }
+            }
             "__eq__" | "__ne__" | "__lt__" | "__le__" | "__gt__" | "__ge__"
                 if args.len() == 1 && param_args.is_empty() =>
             {

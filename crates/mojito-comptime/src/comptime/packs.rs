@@ -367,6 +367,96 @@ pub(super) fn tuple_transform_method(
     }
 }
 
+/// Build the concrete nullary constructor for a Defaultable Tuple
+/// specialization. A heterogeneous pack cannot retain `Ts[i]()` as runtime
+/// syntax, so specialization expands it into one ordinary concrete constructor
+/// call per element before semantic checking.
+pub(super) fn tuple_default_constructor(
+    variadic_constructor: &mojito_ast::ast::Method,
+    types: &[Type],
+    semantic_types: &[Ty],
+    span: Span,
+) -> Option<mojito_ast::ast::Method> {
+    let arguments = types
+        .iter()
+        .zip(semantic_types)
+        .map(|(ty, semantic)| default_constructor_call(ty, semantic, span))
+        .collect::<Option<Vec<_>>>()?;
+    let mut constructor = variadic_constructor.clone();
+    constructor.params.clear();
+    let [statement] = constructor.body.as_mut_slice() else {
+        return None;
+    };
+    let StmtKind::SetPlace { value, .. } = &mut statement.kind else {
+        return None;
+    };
+    let ExprKind::Call { name, .. } = &value.kind else {
+        return None;
+    };
+    if name != "__RuntimeTuple" {
+        return None;
+    }
+    let ExprKind::Call { args, .. } = &mut value.kind else {
+        unreachable!("validated runtime Tuple constructor call")
+    };
+    *args = arguments;
+    Some(constructor)
+}
+
+fn default_constructor_call(ty: &Type, semantic: &Ty, span: Span) -> Option<Expr> {
+    // A nested Tuple element constructs through its minted specialization:
+    // the public `Tuple[...]()` spelling would be folded as the compile-time
+    // Tuple constructor inside the generated body.
+    if let Ty::Struct(name, _) = semantic
+        && mojito_symbol::symbol::is_tuple_specialization_symbol(name)
+    {
+        return Some(Expr::new(
+            ExprKind::Call {
+                name: name.clone(),
+                param_args: Vec::new(),
+                args: Vec::new(),
+                kwargs: Vec::new(),
+            },
+            span,
+        ));
+    }
+    let literal = match ty {
+        Type::Int | Type::UInt => Some(ExprKind::Int(0.into())),
+        Type::Bool => Some(ExprKind::Bool(false)),
+        Type::StringLiteral => Some(ExprKind::Str(String::new())),
+        Type::Float64 => Some(ExprKind::Float(0.0.into())),
+        Type::None => Some(ExprKind::None),
+        _ => None,
+    };
+    if let Some(kind) = literal {
+        return Some(Expr::new(kind, span));
+    }
+    let (name, param_args) = match ty {
+        Type::Named(name, arguments) => (
+            name.clone(),
+            // A specialized (mangled) name has its arguments baked in; an
+            // open application (`Tuple[Int, Bool]`, `Optional[Int]`)
+            // keeps them so the element constructs through its own
+            // specialization.
+            if name.contains('$') {
+                Vec::new()
+            } else {
+                arguments.clone()
+            },
+        ),
+        _ => return None,
+    };
+    Some(Expr::new(
+        ExprKind::Call {
+            name,
+            param_args,
+            args: Vec::new(),
+            kwargs: Vec::new(),
+        },
+        span,
+    ))
+}
+
 pub(super) fn runtime_pack_call_arguments<'a>(
     template: &Stmt,
     display_name: &str,

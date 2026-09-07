@@ -399,6 +399,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             type_params,
                             &m.params,
                             m.keyword_only,
+                            m.has_self,
                             m.self_convention,
                             &overloads,
                         );
@@ -457,6 +458,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         type_params,
                         &m.params,
                         m.keyword_only,
+                        m.has_self,
                         m.self_convention,
                         &overloads,
                     );
@@ -1689,6 +1691,12 @@ impl Flatten<'_> {
         site: &SourceSpan,
     ) -> Option<Reg> {
         let name = match ty {
+            mojito_ast::ast::Type::Int => "Int",
+            mojito_ast::ast::Type::UInt => "UInt",
+            mojito_ast::ast::Type::Bool => "Bool",
+            mojito_ast::ast::Type::StringLiteral => "StringLiteral",
+            mojito_ast::ast::Type::Float64 => "Float64",
+            mojito_ast::ast::Type::None => "NoneType",
             mojito_ast::ast::Type::Named(name, args) if args.is_empty() => name,
             mojito_ast::ast::Type::SelfParam(name) => name,
             _ => return None,
@@ -1696,7 +1704,7 @@ impl Flatten<'_> {
         let dest = self.fresh_typed(site.clone(), None, Ty::StringLiteral);
         self.emit(MirInstr::Const {
             dest,
-            k: Const::Str(name.clone()),
+            k: Const::Str(name.to_string()),
         });
         Some(dest)
     }

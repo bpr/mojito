@@ -41,6 +41,7 @@ impl<'a> Specializer<'a> {
             constant_values: HashMap::new(),
             callable_targets: HashMap::new(),
             enclosing_types: HashMap::new(),
+            speculative: HashSet::new(),
         }
     }
 
@@ -77,7 +78,22 @@ impl<'a> Specializer<'a> {
                     "polymorphic recursion exceeded the 4096-instance budget",
                 ));
             }
-            self.materialize(key, bindings)?;
+            let name = self.instance_name(&key).to_string();
+            if !self.speculative.contains(&name) {
+                self.materialize(key, bindings)?;
+                continue;
+            }
+            // A discovery-only constructor instance that cannot materialize
+            // is not part of the program: forget it (a later call site would
+            // re-enqueue and report the failure in its own context).
+            let functions = self.output_functions.len();
+            let decls = self.output_function_decls.len();
+            if self.materialize(key.clone(), bindings).is_err() {
+                self.output_functions.truncate(functions);
+                self.output_function_decls.truncate(decls);
+                self.instances.retain(|(known, _)| known != &key);
+            }
+            self.speculative.remove(&name);
         }
         let function_order = self
             .source
@@ -131,6 +147,29 @@ impl<'a> Specializer<'a> {
         bindings: Bindings,
         arguments: Vec<InstanceArg>,
     ) -> Result<String, MonoError> {
+        self.enqueue_with(template, bindings, arguments, false)
+    }
+
+    /// `enqueue` for struct discovery's eager `__init__` walk: a fresh
+    /// instance is speculative (see `Specializer::speculative`); an instance
+    /// some call site already demanded stays firm, and a later call-site
+    /// `enqueue` of a speculative instance makes it firm.
+    fn enqueue_speculative(
+        &mut self,
+        template: &str,
+        bindings: Bindings,
+        arguments: Vec<InstanceArg>,
+    ) -> Result<String, MonoError> {
+        self.enqueue_with(template, bindings, arguments, true)
+    }
+
+    fn enqueue_with(
+        &mut self,
+        template: &str,
+        bindings: Bindings,
+        arguments: Vec<InstanceArg>,
+        speculative: bool,
+    ) -> Result<String, MonoError> {
         let owner = bindings.self_instance.as_ref().and_then(|(_, ty)| {
             if let Ty::Struct(name, _) = ty {
                 Some(name.clone())
@@ -145,7 +184,11 @@ impl<'a> Specializer<'a> {
             owner,
         };
         if let Some((_, name)) = self.instances.iter().find(|(known, _)| known == &key) {
-            return Ok(name.clone());
+            let name = name.clone();
+            if !speculative {
+                self.speculative.remove(&name);
+            }
+            return Ok(name);
         }
         // A generic struct's method takes its concrete owner's spelling
         // (`List$mono$TInt.grow`), so lowering's name-composed lifecycle and
@@ -179,6 +222,9 @@ impl<'a> Specializer<'a> {
         }
         self.instances.push((key.clone(), name.clone()));
         self.queue.push_back((key, bindings));
+        if speculative {
+            self.speculative.insert(name.clone());
+        }
         Ok(name)
     }
 
@@ -411,6 +457,11 @@ impl<'a> Specializer<'a> {
                                     &init_base,
                                     args.len() + kwargs.len(),
                                 );
+                                let init = if self.functions.contains_key(init.as_str()) {
+                                    init
+                                } else {
+                                    self.runtime_pack_constructor(&init_base).unwrap_or(init)
+                                };
                                 if self.functions.contains_key(init.as_str()) {
                                     let (target, bindings, arguments) = self.infer_call(
                                         owner,
@@ -1017,11 +1068,40 @@ impl<'a> Specializer<'a> {
                             owner_covered_prefix(&template.param_decls, &function_decl.param_decls);
                         method_arguments.drain(..covered);
                     }
-                    self.enqueue(&candidate, bindings.clone(), method_arguments)?;
+                    // Constructors are only ever reached through call sites;
+                    // the eager walk over-approximates a conditional
+                    // overload (`where conforms_to(Self.T, Defaultable)`
+                    // on an instance whose element is not), so it is
+                    // speculative. The copy/move/deinit lifecycle stays
+                    // firm: lowering composes those names itself.
+                    if method == "__init__" {
+                        self.enqueue_speculative(&candidate, bindings.clone(), method_arguments)?;
+                    } else {
+                        self.enqueue(&candidate, bindings.clone(), method_arguments)?;
+                    }
                 }
             }
         }
         Ok(())
+    }
+
+    /// The unique `__init__` overload of `init_base`'s struct whose
+    /// runtime-pack collector binds any element count (current Tuple's
+    /// `__init__(out self, var *args: *Ts)` beside its nullary constructor),
+    /// which arity-keyed selection cannot see — the VM's `constructor_name`
+    /// fallback.
+    fn runtime_pack_constructor(&self, init_base: &str) -> Option<String> {
+        let mut packs = self.functions.keys().filter(|name| {
+            mojito_symbol::symbol::is_overload_of(name, init_base)
+                && self.declarations.get(*name).is_some_and(|declaration| {
+                    matches!(
+                        declaration.variadic,
+                        Some(mojito_types::types::Ty::RuntimePack(_))
+                    )
+                })
+        });
+        let first = (*packs.next()?).to_string();
+        packs.next().is_none().then_some(first)
     }
 
     pub(super) fn error(&self, function: Option<&str>, construct: impl Into<String>) -> MonoError {

@@ -1643,9 +1643,11 @@ fn list_element_references_lower_with_interior_generation_metadata() {
 #[test]
 fn reference_iteration_binding_reestablishes_the_source_loans() {
     // A `BorrowReference` loop binding aliases the borrowed source through the
-    // yielded handle, so the iterator's source loans re-establish on the
-    // binding itself: an invalidation then names the user's variable rather
-    // than only the compiler's iterator slot.
+    // yielded handle. The iterator object carries the source's whole-place
+    // loan for the whole loop; a user iterator without `_get_owned_interior`
+    // mints no interior loans, so the binding — a reborrow of the iterator
+    // object, not a competing borrow — re-establishes nothing of its own
+    // (mutably re-establishing the whole-place loan would self-conflict).
     let source = include_str!("../assets/ok/reference_yielding_iteration_named_source.mojo");
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
@@ -1662,24 +1664,36 @@ fn reference_iteration_binding_reestablishes_the_source_loans() {
         .iter()
         .position(|name| name == "nums")
         .expect("nums slot") as u32;
+    let iterator = main
+        .var_names
+        .iter()
+        .position(|name| name.starts_with("$iterobj"))
+        .expect("iterator object slot") as u32;
     let binding = main
         .var_names
         .iter()
         .position(|name| name == "x")
         .expect("loop binding slot") as u32;
-    let has_source_loan = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .any(|instruction| {
-            matches!(
-                instruction,
-                MirInstr::EstablishLoans { reference, loans, .. }
-                    if *reference == binding
-                        && loans.iter().any(|loan| loan.place.root == nums)
-            )
-        });
-    assert!(has_source_loan, "loop binding carries the source loan");
+    let establishes = |reference: u32| {
+        main.blocks
+            .iter()
+            .flat_map(|block| &block.instrs)
+            .any(|instruction| {
+                matches!(
+                    instruction,
+                    MirInstr::EstablishLoans { reference: r, loans, .. }
+                        if *r == reference && loans.iter().any(|loan| loan.place.root == nums)
+                )
+            })
+    };
+    assert!(
+        establishes(iterator),
+        "the iterator object carries the source's whole-place loan"
+    );
+    assert!(
+        !establishes(binding),
+        "the loop binding re-establishes only interior loans, and this source has none"
+    );
 }
 
 #[test]

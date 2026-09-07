@@ -359,12 +359,16 @@ pub(super) fn method_lowered_name(
             .with_kw_variadic(sig.kw_variadic.as_deref())
             .with_keyword_names(keyword_names);
     if mojito_symbol::symbol::receiver_overloaded_method(method) {
-        mojito_symbol::symbol::receiver_method_symbol(
-            type_name,
-            method,
-            sig.self_convention,
-            &signature,
-        )
+        if sig.has_self {
+            mojito_symbol::symbol::receiver_method_symbol(
+                type_name,
+                method,
+                sig.self_convention,
+                &signature,
+            )
+        } else {
+            mojito_symbol::symbol::static_method_symbol(type_name, method, &signature)
+        }
     } else {
         mojito_symbol::symbol::method_symbol(type_name, method, &signature)
     }

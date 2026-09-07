@@ -145,7 +145,8 @@ impl VmBackend {
                 };
                 let Some(Value::Str(type_name)) = bound else {
                     return Err(RuntimeError::Unsupported(format!(
-                        "vm: constructing type parameter '{param}' requires a reified type argument"
+                        "vm: constructing type parameter '{param}' in '{}' requires a reified type argument",
+                        prog.mir.functions[function].0
                     )));
                 };
                 // A reified argument can pass through an enclosing abstract
@@ -175,8 +176,15 @@ impl VmBackend {
                         })
                         .unwrap_or(type_name)
                 };
-                regs[dest.0 as usize] =
-                    self.call_named(prog, &type_name, Vec::new(), Vec::new(), &[], &[])?;
+                regs[dest.0 as usize] = match type_name.as_str() {
+                    "Int" => Value::Int(0),
+                    "UInt" => Value::UInt(0),
+                    "Bool" => Value::Bool(false),
+                    "Float64" => Value::Float64(0.0),
+                    "StringLiteral" => Value::Str(String::new()),
+                    "NoneType" => Value::None,
+                    _ => self.call_named(prog, &type_name, Vec::new(), Vec::new(), &[], &[])?,
+                };
             }
             MirInstr::SizeOf { dest, ty } => {
                 let target = mojito_native_core::target::NativeTarget::new(
@@ -354,9 +362,7 @@ impl VmBackend {
                         .then(|| prog.index_of(&func.0))
                         .flatten()
                 } else if prog.structs.contains_key(&func.0) {
-                    let init_name = format!("{}.__init__", func.0);
-                    prog.index_of(&init_name)
-                        .or_else(|| prog.index_of(&prog.overload_name(&init_name, args.len())))
+                    prog.index_of(&prog.constructor_name(&func.0, args.len()))
                 } else {
                     None
                 };

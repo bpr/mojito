@@ -963,7 +963,15 @@ impl Flatten<'_> {
                     } else {
                         recv
                     };
-                    let param_arg_regs = self.param_arg_regs(param_args, &span(e));
+                    // A per-call clone has baked its method parameters into
+                    // the selected symbol. Source brackets remain in the AST,
+                    // but an empty declaration list means they occupy no MIR
+                    // ABI slots.
+                    let param_arg_regs = if param_decls.is_empty() {
+                        Vec::new()
+                    } else {
+                        self.param_arg_regs(param_args, &span(e))
+                    };
                     let saved_anchor_permission = self.allow_argument_anchors;
                     self.allow_argument_anchors = self.call_anchors_arguments(e);
                     let (argument_regs, arg_places) = self.lower_call_arguments(args, false);
@@ -1045,6 +1053,35 @@ impl Flatten<'_> {
                 args,
                 kwargs,
             } => {
+                // An instance method called through its type
+                // (`List[Int].__len__(xs)`): the checker typed the first
+                // argument as the receiver, so lower exactly that call.
+                let receiver_argument = self.checked_adjustments(e).iter().any(|adjustment| {
+                    matches!(
+                        adjustment,
+                        mojito_checked::checked::SemanticAdjustment::ReceiverFromFirstArgument { .. }
+                    )
+                });
+                let (object, args): (&Expr, &[Expr]) = if receiver_argument {
+                    let Some((receiver, rest)) = args.split_first() else {
+                        unreachable!("checked type-receiver call carries a receiver argument")
+                    };
+                    (receiver, rest)
+                } else {
+                    (object, args)
+                };
+                if let Some(mojito_checked::checked::SemanticAdjustment::ConstructTypeParam {
+                    param,
+                }) = self.checked_adjustments(e).into_iter().find(|adjustment| {
+                    matches!(
+                        adjustment,
+                        mojito_checked::checked::SemanticAdjustment::ConstructTypeParam { .. }
+                    )
+                }) {
+                    let dest = self.fresh(span(e), None);
+                    self.emit(MirInstr::ConstructTypeParam { dest, param });
+                    return dest;
+                }
                 // `x.copy()` on a built-in copyable value has no callee: the
                 // checker resolved it to the value read itself.
                 if method == "copy"
@@ -1071,7 +1108,7 @@ impl Flatten<'_> {
                     let saved_anchor_permission = self.allow_argument_anchors;
                     self.allow_argument_anchors = self.call_anchors_arguments(e);
                     let (regs, arg_places) =
-                        self.lower_call_arguments(std::slice::from_ref(object.as_ref()), false);
+                        self.lower_call_arguments(std::slice::from_ref(object), false);
                     self.allow_argument_anchors = saved_anchor_permission;
                     let d = self.fresh_typed(span(e), None, Ty::None);
                     self.emit_interior_invalidations(writer, None);
@@ -1088,6 +1125,54 @@ impl Flatten<'_> {
                         recv_place,
                         recv_writes: true,
                         arg_places,
+                        kwarg_places: Vec::new(),
+                        capture_accesses: Vec::new(),
+                        param_arg_regs: Vec::new(),
+                        param_decls: Vec::new(),
+                    });
+                    return d;
+                }
+                // `write_repr_to` on a bounded or intrinsic Writable has no
+                // concrete receiver body. Produce `repr(receiver)` once and
+                // feed the text through the supplied Writer's ordinary
+                // `write` path.
+                if self.checked_adjustments(e).iter().any(|adjustment| {
+                    matches!(
+                        adjustment,
+                        mojito_checked::checked::SemanticAdjustment::InvertedReprWrite
+                    )
+                }) {
+                    let writer = args.first().expect("checked write_repr_to has one writer");
+                    let value = self.expr(object);
+                    let repr = self.fresh_typed(span(object), None, Ty::StringLiteral);
+                    let value_place = self.simple_place(object);
+                    self.emit(MirInstr::Call {
+                        dest: repr,
+                        func: FuncRef::named("repr"),
+                        raises: None,
+                        args: vec![value],
+                        kwargs: Vec::new(),
+                        arg_places: vec![value_place],
+                        kwarg_places: Vec::new(),
+                        capture_accesses: Vec::new(),
+                        param_arg_regs: Vec::new(),
+                    });
+                    let (recv, recv_place) = self.lower_call_receiver(writer);
+                    let d = self.fresh_typed(span(e), None, Ty::None);
+                    self.emit_interior_invalidations(writer, None);
+                    self.emit(MirInstr::MethodCall {
+                        dest: d,
+                        recv,
+                        method: "write".to_string(),
+                        resolved: None,
+                        raises: None,
+                        reference_result: None,
+                        result_adapter: None,
+                        args: vec![repr],
+                        kwargs: Vec::new(),
+                        recv_place,
+                        recv_writes: true,
+                        arg_places: vec![None],
                         kwarg_places: Vec::new(),
                         capture_accesses: Vec::new(),
                         param_arg_regs: Vec::new(),
@@ -1521,10 +1606,10 @@ impl Flatten<'_> {
                 let receiver_expr = if explicit_destroy {
                     match &object.kind {
                         ExprKind::Transfer(inner) => inner.as_ref(),
-                        _ => object.as_ref(),
+                        _ => object,
                     }
                 } else {
-                    object.as_ref()
+                    object
                 };
                 let (recv, recv_place) = self.lower_call_receiver(receiver_expr);
                 let recv = if implicitly_copied_receiver {

@@ -88,6 +88,89 @@ impl Checker {
     /// scoring/selection machinery. Symbols stay template-owned
     /// (`method_lowered_name` + `self_instance_ty`); no instantiated owner is
     /// ever spelled.
+    /// An instance method called through its type with the receiver as the
+    /// first argument (`List[Int].__len__(xs)`, `Point.norm(p)`), which
+    /// current Mojo checks as the method call on that argument. The argument
+    /// must be an instance of the named type (its explicit type arguments,
+    /// when they resolve, must agree with the receiver's); the call then
+    /// types as `xs.__len__()`, and MIR lowers it that way through
+    /// [`SemanticAdjustment::ReceiverFromFirstArgument`].
+    pub(in crate::checker) fn infer_type_receiver_instance_call(
+        &self,
+        span: SourceSpan,
+        sname: &str,
+        struct_targs: &[mojito_ast::ast::ParamArg],
+        method: &str,
+        call: MethodCallArguments<'_>,
+    ) -> Result<Ty, TypeError> {
+        let MethodCallArguments {
+            param_args,
+            args,
+            kwargs,
+            parameterized_syntax,
+            preserves_receiver_interiors,
+        } = call;
+        let Some((receiver, rest)) = args.split_first() else {
+            unreachable!("type-receiver instance calls carry a receiver argument")
+        };
+        let info = self.structs.get(sname).ok_or_else(|| {
+            TypeError::InvariantViolation(format!("struct '{sname}' was not registered"))
+        })?;
+        let actual = self.infer(receiver)?;
+        let expected = if struct_targs.is_empty() {
+            None
+        } else {
+            let partitioned =
+                self.partition_struct_origin_args(sname, &info.source_params, struct_targs)?;
+            self.resolve_use_params(sname, &info.decls, &partitioned.forwarded, &[], &[])
+                .ok()
+                .map(|(_, tyargs)| self.struct_instance_type(sname, tyargs))
+        };
+        let compatible = match (&actual, &expected) {
+            (Ty::Struct(name, _), None) => name == sname,
+            (Ty::Struct(name, actual_args), Some(Ty::Struct(expected_name, expected_args))) => {
+                let type_args = |args: &[TyArg]| {
+                    args.iter()
+                        .filter_map(|arg| match arg {
+                            TyArg::Ty(ty) => Some(ty.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                };
+                name == expected_name && type_args(actual_args) == type_args(expected_args)
+            }
+            _ => false,
+        };
+        if !compatible {
+            return Err(TypeError::TypeMismatch {
+                expected: expected
+                    .map(|ty| ty.to_string())
+                    .unwrap_or_else(|| sname.to_string()),
+                found: actual.to_string(),
+                context: format!("value passed to 'self' of '{sname}.{method}'"),
+            });
+        }
+        let ty = self.infer_method_call(
+            span.clone(),
+            receiver,
+            method,
+            MethodCallArguments {
+                param_args,
+                args: rest,
+                kwargs,
+                parameterized_syntax,
+                preserves_receiver_interiors,
+            },
+        )?;
+        let mut adjustments = self.operation_adjustments.borrow_mut();
+        let inner = adjustments.remove(&span).map(Box::new);
+        adjustments.insert(
+            span,
+            mojito_checked::checked::SemanticAdjustment::ReceiverFromFirstArgument { inner },
+        );
+        Ok(ty)
+    }
+
     pub(super) fn infer_struct_static_method(
         &self,
         span: SourceSpan,

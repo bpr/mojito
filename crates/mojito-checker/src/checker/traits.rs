@@ -749,6 +749,7 @@ impl Checker {
             let overloads = info.methods.entry(method_name.to_string()).or_default();
             if overloads.iter().any(|existing| {
                 same_method_shape(existing, &sig)
+                    && existing.has_self == sig.has_self
                     && (!mojito_symbol::symbol::receiver_overloaded_method(method_name)
                         || existing.self_convention == sig.self_convention)
             }) {
@@ -1697,6 +1698,36 @@ impl Checker {
                 "Writer" | "Hasher" => match ty {
                     Ty::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
                     Ty::Param { bounds, .. } => bounds.iter().any(|bound| bound == tr),
+                    _ => false,
+                },
+                // Default construction is a declared conformance on structs
+                // (current `Tuple`/`Array` default-construct their elements
+                // through it); the scalar built-ins, `None`, and the
+                // unmaterialized public Tuple answer structurally.
+                "Defaultable" => match ty {
+                    // A minted Tuple instance answers by its elements (its
+                    // conditional pack clause is not evaluated by the
+                    // declared-conformance oracle).
+                    _ if tuple_elements(ty).is_some() => tuple_elements(ty)
+                        .expect("guard established tuple elements")
+                        .into_iter()
+                        .all(|element| self.conforms_to(element, tr)),
+                    Ty::Int
+                    | Ty::IntLiteral
+                    | Ty::UInt
+                    | Ty::Float64
+                    | Ty::FloatLiteral
+                    | Ty::Bool
+                    | Ty::StringLiteral
+                    | Ty::None
+                    | Ty::Simd { .. } => true,
+                    Ty::Tuple(elements) | Ty::RuntimePack(elements) => {
+                        elements.iter().all(|element| self.conforms_to(element, tr))
+                    }
+                    Ty::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
+                    Ty::Param { bounds, .. } => bounds
+                        .iter()
+                        .any(|bound| bound == tr || self.trait_refines(bound, tr)),
                     _ => false,
                 },
                 "Indexer" => match ty {

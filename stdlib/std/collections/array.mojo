@@ -72,6 +72,7 @@ struct _ArrayOwnedIter[T: AnyType](
 struct Array[T: AnyType, length: Int](
     Comparable where conforms_to(T, Comparable),
     Copyable where conforms_to(T, Copyable),
+    Defaultable where conforms_to(T, Defaultable),
     Deinitable where conforms_to(T, Deinitable),
     Equatable where conforms_to(T, Equatable),
     Hashable where conforms_to(T, Hashable),
@@ -99,11 +100,14 @@ struct Array[T: AnyType, length: Int](
             self.data[i] = value^
             i += 1
 
-    # Upstream's `Defaultable where conforms_to(T, Defaultable)` conformance
-    # (default-constructing every element) needs `Self.T()` — constructing a
-    # type parameter's default value in a generic body — which Mojito does
-    # not support yet. Recorded as a subset gap on the types.collections
-    # parity row.
+    def __init__(out self) where conforms_to(Self.T, Defaultable):
+        self._size = Self.length
+        self.data = unsafe_alloc[Self.T](Self.length)
+        var i = 0
+        while i < Self.length:
+            self.data.unsafe_offset(i).unsafe_write(Self.T())
+            i += 1
+
     def __init__(out self, *, fill: Self.T) where conforms_to(Self.T, Copyable):
         self._size = Self.length
         self.data = unsafe_alloc[Self.T](Self.length)

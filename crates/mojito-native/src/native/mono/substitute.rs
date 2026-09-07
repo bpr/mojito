@@ -345,6 +345,22 @@ pub(super) fn substitute_instruction(
         // binding is concrete this is an ordinary nullary constructor call,
         // which the call rewriting below then instantiates.
         ConstructTypeParam { dest, param } => {
+            // A scalar binding default-constructs as its zero value (the
+            // VM's `ConstructTypeParam` answer for the built-in
+            // `Defaultable` types).
+            let scalar_default = match bindings.types.get(param.as_str()) {
+                Some(Ty::Int | Ty::IntLiteral) => Some(mojito_mir::mir::Const::Int(0)),
+                Some(Ty::UInt) => Some(mojito_mir::mir::Const::Int(0)),
+                Some(Ty::Bool) => Some(mojito_mir::mir::Const::Bool(false)),
+                Some(Ty::Float64 | Ty::FloatLiteral) => Some(mojito_mir::mir::Const::Float(0.0)),
+                Some(Ty::StringLiteral) => Some(mojito_mir::mir::Const::Str(String::new())),
+                Some(Ty::None) => Some(mojito_mir::mir::Const::None),
+                _ => None,
+            };
+            if let Some(k) = scalar_default {
+                *instruction = Const { dest: *dest, k };
+                return Ok(());
+            }
             let Some(Ty::Struct(struct_name, _)) = bindings.types.get(param.as_str()) else {
                 return Err(MonoError {
                     function: None,

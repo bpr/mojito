@@ -23,6 +23,7 @@ assets/ok/boolable_and_divmod.mojo	main	exe-differential	sanitized
 assets/ok/borrowed_iteration_temporary_source_drop.mojo	main	exe-differential	sanitized
 assets/ok/bound_generic_write_to.mojo	main	exe-differential	sanitized
 assets/ok/builtins_numeric.mojo	main	exe-differential	sanitized
+assets/ok/call_temporary_ref_receiver.mojo	main	exe-differential	sanitized
 assets/ok/callable_element_call_dispatch.mojo	main	exe-differential	sanitized
 assets/ok/callable_struct_element_invocation.mojo	main	exe-differential	sanitized
 assets/ok/callable_struct_transfer_after_last_use.mojo	main	exe-differential	sanitized
@@ -136,6 +137,7 @@ assets/ok/maybe_uninit_predicates.mojo	main	exe-differential	sanitized
 assets/ok/maybe_uninit_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/maybe_uninit_write.mojo	main	exe-differential	sanitized
 assets/ok/method_mut_param.mojo	main	exe-differential	sanitized
+assets/ok/method_value_parameter_binding.mojo	main	exe-differential	sanitized
 assets/ok/movable_where_false_explicit_destroy.mojo	main	exe-differential	sanitized
 assets/ok/mut_owned_params.mojo	-	ineligible	no-main-entry
 assets/ok/mut_ref_writeback.mojo	main	exe-differential	sanitized
@@ -177,6 +179,7 @@ assets/ok/number_and_string_literals.mojo	main	exe-differential	sanitized
 assets/ok/numeric_operation_traits.mojo	main	exe-differential	sanitized
 assets/ok/optional_is_none.mojo	main	exe-differential	sanitized
 assets/ok/optional_owning_api.mojo	main	exe-differential	sanitized
+assets/ok/optional_raising_subscript.mojo	main	exe-differential	sanitized
 assets/ok/optional_value_protocols.mojo	main	exe-differential	sanitized
 assets/ok/origin_argument_alias_bodies.mojo	main	exe-differential	sanitized
 assets/ok/origin_argument_direct_applications.mojo	main	exe-differential	sanitized
@@ -380,11 +383,13 @@ assets/ok/try_return.mojo	main	exe-differential	sanitized
 assets/ok/tstring_forms.mojo	main	exe-differential	sanitized
 assets/ok/tstring_generic_interpolation.mojo	main	exe-differential	sanitized
 assets/ok/tstring_lazy.mojo	main	exe-differential	sanitized
+assets/ok/tuple_array_defaultable.mojo	main	exe-differential	sanitized
 assets/ok/tuple_hashable_dict_key.mojo	main	exe-differential	sanitized
 assets/ok/tuple_struct_element_equality.mojo	main	exe-differential	sanitized
 assets/ok/tuple_unpack.mojo	main	exe-differential	sanitized
 assets/ok/tuple_unpack_call.mojo	main	exe-differential	sanitized
 assets/ok/type_predicate_comptime_if.mojo	main	exe-differential	sanitized
+assets/ok/type_receiver_instance_call.mojo	main	exe-differential	sanitized
 assets/ok/typelist_comptime_vocabulary.mojo	main	exe-differential	sanitized
 assets/ok/typelist_where_clauses.mojo	main	exe-differential	sanitized
 assets/ok/unsafe_pointer.mojo	main	exe-differential	sanitized

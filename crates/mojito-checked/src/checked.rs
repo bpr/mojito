@@ -512,6 +512,20 @@ pub enum SemanticAdjustment {
     /// `writer.write(x)` — the same `Writer.write` shape both backends
     /// already format through the argument's `write_to` conformance.
     InvertedWrite,
+    /// `x.write_repr_to(writer)` on a `Writable`-bounded receiver: format the
+    /// receiver through `repr(x)`, then feed that text to `writer.write`.
+    /// This is the representation twin of [`Self::InvertedWrite`].
+    InvertedReprWrite,
+    /// An instance method called through its type with the receiver as the
+    /// first argument (`List[Int].__len__(xs)`, current Mojo's
+    /// `T.method(value, …)` spelling): the checker typed it as
+    /// `xs.__len__()`, so MIR lowers the first argument as the receiver and
+    /// the rest as the arguments. `inner` keeps the operation adjustment the
+    /// rewritten method call itself recorded at the same span (an inverted
+    /// write, a parameterized clone selection), reported alongside.
+    ReceiverFromFirstArgument {
+        inner: Option<Box<SemanticAdjustment>>,
+    },
     /// A condition (`if`/`while`/ternary/comprehension filter) whose value
     /// is a `Boolable` struct: MIR converts it through `Bool(x)`, i.e. the
     /// struct's `__bool__`.
@@ -1668,6 +1682,11 @@ fn build_checked_expressions(
             }
             if let Some(operation) = self.operation_adjustments.get(&span) {
                 adjustments.push(operation.clone());
+                if let SemanticAdjustment::ReceiverFromFirstArgument { inner: Some(inner) } =
+                    operation
+                {
+                    adjustments.push((**inner).clone());
+                }
             }
             // Kept apart from the single per-span operation record: a
             // parameterized method invoke that yields a reference carries

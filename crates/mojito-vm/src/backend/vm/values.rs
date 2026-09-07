@@ -314,7 +314,7 @@ impl VmBackend {
         };
         let constructor = target
             .map(str::to_string)
-            .unwrap_or_else(|| prog.overload_name(&format!("{name}.__init__"), args.len()));
+            .unwrap_or_else(|| prog.constructor_name(name, args.len()));
         let fidx = prog.index_of(&constructor).ok_or_else(|| {
             RuntimeError::Unsupported(format!(
                 "vm: checked constructor '{constructor}' is missing from MIR"
@@ -348,7 +348,19 @@ impl VmBackend {
         let mut bound = Vec::with_capacity(user_args.len() + 1);
         bound.push(skeleton);
         bound.extend(user_args);
-        let (_, frame_vars) = self.call_frame(prog, fidx, bound, &[])?;
+        let constructor_params: Vec<_> = prog
+            .sigs
+            .get(&constructor)
+            .into_iter()
+            .flat_map(|signature| signature.param_decls.iter())
+            .zip(param_vals)
+            .filter_map(|(declaration, value)| {
+                value
+                    .clone()
+                    .map(|value| (declaration.name().to_string(), value))
+            })
+            .collect();
+        let (_, frame_vars) = self.call_frame(prog, fidx, bound, &constructor_params)?;
         Ok(frame_vars.into_iter().next().unwrap_or(Value::None))
     }
 

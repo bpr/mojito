@@ -1509,10 +1509,8 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     def islower(self) -> Bool:
         return self._size > 0 and self._all_cased_as(False)
 
-    # Non-empty and made only of Python-space codepoints. Upstream's
-    # `[single_character: Bool = False]` fast-path parameter is not declared:
-    # a value-parameterized method on this origin-parameterized struct is not
-    # specialized (see docs/roadmap.md).
+    # Non-empty and made only of Python-space codepoints (the audited head
+    # declares no `single_character` fast-path parameter either).
     def isspace(self) -> Bool:
         var at = 0
         while at < self._size:

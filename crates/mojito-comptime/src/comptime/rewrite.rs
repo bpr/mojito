@@ -210,10 +210,45 @@ fn rewrite_expr(e: &mut Expr, subs: Subs) {
         }
         ExprKind::MethodCall {
             object,
+            method,
             args,
             kwargs,
-            ..
         } => {
+            // `Self.T()` in a generic struct becomes an ordinary constructor
+            // once specialization has baked the enclosing type parameter.
+            if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
+                && args.is_empty()
+                && kwargs.is_empty()
+                && let Some(CtValue::Type(bound)) = subs(method)
+            {
+                match &*bound {
+                    Ty::Struct(name, parameters) if parameters.is_empty() => {
+                        e.kind = ExprKind::Call {
+                            name: name.clone(),
+                            param_args: Vec::new(),
+                            args: Vec::new(),
+                            kwargs: Vec::new(),
+                        };
+                        return;
+                    }
+                    Ty::Simd { dtype, width } => {
+                        let Some(dtype) = CtValue::Dtype(*dtype).materialize(e.span) else {
+                            return;
+                        };
+                        let Some(width) = CtValue::Int(*width).materialize(e.span) else {
+                            return;
+                        };
+                        e.kind = ExprKind::Call {
+                            name: "SIMD".to_string(),
+                            param_args: vec![ParamArg::Value(dtype), ParamArg::Value(width)],
+                            args: Vec::new(),
+                            kwargs: Vec::new(),
+                        };
+                        return;
+                    }
+                    _ => {}
+                }
+            }
             rewrite_expr(object, subs);
             rewrite_exprs(args, subs);
             for k in kwargs {
@@ -329,10 +364,26 @@ fn fold_pack_typelist_use(e: &Expr, subs: Subs) -> Option<Expr> {
             })
             .collect()
     }
+    /// The bound pack's element count: every element counts, including the
+    /// callable values of a function-valued Tuple (`(identity, offset)`),
+    /// which `pack_elements` cannot spell as source types.
+    fn pack_length(object: &Expr, subs: Subs) -> Option<usize> {
+        let name = match &object.kind {
+            ExprKind::Identifier(name) => name,
+            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(base) if base == "Self") => {
+                field
+            }
+            _ => return None,
+        };
+        let CtValue::Tuple(values) = subs(name)? else {
+            return None;
+        };
+        Some(values.len())
+    }
     match &e.kind {
         ExprKind::Member { object, field } if field == "length" => {
-            let elements = pack_elements(object, subs)?;
-            CtValue::Int(elements.len() as i64).materialize(e.span)
+            let length = pack_length(object, subs)?;
+            CtValue::Int(length as i64).materialize(e.span)
         }
         ExprKind::Invoke {
             callee,

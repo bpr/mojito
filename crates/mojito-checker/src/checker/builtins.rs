@@ -389,6 +389,12 @@ impl Checker {
             {
                 continue;
             }
+            if matches!(&ty, Ty::Struct(name, args)
+                if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice")
+                    && args.is_empty())
+            {
+                continue;
+            }
             if matches!(ty, Ty::Struct(..)) {
                 if self.conforms_to(&ty, "Writable") {
                     continue;

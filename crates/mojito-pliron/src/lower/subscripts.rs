@@ -449,6 +449,18 @@ impl<'a> FnLowering<'a> {
         name: &str,
         args: &[Reg],
     ) -> Result<(), PlironError> {
+        // The VM also reads a nominal `Optional[Int]` bound (a runtime
+        // presence); the native descriptor's presence flags are static, so
+        // that spelling is a recorded native gap rather than a miscompile.
+        if args
+            .iter()
+            .any(|reg| matches!(self.func.reg_types.get(&reg.0), Some(Ty::Struct(..))))
+        {
+            return Err(self.unsupported_reg(
+                format!("`{name}` constructor with an `Optional[Int]` bound"),
+                dest,
+            ));
+        }
         let bound = |lowering: &Self, reg: Reg| {
             (!matches!(lowering.func.reg_types.get(&reg.0), Some(Ty::None))).then_some(reg)
         };

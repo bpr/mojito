@@ -201,7 +201,7 @@ list-anytype-element	run	assets/ok/list_anytype_element.mojo
 list-anytype-append	reject	assets/type_error/list_anytype_append_requires_movable.mojo
 array-comparable	run	assets/ok/array_comparable.mojo
 array-concat-repeat	mojo-only	conformance/fixtures/array_concat_repeat.mojo
-array-defaultable	mojo-only	conformance/fixtures/array_defaultable.mojo
+array-defaultable	run	conformance/fixtures/array_defaultable.mojo
 string-capacity	run	assets/ok/string_capacity.mojo
 maybe-uninit-write	run	assets/ok/maybe_uninit_write.mojo
 maybe-uninit-write-nontrivial	reject	assets/type_error/maybe_uninit_write_nontrivial.mojo
@@ -316,3 +316,11 @@ reversed-list	run	assets/ok/reversed_list.mojo
 static-call-origin-application	run	assets/ok/static_call_origin_application.mojo
 pointer-origin-field-inference	run	assets/ok/pointer_origin_field_inference.mojo
 untracked-pointer-field-tracked-argument	reject	assets/type_error/untracked_pointer_field_tracked_argument.mojo
+optional-raising-subscript	run	assets/ok/optional_raising_subscript.mojo
+tuple-array-defaultable	run	assets/ok/tuple_array_defaultable.mojo
+type-receiver-instance-call	run	assets/ok/type_receiver_instance_call.mojo
+method-value-parameter-binding	run	assets/ok/method_value_parameter_binding.mojo
+call-temporary-ref-receiver	run	assets/ok/call_temporary_ref_receiver.mojo
+write-repr-to-bounded	run	conformance/fixtures/write_repr_to_bounded.mojo
+slice-optional-bounds	run	conformance/fixtures/slice_optional_bounds.mojo
+type-receiver-instance-mismatch	reject	assets/type_error/type_receiver_instance_mismatch.mojo

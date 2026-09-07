@@ -14,6 +14,14 @@ from std.iterable import Iterable, IterableOwned, Iterator, StopIteration
 from std.memory import unsafe_alloc
 
 @fieldwise_init
+struct EmptyOptionalError[T: AnyType](ImplicitlyCopyable, Movable, Writable):
+    def write_to(self, mut writer: Some[Writer]):
+        writer.write("EmptyOptionalError[", _unqualified_type_name[Self.T](), "]()")
+
+    def write_repr_to(self, mut writer: Some[Writer]):
+        self.write_to(writer)
+
+@fieldwise_init
 struct _OptionalIter[
     iterable_mut: Bool, //, T: AnyType, iterable_origin: Origin[mut=iterable_mut]
 ](Iterator where conforms_to(T, Copyable)):
@@ -139,6 +147,15 @@ struct Optional[T: AnyType](
 
     def __bool__(self) -> Bool:
         return self._size == 1
+
+    def __getitem__(
+        ref self
+    ) raises EmptyOptionalError[Self.T] -> ref[
+        origin_of(self)._get_owned_interior["element"]
+    ] Self.T:
+        if self._size == 0:
+            raise EmptyOptionalError[Self.T]()
+        return self.data[0]
 
     # `~opt` is the negated truth value (upstream's `__invert__`).
     def __invert__(self) -> Bool:

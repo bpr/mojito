@@ -134,6 +134,18 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
+        if name == "__RuntimeTuple"
+            && (self.bundled_stdlib_declaration
+                || super::overload_support::is_bundled_module_source(span.source.as_deref()))
+            && param_args.is_empty()
+            && kwargs.is_empty()
+        {
+            return args
+                .iter()
+                .map(|argument| self.infer(argument))
+                .collect::<Result<Vec<_>, _>>()
+                .map(Ty::Tuple);
+        }
         if name == "__mojito_fieldwise_copy" {
             if !param_args.is_empty() || args.len() != 1 || !kwargs.is_empty() {
                 return Err(TypeError::InvariantViolation(

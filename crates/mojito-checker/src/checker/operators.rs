@@ -696,7 +696,10 @@ impl Checker {
         }
         for argument in args {
             let found = self.infer(argument)?;
-            if found != Ty::None && !coerces(&found, &Ty::Int) {
+            // A bound is an `Int`, `None`, or an `Optional[Int]` value (the
+            // descriptor's own field type, as upstream's `Slice.__init__`
+            // declares): the nominal slot is read at construction.
+            if found != Ty::None && !coerces(&found, &Ty::Int) && !is_optional_int(&found) {
                 return Err(TypeError::TypeMismatch {
                     expected: "Int or None".to_string(),
                     found: found.to_string(),
@@ -854,4 +857,11 @@ pub(super) fn prefix_symbol(op: PrefixOp) -> &'static str {
         PrefixOp::Not => "not",
         PrefixOp::Invert => "~",
     }
+}
+
+/// Whether `ty` is the nominal `Optional[Int]` (module-qualified or not).
+fn is_optional_int(ty: &Ty) -> bool {
+    matches!(ty, Ty::Struct(name, args)
+        if (name == "Optional" || name.ends_with("$Optional"))
+            && matches!(args.as_slice(), [mojito_types::types::TyArg::Ty(Ty::Int)]))
 }

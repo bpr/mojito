@@ -705,7 +705,26 @@ impl<'a> FnLowering<'a> {
             mojito_symbol::symbol::is_overload_of(fname, &init)
                 && signature.params.len() == argc + 1
         });
-        let first = matches.next()?.0.clone();
-        matches.next().is_none().then_some(first)
+        if let Some((first, _)) = matches.next() {
+            let first = first.clone();
+            return matches.next().is_none().then_some(first);
+        }
+        // The unique variadic overload whose runtime-pack collector binds
+        // any element count (current Tuple's `*args: *Ts` constructor beside
+        // its nullary one), as the VM's `constructor_name` selects.
+        let mut packs = self.signatures.keys().filter(|fname| {
+            mojito_symbol::symbol::is_overload_of(fname, &init)
+                && self
+                    .declarations
+                    .get(fname.as_str())
+                    .is_some_and(|declaration| {
+                        matches!(
+                            declaration.variadic,
+                            Some(mojito_types::types::Ty::RuntimePack(_))
+                        )
+                    })
+        });
+        let first = packs.next()?.clone();
+        packs.next().is_none().then_some(first)
     }
 }

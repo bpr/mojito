@@ -22,6 +22,46 @@ impl Checker {
             parameterized_syntax,
             preserves_receiver_interiors,
         } = call;
+        // In a generic struct body, Mojo spells construction of an associated
+        // type parameter as `Self.T()`. It is a type-level member call rather
+        // than an instance method call, and the concrete type is reified by
+        // the enclosing constructor frame at execution time.
+        if let ExprKind::Identifier(name) = &object.kind
+            && name == "Self"
+            && param_args.is_empty()
+            && args.is_empty()
+            && kwargs.is_empty()
+            && let Some(ParamDecl::Type {
+                name: parameter,
+                bounds,
+                callable_bound,
+                ..
+            }) = self
+                .self_decls
+                .iter()
+                .find(|declaration| declaration.name() == method)
+        {
+            let ty = Ty::Param {
+                name: parameter.clone(),
+                bounds: bounds.clone(),
+                callable_bound: callable_bound.clone(),
+            };
+            if !self.conforms_to(&ty, "Defaultable") && !self.conforms_to(&ty, "Hasher") {
+                return Err(TypeError::TraitNotSatisfied {
+                    param: parameter.clone(),
+                    ty: ty.to_string(),
+                    trait_name: "Defaultable".to_string(),
+                    reason: self.trait_failure_reason(&ty, "Defaultable"),
+                });
+            }
+            self.operation_adjustments.borrow_mut().insert(
+                span,
+                mojito_checked::checked::SemanticAdjustment::ConstructTypeParam {
+                    param: parameter.clone(),
+                },
+            );
+            return Ok(ty);
+        }
         // A **static** method on a parameterized type — the receiver is a type,
         // not a value (`Dict[Int, Int].fromkeys(...)`). Handled before inferring
         // the object (which would reject a bare `TypeApply`). The pointer family
@@ -37,6 +77,18 @@ impl Checker {
                     .is_some_and(|sigs| sigs.iter().any(|sig| !sig.has_self))
             {
                 return self.infer_struct_static_method(span, name, targs, method, call);
+            }
+            // No static of that name: an instance method called through the
+            // type takes its receiver as the first argument.
+            if !matches!(name.as_str(), "UnsafePointer" | "Pointer")
+                && !args.is_empty()
+                && self.structs.get(name).is_some_and(|info| {
+                    info.methods
+                        .get(method)
+                        .is_some_and(|sigs| sigs.iter().any(|sig| sig.has_self))
+                })
+            {
+                return self.infer_type_receiver_instance_call(span, name, targs, method, call);
             }
             reject_kwargs(kwargs)?;
             return self.infer_static_method(name, targs, method, args, object.source.as_deref());
@@ -55,13 +107,15 @@ impl Checker {
             && let ExprKind::Identifier(sname) = &base.kind
             && self.lookup(sname).is_none()
             && let Some(info) = self.structs.get(sname)
-            && info
-                .methods
-                .get(method)
-                .is_some_and(|sigs| sigs.iter().any(|sig| !sig.has_self))
+            && let Some(sigs) = info.methods.get(method)
         {
             let targ = mojito_ast::ast::ParamArg::Value((**index).clone());
-            return self.infer_struct_static_method(span, sname, &[targ], method, call);
+            if sigs.iter().any(|sig| !sig.has_self) {
+                return self.infer_struct_static_method(span, sname, &[targ], method, call);
+            }
+            if !args.is_empty() && sigs.iter().any(|sig| sig.has_self) {
+                return self.infer_type_receiver_instance_call(span, sname, &[targ], method, call);
+            }
         }
         if let ExprKind::Identifier(sname) = &object.kind
             && let Some(info) = self.structs.get(sname)
@@ -74,6 +128,15 @@ impl Checker {
             // established path below.
             if !info.decls.is_empty() && signatures.iter().any(|sig| !sig.has_self) {
                 return self.infer_struct_static_method(span, sname, &[], method, call);
+            }
+            // The bare type name (never an expression binding) with only
+            // instance methods of that name: the receiver is the first
+            // argument (`Point.norm(p)`).
+            if self.lookup(sname).is_none()
+                && !args.is_empty()
+                && signatures.iter().all(|sig| sig.has_self)
+            {
+                return self.infer_type_receiver_instance_call(span, sname, &[], method, call);
             }
             let mut matches = Vec::new();
             let mut candidate_sigs: Vec<(&MethodSig, Vec<Ty>)> = Vec::new();
@@ -427,6 +490,33 @@ impl Checker {
                 }
                 return Ok(Ty::Bool);
             }
+            if matches!(method, "write_to" | "write_repr_to")
+                && args.len() == 1
+                && param_args.is_empty()
+            {
+                let writer_ty = self.infer(&args[0])?;
+                if !self.conforms_to(&writer_ty, "Writer") {
+                    return Err(TypeError::TypeMismatch {
+                        expected: "Writer".to_string(),
+                        found: writer_ty.to_string(),
+                        context: format!("argument 1 to '{method}'"),
+                    });
+                }
+                self.check_place(&args[0])?;
+                self.borrowed_read_call_places
+                    .borrow_mut()
+                    .insert(object.source_span());
+                self.infer_print(std::slice::from_ref(object))?;
+                self.operation_adjustments.borrow_mut().insert(
+                    span,
+                    if method == "write_repr_to" {
+                        mojito_checked::checked::SemanticAdjustment::InvertedReprWrite
+                    } else {
+                        mojito_checked::checked::SemanticAdjustment::InvertedWrite
+                    },
+                );
+                return Ok(Ty::None);
+            }
             if method != "indices" {
                 return Err(TypeError::NoSuchMethod {
                     object_type: obj_ty.to_string(),
@@ -484,7 +574,7 @@ impl Checker {
         // literal bridge, which `Writer.write` already spells on both
         // backends); every other struct receiver keeps the ordinary method
         // path to its own `write_to`.
-        if method == "write_to"
+        if matches!(method, "write_to" | "write_repr_to")
             && args.len() == 1
             && kwargs.is_empty()
             && param_args.is_empty()
@@ -496,7 +586,10 @@ impl Checker {
                 Ty::Struct(name, targs)
                     if !(targs.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name))
             )
-            && self.conforms_to(&obj_ty, "Writable")
+            && (matches!(&obj_ty, Ty::Struct(name, args)
+                    if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice")
+                        && args.is_empty())
+                || self.conforms_to(&obj_ty, "Writable"))
         {
             let writer_ty = self.infer(&args[0])?;
             if !self.conforms_to(&writer_ty, "Writer") {
@@ -513,7 +606,11 @@ impl Checker {
             self.infer_print(std::slice::from_ref(object))?;
             self.operation_adjustments.borrow_mut().insert(
                 span,
-                mojito_checked::checked::SemanticAdjustment::InvertedWrite,
+                if method == "write_repr_to" {
+                    mojito_checked::checked::SemanticAdjustment::InvertedReprWrite
+                } else {
+                    mojito_checked::checked::SemanticAdjustment::InvertedWrite
+                },
             );
             return Ok(Ty::None);
         }
@@ -627,8 +724,12 @@ impl Checker {
                 match info.methods.get(method) {
                     Some(sigs) => {
                         let overloaded = sigs.len() > 1;
+                        let has_instance_candidate = sigs.iter().any(|sig| sig.has_self);
                         let mut matches = Vec::new();
-                        for sig in sigs {
+                        for sig in sigs
+                            .iter()
+                            .filter(|sig| sig.has_self || !has_instance_candidate)
+                        {
                             let receiver_params: Vec<Ty> = sig
                                 .params
                                 .iter()
@@ -1371,7 +1472,7 @@ impl Checker {
         // exclusivity below still uses the raw declared convention.
         let effective_receiver_convention = if resolved.self_convention == Some(ArgConvention::Ref)
             && ((resolved.parametric_origin_writes.is_empty() && resolved.ref_return.is_none())
-                || self.reference_actual(object)?.mutability
+                || self.materialized_reference_actual(object)?.mutability
                     != mojito_types::origin::Mutability::Mutable)
         {
             Some(ArgConvention::Imm)
