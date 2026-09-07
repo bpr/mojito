@@ -1867,6 +1867,30 @@ fn ct_value(value: &CtValue) -> String {
                 ),
             ],
         ),
+        CtValue::Dict { spelling, entries } => {
+            let mut fields = Vec::new();
+            if let Some(ty) = spelling {
+                fields.push(("spelling", ty_value(ty)));
+            }
+            fields.push((
+                "entries",
+                list(entries.iter().map(|(key, value)| {
+                    record(
+                        "ct_entry",
+                        &[("key", ct_value(key)), ("value", ct_value(value))],
+                    )
+                })),
+            ));
+            record("ct_dict", &fields)
+        }
+        CtValue::Set { spelling, elements } => {
+            let mut fields = Vec::new();
+            if let Some(ty) = spelling {
+                fields.push(("spelling", ty_value(ty)));
+            }
+            fields.push(("elements", list(elements.iter().map(ct_value))));
+            record("ct_set", &fields)
+        }
         CtValue::Type(v) => positional("ct_type", ty_value(v)),
         CtValue::Reflected(v) => positional("ct_reflected", ty_value(v)),
         CtValue::Param(v) => positional("ct_param", symbol(v)),

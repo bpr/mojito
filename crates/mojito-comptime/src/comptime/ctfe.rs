@@ -6,6 +6,11 @@ use super::*;
 
 /// The synthesized root of a struct-construction/static-method CTFE run.
 const CTFE_STRUCT_ENTRY: &str = "$ctfe$struct$entry";
+/// The synthesized root of a general compile-time expression run, and the
+/// typing probe checked before it with the expression bound to a local.
+const CTFE_EXPR_ENTRY: &str = "$ctfe$expr$entry";
+const CTFE_PROBE: &str = "$ctfe$probe";
+const CTFE_PROBE_RESULT: &str = "$ctfe$result";
 
 impl<'a> Elab<'a> {
     /// Registry-aware specializability: recognizes struct-typed value
@@ -326,28 +331,8 @@ impl<'a> Elab<'a> {
         let mut visiting = HashSet::new();
         let mut needed = HashSet::new();
         needed.insert(name.to_string());
-        for (type_params, body, _) in &overloads {
-            // A constructible type parameter (`HasherType()`) constructs the
-            // bound struct, whose own constructors the walk checks by name
-            // when the binding is known; the parameter call itself is pure.
-            let guards: Vec<String> = type_params
-                .iter()
-                .filter(|parameter| {
-                    parameter
-                        .bounds
-                        .iter()
-                        .any(|bound| bound == "Hasher" || bound == "Defaultable")
-                })
-                .map(|parameter| format!("$ctor${}", parameter.name))
-                .collect();
-            for guard in &guards {
-                visiting.insert(guard.clone());
-            }
-            let safe = self.vm_ctfe_safe_block(body, &mut visiting, &mut needed);
-            for guard in &guards {
-                visiting.remove(guard);
-            }
-            if !safe {
+        for (_, body, _) in &overloads {
+            if !self.vm_ctfe_safe_block(body, &mut visiting, &mut needed) {
                 return Err(ComptimeError::NotComptime(format!(
                     "'{name}' is not safe for VM-backed compile-time execution"
                 )));
@@ -457,6 +442,141 @@ impl<'a> Elab<'a> {
         self.vm_value_to_ct(value)
     }
 
+    /// Evaluate a general expression over compile-time values — a method
+    /// call, subscript, or free call whose receiver or argument is a
+    /// compile-time collection or struct (`M.get("a").value()`) — through a
+    /// synthesized VM-CTFE entry. Collection bindings become locals
+    /// initialized from their materialized displays, so the checked boundary
+    /// types and dispatches the expression exactly as a runtime body would;
+    /// every other binding is inlined as its literal. The result type is not
+    /// known before checking, so a probe definition binding the expression
+    /// to a local is checked first: its inferred type spells the entry's
+    /// return, and its non-raising signature is what reports a raising call
+    /// (upstream's rule for a comptime initializer).
+    pub(super) fn ctfe_expr_entry(
+        &self,
+        expr: &Expr,
+        scope: &HashMap<String, CtValue>,
+    ) -> Result<CtValue, ComptimeError> {
+        self.burn()?;
+        let span = expr.span;
+        let collections: RefCell<Vec<String>> = RefCell::new(Vec::new());
+        let subs: super::rewrite::Subs = &|name| {
+            let value = scope.get(name)?;
+            if value.is_runtime_collection() {
+                let mut seen = collections.borrow_mut();
+                if !seen.iter().any(|seen| seen == name) {
+                    seen.push(name.to_string());
+                }
+                None
+            } else {
+                Some(value.clone())
+            }
+        };
+        let mut body = expr.clone();
+        super::rewrite::rewrite_expr(&mut body, subs);
+        let mut prologue = Vec::new();
+        for name in collections.into_inner() {
+            let value = &scope[&name];
+            let display = value.materialize(span).ok_or_else(|| {
+                ComptimeError::NotComptime(format!(
+                    "compile-time value {value} has no runtime form"
+                ))
+            })?;
+            prologue.push(mk(
+                StmtKind::VarDecl {
+                    name,
+                    ty: None,
+                    value: display,
+                },
+                span,
+            ));
+        }
+        let mut visiting = HashSet::new();
+        let mut needed = HashSet::new();
+        let safe = prologue
+            .iter()
+            .all(|stmt| self.vm_ctfe_safe_stmt(stmt, &mut visiting, &mut needed))
+            && self.vm_ctfe_safe_expr(&body, &mut visiting, &mut needed);
+        if !safe {
+            return Err(ComptimeError::NotComptime(
+                "a compile-time expression reaches an effectful builtin and is not safe for \
+                 VM-backed compile-time execution"
+                    .to_string(),
+            ));
+        }
+        let declarations = self.vm_ctfe_declaration_closure(&needed);
+        let mut program = self.vm_ctfe_subprogram(&declarations);
+        // The typing probe: `var $r = <expr>` inside a non-raising def. The
+        // expression's own node gets a fresh identity — a rewritten chain may
+        // share syntax ids among its nodes, and the checker re-keys
+        // duplicates — so the checked type is read back at exactly this node.
+        body.syntax_id = mojito_common::token::SyntaxId::fresh();
+        let key = body.source_span();
+        let mut probe_body = prologue.clone();
+        probe_body.push(mk(
+            StmtKind::VarDecl {
+                name: CTFE_PROBE_RESULT.to_string(),
+                ty: None,
+                value: body.clone(),
+            },
+            span,
+        ));
+        program.push(synthesized_entry(CTFE_PROBE, None, probe_body, span));
+        let checked = mojito_checker::checker::check_program(&program).map_err(|error| {
+            ComptimeError::NotComptime(match error {
+                mojito_common::error::TypeError::UnhandledRaise(_) => {
+                    "cannot call raising function in comptime initializer".to_string()
+                }
+                other => format!("a compile-time expression failed the checked boundary: {other}"),
+            })
+        })?;
+        let ty = checked
+            .expression_ids_at(&key)
+            .iter()
+            .find_map(|id| {
+                let expression = checked.expression(*id)?;
+                expression
+                    .binding_ty
+                    .clone()
+                    .or_else(|| expression.ty.clone())
+            })
+            .ok_or_else(|| {
+                ComptimeError::NotComptime(
+                    "a compile-time expression has no checked type".to_string(),
+                )
+            })?;
+        let ret = source_type_from_ty(&ty).ok_or_else(|| {
+            ComptimeError::NotComptime(format!(
+                "compile-time result type '{ty}' has no source spelling"
+            ))
+        })?;
+        program.pop();
+        let mut entry_body = prologue;
+        entry_body.push(mk(StmtKind::Return(Some(body)), span));
+        program.push(synthesized_entry(
+            CTFE_EXPR_ENTRY,
+            Some(ret),
+            entry_body,
+            span,
+        ));
+        let mut vm = VmBackend::new();
+        let (value, remaining_fuel) = vm
+            .run_function_value(&program, CTFE_EXPR_ENTRY, Vec::new(), &[], self.fuel.get())
+            .map_err(|e| {
+                ComptimeError::NotComptime(format!(
+                    "VM CTFE failed for a compile-time expression: {e}"
+                ))
+            })?;
+        self.fuel.set(remaining_fuel);
+        self.vm_value_to_ct(value).map_err(|error| {
+            ComptimeError::NotComptime(format!(
+                "a compile-time '{ty}' result cannot cross back from VM CTFE ({error}); bind a \
+                 scalar, Bool, String, tuple, fieldwise struct, or a display instead"
+            ))
+        })
+    }
+
     /// The declared return type of a `@staticmethod`, with `Self` resolved to
     /// the owning struct.
     fn struct_static_method_ret(&self, struct_name: &str, method: &str) -> Option<Type> {
@@ -504,7 +624,8 @@ impl<'a> Elab<'a> {
     }
 
     /// Whether every constructor body of a registered, non-specializable
-    /// struct passes the purity walk (a struct construction inside CTFE code).
+    /// struct passes the effect walk (a struct construction inside CTFE
+    /// code); a name that is not such a struct is not a construction.
     pub(super) fn vm_ctfe_safe_struct_ctors(
         &self,
         struct_name: &str,
@@ -515,7 +636,7 @@ impl<'a> Elab<'a> {
         if !visiting.insert(guard.clone()) {
             return true;
         }
-        let safe = self.program.iter().any(|stmt| match &stmt.kind {
+        let safe = self.program.iter().all(|stmt| match &stmt.kind {
             // A vector-keyed template (`AHasher[key: U256]`) crosses as its
             // clones, whose constructors are the template's.
             StmtKind::Struct { name, methods, .. }
@@ -528,7 +649,7 @@ impl<'a> Elab<'a> {
                     .filter(|method| method.name == "__init__")
                     .all(|method| self.vm_ctfe_safe_block(&method.body, visiting, needed))
             }
-            _ => false,
+            _ => true,
         });
         visiting.remove(&guard);
         safe
@@ -815,9 +936,11 @@ impl<'a> Elab<'a> {
             needed.insert(name.to_string());
             return true;
         }
+        // Not a free def: a builtin, a struct constructor, or a constructible
+        // type parameter (`HasherType()`) — the checked boundary decides.
         let Some(f) = self.fns.get(name) else {
             visiting.remove(name);
-            return false;
+            return true;
         };
         let safe = self.vm_ctfe_safe_block(f.body, visiting, needed);
         visiting.remove(name);
@@ -838,27 +961,30 @@ impl<'a> Elab<'a> {
             .all(|s| self.vm_ctfe_safe_stmt(s, visiting, needed))
     }
 
+    /// The effect classifier over one statement; see `vm_ctfe_safe_expr`.
     pub(super) fn vm_ctfe_safe_stmt(
         &self,
         stmt: &Stmt,
         visiting: &mut HashSet<String>,
         needed: &mut HashSet<String>,
     ) -> bool {
-        // This parallel walk is a purity/effect classifier: it discovers the
+        // This parallel walk is an effect classifier: it discovers the
         // transitive helper set but never mutates or specializes the AST.
         match &stmt.kind {
             StmtKind::VarDecl { value, .. }
             | StmtKind::RefDecl { value, .. }
-            | StmtKind::Assign { value, .. } => self.vm_ctfe_safe_expr(value, visiting, needed),
+            | StmtKind::Assign { value, .. }
+            | StmtKind::Unpack { value, .. }
+            | StmtKind::Return(Some(value))
+            | StmtKind::Expr(value)
+            | StmtKind::Raise(value)
+            | StmtKind::Comptime { value, .. } => self.vm_ctfe_safe_expr(value, visiting, needed),
             StmtKind::AugAssign { place, value, .. } | StmtKind::SetPlace { place, value } => {
                 self.vm_ctfe_safe_expr(place, visiting, needed)
                     && self.vm_ctfe_safe_expr(value, visiting, needed)
             }
-            StmtKind::Return(Some(value)) | StmtKind::Expr(value) => {
-                self.vm_ctfe_safe_expr(value, visiting, needed)
-            }
-            StmtKind::Return(None) | StmtKind::Pass => true,
-            StmtKind::If { branches, orelse } => {
+            StmtKind::Return(None) | StmtKind::Pass | StmtKind::Break | StmtKind::Continue => true,
+            StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
                 branches.iter().all(|(cond, body)| {
                     self.vm_ctfe_safe_expr(cond, visiting, needed)
                         && self.vm_ctfe_safe_block(body, visiting, needed)
@@ -866,31 +992,66 @@ impl<'a> Elab<'a> {
                     .as_ref()
                     .is_none_or(|body| self.vm_ctfe_safe_block(body, visiting, needed))
             }
-            StmtKind::While { cond, body, .. } => {
+            StmtKind::While { cond, body, orelse } => {
                 self.vm_ctfe_safe_expr(cond, visiting, needed)
                     && self.vm_ctfe_safe_block(body, visiting, needed)
+                    && orelse
+                        .as_ref()
+                        .is_none_or(|body| self.vm_ctfe_safe_block(body, visiting, needed))
             }
-            StmtKind::For { iter, body, .. } => {
+            StmtKind::For {
+                iter, body, orelse, ..
+            } => {
+                self.vm_ctfe_safe_expr(iter, visiting, needed)
+                    && self.vm_ctfe_safe_block(body, visiting, needed)
+                    && orelse
+                        .as_ref()
+                        .is_none_or(|body| self.vm_ctfe_safe_block(body, visiting, needed))
+            }
+            StmtKind::ComptimeFor { iter, body, .. } => {
                 self.vm_ctfe_safe_expr(iter, visiting, needed)
                     && self.vm_ctfe_safe_block(body, visiting, needed)
             }
-            StmtKind::ComptimeIf { .. }
-            | StmtKind::ComptimeFor { .. }
-            | StmtKind::Raise(_)
-            | StmtKind::Break
-            | StmtKind::Continue
-            | StmtKind::Def { .. }
-            | StmtKind::Struct { .. }
+            StmtKind::Try {
+                body,
+                except,
+                orelse,
+                finalbody,
+            } => {
+                self.vm_ctfe_safe_block(body, visiting, needed)
+                    && except
+                        .as_ref()
+                        .is_none_or(|(_, body)| self.vm_ctfe_safe_block(body, visiting, needed))
+                    && orelse
+                        .as_ref()
+                        .is_none_or(|body| self.vm_ctfe_safe_block(body, visiting, needed))
+                    && finalbody
+                        .as_ref()
+                        .is_none_or(|body| self.vm_ctfe_safe_block(body, visiting, needed))
+            }
+            StmtKind::With { items, body } => {
+                items
+                    .iter()
+                    .all(|item| self.vm_ctfe_safe_expr(&item.context, visiting, needed))
+                    && self.vm_ctfe_safe_block(body, visiting, needed)
+            }
+            StmtKind::Def { body, .. } => self.vm_ctfe_safe_block(body, visiting, needed),
+            // Declarations never appear inside an executed body.
+            StmtKind::Struct { .. }
             | StmtKind::Trait { .. }
             | StmtKind::Import { .. }
-            | StmtKind::FromImport { .. }
-            | StmtKind::With { .. }
-            | StmtKind::Try { .. }
-            | StmtKind::Unpack { .. }
-            | StmtKind::Comptime { .. } => false,
+            | StmtKind::FromImport { .. } => false,
         }
     }
 
+    /// The effect classifier over one expression. VM CTFE runs any
+    /// deterministic body the fuel-bounded VM executes — collection displays,
+    /// pointer-backed stdlib internals, loops, `try`/`raise` inside a callee
+    /// — so the walk rejects only the effectful builtins (`print`, `input`);
+    /// a raising call at the entry is reported by the checked boundary and
+    /// a trap surfaces at execution. Along the way it discovers the free
+    /// callees the subprogram must retain (`needed`); `visiting` carries the
+    /// cycle guards.
     pub(super) fn vm_ctfe_safe_expr(
         &self,
         expr: &Expr,
@@ -904,8 +1065,13 @@ impl<'a> Elab<'a> {
             | ExprKind::Str(_)
             | ExprKind::None
             | ExprKind::EmptySubscript
-            | ExprKind::Identifier(_) => true,
-            ExprKind::Prefix(_, inner) | ExprKind::Transfer(inner) | ExprKind::Spread(inner) => {
+            | ExprKind::Identifier(_)
+            | ExprKind::TypeValue(_)
+            | ExprKind::Uninitialized => true,
+            ExprKind::Prefix(_, inner)
+            | ExprKind::Transfer(inner)
+            | ExprKind::Spread(inner)
+            | ExprKind::Named { value: inner, .. } => {
                 self.vm_ctfe_safe_expr(inner, visiting, needed)
             }
             ExprKind::Infix(_, left, right) => {
@@ -915,6 +1081,40 @@ impl<'a> Elab<'a> {
             ExprKind::TupleLit(items) | ExprKind::ListLit(items) => items
                 .iter()
                 .all(|e| self.vm_ctfe_safe_expr(e, visiting, needed)),
+            ExprKind::BraceLit(entries) => entries.iter().all(|(key, value)| {
+                self.vm_ctfe_safe_expr(key, visiting, needed)
+                    && value
+                        .as_ref()
+                        .is_none_or(|value| self.vm_ctfe_safe_expr(value, visiting, needed))
+            }),
+            ExprKind::Comprehension {
+                key,
+                value,
+                clauses,
+                ..
+            } => {
+                key.as_ref()
+                    .is_none_or(|key| self.vm_ctfe_safe_expr(key, visiting, needed))
+                    && self.vm_ctfe_safe_expr(value, visiting, needed)
+                    && clauses.iter().all(|clause| match clause {
+                        mojito_ast::ast::ComprehensionClause::For { iter, .. } => {
+                            self.vm_ctfe_safe_expr(iter, visiting, needed)
+                        }
+                        mojito_ast::ast::ComprehensionClause::If(condition) => {
+                            self.vm_ctfe_safe_expr(condition, visiting, needed)
+                        }
+                    })
+            }
+            ExprKind::Lambda { def } => self.vm_ctfe_safe_stmt(def, visiting, needed),
+            ExprKind::TString { parts, .. } => parts.iter().all(|part| match part {
+                mojito_ast::ast::TStringPart::Expr(value) => {
+                    self.vm_ctfe_safe_expr(value, visiting, needed)
+                }
+                _ => true,
+            }),
+            ExprKind::TypeApply { args, .. } => {
+                self.vm_ctfe_safe_param_args(args, visiting, needed)
+            }
             ExprKind::Index { object, index } => {
                 self.vm_ctfe_safe_expr(object, visiting, needed)
                     && self.vm_ctfe_safe_expr(index, visiting, needed)
@@ -943,15 +1143,10 @@ impl<'a> Elab<'a> {
                 ..
             } => {
                 self.vm_ctfe_safe_expr(object, visiting, needed)
-                    && lower
-                        .as_ref()
-                        .is_none_or(|e| self.vm_ctfe_safe_expr(e, visiting, needed))
-                    && upper
-                        .as_ref()
-                        .is_none_or(|e| self.vm_ctfe_safe_expr(e, visiting, needed))
-                    && step
-                        .as_ref()
-                        .is_none_or(|e| self.vm_ctfe_safe_expr(e, visiting, needed))
+                    && [lower, upper, step]
+                        .into_iter()
+                        .flatten()
+                        .all(|e| self.vm_ctfe_safe_expr(e, visiting, needed))
             }
             ExprKind::MultiIndex { object, args } => {
                 self.vm_ctfe_safe_expr(object, visiting, needed)
@@ -977,85 +1172,104 @@ impl<'a> Elab<'a> {
                 args,
                 kwargs,
             } => {
-                kwargs.is_empty()
-                    && param_args.iter().all(|arg| match arg {
-                        ParamArg::Value(e) => self.vm_ctfe_safe_expr(e, visiting, needed),
-                        ParamArg::Type(_) => true,
-                        ParamArg::Named { value, .. } => match &**value {
-                            ParamArg::Value(e) => self.vm_ctfe_safe_expr(e, visiting, needed),
-                            ParamArg::Type(_) => true,
-                            ParamArg::Named { .. } => false,
-                        },
-                    })
+                !vm_ctfe_effectful_builtin(name)
+                    && self.vm_ctfe_safe_param_args(param_args, visiting, needed)
                     && args
                         .iter()
                         .all(|e| self.vm_ctfe_safe_expr(e, visiting, needed))
-                    && (name == "is_same_type"
-                        || vm_ctfe_safe_builtin(name)
-                        // A constructible type parameter of the entry
-                        // (`HasherType()`); the bound struct's constructors
-                        // are checked where the binding is known.
-                        || visiting.contains(&format!("$ctor${name}"))
-                        // A vector alias's construction (`U256(...)`).
-                        || self.vector_alias(name)
-                        || self.vm_ctfe_safe_fn(name, visiting, needed)
-                        // A struct construction is safe when its constructor
-                        // bodies are.
-                        || self.vm_ctfe_safe_struct_ctors(name, visiting, needed))
+                    && kwargs
+                        .iter()
+                        .all(|argument| self.vm_ctfe_safe_expr(&argument.value, visiting, needed))
+                    && self.vm_ctfe_safe_fn(name, visiting, needed)
+                    && self.vm_ctfe_safe_struct_ctors(name, visiting, needed)
             }
-            // The hasher protocol is CTFE-transparent: its bodies are
-            // retained-struct arithmetic the fuel-bounded VM executes
-            // (`hasher.update(x)`, `value.__hash__(hasher)`,
-            // `hasher^.finish()`, and the bundled hashers' own mixing steps).
             ExprKind::MethodCall {
                 object,
                 method,
                 args,
                 kwargs,
             } => {
-                kwargs.is_empty()
-                    && matches!(
-                        method.as_str(),
-                        "update"
-                            | "_update_with_simd"
-                            | "_update_with_bytes"
-                            | "finish"
-                            | "__hash__"
-                            | "_update"
-                            | "_large_update"
-                    )
-                    && self.vm_ctfe_safe_expr(object, visiting, needed)
+                self.vm_ctfe_safe_expr(object, visiting, needed)
                     && args
                         .iter()
                         .all(|e| self.vm_ctfe_safe_expr(e, visiting, needed))
+                    && kwargs
+                        .iter()
+                        .all(|argument| self.vm_ctfe_safe_expr(&argument.value, visiting, needed))
+                    && self.vm_ctfe_safe_method(method, visiting, needed)
             }
-            // `v.to_bits[DType.d]()` / `v.cast[DType.d]()`: lane intrinsics.
             ExprKind::Invoke {
                 callee,
                 param_args,
                 args,
                 kwargs,
             } => {
-                kwargs.is_empty()
-                    && args.is_empty()
-                    && matches!(&callee.kind, ExprKind::Member { object, field }
-                        if matches!(field.as_str(), "to_bits" | "cast")
-                            && self.vm_ctfe_safe_expr(object, visiting, needed))
-                    && param_args.iter().all(|arg| match arg {
-                        ParamArg::Value(e) => self.vm_ctfe_safe_expr(e, visiting, needed),
-                        ParamArg::Type(_) => true,
-                        ParamArg::Named { .. } => false,
-                    })
+                self.vm_ctfe_safe_expr(callee, visiting, needed)
+                    && self.vm_ctfe_safe_param_args(param_args, visiting, needed)
+                    && args
+                        .iter()
+                        .all(|e| self.vm_ctfe_safe_expr(e, visiting, needed))
+                    && kwargs
+                        .iter()
+                        .all(|argument| self.vm_ctfe_safe_expr(&argument.value, visiting, needed))
+                    && match &callee.kind {
+                        ExprKind::Member { field, .. } => {
+                            self.vm_ctfe_safe_method(field, visiting, needed)
+                        }
+                        _ => true,
+                    }
             }
-            ExprKind::BraceLit(_)
-            | ExprKind::Comprehension { .. }
-            | ExprKind::TypeValue(_)
-            | ExprKind::TypeApply { .. }
-            | ExprKind::Named { .. }
-            | ExprKind::TString { .. }
-            | ExprKind::Lambda { .. }
-            | ExprKind::Uninitialized => false,
         }
+    }
+
+    fn vm_ctfe_safe_param_args(
+        &self,
+        args: &[ParamArg],
+        visiting: &mut HashSet<String>,
+        needed: &mut HashSet<String>,
+    ) -> bool {
+        args.iter().all(|arg| match arg {
+            ParamArg::Value(e) => self.vm_ctfe_safe_expr(e, visiting, needed),
+            ParamArg::Type(_) => true,
+            ParamArg::Named { value, .. } => match &**value {
+                ParamArg::Value(e) => self.vm_ctfe_safe_expr(e, visiting, needed),
+                ParamArg::Type(_) => true,
+                ParamArg::Named { .. } => false,
+            },
+        })
+    }
+
+    /// Whether every retained struct's method bodies named `method` pass the
+    /// effect walk: the receiver's struct is unknown before checking, so all
+    /// same-named bodies are classified. Memoized in `needed` under a
+    /// `$method$` prefix the declaration closure ignores (only free defs are
+    /// retained by name).
+    fn vm_ctfe_safe_method(
+        &self,
+        method: &str,
+        visiting: &mut HashSet<String>,
+        needed: &mut HashSet<String>,
+    ) -> bool {
+        let guard = format!("$method${method}");
+        if needed.contains(&guard) || !visiting.insert(guard.clone()) {
+            return true;
+        }
+        let safe = self.program.iter().all(|stmt| match &stmt.kind {
+            StmtKind::Struct { name, methods, .. }
+                if !self.is_specializable(stmt) || self.simd_keyed_struct_template(name) =>
+            {
+                methods
+                    .iter()
+                    .filter(|candidate| candidate.name == method)
+                    .all(|candidate| self.vm_ctfe_safe_block(&candidate.body, visiting, needed))
+            }
+            _ => true,
+        });
+        visiting.remove(&guard);
+        if safe {
+            needed.insert(guard);
+        }
+        safe
     }
 }
 
@@ -1267,13 +1481,23 @@ impl Elab<'_> {
     }
 }
 
-impl Elab<'_> {
-    /// Whether `name` is a module alias of a vector type (`U256`), whose
-    /// application constructs `SIMD[DType.d, w](...)`.
-    pub(super) fn vector_alias(&self, name: &str) -> bool {
-        matches!(
-            self.top_consts.borrow().get(name),
-            Some(CtValue::Type(ty)) if matches!(**ty, Ty::Simd { .. })
-        )
-    }
+/// A parameterless synthesized entry definition with the given body.
+fn synthesized_entry(name: &str, ret: Option<Type>, body: Vec<Stmt>, span: Span) -> Stmt {
+    mk(
+        StmtKind::Def {
+            name: name.to_string(),
+            decorators: Vec::new(),
+            type_params: Vec::new(),
+            params: Vec::new(),
+            positional_only: None,
+            keyword_only: None,
+            captures: None,
+            raises: false,
+            raises_type: None,
+            ret,
+            where_clauses: Vec::new(),
+            body,
+        },
+        span,
+    )
 }

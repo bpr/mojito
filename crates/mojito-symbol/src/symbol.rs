@@ -1713,6 +1713,39 @@ fn decode_specialization_value(text: &str, position: usize) -> Option<(CtValue, 
             };
             (value, cursor + 1)
         }
+        b'm' | b'h' => {
+            let (count, after_count) = until(b'[')?;
+            let count: usize = count.parse().ok()?;
+            let mut cursor = after_count;
+            let value = if code == b'm' {
+                let mut entries = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let (key, next) = decode_specialization_value(text, cursor)?;
+                    let (value, next) = decode_specialization_value(text, next)?;
+                    entries.push((key, value));
+                    cursor = next;
+                }
+                CtValue::Dict {
+                    spelling: None,
+                    entries,
+                }
+            } else {
+                let mut elements = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let (value, next) = decode_specialization_value(text, cursor)?;
+                    elements.push(value);
+                    cursor = next;
+                }
+                CtValue::Set {
+                    spelling: None,
+                    elements,
+                }
+            };
+            if bytes.get(cursor) != Some(&b']') {
+                return None;
+            }
+            (value, cursor + 1)
+        }
         _ => return None,
     })
 }
@@ -1773,6 +1806,23 @@ fn encode_specialization_value(value: &CtValue, out: &mut String) {
         CtValue::List(values) => {
             out.push_str(&format!("l{}[", values.len()));
             for value in values {
+                encode_specialization_value(value, out);
+            }
+            out.push(']');
+        }
+        // A display's entries in order; the explicit spelling is not part of
+        // the value identity.
+        CtValue::Dict { entries, .. } => {
+            out.push_str(&format!("m{}[", entries.len()));
+            for (key, value) in entries {
+                encode_specialization_value(key, out);
+                encode_specialization_value(value, out);
+            }
+            out.push(']');
+        }
+        CtValue::Set { elements, .. } => {
+            out.push_str(&format!("h{}[", elements.len()));
+            for value in elements {
                 encode_specialization_value(value, out);
             }
             out.push(']');

@@ -9,11 +9,11 @@
 //! here keeps the two phases speaking the same language — a prerequisite for
 //! type-valued compile-time members.
 //!
-//! Scalar values and recursively materializable tuples/lists have a runtime
-//! literal form; `Type`, `Reflected`, and `Param` are compile-time-only.
+//! Scalar values and recursively materializable tuples/lists/dicts/sets have a
+//! runtime literal form; `Type`, `Reflected`, and `Param` are compile-time-only.
 
-use crate::types::{Ty, list_element, tuple_elements};
-use mojito_ast::ast::{Expr, ExprKind, ParamArg};
+use crate::types::{Ty, TyArg, dict_elements, list_element, set_element, tuple_elements};
+use mojito_ast::ast::{Expr, ExprKind, KwArg, ParamArg, Type};
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_common::token::Span;
 use std::fmt;
@@ -106,6 +106,23 @@ pub enum CtValue {
     Str(String),
     Tuple(Vec<CtValue>),
     List(Vec<CtValue>),
+    /// A compile-time dictionary display (`comptime M = {"a": 1}`):
+    /// insertion-ordered entries deduplicated by structural key equality (a
+    /// later duplicate key replaces the value in place, as `Dict.__setitem__`
+    /// does). `spelling` is the explicit nominal type when one was given — an
+    /// annotation (`comptime E: Dict[String, Int] = {}`) or the explicit
+    /// literal constructor (`Dict[K, V, H](keys, values, None)`) — so
+    /// materialization spells that constructor; `None` is the bare display,
+    /// which the checker types with the default hasher.
+    Dict {
+        spelling: Option<Box<Ty>>,
+        entries: Vec<(CtValue, CtValue)>,
+    },
+    /// A compile-time set display (`comptime S = {1, 2, 3}`); see `Dict`.
+    Set {
+        spelling: Option<Box<Ty>>,
+        elements: Vec<CtValue>,
+    },
     /// A `DType.<dt>` compile-time value — the binding of a `[dtype: DType]`
     /// value parameter. Materializes as the member spelling, which type
     /// resolution already accepts inside `SIMD[...]`/`Scalar[...]` brackets.
@@ -299,6 +316,96 @@ fn int_binary(
 }
 
 impl CtValue {
+    /// A compile-time dictionary from display-ordered entries: a repeated key
+    /// keeps its first position and takes the last value.
+    pub fn dict(spelling: Option<Ty>, entries: Vec<(CtValue, CtValue)>) -> Self {
+        let mut deduplicated: Vec<(CtValue, CtValue)> = Vec::with_capacity(entries.len());
+        for (key, value) in entries {
+            match deduplicated
+                .iter_mut()
+                .find(|(existing, _)| *existing == key)
+            {
+                Some(entry) => entry.1 = value,
+                None => deduplicated.push((key, value)),
+            }
+        }
+        CtValue::Dict {
+            spelling: spelling.map(Box::new),
+            entries: deduplicated,
+        }
+    }
+
+    /// A compile-time set from display-ordered elements, first occurrence kept.
+    pub fn set(spelling: Option<Ty>, elements: Vec<CtValue>) -> Self {
+        let mut deduplicated: Vec<CtValue> = Vec::with_capacity(elements.len());
+        for element in elements {
+            if !deduplicated.contains(&element) {
+                deduplicated.push(element);
+            }
+        }
+        CtValue::Set {
+            spelling: spelling.map(Box::new),
+            elements: deduplicated,
+        }
+    }
+
+    /// Whether this value is a collection that is not implicitly copyable at
+    /// runtime (`Array`/`List`, `Dict`, `Set`): it never crosses to runtime
+    /// implicitly and needs an explicit `materialize[...]()`.
+    pub fn is_runtime_collection(&self) -> bool {
+        matches!(
+            self,
+            CtValue::List(_) | CtValue::Dict { .. } | CtValue::Set { .. }
+        )
+    }
+
+    /// The spelling of the runtime type an un-annotated binding of this value
+    /// has (upstream's wording in the materialization diagnostic: a list is
+    /// `Array[T, Int(n)]`), or `None` for a compile-time-only value.
+    pub fn runtime_type_text(&self) -> Option<String> {
+        Some(match self {
+            CtValue::Int(_) | CtValue::IntLiteral(_) => "Int".to_string(),
+            CtValue::UInt(_) => "UInt".to_string(),
+            CtValue::Float(_) | CtValue::FloatLiteral(_) => "Float64".to_string(),
+            CtValue::Bool(_) => "Bool".to_string(),
+            CtValue::Str(_) => "String".to_string(),
+            CtValue::Dtype(_) => "DType".to_string(),
+            CtValue::Simd { dtype, lanes } => {
+                format!("SIMD[DType.{}, {}]", dtype.name(), lanes.len())
+            }
+            CtValue::Struct { name, .. } => name.clone(),
+            CtValue::Tuple(values) => format!(
+                "Tuple[{}]",
+                values
+                    .iter()
+                    .map(CtValue::runtime_type_text)
+                    .collect::<Option<Vec<_>>>()?
+                    .join(", ")
+            ),
+            CtValue::List(values) => format!(
+                "Array[{}, Int({})]",
+                values.first()?.runtime_type_text()?,
+                values.len()
+            ),
+            CtValue::Dict { spelling, entries } => match spelling {
+                Some(ty) => ty.to_string(),
+                None => {
+                    let (key, value) = entries.first()?;
+                    format!(
+                        "Dict[{}, {}]",
+                        key.runtime_type_text()?,
+                        value.runtime_type_text()?
+                    )
+                }
+            },
+            CtValue::Set { spelling, elements } => match spelling {
+                Some(ty) => ty.to_string(),
+                None => format!("Set[{}]", elements.first()?.runtime_type_text()?),
+            },
+            CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Param(_) => return None,
+        })
+    }
+
     /// Materialize an exact literal into the compile-time representation of a
     /// declared scalar type. Values which are already materialized are kept as
     /// is. This is the checked boundary used by value parameters and defaults;
@@ -312,6 +419,13 @@ impl CtValue {
             | (value @ CtValue::FloatLiteral(_), Ty::FloatLiteral)
             | (value @ CtValue::Bool(_), Ty::Bool)
             | (value @ CtValue::Str(_), Ty::StringLiteral) => Some(value),
+            // A string literal is the nominal `String`'s compile-time form
+            // (`comptime E: Dict[String, Int] = {"a": 1}`).
+            (value @ CtValue::Str(_), Ty::Struct(name, args))
+                if args.is_empty() && crate::types::is_stdlib_string_struct(name) =>
+            {
+                Some(value)
+            }
             (value @ CtValue::Dtype(_), Ty::Dtype) => Some(value),
             (
                 value @ CtValue::Simd { .. },
@@ -360,6 +474,25 @@ impl CtValue {
                     .collect::<Option<Vec<_>>>()
                     .map(CtValue::List)
             }
+            (CtValue::Dict { entries, .. }, target) if dict_elements(target).is_some() => {
+                let (key_ty, value_ty) =
+                    dict_elements(target).expect("guard established Dict elements");
+                let entries = entries
+                    .into_iter()
+                    .map(|(key, value)| {
+                        Some((key.materialize_as(key_ty)?, value.materialize_as(value_ty)?))
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                Some(CtValue::dict(Some(target.clone()), entries))
+            }
+            (CtValue::Set { elements, .. }, target) if set_element(target).is_some() => {
+                let element_ty = set_element(target).expect("guard established Set element");
+                let elements = elements
+                    .into_iter()
+                    .map(|element| element.materialize_as(element_ty))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(CtValue::set(Some(target.clone()), elements))
+            }
             (CtValue::Tuple(values), target)
                 if tuple_elements(target).is_some_and(|types| types.len() == values.len()) =>
             {
@@ -387,6 +520,82 @@ impl CtValue {
             CtValue::Str(s) => ExprKind::Str(s.clone()),
             CtValue::Tuple(vs) => ExprKind::TupleLit(materialize_all(vs, span)?),
             CtValue::List(vs) => ExprKind::ListLit(materialize_all(vs, span)?),
+            // The bare display, or the explicit literal constructor
+            // `Dict[K, V, H](keys, values, None)` when the value was spelled
+            // with one (an empty explicit dict is `Dict[K, V]()`).
+            CtValue::Dict { spelling, entries } => match spelling {
+                None => ExprKind::BraceLit(
+                    entries
+                        .iter()
+                        .map(|(key, value)| {
+                            Some((key.materialize(span)?, Some(value.materialize(span)?)))
+                        })
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+                Some(ty) => {
+                    let Type::Named(name, param_args) = source_type(ty, span)? else {
+                        return None;
+                    };
+                    // The key and value lists are explicit `List[K](...)`
+                    // constructions rather than displays: a display argument
+                    // takes no context from a parameterized constructor's
+                    // `List[Self.K]` parameter.
+                    let args = if entries.is_empty() {
+                        Vec::new()
+                    } else {
+                        let [ParamArg::Type(key_ty), ParamArg::Type(value_ty), ..] =
+                            param_args.as_slice()
+                        else {
+                            return None;
+                        };
+                        let keys: Vec<&CtValue> = entries.iter().map(|(key, _)| key).collect();
+                        let values: Vec<&CtValue> =
+                            entries.iter().map(|(_, value)| value).collect();
+                        vec![
+                            list_construction(key_ty.clone(), materialize_refs(&keys, span)?, span),
+                            list_construction(
+                                value_ty.clone(),
+                                materialize_refs(&values, span)?,
+                                span,
+                            ),
+                            literal(ExprKind::None, span),
+                        ]
+                    };
+                    ExprKind::Call {
+                        name,
+                        param_args,
+                        args,
+                        kwargs: Vec::new(),
+                    }
+                }
+            },
+            CtValue::Set { spelling, elements } => match spelling {
+                None => ExprKind::BraceLit(
+                    elements
+                        .iter()
+                        .map(|element| Some((element.materialize(span)?, None)))
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+                Some(ty) => {
+                    let Type::Named(name, param_args) = source_type(ty, span)? else {
+                        return None;
+                    };
+                    let kwargs = if elements.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![KwArg {
+                            name: "__set_literal__".to_string(),
+                            value: literal(ExprKind::None, span),
+                        }]
+                    };
+                    ExprKind::Call {
+                        name,
+                        param_args,
+                        args: materialize_all(elements, span)?,
+                        kwargs,
+                    }
+                }
+            },
             CtValue::Dtype(dtype) => ExprKind::Member {
                 object: Box::new(Expr {
                     kind: ExprKind::Identifier("DType".to_string()),
@@ -452,6 +661,68 @@ fn materialize_all(vs: &[CtValue], span: Span) -> Option<Vec<Expr>> {
     vs.iter().map(|v| v.materialize(span)).collect()
 }
 
+fn materialize_refs(vs: &[&CtValue], span: Span) -> Option<Vec<Expr>> {
+    vs.iter().map(|v| v.materialize(span)).collect()
+}
+
+/// `List[T](elements..., __list_literal__=None)`.
+fn list_construction(element: Type, elements: Vec<Expr>, span: Span) -> Expr {
+    literal(
+        ExprKind::Call {
+            name: "List".to_string(),
+            param_args: vec![ParamArg::Type(element)],
+            args: elements,
+            kwargs: vec![KwArg {
+                name: "__list_literal__".to_string(),
+                value: literal(ExprKind::None, span),
+            }],
+        },
+        span,
+    )
+}
+
+fn literal(kind: ExprKind, span: Span) -> Expr {
+    Expr {
+        kind,
+        span,
+        source: None,
+        syntax_id: mojito_common::token::SyntaxId::fresh(),
+    }
+}
+
+/// The source spelling of an explicit collection type (`Dict[String, Int,
+/// Fnv1a]`): scalars, nominal structs over type/value arguments, and SIMD.
+/// Origin arguments and callables have no spelling here.
+fn source_type(ty: &Ty, span: Span) -> Option<Type> {
+    Some(match ty {
+        Ty::Int | Ty::IntLiteral => Type::Int,
+        Ty::UInt => Type::UInt,
+        Ty::Bool => Type::Bool,
+        Ty::StringLiteral => Type::StringLiteral,
+        Ty::Float64 | Ty::FloatLiteral => Type::Float64,
+        Ty::None => Type::None,
+        Ty::Simd { dtype, width } => Type::Named(
+            "SIMD".to_string(),
+            vec![
+                ParamArg::Value(CtValue::Dtype(*dtype).materialize(span)?),
+                ParamArg::Value(CtValue::Int(*width).materialize(span)?),
+            ],
+        ),
+        Ty::Struct(name, arguments) => Type::Named(
+            name.clone(),
+            arguments
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(ty) => Some(ParamArg::Type(source_type(ty, span)?)),
+                    TyArg::Val(value) => Some(ParamArg::Value(value.materialize(span)?)),
+                    TyArg::Origin(_) => None,
+                })
+                .collect::<Option<Vec<_>>>()?,
+        ),
+        _ => return None,
+    })
+}
+
 impl fmt::Display for CtValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -493,6 +764,26 @@ impl fmt::Display for CtValue {
             CtValue::Type(ty) => write!(f, "{ty}"),
             CtValue::Reflected(ty) => write!(f, "reflect[{ty}]"),
             CtValue::Param(name) => write!(f, "{name}"),
+            CtValue::Dict { entries, .. } => {
+                write!(f, "{{")?;
+                for (index, (key, value)) in entries.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{key}: {value}")?;
+                }
+                write!(f, "}}")
+            }
+            CtValue::Set { elements, .. } => {
+                write!(f, "{{")?;
+                for (index, element) in elements.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{element}")?;
+                }
+                write!(f, "}}")
+            }
             CtValue::Tuple(vs) | CtValue::List(vs) => {
                 let (open, close) = match self {
                     CtValue::Tuple(_) => ('(', ')'),

@@ -366,9 +366,19 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   root's helper clusters live in
   `comptime/{synth,ctfe_calls,packs,params,simd_width}.rs`.
 - `comptime/eval.rs` owns compile-time expression evaluation (the `eval`
-  dispatcher, reflection methods, infix/iteration folding).
-- `comptime/ctfe.rs` owns VM-driven compile-time function evaluation and the
-  VM-CTFE program rewrite and safety analysis.
+  dispatcher, set/dictionary displays and the explicit literal constructors,
+  the structural collection folds `len`/`in`/`keys`/`values`, reflection
+  methods, infix/iteration folding).
+- `comptime/ctfe.rs` owns VM-driven compile-time evaluation — `ctfe_call`,
+  `ctfe_struct_entry`, `ctfe_generic_def_entry`, and the general
+  `ctfe_expr_entry` (collection bindings as display-initialized locals, a
+  checked typing probe, then the typed entry) — the VM-CTFE program rewrite,
+  and the effect walk (`vm_ctfe_safe_*`: deterministic bodies run, only
+  `print`/`input` reject).
+- `comptime/crossing.rs` owns the compile-time → runtime crossing fold
+  (`fold_runtime_crossings`: `materialize[X]()` and `comptime(e)` become
+  literals; a bare runtime use of a compile-time collection is rejected with
+  upstream's `ImplicitlyCopyable` text; runtime locals shadow).
 - `comptime/specialize.rs` owns monomorphization and `def`/`struct`
   specialization synthesis (`generate_struct_spec`, tuple-spec ordering, and
   Tuple/TString request seeding), and the per-instantiation method clones of

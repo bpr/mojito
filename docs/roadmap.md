@@ -107,15 +107,10 @@ exempt from the ordering.
   executable oracle first, then everyday spellings that reject today, then
   parity details; no task depends on a later one. A
   task closes when its bullets are done; a residue discovered inside a task
-  moves to the task that owns its fix (or to task 3, the deliberate
+  moves to the task that owns its fix (or to task 2, the deliberate
   deferrals), never back to a finished one. The remaining tasks are direct.
 
-  1. **Compile-time collections.** `comptime d = {...}` Dict/Set values
-     hashed with `default_comp_time_hasher`. `CtValue` has no mapping kind
-     (`crates/mojito-types/src/ct.rs`), `Elab::eval` has no dict-display
-     arm, and the VM-CTFE purity walk admits only the hasher protocol's
-     method calls, so a general compile-time method-call rule comes with it.
-  2. **Diagnostic wording and strictness.**
+  1. **Diagnostic wording and strictness.**
      - An unavailable where-gated method reports `'set' is unavailable for
        Variant[Conn]: its where clause evaluated to False` rather than
        upstream's clause text.
@@ -131,7 +126,7 @@ exempt from the ordering.
      - `Counter[Self.index]` (a field, not a parameter) in a bracket slot
        reports `not a compile-time Int constant: Counter` rather than
        naming the field.
-  3. **Deliberate deferrals.** Nothing depends on these; each is a
+  2. **Deliberate deferrals.** Nothing depends on these; each is a
      conscious limit, listed here so it is not mistaken for unfinished
      task work.
      - Clones are minted per whole instance (no reachability pruning) and
@@ -224,6 +219,21 @@ exempt from the ordering.
      - `if`/`while` accept a width-1 bool lane through the `Bool(x)`
        truthiness conversion, but `and`/`or` still demand `Bool` operands
        (`a == b or c < d` over `UInt64`s rejects; nest the tests).
+     - A VM-evaluated compile-time expression whose result is pointer-backed
+       (`comptime C = M.copy()`, a bare `Optional`, a `String`) cannot cross
+       back (`cannot cross back from VM CTFE`; upstream binds it): the
+       freezable results are scalars, Bool, String, tuples, fieldwise
+       structs, and displays. Compile-time Dict/Set key identity is
+       structural `CtValue` equality, exact for every prelude key type (a
+       user-struct key with a non-fieldwise `__eq__` diverges), and the
+       typing probe checks the CTFE subprogram once more per VM-bound
+       expression.
+     - A list display as an argument to an explicitly applied constructor at
+       runtime (`Dict[String, Int](["a"], [1], None)`) takes no context from
+       the parameterized `List[Self.K]` parameter and materializes as
+       `Array`, so no overload matches; spell the lists
+       (`List[String]("a", __list_literal__=None)`), as a compile-time
+       value's materialization does.
 
 - [ ] **Filesystem and I/O slice** — representative file/path/stream APIs
   on the Writer and explicit-destroy foundations.

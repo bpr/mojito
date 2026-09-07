@@ -315,6 +315,24 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 let (branches, orelse) = self.parse_if_rest()?;
                 Ok(StmtKind::ComptimeIf { branches, orelse })
             }
+            // The expression form `comptime(expr)` in statement position.
+            Some(Token::LParen) => {
+                let start = self.last_span.0;
+                self.next_token()?; // consume '('
+                let inner = self.parse_expression(Precedence::Lowest)?;
+                self.expect(Token::RParen, "Expected ')' after the comptime expression")?;
+                let call = self.node(
+                    ExprKind::Call {
+                        name: "comptime".to_string(),
+                        param_args: Vec::new(),
+                        args: vec![inner],
+                        kwargs: Vec::new(),
+                    },
+                    start,
+                );
+                self.expect_stmt_end()?;
+                Ok(StmtKind::Expr(call))
+            }
             Some(Token::For) => {
                 let (var, binding, iter, body) = self.parse_for_rest()?;
                 if binding != LoopBindingMode::Immutable {

@@ -1767,19 +1767,22 @@ impl Flatten<'_> {
         Some(dest)
     }
 
+    /// An erased argument keeps its (empty) slot: every backend aligns the
+    /// slots with the callee's declarations positionally, so a dropped slot
+    /// would shift the reified arguments after it (`Dict[String, Int, H]`).
     fn param_arg_regs(&mut self, arguments: &[ParamArg], site: &SourceSpan) -> Vec<MirParamArg> {
         let mut registers = Vec::new();
         for argument in arguments {
-            if !self.param_arg_is_erased(argument) {
-                let name = match argument {
-                    ParamArg::Named { name, .. } => Some(name.clone()),
-                    ParamArg::Type(_) | ParamArg::Value(_) => None,
-                };
-                registers.push(MirParamArg {
-                    name,
-                    value: self.param_arg_reg(argument, site),
-                });
-            }
+            let name = match argument {
+                ParamArg::Named { name, .. } => Some(name.clone()),
+                ParamArg::Type(_) | ParamArg::Value(_) => None,
+            };
+            let value = if self.param_arg_is_erased(argument) {
+                None
+            } else {
+                self.param_arg_reg(argument, site)
+            };
+            registers.push(MirParamArg { name, value });
         }
         registers
     }

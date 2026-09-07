@@ -38,8 +38,8 @@ It supports:
 - `comptime NAME = expr`
 - `comptime if`
 - `comptime for`
-- compile-time values: `Int`, `Bool`, `String`, `Tuple`, `List`, and
-  compile-time-only `Type`
+- compile-time values: `Int`, `Bool`, `String`, `Tuple`, `List`, `Dict`, `Set`,
+  and compile-time-only `Type`
 - VM-backed CTFE calls to pure, top-level functions, including value-parameter
   helpers and helpers whose type parameters are used for compile-time facts
 - CTFE support for loops, branches, recursion, and transitive helper calls under
@@ -702,23 +702,20 @@ then plan a MIR/VM-backed CTFE phase before the AST interpreter grows too large.
 
 ### Purity And Effect Rules
 
-CTFE functions should reject:
+The VM-CTFE walk is an effect classifier, not an allowlist. It rejects up
+front:
 
-- `print`
-- `raise`
-- runtime heap mutation, unless the heap is explicitly compile-time
-- pointer allocation/free
-- calls to non-CTFE functions
-- non-deterministic builtins
+- the effectful builtins (`print`, `input`)
+- a raising call at the entry (`cannot call raising function in comptime
+  initializer`, reported by the checked probe's non-raising signature)
+- non-deterministic builtins, as they are added
 
-They may allow:
-
-- local variables
-- arithmetic
-- tuples/lists of `CtValue`
-- branches/loops with fuel
-- calls to other CTFE-safe functions
-- reading associated comptime members
+Everything deterministic the fuel-bounded VM executes is admitted: locals,
+arithmetic, branches/loops/recursion, `try`/`raise` inside a callee, collection
+displays, the pointer-backed stdlib internals (the VM heap is the compile-time
+heap), struct construction and method dispatch, and associated comptime
+members. A trap (`os.abort`, a bounds failure) surfaces as a CTFE failure at
+execution.
 
 ### Acceptance Tests
 
@@ -975,16 +972,23 @@ safety walk proves the helper call graph is CTFE-safe:
 
 - value-parameter generics are allowed and their value arguments are reified into
   VM frame locals
-- loops, branches, recursion, and calls to other proven-safe helpers are allowed
-- a small deterministic builtin set is allowed (`range`, numeric conversions,
-  `abs`, `min`, `max`, `round`)
+- loops, branches, recursion, method dispatch, collection displays, and every
+  other deterministic body are allowed; only the effectful builtins (`print`,
+  `input`) reject up front
 - VM execution burns the same program-wide comptime fuel as the elaborator
 - `Value` results convert back to `CtValue` only for runtime-materializable
-  compile-time values (`Int`, `Bool`, `String`, `Tuple`, `List`)
+  compile-time values (`Int`, `Bool`, `String`, `Tuple`, `List`, fieldwise
+  structs); a pointer-backed result (a `Dict` copy, a bare `Optional`) is
+  rejected as a recorded subset limit
+- a general expression over compile-time values (`M.get("a").value()`) runs
+  through a synthesized entry: collection bindings become locals initialized
+  from their displays, a checked probe binding the expression to a local
+  infers the entry's return type (and reports a raising call), and the typed
+  entry runs
 
-The VM path still deliberately rejects runtime effects and runtime-only machinery:
-`print`, `raise`, methods/dunder dispatch through user values, pointer allocation,
-`try`, nested declarations, keyword calls, and other unsupported runtime forms.
+A compile-time collection never crosses to runtime implicitly: `materialize[M]()`
+and `comptime(expr)` fold to the literal form, and a bare runtime use reports
+upstream's `not 'ImplicitlyCopyable'` diagnostic.
 
 Type-valued and associated-member facts do not cross into the VM as runtime
 values. Instead, the elaborator resolves them before lowering and rewrites the

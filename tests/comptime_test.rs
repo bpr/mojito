@@ -455,6 +455,34 @@ fn non_comptime_binding_is_rejected_by_elaboration() {
 }
 
 #[test]
+fn comptime_collection_displays_fold() {
+    // Set and dictionary displays bind compile-time values; `len`, `in`,
+    // and `comptime for` read them without the VM.
+    let src = "comptime M = {\"a\": 1, \"b\": 2}\n\ndef main():\n    comptime S = {1, 2, 3}\n    comptime n = len(S)\n    comptime c = 2 in S\n    comptime has_b = \"b\" in M\n    print(n, c, has_b, comptime(len(M)))\n    comptime for k in M:\n        print(k)\n";
+    assert_eq!(run(src).unwrap(), "3 True True 2\na\nb\n");
+}
+
+#[test]
+fn comptime_collection_method_calls_run_through_the_vm() {
+    // A chained method call over a compile-time dictionary is one VM-CTFE
+    // entry whose result type comes from the typing probe.
+    let src = "comptime M = {\"a\": 1, \"b\": 2}\n\ndef main():\n    comptime g = M.get(\"a\").value()\n    comptime d = M.get(\"zz\", 7)\n    print(g, d)\n";
+    assert_eq!(run(src).unwrap(), "1 7\n");
+}
+
+#[test]
+fn comptime_collection_runtime_use_is_rejected_by_elaboration() {
+    // A compile-time collection is not implicitly copyable: a bare runtime
+    // use needs `materialize[M]()`.
+    let program = parse("comptime M = {1: 2}\n\ndef main():\n    print(len(M))\n").unwrap();
+    let error = elaborate(program).unwrap_err().to_string();
+    assert!(error.contains("not 'ImplicitlyCopyable'"), "got {error}");
+    let program = parse("def main():\n    comptime l = [1, 2, 3]\n    print(len(l))\n").unwrap();
+    let error = elaborate(program).unwrap_err().to_string();
+    assert!(error.contains("Array[Int, Int(3)]"), "got {error}");
+}
+
+#[test]
 fn ctfe_runs_a_pure_function_at_compile_time() {
     // A pure top-level function (loops + locals) executes at compile time.
     let src = "def next_pow2(n: Int) -> Int:\n    var p: Int = 1\n    while p < n:\n        p = p * 2\n    return p\n\ncomptime CAP = next_pow2(17)\n\ndef main():\n    comptime for i in range(CAP):\n        pass\n    print(CAP)\n";

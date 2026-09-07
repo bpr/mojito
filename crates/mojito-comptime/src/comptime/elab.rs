@@ -32,6 +32,9 @@ impl<'a> Elab<'a> {
         for stmt in stmts {
             let first_new = out.len();
             self.stmt(stmt, env, in_fn, &mut out)?;
+            // Runtime uses of the bindings elaborated so far cross explicitly
+            // (`materialize[X]()`, `comptime(e)`) or are rejected.
+            self.fold_runtime_crossings(&mut out[first_new..], env)?;
             if !type_aliases.is_empty() {
                 let subs: Subs = &|name| type_aliases.get(name).cloned();
                 for statement in &mut out[first_new..] {
@@ -85,7 +88,30 @@ impl<'a> Elab<'a> {
                     out.push(stmt.clone());
                     return Ok(());
                 }
-                let v = self.eval(value, env)?;
+                let mut v = self.eval(value, env)?;
+                // A collection display takes the binding's annotation as its
+                // spelled type; an empty `{}` has no other typing.
+                if matches!(v, CtValue::Dict { .. } | CtValue::Set { .. }) {
+                    match ty {
+                        Some(annotation) => {
+                            let target =
+                                self.param_arg_type(&ParamArg::Type(annotation.clone()), env)?;
+                            v = v.clone().materialize_as(&target).ok_or_else(|| {
+                                ComptimeError::NotComptime(format!(
+                                    "comptime '{name}' is a {v} display, not a '{target}'"
+                                ))
+                            })?;
+                        }
+                        None if matches!(&value.kind, ExprKind::BraceLit(entries) if entries.is_empty()) =>
+                        {
+                            return Err(ComptimeError::NotComptime(
+                                "an empty '{}' display needs a Dict[K, V] type annotation"
+                                    .to_string(),
+                            ));
+                        }
+                        None => {}
+                    }
+                }
                 if !in_fn {
                     self.top_consts.borrow_mut().insert(name.clone(), v.clone());
                 }
@@ -94,10 +120,14 @@ impl<'a> Elab<'a> {
                 // checker's own folder can't evaluate, becomes usable as a value
                 // parameter and materializes cleanly).
                 env.insert(name.clone(), v);
-                // Type and reflection handles have no runtime representation.
-                // Keep them only in the elaboration environment; subsequent
-                // comptime expressions consume them before checking/lowering.
-                if let Some(value) = env[name].materialize(span) {
+                // Type and reflection handles have no runtime representation,
+                // and a collection is not implicitly copyable (it crosses only
+                // through `materialize[...]()`). Keep those only in the
+                // elaboration environment; subsequent comptime expressions
+                // consume them before checking/lowering.
+                if !env[name].is_runtime_collection()
+                    && let Some(value) = env[name].materialize(span)
+                {
                     out.push(mk(
                         StmtKind::Comptime {
                             name: name.clone(),

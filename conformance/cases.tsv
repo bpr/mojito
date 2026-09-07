@@ -249,6 +249,11 @@ pointer-placeholder-immutable-write	reject	assets/type_error/pointer_placeholder
 pointer-placeholder-mutable-forward	reject	assets/type_error/pointer_placeholder_mutable_forward.mojo
 pointer-placeholder-return	reject	assets/type_error/pointer_placeholder_return.mojo
 comptime-hash	run	assets/ok/comptime_hash.mojo
+comptime-collections	run	assets/ok/comptime_collections.mojo
+comptime-dict-raising-subscript	reject	assets/type_error/comptime_dict_raising_subscript.mojo
+comptime-collection-runtime-use	reject	assets/type_error/comptime_collection_runtime_use.mojo
+comptime-list-runtime-use	reject	assets/type_error/comptime_list_runtime_use.mojo
+comptime-dict-result-not-freezable	mojo-only	assets/type_error/comptime_dict_result_not_freezable.mojo
 dict-hasher-forwarding	run	assets/ok/dict_hasher_forwarding.mojo
 hashable-user-struct	run	conformance/fixtures/hashable_user_struct.mojo
 parametric-statics	run	assets/ok/parametric_static_methods.mojo

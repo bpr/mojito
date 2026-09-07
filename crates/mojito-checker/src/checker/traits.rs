@@ -1647,6 +1647,42 @@ impl Checker {
                     None
                 }
             }
+            // A display types like the checker's own inference of it: the
+            // first entry's types, every other entry coercing, under the
+            // default hasher; an explicit spelling is the type itself.
+            CtValue::Dict { spelling, entries } => match spelling {
+                Some(ty) => Some((**ty).clone()),
+                None => {
+                    let (first_key, first_value) = entries.first()?;
+                    let key = self.ct_value_ty(first_key, self_ty)?;
+                    let value = self.ct_value_ty(first_value, self_ty)?;
+                    entries
+                        .iter()
+                        .skip(1)
+                        .all(|(k, v)| {
+                            self.ct_value_ty(k, self_ty)
+                                .is_some_and(|ty| coerces(&ty, &key))
+                                && self
+                                    .ct_value_ty(v, self_ty)
+                                    .is_some_and(|ty| coerces(&ty, &value))
+                        })
+                        .then(|| self.nominal_dict(key, value))
+                }
+            },
+            CtValue::Set { spelling, elements } => match spelling {
+                Some(ty) => Some((**ty).clone()),
+                None => {
+                    let element = self.ct_value_ty(elements.first()?, self_ty)?;
+                    elements
+                        .iter()
+                        .skip(1)
+                        .all(|v| {
+                            self.ct_value_ty(v, self_ty)
+                                .is_some_and(|ty| coerces(&ty, &element))
+                        })
+                        .then(|| self.nominal_set(element))
+                }
+            },
             CtValue::Type(_) | CtValue::Reflected(_) => {
                 let _ = self_ty;
                 None

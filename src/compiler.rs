@@ -979,8 +979,16 @@ fn tuple_specialization_value_is_closed_in(
     use crate::ct::CtValue;
     match value {
         CtValue::Param(name) => value_binders.contains(name.trim_start_matches('*')),
-        CtValue::Tuple(values) | CtValue::List(values) => values.iter().all(|value| {
+        CtValue::Tuple(values)
+        | CtValue::List(values)
+        | CtValue::Set {
+            elements: values, ..
+        } => values.iter().all(|value| {
             tuple_specialization_value_is_closed_in(value, type_binders, value_binders)
+        }),
+        CtValue::Dict { entries, .. } => entries.iter().all(|(key, value)| {
+            tuple_specialization_value_is_closed_in(key, type_binders, value_binders)
+                && tuple_specialization_value_is_closed_in(value, type_binders, value_binders)
         }),
         CtValue::Struct { fields, .. } => fields.iter().all(|(_, value)| {
             tuple_specialization_value_is_closed_in(value, type_binders, value_binders)

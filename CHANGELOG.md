@@ -8,6 +8,27 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Compile-time collections: a `comptime` binding of a set or dictionary
+  display (or the explicit literal constructors
+  `Dict[K, V, default_comp_time_hasher](keys, values, None)` /
+  `Set[T, H](...)`, or an annotated empty `{}`) is a compile-time value;
+  `len`, `in`, `keys()`/`values()`, and `comptime for` read it at compile
+  time, any other method call or subscript over a compile-time value runs as
+  one VM-CTFE entry whose result type a checked probe infers
+  (`comptime g = M.get("a").value()`; a raising call reports upstream's
+  `cannot call raising function in comptime initializer`), and a runtime use
+  crosses through the new `materialize[X]()` and `comptime(expr)` forms — a
+  bare runtime use of a compile-time list, set, or dictionary now rejects
+  with upstream's `not 'ImplicitlyCopyable'` diagnostic. The VM-CTFE purity
+  walk is an effect classifier (only `print`/`input` reject up front). Two
+  fixes beneath it: a call's erased compile-time argument keeps its slot so
+  later positional arguments stay aligned (`Dict[String, Int, H](...)`
+  reified `Int` as the key type), and an erased-body `hash[Self.H]` reads the
+  hasher through a `self` reference handle (inserts inside `Dict.__init__`
+  hashed with the default hasher). (`assets/ok/comptime_collections.mojo`,
+  `assets/type_error/comptime_dict_raising_subscript.mojo`,
+  `comptime_collection_runtime_use.mojo`, `comptime_list_runtime_use.mojo`,
+  `comptime_dict_result_not_freezable.mojo`)
 - Upstream's Movable-only collection bounds: `Dict[K: Hashable & Equatable &
   Movable, V: Movable]`, `Set[T: Hashable & Equatable & Movable]`, and
   `StringDict[V: Movable]`, with the copying APIs `where`-guarded on

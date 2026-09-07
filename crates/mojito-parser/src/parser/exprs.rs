@@ -229,6 +229,25 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 Ok(self.node(ExprKind::TypeValue(ty), start))
             }
             Token::Lambda => self.parse_lambda(start),
+            // `comptime(expr)`: compile-time evaluation of an expression in a
+            // runtime position; elaboration folds it to its materialized result.
+            Token::Comptime => {
+                self.expect(
+                    Token::LParen,
+                    "Expected '(' after 'comptime' in an expression",
+                )?;
+                let inner = self.parse_expression(Precedence::Lowest)?;
+                self.expect(Token::RParen, "Expected ')' after the comptime expression")?;
+                Ok(self.node(
+                    ExprKind::Call {
+                        name: "comptime".to_string(),
+                        param_args: Vec::new(),
+                        args: vec![inner],
+                        kwargs: Vec::new(),
+                    },
+                    start,
+                ))
+            }
             Token::Minus => {
                 let operand = self.parse_expression(Precedence::Unary)?;
                 Ok(self.node(ExprKind::Prefix(PrefixOp::Neg, Box::new(operand)), start))

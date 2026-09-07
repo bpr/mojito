@@ -628,6 +628,49 @@ impl Decoder {
                     fields: entries,
                 })
             }
+            ValueKind::Record(tag, fields) if tag == "ct_dict" => {
+                let spelling = match self.field(fields, "spelling") {
+                    Ok(spelling) => Some(self.ty(spelling)?),
+                    Err(()) => None,
+                };
+                let entries_value = self.required(value, fields, "entries")?;
+                let mut entries = Vec::new();
+                if let Ok(values) = self.list(entries_value) {
+                    for entry in values {
+                        let Ok(entry_fields) = self.record(entry, "ct_entry") else {
+                            continue;
+                        };
+                        let key = self
+                            .required(entry, entry_fields, "key")
+                            .and_then(|v| self.ct_value(v));
+                        let element = self
+                            .required(entry, entry_fields, "value")
+                            .and_then(|v| self.ct_value(v));
+                        self.unknown(entry_fields, &["key", "value"]);
+                        if let (Some(key), Some(element)) = (key, element) {
+                            entries.push((key, element));
+                        }
+                    }
+                }
+                self.unknown(fields, &["spelling", "entries"]);
+                Some(CtValue::Dict {
+                    spelling: spelling.map(Box::new),
+                    entries,
+                })
+            }
+            ValueKind::Record(tag, fields) if tag == "ct_set" => {
+                let spelling = match self.field(fields, "spelling") {
+                    Ok(spelling) => Some(self.ty(spelling)?),
+                    Err(()) => None,
+                };
+                let elements_value = self.required(value, fields, "elements")?;
+                let elements = self.ct_values(elements_value);
+                self.unknown(fields, &["spelling", "elements"]);
+                Some(CtValue::Set {
+                    spelling: spelling.map(Box::new),
+                    elements,
+                })
+            }
             _ => {
                 self.error(value.span, "expected compile-time value");
                 None

@@ -22,9 +22,12 @@ pub(super) fn materialize_block(
 ) -> Vec<Stmt> {
     // Declared struct names are marked so a subscript-shaped projection on a
     // runtime local (`v[String]`) can be told from ordinary indexing.
+    // A collection constant never inlines: its runtime uses were folded
+    // through `materialize[...]()` or rejected before this pass.
     let subs: Subs = &|n| {
         consts
             .get(n)
+            .filter(|value| !value.is_runtime_collection())
             .cloned()
             .or_else(|| type_names.contains(n).then(type_name_marker))
     };
@@ -107,7 +110,7 @@ pub(super) fn substitute_type_bindings_in_expr(expr: &mut Expr, subs: TypeSubs) 
     retype_expr(expr, subs);
 }
 
-fn rewrite_expr(e: &mut Expr, subs: Subs) {
+pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
     if let Some(folded) = fold_pack_typelist_use(e, subs) {
         *e = folded;
         return;

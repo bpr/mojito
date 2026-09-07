@@ -657,6 +657,8 @@ atom:
     | '.' NAME ['(' [args] ')']   # leading-dot contextual member (`.red()`); the base
                                   # type is inferred from the expected type; postfix
                                   # chains attach normally
+    | 'comptime' '(' expression ')'   # compile-time evaluation in a runtime position; the
+                                      # result materializes (it must be implicitly copyable)
     | INT
     | FLOAT
     | (STRING | TSTRING)+         # adjacent family concatenates; any TSTRING retains interpolation

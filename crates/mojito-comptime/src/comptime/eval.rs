@@ -59,6 +59,30 @@ impl<'a> Elab<'a> {
             ExprKind::TypeApply { name, args } => self.type_value(name, args, scope),
             ExprKind::TupleLit(elems) => Ok(CtValue::Tuple(self.eval_all(elems, scope)?)),
             ExprKind::ListLit(elems) => Ok(CtValue::List(self.eval_all(elems, scope)?)),
+            // A set or dictionary display; an empty `{}` is a dictionary whose
+            // spelling the annotated binding supplies.
+            ExprKind::BraceLit(entries) => {
+                if entries.iter().all(|(_, value)| value.is_some()) {
+                    let entries = entries
+                        .iter()
+                        .map(|(key, value)| {
+                            let value = value.as_ref().expect("guard established dict entries");
+                            Ok((self.eval(key, scope)?, self.eval(value, scope)?))
+                        })
+                        .collect::<Result<Vec<_>, ComptimeError>>()?;
+                    Ok(CtValue::dict(None, entries))
+                } else if entries.iter().all(|(_, value)| value.is_none()) {
+                    let elements = entries
+                        .iter()
+                        .map(|(element, _)| self.eval(element, scope))
+                        .collect::<Result<Vec<_>, ComptimeError>>()?;
+                    Ok(CtValue::set(None, elements))
+                } else {
+                    Err(ComptimeError::NotComptime(
+                        "set elements and dictionary key/value pairs cannot be mixed".to_string(),
+                    ))
+                }
+            }
             ExprKind::Member { object, field } => {
                 if let ExprKind::Identifier(name) = &object.kind
                     && name == "Self"
@@ -97,6 +121,18 @@ impl<'a> Elab<'a> {
                         "compile-time member access '.{field}' needs a type value"
                     ))),
                 }
+            }
+            // A call or subscript chained onto another call over a
+            // compile-time value (`M.get("a").value()`) evaluates as one VM
+            // entry: the intermediate result need not have a compile-time
+            // form of its own.
+            ExprKind::MethodCall { object, kwargs, .. }
+                if kwargs.is_empty() && self.chained_on_value(object, scope) =>
+            {
+                self.ctfe_expr_entry(e, scope)
+            }
+            ExprKind::Index { object, .. } if self.chained_on_value(object, scope) => {
+                self.ctfe_expr_entry(e, scope)
             }
             ExprKind::Index { object, index } => {
                 // `IsTriviallyCopyable[Plain]`: a single non-scalar bracket
@@ -155,9 +191,13 @@ impl<'a> Elab<'a> {
                     };
                     return self.eval_reflected_field_handle(&ty, field, index, scope);
                 }
-                let seq = self
-                    .eval(object, scope)?
-                    .as_sequence("indexing a comptime collection")?;
+                let container = self.eval(object, scope)?;
+                // A dictionary subscript is the raising `__getitem__`, which
+                // the checked entry reports as upstream does.
+                if matches!(container, CtValue::Dict { .. }) {
+                    return self.ctfe_expr_entry(e, scope);
+                }
+                let seq = container.as_sequence("indexing a comptime collection")?;
                 let i = self.eval(index, scope)?.as_int("comptime index")?;
                 seq.get(i as usize).cloned().ok_or_else(|| {
                     ComptimeError::BadArithmetic(format!("comptime index {i} out of range"))
@@ -179,13 +219,15 @@ impl<'a> Elab<'a> {
                 method,
                 args,
                 kwargs,
-            } if args.is_empty() && kwargs.is_empty() => {
-                let CtValue::Reflected(ty) = self.eval(object, scope)? else {
-                    return Err(ComptimeError::NotComptime(format!(
-                        "compile-time reflection method '{method}' needs a reflect[T] handle"
-                    )));
-                };
-                self.eval_reflection_method(&ty, method, scope)
+            } if args.is_empty()
+                && kwargs.is_empty()
+                && !matches!(&object.kind, ExprKind::Identifier(name)
+                    if self.structs.contains_key(name.as_str())) =>
+            {
+                match self.eval(object, scope)? {
+                    CtValue::Reflected(ty) => self.eval_reflection_method(&ty, method, scope),
+                    receiver => self.comptime_value_method(e, &receiver, method, args, scope),
+                }
             }
             ExprKind::Invoke {
                 callee,
@@ -389,6 +431,63 @@ impl<'a> Elab<'a> {
                     })?;
                 Ok(CtValue::Simd { dtype, lanes })
             }
+            // The explicit literal constructors `Dict[K, V, H](keys, values,
+            // None)` and `Set[T, H](elements..., __set_literal__=None)`, or
+            // their empty applications: the spelled type is kept so the value
+            // materializes as that constructor rather than a bare display.
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if name == "Dict"
+                && !param_args.is_empty()
+                && kwargs.is_empty()
+                && self.structs.contains_key(name.as_str())
+                && (args.is_empty()
+                    || (args.len() == 3 && matches!(args[2].kind, ExprKind::None))) =>
+            {
+                let spelling = self.param_arg_type(
+                    &ParamArg::Type(Type::Named(name.clone(), param_args.clone())),
+                    scope,
+                )?;
+                let entries = if args.is_empty() {
+                    Vec::new()
+                } else {
+                    let keys = self
+                        .eval(&args[0], scope)?
+                        .as_sequence("Dict literal keys")?;
+                    let values = self
+                        .eval(&args[1], scope)?
+                        .as_sequence("Dict literal values")?;
+                    if keys.len() != values.len() {
+                        return Err(ComptimeError::NotComptime(
+                            "a Dict literal constructor takes as many keys as values".to_string(),
+                        ));
+                    }
+                    keys.into_iter().zip(values).collect()
+                };
+                Ok(CtValue::dict(Some(spelling), entries))
+            }
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if name == "Set"
+                && !param_args.is_empty()
+                && self.structs.contains_key(name.as_str())
+                && kwargs.iter().all(|argument| {
+                    argument.name == "__set_literal__"
+                        && matches!(argument.value.kind, ExprKind::None)
+                }) =>
+            {
+                let spelling = self.param_arg_type(
+                    &ParamArg::Type(Type::Named(name.clone(), param_args.clone())),
+                    scope,
+                )?;
+                Ok(CtValue::set(Some(spelling), self.eval_all(args, scope)?))
+            }
             ExprKind::Call { name, args, .. } if name == "len" && args.len() == 1 => {
                 let sequence = self
                     .eval(&args[0], scope)?
@@ -461,6 +560,11 @@ impl<'a> Elab<'a> {
                 ..
             } => {
                 let argv = self.eval_all(args, scope)?;
+                // A collection argument crosses only as its display inside a
+                // synthesized entry.
+                if argv.iter().any(CtValue::is_runtime_collection) {
+                    return self.ctfe_expr_entry(e, scope);
+                }
                 self.ctfe_call(name, param_args, argv, scope)
             }
             // A static method on a struct (`Extent.square(4)`) → the
@@ -480,9 +584,82 @@ impl<'a> Elab<'a> {
                 let literal_args = self.eval_to_literals(args, e.span, scope)?;
                 self.ctfe_struct_entry(struct_name, Some(method), literal_args, e.span)
             }
+            // A method call on a compile-time value with a runtime form.
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+                kwargs,
+            } if kwargs.is_empty() => {
+                let receiver = self.eval(object, scope)?;
+                self.comptime_value_method(e, &receiver, method, args, scope)
+            }
             _ => Err(ComptimeError::NotComptime(
                 "unsupported compile-time expression".to_string(),
             )),
+        }
+    }
+
+    /// Whether `object` is itself a call or subscript whose receiver chain is
+    /// rooted at a compile-time value (the receiver of a chained call).
+    fn chained_on_value(&self, object: &Expr, scope: &HashMap<String, CtValue>) -> bool {
+        matches!(
+            object.kind,
+            ExprKind::MethodCall { .. } | ExprKind::Index { .. } | ExprKind::Invoke { .. }
+        ) && self.chain_root_is_value(object, scope)
+    }
+
+    /// Whether a receiver chain (`a.b(...)[i].c(...)`) is rooted at a binding
+    /// of a compile-time value with a runtime form (not a type or reflection
+    /// handle).
+    fn chain_root_is_value(&self, expr: &Expr, scope: &HashMap<String, CtValue>) -> bool {
+        match &expr.kind {
+            ExprKind::MethodCall { object, .. }
+            | ExprKind::Index { object, .. }
+            | ExprKind::Member { object, .. } => self.chain_root_is_value(object, scope),
+            ExprKind::Invoke { callee, .. } => self.chain_root_is_value(callee, scope),
+            ExprKind::Identifier(name) => scope.get(name).is_some_and(|value| {
+                !matches!(
+                    value,
+                    CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Param(_)
+                )
+            }),
+            _ => false,
+        }
+    }
+
+    /// A method call on a compile-time collection or struct value. The
+    /// structural folds (`keys`, `values`, `__len__`, `__contains__`) read
+    /// the value directly; everything else runs through a synthesized
+    /// VM-CTFE entry over the materialized receiver.
+    fn comptime_value_method(
+        &self,
+        call: &Expr,
+        receiver: &CtValue,
+        method: &str,
+        args: &[Expr],
+        scope: &HashMap<String, CtValue>,
+    ) -> Result<CtValue, ComptimeError> {
+        match (receiver, method, args) {
+            (CtValue::Dict { entries, .. }, "keys", []) => Ok(CtValue::List(
+                entries.iter().map(|(key, _)| key.clone()).collect(),
+            )),
+            (CtValue::Dict { entries, .. }, "values", []) => Ok(CtValue::List(
+                entries.iter().map(|(_, value)| value.clone()).collect(),
+            )),
+            (CtValue::Dict { .. } | CtValue::Set { .. }, "__len__", []) => {
+                Ok(CtValue::Int(receiver.as_sequence("__len__()")?.len() as i64))
+            }
+            (CtValue::Dict { .. } | CtValue::Set { .. }, "__contains__", [item]) => {
+                let item = self.eval(item, scope)?;
+                Ok(CtValue::Bool(comptime_contains(receiver, &item)?))
+            }
+            (CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Param(_), _, _) => {
+                Err(ComptimeError::NotComptime(format!(
+                    "compile-time method '{method}' needs a value receiver"
+                )))
+            }
+            _ => self.ctfe_expr_entry(call, scope),
         }
     }
 
@@ -987,6 +1164,16 @@ impl<'a> Elab<'a> {
         scope: &HashMap<String, CtValue>,
     ) -> Result<CtValue, ComptimeError> {
         match op {
+            InfixOp::In | InfixOp::NotIn => {
+                let item = self.eval(l, scope)?;
+                let container = self.eval(r, scope)?;
+                let found = comptime_contains(&container, &item)?;
+                return Ok(CtValue::Bool(if matches!(op, InfixOp::In) {
+                    found
+                } else {
+                    !found
+                }));
+            }
             InfixOp::And => {
                 return Ok(CtValue::Bool(
                     self.eval(l, scope)?.as_bool("'and'")?
@@ -1256,5 +1443,21 @@ impl Elab<'_> {
             },
             _ => None,
         }
+    }
+}
+
+/// Compile-time membership: a dictionary tests its keys, a set/list/tuple its
+/// elements (structural equality, exact for every prelude key type), and a
+/// string its substrings.
+fn comptime_contains(container: &CtValue, item: &CtValue) -> Result<bool, ComptimeError> {
+    match (container, item) {
+        (CtValue::Dict { entries, .. }, _) => Ok(entries.iter().any(|(key, _)| key == item)),
+        (CtValue::Set { elements, .. }, _)
+        | (CtValue::List(elements), _)
+        | (CtValue::Tuple(elements), _) => Ok(elements.contains(item)),
+        (CtValue::Str(text), CtValue::Str(needle)) => Ok(text.contains(needle.as_str())),
+        _ => Err(ComptimeError::NotComptime(
+            "'in' needs a compile-time collection or string on the right".to_string(),
+        )),
     }
 }

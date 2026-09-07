@@ -489,6 +489,12 @@ pub(super) fn verify_param_arguments(
             index
         };
         let Some(index) = index else {
+            // An erased positional argument keeps its slot for alignment but
+            // binds nothing; past the declarations it is an explicit origin
+            // argument, which is not a parameter declaration at all.
+            if argument.name.is_none() && argument.value.is_none() {
+                continue;
+            }
             errors.push(format!(
                 "{prefix}: compile-time argument does not match a parameter declaration"
             ));

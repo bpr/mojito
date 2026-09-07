@@ -134,7 +134,7 @@ impl VmBackend {
             MirInstr::ConstructTypeParam { dest, param } => {
                 // A constructible type parameter is reified at runtime as the
                 // bound struct's name.
-                let bound = match bound_type_parameter(prog, function, vars, param) {
+                let bound = match self.bound_type_parameter(prog, function, frame_id, vars, param) {
                     Some(reference @ Value::Ref { .. }) => {
                         match self.read_reference(&reference, frame_id, vars)? {
                             Value::Struct { name, .. } => Some(Value::Str(name)),
@@ -327,19 +327,25 @@ impl VmBackend {
                 // `value_params`.
                 let caller = CallerBindings {
                     function: caller_function,
+                    frame: frame_id,
                     registers: regs,
                     variables: vars,
                 };
-                let pvals = prog
-                    .sigs
-                    .get(&func.0)
-                    .map(|signature| {
-                        runtime_parameter_arguments(
-                            prog,
-                            caller,
-                            &signature.param_decls,
-                            param_arg_regs,
-                        )
+                // An explicitly resolved `__init__` overload constructs its
+                // struct, so the supplied arguments align with the struct's
+                // declarations (`Dict[K, V, H](keys, values, None)`), not the
+                // constructor's own.
+                let declarations = mojito_symbol::symbol::init_overload_struct(&func.0)
+                    .and_then(|struct_name| prog.structs.get(struct_name))
+                    .map(|definition| definition.param_decls.as_slice())
+                    .or_else(|| {
+                        prog.sigs
+                            .get(&func.0)
+                            .map(|signature| signature.param_decls.as_slice())
+                    });
+                let pvals = declarations
+                    .map(|declarations| {
+                        self.runtime_parameter_arguments(prog, caller, declarations, param_arg_regs)
                     })
                     .unwrap_or_else(|| {
                         param_arg_regs
@@ -570,10 +576,11 @@ impl VmBackend {
                         } else {
                             param_decls
                         };
-                        let supplied = runtime_parameter_arguments(
+                        let supplied = self.runtime_parameter_arguments(
                             prog,
                             CallerBindings {
                                 function: caller_function,
+                                frame: frame_id,
                                 registers: regs,
                                 variables: vars,
                             },

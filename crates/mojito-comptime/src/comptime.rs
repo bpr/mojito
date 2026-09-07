@@ -358,7 +358,13 @@ impl CtValueExt for CtValue {
     /// upstream) yields its element types.
     fn as_sequence(&self, ctx: &str) -> Result<Vec<CtValue>, ComptimeError> {
         match self {
-            CtValue::Tuple(v) | CtValue::List(v) => Ok(v.clone()),
+            CtValue::Tuple(v) | CtValue::List(v) | CtValue::Set { elements: v, .. } => {
+                Ok(v.clone())
+            }
+            // A dictionary iterates (and counts) its keys, as at runtime.
+            CtValue::Dict { entries, .. } => {
+                Ok(entries.iter().map(|(key, _)| key.clone()).collect())
+            }
             _ => self
                 .typelist_elements()
                 .map(<[CtValue]>::to_vec)
@@ -393,6 +399,9 @@ impl CtValueExt for CtValue {
 pub enum ComptimeError {
     /// An expression is not compile-time evaluable (or names an unknown comptime).
     NotComptime(String),
+    /// A compile-time value used at runtime without an explicit crossing;
+    /// the message is upstream's diagnostic verbatim.
+    Crossing(String),
     /// A condition did not evaluate to `Bool`.
     NotBool(String),
     /// A context required a compile-time `Int`.
@@ -440,6 +449,7 @@ impl std::fmt::Display for ComptimeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ComptimeError::NotComptime(s) => write!(f, "not a compile-time value: {s}"),
+            ComptimeError::Crossing(s) => write!(f, "{s}"),
             ComptimeError::NotBool(s) => write!(f, "expected a compile-time Bool ({s})"),
             ComptimeError::NotInt(s) => write!(f, "expected a compile-time Int ({s})"),
             ComptimeError::BadArithmetic(s) => write!(f, "compile-time arithmetic error: {s}"),
@@ -650,9 +660,11 @@ pub fn elaborate_with_requests(
         generic_aliases: RefCell::new(HashMap::new()),
     };
     let mut env = HashMap::new();
-    let elaborated = elab.block(&program, &mut env, false)?;
-    // Materialize module-level comptime constants into runtime literals.
+    let mut elaborated = elab.block(&program, &mut env, false)?;
+    // A module constant declared after its use crosses here.
     let consts = elab.top_consts.borrow().clone();
+    elab.fold_runtime_crossings(&mut elaborated, &consts)?;
+    // Materialize module-level comptime constants into runtime literals.
     let materialized = materialize_block(elaborated, &consts, &elab.struct_names);
     // Monomorphize comptime-dependent generic templates against their call sites.
     let (mut result, instances) =
@@ -691,6 +703,7 @@ pub fn elaborate_with_requests(
     })
 }
 
+mod crossing;
 mod ctfe_calls;
 mod elab;
 mod packs;
@@ -1119,6 +1132,12 @@ fn ct_to_vm(value: &CtValue) -> Result<Value, ComptimeError> {
                 "type-valued or symbolic values cannot cross into VM CTFE".to_string(),
             ))
         }
+        // A collection crosses into VM CTFE only as its materialized display
+        // in a synthesized entry, never as a runtime value.
+        CtValue::Dict { .. } | CtValue::Set { .. } => Err(ComptimeError::NotComptime(
+            "a compile-time collection crosses into VM CTFE only through a synthesized entry"
+                .to_string(),
+        )),
     }
 }
 
@@ -1816,11 +1835,10 @@ fn lit_result(val: &CtValue, span: Span) -> Result<Expr, ComptimeError> {
     })
 }
 
-fn vm_ctfe_safe_builtin(name: &str) -> bool {
-    matches!(
-        name,
-        "range" | "abs" | "min" | "max" | "round" | "Int" | "UInt" | "Float64" | "SIMD"
-    ) || mojito_ast::ast::Dtype::from_scalar_alias(name).is_some()
+/// The builtins with an observable effect, which no compile-time evaluation
+/// may reach: everything else the VM executes deterministically.
+fn vm_ctfe_effectful_builtin(name: &str) -> bool {
+    matches!(name, "print" | "input")
 }
 
 mod ctfe;

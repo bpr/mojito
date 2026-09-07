@@ -58,11 +58,15 @@ Mojito's:
    rejects writes through it.
 5. **Compile-time hashing runs the VM.** A call to a type-parameterized free
    function with a constructible parameter routes through a synthesized
-   checked entry (folded type arguments, typed literal arguments), the purity
-   walk admits the hasher protocol's method calls and the bundled hashers'
-   mixing steps, and the VM-CTFE subprogram carries the keyed `default_hasher`
+   checked entry (folded type arguments, typed literal arguments), the effect
+   walk admits every deterministic body (the hasher protocol needs no
+   allowlist), and the VM-CTFE subprogram carries the keyed `default_hasher`
    clone at its template's position. Scalar, Bool, Float64, and string
-   arguments fold; compile-time Dict/Set values are a roadmap task.
+   arguments fold. A compile-time dictionary or set display folds with the
+   default hasher, as upstream; the explicit literal constructor
+   (`Dict[K, V, default_comp_time_hasher](keys, values, None)`) is the one
+   spelling that carries `Fnv1a`, and the value materializes back as that
+   constructor.
 
 Two leniencies remain on the acceptance side, both recorded: `Hasher`, like
 `Writer`, resolves without `from std.hashlib import Hasher`; and

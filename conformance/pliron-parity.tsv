@@ -35,6 +35,7 @@ assets/ok/comparable_ordered_algorithms.mojo	main	exe-differential	sanitized
 assets/ok/comprehension_borrowed_named_source.mojo	main	exe-differential	sanitized
 assets/ok/comprehension_temporary_source_drop.mojo	main	exe-differential	sanitized
 assets/ok/comptime_alias_generic.mojo	main	exe-differential	sanitized
+assets/ok/comptime_collections.mojo	main	exe-differential	sanitized
 assets/ok/comptime_ctfe.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for.mojo	main	exe-differential	sanitized
 assets/ok/comptime_frozen_struct.mojo	main	exe-differential	sanitized

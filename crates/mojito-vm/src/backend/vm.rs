@@ -816,6 +816,8 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
         ),
         CtValue::Dtype(_)
         | CtValue::Struct { .. }
+        | CtValue::Dict { .. }
+        | CtValue::Set { .. }
         | CtValue::Type(_)
         | CtValue::Reflected(_)
         | CtValue::Param(_) => return None,
@@ -929,9 +931,14 @@ fn resolve_value_parameter_slots(
 fn vm_ct_value_is_symbolic(value: &CtValue) -> bool {
     match value {
         CtValue::Param(_) => true,
-        CtValue::Tuple(values) | CtValue::List(values) => {
-            values.iter().any(vm_ct_value_is_symbolic)
-        }
+        CtValue::Tuple(values)
+        | CtValue::List(values)
+        | CtValue::Set {
+            elements: values, ..
+        } => values.iter().any(vm_ct_value_is_symbolic),
+        CtValue::Dict { entries, .. } => entries
+            .iter()
+            .any(|(key, value)| vm_ct_value_is_symbolic(key) || vm_ct_value_is_symbolic(value)),
         CtValue::Type(ty) | CtValue::Reflected(ty) => vm_type_is_symbolic(ty),
         CtValue::Struct { fields, .. } => fields
             .iter()
@@ -1093,90 +1100,109 @@ fn align_parameter_arguments<T>(
     aligned
 }
 
-/// The supplied compile-time arguments of a call, aligned to the callee's
-/// declarations. A reified type argument spelled as the caller's own binder
-/// (`hash[Self.H](key)` in an erased struct body, `Const::Str("H")`)
-/// resolves through the caller frame's reified parameters; a spelling bound
-/// nowhere passes through for the callee's declaration default.
-fn runtime_parameter_arguments(
-    prog: &Prog,
-    caller: CallerBindings<'_>,
-    declarations: &[ParamDecl],
-    arguments: &[mojito_mir::mir::MirParamArg],
-) -> Vec<Option<Value>> {
-    align_parameter_arguments(
-        declarations,
-        arguments
-            .iter()
-            .map(|argument| {
-                let value = argument
-                    .value
-                    .map(|register| caller.registers[register.0 as usize].clone())
-                    .map(|value| match value {
-                        Value::Str(spelling) if !prog.structs.contains_key(&spelling) => {
-                            bound_type_parameter(prog, caller.function, caller.variables, &spelling)
-                                .unwrap_or(Value::Str(spelling))
-                        }
-                        other => other,
-                    });
-                (argument.name.clone(), value)
-            })
-            .collect(),
-    )
-}
+impl VmBackend {
+    /// The supplied compile-time arguments of a call, aligned to the callee's
+    /// declarations. A reified type argument spelled as the caller's own binder
+    /// (`hash[Self.H](key)` in an erased struct body, `Const::Str("H")`)
+    /// resolves through the caller frame's reified parameters; a spelling bound
+    /// nowhere passes through for the callee's declaration default.
+    fn runtime_parameter_arguments(
+        &self,
+        prog: &Prog,
+        caller: CallerBindings<'_>,
+        declarations: &[ParamDecl],
+        arguments: &[mojito_mir::mir::MirParamArg],
+    ) -> Vec<Option<Value>> {
+        align_parameter_arguments(
+            declarations,
+            arguments
+                .iter()
+                .map(|argument| {
+                    let value = argument
+                        .value
+                        .map(|register| caller.registers[register.0 as usize].clone())
+                        .map(|value| match value {
+                            Value::Str(spelling) if !prog.structs.contains_key(&spelling) => self
+                                .bound_type_parameter(
+                                    prog,
+                                    caller.function,
+                                    caller.frame,
+                                    caller.variables,
+                                    &spelling,
+                                )
+                                .unwrap_or(Value::Str(spelling)),
+                            other => other,
+                        });
+                    (argument.name.clone(), value)
+                })
+                .collect(),
+        )
+    }
 
-/// The runtime binding of the compile-time type parameter `param` in the
-/// frame of `function`, reified as the bound struct's name: a def binds its
-/// reified parameters into the frame local of the same name; a struct method
-/// reads them from `self`'s reified parameters.
-fn bound_type_parameter(
-    prog: &Prog,
-    function: usize,
-    variables: &[Value],
-    param: &str,
-) -> Option<Value> {
-    let definition = &prog.mir.functions[function].1;
-    definition
-        .var_names
-        .iter()
-        .position(|candidate| candidate == param)
-        .map(|slot| variables[slot].clone())
-        .filter(|value| !matches!(value, Value::None))
-        .or_else(|| match variables.first() {
-            Some(Value::Struct { value_params, .. }) => value_params
+    /// The runtime binding of the compile-time type parameter `param` in the
+    /// frame of `function`, reified as the bound struct's name: a def binds its
+    /// reified parameters into the frame local of the same name; a struct method
+    /// reads them from `self`'s reified parameters — through the handle when
+    /// `self` is a reference (a `mut self` method called on a value still under
+    /// construction, `self[k] = v` inside `Dict.__init__`).
+    fn bound_type_parameter(
+        &self,
+        prog: &Prog,
+        function: usize,
+        frame: FrameId,
+        variables: &[Value],
+        param: &str,
+    ) -> Option<Value> {
+        let definition = &prog.mir.functions[function].1;
+        let receiver_parameter = |receiver: &Value| match receiver {
+            Value::Struct { value_params, .. } => value_params
                 .iter()
                 .find(|(candidate, _)| candidate == param)
                 .map(|(_, value)| value.clone()),
             _ => None,
-        })
-        // A method-level type parameter inferred from an argument
-        // (`__hash__[H2: Hasher](self, mut hasher: H2)` → `H2()`): the
-        // parameter's runtime struct names the bound type. A `mut` parameter
-        // holds a reference handle; the caller reads through it.
-        .or_else(|| {
-            let signature = prog.sigs.get(&prog.mir.functions[function].0)?;
-            let parameter = signature
-                .param_names
-                .iter()
-                .zip(&signature.param_types)
-                .find(|(_, ty)| matches!(ty, Ty::Param { name, .. } if name == param))
-                .map(|(name, _)| name)?;
-            let slot = definition
-                .var_names
-                .iter()
-                .position(|candidate| candidate == parameter)?;
-            match &variables[slot] {
-                Value::Struct { name, .. } => Some(Value::Str(name.clone())),
-                reference @ Value::Ref { .. } => Some(reference.clone()),
+        };
+        definition
+            .var_names
+            .iter()
+            .position(|candidate| candidate == param)
+            .map(|slot| variables[slot].clone())
+            .filter(|value| !matches!(value, Value::None))
+            .or_else(|| match variables.first() {
+                Some(receiver @ Value::Struct { .. }) => receiver_parameter(receiver),
+                Some(reference @ Value::Ref { .. }) => self
+                    .read_reference(reference, frame, variables)
+                    .ok()
+                    .and_then(|receiver| receiver_parameter(&receiver)),
                 _ => None,
-            }
-        })
+            })
+            // A method-level type parameter inferred from an argument
+            // (`__hash__[H2: Hasher](self, mut hasher: H2)` → `H2()`): the
+            // parameter's runtime struct names the bound type. A `mut` parameter
+            // holds a reference handle; the caller reads through it.
+            .or_else(|| {
+                let signature = prog.sigs.get(&prog.mir.functions[function].0)?;
+                let parameter = signature
+                    .param_names
+                    .iter()
+                    .zip(&signature.param_types)
+                    .find(|(_, ty)| matches!(ty, Ty::Param { name, .. } if name == param))
+                    .map(|(name, _)| name)?;
+                let slot = definition
+                    .var_names
+                    .iter()
+                    .position(|candidate| candidate == parameter)?;
+                match &variables[slot] {
+                    Value::Struct { name, .. } => Some(Value::Str(name.clone())),
+                    reference @ Value::Ref { .. } => Some(reference.clone()),
+                    _ => None,
+                }
+            })
+    }
 }
 
-/// The caller frame's state a call's compile-time arguments resolve against.
-#[derive(Clone, Copy)]
 struct CallerBindings<'a> {
     function: usize,
+    frame: FrameId,
     registers: &'a [Value],
     variables: &'a [Value],
 }
@@ -1185,6 +1211,7 @@ impl<'a> From<&'a Frame> for CallerBindings<'a> {
     fn from(frame: &'a Frame) -> Self {
         CallerBindings {
             function: frame.function,
+            frame: frame.id,
             registers: &frame.registers,
             variables: &frame.variables,
         }

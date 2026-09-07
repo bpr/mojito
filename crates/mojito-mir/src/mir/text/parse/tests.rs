@@ -224,6 +224,14 @@ fn type_families_reprint_byte_identically() {
                 CtValue::Type(Box::new(Ty::Int)),
                 CtValue::Reflected(Box::new(Ty::Bool)),
                 CtValue::Param("N".into()),
+                CtValue::Dict {
+                    spelling: Some(Box::new(mojito_types::types::dict_type(Ty::Int, Ty::Bool))),
+                    entries: vec![(CtValue::Int(1), CtValue::Bool(true))],
+                },
+                CtValue::Set {
+                    spelling: None,
+                    elements: vec![CtValue::Str("a".into()), CtValue::Str("b".into())],
+                },
             ])),
             TyArg::Origin(Origin::union([
                 Origin::Param(OriginParamId(0)),

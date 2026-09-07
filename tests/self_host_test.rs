@@ -271,6 +271,24 @@ fn compile_time_hash_matches_the_runtime_values() {
 }
 
 #[test]
+fn compile_time_collections_match_upstream() {
+    // `comptime` dictionary and set displays fold at elaboration, their
+    // reads evaluate at compile time (structural folds and VM entries), the
+    // explicit literal constructors carry `default_comp_time_hasher`, and
+    // `materialize[...]()`/`comptime(...)` cross to runtime; the output is
+    // the pinned upstream's.
+    let directory = TempDir::new();
+    let main = directory.write(
+        "main.mojo",
+        include_str!("../assets/ok/comptime_collections.mojo"),
+    );
+    assert_eq!(
+        run_compiled(&main).unwrap(),
+        "2 3 0 True False 1 7 2 2\na\nb\n1\n4\n9\n2 1 2 2 3 True\na\nb\n2 True\n10\n"
+    );
+}
+
+#[test]
 fn explicit_hasher_containers_run() {
     // `Dict`/`Set` accept an explicit hasher parameter and hash keys with it.
     let directory = TempDir::new();

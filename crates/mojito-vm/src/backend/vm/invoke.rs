@@ -700,10 +700,11 @@ impl VmBackend {
                         } else {
                             param_decls
                         };
-                        let supplied = runtime_parameter_arguments(
+                        let supplied = self.runtime_parameter_arguments(
                             prog,
                             CallerBindings {
                                 function: caller_function,
+                                frame: frame_id,
                                 registers: regs,
                                 variables: vars,
                             },
