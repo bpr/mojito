@@ -263,24 +263,32 @@ exempt from the ordering.
        Extended_Pictographic or Prepend data); reverse iteration re-scans
        forward from the nearest CR/LF/Control boundary.
 
-- [ ] **Filesystem and I/O slice: files, streams, paths, tempfile** — over
-  the landed `external_call` libc table and `std.os`, upstream's signatures:
-  1. the `with` statement as a type-aware checker desugar (today the comptime
-     elaborator emits an unconditional `__exit__`): `__enter__` consuming `var
-     self`, optional `__exit__`, the error-taking `__exit__(self, err) -> Bool`
-     overload, cleanup before error processing and on `break`/`continue`/
-     `return`;
-  2. `std.io.file` (`FileHandle` over raw descriptors, `open` with upstream's
-     mode and error texts), `FileDescriptor`, `std.sys` `stdin`/`stdout`/
-     `stderr`, `print(sep=, end=, flush=, file=)`;
-  3. `std.pathlib` (`Path`, `cwd`, `DIR_SEPARATOR`) and `std.tempfile`
-     (`gettempdir`, `mkdtemp`, `TemporaryDirectory`; `_get_random_name` from
-     `/dev/urandom` until `std.random` lands);
-  4. then the deferred tail: public `stat`/`lstat`/`stat_result`, `realpath`,
-     `symlink`/`link`/`chdir`, `isatty`, `OptionalPointer` (null tests spell
-     `Int(ptr) == 0` today), `ErrNo`'s named constants, `~user` expansion
-     (`getpwnam`), and the VM's per-process environment overlay (native
-     `setenv` writes the real environment; unobservable in-process).
+- [ ] **Filesystem and I/O residues** — behind the landed files, streams,
+  paths, and tempfile stage (`docs/features.md`):
+  1. the deferred tail: public `stat`/`lstat`/`stat_result`, `realpath`,
+     `symlink`/`link`/`chdir`, `isatty` (`FileDescriptor.isatty`/`fchdir`),
+     `OptionalPointer` (null tests spell `Int(ptr) == 0`), `ErrNo`'s named
+     constants, `~user` expansion (`getpwnam`), the VM's per-process
+     environment overlay (native `setenv` writes the real environment),
+     `NamedTemporaryFile`, `FileHandle.read` into a typed
+     `Span[Scalar[dtype], origin]`, `Path.stat`/`lstat`/
+     `_dir_of_current_file`, `KeyElement`, `_get_random_name` over
+     `std.random` (reads `/dev/urandom` today), a generic `__exit__[E]`;
+  2. traps the stage worked around, each its own fix: an overloaded
+     constructor spelled with the `StringSlice` or `Byte` alias mangles a
+     different key than the `StringSpan`/`UInt8` the call selects (the ports
+     spell the canonical names); a temporary view as a method argument
+     (`s.take(String("x").as_bytes())`) is a VM "reference receiver must be a
+     place" rejection and as an augmented-assignment operand
+     (`p /= StringSpan(s)`) a VM use-after-free; `Span[mut=True, T, _]`
+     fails origin inference (spell an `[origin: Origin[mut=True]]` binder);
+     the VM never destroys a discarded call result (`with Mgr():` whose
+     `__enter__` returns a value leaks it) and destroys a struct whose field
+     feeds `print` before the print runs (Mojo prints first); `range` is
+     invisible in `std.string`, and a module loaded while the prelude
+     bootstraps (`std.io` and the whole `std.os` graph now) must import
+     `String` explicitly — that graph costs Hello World about a second of
+     debug compile time (`docs/performance.md`).
 - [ ] **Time, random, and testing slices** — deterministic testable cores;
   host-dependent behavior behind runtime services.
 

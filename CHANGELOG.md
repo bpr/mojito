@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The filesystem slice's files, streams, paths, and temporary directories:
+  the `with` statement as a checker desugar selected by the manager's methods
+  (a consuming `__enter__` whose result lives to the block end, a plain
+  `__exit__` by `try`/`finally`, both overloads with `__exit__(self, err) ->
+  Bool` deciding propagation; upstream's rejection texts), `std.io`
+  `FileHandle`/`open`/`FileDescriptor` as prelude names, `std.sys`
+  `stdin`/`stdout`/`stderr`, `print(sep=, end=, flush=, file=)` on both
+  backends, `std.pathlib` (`Path`, `cwd`, `DIR_SEPARATOR`), `std.tempfile`
+  (`gettempdir`, `mkdtemp`, `TemporaryDirectory`), `String(from_utf8=)`
+  with UTF-8 validation, `Span.unsafe_ptr()`; beneath them, width-1 scalars
+  gain `copy()`, the VM-CTFE subprogram folds every retained module-scope
+  constant, and an omitted `Optional[T] = None` argument compiles natively
+  (the monomorphizer instantiates the recorded constructor for the parameter
+  type); exe ratchet 434 → 444, errors 30 → 34.
+
 - The filesystem slice's host boundary and `std.os`: upstream's
   `external_call[callee, return_type, num_fixed_args=](*args)` builtin over a
   closed libc callee table (`mojito_types::ffi`; the VM runs each callee on

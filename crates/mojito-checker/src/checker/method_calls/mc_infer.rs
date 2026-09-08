@@ -364,6 +364,16 @@ impl Checker {
             // reductions collapse to the canonicalized width-1 scalar
             // (`reduce_and`/`reduce_or` to `Bool`).
             return match method {
+                // `Copyable.copy` on a scalar or vector is the value read
+                // itself (the builtin-copy rule of the nominal resolver).
+                "copy" if args.is_empty() && param_args.is_empty() => {
+                    if is_place_expr(object) {
+                        self.copy_place_value_uses
+                            .borrow_mut()
+                            .insert(object.source_span());
+                    }
+                    Ok(obj_ty.clone())
+                }
                 "cast" if param_args.len() == 1 && args.is_empty() => {
                     let target = dtype_from_arg(&param_args[0])?;
                     // Bool casts are deferred: masks convert through
@@ -505,7 +515,7 @@ impl Checker {
                 self.borrowed_read_call_places
                     .borrow_mut()
                     .insert(object.source_span());
-                self.infer_print(std::slice::from_ref(object))?;
+                self.infer_print(std::slice::from_ref(object), &[])?;
                 self.operation_adjustments.borrow_mut().insert(
                     span,
                     if method == "write_repr_to" {
@@ -602,7 +612,7 @@ impl Checker {
             self.borrowed_read_call_places
                 .borrow_mut()
                 .insert(object.source_span());
-            self.infer_print(std::slice::from_ref(object))?;
+            self.infer_print(std::slice::from_ref(object), &[])?;
             self.operation_adjustments.borrow_mut().insert(
                 span,
                 if method == "write_repr_to" {
@@ -619,7 +629,7 @@ impl Checker {
             self.borrowed_read_call_places
                 .borrow_mut()
                 .extend(args.iter().map(Expr::source_span));
-            self.infer_print(args)?;
+            self.infer_print(args, &[])?;
             return Ok(Ty::None);
         }
         if matches!(&obj_ty, Ty::Param { bounds, .. } if bounds.iter().any(|bound| bound == "Hasher"))
@@ -684,7 +694,7 @@ impl Checker {
             // A template receiver may be the compile-time literal or the
             // nominal String; the formatted result materializes nominally.
             reject_kwargs(kwargs)?;
-            self.infer_print(args)?;
+            self.infer_print(args, &[])?;
             return self.nominal_string_wrap(span);
         }
         if let Ty::Tuple(elements) = &obj_ty {

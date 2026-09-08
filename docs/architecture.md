@@ -1018,8 +1018,8 @@ monomorphizer does not yet honor that forwarding (a `docs/roadmap.md`
 native-lane residue).
 
 Examples of syntax that may parse before it is fully implemented include richer
-trait features, `with`, and advanced expression/declaration forms that the VM
-does not yet execute.
+trait features and advanced expression/declaration forms that the VM does not
+yet execute.
 
 ### Overload Resolution
 
@@ -3096,7 +3096,25 @@ produces glibc `dirent` images, `__xstat` fills the caller's `_c_stat` by
 field name) — over a descriptor table where fd 1 appends to the captured
 stdout and `setenv`/`unsetenv` write a per-VM overlay; the native backend
 declares the C function on demand and calls it. No compiler-private
-`_mojito_*` crossing exists for I/O.
+`_mojito_*` crossing exists for I/O. `print(sep=, end=, flush=, file=)` is the
+same builtin with keywords: the VM joins the cells and writes them to the
+captured stdout or, for `file=`, through its descriptor table; the native
+backend routes every piece of such a call through libc `write` on the
+`FileDescriptor`'s value instead of `mjrt_write_stdout`.
+
+The `with` statement is a checker desugar (`checker/with_stmt.rs`), not a
+lowering construct: the manager's declared `__enter__`/`__exit__` methods
+select one of a few ordinary statement shapes (`VarDecl`, `Try`, `If`,
+`Raise`, `Expr`), the checker checks that desugar in a block scope, and after
+the last transfer round it splices the desugar into the checked tree in the
+statement's place. HIR, MIR, ownership analysis, and the backends therefore
+never see a `With` node. The one compiler-private spelling it emits is
+`_mojito_keep_alive(name)`, a statement MIR lowers to the existing
+`KeepAlive` liveness anchor (resolved through the argument's checked binding,
+so a later block rebinding the same `as` name anchors its own slot): it keeps
+the manager — or a consuming `__enter__`'s result standing in for it — alive
+to the end of the block without a copy or a move, while an `as` binding is an
+ordinary local destroyed at its last use, as the pinned Mojo does.
 
 Keeping value-level behavior in `runtime` prevents the VM from baking every
 operation directly into the backend. The VM should be a consumer of checked MIR

@@ -77,6 +77,8 @@ assets/ok/explicit_destroy_partial_fields.mojo	main	exe-differential	sanitized
 assets/ok/explicit_destroy_raising.mojo	main	exe-differential	sanitized
 assets/ok/explicit_transfer_convention.mojo	main	exe-differential	sanitized
 assets/ok/external_call_write_stdout.mojo	main	exe-differential	sanitized
+assets/ok/file_descriptor_stdout_order.mojo	main	exe-differential	sanitized
+assets/ok/file_handle_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/forward_struct_reference_iterator.mojo	main	exe-differential	sanitized
 assets/ok/funarg_call_through_after_last_use.mojo	main	exe-differential	sanitized
 assets/ok/func_styles.mojo	main	exe-differential	sanitized
@@ -222,6 +224,7 @@ assets/ok/parameterized_assoc_self_origin_return.mojo	main	exe-differential	sani
 assets/ok/parameterized_assoc_value.mojo	main	exe-differential	sanitized
 assets/ok/parametric_mut_iterator_read.mojo	main	exe-differential	sanitized
 assets/ok/parametric_static_methods.mojo	main	exe-differential	sanitized
+assets/ok/path_operations.mojo	main	exe-differential	sanitized
 assets/ok/pliron_alloc_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/pliron_builtin_numeric_edges.mojo	main	exe-differential	sanitized
 assets/ok/pliron_callable_struct.mojo	main	exe-differential	sanitized
@@ -302,6 +305,7 @@ assets/ok/pointer_to_ref_binding.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_ref_write_through.mojo	main	exe-differential	sanitized
 assets/ok/pointer_unsafe_vocabulary.mojo	main	exe-differential	sanitized
 assets/ok/positional_only.mojo	main	exe-differential	sanitized
+assets/ok/print_keywords_file.mojo	main	exe-differential	sanitized
 assets/ok/raise_borrowed_string_parameter.mojo	main	exe-differential	sanitized
 assets/ok/range_zero_step_empty.mojo	main	exe-differential	sanitized
 assets/ok/ref_binding_temporary_source.mojo	main	exe-differential	sanitized
@@ -384,6 +388,7 @@ assets/ok/struct_value_param_frozen.mojo	main	exe-differential	sanitized
 assets/ok/subtree_pointer_generic_field.mojo	main	exe-differential	sanitized
 assets/ok/subtree_pointer_read.mojo	main	exe-differential	sanitized
 assets/ok/telemetry.mojo	main	exe-differential	sanitized
+assets/ok/tempfile_mkdtemp.mojo	main	exe-differential	sanitized
 assets/ok/ternary.mojo	main	exe-differential	sanitized
 assets/ok/trait_default_method.mojo	main	exe-differential	sanitized
 assets/ok/trait_inheritance.mojo	-	ineligible	no-main-entry
@@ -428,6 +433,11 @@ assets/ok/waypoints.mojo	main	exe-differential	sanitized
 assets/ok/where_message_satisfied.mojo	main	exe-differential	sanitized
 assets/ok/where_repeated_clauses.mojo	main	exe-differential	sanitized
 assets/ok/while.mojo	main	exe-differential	sanitized
+assets/ok/with_enter_only.mojo	main	exe-differential	sanitized
+assets/ok/with_exit_error_swallow.mojo	main	exe-differential	sanitized
+assets/ok/with_multiple.mojo	main	exe-differential	sanitized
+assets/ok/with_multiple_dependent.mojo	main	exe-differential	sanitized
+assets/ok/with_statement.mojo	main	exe-differential	sanitized
 assets/ownership_ok/both_branches_move_then_reinit.mojo	main	exe-differential	sanitized
 assets/ownership_ok/dict_mutation_then_break_no_later_use.mojo	main	exe-differential	sanitized
 assets/ownership_ok/dict_value_reads_during_iteration.mojo	main	exe-differential	sanitized
@@ -447,6 +457,10 @@ assets/ownership_ok/transferred_loan_after_last_use.mojo	main	exe-differential	s
 assets/ownership_ok/view_live_across_reading_loop.mojo	main	exe-differential	sanitized
 assets/runtime_error/allocation_use_after_dealloc.mojo	main,__toplevel__	error-differential	category=PointerUseAfterFree
 assets/runtime_error/div_by_zero.mojo	-	ineligible	non-conforming-snippet
+assets/runtime_error/file_open_invalid_mode.mojo	main,__toplevel__	error-differential	category=UnhandledError
+assets/runtime_error/file_open_missing.mojo	main,__toplevel__	error-differential	category=UnhandledError
+assets/runtime_error/file_read_closed_handle.mojo	main,__toplevel__	error-differential	category=UnhandledError
+assets/runtime_error/file_read_write_only_handle.mojo	main,__toplevel__	error-differential	category=UnhandledError
 assets/runtime_error/list_contiguous_slice_negative.mojo	main,__toplevel__	error-differential	category=Abort
 assets/runtime_error/list_contiguous_slice_out_of_range.mojo	main,__toplevel__	error-differential	category=Abort
 assets/runtime_error/list_contiguous_slice_reversed.mojo	main,__toplevel__	error-differential	category=Abort

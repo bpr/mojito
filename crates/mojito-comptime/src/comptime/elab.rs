@@ -239,62 +239,18 @@ impl<'a> Elab<'a> {
                     span,
                 ));
             }
+            // The context-manager protocol is a checker desugar (the manager
+            // type selects the `__enter__`/`__exit__` shape); elaborate the
+            // body and keep the statement, like `While`.
             StmtKind::With { items, body } => {
-                let mut nested = self.block(body, env, in_fn)?;
-                for (index, item) in items.iter().enumerate().rev() {
-                    let manager = format!("$with{}_{}", span.0, index);
-                    let manager_expr = Expr::new(ExprKind::Identifier(manager.clone()), span);
-                    let enter = Expr::new(
-                        ExprKind::MethodCall {
-                            object: Box::new(manager_expr.clone()),
-                            method: "__enter__".to_string(),
-                            args: Vec::new(),
-                            kwargs: Vec::new(),
-                        },
-                        span,
-                    );
-                    let enter_statement = match &item.var {
-                        Some(name) => mk(
-                            StmtKind::VarDecl {
-                                name: name.clone(),
-                                ty: None,
-                                value: enter,
-                            },
-                            span,
-                        ),
-                        None => mk(StmtKind::Expr(enter), span),
-                    };
-                    let exit = Expr::new(
-                        ExprKind::MethodCall {
-                            object: Box::new(manager_expr),
-                            method: "__exit__".to_string(),
-                            args: Vec::new(),
-                            kwargs: Vec::new(),
-                        },
-                        span,
-                    );
-                    nested = vec![
-                        mk(
-                            StmtKind::VarDecl {
-                                name: manager,
-                                ty: None,
-                                value: item.context.clone(),
-                            },
-                            span,
-                        ),
-                        enter_statement,
-                        mk(
-                            StmtKind::Try {
-                                body: nested,
-                                except: None,
-                                orelse: None,
-                                finalbody: Some(vec![mk(StmtKind::Expr(exit), span)]),
-                            },
-                            span,
-                        ),
-                    ];
-                }
-                out.extend(nested);
+                let body = self.block(body, env, in_fn)?;
+                out.push(mk(
+                    StmtKind::With {
+                        items: items.clone(),
+                        body,
+                    },
+                    span,
+                ));
             }
             StmtKind::Def {
                 name,

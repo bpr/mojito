@@ -1544,7 +1544,11 @@ impl Flatten<'_> {
 
     /// Intern the runtime slot for one checked binding. Same-spelled lexical
     /// declarations deliberately receive different slots.
-    fn binding_var(&mut self, binding: mojito_types::origin::OwnerId, name: &str) -> VarId {
+    pub(super) fn binding_var(
+        &mut self,
+        binding: mojito_types::origin::OwnerId,
+        name: &str,
+    ) -> VarId {
         if let Some(var) = self.owner_vars.get(&binding).copied() {
             return var;
         }

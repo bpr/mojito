@@ -589,6 +589,54 @@ def atof(str: String) raises -> Float64:
 # `std.os.PathLike` (re-exported there): a value that names a filesystem
 # path. Declared here because the trait names `String` and this module loads
 # before `std.os`.
+# UTF-8 well-formedness (the Unicode table of valid byte sequences), for the
+# validating `String(from_utf8=...)` constructor.
+def _is_valid_utf8(bytes: Span[UInt8, _]) -> Bool:
+    var i = 0
+    var n = len(bytes)
+    while i < n:
+        var lead = Int(bytes[i])
+        if lead < 0x80:
+            i += 1
+            continue
+        var width = 0
+        var min_second = 0x80
+        var max_second = 0xBF
+        if lead >= 0xC2 and lead <= 0xDF:
+            width = 2
+        elif lead == 0xE0:
+            width = 3
+            min_second = 0xA0
+        elif (lead >= 0xE1 and lead <= 0xEC) or lead == 0xEE or lead == 0xEF:
+            width = 3
+        elif lead == 0xED:
+            width = 3
+            max_second = 0x9F
+        elif lead == 0xF0:
+            width = 4
+            min_second = 0x90
+        elif lead >= 0xF1 and lead <= 0xF3:
+            width = 4
+        elif lead == 0xF4:
+            width = 4
+            max_second = 0x8F
+        else:
+            return False
+        if i + width > n:
+            return False
+        var second = Int(bytes[i + 1])
+        if second < min_second or second > max_second:
+            return False
+        var k = 2
+        while k < width:
+            var continuation = Int(bytes[i + k])
+            if continuation < 0x80 or continuation > 0xBF:
+                return False
+            k += 1
+        i += width
+    return True
+
+
 trait PathLike:
     def __fspath__(self) -> String:
         ...
@@ -660,6 +708,18 @@ struct String(
         var copied = external_call["memcpy", Pointer[UInt8, MutUntrackedOrigin]](
             self.data, unsafe_from_utf8_ptr, UInt(self.size)
         )
+
+    # Upstream's validating constructor from UTF-8 bytes (a file read).
+    def __init__(out self, *, from_utf8: Span[UInt8, _]) raises:
+        if not _is_valid_utf8(from_utf8):
+            raise Error("Cannot construct a String from invalid UTF-8 data")
+        self.size = len(from_utf8)
+        self.cap = self.size if self.size > 0 else 1
+        self.data = unsafe_alloc[Byte](self.cap)
+        var i = 0
+        while i < self.size:
+            self.data[i] = from_utf8[i]
+            i += 1
 
     def __init__(out self, *, copy: Self):
         self.size = copy.size

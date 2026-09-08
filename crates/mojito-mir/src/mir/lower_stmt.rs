@@ -127,6 +127,28 @@ impl Flatten<'_> {
                     *mutable,
                 );
             }
+            // The checker's `with` desugar anchors a manager's liveness at the
+            // end of its block with `_mojito_keep_alive(name)`: a use of the
+            // named slot (resolved by its checked binding, like any read)
+            // without a value, so nothing is evaluated.
+            HirInstr::Eval(e)
+                if let ExprKind::Call { name, args, .. } = &e.syntax.kind
+                    && name == "_mojito_keep_alive"
+                    && let [
+                        Expr {
+                            kind: ExprKind::Identifier(local),
+                            ..
+                        },
+                    ] = args.as_slice() =>
+            {
+                // The argument's checked child carries the binding; the HIR
+                // syntax clone has no address-keyed facts of its own.
+                let var = match e.children.first().and_then(|child| child.binding) {
+                    Some(owner) => self.binding_var(owner, local),
+                    None => self.var(local),
+                };
+                self.emit(MirInstr::KeepAlive { var });
+            }
             HirInstr::Eval(e) => {
                 let _ = self.expr_hir(e); // evaluated for its effect; result discarded
             }

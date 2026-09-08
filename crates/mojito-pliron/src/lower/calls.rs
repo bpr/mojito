@@ -40,12 +40,7 @@ impl<'a> FnLowering<'a> {
                 return self.lower_convert(ctx, dest, name, args, kwargs);
             }
             if name == "print" {
-                if !kwargs.is_empty() {
-                    return Err(
-                        self.unsupported_reg("print call with keyword arguments".into(), dest)
-                    );
-                }
-                return self.lower_print(ctx, dest, args);
+                return self.lower_print(ctx, dest, args, kwargs);
             }
             if name == "String" {
                 return self.lower_string_builtin(ctx, dest, args, kwargs);
@@ -527,6 +522,19 @@ impl<'a> FnLowering<'a> {
                                 && let Some(text) = string_default_text(default) =>
                         {
                             self.string_span_default_argument(ctx, text, dest)
+                        }
+                        // An `Optional[T]` parameter defaulting to `None`: the
+                        // checker records the `NoneType` constructor, whose
+                        // zero-sized argument has no operand; it runs over
+                        // fresh storage the callee receives.
+                        LowerTy::Aggregate { layout, .. }
+                            if let CheckedConst::Construct { target, arg } = default
+                                && matches!(**arg, CheckedConst::None)
+                                && self.signatures.contains_key(target.as_str()) =>
+                        {
+                            let storage = self.entry_alloca(ctx, layout.size, layout.align);
+                            self.emit_bound_call(ctx, dest, target, vec![storage])?;
+                            storage
                         }
                         _ => {
                             return Err(self.unsupported_reg(

@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
+use mojito_checked::checked::CheckedConst;
 use mojito_mir::mir::{
     Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace,
     MirProgram, MirStructDeclaration, Reg,

@@ -6259,3 +6259,70 @@ fn where_clauses_refine_method_signatures() {
         "got {e:?}"
     );
 }
+
+#[test]
+fn with_statement_desugars_by_manager_shape() {
+    // A plain `__exit__` manager, an enter-only (consuming) manager, and two
+    // sequential blocks binding the same `as` name all check; the `as` name
+    // is scoped to its block.
+    let plain = "struct M:\n    def __init__(out self):\n        pass\n\n    def __enter__(self) -> Int:\n        return 1\n\n    def __exit__(self):\n        pass\n\n";
+    let owning = "struct G(Movable):\n    def __init__(out self):\n        pass\n\n    def __enter__(var self) -> Self:\n        return self^\n\n";
+    ok(&format!(
+        "{plain}{owning}def main():\n    with M() as f:\n        print(f)\n    with M() as f:\n        print(f)\n    with G() as g:\n        print(1)\n    with G():\n        print(2)\n    with M() as a, M() as b:\n        print(a + b)\n"
+    ));
+    let e = err(&format!(
+        "{plain}def main():\n    with M() as f:\n        print(f)\n    print(f)\n"
+    ));
+    assert!(
+        matches!(&e, TypeError::UndefinedVariable(name) if name == "f"),
+        "got {e:?}"
+    );
+}
+
+#[test]
+fn with_statement_rejects_managers_outside_the_protocol() {
+    // The pinned Mojo's diagnostics: no `__enter__`; an error-taking
+    // `__exit__` without the plain one; a consuming `__enter__` beside an
+    // `__exit__`.
+    let e = err(
+        "struct N:\n    def __init__(out self):\n        pass\n\n    def __exit__(self):\n        pass\n\ndef main():\n    with N() as f:\n        print(1)\n",
+    );
+    assert_eq!(
+        e.to_string(),
+        "'N' does not implement the '__enter__' method"
+    );
+    let e = err(
+        "struct E:\n    def __init__(out self):\n        pass\n\n    def __enter__(self) -> Int:\n        return 1\n\n    def __exit__(self, err: Error) -> Bool:\n        return True\n\ndef main() raises:\n    with E() as f:\n        print(f)\n",
+    );
+    assert_eq!(
+        e.to_string(),
+        "invalid call to '__exit__': missing required argument: 'err'"
+    );
+    let e = err(
+        "struct B(Movable):\n    def __init__(out self):\n        pass\n\n    def __enter__(var self) -> Self:\n        return self^\n\n    def __exit__(self):\n        pass\n\ndef main():\n    with B() as f:\n        print(1)\n",
+    );
+    assert_eq!(
+        e.to_string(),
+        "context manager of type 'B' defines a consuming __enter__ method as well as an __exit__ method; either remove 'var' from its '__enter__' method or remove the '__exit__' method"
+    );
+}
+
+#[test]
+fn print_keywords_are_checked() {
+    ok("def main():\n    print(1, 2, sep=\"-\", end=\"\", flush=True)\n");
+    let e = err("def main():\n    print(1, foo=2)\n");
+    assert_eq!(
+        e.to_string(),
+        "invalid call to 'print': unexpected keyword argument 'foo'"
+    );
+    let e = err("def main():\n    print(1, sep=3)\n");
+    assert!(
+        matches!(&e, TypeError::TypeMismatch { context, .. } if context == "'sep' argument to 'print'"),
+        "got {e:?}"
+    );
+    let e = err("def main():\n    print(1, file=2)\n");
+    assert!(
+        matches!(&e, TypeError::TypeMismatch { expected, .. } if expected == "FileDescriptor"),
+        "got {e:?}"
+    );
+}

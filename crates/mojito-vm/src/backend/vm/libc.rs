@@ -338,21 +338,30 @@ impl VmBackend {
             return self.fail_code(EFAULT);
         };
         let bytes = self.read_bytes(&buffer, count as usize)?;
-        let written = match fd {
-            0 => return self.fail_code(EBADF),
-            1 => {
-                self.output.push_str(&String::from_utf8_lossy(&bytes));
-                Ok(bytes.len())
-            }
-            2 => std::io::stderr().write_all(&bytes).map(|()| bytes.len()),
-            _ => match self.host.files.get_mut(&fd) {
-                Some(file) => file.write(&bytes),
-                None => return self.fail_code(EBADF),
-            },
-        };
-        match written {
+        if fd == 0 {
+            return self.fail_code(EBADF);
+        }
+        match self.host_write_bytes(fd, &bytes) {
             Ok(n) => Ok(Value::Int(n as i64)),
             Err(error) => self.fail(&error),
+        }
+    }
+
+    /// Write `bytes` to an open descriptor: fd 1 appends to the captured
+    /// stdout (so `print` and raw writes interleave in order), fd 2 is the
+    /// process stderr, and any other descriptor is a file in the table
+    /// (`EBADF` otherwise).
+    pub(super) fn host_write_bytes(&mut self, fd: i32, bytes: &[u8]) -> std::io::Result<usize> {
+        match fd {
+            1 => {
+                self.output.push_str(&String::from_utf8_lossy(bytes));
+                Ok(bytes.len())
+            }
+            2 => std::io::stderr().write_all(bytes).map(|()| bytes.len()),
+            _ => match self.host.files.get_mut(&fd) {
+                Some(file) => file.write(bytes),
+                None => Err(std::io::Error::from_raw_os_error(EBADF)),
+            },
         }
     }
 

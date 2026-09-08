@@ -83,6 +83,11 @@ struct Span[mut: Bool, //, T: Movable, origin: Origin[mut=mut]](
     def __len__(self) -> Int:
         return self._size
 
+    # The span's data pointer, carrying the span's own origin (a libc
+    # buffer argument).
+    def unsafe_ptr(self) -> Pointer[Self.T, Self.origin._get_owned_interior["element"]]:
+        return self._data
+
     # Borrowed iteration yields element references like List's (write-through
     # on a mutable source); the iterator borrows the span itself, whose loans
     # keep the underlying List alive.

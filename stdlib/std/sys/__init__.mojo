@@ -1,2 +1,4 @@
-"""System facilities. Mojito ports the libc `errno` vocabulary
-(`std.sys._libc_errno`) here; the standard streams follow with the file API."""
+"""System facilities: the libc `errno` vocabulary (`std.sys._libc_errno`)
+and the standard streams (`stdin`, `stdout`, `stderr`)."""
+
+from ._io import stderr, stdin, stdout

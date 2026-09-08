@@ -345,3 +345,17 @@ os-dir-operations	run	assets/ok/os_dir_operations.mojo
 env-roundtrip	run	assets/ok/env_roundtrip.mojo
 errno-strerror	run	assets/ok/errno_strerror.mojo
 external-call-write-stdout	run	assets/ok/external_call_write_stdout.mojo
+with-enter-only	run	assets/ok/with_enter_only.mojo
+with-exit-error-swallow	run	assets/ok/with_exit_error_swallow.mojo
+with-multiple-dependent	run	assets/ok/with_multiple_dependent.mojo
+with-statement	run	assets/ok/with_statement.mojo
+with-multiple	run	assets/ok/with_multiple.mojo
+print-keywords-file	run	assets/ok/print_keywords_file.mojo
+file-handle-roundtrip	run	assets/ok/file_handle_roundtrip.mojo
+file-descriptor-stdout-order	run	assets/ok/file_descriptor_stdout_order.mojo
+path-operations	run	assets/ok/path_operations.mojo
+tempfile-mkdtemp	run	assets/ok/tempfile_mkdtemp.mojo
+print-unknown-keyword	reject	assets/type_error/print_unknown_keyword.mojo
+with-no-enter	reject	assets/type_error/with_no_enter.mojo
+with-error-exit-only	reject	assets/type_error/with_error_exit_only.mojo
+with-consuming-enter-and-exit	reject	assets/type_error/with_consuming_enter_and_exit.mojo

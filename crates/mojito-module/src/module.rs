@@ -1305,6 +1305,9 @@ const PRELUDE_EXPORTS: &[&str] = &[
     "atof",
     "next",
     "reversed",
+    "open",
+    "FileHandle",
+    "FileDescriptor",
 ];
 
 fn bundled_path(relative: &str) -> Option<PathBuf> {

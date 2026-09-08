@@ -392,7 +392,47 @@ impl Checker {
     /// including public collections, opt into current `Writable`. During tuple
     /// specialization discovery an as-yet-unmaterialized nominal shape is checked
     /// element-wise; executable values always cross the concrete struct boundary.
-    pub(super) fn infer_print(&self, args: &[Expr]) -> Result<Ty, TypeError> {
+    /// Type the built-in `print(*args, sep=, end=, flush=, file=)`: every
+    /// positional argument is printable; `sep`/`end` are strings, `flush` a
+    /// `Bool`, and `file` the stdlib `FileDescriptor`.
+    pub(super) fn infer_print(
+        &self,
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Result<Ty, TypeError> {
+        for keyword in kwargs {
+            let ty = self.infer(&keyword.value)?;
+            self.borrow_reference_result_argument(&keyword.value);
+            self.borrow_nominal_place_argument(&keyword.value, &ty);
+            let (accepted, expected) = match keyword.name.as_str() {
+                "sep" | "end" => (
+                    ty == Ty::StringLiteral
+                        || matches!(&ty, Ty::Struct(name, targs)
+                            if (targs.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name))
+                                || mojito_types::types::is_stdlib_string_span_struct(name)),
+                    "String",
+                ),
+                "flush" => (ty == Ty::Bool, "Bool"),
+                "file" => (
+                    matches!(&ty, Ty::Struct(name, _)
+                        if mojito_types::types::is_stdlib_file_descriptor_struct(name)),
+                    "FileDescriptor",
+                ),
+                other => {
+                    return Err(TypeError::BadCall {
+                        func: "print".to_string(),
+                        reason: format!("unexpected keyword argument '{other}'"),
+                    });
+                }
+            };
+            if !accepted {
+                return Err(TypeError::TypeMismatch {
+                    expected: expected.to_string(),
+                    found: ty.to_string(),
+                    context: format!("'{}' argument to 'print'", keyword.name),
+                });
+            }
+        }
         for (i, arg) in args.iter().enumerate() {
             let ty = self.infer(arg)?;
             self.borrow_reference_result_argument(arg);

@@ -199,7 +199,11 @@ impl VmBackend {
         // Built-ins take positional arguments only, and user functions handle
         // keywords through their signatures below. Struct constructors get a
         // narrow exception for Mojo's lifecycle copy constructor (`copy:`).
-        if !kwargs.is_empty() && !prog.sigs.contains_key(name) && !prog.structs.contains_key(name) {
+        if !kwargs.is_empty()
+            && name != "print"
+            && !prog.sigs.contains_key(name)
+            && !prog.structs.contains_key(name)
+        {
             return Err(RuntimeError::Unsupported(format!(
                 "vm: keyword arguments to '{name}' are not supported"
             )));
@@ -256,14 +260,41 @@ impl VmBackend {
                 }
                 Ok(Value::ComptimeList(values))
             }
+            // `print(*args, sep=, end=, flush=, file=)`: the joined cells go
+            // to the captured stdout, or through the descriptor table when
+            // `file=` names another descriptor (`flush` is a no-op: the
+            // captured stream is unbuffered).
             "print" => {
                 let mut cells = Vec::with_capacity(args.len());
                 for (index, value) in args.into_iter().enumerate() {
                     let static_ty = arg_types.get(index).and_then(Option::as_ref);
                     cells.push(self.format_value(prog, value, false, static_ty)?);
                 }
-                self.output.push_str(&cells.join(" "));
-                self.output.push('\n');
+                let mut sep = " ".to_string();
+                let mut end = "\n".to_string();
+                let mut fd = 1;
+                for (key, value) in kwargs {
+                    match key.as_str() {
+                        "sep" => sep = self.format_value(prog, value, false, None)?,
+                        "end" => end = self.format_value(prog, value, false, None)?,
+                        "flush" => {}
+                        "file" => fd = descriptor_value(&value)?,
+                        other => {
+                            return Err(RuntimeError::Unsupported(format!(
+                                "vm: keyword argument '{other}' to 'print'"
+                            )));
+                        }
+                    }
+                }
+                let mut text = cells.join(&sep);
+                text.push_str(&end);
+                if fd == 1 {
+                    self.output.push_str(&text);
+                } else if let Err(error) = self.host_write_bytes(fd, text.as_bytes()) {
+                    return Err(RuntimeError::Abort(format!(
+                        "expected amount of bytes not written: {error}"
+                    )));
+                }
                 Ok(Value::None)
             }
             // Upstream's libc FFI over the closed callee table: the callee
@@ -698,5 +729,20 @@ fn scalar_repr(value: &Value) -> String {
             )
         }
         other => other.to_string(),
+    }
+}
+
+/// The raw descriptor held by a `FileDescriptor` value (`print(file=)`).
+fn descriptor_value(value: &Value) -> Result<i32, RuntimeError> {
+    let Value::Struct { fields, .. } = value else {
+        return Err(RuntimeError::TypeError(
+            "vm: 'file' argument to 'print' is not a FileDescriptor".to_string(),
+        ));
+    };
+    match fields.iter().find(|(name, _)| name == "value") {
+        Some((_, Value::Int(fd))) => Ok(*fd as i32),
+        _ => Err(RuntimeError::TypeError(
+            "vm: FileDescriptor value without an Int descriptor".to_string(),
+        )),
     }
 }

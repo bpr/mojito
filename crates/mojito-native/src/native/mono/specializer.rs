@@ -285,10 +285,50 @@ impl<'a> Specializer<'a> {
             substitute_declaration(&mut declaration, &bindings)?;
             declaration.lowered_name = name.clone();
             declaration.param_decls.clear();
+            self.instantiate_constructed_defaults(&key.template, &mut declaration)?;
             self.output_function_decls.push(declaration);
         }
         self.discover_structs(&key.template, &function)?;
         self.output_functions.push((name, function));
+        Ok(())
+    }
+
+    /// A parameter defaulting to a recorded constructor over a generic
+    /// struct instance (`dir: Optional[String] = None` records
+    /// `Optional.__init__$ov$None`): the omitted-argument path runs the
+    /// constructor's instance for the concrete parameter type, so enqueue it
+    /// and respell the default's target to that instance.
+    fn instantiate_constructed_defaults(
+        &mut self,
+        owner: &str,
+        declaration: &mut MirFunctionDeclaration,
+    ) -> Result<(), MonoError> {
+        for (index, default) in declaration.defaults.iter_mut().enumerate() {
+            let Some(CheckedConst::Construct { target, arg }) = default else {
+                continue;
+            };
+            if !matches!(**arg, CheckedConst::None) || !self.functions.contains_key(target.as_str())
+            {
+                continue;
+            }
+            let Some(param_ty @ Ty::Struct(struct_name, arguments)) =
+                declaration.param_types.get(index)
+            else {
+                continue;
+            };
+            if arguments.is_empty()
+                || !self
+                    .generic_templates
+                    .contains(nominal_template(struct_name))
+                || is_symbolic(param_ty)
+            {
+                continue;
+            }
+            let (bindings, arguments, _) =
+                self.infer_receiver_call(owner, target, param_ty, None)?;
+            let instance = self.enqueue(target, bindings, arguments)?;
+            *target = instance;
+        }
         Ok(())
     }
 

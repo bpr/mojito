@@ -1,6 +1,7 @@
 """glibc's x86-64 `struct stat` and the `__xstat`/`__lxstat` calls that fill it."""
 
 from std.ffi import external_call
+from std.string import String
 from std.time.time import _CTimeSpec
 
 comptime dev_t = Int64

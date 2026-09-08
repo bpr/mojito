@@ -311,6 +311,11 @@ argument's display bytes, a single `" "` between arguments, and a trailing
 own `write(1, ...)` through `external_call` is an unbuffered syscall and
 `mjrt_write_stdout` flushes per call, so the two interleave in program
 order — the VM appends both to its captured stdout in the same order.
+`print(sep=, end=, flush=, file=)` writes `sep` and `end` bytes like
+arguments; with `file=`, every piece of that call goes through libc
+`write(fd, data, len)` on the `FileDescriptor`'s value instead of
+`mjrt_write_stdout` (`flush` is a no-op). No runtime symbol or ABI version
+changes for it.
 
 ## The runtime library
 

@@ -19,3 +19,4 @@ from std.builtin.reversed import reversed
 from std.memory import alloc
 from std.span import Span
 from std.hashlib import hash
+from std.io import FileDescriptor, FileHandle, open

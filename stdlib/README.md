@@ -144,6 +144,19 @@ only from their authoritative `std` modules.
   `basename`, `dirname`, `split_extension`, `splitroot`, `expandvars`,
   `expanduser`). Every host call is upstream's `external_call` over the closed
   libc table (`std/ffi`).
+- `std/io/` — `file.mojo` (`FileHandle` over a raw descriptor and `open`;
+  both prelude names) and `file_descriptor.mojo` (`FileDescriptor`, a
+  `Writer` over a descriptor; `print(file=)` writes through it). `std/sys/`
+  adds `_io.mojo` (`stdin`/`stdout`/`stderr` as compile-time
+  `FileDescriptor` values). Because the prelude imports `std.io`, every
+  module on its import graph (`std.os`, `std.sys`, `std.stat`, ...) loads
+  while the prelude bootstraps and must import `String` explicitly (`from
+  std.string import String`); `range` is not visible there either.
+- `std/pathlib/` — `path.mojo` (`Path`, `cwd`, `DIR_SEPARATOR`; `joinpath`
+  iterates its pack and binds each view before `/=`, the shape both backends
+  run). `std/tempfile/` — `tempfile.mojo` (`gettempdir`, `mkdtemp`,
+  `TemporaryDirectory`; `_get_random_name` reads `/dev/urandom` until
+  `std.random` lands).
 - `std/ffi/__init__.mojo` — the `c_*` scalar aliases, the `external_call`
   builtin's import home, `CStringSlice` (declared in `std/string.mojo`, which
   loads first) and `get_errno` re-exports.

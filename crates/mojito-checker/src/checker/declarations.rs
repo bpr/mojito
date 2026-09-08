@@ -89,6 +89,9 @@ pub(super) fn stmt_returns(stmt: &Stmt) -> bool {
             orelse.as_ref().is_some_and(|e| definitely_returns(e))
                 && branches.iter().all(|(_, b)| definitely_returns(b))
         }
+        // A `with` body runs exactly once (its desugar is a `try`/`finally`
+        // whose cleanup cannot divert control), so it diverges iff the body does.
+        StmtKind::With { body, .. } => definitely_returns(body),
         // A `try` definitely diverges when: a `finally` does (it overrides every
         // path); or the **normal-completion** path diverges (the body — or, if the
         // body may complete, the `else`) *and* the **exceptional** path does (every
@@ -218,6 +221,20 @@ fn init_field_flow(body: &[Stmt], field: &str, mut initialized: bool) -> InitFie
             // have to be safe.
             StmtKind::While { body, .. } | StmtKind::For { body, .. } => {
                 valid &= init_field_flow(body, field, initialized).valid;
+            }
+            // A `with` body runs exactly once, straight through.
+            StmtKind::With { body, .. } => {
+                let flow = init_field_flow(body, field, initialized);
+                valid &= flow.valid;
+                match flow.normal {
+                    Some(state) => initialized = state,
+                    None => {
+                        return InitFieldFlow {
+                            normal: None,
+                            valid,
+                        };
+                    }
+                }
             }
             StmtKind::Try {
                 body,

@@ -1,6 +1,7 @@
 """Environment variables (`getenv`, `setenv`, `unsetenv`)."""
 
 from std.ffi import c_int, external_call
+from std.string import String
 
 
 def setenv(var name: String, var value: String, overwrite: Bool = True) -> Bool:

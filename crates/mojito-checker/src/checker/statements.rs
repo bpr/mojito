@@ -1152,9 +1152,8 @@ impl Checker {
                 Ok(())
             }
 
-            // `with` blocks parse, but the context-manager (`__enter__`/`__exit__`)
-            // protocol is deferred — flagged, like the other parse-only constructs.
-            StmtKind::With { .. } => Err(TypeError::Unsupported("with statement".to_string())),
+            // The context-manager protocol is a checked desugar (`with_stmt.rs`).
+            StmtKind::With { items, body } => self.check_with(stmt, items, body, ret, in_loop),
 
             StmtKind::SetPlace { place, value } => {
                 if let Some(root) = place_root_name(place) {

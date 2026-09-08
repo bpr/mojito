@@ -239,6 +239,7 @@ pub(super) fn lower_body(
         last_uses: HashMap::new(),
         position: (0, 0),
         erased: HashSet::new(),
+        print_sink: None,
         partially_moved: HashSet::new(),
         leaf_flags: HashMap::new(),
         aliased_receiver_regs: collect_aliased_receiver_regs(func, env.declarations),
@@ -440,6 +441,9 @@ struct FnLowering<'a> {
     /// markers, void call results). Reading one is an internal invariant
     /// violation surfaced as a diagnostic, never a silent miscompile.
     erased: HashSet<u32>,
+    /// The C `int` descriptor a `print(file=)` currently routes its bytes
+    /// through (`None` outside such a call: `mjrt_write_stdout`).
+    print_sink: Option<Value>,
     /// Variables a `MovePlace` moved a projection out of. Dropping such a
     /// variable must skip the moved parts (the VM tombstones them); when the
     /// drop would emit destructor work, lowering rejects instead of guessing.

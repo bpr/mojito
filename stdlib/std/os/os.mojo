@@ -2,6 +2,7 @@
 
 from std.collections.list import List
 from std.ffi import external_call, get_errno
+from std.string import String
 from .path import exists, isdir, split
 from .pathlike import PathLike as stdPathLike
 

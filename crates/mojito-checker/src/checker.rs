@@ -126,6 +126,9 @@ pub fn check_program_with_materialized_callables(
         transfer_seed = checker.transfer_effects.borrow().clone();
         call_through_seed = checker.call_through_effects.borrow().clone();
     };
+    // Context managers are desugared by the checker; later phases see only
+    // the ordinary statements it checked.
+    with_stmt::splice_with_desugars(&mut expanded, &checker.with_desugars.borrow());
     let _finish = timing::span("explicit_destroy");
     let explicit_destroy_types = checker
         .structs
@@ -510,6 +513,9 @@ pub struct Checker {
     /// HIR uses these facts to map checked owners to runtime slots without
     /// recovering a binding from its source spelling.
     statement_bindings: RefCell<HashMap<SourceSpan, mojito_types::origin::OwnerId>>,
+    /// Each checked `with` statement's desugar (keyed by the statement),
+    /// spliced into the final tree after the last transfer round.
+    with_desugars: RefCell<HashMap<SourceSpan, Vec<Stmt>>>,
     /// Explicit capture entries resolved at the nested declaration site. Keeping
     /// unused entries is essential: a move capture still transfers at declaration.
     declaration_captures:
@@ -672,6 +678,7 @@ impl Checker {
             expression_types: RefCell::new(HashMap::new()),
             expression_bindings: RefCell::new(HashMap::new()),
             statement_bindings: RefCell::new(HashMap::new()),
+            with_desugars: RefCell::new(HashMap::new()),
             declaration_captures: RefCell::new(HashMap::new()),
             comprehension_bindings: RefCell::new(HashMap::new()),
             expression_place_types: RefCell::new(HashMap::new()),
@@ -2112,6 +2119,7 @@ mod call_inference;
 mod ffi_calls;
 
 mod statements;
+mod with_stmt;
 
 #[cfg(test)]
 mod dependent_callable_signature_tests {

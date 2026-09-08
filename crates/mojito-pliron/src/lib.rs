@@ -784,6 +784,12 @@ fn reachable_set<'p>(
         .iter()
         .map(|decl| (decl.name.as_str(), decl))
         .collect();
+    let declarations: HashMap<&str, &mojito_mir::mir::MirFunctionDeclaration> = program
+        .declarations
+        .functions
+        .iter()
+        .map(|decl| (decl.lowered_name.as_str(), decl))
+        .collect();
     let mut reachable = HashSet::new();
     let mut queue = VecDeque::new();
     for entry in entries {
@@ -825,6 +831,19 @@ fn reachable_set<'p>(
                 }
                 let lifecycle = format!("{struct_name}.{method}");
                 if let Some((callee, _)) = functions.get_key_value(lifecycle.as_str())
+                    && reachable.insert(*callee)
+                {
+                    queue.push_back(*callee);
+                }
+            }
+        }
+        // An omitted argument whose default is a recorded constructor
+        // (`dir: Optional[String] = None`) calls that constructor's instance
+        // from the caller's lowering: an edge no call instruction spells.
+        if let Some(declaration) = declarations.get(name) {
+            for default in declaration.defaults.iter().flatten() {
+                if let mojito_checked::checked::CheckedConst::Construct { target, .. } = default
+                    && let Some((callee, _)) = functions.get_key_value(target.as_str())
                     && reachable.insert(*callee)
                 {
                     queue.push_back(*callee);

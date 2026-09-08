@@ -1281,7 +1281,7 @@ impl Elab<'_> {
     /// and helper calls resolve exactly, then fold module-scope type aliases
     /// into the retained statements. The VM still executes only the entry.
     fn vm_ctfe_subprogram(&self, declarations: &HashSet<String>) -> Vec<Stmt> {
-        let mut program = self
+        let program = self
             .program
             .iter()
             .filter(|stmt| match &stmt.kind {
@@ -1357,6 +1357,38 @@ impl Elab<'_> {
                 stmt
             })
             .collect::<Vec<_>>();
+        // Module-scope literal constants fold into the retained bodies as the
+        // production elaboration folds them: a retained `Comptime` statement
+        // binds a module-level name the checker types but no function-level
+        // MIR can read (a string constant a retained path helper names). The
+        // retained statements themselves supply the values — a constant
+        // declared in a module elaborated after this evaluation is not yet in
+        // `top_consts` — beneath the already-elaborated constants.
+        let mut consts: HashMap<String, CtValue> = program
+            .iter()
+            .filter_map(|statement| match &statement.kind {
+                StmtKind::Comptime { name, value, .. } => {
+                    let value = match &value.kind {
+                        ExprKind::Int(value) => CtValue::IntLiteral(value.clone()),
+                        ExprKind::Float(value) => CtValue::FloatLiteral(value.clone()),
+                        ExprKind::Bool(value) => CtValue::Bool(*value),
+                        ExprKind::Str(value) => CtValue::Str(value.clone()),
+                        _ => return None,
+                    };
+                    Some((name.clone(), value))
+                }
+                _ => None,
+            })
+            .collect();
+        consts.extend(self.top_consts.borrow().clone());
+        let type_names: HashSet<String> = program
+            .iter()
+            .filter_map(|statement| match &statement.kind {
+                StmtKind::Struct { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        let mut program = super::rewrite::materialize_block(program, &consts, &type_names);
         // A retained struct's method that only elaborates with its own
         // compile-time parameters bound (a `comptime for` over a method pack,
         // `FormatStruct.params`) crosses the boundary as the trap stub the

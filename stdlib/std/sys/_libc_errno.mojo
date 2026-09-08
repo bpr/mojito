@@ -1,5 +1,9 @@
 """The C library's `errno`: reading, setting, and rendering error codes."""
 
+# Loaded while the prelude bootstraps (through `std.io`), so `String` is
+# imported explicitly rather than taken from the prelude.
+from std.string import String
+
 
 def _errno_ptr() -> Pointer[Int32, MutUntrackedOrigin]:
     return external_call["__errno_location", Pointer[Int32, MutUntrackedOrigin]]()

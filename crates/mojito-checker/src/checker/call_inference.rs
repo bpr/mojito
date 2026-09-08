@@ -284,13 +284,13 @@ impl Checker {
                     reject_kwargs(kwargs)?;
                     return self.infer_uninit_storage_construction(span, param_args, args);
                 }
+                "print" => return self.infer_print(args, kwargs),
                 _ if !kwargs.is_empty() => {
                     return Err(TypeError::BadCall {
                         func: name.to_string(),
                         reason: "keyword arguments are not supported here".to_string(),
                     });
                 }
-                "print" => return self.infer_print(args),
                 // Upstream's libc FFI spelling over Mojito's closed callee
                 // table (`mojito_types::ffi`); the backends read the callee
                 // from the first parameter argument and the result type from
@@ -352,6 +352,29 @@ impl Checker {
                 // None — the call never returns at runtime, and stdlib call
                 // sites keep a normal control-flow path after it rather than
                 // relying on bottom-type flow analysis.
+                // The `with` desugar's liveness anchor: a named local kept
+                // alive to this statement without a copy or a move (HIR
+                // lowers the statement to `KeepAlive`).
+                name if name == with_stmt::KEEP_ALIVE_BUILTIN => {
+                    let [argument] = args else {
+                        return Err(TypeError::ArityMismatch {
+                            name: name.to_string(),
+                            expected: 1,
+                            got: args.len(),
+                        });
+                    };
+                    let ExprKind::Identifier(local) = &argument.kind else {
+                        return Err(TypeError::BadCall {
+                            func: name.to_string(),
+                            reason: "the argument must name a local variable".to_string(),
+                        });
+                    };
+                    if self.lookup(local).is_none() {
+                        return Err(TypeError::UndefinedVariable(local.clone()));
+                    }
+                    self.infer(argument)?;
+                    return Ok(Ty::None);
+                }
                 "_mojito_abort" => {
                     let tys = self.builtin_args("_mojito_abort", 1, args)?;
                     match &tys[0] {

@@ -564,9 +564,12 @@ block (`with open(p) as f:`, `with lock():`, or several comma-separated
 **optional** `as NAME` binding (Mojo's protocol: `__enter__` runs on entry — its
 result bound to `NAME` if present — and `__exit__` on exit). The `as` target is a
 plain `NAME`; the **parenthesized** and **tuple-target** forms are not in the Mojo
-docs, so (strict-subset) they are not parsed. The frontend elaborates the statement
-into checked `__enter__` and `__exit__` calls protected by `try`/`finally`, so a
-raising exit follows the ordinary effect rules.
+docs, so (strict-subset) they are not parsed. The checker desugars the statement by the
+manager's declared methods — a consuming `__enter__` whose result stands in for
+the manager to the block end, a plain `__exit__` run by `try`/`finally`, or both
+`__exit__` overloads with the error-taking one deciding whether a body error
+propagates — and splices the desugar into the checked tree, so a raising exit
+follows the ordinary effect rules (see `docs/features.md`, Contexts).
 
 ### try_stmt
 

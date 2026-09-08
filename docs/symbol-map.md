@@ -43,6 +43,8 @@ map and dependency DAG live in `docs/architecture.md` §Workspace Layout.
 | Runtime values/operations | `runtime::{Value, coerce_checked, apply_infix, apply_prefix}` | VM and VM-backed CTFE. |
 | Backend contract | `backend::{Backend, BackendKind}` | Compiler driver and CLI. |
 | Phase timing (`--timings`) | `timing::{enable, enabled, span, round, count, report}` (crate `mojito-common`) | Every phase crate records spans; the CLI enables collection and prints the report; `scripts/bench-compile` and `tools/bench` parse it. Disabled, a span is one relaxed atomic load. |
+| `print` keywords | `infer_print` (`checker/builtins.rs`) | The VM's `print` arm (`dispatch.rs`; `file=` writes through `host_write_bytes`), pliron's `lower_print` (`lower/print.rs`; a `print_sink` descriptor makes `write_stdout` call libc `write`), `mojito_types::types::is_stdlib_file_descriptor_struct`. |
+| Constructed defaults (`dir: Optional[String] = None`) | `CheckedConst::Construct` in the callee's declaration | The VM's `bind_for_call`; the native monomorphizer's `instantiate_constructed_defaults` (enqueues the constructor instance for the parameter type and respells the default's target), pliron's `reachable_set` (follows the default's target) and `bind_call_slots` (runs the instance over fresh storage). |
 | Host call allowlist (`external_call`) | `mojito_types::ffi::{CType, FfiCallee, CALLEES, callee, accepts_arg, accepts_ret}` | The checker's `infer_external_call` (rejects any other callee, checks arguments and the declared return type), the VM's `backend/vm/libc.rs` table (std-only execution: descriptor table, `errno` slot, environment overlay, glibc `dirent` byte images, `_c_stat` fills by field name), and pliron's `lower/externs.rs` (on-demand `llvm.func` declarations, `open` variadic, real C calls). The callee travels as the call's first parameter argument; the result type is the destination register's checked type. |
 | Generated string tables | `stdlib/std/_string_tables.mojo` (written by `scripts/gen-string-tables` from the pinned upstream `_unicode_lookups.mojo` and `_parsing_numbers/constants.mojo`) | Fixed-width hex records in string literals: the Unicode 16 case-mapping tables behind `StringSpan.upper`/`lower`/`isupper`/`islower` and the Eisel-Lemire power-of-five table behind `atof`; `string.mojo`'s `_hex_at`/`_hex_u64_at`/`_table_find` decode and binary-search them. Regenerate at every re-pin; never edit by hand. |
 | Native compile (experimental, `backend-pliron`) | `backend::pliron::{compile, CompileOptions, NativeModule, EmitKind, OptLevel, NativeTarget, JitValue, TrapCategory, PlironError, runtime_declarations}` | CLI `compile`/`run --backend pliron` and the capability-manifest differential harness. |
@@ -87,6 +89,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   module-level aliases like struct shells). `check_def` checks one function declaration — the
   `StmtKind::Def` arm delegates to it, and lambda mode (`lambda = true`)
   applies the lambda-specific capture-default/thinness/diagnostic deltas.
+- `checker/with_stmt.rs` owns the `with` statement: `check_with` classifies
+  the manager (`context_manager_shape`: consuming `__enter__`, plain and
+  error-taking `__exit__` overloads, upstream's rejections), synthesizes the
+  desugar (`Synth` node factory, hidden `$with<id>_*` names) and checks it in
+  a block scope, and `splice_with_desugars` replaces every checked `with` in
+  the final tree before `explicit_destroy`; `KEEP_ALIVE_BUILTIN` names the
+  `_mojito_keep_alive` liveness anchor the call inference accepts and MIR's
+  `lower_stmt.rs` lowers to `KeepAlive`.
 - `checker/inference.rs` owns expression inference (`infer`/`infer_impl`),
   list/tuple/variant construction, and t-string typing (the lazy `TString`
   element list and its snapshot capture policy). `infer_variant_storage_method`
@@ -352,8 +362,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   index loads.
 - `backend/vm/invoke.rs` owns writeback/synchronous call machinery, argument
   binding, kwargs collection, and method dispatch.
-- `backend/vm/dispatch.rs` owns named-call dispatch, drops, slice bounds, and
-  value formatting.
+- `backend/vm/dispatch.rs` owns named-call dispatch (`print` with its
+  `sep`/`end`/`flush`/`file` keywords through `descriptor_value` and
+  `libc.rs`'s `host_write_bytes`), drops, slice bounds, and value formatting.
 - `backend/vm/libc.rs` owns the `external_call` libc table: `HostState`
   (descriptors, directory streams, the `errno` allocation, the environment
   overlay) and the per-callee marshaling between VM values and Rust's

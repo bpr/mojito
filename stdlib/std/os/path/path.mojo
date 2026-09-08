@@ -1,6 +1,7 @@
 """Path predicates and string manipulation (`os.path`)."""
 
 from std.stat import S_ISDIR, S_ISLNK, S_ISREG
+from std.string import String
 from ..pathlike import PathLike as stdPathLike
 from .._linux_x86 import _lstat, _stat
 from ..env import getenv

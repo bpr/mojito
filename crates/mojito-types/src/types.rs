@@ -2320,6 +2320,15 @@ pub fn is_stdlib_string_span_struct(name: &str) -> bool {
     name == STDLIB_STRING_SPAN_STRUCT
 }
 
+/// Whether `name` is the bundled `FileDescriptor` struct (`std.io`), the
+/// only accepted `file=` argument of `print`. Its checked identity is the
+/// linker's module-qualified spelling of `std/io/file_descriptor.mojo`; the
+/// bare name is the prelude spelling and shares the other stdlib name lists'
+/// shadowing caveat.
+pub fn is_stdlib_file_descriptor_struct(name: &str) -> bool {
+    name == "FileDescriptor" || name.ends_with("file$descriptor$FileDescriptor")
+}
+
 /// Identity of one checked declaration, stable across the checked program.
 /// Defined here (below the checked handoff) so symbol mangling can spell
 /// declaration-qualified names without depending on the handoff crate.
