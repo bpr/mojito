@@ -6,4 +6,4 @@ comptime M = {"a": 1, "b": 2}
 
 def main():
     comptime C = M.copy()
-    print(len(C))
+    print(comptime(len(C)))

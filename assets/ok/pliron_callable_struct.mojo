@@ -24,7 +24,7 @@ struct Keeper(def(mut List[Int], var String)):
     var seen: Int
 
     def __call__(mut self, mut sink: List[Int], var tag: String):
-        self.seen += len(tag)
+        self.seen += tag.byte_length()
         sink.append(self.seen)
 
 def main():

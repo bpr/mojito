@@ -1,6 +1,6 @@
 # unsafe_deinit runs the payload destructor, so it requires a Deinitable
 # payload; ThinAllocation is linear (Deinitable where False).
-# expect: no overload matches
+# expect: violated constraint
 from std.memory import MaybeUninit, ThinAllocation
 
 def main():

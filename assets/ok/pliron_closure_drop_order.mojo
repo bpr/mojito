@@ -14,7 +14,7 @@ struct Token(Movable, Deinitable):
 
 def main():
     var label = String("captured")
-    var describe: def() capturing[_] -> Int = lambda {var label^} -> Int: len(label)
+    var describe: def() capturing[_] -> Int = lambda {var label^} -> Int: label.byte_length()
     print(describe())
     print(describe())
 

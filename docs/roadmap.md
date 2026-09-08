@@ -217,6 +217,11 @@ exempt from the ordering.
        needs a concrete comptime `Int`, where upstream binds the parameter.
      - String literals have no methods (`"abc".byte_length()` rejects):
        a literal-typed value converts through `String(...)` first.
+     - An annotated `Optional[T]` local initialized from a bare struct
+       construction (`var o: Optional[P] = P(4)`) fails MIR verification
+       with an untyped register for the constructor call; spell the
+       wrapper (`Optional[P](P(4))`, `Optional(P(4))`) — a literal payload
+       (`var n: Optional[Int] = 6`) converts.
      - `if`/`while` accept a width-1 bool lane through the `Bool(x)`
        truthiness conversion, but `and`/`or` still demand `Bool` operands
        (`a == b or c < d` over `UInt64`s rejects; nest the tests).

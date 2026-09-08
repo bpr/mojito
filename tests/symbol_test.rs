@@ -87,7 +87,7 @@ fn parameterized_annotation_type_parameters_spell_their_bounds() {
     let source = "struct Box[T: Copyable & Movable & Deinitable]:\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\ndef pick[T: Copyable & Movable & Deinitable](b: Box[T]) -> Int:\n    return 1\n\ndef pick(x: Int) -> Int:\n    return x\n\ndef main():\n    print(pick(Box(7)))\n    print(pick(5))\n";
     let names = lowered_names(source);
     assert!(
-        names.contains("pick$ov$Box$T$Copyable$Movable"),
+        names.contains("pick$ov$Box$T$Copyable$Movable$Deinitable"),
         "{names:?}"
     );
 

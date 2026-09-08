@@ -20,7 +20,7 @@ struct Box:
         self.n = n
 
     def __init__(out self, label: String):
-        self.n = len(label)
+        self.n = label.byte_length()
 
     def value(self) -> Int:
         return self.n

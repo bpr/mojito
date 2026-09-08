@@ -4,7 +4,7 @@ def f(x: Int) -> Int:
     return x
 
 def f(x: String) -> Int:
-    return len(x)
+    return x.byte_length()
 
 def main():
     var r: Int = f(True)

@@ -296,7 +296,7 @@ fn value_constructor_literal_arguments_bind_against_the_receiver_solution() {
     // The owned_pointer_api shape: the receiver's type arguments solve
     // `T := Int`, then the literal-typed constructor argument must merge
     // rather than conflict ("`Int` and `Int`").
-    let source = "struct Box[T: Movable]:\n\
+    let source = "struct Box[T: Movable & Deinitable]:\n\
                   \x20   var value: Self.T\n\
                   \n\
                   \x20   def __init__(out self, var value: Self.T):\n\
@@ -433,7 +433,7 @@ fn distinct_instantiations_split_into_owner_named_instances() {
     // The `List.grow` shape: `refresh` reaches `set` through the bare
     // in-body `self` receiver, which must carry the owner instance's
     // binding for `T` rather than the shared template spelling.
-    let source = "struct Pairing[T: Copyable & Movable]:\n\
+    let source = "struct Pairing[T: Copyable & Movable & Deinitable]:\n\
                   \x20   var value: Self.T\n\
                   \n\
                   \x20   def __init__(out self, var value: Self.T):\n\

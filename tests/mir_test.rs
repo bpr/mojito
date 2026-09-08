@@ -3012,7 +3012,8 @@ fn explicit_origin_selection_erases_semantic_arguments_and_types_function_consta
                     func,
                     param_arg_regs,
                     ..
-                } if func.0.contains("choose") && param_arg_regs.is_empty()
+                } if func.0.contains("choose")
+                    && param_arg_regs.iter().all(|argument| argument.value.is_none())
             ))
     );
     assert!(!main.blocks.iter().flat_map(|block| &block.instrs).any(

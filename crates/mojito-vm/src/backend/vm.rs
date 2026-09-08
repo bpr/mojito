@@ -1585,7 +1585,7 @@ mod pointer_storage_tests {
 
         assert!(vm.heap_read(allocation, offset, 0).is_err());
         let (region, slot) = vm.heap_index(allocation, offset, 0).expect("slot");
-        vm.heap[region].slots[slot] = Value::Int(7);
+        vm.heap_store(region, slot, Value::Int(7));
         assert_eq!(
             vm.heap_take(allocation, offset, 0)
                 .expect("initialized take"),
@@ -1593,7 +1593,11 @@ mod pointer_storage_tests {
         );
         assert!(vm.heap_take(allocation, offset, 0).is_err());
 
-        vm.heap[region].slots[slot] = Value::Tuple(vec![Value::Int(1), Value::Int(2)]);
+        vm.heap_store(
+            region,
+            slot,
+            Value::Tuple(vec![Value::Int(1), Value::Int(2)]),
+        );
         vm.heap_destroy(&empty_program(), allocation, offset, 0)
             .expect("initialized destroy");
         assert!(vm.heap_read(allocation, offset, 0).is_err());

@@ -319,15 +319,7 @@ impl<'a> FnLowering<'a> {
         {
             let ptr = self.reg_ptr(ctx, arg)?;
             let (data, len) = self.string_parts(ctx, ptr, dest);
-            self.str_runtime.insert(
-                dest.0,
-                RuntimeStr {
-                    data,
-                    len,
-                    owned: false,
-                },
-            );
-            return Ok(());
+            return self.borrow_or_adopt_string(arg, dest, data, len);
         }
         // A runtime StringLiteral value reads back as a borrowed string.
         if matches!(self.func.reg_types.get(&arg.0), Some(Ty::StringLiteral))
@@ -335,15 +327,7 @@ impl<'a> FnLowering<'a> {
         {
             let ptr = self.reg_ptr(ctx, arg)?;
             let (data, len) = self.string_parts(ctx, ptr, dest);
-            self.str_runtime.insert(
-                dest.0,
-                RuntimeStr {
-                    data,
-                    len,
-                    owned: false,
-                },
-            );
-            return Ok(());
+            return self.borrow_or_adopt_string(arg, dest, data, len);
         }
         // A nominal struct converts through its `write_to` conformance over
         // a fresh accumulator — the VM's `format_value` struct arm. The
@@ -399,6 +383,28 @@ impl<'a> FnLowering<'a> {
             },
         );
         self.mark_owned_temp(dest, Ty::StringLiteral)?;
+        Ok(())
+    }
+
+    /// Record `dest` as the `(data, len)` string the `String(arg)` builtin
+    /// reads out of `arg`. A borrowed descriptor aliases `arg`'s buffer, so
+    /// when `arg` is an owned register temporary — released right after this
+    /// instruction, its final use — the buffer transfers to `dest` instead
+    /// (owned, released after `dest`'s own final use, or stolen by a String
+    /// constructor); otherwise the descriptor stays a borrow.
+    fn borrow_or_adopt_string(
+        &mut self,
+        arg: Reg,
+        dest: Reg,
+        data: Value,
+        len: Value,
+    ) -> Result<(), PlironError> {
+        let owned = self.owned_temps.remove(&arg.0).is_some();
+        self.str_runtime
+            .insert(dest.0, RuntimeStr { data, len, owned });
+        if owned {
+            self.mark_owned_temp(dest, Ty::StringLiteral)?;
+        }
         Ok(())
     }
 

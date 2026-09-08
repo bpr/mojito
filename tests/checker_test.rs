@@ -799,7 +799,7 @@ fn accepts_generic_function_identity() {
 #[test]
 fn accepts_generic_function_over_generic_struct() {
     ok(&format!(
-        "{PAIR}def first[T: ImplicitlyCopyable & Movable](p: Pair[T]) -> T:\n    return p.left\n\nvar p: Pair[Int] = Pair(1, 2)\nvar x: Int = first(p)\n"
+        "{PAIR}def first[T: ImplicitlyCopyable & Movable & Deinitable](p: Pair[T]) -> T:\n    return p.left\n\nvar p: Pair[Int] = Pair(1, 2)\nvar x: Int = first(p)\n"
     ));
 }
 
@@ -843,7 +843,7 @@ fn rejects_unknown_trait_bound() {
 fn rejects_bare_type_parameter_as_struct_field() {
     // Inside a struct a parameter must be written `Self.T`, not bare `T`.
     let e = err("@fieldwise_init\nstruct Bad[T: Copyable & Movable]:\n    var v: T\n");
-    assert_eq!(e, TypeError::UnknownType("T".into()));
+    assert_eq!(e, TypeError::UnqualifiedStructParam("T".into()));
 }
 
 #[test]
@@ -2020,7 +2020,7 @@ fn rejects_printing_a_function() {
 #[test]
 fn accepts_string_and_numeric_builtins() {
     ok(
-        "var s: StringLiteral = \"n=\" + String(42)\nvar a: Int = abs(-7)\nvar f: Float64 = abs(-2.5)\nvar lo: Int = min(3, 8)\nvar hi: Float64 = max(1.0, 2.0)\nvar r: Float64 = round(3.7)\nvar n: Int = len(\"hello\")\n",
+        "var s: StringLiteral = \"n=\" + String(42)\nvar a: Int = abs(-7)\nvar f: Float64 = abs(-2.5)\nvar lo: Int = min(3, 8)\nvar hi: Float64 = max(1.0, 2.0)\nvar r: Float64 = round(3.7)\n",
     );
 }
 
@@ -3358,7 +3358,7 @@ fn callable_type_bounds_reject_structural_generic_overloaded_and_stronger_effect
     assert!(matches!(generic, TypeError::TraitNotSatisfied { .. }));
 
     let overloaded = err(
-        "def choose(value: Int) -> Int:\n    return value\n\ndef choose(value: StringLiteral) -> Int:\n    return String(value).byte_length()\n\ndef apply[F: def(Int) -> Int](callback: F) -> Int:\n    return callback(1)\n\ndef main():\n    print(apply(choose))\n",
+        "def choose(value: Int) -> Int:\n    return value\n\ndef choose(value: StringLiteral) -> Int:\n    return 0\n\ndef apply[F: def(Int) -> Int](callback: F) -> Int:\n    return callback(1)\n\ndef main():\n    print(apply(choose))\n",
     );
     assert!(matches!(overloaded, TypeError::TraitNotSatisfied { .. }));
 }
@@ -3444,7 +3444,7 @@ fn contextual_type_selects_an_origin_specialized_overload_value() {
 #[test]
 fn contextually_selects_an_overloaded_callable_value() {
     ok(
-        "def choose(value: Int) -> Int:\n    return value + 1\n\ndef choose(value: StringLiteral) -> Int:\n    return String(value).byte_length()\n\ndef main():\n    var callback: def(Int) thin -> Int = choose\n    var result: Int = callback(41)\n",
+        "def choose(value: Int) -> Int:\n    return value + 1\n\ndef choose(value: StringLiteral) -> Int:\n    return 0\n\ndef main():\n    var callback: def(Int) thin -> Int = choose\n    var result: Int = callback(41)\n",
     );
 }
 

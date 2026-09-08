@@ -763,7 +763,7 @@ fn generic_function_identity_runs_type_erased() {
 #[test]
 fn generic_function_over_generic_struct() {
     let e = run(&format!(
-        "{PAIR}def first[T: Copyable & Movable](p: Pair[T]) -> T:\n    return p.left.copy()\n\nvar p: Pair[Int] = Pair(10, 20)\nvar x: Int = first(p)\n"
+        "{PAIR}def first[T: Copyable & Movable & Deinitable](p: Pair[T]) -> T:\n    return p.left.copy()\n\nvar p: Pair[Int] = Pair(10, 20)\nvar x: Int = first(p)\n"
     ));
     assert_eq!(binding(&e, "x"), Value::Int(10));
 }
@@ -1135,8 +1135,10 @@ fn round_rounds_to_nearest() {
 }
 
 #[test]
-fn len_of_string() {
-    let e = run("var n: Int = len(\"hello\")\nvar z: Int = len(\"\")\n");
+fn byte_length_of_string() {
+    let e = run(
+        "var n: Int = String(\"hello\").byte_length()\nvar z: Int = String(\"\").byte_length()\n",
+    );
     assert_eq!(binding(&e, "n"), Value::Int(5));
     assert_eq!(binding(&e, "z"), Value::Int(0));
 }

@@ -2227,14 +2227,31 @@ impl Checker {
                 .structs
                 .get(name)
                 .map(|s| {
-                    s.conforms.iter().any(|c| {
-                        matches!(
-                            c.as_str(),
-                            "Copyable" | "ImplicitlyCopyable" | "TrivialRegisterPassable"
-                        ) && s.conformance_conditions.get(c).is_none_or(|condition| {
-                            self.eval_conformance_condition(s, args, condition)
+                    // A declared Copyable-family conformance is the contract
+                    // and its condition decides: `Array[T]` declares
+                    // `Copyable where conforms_to(T, Copyable)` beside a
+                    // where-gated copy initializer, so the initializer's
+                    // presence alone proves nothing. Only a struct declaring
+                    // no such conformance answers by its copy initializer.
+                    let mut declared = s
+                        .conforms
+                        .iter()
+                        .filter(|c| {
+                            matches!(
+                                c.as_str(),
+                                "Copyable" | "ImplicitlyCopyable" | "TrivialRegisterPassable"
+                            )
                         })
-                    }) || s.methods.contains_key("__copyinit__")
+                        .peekable();
+                    if declared.peek().is_some() {
+                        declared.any(|c| {
+                            s.conformance_conditions.get(c).is_none_or(|condition| {
+                                self.eval_conformance_condition(s, args, condition)
+                            })
+                        })
+                    } else {
+                        s.methods.contains_key("__copyinit__")
+                    }
                 })
                 .unwrap_or(true),
             Ty::Param { bounds, .. } => bounds.iter().any(|bound| {
@@ -2585,10 +2602,15 @@ impl Checker {
             return false;
         };
         info.methods.contains_key("__copyinit__")
-            || info
-                .fields
-                .iter()
-                .all(|(_, ty)| self.is_copyable_under_assumption(ty, assumption))
+            || info.fields.iter().all(|(_, ty)| {
+                self.is_copyable_under_assumption(ty, assumption)
+                    // The focused checker (no linked prelude) sees a
+                    // `List[Int]`/`Tuple[*Ts]` field as an unregistered
+                    // nominal spelling; the ordinary capability helper's
+                    // compatibility default answers for it.
+                    || matches!(ty, Ty::Struct(field_struct, _)
+                        if !self.structs.contains_key(field_struct) && self.is_copyable(ty))
+            })
     }
 
     pub(super) fn struct_implicitly_copyable_conformance_ok(&self, name: &str) -> bool {

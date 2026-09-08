@@ -291,7 +291,7 @@ fn pliron_dist_abi_mismatched_runtime_is_rejected() {
     assert!(!compile.status.success());
     let stderr = String::from_utf8_lossy(&compile.stderr);
     assert!(
-        stderr.contains("ABI version 999") && stderr.contains("requires 6"),
+        stderr.contains("ABI version 999") && stderr.contains("requires 7"),
         "stderr: {stderr}"
     );
 }

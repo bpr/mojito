@@ -669,7 +669,11 @@ mod tests {
             f64::INFINITY,
             f64::NEG_INFINITY,
         ] {
-            let expected = format!("{x:?}");
+            let expected = if x.is_nan() {
+                "nan".to_string()
+            } else {
+                format!("{x:?}")
+            };
             assert!(expected.len() <= 32);
             assert_eq!(fmt_f64(x), expected);
         }

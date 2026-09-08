@@ -102,6 +102,7 @@ runtime	mjrt_fmt_f64	supported	since=v1
 runtime	mjrt_trap	supported	since=v1
 runtime	mjrt_unhandled_error	supported	since=v2
 runtime	mjrt_abort	supported	since=v6
+runtime	mjrt_repr_string	supported	since=v7
 runtime	mjrt_trace	supported	since=v3
 runtime	mjrt_read_line	supported	since=v4
-runtime	mjrt_abi_version	supported	data symbol; current version 6
+runtime	mjrt_abi_version	supported	data symbol; current version 7
