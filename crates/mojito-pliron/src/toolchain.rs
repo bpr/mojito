@@ -15,8 +15,8 @@ use super::pipeline::Pipeline;
 use super::{OptLevel, PlironError, PlironErrorKind};
 
 /// The LLVM major version every external tool must match — the same pin as
-/// the in-process `llvm-sys = "221"` dependency (LLVM 22).
-pub(super) const EXPECTED_LLVM_MAJOR: u32 = 22;
+/// the in-process `llvm-sys = "231"` dependency (LLVM 23.1).
+pub(super) const EXPECTED_LLVM_MAJOR: u32 = 23;
 
 /// A human-readable report of everything `resolve` would use, one stable
 /// `key\tvalue` line per component. Never fails: a missing or incompatible
@@ -223,8 +223,8 @@ pub fn set_runtime_override(path: PathBuf) {
 
 static RUNTIME_OVERRIDE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
-const CLANG_CANDIDATES: &[&str] = &["clang-22", "clang"];
-const OPT_CANDIDATES: &[&str] = &["opt-22", "opt"];
+const CLANG_CANDIDATES: &[&str] = &["clang-23", "clang"];
+const OPT_CANDIDATES: &[&str] = &["opt-23", "opt"];
 
 /// Process-memoized [`find_tool`]. Discovery depends only on `PATH`, which
 /// is stable for the process, so the subprocess version probes run once even
@@ -334,8 +334,8 @@ fn probe_version(path: &Path) -> Option<String> {
         return None;
     }
     let text = String::from_utf8_lossy(&output.stdout);
-    // clang prints "... clang version 22.x.y ..." on the first line; opt
-    // prints an "LLVM (...):" banner with "  LLVM version 22.x.y" below it.
+    // clang prints "... clang version 23.x.y ..." on the first line; opt
+    // prints an "LLVM (...):" banner with "  LLVM version 23.x.y" below it.
     // Return the line carrying the version so the report shows it verbatim.
     text.lines()
         .map(str::trim)
@@ -493,10 +493,10 @@ mod tests {
     #[test]
     fn pliron_toolchain_parses_llvm_majors() {
         assert_eq!(
-            parse_llvm_major("Ubuntu clang version 22.1.0 (++2026)"),
-            Some(22)
+            parse_llvm_major("Ubuntu clang version 23.1.0 (++2026)"),
+            Some(23)
         );
-        assert_eq!(parse_llvm_major("LLVM version 22.1.0"), Some(22));
+        assert_eq!(parse_llvm_major("LLVM version 23.1.0"), Some(23));
         assert_eq!(parse_llvm_major("clang version 17.0.6"), Some(17));
         assert_eq!(parse_llvm_major("no marker here"), None);
     }

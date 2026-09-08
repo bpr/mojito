@@ -17,6 +17,27 @@ material-failure conditions triggered:
 - No required API needed any Pliron fork; every gap found is minor and
   locally bridgeable (details below).
 
+## Current Pins (updated 2026-09-08)
+
+The Stage 0 pin record below is historical. The lane now pins Pliron by git
+revision `477e6b0edb18b29df4cf7b90f0f468dc8a872f22` (`pliron`/`pliron-llvm`,
+whose LLVM layer requires `llvm-sys 231`) against LLVM 23.1.0 installed from
+the official release archive at `/opt/llvm-23` and discovered through
+`LLVM_SYS_231_PREFIX` (every lane script exports that default and prepends its
+`bin/` to `PATH`, so `clang-23`/`opt-23`/`llvm-dwarfdump-23` resolve). The
+current CI recipe is:
+
+```sh
+rustup toolchain install 1.96.1
+export LLVM_SYS_231_PREFIX=/opt/llvm-23     # LLVM-23.1.0-Linux-X64 archive
+export PATH="$LLVM_SYS_231_PREFIX/bin:$PATH"
+scripts/check-pliron-spike                  # spike: fmt + nextest + clippy
+scripts/check-pliron                        # backend lane
+```
+
+The upgrade rehearsal and promotion decision are recorded in
+`pliron-promotion.md`; the adaptation set is listed in `pliron-stage6.md`.
+
 ## Pin Record
 
 | Component | Pin | Evidence |

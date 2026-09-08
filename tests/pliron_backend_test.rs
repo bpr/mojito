@@ -1,5 +1,5 @@
-//! Differential and emission tests for the experimental Pliron backend
-//! (feature `backend-pliron`; requires LLVM 22 — see scripts/check-pliron).
+//! Differential and emission tests for the supported Pliron backend
+//! (feature `backend-pliron`; requires LLVM 23.1 — see scripts/check-pliron).
 
 #![cfg(feature = "backend-pliron")]
 
@@ -89,7 +89,6 @@ fn fib_lowers_verifies_and_prints_canonically() {
               [] 
             {
               ^block2v1(v0: builtin.integer i64):
-                v1 = llvm.constant <builtin.integer <1: i64>> : builtin.integer i64;
                 llvm.br ^block3v1()
 
               ^block3v1():
@@ -117,7 +116,6 @@ fn fib_lowers_verifies_and_prints_canonically() {
               [] 
             {
               ^block7v1():
-                v16 = llvm.constant <builtin.integer <1: i64>> : builtin.integer i64;
                 llvm.br ^block8v1()
 
               ^block8v1():
@@ -191,14 +189,14 @@ fn canonical_text_round_trips() {
     )
     .expect_ok(ctx1);
     pliron::operation::verify_operation(round1, ctx1).expect_ok(ctx1);
-    pliron::debug_info::erase_given_names(ctx1, round1);
+    pliron::builtin::given_names::erase_given_names(ctx1, round1);
     let round1_text = round1.disp(ctx1).to_string();
 
     let ctx2 = &mut pliron::context::Context::new();
     let round2 =
         parse_from_str(spaced(Operation::top_level_parser()), ctx2, &round1_text).expect_ok(ctx2);
     pliron::operation::verify_operation(round2, ctx2).expect_ok(ctx2);
-    pliron::debug_info::erase_given_names(ctx2, round2);
+    pliron::builtin::given_names::erase_given_names(ctx2, round2);
     let round2_text = round2.disp(ctx2).to_string();
 
     assert_eq!(
@@ -1500,7 +1498,7 @@ mod native_abi_cross_checks {
     #[test]
     fn pliron_pinned_data_layout_matches_installed_clang() {
         let triple = Triple::X86_64UnknownLinuxGnu;
-        let clang = ["clang-22", "clang"]
+        let clang = ["clang-23", "clang"]
             .into_iter()
             .find(|candidate| {
                 Command::new(candidate)
@@ -1566,7 +1564,7 @@ def main():
                 .write_executable(&exe, super::OptLevel::O0, super::DebugInfo::Lines)
                 .expect("exe emission");
 
-            let nm = ["llvm-nm-22", "llvm-nm", "nm"]
+            let nm = ["llvm-nm-23", "llvm-nm", "nm"]
                 .into_iter()
                 .find(|candidate| {
                     Command::new(candidate)

@@ -51,8 +51,9 @@ num-traits = "0.2.19"
 petgraph = "0.8.3"
 
 [features]
-# Experimental Pliron native backend (roadmap section 4, Stage 1). Requires
-# LLVM 22 dev libraries (llvm-sys 221; discovery via LLVM_SYS_221_PREFIX).
+# Pliron native backend, Mojito's supported path to LLVM and optimized native
+# binaries. Requires LLVM 23.1 (llvm-sys 231; discovery via
+# LLVM_SYS_231_PREFIX).
 # The default build must stay free of LLVM: tests/backend_isolation_test.rs
 # guards the default dependency graph. See docs/notes/pliron-stage0.md.
 backend-pliron = [
@@ -64,9 +65,9 @@ backend-pliron = [
 ]
 
 [dependencies]
-# Direct llvm-sys (same 221/LLVM-22 pin pliron-llvm resolves) powers the
+# Direct llvm-sys (same 231/LLVM-23.1 pin pliron-llvm resolves) powers the
 # target-data layout cross checks in tests/pliron_backend_test.rs.
-llvm-sys = { version = "221", optional = true }
+llvm-sys = { version = "231", optional = true }
 mojito-analysis = { path = "crates/mojito-analysis" }
 mojito-ast = { path = "crates/mojito-ast" }
 mojito-checked = { path = "crates/mojito-checked" }
@@ -84,10 +85,10 @@ mojito-parser = { path = "crates/mojito-parser" }
 mojito-symbol = { path = "crates/mojito-symbol" }
 mojito-types = { path = "crates/mojito-types" }
 mojito-vm = { path = "crates/mojito-vm" }
-# Direct pliron (the same =0.17.0 pin crates/mojito-pliron resolves) powers
+# Direct pliron (the same upstream revision crates/mojito-pliron resolves) powers
 # the canonical-text parse -> print fixpoint check in
 # tests/pliron_backend_test.rs.
-pliron = { version = "=0.17.0", optional = true }
+pliron = { git = "https://github.com/pliron-org/pliron", rev = "477e6b0edb18b29df4cf7b90f0f468dc8a872f22", optional = true }
 # Pure-Rust ELF/archive inspection and digests for the resolved-toolchain
 # report, runtime ABI validation, and reproducibility diagnostics. Read-only,
 # no compression backends.

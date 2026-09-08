@@ -34,7 +34,7 @@ impl Triple {
     }
 
     /// The pinned LLVM data-layout string for this triple. Must match what
-    /// the pinned toolchain (LLVM 22 clang) produces for [`Triple::name`];
+    /// the pinned toolchain (LLVM 23.1 clang) produces for [`Triple::name`];
     /// the pliron-lane cross-check test enforces that.
     pub fn data_layout(self) -> &'static str {
         match self {

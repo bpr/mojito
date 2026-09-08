@@ -57,7 +57,7 @@ fn pliron_toolchain_report_release_names_pipeline_and_opt() {
 }
 
 /// On this pinned lane the tools and runtime resolve, versions match the
-/// LLVM 22 pin, and the archive's embedded ABI version matches the
+/// LLVM 23 pin, and the archive's embedded ABI version matches the
 /// compiler-side contract table.
 #[test]
 fn pliron_toolchain_report_resolves_the_pinned_lane() {
@@ -70,11 +70,11 @@ fn pliron_toolchain_report_resolves_the_pinned_lane() {
     let clang_version = value("clang-version").unwrap_or_else(|| {
         panic!("clang did not resolve:\n{report}");
     });
-    assert!(clang_version.contains("22."), "{clang_version}");
+    assert!(clang_version.contains("23."), "{clang_version}");
     let opt_version = value("opt-version").unwrap_or_else(|| {
         panic!("opt did not resolve:\n{report}");
     });
-    assert!(opt_version.contains("22."), "{opt_version}");
+    assert!(opt_version.contains("23."), "{opt_version}");
     assert_eq!(
         value("runtime-abi-version"),
         Some(rt_abi::MJRT_ABI_VERSION.to_string().as_str()),

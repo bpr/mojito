@@ -44,8 +44,6 @@ fn constfold_folds_add_and_dce_removes_dead_sub() {
               [] 
             {
               ^entry_block2v1():
-                v0 = llvm.constant <builtin.integer <40: i32>> : builtin.integer i32;
-                v1 = llvm.constant <builtin.integer <2: i32>> : builtin.integer i32;
                 v4 = llvm.constant <builtin.integer <42: i32>> : builtin.integer i32;
                 llvm.return v4
             }
@@ -60,11 +58,10 @@ fn constfold_folds_add_and_dce_removes_dead_sub() {
         !printed.contains("llvm.sub"),
         "DCE must remove the unused sub:\n{printed}"
     );
-    // Upstream gap: dead constants survive DCE because llvm.constant lacks a
-    // SideEffects impl. 40 and 2 stay alongside the folded 42.
+    // DCE removes the two inputs after the add is replaced by folded 42.
     assert_eq!(
         printed.matches("llvm.constant").count(),
-        3,
-        "expected the upstream dead-constant DCE gap to hold:\n{printed}"
+        1,
+        "expected only the folded constant to remain:\n{printed}"
     );
 }

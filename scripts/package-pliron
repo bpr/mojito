@@ -9,7 +9,8 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-export LLVM_SYS_221_PREFIX="${LLVM_SYS_221_PREFIX:-/usr/lib/llvm-22}"
+export LLVM_SYS_231_PREFIX="${LLVM_SYS_231_PREFIX:-/opt/llvm-23}"
+export PATH="${LLVM_SYS_231_PREFIX}/bin:${PATH}"
 
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 TRIPLE=x86_64-unknown-linux-gnu
@@ -39,9 +40,9 @@ cp LICENSE "${OUT}/share/doc/LICENSE"
 cat > "${OUT}/share/doc/COMPAT.md" <<EOF
 # Toolchain compatibility
 
-Target: ${TRIPLE}. Object and executable emission require clang 22 on
-PATH (\`clang-22\` preferred); the release profile additionally requires
-\`opt\` 22. Emitted executables are self-contained (this bundle's runtime
+Target: ${TRIPLE}. Object and executable emission require clang 23 on
+PATH (\`clang-23\` preferred); the release profile additionally requires
+\`opt\` 23. Emitted executables are self-contained (this bundle's runtime
 is linked in statically) and need none of those tools to run.
 EOF
 cat > "${OUT}/share/mojito/smoke/hello.mojo" <<EOF
@@ -61,7 +62,7 @@ printf 'schema\t1\ntarget\t%s\nabi-version\t%s\nsha256\t%s\nlibs\tm\n' \
     "${TRIPLE}" "${ABI}" "${RUNTIME_SHA}" > "${OUT}/lib/runtime-link.tsv"
 
 RUSTC_VERSION=$(rustc --version)
-CLANG_VERSION=$(clang-22 --version 2>/dev/null | head -1 || clang --version | head -1)
+CLANG_VERSION=$(clang-23 --version 2>/dev/null | head -1 || clang --version | head -1)
 printf 'schema\t1\nversion\t%s\ngit-rev\t%s\ntarget\t%s\nabi-version\t%s\nrustc\t%s\nclang\t%s\nlock-sha256\t%s\n' \
     "${VERSION}" "${GIT_REV}" "${TRIPLE}" "${ABI}" "${RUSTC_VERSION}" "${CLANG_VERSION}" \
     "$(sha256sum Cargo.lock | cut -d' ' -f1)" > "${OUT}/manifest.tsv"

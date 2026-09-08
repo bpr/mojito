@@ -230,19 +230,7 @@ impl<'a> Specializer<'a> {
         }
         let exact = format!("{name}.{method}");
         if self.functions.contains_key(exact.as_str()) {
-            let (mut bindings, arguments, _) =
-                self.infer_receiver_call(owner, &exact, &ty, None)?;
-            if let Some(declaration) = self.declarations.get(exact.as_str()) {
-                for parameter in &declaration.param_types {
-                    if let Ty::Param { name, .. } = parameter {
-                        bindings
-                            .types
-                            .entry(name.clone())
-                            .or_insert(Ty::StringLiteral);
-                    }
-                }
-            }
-            self.enqueue(&exact, bindings, arguments)?;
+            self.enqueue_nominal_method_instance(owner, &ty, method, 1, &[])?;
             return Ok(());
         }
         // A closed instance displays through its per-instantiation

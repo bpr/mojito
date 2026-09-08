@@ -78,7 +78,7 @@ impl<'a> FnLowering<'a> {
                     let slot = match self.var_lower_ty(var as u32)? {
                         LowerTy::Scalar(scalar) => {
                             let handle = scalar.handle(ctx);
-                            let alloca = AllocaOp::new(ctx, handle, one);
+                            let alloca = AllocaOp::new(ctx, handle, one, 0);
                             self.append(ctx, alloca.get_operation(), None);
                             alloca.get_result(ctx)
                         }
@@ -129,7 +129,7 @@ impl<'a> FnLowering<'a> {
                 let slot = self.var_slots[var];
                 self.mem_zero(ctx, slot, layout.size);
             }
-            let alloca = AllocaOp::new(ctx, i1, one);
+            let alloca = AllocaOp::new(ctx, i1, one, 0);
             self.append(ctx, alloca.get_operation(), None);
             let init = self.bool_constant(ctx, var < self.func.n_params);
             let store = StoreOp::new(ctx, init, alloca.get_result(ctx));
@@ -170,7 +170,7 @@ impl<'a> FnLowering<'a> {
             {
                 continue;
             }
-            let alloca = AllocaOp::new(ctx, i1, one);
+            let alloca = AllocaOp::new(ctx, i1, one, 0);
             self.append(ctx, alloca.get_operation(), None);
             let init = self.bool_constant(ctx, true);
             let store = StoreOp::new(ctx, init, alloca.get_result(ctx));

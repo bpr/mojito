@@ -29,7 +29,7 @@ pub(super) fn run_value(
 ) -> Result<JitValue, PlironError> {
     ensure_native_target()?;
     // The reparse context of the optimized path must outlive the JIT'd call.
-    let (_llvm_ctx, llvm_module) = emit::to_llvm_optimized(ctx, module, target, opt)?;
+    let (llvm_ctx, llvm_module) = emit::to_llvm_optimized(ctx, module, target, opt)?;
     let jit = LLVMLLJIT::new_with_default_builder()
         .map_err(|error| jit_error(format!("LLJIT construction: {error}")))?;
     for (name, address) in symbols {
@@ -41,7 +41,7 @@ pub(super) fn run_value(
         )
         .map_err(|error| jit_error(format!("LLJIT symbol mapping of `{name}`: {error}")))?;
     }
-    jit.add_module(llvm_module)
+    jit.add_module(llvm_ctx, llvm_module)
         .map_err(|error| jit_error(format!("LLJIT add_module: {error}")))?;
     let address = jit
         .lookup_symbol(symbol)

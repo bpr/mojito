@@ -6,7 +6,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-llvm-sys = { version = "221" }
+llvm-sys = { version = "231" }
 mojito-analysis = { path = "../mojito-analysis" }
 mojito-ast = { path = "../mojito-ast" }
 mojito-checked = { path = "../mojito-checked" }
@@ -18,8 +18,8 @@ mojito-symbol = { path = "../mojito-symbol" }
 mojito-types = { path = "../mojito-types" }
 mojito-vm = { path = "../mojito-vm" }
 object = { version = "0.40.0", default-features = false, features = ["read", "std"] }
-pliron = { version = "=0.17.0" }
-pliron-llvm = { version = "=0.17.0" }
+pliron = { git = "https://github.com/pliron-org/pliron", rev = "477e6b0edb18b29df4cf7b90f0f468dc8a872f22" }
+pliron-llvm = { git = "https://github.com/pliron-org/pliron", rev = "477e6b0edb18b29df4cf7b90f0f468dc8a872f22" }
 sha2 = { version = "0.11.0" }
 
 [dev-dependencies]

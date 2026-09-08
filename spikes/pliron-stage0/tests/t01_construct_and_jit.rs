@@ -19,7 +19,8 @@ fn builds_verifies_and_jit_executes_main_returning_42() {
     llvm_module.verify().expect("LLVM module verifies");
 
     let jit = LLVMLLJIT::new_with_default_builder().expect("LLJIT builder");
-    jit.add_module(llvm_module).expect("add module to JIT");
+    jit.add_module(llvm_ctx, llvm_module)
+        .expect("add module to JIT");
     let addr = jit.lookup_symbol("main").expect("main symbol resolves");
     assert_ne!(addr, 0);
     let main_fn = unsafe { std::mem::transmute::<u64, fn() -> i32>(addr) };

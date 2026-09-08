@@ -377,7 +377,7 @@ fn run_program_native(file: Option<&str>, cli: &CliArgs) -> Result<(), String> {
 fn run_program_native(_file: Option<&str>, _cli: &CliArgs) -> Result<(), String> {
     Err(
         "this mojito build lacks the `backend-pliron` feature; rebuild with \
-         `cargo build --features backend-pliron` (requires LLVM 22 — see \
+         `cargo build --features backend-pliron` (requires LLVM 23.1 — see \
          docs/notes/pliron-stage0.md)"
             .to_string(),
     )
@@ -627,7 +627,7 @@ fn stage_link(file: Option<&str>, cli: &CliArgs) -> ExitCode {
 fn stage_link(_file: Option<&str>, _cli: &CliArgs) -> ExitCode {
     eprintln!(
         "this mojito build lacks the `backend-pliron` feature; rebuild with \
-         `cargo build --features backend-pliron` (requires LLVM 22)"
+         `cargo build --features backend-pliron` (requires LLVM 23.1)"
     );
     ExitCode::FAILURE
 }
@@ -638,7 +638,7 @@ fn stage_compile(_file: Option<&str>, _cli: &CliArgs) -> ExitCode {
     eprintln!(
         "compile error: this mojito build lacks the `backend-pliron` feature; \
          rebuild with `cargo build --features backend-pliron` \
-         (requires LLVM 22 — see docs/notes/pliron-stage0.md)"
+         (requires LLVM 23.1 — see docs/notes/pliron-stage0.md)"
     );
     ExitCode::FAILURE
 }
@@ -750,7 +750,7 @@ fn print_usage() {
          \x20 check [FILE]   type-check and report ok or the first error\n\
          \x20 run   [FILE]   evaluate and print output + final bindings\n\
          \x20 emit-mir [FILE] compile and print executable textual MIR\n\
-         \x20 compile [FILE] native-compile via --backend pliron (experimental)\n\
+         \x20 compile [FILE] native-compile via --backend pliron\n\
          \x20 link  OBJ      link a saved object via its .link.tsv manifest (--backend pliron)\n\
          \x20 exec  [FILE]   execute a verified textual MIR artifact\n\
          \x20 demo           run the built-in showcase (default)\n\n\

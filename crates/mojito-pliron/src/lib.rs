@@ -1,4 +1,4 @@
-//! Experimental Pliron native backend (roadmap: native backend, Stages 1-4).
+//! Supported Pliron native backend below Mojito's verified-MIR waist.
 //!
 //! Compiles the checked scalar subset of verified, drop-elaborated MIR —
 //! Int/UInt/Float64/Bool constants, every scalar operator and the builtin
@@ -153,7 +153,7 @@ pub fn compile(
     })?;
     verify_module(&context, module)?;
 
-    pliron::debug_info::erase_given_names(&mut context, module.get_operation());
+    pliron::builtin::given_names::erase_given_names(&mut context, module.get_operation());
     let canonical_text = module.get_operation().disp(&context).to_string();
     // Collected after the cleanup pipeline: passes may delete calls and
     // unreachable blocks, and correlation must see the final IR.

@@ -3,6 +3,7 @@
 //! and use replacement; a follow-up built-in DCE run removes the dead inputs.
 
 use pliron::{
+    attribute::Attribute,
     builtin::{attributes::IntegerAttr, op_interfaces::OneResultInterface},
     context::{Context, Ptr},
     irbuild::IRStatus,
@@ -85,8 +86,8 @@ fn collect_foldable_adds(
 /// If `value` is the result of an integer `llvm.constant`, return its attr.
 fn as_integer_constant(ctx: &Context, value: Value) -> Option<IntegerAttr> {
     let const_op = Operation::get_op::<ConstantOp>(value.defining_op()?, ctx)?;
-    const_op
-        .get_value(ctx)
+    let value = const_op.get_value(ctx);
+    (&*value as &dyn Attribute)
         .downcast_ref::<IntegerAttr>()
         .cloned()
 }

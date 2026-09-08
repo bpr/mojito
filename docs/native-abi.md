@@ -68,7 +68,7 @@ its own explicit support decision and testing infrastructure.
 
   Both are stamped as `target datalayout`/`target triple` on every emitted
   LLVM module, and every `clang` invocation passes `--target=<triple>`.
-  The string is pinned against the installed LLVM 22 toolchain by test.
+  The string is pinned against the installed LLVM 23.1 toolchain by test.
 - **CPU features** — `CpuFeatures`; only the target baseline is accepted.
 - **Optimization profile** — `OptLevel`: `O0` (backend baseline cleanup
   only) or `Release` (LLVM `default<O1>` over the emitted bitcode).

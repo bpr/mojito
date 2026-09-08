@@ -122,7 +122,8 @@ fn lowering_leaves_no_spike_ops_and_executes() {
     let llvm_module = to_llvm_ir::convert_module(ctx, &llvm_ctx, module).expect_ok(ctx);
     llvm_module.verify().expect("LLVM module verifies");
     let jit = LLVMLLJIT::new_with_default_builder().expect("LLJIT builder");
-    jit.add_module(llvm_module).expect("add module to JIT");
+    jit.add_module(llvm_ctx, llvm_module)
+        .expect("add module to JIT");
     let addr = jit.lookup_symbol("main").expect("main symbol resolves");
     let main_fn = unsafe { std::mem::transmute::<u64, fn() -> i32>(addr) };
     assert_eq!(main_fn(), 42);

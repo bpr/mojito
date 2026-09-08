@@ -6,8 +6,8 @@ rust-version = "1.96.1"
 publish = false
 
 [dependencies]
-pliron = "=0.17.0"
-pliron-llvm = "=0.17.0"
+pliron = { git = "https://github.com/pliron-org/pliron", rev = "477e6b0edb18b29df4cf7b90f0f468dc8a872f22" }
+pliron-llvm = { git = "https://github.com/pliron-org/pliron", rev = "477e6b0edb18b29df4cf7b90f0f468dc8a872f22" }
 
 [dev-dependencies]
 expect-test = "1.5.1"

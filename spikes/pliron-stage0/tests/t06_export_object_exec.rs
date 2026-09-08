@@ -9,10 +9,10 @@ use pliron::{context::Context, result::ExpectOk};
 use pliron_llvm::{llvm_sys::core::LLVMContext, to_llvm_ir};
 use pliron_stage0_spike::ir_build::build_main_returns_42;
 
-/// Prefer the version-suffixed clang matching llvm-sys 221; fall back to the
-/// unsuffixed binary (this machine's default clang is LLVM 22 as well).
+/// Prefer the version-suffixed clang matching llvm-sys 231; fall back to the
+/// unsuffixed binary supplied by the documented LLVM 23.1 archive.
 fn find_clang() -> &'static str {
-    for candidate in ["clang-22", "clang"] {
+    for candidate in ["clang-23", "clang"] {
         if Command::new(candidate)
             .arg("--version")
             .output()
@@ -21,7 +21,7 @@ fn find_clang() -> &'static str {
             return candidate;
         }
     }
-    panic!("no clang found; install clang (LLVM 22) to run this test");
+    panic!("no clang found; install clang (LLVM 23) to run this test");
 }
 
 #[test]

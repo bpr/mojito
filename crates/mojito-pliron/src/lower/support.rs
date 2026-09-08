@@ -123,11 +123,11 @@ pub(crate) fn emit_pow_body(ctx: &mut Context, func: FuncOp) {
 
     // entry: allocas for acc/base/exp, seeded from the arguments.
     let one = constant(ctx, i64_int, 1, entry);
-    let acc_alloca = AllocaOp::new(ctx, i64_ty, one);
+    let acc_alloca = AllocaOp::new(ctx, i64_ty, one, 0);
     acc_alloca.get_operation().insert_at_back(entry, ctx);
-    let base_alloca = AllocaOp::new(ctx, i64_ty, one);
+    let base_alloca = AllocaOp::new(ctx, i64_ty, one, 0);
     base_alloca.get_operation().insert_at_back(entry, ctx);
-    let exp_alloca = AllocaOp::new(ctx, i64_ty, one);
+    let exp_alloca = AllocaOp::new(ctx, i64_ty, one, 0);
     exp_alloca.get_operation().insert_at_back(entry, ctx);
     let acc_slot = acc_alloca.get_result(ctx);
     let base_slot = base_alloca.get_result(ctx);

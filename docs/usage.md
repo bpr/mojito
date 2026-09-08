@@ -40,7 +40,7 @@ Commands:
 | `own` | parse, type-check, and run ownership analysis |
 | `run` | compile and execute on the register VM |
 | `emit-mir` | compile and print canonical executable MIR |
-| `compile` | native-compile the scalar subset via `--backend pliron` (experimental; requires the `backend-pliron` feature and LLVM 22) |
+| `compile` | native-compile via the supported Pliron backend (requires the `backend-pliron` feature and LLVM 23.1) |
 | `exec` | execute a verified textual MIR artifact |
 
 `FILE` is optional. Use a path, `-`, or omit it to read from standard input:
@@ -75,7 +75,7 @@ development target tree (built by `cargo build -p mojito-runtime`) — the
 full contract is [`docs/native-abi.md`](native-abi.md):
 
 ```sh
-cargo build --features backend-pliron   # needs llvm-22-dev (see docs/notes/pliron-stage1.md)
+cargo build --features backend-pliron   # needs LLVM 23.1 at LLVM_SYS_231_PREFIX (see docs/notes/pliron-stage0.md)
 cargo build -p mojito-runtime           # the linked native runtime archive
 target/debug/mojito compile pure.mojo --backend pliron --emit exe -o pure
 ```

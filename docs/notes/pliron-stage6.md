@@ -2,9 +2,9 @@
 
 Implementation record for Stage 6 (plan: `pliron-stage6-plan.md`). The
 sections below are the binding policy decisions as landed; changing any of
-them is a reviewed policy change. Status: implementation complete; the
-acceptance-evidence record is at the end, with only the upstream-blocked
-dependency-upgrade rehearsal still open.
+them is a reviewed policy change. Status: complete and promoted. The LLVM 23.1
+upgrade rehearsal and promotion decision are recorded in
+`pliron-promotion.md`.
 
 ## Optimization profiles and pipelines
 
@@ -32,8 +32,8 @@ hierarchy; the tests are scoped to what exists.
 
 ## Toolchain and tool pins
 
-`src/backend/pliron/toolchain.rs` resolves `clang`/`opt` to absolute PATH
-entries once, requires LLVM major 22 (the `llvm-sys = "221"` pin), and
+`crates/mojito-pliron/src/toolchain.rs` resolves `clang`/`opt` to absolute PATH
+entries once, requires LLVM major 23 (the `llvm-sys = "231"` pin), and
 validates the runtime archive — provenance, sha256, and the
 `mjrt_abi_version` value read mechanically from the archive — before any
 frontend work (`check_toolchain`). `--print-toolchain` reports it all as
@@ -121,20 +121,17 @@ capture (two agreeing runs, governor pinned).
 
 ## Dependency-upgrade rehearsal
 
-Not executable at close: `pliron`/`pliron-llvm` 0.17.0 and `llvm-sys`
-221.0.1 are the latest published releases as of 2026-08-24. The rehearsal
-procedure is: branch, bump the pins, run `scripts/check-pliron`, the full
-parity + sanitizer lanes, `pliron_repro_test` (reproducibility across the
-upgrade), and `scripts/bench-pliron --check` against the committed
-baseline; record required patches, effort, and output changes; discard
-the branch. It must run — and pass — on the first upstream release
-before that release is adopted, and its record feeds the promotion
-decision.
+Completed 2026-09-08 by moving from the 0.17.0 crates.io release and
+`llvm-sys 221` to Pliron revision `477e6b0e` and `llvm-sys 231`. The small
+adaptation set was limited to moved given-name/byte-attribute APIs, boxed typed
+constant attributes, explicit alloca address spaces, and JIT context ownership.
+No fork, MIR change, native ABI change, or new dependency edge was required.
+See `pliron-promotion.md` for gate evidence and the resulting support decision.
 
 ## Acceptance evidence
 
-Recorded 2026-08-26 on the pinned runner (`pop-os`); the
-dependency-upgrade rehearsal is the only item still open:
+Recorded 2026-08-26 on the pinned runner (`pop-os`), with the dependency
+upgrade completed on 2026-09-08:
 
 1. Pinned-runner baseline committed under
    `benchmarks/native/baseline/pop-os/` (two agreeing governor-pinned
@@ -158,8 +155,7 @@ dependency-upgrade rehearsal is the only item still open:
    the smoke fixture and the executable ran in a bare `ubuntu:24.04`
    container printing `mojito bundle ok` (the automated approximation —
    `env -i` + DT_NEEDED inspection — remains in `pliron_dist_test`).
-4. The dependency-upgrade rehearsal, blocked on an upstream release
-   (procedure above).
+4. The dependency-upgrade rehearsal completed as described above.
 
 ## Regression-free period accrual
 

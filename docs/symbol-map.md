@@ -47,7 +47,7 @@ map and dependency DAG live in `docs/architecture.md` §Workspace Layout.
 | Constructed defaults (`dir: Optional[String] = None`) | `CheckedConst::Construct` in the callee's declaration | The VM's `bind_for_call`; the native monomorphizer's `instantiate_constructed_defaults` (enqueues the constructor instance for the parameter type and respells the default's target), pliron's `reachable_set` (follows the default's target) and `bind_call_slots` (runs the instance over fresh storage). |
 | Host call allowlist (`external_call`) | `mojito_types::ffi::{CType, FfiCallee, CALLEES, callee, accepts_arg, accepts_ret}` | The checker's `infer_external_call` (rejects any other callee, checks arguments and the declared return type), the VM's `backend/vm/libc.rs` table (std-only execution: descriptor table, `errno` slot, environment overlay, glibc `dirent` byte images, `_c_stat` fills by field name), and pliron's `lower/externs.rs` (on-demand `llvm.func` declarations, `open` variadic, real C calls). The callee travels as the call's first parameter argument; the result type is the destination register's checked type. |
 | Generated string tables | `stdlib/std/_string_tables.mojo` (written by `scripts/gen-string-tables` from the pinned upstream `_unicode_lookups.mojo` and `_parsing_numbers/constants.mojo`) | Fixed-width hex records in string literals: the Unicode 16 case-mapping tables behind `StringSpan.upper`/`lower`/`isupper`/`islower` and the Eisel-Lemire power-of-five table behind `atof`; `string.mojo`'s `_hex_at`/`_hex_u64_at`/`_table_find` decode and binary-search them. Regenerate at every re-pin; never edit by hand. |
-| Native compile (experimental, `backend-pliron`) | `backend::pliron::{compile, CompileOptions, NativeModule, EmitKind, OptLevel, NativeTarget, JitValue, TrapCategory, PlironError, runtime_declarations}` | CLI `compile`/`run --backend pliron` and the capability-manifest differential harness. |
+| Native compile (`backend-pliron`) | `backend::pliron::{compile, CompileOptions, NativeModule, EmitKind, OptLevel, NativeTarget, JitValue, TrapCategory, PlironError, runtime_declarations}` | CLI `compile`/`run --backend pliron` and the capability-manifest differential harness. |
 | Shared native ABI | `native::target::{Triple, CpuFeatures, NativeTarget, BuildConfig, OptLevel, EmitKind}`, `native::layout::{LayoutCx, StructFieldIndex, compose}`, `native::mangle::mangle`, `native::rt_abi` | Every native backend, the VM's typed `SizeOf` instruction, the CLI, `crates/mojito-runtime` agreement tests, and the LLVM cross checks. |
 | Backend-side monomorphization | `native::mono::{specialize, SpecializedProgram, MonoError}` | Native backends. Clones an entry-rooted concrete MIR graph; canonical MIR and VM execution remain unchanged. |
 
@@ -294,7 +294,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   VM-display `mjrt_fmt_*` formatters, and `mjrt_trap`. It must never depend
   on the `mojito` crate (the VM `Value` stays out of the ABI);
   `tests/native_abi_test.rs` pins the Rust-side agreement.
-- `backend/pliron.rs` (feature `backend-pliron`) owns the experimental native
+- `backend/pliron.rs` (feature `backend-pliron`) owns the supported native
   backend: `compile` orchestration (reachable closure, verify, mem2reg/DCE,
   canonical text), `NativeModule` emission/JIT entry points,
   `runtime_declarations` (the contract table's LLVM rendering), `JitValue`,
@@ -321,7 +321,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   optimization policy: the shared pliron cleanup stage and each profile's
   LLVM pipeline selection, snapshot-pinned),
   `backend/pliron/toolchain.rs` (`ResolvedToolchain`: PATH-resolved
-  absolute clang/`opt` paths version-checked against the LLVM 22 pin,
+  absolute clang/`opt` paths version-checked against the LLVM 23.1 pin,
   ordered runtime-archive discovery — `--runtime-lib` via
   `set_runtime_override`, `MOJITO_RUNTIME_LIB`, installation bundle,
   development tree — with provenance/sha256/embedded-ABI-version

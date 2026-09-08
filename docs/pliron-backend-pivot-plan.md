@@ -302,8 +302,8 @@ Declare the pivot complete only when:
   build.
 - Keep `pliron-llvm` and `llvm-sys` under `backend-pliron`; the default VM CLI
   must neither discover nor link LLVM.
-- Linux remains the promotion platform first. Package an exact LLVM 22 toolchain
-  or document distro packages and `LLVM_SYS_221_PREFIX`.
+- Linux remains the promotion platform first. Package an exact LLVM 23.1 toolchain
+  or document distro packages and `LLVM_SYS_231_PREFIX`.
 - macOS requires universal decision records for Homebrew/package LLVM, rpaths,
   deployment targets, codesigning, and arm64/x86_64 CI before support claims.
 - Windows requires an LLVM distribution, MSVC ABI/linker testing, DLL/static

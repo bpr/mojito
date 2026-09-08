@@ -1,6 +1,6 @@
 //! Pliron Stage 0 feasibility spike (roadmap: native backend, Stage 0).
 //!
-//! Validates pliron + pliron-llvm 0.17.0 against LLVM 22 outside the
+//! Validates the pinned Pliron revision against LLVM 23.1 outside the
 //! production compiler: IR construction, textual round-trips, verification
 //! failure with located diagnostics, passes, a toy-dialect lowering through
 //! the dialect-conversion framework, LLVM export, and host execution.
@@ -36,6 +36,6 @@ pub fn print_ir(ctx: &Context, op: Ptr<Operation>) -> String {
 /// it with the internal id, so block labels grow on every round trip.
 /// Erasing given names first makes the printed text byte-stable.
 pub fn canonical_text(ctx: &mut Context, op: Ptr<Operation>) -> String {
-    pliron::debug_info::erase_given_names(ctx, op);
+    pliron::builtin::given_names::erase_given_names(ctx, op);
     op.disp(ctx).to_string()
 }

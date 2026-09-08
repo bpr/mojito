@@ -14,32 +14,14 @@ exempt from the ordering.
 
 ## Ordered Work
 
-### 1. Native Backend: Pliron Stage 6 — Optimization and Distribution
+### 1. Native Backend
 
-- [ ] **Dependency-upgrade rehearsal** — the one open Stage 6 acceptance
-  item. Blocked on the first upstream pliron/llvm-sys release newer than the
-  pins (0.17.0 / llvm-sys 221.0.1). Procedure and evidence:
-  `docs/notes/pliron-stage6.md`.
-- [ ] **Promotion decision** — promote Pliron from experimental only with:
-  - semantic parity on all runnable corpus and conformance cases, no
-    untracked MIR gaps;
-  - reproducible tooling on the supported Linux target, acceptable
-    benchmarks, no broad upstream fork;
-  - one successful upgrade rehearsal and a sustained regression-free gate
-    period (accruing in the stage 6 note).
-  - Blockers: disproportionate upstream churn, missing dialect/export
-    coverage, irreproducible LLVM discovery, semantic drift in
-    output/errors/references/drop order, a Mojito dialect duplicating MIR,
-    runtime/codegen layout disagreement, optimization-only miscompiles,
-    undocumented ABI lock-in, stale adoption evidence.
-  - Close with a `docs/notes/` decision record citing evidence per
-    criterion. Promotion never removes the VM or makes Pliron a required
-    compiler layer.
-- [ ] **Cranelift fallback** *(only on material Pliron failure)* — record
-  the evidence, then implement the same acceptance slices over verified MIR
-  with the shared target/layout/runtime ABI and differential corpus. Not a
-  parallel second backend. If it also fails: reassess direct LLVM, Melior,
-  Inkwell, or a C/C++ source backend with a fresh record.
+- [ ] **Cranelift alternate backend** *(deferred)* — Pliron is Mojito's
+  supported route to LLVM and optimized binaries, but the verified-MIR waist
+  deliberately permits a Cranelift backend. If justified by portability,
+  build-cost, or upstream-risk evidence, implement the same acceptance slices
+  with the shared target/layout/runtime ABI and differential corpus. Do not
+  fork language semantics or make Cranelift a required compiler layer.
 - [ ] **Native SIMD lowering** — after language parity, replace the
   lane-by-lane memory computation with LLVM fixed-vector SSA
   (`docs/notes/native-simd-pliron-assessment.md`), keeping the storage/call
@@ -81,6 +63,21 @@ exempt from the ordering.
 - The `a79fbdf59f2` pass (2026-08-26, Mojo `1.1.0.dev2026082605`) is
   complete (`docs/mojo-nightly.md`); the next re-pin recreates this
   section's checkbox.
+- [ ] **Behavioral divergences from the pinned Mojo — burn to zero**
+  *(standing; every new one lands here with a probe or a `cases.tsv`
+  `mojito-only`/`output-diff` row, and leaves when its probe promotes to an
+  `assets/ok` fixture)*. Open today:
+  1. a discarded call result is never destroyed by the VM (Mojo destroys it
+     before the next statement; `with Mgr():` whose `__enter__` returns a
+     value leaks the result) —
+     `conformance/probes/discarded_result_destruction.mojo`;
+  2. a struct whose field feeds `print` is destroyed before the line prints
+     (Mojo prints first; the VM drops the owner at the field read, its last
+     use) — `conformance/probes/print_argument_drop_order.mojo`; the
+     `__deinit__`-printing fixtures are written around it;
+  3. the `mojito-only` rows of `conformance/cases.tsv` (acceptance
+     divergences) and the `@__parameter` capture-model mirror image
+     (`conformance/probes/parameter_closure_capture_model.mojo`).
 - [ ] **Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
   any order)* — places where Mojito's stdlib leans on the Rust runtime
   where upstream is pure Mojo. Each is a candidate port, preferred over any
@@ -282,9 +279,8 @@ exempt from the ordering.
      place" rejection and as an augmented-assignment operand
      (`p /= StringSpan(s)`) a VM use-after-free; `Span[mut=True, T, _]`
      fails origin inference (spell an `[origin: Origin[mut=True]]` binder);
-     the VM never destroys a discarded call result (`with Mgr():` whose
-     `__enter__` returns a value leaks it) and destroys a struct whose field
-     feeds `print` before the print runs (Mojo prints first); `range` is
+     the two VM destruction-order divergences the stage found live in the
+     behavioral-divergences task of section 2; `range` is
      invisible in `std.string`, and a module loaded while the prelude
      bootstraps (`std.io` and the whole `std.os` graph now) must import
      `String` explicitly — that graph costs Hello World about a second of

@@ -143,13 +143,13 @@ LLVM or MLIR lowering and eBPF are no longer prioritized.
 Native-backend work is isolated from the default build as an invariant: the
 default `mojito` build and `scripts/check` resolve no LLVM or Pliron
 dependency (`tests/backend_isolation_test.rs` guards the default feature
-graph). The experimental backend lives in the workspace crate `crates/mojito-pliron/` behind the
+graph). The supported backend lives in the workspace crate `crates/mojito-pliron/` behind the
 optional `backend-pliron` feature — a compile path
 (`mojito compile --backend pliron`, plus `run --backend pliron` for the
 advertised subset) consuming the cached post-drop `elaborated_mir` artifact,
 with its own gate (`scripts/check-pliron`, which also chains the Stage 0
-spike gate). Production execution stays on the register VM. Dependency pins
-live in `docs/notes/pliron-stage0.md`; the per-stage designs and recorded
+spike gate). Production execution stays on the register VM. The current pin
+and promotion rationale live in `docs/notes/pliron-promotion.md`; the per-stage designs and recorded
 VM/native divergence policies in `docs/notes/pliron-stage1.md` through
 `docs/notes/pliron-stage4.md`.
 
@@ -254,10 +254,10 @@ execution time, and supported/excluded MIR counts (the generated
 `conformance/pliron-parity.tsv` and `conformance/pliron-capability.tsv`
 manifests). Every stage is removable by disabling its optional feature and
 backend modules without changing MIR, VM, or source semantics. The default
-response to a correctness failure is to keep Pliron experimental or disable
-the offending optimization; the default response to an upstream or
-distribution failure is the Cranelift fallback recorded in `docs/roadmap.md`,
-not erosion of the MIR/VM contracts.
+response to a correctness failure is to disable the offending optimization or
+native path until parity is restored. Upstream or distribution risk can justify
+the Cranelift alternate recorded in `docs/roadmap.md`, never erosion of the
+MIR/VM contracts.
 
 ### Source Module Boundaries
 

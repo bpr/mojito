@@ -238,7 +238,7 @@ fn pliron_dist_corrupt_runtime_is_rejected_early() {
 /// built with the lane's clang + ar from one C definition.
 #[test]
 fn pliron_dist_abi_mismatched_runtime_is_rejected() {
-    let ar = ["llvm-ar-22", "llvm-ar", "ar"]
+    let ar = ["llvm-ar-23", "llvm-ar", "ar"]
         .into_iter()
         .find(|candidate| {
             Command::new(candidate)
@@ -246,8 +246,8 @@ fn pliron_dist_abi_mismatched_runtime_is_rejected() {
                 .output()
                 .is_ok_and(|out| out.status.success())
         })
-        .expect("an ar tool (the pliron lane ships llvm-ar-22)");
-    let clang = ["clang-22", "clang"]
+        .expect("an ar tool (the pliron lane ships llvm-ar-23)");
+    let clang = ["clang-23", "clang"]
         .into_iter()
         .find(|candidate| {
             Command::new(candidate)

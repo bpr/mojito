@@ -16,7 +16,7 @@
 use std::collections::{HashMap, HashSet};
 
 use pliron::basic_block::BasicBlock;
-use pliron::builtin::attributes::{BytesAttr, FPDoubleAttr, FPSingleAttr, IntegerAttr, StringAttr};
+use pliron::builtin::attributes::{FPDoubleAttr, FPSingleAttr, IntegerAttr, StringAttr};
 use pliron::builtin::op_interfaces::{
     CallOpCallable, OneResultInterface, SingleBlockRegionInterface,
 };
@@ -31,7 +31,8 @@ use pliron::r#type::{TypeHandle, TypedHandle};
 use pliron::utils::apint::{APInt, bw};
 use pliron::value::Value;
 use pliron_llvm::attributes::{
-    FCmpPredicateAttr, FastmathFlagsAttr, ICmpPredicateAttr, IntegerOverflowFlagsAttr, LinkageAttr,
+    BytesAttr, FCmpPredicateAttr, FastmathFlagsAttr, ICmpPredicateAttr, IntegerOverflowFlagsAttr,
+    LinkageAttr,
 };
 use pliron_llvm::op_interfaces::{
     AlignableOpInterface, BinArithOp, CastOpInterface, CastOpWithNNegInterface, FastMathFlags,

@@ -91,8 +91,8 @@ cargo run -- emit-mir assets/ok/defines_main.mojo | cargo run -- exec -
 
 ## Native Binaries with Pliron and LLVM
 
-The experimental Pliron backend lowers Mojito's verified MIR through Pliron's
-LLVM dialect. It currently requires Linux and LLVM 22. The recommended way to
+The supported Pliron backend lowers Mojito's verified MIR through Pliron's
+LLVM dialect. It currently requires Linux and LLVM 23.1. The recommended way to
 get a native executable is a single `--emit exe` call, which drives the pinned
 LLVM optimization and linking tools and links the Mojito runtime behind the
 scenes:
@@ -115,19 +115,19 @@ cargo run --features backend-pliron -- compile program.mojo \
 ```
 
 The emitted IR includes the synthesized C `main` wrapper, so you can also run
-the same LLVM 22 optimization and linking machinery by hand — the final link
+the same LLVM 23.1 optimization and linking machinery by hand — the final link
 must include Mojito's native runtime:
 
 ```sh
-opt-22 -passes='default<O1>' program.ll -o program.bc
-clang-22 --target=x86_64-unknown-linux-gnu --no-default-config \
+opt-23 -passes='default<O1>' program.ll -o program.bc
+clang-23 --target=x86_64-unknown-linux-gnu --no-default-config \
   program.bc target/release/libmojito_runtime.a \
   -lm -Wl,--build-id=none -o program
 ./program
 ```
 
-Use the LLVM 22 executable names provided by your installation if they differ
-from `opt-22` and `clang-22`.
+Use the LLVM 23 executable names provided by your installation if they differ
+from `opt-23` and `clang-23`.
 
 Use `--emit bc` or `--emit obj` when an intermediate LLVM bitcode or object
 artifact is more useful. Pliron supports only the native subset recorded in the

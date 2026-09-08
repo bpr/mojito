@@ -50,10 +50,10 @@ fn native_compile_labeled(src: &str, label: &str) -> NativeModule {
         .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)))
 }
 
-/// The pinned dwarfdump (LLVM 22 lane requirement, same candidate policy as
+/// The pinned dwarfdump (LLVM 23 lane requirement, same candidate policy as
 /// the backend's tools).
 fn dwarfdump() -> &'static str {
-    for candidate in ["llvm-dwarfdump-22", "llvm-dwarfdump"] {
+    for candidate in ["llvm-dwarfdump-23", "llvm-dwarfdump"] {
         if Command::new(candidate)
             .arg("--version")
             .output()
@@ -62,7 +62,7 @@ fn dwarfdump() -> &'static str {
             return candidate;
         }
     }
-    panic!("the pliron lane requires llvm-dwarfdump (LLVM 22)");
+    panic!("the pliron lane requires llvm-dwarfdump (LLVM 23)");
 }
 
 /// gdb is not a lane requirement; backtrace tests skip without it.
@@ -95,7 +95,11 @@ fn gdb_backtrace(exe: &Path) -> String {
         .arg(exe)
         .output()
         .expect("gdb runs");
-    String::from_utf8_lossy(&output.stdout).into_owned()
+    format!(
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
 }
 
 /// The line table names the fixture with its registered label and carries

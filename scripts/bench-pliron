@@ -9,7 +9,8 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-export LLVM_SYS_221_PREFIX="${LLVM_SYS_221_PREFIX:-/usr/lib/llvm-22}"
+export LLVM_SYS_231_PREFIX="${LLVM_SYS_231_PREFIX:-/opt/llvm-23}"
+export PATH="${LLVM_SYS_231_PREFIX}/bin:${PATH}"
 
 echo "==> cargo build --release -p mojito-runtime (release runtime archive)"
 cargo build --release -p mojito-runtime

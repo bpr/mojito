@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Gate for the LLVM lane: the feature-gated Pliron backend inside mojito plus
 # the Stage 0 spike. Deliberately kept out of scripts/check — the default VM
-# lane must never require LLVM. Requires llvm-22-dev and clang; pins and CI
+# lane must never require LLVM. Requires LLVM 23.1; pins and CI
 # recipe: docs/notes/pliron-stage0.md and docs/notes/pliron-stage1.md.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-export LLVM_SYS_221_PREFIX="${LLVM_SYS_221_PREFIX:-/usr/lib/llvm-22}"
+export LLVM_SYS_231_PREFIX="${LLVM_SYS_231_PREFIX:-/opt/llvm-23}"
+export PATH="${LLVM_SYS_231_PREFIX}/bin:${PATH}"
 
 echo "==> cargo build -p mojito-runtime (native runtime archive)"
 cargo build -p mojito-runtime

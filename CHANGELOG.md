@@ -6,6 +6,15 @@ to evolve under the `0.x` compatibility rules.
 
 ## [Unreleased]
 
+### Changed
+
+- Promote the feature-gated Pliron backend from experimental to supported as
+  Mojito's path to LLVM and optimized native binaries. Update to pinned Pliron
+  revision `477e6b0e`, `llvm-sys 231.0.0`, and LLVM 23.1 discovered through
+  `LLVM_SYS_231_PREFIX`; verified MIR remains the backend-independent waist,
+  the VM remains the semantic oracle, and Cranelift remains a feasible future
+  alternate backend.
+
 ### Added
 
 - The filesystem slice's files, streams, paths, and temporary directories:

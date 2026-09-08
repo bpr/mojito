@@ -405,7 +405,7 @@ pub(crate) fn synthesize_exe_wrapper(
         let count_attr = IntegerAttr::new(i64_int, APInt::from_u64(layout.size.max(1), bw(64)));
         let count = ConstantOp::new(ctx, Box::new(count_attr));
         count.get_operation().insert_at_back(current, ctx);
-        let storage = AllocaOp::new(ctx, i8_ty, count.get_result(ctx));
+        let storage = AllocaOp::new(ctx, i8_ty, count.get_result(ctx), 0);
         storage.set_alignment(ctx, layout.align as u32);
         storage.get_operation().insert_at_back(current, ctx);
         let callee_ty = FuncType::get(ctx, void, vec![ptr_ty], false);

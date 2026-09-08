@@ -585,7 +585,7 @@ impl<'a> FnLowering<'a> {
         let i64_int = IntegerType::get(ctx, 64, Signedness::Signless);
         let attr = IntegerAttr::new(i64_int, APInt::from_u64(1, bw(64)));
         let count = ConstantOp::new(ctx, Box::new(attr));
-        let alloca = AllocaOp::new(ctx, handle, count.get_result(ctx));
+        let alloca = AllocaOp::new(ctx, handle, count.get_result(ctx), 0);
         alloca.get_operation().insert_at_front(entry, ctx);
         count.get_operation().insert_at_front(entry, ctx);
         alloca.get_result(ctx)
@@ -601,7 +601,7 @@ impl<'a> FnLowering<'a> {
         let i64_int = IntegerType::get(ctx, 64, Signedness::Signless);
         let attr = IntegerAttr::new(i64_int, APInt::from_u64(size.max(1), bw(64)));
         let count = ConstantOp::new(ctx, Box::new(attr));
-        let alloca = AllocaOp::new(ctx, i8_ty, count.get_result(ctx));
+        let alloca = AllocaOp::new(ctx, i8_ty, count.get_result(ctx), 0);
         alloca.set_alignment(ctx, align as u32);
         // Prepend `[count, alloca]` so the storage precedes every use.
         alloca.get_operation().insert_at_front(entry, ctx);
