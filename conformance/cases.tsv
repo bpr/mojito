@@ -254,6 +254,12 @@ comptime-dict-raising-subscript	reject	assets/type_error/comptime_dict_raising_s
 comptime-collection-runtime-use	reject	assets/type_error/comptime_collection_runtime_use.mojo
 comptime-list-runtime-use	reject	assets/type_error/comptime_list_runtime_use.mojo
 comptime-dict-result-not-freezable	mojo-only	assets/type_error/comptime_dict_result_not_freezable.mojo
+where-violated-sole-candidate	reject	assets/type_error/where_violated_sole_candidate.mojo
+struct-field-unqualified-param	reject	assets/type_error/struct_field_unqualified_param.mojo
+struct-field-non-deinitable-param	reject	assets/type_error/struct_field_non_deinitable_param.mojo
+fieldwise-anytype-field	reject	assets/type_error/fieldwise_anytype_field.mojo
+struct-param-bare-bracket-slot	reject	assets/type_error/struct_param_bare_bracket_slot.mojo
+struct-field-in-bracket-slot	reject	assets/type_error/struct_field_in_bracket_slot.mojo
 dict-hasher-forwarding	run	assets/ok/dict_hasher_forwarding.mojo
 hashable-user-struct	run	conformance/fixtures/hashable_user_struct.mojo
 parametric-statics	run	assets/ok/parametric_static_methods.mojo

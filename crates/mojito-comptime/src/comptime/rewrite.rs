@@ -556,6 +556,14 @@ pub(super) fn rewrite_type(ty: &mut Type, subs: Subs) {
             }
         }
         Type::Named(_, arguments) => rewrite_param_args(arguments, subs),
+        // `Self.T` of a baked type binder spells the bound type.
+        Type::SelfParam(name) => {
+            if let Some(CtValue::Type(bound)) = subs(name)
+                && let Some(source) = source_type_from_ty(&bound)
+            {
+                *ty = source;
+            }
+        }
         Type::Assoc { base, args, .. } => {
             rewrite_type(base, subs);
             rewrite_param_args(args, subs);
@@ -617,7 +625,6 @@ pub(super) fn rewrite_type(ty: &mut Type, subs: Subs) {
         | Type::StringLiteral
         | Type::Float64
         | Type::None
-        | Type::SelfParam(_)
         | Type::SelfType
         | Type::MaterializedCallable(_) => {}
     }
@@ -1494,6 +1501,20 @@ fn rewrite_exprs(es: &mut [Expr], subs: Subs) {
 fn rewrite_param_args(args: &mut [mojito_ast::ast::ParamArg], subs: Subs) {
     for a in args {
         match a {
+            // `Self.n` of a baked value parameter in a bracket slot
+            // (`Scalar[Self.dtype]`, upstream's required spelling) reads the
+            // bound value, like the expression form `Self.n`.
+            mojito_ast::ast::ParamArg::Type(Type::SelfParam(name))
+                if let Some(value) = subs(name)
+                    && !matches!(
+                        value,
+                        CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Param(_)
+                    )
+                    && let Some(materialized) =
+                        value.materialize(mojito_common::token::DUMMY_SPAN) =>
+            {
+                *a = mojito_ast::ast::ParamArg::Value(materialized);
+            }
             mojito_ast::ast::ParamArg::Type(ty) => rewrite_type(ty, subs),
             mojito_ast::ast::ParamArg::Value(e) => {
                 rewrite_expr(e, subs);

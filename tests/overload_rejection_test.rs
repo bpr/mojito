@@ -466,7 +466,7 @@ fn reports_substitution_induced_method_ambiguity_as_ambiguous() {
     // On `Pair[StringLiteral]`, `m(Self.T)` and `m(String)` substitute to the same
     // signature; the tie must be reported as ambiguity, not "no method".
     match err(
-        "@fieldwise_init\nstruct Pair[T: Copyable & Movable]:\n    var a: Self.T\n    def m(self, x: Self.T) -> Int:\n        return 0\n    def m(self, x: StringLiteral) -> Int:\n        return 1\n\nvar p: Pair[StringLiteral] = Pair(\"hi\")\nvar r: Int = p.m(\"x\")\n",
+        "@fieldwise_init\nstruct Pair[T: Copyable & Movable & Deinitable]:\n    var a: Self.T\n    def m(self, x: Self.T) -> Int:\n        return 0\n    def m(self, x: StringLiteral) -> Int:\n        return 1\n\nvar p: Pair[StringLiteral] = Pair(\"hi\")\nvar r: Int = p.m(\"x\")\n",
     ) {
         TypeError::BadCall { reason, .. } => {
             assert!(reason.contains("ambiguous"), "got: {reason}")

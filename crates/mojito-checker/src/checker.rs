@@ -1719,6 +1719,10 @@ struct StructInfo {
     conformance_conditions: HashMap<String, Expr>,
     /// Declared fields, in order (drives the fieldwise constructor).
     fields: Vec<(String, Ty)>,
+    /// The declared field names, available from shell registration on (the
+    /// typed `fields` arrive later), so a `Self.<field>` in a compile-time
+    /// position can be told from an unknown parameter.
+    declared_field_names: Vec<String>,
     /// For each field whose SOURCE annotation applied origin-binder
     /// arguments (`var iter: EntryIter[Self.o2]`), the (callee origin-param
     /// index, enclosing origin-param index) pairs the application bound —

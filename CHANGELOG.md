@@ -8,6 +8,28 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Diagnostic wording and strictness in upstream's shape: a failed
+  message-less `where` clause reports `invalid call to 'show': violated
+  constraint; constraint declared here evaluated to False, expected
+  'conforms_to(T, Copyable)'` (the clause as declared, for a sole candidate
+  and for a pack-gated method such as `Variant.set`; `(condition,
+  "message")` clauses keep `constraint failed: message`, and every call
+  diagnostic now starts `invalid call to`); a struct's own parameter
+  spelled bare inside its body (`var value: T`, `Counter[length]()`)
+  reports `unqualified access to struct parameter 'T'; use 'Self.T'
+  instead`; a field typed by a bare struct type parameter needs a
+  `Deinitable`-proving bound or a (conditional) `Deinitable` conformance
+  (`field 'value' has non-'Deinitable' type 'T'`; the fixtures and tests
+  that stored `Self.T` under `Copyable & Movable`/`AnyType` bounds now
+  carry the bound, and `is_deinitable` follows trait refinement); and
+  `Self.<field>` in a bracket slot reports `cannot access instance field
+  'index' without an instance of 'Counter[length]'` instead of naming the
+  applied struct. The bundled `std.range` iterators spell `Scalar[Self.dtype]`
+  as upstream does (a `Self.n` bracket argument now substitutes inside a
+  value specialization). (`assets/type_error/where_violated_sole_candidate.mojo`,
+  `struct_field_unqualified_param.mojo`,
+  `struct_field_non_deinitable_param.mojo`, `fieldwise_anytype_field.mojo`,
+  `struct_param_bare_bracket_slot.mojo`, `struct_field_in_bracket_slot.mojo`)
 - Compile-time collections: a `comptime` binding of a set or dictionary
   display (or the explicit literal constructors
   `Dict[K, V, default_comp_time_hasher](keys, values, None)` /

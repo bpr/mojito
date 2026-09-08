@@ -4,7 +4,7 @@
 # expect: type 'Box' expects 1 type argument(s), got 2
 
 
-struct Box[T: Copyable & Movable]:
+struct Box[T: Copyable & Movable & Deinitable]:
     var item: Self.T
 
     def __init__(out self, var item: Self.T):

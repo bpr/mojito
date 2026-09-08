@@ -159,10 +159,9 @@ impl Checker {
                     Ok(instantiated) => instantiated,
                     Err(_) => continue,
                 };
-                if let Err(message) = self.method_constraint_result(sig, &method_arguments) {
+                if let Err(failure) = self.method_constraint_result(sig, &method_arguments) {
                     if single_candidate
                         && availability_failure.is_none()
-                        && let Some(message) = message
                         && self
                             .score_method_call(
                                 sig,
@@ -174,7 +173,7 @@ impl Checker {
                             )
                             .is_ok()
                     {
-                        availability_failure = Some(message.to_string());
+                        availability_failure = Some(failure.reason());
                     }
                     continue;
                 }
@@ -253,7 +252,7 @@ impl Checker {
             if let Some(message) = availability_failure {
                 return Err(TypeError::BadCall {
                     func: format!("{sname}.{method}"),
-                    reason: format!("constraint failed: {message}"),
+                    reason: message,
                 });
             }
         }
@@ -770,7 +769,7 @@ impl Checker {
                                     argument.clone(),
                                 );
                             }
-                            if let Err(message) =
+                            if let Err(failure) =
                                 self.method_constraint_result(sig, &method_arguments)
                             {
                                 // A candidate the arguments would have
@@ -778,7 +777,6 @@ impl Checker {
                                 // clause even among overloads (the
                                 // where-gated `set` pair of `Variant`).
                                 if availability_failure.is_none()
-                                    && let Some(message) = message
                                     && self
                                         .score_method_call(
                                             sig,
@@ -790,7 +788,7 @@ impl Checker {
                                         )
                                         .is_ok()
                                 {
-                                    availability_failure = Some(message.to_string());
+                                    availability_failure = Some(failure.reason());
                                 }
                                 continue;
                             }
@@ -930,10 +928,9 @@ impl Checker {
                     else {
                         continue;
                     };
-                    if let Err(message) = self.method_constraint_result(&sig, &method_arguments) {
+                    if let Err(failure) = self.method_constraint_result(&sig, &method_arguments) {
                         if single_candidate
                             && availability_failure.is_none()
-                            && let Some(message) = message
                             && self
                                 .score_method_call(
                                     &sig,
@@ -945,7 +942,7 @@ impl Checker {
                                 )
                                 .is_ok()
                         {
-                            availability_failure = Some(message.to_string());
+                            availability_failure = Some(failure.reason());
                         }
                         continue;
                     }
@@ -1187,10 +1184,9 @@ impl Checker {
             Err(OverloadSelect::NoMatch) => {
                 return Err(TypeError::BadCall {
                     func: method.to_string(),
-                    reason: availability_failure.map_or_else(
-                        || "no overload matches the supplied arguments".to_string(),
-                        |message| format!("constraint failed: {message}"),
-                    ),
+                    reason: availability_failure.unwrap_or_else(|| {
+                        "no overload matches the supplied arguments".to_string()
+                    }),
                 });
             }
             Err(OverloadSelect::Ambiguous) => {

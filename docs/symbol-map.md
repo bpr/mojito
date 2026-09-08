@@ -379,6 +379,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`fold_runtime_crossings`: `materialize[X]()` and `comptime(e)` become
   literals; a bare runtime use of a compile-time collection is rejected with
   upstream's `ImplicitlyCopyable` text; runtime locals shadow).
+- `comptime/unparse.rs` owns the source spelling of a `where` clause for
+  diagnostics (`render_where_clause`, `violated_constraint_message`: the
+  clause as declared with `Self.` dropped, upstream's note text).
 - `comptime/specialize.rs` owns monomorphization and `def`/`struct`
   specialization synthesis (`generate_struct_spec`, tuple-spec ordering, and
   Tuple/TString request seeding), and the per-instantiation method clones of

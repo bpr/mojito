@@ -2,7 +2,7 @@ trait Iterable:
     comptime Element: Copyable & Movable
 
 @fieldwise_init
-struct Bag[T: Copyable & Movable](Iterable):
+struct Bag[T: Copyable & Movable & Deinitable](Iterable):
     comptime Element = Self.T
     var value: Self.T
 

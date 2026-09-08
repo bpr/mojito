@@ -4,7 +4,7 @@ trait HasElement:
         ...
 
 @fieldwise_init
-struct Box[T: Copyable & Movable](HasElement):
+struct Box[T: Copyable & Movable & Deinitable](HasElement):
     comptime Element = Self.T
     var value: Self.T
 

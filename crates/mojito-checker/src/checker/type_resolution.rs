@@ -432,6 +432,11 @@ impl Checker {
                 ) {
                     return self.pointer_type(name, args);
                 }
+                // The enclosing struct's own parameter spelled bare: Mojo
+                // requires `Self.T` / `Self.n` inside the body.
+                if args.is_empty() && self.is_enclosing_struct_param(name) {
+                    return Err(TypeError::UnqualifiedStructParam(name.clone()));
+                }
                 return Err(TypeError::UnknownType(name.clone()));
             }
             // `Self.T` — one of the enclosing struct's *type* parameters (a value
@@ -1796,6 +1801,10 @@ impl Checker {
                     }
                     Ok(TyArg::Val(CtValue::Param(param.clone())))
                 }
+                // A bare parameter name, or `Self.<field>`, in a value slot.
+                ParamArg::Type(ty) if let Some(error) = self.bare_or_field_in_value_slot(ty) => {
+                    Err(error)
+                }
                 ParamArg::Type(_) => Err(TypeError::TypeMismatch {
                     expected: "a value".to_string(),
                     found: "a type".to_string(),
@@ -2435,7 +2444,12 @@ impl Checker {
                     .to_i64()
                     .ok_or_else(|| TypeError::BadSimdWidth(value.to_string()))?
             }
-            mojito_ast::ast::ParamArg::Type(_) => {
+            // A lowercase name parses as a type argument: the enclosing
+            // struct's own value parameter spelled bare, or `Self.<field>`.
+            mojito_ast::ast::ParamArg::Type(ty) => {
+                if let Some(error) = self.bare_or_field_in_value_slot(ty) {
+                    return Err(error);
+                }
                 return Err(TypeError::BadSimdWidth("a type".to_string()));
             }
             mojito_ast::ast::ParamArg::Named { .. } => {
@@ -2446,6 +2460,21 @@ impl Checker {
             Ok(w)
         } else {
             Err(TypeError::BadSimdWidth(w.to_string()))
+        }
+    }
+
+    /// Upstream's rejections of two type-shaped spellings in a value slot: the
+    /// enclosing struct's own parameter spelled bare (`Counter[length]`, which
+    /// parses as a type argument) and a field spelled `Self.<field>`.
+    pub(super) fn bare_or_field_in_value_slot(&self, ty: &SourceType) -> Option<TypeError> {
+        match ty {
+            SourceType::Named(name, args)
+                if args.is_empty() && self.is_enclosing_struct_param(name) =>
+            {
+                Some(TypeError::UnqualifiedStructParam(name.clone()))
+            }
+            SourceType::SelfParam(field) => self.instance_field_without_instance(field),
+            _ => None,
         }
     }
 

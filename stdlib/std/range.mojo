@@ -25,14 +25,14 @@ def _range_length(start: Int, stop: Int, step: Int) -> Int:
 struct _ZeroStartingRange[dtype: DType = DType.int](
     Copyable, Deinitable, ImplicitlyCopyable, Iterable, Iterator, Movable
 ):
-    comptime Element = Scalar[dtype]
+    comptime Element = Scalar[Self.dtype]
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
     ] = Self
-    var curr: Scalar[dtype]
-    var end: Scalar[dtype]
+    var curr: Scalar[Self.dtype]
+    var end: Scalar[Self.dtype]
 
-    def __init__(out self, end: Scalar[dtype]):
+    def __init__(out self, end: Scalar[Self.dtype]):
         var clamped = end
         # Scalar comparisons produce width-1 masks; branch through Int.
         if Int(clamped) < 0:
@@ -43,10 +43,10 @@ struct _ZeroStartingRange[dtype: DType = DType.int](
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self
 
-    def __reversed__(self) -> _StridedRange[dtype]:
-        return _StridedRange[dtype](self.end - 1, Scalar[dtype](-1), Scalar[dtype](-1))
+    def __reversed__(self) -> _StridedRange[Self.dtype]:
+        return _StridedRange[Self.dtype](self.end - 1, Scalar[Self.dtype](-1), Scalar[Self.dtype](-1))
 
-    def __next__(mut self) raises StopIteration -> Scalar[dtype]:
+    def __next__(mut self) raises StopIteration -> Scalar[Self.dtype]:
         var remaining = self.curr
         if Int(remaining) == 0:
             raise StopIteration()
@@ -56,20 +56,20 @@ struct _ZeroStartingRange[dtype: DType = DType.int](
     def __len__(self) -> Int:
         return Int(self.curr)
 
-    def __getitem__(self, idx: Int) -> Scalar[dtype]:
-        return Scalar[dtype](idx)
+    def __getitem__(self, idx: Int) -> Scalar[Self.dtype]:
+        return Scalar[Self.dtype](idx)
 
 struct _SequentialRange[dtype: DType = DType.int](
     Copyable, Deinitable, ImplicitlyCopyable, Iterable, Iterator, Movable
 ):
-    comptime Element = Scalar[dtype]
+    comptime Element = Scalar[Self.dtype]
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
     ] = Self
-    var start: Scalar[dtype]
-    var end: Scalar[dtype]
+    var start: Scalar[Self.dtype]
+    var end: Scalar[Self.dtype]
 
-    def __init__(out self, start: Scalar[dtype], end: Scalar[dtype]):
+    def __init__(out self, start: Scalar[Self.dtype], end: Scalar[Self.dtype]):
         self.start = start
         var stop = end
         if Int(stop) < Int(start):
@@ -79,10 +79,10 @@ struct _SequentialRange[dtype: DType = DType.int](
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self
 
-    def __reversed__(self) -> _StridedRange[dtype]:
-        return _StridedRange[dtype](self.end - 1, self.start - 1, Scalar[dtype](-1))
+    def __reversed__(self) -> _StridedRange[Self.dtype]:
+        return _StridedRange[Self.dtype](self.end - 1, self.start - 1, Scalar[Self.dtype](-1))
 
-    def __next__(mut self) raises StopIteration -> Scalar[dtype]:
+    def __next__(mut self) raises StopIteration -> Scalar[Self.dtype]:
         var current = self.start
         if Int(current) == Int(self.end):
             raise StopIteration()
@@ -92,22 +92,22 @@ struct _SequentialRange[dtype: DType = DType.int](
     def __len__(self) -> Int:
         return Int(self.end) - Int(self.start)
 
-    def __getitem__(self, idx: Int) -> Scalar[dtype]:
-        return self.start + Scalar[dtype](idx)
+    def __getitem__(self, idx: Int) -> Scalar[Self.dtype]:
+        return self.start + Scalar[Self.dtype](idx)
 
 struct _StridedRange[dtype: DType = DType.int](
     Copyable, Deinitable, ImplicitlyCopyable, Iterable, Iterator, Movable
 ):
-    comptime Element = Scalar[dtype]
+    comptime Element = Scalar[Self.dtype]
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
     ] = Self
-    var start: Scalar[dtype]
-    var end: Scalar[dtype]
-    var step: Scalar[dtype]
+    var start: Scalar[Self.dtype]
+    var end: Scalar[Self.dtype]
+    var step: Scalar[Self.dtype]
 
     def __init__(
-        out self, start: Scalar[dtype], end: Scalar[dtype], step: Scalar[dtype]
+        out self, start: Scalar[Self.dtype], end: Scalar[Self.dtype], step: Scalar[Self.dtype]
     ):
         # A zero step has no direction; collapse it to the canonical empty
         # range at construction (upstream's rule), keeping the check out of
@@ -126,11 +126,11 @@ struct _StridedRange[dtype: DType = DType.int](
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self
 
-    def __reversed__(self) -> _StridedRange[dtype]:
-        var last = self.start + Scalar[dtype](len(self) - 1) * self.step
-        return _StridedRange[dtype](last, self.start - self.step, -self.step)
+    def __reversed__(self) -> _StridedRange[Self.dtype]:
+        var last = self.start + Scalar[Self.dtype](len(self) - 1) * self.step
+        return _StridedRange[Self.dtype](last, self.start - self.step, -self.step)
 
-    def __next__(mut self) raises StopIteration -> Scalar[dtype]:
+    def __next__(mut self) raises StopIteration -> Scalar[Self.dtype]:
         if Int(self.step) > 0:
             if Int(self.start) >= Int(self.end):
                 raise StopIteration()
@@ -144,8 +144,8 @@ struct _StridedRange[dtype: DType = DType.int](
     def __len__(self) -> Int:
         return _range_length(Int(self.start), Int(self.end), Int(self.step))
 
-    def __getitem__(self, idx: Int) -> Scalar[dtype]:
-        return self.start + Scalar[dtype](idx) * self.step
+    def __getitem__(self, idx: Int) -> Scalar[Self.dtype]:
+        return self.start + Scalar[Self.dtype](idx) * self.step
 
 def range(end: Int) -> _ZeroStartingRange[DType.int]:
     return _ZeroStartingRange[DType.int](end)

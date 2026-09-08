@@ -9,7 +9,7 @@ struct Point:
     var x: Int
 
 @fieldwise_init
-struct Pair[T: AnyType]:
+struct Pair[T: Movable & Deinitable]:
     var a: Self.T
     var b: Self.T
 

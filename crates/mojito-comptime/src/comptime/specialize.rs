@@ -836,7 +836,12 @@ impl<'a> Elab<'a> {
             return Ok(());
         }
         Err(ComptimeError::Constraint(message.map_or_else(
-            || format!("'{display_name}' where clause evaluated to False"),
+            || {
+                format!(
+                    "'{display_name}': {}",
+                    super::unparse::violated_constraint_message(condition)
+                )
+            },
             str::to_string,
         )))
     }
@@ -1275,25 +1280,25 @@ impl<'a> Elab<'a> {
             // false concrete clause removes the unavailable method; a true one
             // is erased. Any residual method-generic proposition remains for
             // ordinary checker specialization.
-            let mut method_unavailable = false;
+            let mut unavailable: Option<Expr> = None;
             let mut residual_clauses = Vec::new();
             for condition in method.where_clauses.drain(..) {
                 let folded = self.fold_pack_conformance_predicate(&condition, &binding, types)?;
                 match &folded.kind {
                     ExprKind::Bool(false) => {
-                        method_unavailable = true;
+                        unavailable = Some(condition);
                         break;
                     }
                     ExprKind::Bool(true) => {}
                     _ => residual_clauses.push(folded),
                 }
             }
-            if method_unavailable {
+            if let Some(condition) = unavailable {
                 // An unavailable method stays declared as a trap stub behind
-                // a diagnostic clause: a call reports the failed availability
-                // (`constraint failed: …`, upstream's shape) rather than a
-                // missing member, and the stub body never runs.
-                method.where_clauses = vec![unavailable_method_clause(&method, orig, types)];
+                // a diagnostic clause: a call reports the violated clause
+                // (upstream's note, spelled from the source clause) rather
+                // than a missing member, and the stub body never runs.
+                method.where_clauses = vec![unavailable_method_clause(&condition)];
                 method.body = vec![unspecialized_method_stub(orig, &method)];
                 elaborated_methods.push(method);
                 continue;
@@ -2550,28 +2555,12 @@ pub(super) fn method_parameter_is_baked(parameter: &TypeParam, siblings: &[TypeP
 /// own parameters are bound: a runtime trap. Every concrete call retargets
 /// to a per-call clone, so the stub only runs through the erased path.
 /// The diagnostic `where (False, "…")` clause carried by a method whose
-/// pack-dependent availability clause folded to `False` for this
-/// specialization (see the unavailable-method branch of the struct
-/// specializer).
-fn unavailable_method_clause(method: &Method, owner: &str, types: &[CtValue]) -> Expr {
-    let span = method
-        .where_clauses
-        .first()
-        .map(|clause| clause.span)
-        .unwrap_or(mojito_common::token::DUMMY_SPAN);
-    let arguments = types
-        .iter()
-        .map(|value| match value {
-            CtValue::Type(ty) => mojito_types::types::unqualified_type_name(ty),
-            other => format!("{other:?}"),
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    let message = format!(
-        "'{}' is unavailable for {}[{arguments}]: its where clause evaluated to False",
-        method.name,
-        owner.rsplit('$').next().unwrap_or(owner),
-    );
+/// pack-dependent availability clause `condition` folded to `False` for
+/// this specialization (see the unavailable-method branch of the struct
+/// specializer): the message is upstream's note naming the source clause.
+fn unavailable_method_clause(condition: &Expr) -> Expr {
+    let span = condition.span;
+    let message = super::unparse::violated_constraint_message(condition);
     Expr::new(
         ExprKind::TupleLit(vec![
             Expr::new(ExprKind::Bool(false), span),

@@ -518,7 +518,7 @@ impl Checker {
                         }
                         Err(TypeError::BadCall { reason, .. })
                             if reason.starts_with("constraint failed: ")
-                                || reason.starts_with("generic constraint is not satisfied: ") =>
+                                || reason.starts_with("violated constraint; ") =>
                         {
                             // Generic constraints are validated while solving type
                             // arguments, before the final coercion and alias checks.

@@ -1015,29 +1015,57 @@ impl Checker {
         self.method_constraint_result(signature, arguments).is_ok()
     }
 
-    /// Evaluate method availability while preserving an outer diagnostic message.
-    /// `Err(None)` is an ordinary failed constraint; `Err(Some(_))` is the current
-    /// `(condition, "message")` form and may explain a sole-candidate call failure.
+    /// Evaluate method availability, keeping what a call diagnostic needs:
+    /// the retained `(condition, "message")` text, or the violated clause
+    /// itself, which may explain a sole-candidate call failure.
     pub(super) fn method_constraint_result<'signature>(
         &self,
         signature: &'signature MethodSig,
         arguments: &HashMap<String, TyArg>,
-    ) -> Result<(), Option<&'signature str>> {
+    ) -> Result<(), ConstraintFailure<'signature>> {
         let borrowed: HashMap<&str, &TyArg> = arguments
             .iter()
             .map(|(name, argument)| (name.as_str(), argument))
             .collect();
         for constraint in &signature.availability {
             if !self.eval_generic_constraint(constraint, &borrowed) {
-                let message = match constraint {
-                    GenericConstraint::WithMessage(_, message) => Some(message.as_str()),
-                    _ => None,
-                };
-                return Err(message);
+                return Err(match constraint {
+                    GenericConstraint::WithMessage(_, message) => {
+                        ConstraintFailure::Message(message.as_str())
+                    }
+                    violated => ConstraintFailure::Violated(violated),
+                });
             }
         }
         Ok(())
     }
+}
+
+/// Why an availability clause rejected a call.
+pub(super) enum ConstraintFailure<'a> {
+    /// The `(condition, "message")` form: the message is the diagnostic.
+    Message(&'a str),
+    /// A message-less clause: the diagnostic spells the clause itself.
+    Violated(&'a GenericConstraint),
+}
+
+impl ConstraintFailure<'_> {
+    /// The call diagnostic's reason. A retained message keeps its
+    /// `constraint failed:` shape; a violated clause reports upstream's note.
+    pub(super) fn reason(&self) -> String {
+        match self {
+            ConstraintFailure::Message(message) => format!("constraint failed: {message}"),
+            ConstraintFailure::Violated(constraint) => violated_constraint_reason(constraint),
+        }
+    }
+}
+
+/// Upstream's wording for a failed message-less `where` clause: the error
+/// line's `violated constraint` joined with its note naming the clause.
+pub(super) fn violated_constraint_reason(constraint: &impl std::fmt::Display) -> String {
+    format!(
+        "violated constraint; constraint declared here evaluated to False, expected '{constraint}'"
+    )
 }
 
 /// Whether a struct symbol names the bundled `Span` view (bare or

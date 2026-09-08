@@ -5,5 +5,5 @@ trait HasElement:
     comptime Element: AnyType
 
 @fieldwise_init
-struct Box[T: AnyType](HasElement):
+struct Box[T: Movable & Deinitable](HasElement):
     var value: Self.T

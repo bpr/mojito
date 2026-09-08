@@ -373,6 +373,11 @@ impl Checker {
                     .cloned()
                     .collect(),
                 fields: Vec::new(),
+                declared_field_names: declaration
+                    .fields
+                    .iter()
+                    .map(|field| field.name.clone())
+                    .collect(),
                 field_origin_arguments: HashMap::new(),
                 associated: HashMap::new(),
                 associated_constraints: HashMap::new(),
@@ -585,6 +590,24 @@ impl Checker {
                 &ty,
                 &format!("the type of struct field '{}'", f.name),
             )?;
+            // A field typed by a bare struct type parameter needs a
+            // `Deinitable`-proving bound, unless the struct itself declares
+            // `Deinitable` (conditionally, as `Optional`/`List` do), which
+            // discharges the field's destructibility to that declaration.
+            if !declaration.name.contains('$')
+                && let Ty::Param {
+                    name: parameter,
+                    bounds,
+                    ..
+                } = &ty
+                && !self.bounds_prove_deinitable(bounds)
+                && !declaration.conforms.iter().any(|tr| tr == "Deinitable")
+            {
+                return Err(TypeError::FieldNotDeinitable {
+                    field: f.name.clone(),
+                    ty: parameter.trim_start_matches('*').to_string(),
+                });
+            }
             self.declaration_types.borrow_mut().insert(
                 mojito_checked::checked::AnnotationSite::StructField {
                     module: declaration.module.clone(),
@@ -2477,9 +2500,19 @@ impl Checker {
                     true
                 }
             }),
-            Ty::Param { bounds, .. } => bounds.iter().any(|b| b == "Deinitable"),
+            Ty::Param { bounds, .. } => self.bounds_prove_deinitable(bounds),
             _ => true,
         }
+    }
+
+    /// Whether a parameter's bounds prove `Deinitable`: the trait itself, a
+    /// trait refining it, or the trivial-lifecycle marker that implies it.
+    pub(super) fn bounds_prove_deinitable(&self, bounds: &[String]) -> bool {
+        bounds.iter().any(|bound| {
+            bound == "Deinitable"
+                || bound == "TrivialRegisterPassable"
+                || self.trait_refines(bound, "Deinitable")
+        })
     }
 
     pub(super) fn is_hashable(&self, ty: &Ty) -> bool {

@@ -1,4 +1,4 @@
-# expect: 'set' is unavailable for Variant[Conn]
+# expect: violated constraint; constraint declared here evaluated to False, expected 'Ts.all_conforms_to[Deinitable]()'
 from std.utils import Variant
 
 @explicit_destroy("close Conn")

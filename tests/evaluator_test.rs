@@ -709,7 +709,7 @@ fn range_with_zero_step_is_empty() {
 
 // --- Parameterization (generics): type-erased at runtime ---
 
-const PAIR: &str = "@fieldwise_init\nstruct Pair[T: Copyable & Movable]:\n    var left: Self.T\n    var right: Self.T\n";
+const PAIR: &str = "@fieldwise_init\nstruct Pair[T: Copyable & Movable & Deinitable]:\n    var left: Self.T\n    var right: Self.T\n";
 
 #[test]
 fn generic_struct_constructs_and_reads_members() {
@@ -747,7 +747,7 @@ fn inferred_generic_methods_run_type_erased() {
 
 #[test]
 fn generic_target_implicit_conversion_runs_selected_constructor() {
-    let src = "struct Box[T: AnyType]:\n    var value: Self.T\n    @implicit\n    def __init__(out self, value: Self.T):\n        self.value = value\n\ndef take(value: Box[Int]) -> Int:\n    return value.value\n\ndef main():\n    print(take(42))\n";
+    let src = "struct Box[T: Movable & Deinitable]:\n    var value: Self.T\n    @implicit\n    def __init__(out self, value: Self.T):\n        self.value = value\n\ndef take(value: Box[Int]) -> Int:\n    return value.value\n\ndef main():\n    print(take(42))\n";
     assert_eq!(output(src), "42\n");
 }
 
@@ -771,7 +771,7 @@ fn generic_function_over_generic_struct() {
 #[test]
 fn generic_struct_method_dispatches() {
     let e = run(
-        "@fieldwise_init\nstruct Box[T: Copyable & Movable]:\n    var val: Self.T\n\n    def get(self) -> Self.T:\n        return self.val.copy()\n\nvar b: Box[Int] = Box(7)\nvar g: Int = b.get()\n",
+        "@fieldwise_init\nstruct Box[T: Copyable & Movable & Deinitable]:\n    var val: Self.T\n\n    def get(self) -> Self.T:\n        return self.val.copy()\n\nvar b: Box[Int] = Box(7)\nvar g: Int = b.get()\n",
     );
     assert_eq!(binding(&e, "g"), Value::Int(7));
 }

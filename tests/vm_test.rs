@@ -572,7 +572,7 @@ fn parametric_static_methods_dispatch_on_both_spellings() {
     // ABI; overloaded parametric statics run their checker-selected symbols.
     assert_eq!(
         parity(
-            "struct Box[T: Copyable & Movable]:\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    @staticmethod\n    def of(var item: Self.T) -> Self:\n        return Box(item^)\n\n    @staticmethod\n    def of(var item: Self.T, extra: Int) -> Self:\n        return Box(item^)\n\ndef main():\n    var a = Box[Int].of(5)\n    print(a.item)\n    var b = Box.of(String(\"q\"), 3)\n    print(b.item)\n"
+            "struct Box[T: Copyable & Movable & Deinitable]:\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    @staticmethod\n    def of(var item: Self.T) -> Self:\n        return Box(item^)\n\n    @staticmethod\n    def of(var item: Self.T, extra: Int) -> Self:\n        return Box(item^)\n\ndef main():\n    var a = Box[Int].of(5)\n    print(a.item)\n    var b = Box.of(String(\"q\"), 3)\n    print(b.item)\n"
         ),
         "5\nq\n"
     );

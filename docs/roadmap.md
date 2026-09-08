@@ -105,42 +105,59 @@ exempt from the ordering.
   and String surfaces toward the audited head (`docs/features.md` records
   what lands). The tasks below are in impact order: soundness of the
   executable oracle first, then everyday spellings that reject today, then
-  parity details; no task depends on a later one. A
-  task closes when its bullets are done; a residue discovered inside a task
-  moves to the task that owns its fix (or to task 2, the deliberate
-  deferrals), never back to a finished one. The remaining tasks are direct.
+  parity details; no task depends on a later one. Every bullet is a
+  conscious, recorded limit (not silently unfinished work); a task closes
+  when its bullets are done, and a residue discovered inside a task moves
+  to the task that owns its fix, never back to a finished one. The tasks
+  group the limits by the fix they share.
 
-  1. **Diagnostic wording and strictness.**
-     - An unavailable where-gated method reports `'set' is unavailable for
-       Variant[Conn]: its where clause evaluated to False` rather than
-       upstream's clause text.
-     - A bare `T` in a struct field type (`var value: T`) is rejected only
-       by the specialization conformance oracle (`unknown type 'T'`) and a
-       non-`Deinitable` field parameter (`struct Box[T: Copyable & Movable]:
-       var value: Self.T`) is accepted, where upstream reports `use Self.T`
-       and requires a `Deinitable` bound.
-     - A struct's own value parameter spelled bare (`n` rather than
-       `Self.n`) in an expression-position bracket slot reaches MIR as an
-       untyped `UseVar`; upstream rejects the bare spelling ("use
-       `Self.n`"), so it should be a checker error.
-     - `Counter[Self.index]` (a field, not a parameter) in a bracket slot
-       reports `not a compile-time Int constant: Counter` rather than
-       naming the field.
-  2. **Deliberate deferrals.** Nothing depends on these; each is a
-     conscious limit, listed here so it is not mistaken for unfinished
-     task work.
-     - Clones are minted per whole instance (no reachability pruning) and
-       re-checked each discovery round: `benchmarks/compile/stdlib_heavy`
-       is about 2.2x its pre-clone baseline in release
-       (`docs/performance.md`); the repr methods added 2026-09-05 cost
-       about 5% in debug across the compile benchmarks. Lever:
-       reachability-pruned minting.
+  1. **Temporary views and their origins** (the temp-view-anchoring
+     family; the one cluster where the VM oracle can be unsound).
+     - Destructuring a returned `Tuple` of origin-bearing views (`var a, b
+       = s.split_at_grapheme(n)`) reports `use after Pointer deallocation`
+       on the VM while a bound pair read by index (`pair[0]`, `pair[1]`) and
+       a returned tuple literal of views both run.
+     - `split_at_grapheme` returns the receiver's origin where upstream
+       returns `ImmOrigin` views.
+     - An overloaded free def over a temporary view argument
+       (`reversed(StringSpan(s))`; bind the view first, or call
+       `graphemes_reversed()`) frees the view before the loop runs.
+     - `value()` on a temporary `Optional` holding a view
+       (`it.peek_next().value()`) is rejected as a reference to a non-place
+       (bind the Optional first).
+     - Boundary, not work: casting a tracked pointer to an untracked origin
+       at its source's last use
+       (`s.unsafe_ptr().unsafe_origin_cast[ImmUntrackedOrigin]()`) frees
+       the source before the pointer is read — as upstream would.
+  2. **Compile-time evaluation residues** (what VM CTFE can bind and
+     resolve).
+     - A VM-evaluated compile-time expression whose result is pointer-backed
+       (`comptime C = M.copy()`, a bare `Optional`, a `String`) cannot cross
+       back (`cannot cross back from VM CTFE`; upstream binds it): the
+       freezable results are scalars, Bool, String, tuples, fieldwise
+       structs, and displays.
+     - Compile-time Dict/Set key identity is structural `CtValue` equality,
+       exact for every prelude key type (a user-struct key with a
+       non-fieldwise `__eq__` diverges).
+     - The typing probe checks the CTFE subprogram once more per VM-bound
+       expression.
+     - A non-parameterized struct alias mentioning a value parameter
+       (`comptime Alias = S[Self.T, Self.length]`) resolved through an
+       instance (`S[Int, 3].Alias`) keeps `length` symbolic (`expected
+       S[Int, length], found S[Int, 3]`): `associated_type_from_base`
+       substitutes type parameters only. Parameterized aliases substitute
+       both.
+  3. **Monomorphization coverage and cost** (where the erased path still
+     stands in for an instance clone, and what minting costs).
      - An instantiation whose argument mentions `StringLiteral` (`{"a": 1}`
        is `Dict[StringLiteral, Int]`) keeps the erased path: its values
        keep the literal runtime representation while an un-annotated
        binding materializes `String`. Lifting it needs one runtime
        representation for `StringLiteral` and `String`, or typing the
-       display as `Dict[String, Int]` as Mojo does.
+       display as `Dict[String, Int]` as Mojo does. `StringDict.__getitem__`
+       stays a `Copyable`-guarded copy for the same reason: its
+       `StringLiteral`-keyed entry list keeps the erased path, where a
+       reference result cannot spell its interior origin.
      - A call inside an unstamped bundled body on a bundled struct's
        generic method keeps the erased path (requests are admitted from
        user code, clone bodies, variadic specs, instances, and user
@@ -148,9 +165,22 @@ exempt from the ordering.
      - An instance clone whose walk cannot resolve an application (a
        variadic template over a nested public `Tuple` argument) is dropped
        to the erased path rather than failing the program.
-     - Casting a tracked pointer to an untracked origin at its source's
-       last use (`s.unsafe_ptr().unsafe_origin_cast[ImmUntrackedOrigin]()`)
-       frees the source before the pointer is read — as upstream would.
+     - Value-parameterized structs get no instance clones, so an erased
+       body's `_unqualified_type_name[Self.T]()` spells `T`
+       (`repr([1, 2])` prints `Array[T, 2]([Int(1), Int(2)])` where
+       upstream prints the element type), and a `Self.n` bracket argument
+       inside such a body (`Counter[Self.length](i)`) is VM-only: native
+       monomorphization needs a compile-time-constant value argument
+       (`unsupported value parameter 'length' is not compile-time
+       constant`).
+     - Clones are minted per whole instance (no reachability pruning) and
+       re-checked each discovery round: `benchmarks/compile/stdlib_heavy`
+       is about 2.2x its pre-clone baseline in release
+       (`docs/performance.md`); the repr methods added 2026-09-05 cost
+       about 5% in debug across the compile benchmarks. Lever:
+       reachability-pruned minting.
+  4. **Variadic packs and tuples** (what the pack machinery types
+     syntactically or refuses).
      - Type-pack calls inside a nested `def` and whole-pack-forwarded calls
        keep the syntactic element-typing path (`a heterogeneous pack
        specialization needs an expression whose type is statically evident
@@ -166,74 +196,43 @@ exempt from the ordering.
        (`Tuple[TypeNames[Int]]`) keeps the fixed-arity diagnostic: its
        erased shell has no sound nominal form (the public `Tuple` is the one
        compiler-known template whose `*Ts` absorbs every argument).
-     - A standalone nullary vector construction `SIMD[d, w]()` rejects
-       (`SIMD construction expects w element(s) or 1 to splat, got 0`);
-       only a Tuple element defaults to zero lanes.
      - A public Tuple as an explicit type argument does not conform to
        `Deinitable` (`make[T: Defaultable & Deinitable]()` over
        `Tuple[Int, Bool]` reports the bound failure) while the inferred
        shape runs.
-     - Value-parameterized structs get no instance clones, so an erased
-       body's `_unqualified_type_name[Self.T]()` spells `T`
-       (`repr([1, 2])` prints `Array[T, 2]([Int(1), Int(2)])` where
-       upstream prints the element type), and a `Self.n` bracket argument
-       inside such a body (`Counter[Self.length](i)`) is VM-only: native
-       monomorphization needs a compile-time-constant value argument
-       (`unsupported value parameter 'length' is not compile-time
-       constant`).
-     - `_unqualified_type_name` spells nested structs unqualified where
-       upstream keeps a non-prelude struct's module path
-       (`Optional[std.collections.dict.Dict[...]]`, `List[up.Flag[True]]`)
-       while `List`/`Optional`/`String`/`SIMD` stay bare.
-     - No `std.builtin.rebind.downcast`: `Dict`/`Set` guard `keys`/`values`/
-       `items`/`__iter__` (and `Dict.keys` needs copyable values as well as
-       keys, since the key view wraps the entry view) with `where
-       conforms_to(K, Copyable)` instead of laundering the parameter, and
-       `StringDict.__getitem__` stays a `Copyable`-guarded copy: its
-       `StringLiteral`-keyed entry list keeps the erased path, where a
-       reference result cannot spell its interior origin.
-     - A non-parameterized struct alias mentioning a value parameter
-       (`comptime Alias = S[Self.T, Self.length]`) resolved through an
-       instance (`S[Int, 3].Alias`) keeps `length` symbolic (`expected
-       S[Int, length], found S[Int, 3]`): `associated_type_from_base`
-       substitutes type parameters only. Parameterized aliases substitute
-       both.
-     - Destructuring a returned `Tuple` of origin-bearing views (`var a, b
-       = s.split_at_grapheme(n)`) reports `use after Pointer deallocation`
-       on the VM while a bound pair read by index (`pair[0]`, `pair[1]`) and
-       a returned tuple literal of views both run; `split_at_grapheme`
-       also returns the receiver's origin where upstream returns `ImmOrigin`
-       views. An overloaded free def over a temporary view argument
-       (`reversed(StringSpan(s))`; bind the view first, or call
-       `graphemes_reversed()`) frees the view before the loop runs, and
-       `value()` on a temporary `Optional` holding a view
-       (`it.peek_next().value()`) is rejected as a reference to a non-place
-       (bind the Optional first); both are the same temp-view-anchoring
-       family.
-     - Grapheme segmentation is the documented UAX #29 essentials subset
-       (hand-maintained Control/Extend/SpacingMark ranges, no
-       Extended_Pictographic or Prepend data); reverse iteration re-scans
-       forward from the nearest CR/LF/Control boundary.
-     - String literals have no methods (`"abc".byte_length()` rejects):
-       a literal-typed value converts through `String(...)` first.
-     - `if`/`while` accept a width-1 bool lane through the `Bool(x)`
-       truthiness conversion, but `and`/`or` still demand `Bool` operands
-       (`a == b or c < d` over `UInt64`s rejects; nest the tests).
-     - A VM-evaluated compile-time expression whose result is pointer-backed
-       (`comptime C = M.copy()`, a bare `Optional`, a `String`) cannot cross
-       back (`cannot cross back from VM CTFE`; upstream binds it): the
-       freezable results are scalars, Bool, String, tuples, fieldwise
-       structs, and displays. Compile-time Dict/Set key identity is
-       structural `CtValue` equality, exact for every prelude key type (a
-       user-struct key with a non-fieldwise `__eq__` diverges), and the
-       typing probe checks the CTFE subprogram once more per VM-bound
-       expression.
+     - A standalone nullary vector construction `SIMD[d, w]()` rejects
+       (`SIMD construction expects w element(s) or 1 to splat, got 0`);
+       only a Tuple element defaults to zero lanes.
+  5. **Everyday spellings that still reject** (checker context and
+     stdlib API shapes).
      - A list display as an argument to an explicitly applied constructor at
        runtime (`Dict[String, Int](["a"], [1], None)`) takes no context from
        the parameterized `List[Self.K]` parameter and materializes as
        `Array`, so no overload matches; spell the lists
        (`List[String]("a", __list_literal__=None)`), as a compile-time
        value's materialization does.
+     - A struct's own value parameter as a SIMD width in a signature
+       (`def zeros(self) -> SIMD[DType.int64, Self.length]`) reports `SIMD
+       width must be a positive power of two, got a type`: the width slot
+       needs a concrete comptime `Int`, where upstream binds the parameter.
+     - String literals have no methods (`"abc".byte_length()` rejects):
+       a literal-typed value converts through `String(...)` first.
+     - `if`/`while` accept a width-1 bool lane through the `Bool(x)`
+       truthiness conversion, but `and`/`or` still demand `Bool` operands
+       (`a == b or c < d` over `UInt64`s rejects; nest the tests).
+     - No `std.builtin.rebind.downcast`: `Dict`/`Set` guard `keys`/`values`/
+       `items`/`__iter__` (and `Dict.keys` needs copyable values as well as
+       keys, since the key view wraps the entry view) with `where
+       conforms_to(K, Copyable)` instead of laundering the parameter.
+  6. **Naming and Unicode details** (output text only).
+     - `_unqualified_type_name` spells nested structs unqualified where
+       upstream keeps a non-prelude struct's module path
+       (`Optional[std.collections.dict.Dict[...]]`, `List[up.Flag[True]]`)
+       while `List`/`Optional`/`String`/`SIMD` stay bare.
+     - Grapheme segmentation is the documented UAX #29 essentials subset
+       (hand-maintained Control/Extend/SpacingMark ranges, no
+       Extended_Pictographic or Prepend data); reverse iteration re-scans
+       forward from the nearest CR/LF/Control boundary.
 
 - [ ] **Filesystem and I/O slice** — representative file/path/stream APIs
   on the Writer and explicit-destroy foundations.

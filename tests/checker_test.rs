@@ -772,7 +772,7 @@ fn loop_variable_does_not_leak_after_for() {
 // --- Parameterization (generics) ---
 
 /// A generic `Pair[T]` struct used by several tests below.
-const PAIR: &str = "@fieldwise_init\nstruct Pair[T: Copyable & Movable]:\n    var left: Self.T\n    var right: Self.T\n";
+const PAIR: &str = "@fieldwise_init\nstruct Pair[T: Copyable & Movable & Deinitable]:\n    var left: Self.T\n    var right: Self.T\n";
 
 #[test]
 fn accepts_generic_struct_construction_and_member() {
@@ -806,7 +806,7 @@ fn accepts_generic_function_over_generic_struct() {
 #[test]
 fn accepts_generic_struct_method_returning_self_param() {
     ok(
-        "@fieldwise_init\nstruct Box[T: ImplicitlyCopyable & Movable]:\n    var val: Self.T\n\n    def get(self) -> Self.T:\n        return self.val\n\nvar b: Box[Int] = Box(7)\nvar g: Int = b.get()\n",
+        "@fieldwise_init\nstruct Box[T: ImplicitlyCopyable & Movable & Deinitable]:\n    var val: Self.T\n\n    def get(self) -> Self.T:\n        return self.val\n\nvar b: Box[Int] = Box(7)\nvar g: Int = b.get()\n",
     );
 }
 
@@ -849,7 +849,7 @@ fn rejects_bare_type_parameter_as_struct_field() {
 #[test]
 fn rejects_wrong_type_argument_count() {
     let e = err(
-        "@fieldwise_init\nstruct Box[T: Copyable & Movable]:\n    var v: Self.T\n\nvar b: Box[Int, Int] = Box(1)\n",
+        "@fieldwise_init\nstruct Box[T: Copyable & Movable & Deinitable]:\n    var v: Self.T\n\nvar b: Box[Int, Int] = Box(1)\n",
     );
     assert!(
         matches!(
@@ -1039,7 +1039,9 @@ fn rejects_by_value_struct_self_containment() {
 
 #[test]
 fn rejects_self_param_naming_unknown_parameter() {
-    let e = err("@fieldwise_init\nstruct Box[T: Copyable & Movable]:\n    var v: Self.U\n");
+    let e = err(
+        "@fieldwise_init\nstruct Box[T: Copyable & Movable & Deinitable]:\n    var v: Self.U\n",
+    );
     assert_eq!(e, TypeError::UnknownSelfParam("U".into()));
 }
 
@@ -1169,7 +1171,7 @@ fn copyable_reference_next_refines_a_value_requirement() {
     // A conditional generic conformance supplies the Copyable proof while the
     // iterator template is still symbolic.
     ok(
-        "trait IteratorContract:\n    comptime Element: Movable\n    def __next__(mut self) -> Self.Element: ...\n\n@fieldwise_init\nstruct GenericIterator[T: Movable](\n    IteratorContract where conforms_to(T, Copyable)\n):\n    comptime Element = Self.T\n    var value: Self.T\n    def __next__(mut self) -> ref[origin_of(self.value)] Self.T where conforms_to(Self.T, Copyable):\n        return self.value\n",
+        "trait IteratorContract:\n    comptime Element: Movable\n    def __next__(mut self) -> Self.Element: ...\n\n@fieldwise_init\nstruct GenericIterator[T: Movable & Deinitable](\n    IteratorContract where conforms_to(T, Copyable)\n):\n    comptime Element = Self.T\n    var value: Self.T\n    def __next__(mut self) -> ref[origin_of(self.value)] Self.T where conforms_to(Self.T, Copyable):\n        return self.value\n",
     );
 }
 
@@ -1310,7 +1312,7 @@ fn typed_call_effects_require_the_same_enclosing_error_type() {
 #[test]
 fn accepts_trait_comptime_type_member_conformance() {
     ok(
-        "trait HasElement:\n    comptime Element: AnyType\n\n@fieldwise_init\nstruct Box[T: AnyType](HasElement):\n    comptime Element = Self.T\n    var value: Self.T\n",
+        "trait HasElement:\n    comptime Element: AnyType\n\n@fieldwise_init\nstruct Box[T: Movable & Deinitable](HasElement):\n    comptime Element = Self.T\n    var value: Self.T\n",
     );
 }
 
@@ -1324,7 +1326,7 @@ fn accepts_trait_comptime_value_member_conformance() {
 #[test]
 fn rejects_missing_trait_comptime_member() {
     let e = err(
-        "trait HasElement:\n    comptime Element: AnyType\n\n@fieldwise_init\nstruct Box[T: AnyType](HasElement):\n    var value: Self.T\n",
+        "trait HasElement:\n    comptime Element: AnyType\n\n@fieldwise_init\nstruct Box[T: Movable & Deinitable](HasElement):\n    var value: Self.T\n",
     );
     assert!(
         matches!(
@@ -1401,11 +1403,11 @@ fn rejects_conflicting_inherited_associated_member_kinds() {
 #[test]
 fn applies_conditional_conformance_after_specialization() {
     ok(
-        "@fieldwise_init\nstruct Wrapper[T: AnyType](Writable where conforms_to(T, Writable)):\n    var value: Self.T\n\ndef accept[T: Writable](value: T):\n    pass\n\ndef main():\n    accept(Wrapper[Int](1))\n",
+        "@fieldwise_init\nstruct Wrapper[T: Movable & Deinitable](Writable where conforms_to(T, Writable)):\n    var value: Self.T\n\ndef accept[T: Writable](value: T):\n    pass\n\ndef main():\n    accept(Wrapper[Int](1))\n",
     );
 
     let e = err(
-        "@fieldwise_init\nstruct Opaque:\n    pass\n\n@fieldwise_init\nstruct Wrapper[T: AnyType](Writable where conforms_to(T, Writable)):\n    var value: Self.T\n\ndef accept[T: Writable](value: T):\n    pass\n\ndef main():\n    accept(Wrapper[Opaque](Opaque()))\n",
+        "@fieldwise_init\nstruct Opaque:\n    pass\n\n@fieldwise_init\nstruct Wrapper[T: Movable & Deinitable](Writable where conforms_to(T, Writable)):\n    var value: Self.T\n\ndef accept[T: Writable](value: T):\n    pass\n\ndef main():\n    accept(Wrapper[Opaque](Opaque()))\n",
     );
     assert!(
         matches!(&e, TypeError::TraitNotSatisfied { trait_name, .. } if trait_name == "Writable"),
@@ -1504,7 +1506,7 @@ fn accepts_comptime_constant_as_value_argument() {
 #[test]
 fn accepts_explicit_type_argument() {
     ok(
-        "@fieldwise_init\nstruct Box[T: Copyable & Movable]:\n    var v: Self.T\n\nvar b: Box[Int] = Box[Int](5)\n",
+        "@fieldwise_init\nstruct Box[T: Copyable & Movable & Deinitable]:\n    var v: Self.T\n\nvar b: Box[Int] = Box[Int](5)\n",
     );
 }
 
@@ -2821,7 +2823,7 @@ fn evaluates_defaults_that_depend_on_earlier_parameters() {
 #[test]
 fn applies_defaulted_type_parameters() {
     ok(
-        "@fieldwise_init\nstruct Box[T: Copyable = Int]:\n    var value: Self.T\n\nvar box: Box = Box(7)\n",
+        "@fieldwise_init\nstruct Box[T: Copyable & Deinitable = Int]:\n    var value: Self.T\n\nvar box: Box = Box(7)\n",
     );
 }
 
@@ -2856,13 +2858,13 @@ fn infers_parametric_struct_static_parameters() {
     // inferred from the argument types) both dispatch a parametric struct's
     // static; the receiver substitution resolves `Self` in the return type.
     ok(
-        "struct Box[T: Copyable & Movable]:\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    @staticmethod\n    def filled(var item: Self.T) -> Self:\n        return Box(item^)\n\nvar a: Box[Int] = Box[Int].filled(7)\nvar b: Box[StringLiteral] = Box.filled(\"hi\")\n",
+        "struct Box[T: Copyable & Movable & Deinitable]:\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    @staticmethod\n    def filled(var item: Self.T) -> Self:\n        return Box(item^)\n\nvar a: Box[Int] = Box[Int].filled(7)\nvar b: Box[StringLiteral] = Box.filled(\"hi\")\n",
     );
     // A sole static candidate surfaces the receiver solver's own diagnostic
     // instead of collapsing it into a generic no-overload failure.
     assert!(matches!(
         err(
-            "struct Box[T: Copyable & Movable]:\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    @staticmethod\n    def filled(var item: Self.T) -> Self:\n        return Box(item^)\n\nvar a = Box[Int, Int].filled(7)\n"
+            "struct Box[T: Copyable & Movable & Deinitable]:\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    @staticmethod\n    def filled(var item: Self.T) -> Self:\n        return Box(item^)\n\nvar a = Box[Int, Int].filled(7)\n"
         ),
         TypeError::WrongTypeArgCount { .. }
     ));
@@ -2937,11 +2939,11 @@ fn enforces_trailing_where_constraints_and_type_equality() {
 #[test]
 fn gates_methods_with_parent_parameter_where_constraints() {
     ok(
-        "@fieldwise_init\nstruct Wrapper[T: Copyable]:\n    var value: Self.T\n    def compare(self, other: Self.T) -> Bool where conforms_to(Self.T, Comparable):\n        return True\n\nvar wrapped = Wrapper[Int](1)\nvar same = wrapped.compare(1)\n",
+        "@fieldwise_init\nstruct Wrapper[T: Copyable & Deinitable]:\n    var value: Self.T\n    def compare(self, other: Self.T) -> Bool where conforms_to(Self.T, Comparable):\n        return True\n\nvar wrapped = Wrapper[Int](1)\nvar same = wrapped.compare(1)\n",
     );
     assert!(matches!(
         err(
-            "@fieldwise_init\nstruct Wrapper[T: Copyable]:\n    var value: Self.T\n    def compare(self, other: Self.T) -> Bool where conforms_to(Self.T, Comparable):\n        return False\n\nvar wrapped = Wrapper[StringLiteral](\"x\")\nvar same = wrapped.compare(\"x\")\n"
+            "@fieldwise_init\nstruct Wrapper[T: Copyable & Deinitable]:\n    var value: Self.T\n    def compare(self, other: Self.T) -> Bool where conforms_to(Self.T, Comparable):\n        return False\n\nvar wrapped = Wrapper[StringLiteral](\"x\")\nvar same = wrapped.compare(\"x\")\n"
         ),
         TypeError::NoSuchMethod { .. } | TypeError::BadCall { .. }
     ));
@@ -2950,7 +2952,7 @@ fn gates_methods_with_parent_parameter_where_constraints() {
 #[test]
 fn applies_implicit_conversion_to_a_specialized_generic_target() {
     ok(
-        "struct Box[T: AnyType]:\n    var value: Self.T\n    @implicit\n    def __init__(out self, value: Self.T):\n        self.value = value\n\ndef take(value: Box[Int]) -> Int:\n    return value.value\n\nvar answer: Int = take(42)\n",
+        "struct Box[T: Movable & Deinitable]:\n    var value: Self.T\n    @implicit\n    def __init__(out self, value: Self.T):\n        self.value = value\n\ndef take(value: Box[Int]) -> Int:\n    return value.value\n\nvar answer: Int = take(42)\n",
     );
 }
 
@@ -4795,7 +4797,7 @@ fn generic_hand_written_init() {
     // by unifying the constructor's parameters against the arguments (inferred), or
     // supplied explicitly (`Box[Int](5)`).
     ok(
-        "struct Box[T: Copyable & Movable]:\n    var v: Self.T\n    def __init__(out self, v: Self.T):\n        self.v = v.copy()\n    def get(self) -> Self.T:\n        return self.v.copy()\n\ndef main():\n    var a: Box[Int] = Box(5)\n    var b: Box[Int] = Box[Int](6)\n    print(a.get(), b.get())\n",
+        "struct Box[T: Copyable & Movable & Deinitable]:\n    var v: Self.T\n    def __init__(out self, v: Self.T):\n        self.v = v.copy()\n    def get(self) -> Self.T:\n        return self.v.copy()\n\ndef main():\n    var a: Box[Int] = Box(5)\n    var b: Box[Int] = Box[Int](6)\n    print(a.get(), b.get())\n",
     );
     // A UnsafePointer field of the type parameter, allocated with `Self.T`.
     ok(
@@ -4804,7 +4806,7 @@ fn generic_hand_written_init() {
     // A wrong-typed constructor argument is still rejected (solved T = Int here).
     assert!(matches!(
         err(
-            "struct Box[T: Copyable & Movable]:\n    var v: Self.T\n    def __init__(out self, v: Self.T):\n        self.v = v.copy()\n\ndef main():\n    var a: Box[Int] = Box[Int](\"no\")\n"
+            "struct Box[T: Copyable & Movable & Deinitable]:\n    var v: Self.T\n    def __init__(out self, v: Self.T):\n        self.v = v.copy()\n\ndef main():\n    var a: Box[Int] = Box[Int](\"no\")\n"
         ),
         TypeError::TypeMismatch { .. }
     ));
@@ -5053,14 +5055,14 @@ fn concrete_conversions_and_abs_route_through_dunders() {
 #[test]
 fn conditional_iterable_conformance_proves_its_associated_iterator_contract() {
     ok(
-        "trait IteratorContract:\n    comptime Element: Movable\n    def next(self) -> Self.Element: ...\n\ntrait IterableContract:\n    comptime Element: Movable\n    comptime Iter: IteratorContract\n    def iter(self) -> Self.Iter: ...\n\n@fieldwise_init\nstruct Cursor[T: Movable](IteratorContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    var value: Self.T\n    def next(self) -> Self.T where conforms_to(Self.T, Copyable):\n        return self.value.copy()\n\n@fieldwise_init\nstruct Container[T: Movable](IterableContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    comptime Iter = Cursor[Self.T]\n    var value: Self.T\n    def iter(self) -> Cursor[Self.T] where conforms_to(Self.T, Copyable):\n        return Cursor[Self.T](self.value.copy())\n",
+        "trait IteratorContract:\n    comptime Element: Movable\n    def next(self) -> Self.Element: ...\n\ntrait IterableContract:\n    comptime Element: Movable\n    comptime Iter: IteratorContract\n    def iter(self) -> Self.Iter: ...\n\n@fieldwise_init\nstruct Cursor[T: Movable & Deinitable](IteratorContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    var value: Self.T\n    def next(self) -> Self.T where conforms_to(Self.T, Copyable):\n        return self.value.copy()\n\n@fieldwise_init\nstruct Container[T: Movable & Deinitable](IterableContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    comptime Iter = Cursor[Self.T]\n    var value: Self.T\n    def iter(self) -> Cursor[Self.T] where conforms_to(Self.T, Copyable):\n        return Cursor[Self.T](self.value.copy())\n",
     );
 }
 
 #[test]
 fn unrelated_conditional_conformance_does_not_prove_an_iterator_contract() {
     let error = err(
-        "trait IteratorContract:\n    comptime Element: Movable\n    def next(self) -> Self.Element: ...\n\ntrait IterableContract:\n    comptime Element: Movable\n    comptime Iter: IteratorContract\n    def iter(self) -> Self.Iter: ...\n\n@fieldwise_init\nstruct Cursor[T: Movable](IteratorContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    var value: Self.T\n    def next(self) -> Self.T where conforms_to(Self.T, Copyable):\n        return self.value.copy()\n\n@fieldwise_init\nstruct BadContainer[T: Movable](IterableContract where conforms_to(T, Equatable)):\n    comptime Element = Self.T\n    comptime Iter = Cursor[Self.T]\n    var value: Self.T\n    def iter(self) -> Cursor[Self.T] where conforms_to(Self.T, Equatable):\n        return Cursor[Self.T](self.value.copy())\n",
+        "trait IteratorContract:\n    comptime Element: Movable\n    def next(self) -> Self.Element: ...\n\ntrait IterableContract:\n    comptime Element: Movable\n    comptime Iter: IteratorContract\n    def iter(self) -> Self.Iter: ...\n\n@fieldwise_init\nstruct Cursor[T: Movable & Deinitable](IteratorContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    var value: Self.T\n    def next(self) -> Self.T where conforms_to(Self.T, Copyable):\n        return self.value.copy()\n\n@fieldwise_init\nstruct BadContainer[T: Movable & Deinitable](IterableContract where conforms_to(T, Equatable)):\n    comptime Element = Self.T\n    comptime Iter = Cursor[Self.T]\n    var value: Self.T\n    def iter(self) -> Cursor[Self.T] where conforms_to(Self.T, Equatable):\n        return Cursor[Self.T](self.value.copy())\n",
     );
     assert!(
         matches!(
@@ -5169,7 +5171,7 @@ fn conditional_conformance_discharges_a_parameterized_member_bound() {
     // the assumption that discharges it — the shape the origin-parameterized
     // collection iterators use.
     ok(
-        "trait IteratorContract:\n    comptime Element: Movable\n    def next(self) -> Self.Element: ...\n\ntrait IterableContract:\n    comptime Element: Movable\n    comptime IterType[mut: Bool, //, origin: Origin[mut=mut]]: IteratorContract\n    def make(ref self) -> Self.IterType[origin_of(self)]: ...\n\n@fieldwise_init\nstruct Cursor[T: Movable](IteratorContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    var value: Self.T\n    def next(self) -> Self.T where conforms_to(Self.T, Copyable):\n        return self.value.copy()\n\n@fieldwise_init\nstruct Container[T: Movable](IterableContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    comptime IterType[mut: Bool, //, origin: Origin[mut=mut]] = Cursor[Self.T]\n    var value: Self.T\n    def make(ref self) -> Self.IterType[origin_of(self)] where conforms_to(Self.T, Copyable):\n        return Cursor[Self.T](self.value.copy())\n",
+        "trait IteratorContract:\n    comptime Element: Movable\n    def next(self) -> Self.Element: ...\n\ntrait IterableContract:\n    comptime Element: Movable\n    comptime IterType[mut: Bool, //, origin: Origin[mut=mut]]: IteratorContract\n    def make(ref self) -> Self.IterType[origin_of(self)]: ...\n\n@fieldwise_init\nstruct Cursor[T: Movable & Deinitable](IteratorContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    var value: Self.T\n    def next(self) -> Self.T where conforms_to(Self.T, Copyable):\n        return self.value.copy()\n\n@fieldwise_init\nstruct Container[T: Movable & Deinitable](IterableContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    comptime IterType[mut: Bool, //, origin: Origin[mut=mut]] = Cursor[Self.T]\n    var value: Self.T\n    def make(ref self) -> Self.IterType[origin_of(self)] where conforms_to(Self.T, Copyable):\n        return Cursor[Self.T](self.value.copy())\n",
     );
 }
 
@@ -5179,7 +5181,7 @@ fn owned_iterable_conformance_binds_iterator_owned_type() {
     // `IteratorOwnedType` (current Mojo's owned-iterator member), consumed by an
     // ownership-taking `__iter__(var self)`.
     ok(
-        "trait Iterator:\n    comptime Element: Movable\n    def __next__(mut self) -> Self.Element: ...\n\ntrait IterableOwned:\n    comptime Element: Movable\n    comptime IteratorOwnedType: Iterator\n    def __iter__(var self) -> Self.IteratorOwnedType: ...\n\n@fieldwise_init\nstruct Drain[T: Movable](Iterator):\n    comptime Element = Self.T\n    var value: Self.T\n    def __next__(mut self) -> Self.T:\n        return self.value^\n\n@fieldwise_init\nstruct Bucket[T: Movable](IterableOwned):\n    comptime Element = Self.T\n    comptime IteratorOwnedType = Drain[Self.T]\n    var value: Self.T\n    def __iter__(var self) -> Drain[Self.T]:\n        return Drain[Self.T](self.value^)\n",
+        "trait Iterator:\n    comptime Element: Movable\n    def __next__(mut self) -> Self.Element: ...\n\ntrait IterableOwned:\n    comptime Element: Movable\n    comptime IteratorOwnedType: Iterator\n    def __iter__(var self) -> Self.IteratorOwnedType: ...\n\n@fieldwise_init\nstruct Drain[T: Movable & Deinitable](Iterator):\n    comptime Element = Self.T\n    var value: Self.T\n    def __next__(mut self) -> Self.T:\n        return self.value^\n\n@fieldwise_init\nstruct Bucket[T: Movable & Deinitable](IterableOwned):\n    comptime Element = Self.T\n    comptime IteratorOwnedType = Drain[Self.T]\n    var value: Self.T\n    def __iter__(var self) -> Drain[Self.T]:\n        return Drain[Self.T](self.value^)\n",
     );
 }
 
@@ -6166,11 +6168,77 @@ fn accepts_self_qualified_value_parameter_in_a_struct_alias() {
     let e = err(
         "struct Counter[length: Int](Copyable, Movable):\n    comptime Alias = Counter[Self.index]\n    var index: Int\n\n    def __init__(out self):\n        self.index = 0\n",
     );
-    assert!(e.to_string().contains("not a compile-time"), "got {e:?}");
+    assert!(
+        e.to_string().contains(
+            "cannot access instance field 'index' without an instance of 'Counter[length]'"
+        ),
+        "got {e:?}"
+    );
     let e = err(
         "struct P[T: AnyType, n: Int](Copyable, Movable):\n    comptime Alias = P[Self.n, Self.n]\n    var index: Int\n\n    def __init__(out self):\n        self.index = 0\n",
     );
-    assert!(e.to_string().contains("not a compile-time"), "got {e:?}");
+    assert!(e.to_string().contains("'n'"), "got {e:?}");
+}
+
+#[test]
+fn rejects_bare_struct_parameter_spellings() {
+    // Inside a struct body the struct's own parameters are `Self.T` /
+    // `Self.n`; a bare `T` field type or a bare `n` bracket slot reports
+    // upstream's `use 'Self.n'` error.
+    let e = err(
+        "struct Box[T: Copyable & Movable & Deinitable]:\n    var value: T\n\n    def __init__(out self, var value: Self.T):\n        self.value = value^\n",
+    );
+    assert!(
+        matches!(e, TypeError::UnqualifiedStructParam(ref name) if name == "T"),
+        "got {e:?}"
+    );
+    let e = err(
+        "struct Counter[length: Int]:\n    var i: Int\n\n    def __init__(out self):\n        self.i = 0\n\n    def fresh(self) -> Int:\n        var other = Counter[length]()\n        return other.i\n",
+    );
+    assert!(
+        e.to_string()
+            .contains("unqualified access to struct parameter 'length'; use 'Self.length' instead"),
+        "got {e:?}"
+    );
+    ok(
+        "struct Counter[length: Int]:\n    var i: Int\n\n    def __init__(out self):\n        self.i = 0\n\n    def fresh(self) -> Int:\n        var other = Counter[Self.length]()\n        return other.i + Self.length\n",
+    );
+}
+
+#[test]
+fn bare_parameter_fields_need_a_deinitable_bound() {
+    // A field typed by a bare struct type parameter needs a
+    // `Deinitable`-proving bound, or a (conditional) `Deinitable`
+    // conformance on the struct that discharges it.
+    let body = "    var value: Self.T\n\n    def __init__(out self, var value: Self.T):\n        self.value = value^\n";
+    let e = err(&format!("struct Box[T: Copyable & Movable]:\n{body}"));
+    assert!(
+        matches!(e, TypeError::FieldNotDeinitable { ref field, ref ty } if field == "value" && ty == "T"),
+        "got {e:?}"
+    );
+    let e = err(&format!("struct Box[T: Copyable]:\n{body}"));
+    assert!(
+        matches!(e, TypeError::FieldNotDeinitable { .. }),
+        "got {e:?}"
+    );
+    ok(&format!("struct Box[T: Copyable & Deinitable]:\n{body}"));
+    ok(&format!(
+        "struct Box[T: Copyable & Movable](Deinitable where conforms_to(T, Deinitable)):\n{body}"
+    ));
+}
+
+#[test]
+fn sole_candidate_violated_where_clause_names_the_clause() {
+    // A message-less `where` clause that is false for the only candidate
+    // reports upstream's violated-constraint note with the clause spelled
+    // out; a `(condition, \"message\")` clause keeps its message.
+    let e = err(
+        "struct Plain:\n    var v: Int\n\n    def __init__(out self):\n        self.v = 0\n\nstruct Box[T: AnyType]:\n    var n: Int\n\n    def __init__(out self):\n        self.n = 0\n\n    def show(self) -> Int where conforms_to(Self.T, Copyable):\n        return self.n\n\ndef main():\n    var b = Box[Plain]()\n    print(b.show())\n",
+    );
+    assert_eq!(
+        e.to_string(),
+        "invalid call to 'show': violated constraint; constraint declared here evaluated to False, expected 'conforms_to(T, Copyable)'"
+    );
 }
 
 #[test]
@@ -6179,12 +6247,12 @@ fn where_clauses_refine_method_signatures() {
     // receiver's bare bounds do not admit checks under the clause and rejects
     // without it. (The comptime-alias twin needs the linked prelude's
     // `Iterable`; see comptime_test.)
-    let need = "struct Need[T: Copyable & Movable](Copyable, Movable):\n    var v: Self.T\n\n    def __init__(out self, var v: Self.T):\n        self.v = v^\n\n";
+    let need = "struct Need[T: Copyable & Movable & Deinitable](Copyable, Movable):\n    var v: Self.T\n\n    def __init__(out self, var v: Self.T):\n        self.v = v^\n\n";
     ok(&format!(
-        "{need}struct Bag[T: Movable](Movable):\n    var v: Self.T\n\n    def __init__(out self, var v: Self.T):\n        self.v = v^\n\n    def make(self) -> Need[Self.T] where conforms_to(Self.T, Copyable) and conforms_to(Self.T, Movable):\n        return Need[Self.T](self.v.copy())\n"
+        "{need}struct Bag[T: Movable & Deinitable](Movable):\n    var v: Self.T\n\n    def __init__(out self, var v: Self.T):\n        self.v = v^\n\n    def make(self) -> Need[Self.T] where conforms_to(Self.T, Copyable) and conforms_to(Self.T, Movable):\n        return Need[Self.T](self.v.copy())\n"
     ));
     let e = err(&format!(
-        "{need}struct Bag[T: Movable](Movable):\n    var v: Self.T\n\n    def __init__(out self, var v: Self.T):\n        self.v = v^\n\n    def make(self) -> Need[Self.T]:\n        return Need[Self.T](self.v^)\n"
+        "{need}struct Bag[T: Movable & Deinitable](Movable):\n    var v: Self.T\n\n    def __init__(out self, var v: Self.T):\n        self.v = v^\n\n    def make(self) -> Need[Self.T]:\n        return Need[Self.T](self.v^)\n"
     ));
     assert!(
         matches!(&e, TypeError::TraitNotSatisfied { trait_name, .. } if trait_name == "Copyable"),

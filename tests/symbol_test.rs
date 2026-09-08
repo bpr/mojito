@@ -84,7 +84,7 @@ fn parameterized_annotation_type_parameters_spell_their_bounds() {
     // identifier; a declared type parameter there mangles as the checker's
     // `Ty::Param` does, so the overloaded generic member is the symbol its
     // call names.
-    let source = "struct Box[T: Copyable & Movable]:\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\ndef pick[T: Copyable & Movable](b: Box[T]) -> Int:\n    return 1\n\ndef pick(x: Int) -> Int:\n    return x\n\ndef main():\n    print(pick(Box(7)))\n    print(pick(5))\n";
+    let source = "struct Box[T: Copyable & Movable & Deinitable]:\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\ndef pick[T: Copyable & Movable & Deinitable](b: Box[T]) -> Int:\n    return 1\n\ndef pick(x: Int) -> Int:\n    return x\n\ndef main():\n    print(pick(Box(7)))\n    print(pick(5))\n";
     let names = lowered_names(source);
     assert!(
         names.contains("pick$ov$Box$T$Copyable$Movable"),
@@ -143,7 +143,7 @@ fn mojo_copy_constructor_counts_as_copyinit_not_an_init_overload() {
 fn struct_and_generic_parameter_types_mangle_from_their_annotations() {
     let names = lowered_names(
         "@fieldwise_init\nstruct Point:\n    var x: Int\n\
-         @fieldwise_init\nstruct Pair[T: AnyType]:\n    var a: Self.T\n    var b: Self.T\n\
+         @fieldwise_init\nstruct Pair[T: Movable & Deinitable]:\n    var a: Self.T\n    var b: Self.T\n\
          def pick(p: Point) -> Int:\n    return p.x\n\
          def pick(n: Int) -> Int:\n    return n\n\
          def pick(q: Pair[Int]) -> Int:\n    return q.a\n",
@@ -213,7 +213,7 @@ fn nested_declaration_symbols_are_derived_from_checked_ids() {
 #[test]
 fn checker_recorded_callees_name_real_mir_functions() {
     let src = "@fieldwise_init\nstruct Point:\n    var x: Int\n\
-         @fieldwise_init\nstruct Pair[T: AnyType]:\n    var a: Self.T\n    var b: Self.T\n\
+         @fieldwise_init\nstruct Pair[T: Movable & Deinitable]:\n    var a: Self.T\n    var b: Self.T\n\
          struct Box:\n    var n: Int\n\
          \n    def __init__(out self):\n        self.n = 0\n\
          \n    def __init__(out self, n: Int):\n        self.n = n\n\

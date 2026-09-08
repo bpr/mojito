@@ -15,11 +15,15 @@ impl Checker {
     ) -> Result<mojito_common::literal::IntLiteral, TypeError> {
         match &expr.kind {
             ExprKind::Int(n) => Ok(n.clone()),
-            ExprKind::Identifier(name) => self
-                .comptimes
-                .get(name)
-                .cloned()
-                .ok_or_else(|| TypeError::NotComptime(name.clone())),
+            ExprKind::Identifier(name) => self.comptimes.get(name).cloned().ok_or_else(|| {
+                // A bare struct value parameter (`SIMD[d, length]`) is
+                // upstream's `use 'Self.length'` error, not a missing constant.
+                if self.is_enclosing_struct_param(name) {
+                    TypeError::UnqualifiedStructParam(name.clone())
+                } else {
+                    TypeError::NotComptime(name.clone())
+                }
+            }),
             ExprKind::Prefix(PrefixOp::Neg, e) => Ok(self.eval_ct(e)?.neg()),
             ExprKind::Infix(op, l, r) => {
                 let (a, b) = (self.eval_ct(l)?, self.eval_ct(r)?);
@@ -276,16 +280,17 @@ impl Checker {
                 if let Some(n) = self.comptimes.get(name) {
                     return Ok(CtValue::IntLiteral(n.clone()));
                 }
-                // The enclosing struct's parameters are in scope by bare name,
-                // exactly like their `Self.<name>` spelling below.
-                if let Some(value) = self.self_param_ct_value(name) {
-                    return Ok(value);
+                // The enclosing struct's own parameter is spelled `Self.<name>`
+                // inside the body (the `Member` arm below); the bare spelling
+                // is upstream's error.
+                if self.is_enclosing_struct_param(name) {
+                    return Err(TypeError::UnqualifiedStructParam(name.clone()));
                 }
-                self.ty_value_from_name(name, &[])
+                self.ty_value_from_name(name, &[])?
                     .ok_or_else(|| TypeError::NotComptime(name.clone()))
             }
             ExprKind::TypeApply { name, args } => self
-                .ty_value_from_name(name, args)
+                .ty_value_from_name(name, args)?
                 .ok_or_else(|| TypeError::NotComptime(name.clone())),
             // `SIMD[DType.d, w](lanes...)`, or a vector alias's application
             // (`U256(0)`), is a compile-time vector — a hasher key: one lane
@@ -342,7 +347,7 @@ impl Checker {
                         .collect(),
                     _ => vec![mojito_ast::ast::ParamArg::Value((**index).clone())],
                 };
-                self.ty_value_from_name(name, &args)
+                self.ty_value_from_name(name, &args)?
                     .ok_or_else(|| TypeError::NotComptime(name.clone()))
             }
             ExprKind::Member { object, field } => {
@@ -354,6 +359,9 @@ impl Checker {
                     }
                     if let Some(value) = associated.get(field) {
                         return Ok(value.clone());
+                    }
+                    if let Some(error) = self.instance_field_without_instance(field) {
+                        return Err(error);
                     }
                     return Err(TypeError::UnknownSelfParam(field.clone()));
                 }
@@ -408,7 +416,7 @@ impl Checker {
         if !param_args.is_empty() {
             return None;
         }
-        match self.ty_value_from_name(name, &[])? {
+        match self.ty_value_from_name(name, &[]).ok().flatten()? {
             CtValue::Type(ty) => match *ty {
                 Ty::Simd { dtype, width } => Some((dtype, width)),
                 _ => None,
@@ -519,22 +527,63 @@ impl Checker {
         })
     }
 
+    /// The type value a name (with bracket arguments) denotes, `None` when
+    /// the name is not a type at all. Any other resolution failure — a
+    /// misspelled argument, a field in a value slot — is the diagnostic.
     pub(super) fn ty_value_from_name(
         &self,
         name: &str,
         args: &[mojito_ast::ast::ParamArg],
-    ) -> Option<CtValue> {
+    ) -> Result<Option<CtValue>, TypeError> {
         if args.is_empty() {
             if let Some(ty) = scalar_type_name(name) {
-                return Some(CtValue::Type(Box::new(ty)));
+                return Ok(Some(CtValue::Type(Box::new(ty))));
             }
             if name == "None" {
-                return Some(CtValue::Type(Box::new(Ty::None)));
+                return Ok(Some(CtValue::Type(Box::new(Ty::None))));
             }
         }
-        self.ty_from_anno(&SourceType::Named(name.to_string(), args.to_vec()))
-            .ok()
-            .map(|ty| CtValue::Type(Box::new(ty)))
+        match self.ty_from_anno(&SourceType::Named(name.to_string(), args.to_vec())) {
+            Ok(ty) => Ok(Some(CtValue::Type(Box::new(ty)))),
+            Err(TypeError::UnknownType(_)) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Whether `name` is one of the enclosing struct's own parameters: its
+    /// declared parameters, or — inside a value specialization's clone, whose
+    /// body may still spell a baked value parameter bare — the template's.
+    pub(super) fn is_enclosing_struct_param(&self, name: &str) -> bool {
+        let declares = |decls: &[ParamDecl]| {
+            decls
+                .iter()
+                .any(|decl| decl.name().trim_start_matches('*') == name)
+        };
+        if declares(&self.self_decls) {
+            return true;
+        }
+        let Some(Ty::Struct(struct_name, _)) = &self.self_ty else {
+            return false;
+        };
+        mojito_symbol::symbol::demangle_specialization(struct_name)
+            .and_then(|(template, _)| self.structs.get(template))
+            .is_some_and(|info| declares(&info.decls))
+    }
+
+    /// Upstream's rejection of `Self.<field>` in a compile-time position:
+    /// the enclosing struct declares that field, and a field needs an
+    /// instance.
+    pub(super) fn instance_field_without_instance(&self, field: &str) -> Option<TypeError> {
+        let Some(self_ty @ Ty::Struct(name, _)) = &self.self_ty else {
+            return None;
+        };
+        self.structs
+            .get(name)
+            .is_some_and(|info| info.declared_field_names.iter().any(|f| f == field))
+            .then(|| TypeError::InstanceFieldWithoutInstance {
+                field: field.to_string(),
+                ty: self_ty.to_string(),
+            })
     }
 
     pub(super) fn compile_dependent_ct_expr(&self, expr: &Expr) -> Result<CtExpr, TypeError> {
@@ -1271,7 +1320,7 @@ impl Checker {
             GenericConstraint::WithMessage(_, message) => {
                 format!("constraint failed: {message}")
             }
-            _ => format!("generic constraint is not satisfied: {constraint:?}"),
+            violated => super::generics::violated_constraint_reason(violated),
         };
         Err(TypeError::BadCall {
             func: name.to_string(),

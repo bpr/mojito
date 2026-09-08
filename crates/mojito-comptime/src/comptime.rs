@@ -710,6 +710,7 @@ mod packs;
 mod params;
 mod simd_width;
 mod synth;
+mod unparse;
 
 use ctfe_calls::*;
 use packs::*;

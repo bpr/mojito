@@ -5,7 +5,7 @@
 # view's source alive through the call even though it has no later use.
 
 
-struct Pair[A: Copyable & Movable, B: Copyable & Movable]:
+struct Pair[A: Copyable & Movable & Deinitable, B: Copyable & Movable & Deinitable]:
     var first: Self.A
     var second: Self.B
 
@@ -17,7 +17,7 @@ struct Pair[A: Copyable & Movable, B: Copyable & Movable]:
         return total
 
 
-struct Tally[T: Copyable & Movable]:
+struct Tally[T: Copyable & Movable & Deinitable]:
     var seed: Self.T
 
     @staticmethod

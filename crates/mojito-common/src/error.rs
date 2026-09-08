@@ -241,6 +241,22 @@ pub enum TypeError {
     /// `Self.T` used where `T` is not a type parameter of the enclosing struct
     /// (or outside any struct).
     UnknownSelfParam(String),
+    /// The enclosing struct's own parameter spelled bare (`T`, `n`) inside
+    /// its body, where Mojo requires `Self.T` / `Self.n`.
+    UnqualifiedStructParam(String),
+    /// `Self.field` in a compile-time position (a bracket slot, an alias),
+    /// where only a parameter or an associated member is in scope.
+    InstanceFieldWithoutInstance {
+        field: String,
+        ty: String,
+    },
+    /// A field typed by a bare struct type parameter whose bounds do not
+    /// prove `Deinitable`, in a struct that declares no `Deinitable`
+    /// conformance to discharge it.
+    FieldNotDeinitable {
+        field: String,
+        ty: String,
+    },
     /// A generic call/construction could not solve a type parameter from the
     /// argument types (no explicit type-argument syntax exists to supply it).
     CannotInferTypeParam {
@@ -609,6 +625,17 @@ impl fmt::Display for TypeError {
                     name
                 )
             }
+            TypeError::UnqualifiedStructParam(name) => write!(
+                f,
+                "unqualified access to struct parameter '{name}'; use 'Self.{name}' instead"
+            ),
+            TypeError::InstanceFieldWithoutInstance { field, ty } => write!(
+                f,
+                "cannot access instance field '{field}' without an instance of '{ty}'"
+            ),
+            TypeError::FieldNotDeinitable { field, ty } => {
+                write!(f, "field '{field}' has non-'Deinitable' type '{ty}'")
+            }
             TypeError::CannotInferTypeParam { name, param } => write!(
                 f,
                 "cannot infer type parameter '{}' of '{}' from the arguments",
@@ -708,7 +735,7 @@ impl fmt::Display for TypeError {
                 write!(f, "compiler invariant violated: {detail}")
             }
             TypeError::BadCall { func, reason } => {
-                write!(f, "call to '{}': {}", func, reason)
+                write!(f, "invalid call to '{}': {}", func, reason)
             }
         }
     }

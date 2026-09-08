@@ -271,10 +271,9 @@ impl Checker {
                     argument.clone(),
                 );
             }
-            if let Err(message) = self.method_constraint_result(sig, &method_arguments) {
+            if let Err(failure) = self.method_constraint_result(sig, &method_arguments) {
                 if single_candidate
                     && availability_failure.is_none()
-                    && let Some(message) = message
                     && self
                         .score_method_call(
                             sig,
@@ -286,7 +285,7 @@ impl Checker {
                         )
                         .is_ok()
                 {
-                    availability_failure = Some(message.to_string());
+                    availability_failure = Some(failure.reason());
                 }
                 continue;
             }
@@ -349,7 +348,7 @@ impl Checker {
         {
             return Err(TypeError::BadCall {
                 func: format!("{sname}.{method}"),
-                reason: format!("constraint failed: {message}"),
+                reason: message,
             });
         }
         let selected =
