@@ -16,7 +16,6 @@ from std.iterable import Iterable, IterableOwned, Iterator, StopIteration
 
 from std.optional import Optional
 
-from std.os import abort
 
 @fieldwise_init
 struct _ListIter[
@@ -272,7 +271,7 @@ struct List[T: AnyType](
     # current length.
     def shrink(mut self, new_length: Int) where conforms_to(Self.T, Deinitable):
         if self.size < new_length:
-            abort("shrink: new size is bigger than current")
+            _mojito_abort("shrink: new size is bigger than current")
         var i = new_length
         while i < self.size:
             self.data.unsafe_offset(i).unsafe_deinit_pointee()

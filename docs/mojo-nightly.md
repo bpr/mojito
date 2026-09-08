@@ -235,9 +235,11 @@ These changes should remain visible without displacing the CPU language work:
   concurrency remain outside first-pass parity.
 - Experimental FP6 encodings are packed storage formats without general
   arithmetic or conversions. Revisit them after ordinary scalar/SIMD parity.
-- `external_call(..., num_fixed_args=N)`, platform C ABI forwarding, and dynamic
-  library lifetime improvements are CPU-relevant but depend on a real FFI/native
-  boundary. Record them with native backend and ABI work.
+- `external_call(..., num_fixed_args=N)` runs over Mojito's closed libc callee
+  table (`mojito_types::ffi`; the filesystem, directory, and environment
+  calls the stdlib ports need). Platform C ABI forwarding beyond that table and
+  dynamic library lifetime improvements depend on a real FFI/native boundary.
+  Record them with native backend and ABI work.
 - `size_of` now includes alignment padding. Implement it with observable CPU
   layout/ABI semantics, not by inventing VM-only sizes.
 - Address-space expansion, GPU/MAX package moves, GPU APIs, and Python

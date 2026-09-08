@@ -58,6 +58,9 @@ pub struct VmBackend {
     /// appends prompts to `output` so differential harnesses can feed the VM
     /// and a native executable identical bytes.
     input_override: Option<std::io::Cursor<Vec<u8>>>,
+    /// Host state of the `external_call` libc table: descriptors, directory
+    /// streams, `errno`, and the environment overlay (see `libc.rs`).
+    host: libc::HostState,
 }
 
 impl VmBackend {
@@ -1741,4 +1744,5 @@ mod input_override_tests {
 mod adapters;
 mod dispatch;
 mod invoke;
+mod libc;
 mod values;

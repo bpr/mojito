@@ -1562,7 +1562,10 @@ fn scalar_type_name(name: &str) -> Option<Ty> {
         // ordinary struct resolution: in type-argument and type-value
         // positions it denotes the nominal stdlib struct. Value-parameter
         // classification keeps the literal type via `ct_value_param_type`.
-        _ => None,
+        // The sized scalar aliases (`Int8`, `UInt64`, `Float32`, ...) are
+        // width-1 SIMD types, so `comptime c_int = Int32` is a type value.
+        _ => mojito_ast::ast::Dtype::from_scalar_alias(name)
+            .map(|dtype| Ty::Simd { dtype, width: 1 }),
     }
 }
 

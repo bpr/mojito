@@ -629,7 +629,10 @@ pub(super) fn loan_accesses(
             // retained places are classified by the callee's convention at
             // that slot; a keyword place stays exclusive (its slot is not
             // known positionally here).
-            let intrinsic_read = matches!(func.0.as_str(), "print" | "String" | "repr");
+            let intrinsic_read = matches!(
+                func.0.as_str(),
+                "print" | "String" | "repr" | "external_call"
+            );
             let access = |parameter: Option<usize>| match parameter {
                 _ if intrinsic_read => LoanAccess::Read,
                 Some(parameter) => retained_access(&func.0, parameter),

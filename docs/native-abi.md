@@ -282,6 +282,22 @@ runtime family `mjrt_*` (the `mojito-runtime` exports plus backend-emitted
 helpers like `mjrt_pow`), and the constant-pool family `mjstr_*` (private
 linkage — never exported from produced objects).
 
+The only other foreign symbols generated code references are the libc
+callees of `mojito_types::ffi::CALLEES` behind the `external_call` builtin
+(`open`, `read`, `write`, `close`, `lseek`, `unlink`, `mkdir`, `rmdir`,
+`opendir`, `readdir`, `closedir`, `getcwd`, `getenv`, `setenv`, `unsetenv`,
+`strerror`, `__errno_location`, `memcpy`, `strlen`, `__xstat`, `__lxstat`),
+declared on demand as undefined imports with the table's C prototype —
+`int` parameters and results are `i32`, the `size_t`/`ssize_t`/`off_t`
+family `i64`, pointers opaque `ptr`, and `open` is variadic (`i32 (ptr, i32,
+...)`, its `mode` passed as a promoted `i32`). Integer operands resize from
+the checked scalar width to the C width and results back to the destination
+register's width; a `CStringSlice` operand passes its single pointer field.
+None of this is part of the runtime contract table, so it does not move the
+ABI version; the `errno`, buffer, and return conventions the VM reproduces
+are libc's own. Structs a callee fills (`_c_stat`) rely on the declaration-
+order layout rule above matching glibc's x86-64 `struct stat`.
+
 ## Output
 
 `mjrt_write_stdout(data, len)` writes exactly the given bytes (interrupt
@@ -291,7 +307,10 @@ produces the same text as the VM's display (`f64` is Rust's `{:?}` shortest
 round trip — `3.0`, `1e300`, `NaN`, `inf`), so print parity is structural
 rather than re-implemented: `print` lowers to one write per piece — each
 argument's display bytes, a single `" "` between arguments, and a trailing
-`"\n"` — composing the VM's `format_value` join byte-for-byte.
+`"\n"` — composing the VM's `format_value` join byte-for-byte. A program's
+own `write(1, ...)` through `external_call` is an unbuffered syscall and
+`mjrt_write_stdout` flushes per call, so the two interleave in program
+order — the VM appends both to its captured stdout in the same order.
 
 ## The runtime library
 

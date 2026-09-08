@@ -321,6 +321,13 @@ impl<'a> FnLowering<'a> {
             let (data, len) = self.string_parts(ctx, ptr, dest);
             return self.borrow_or_adopt_string(arg, dest, data, len);
         }
+        // An error value converts to its bare message (the VM's
+        // `format_value` over `Value::Error`), borrowed from the error.
+        if matches!(self.func.reg_types.get(&arg.0), Some(Ty::Error)) {
+            let ptr = self.reg_ptr(ctx, arg)?;
+            let (data, len) = self.string_parts(ctx, ptr, dest);
+            return self.borrow_or_adopt_string(arg, dest, data, len);
+        }
         // A runtime StringLiteral value reads back as a borrowed string.
         if matches!(self.func.reg_types.get(&arg.0), Some(Ty::StringLiteral))
             && !self.pending_literals.contains_key(&arg.0)

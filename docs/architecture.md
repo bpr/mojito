@@ -3081,6 +3081,23 @@ both the VM and native lowering ask the shared `native::layout::LayoutCx` for
 the byte count. This keeps target layout below the checked-MIR waist without
 duplicating layout policy in either backend.
 
+`external_call["callee", ReturnType, num_fixed_args=n](args...)` is the one
+host boundary below the stdlib: a builtin over the closed libc callee table
+`mojito_types::ffi::CALLEES`. The checker (`checker/ffi_calls.rs`) accepts
+only an allowlisted callee (any other name is a contextual error), checks
+each argument and the declared return type against the C prototype, and
+types the call as never raising; MIR carries it as an ordinary named `Call`
+whose first parameter argument is the callee string constant, and every
+backend reads the result type from the destination register. The VM
+(`backend/vm/libc.rs`) executes each callee on Rust's standard library with
+libc's observable contract — return value, an `errno` slot behind
+`__errno_location`, bytes written through pointer arguments (`readdir`
+produces glibc `dirent` images, `__xstat` fills the caller's `_c_stat` by
+field name) — over a descriptor table where fd 1 appends to the captured
+stdout and `setenv`/`unsetenv` write a per-VM overlay; the native backend
+declares the C function on demand and calls it. No compiler-private
+`_mojito_*` crossing exists for I/O.
+
 Keeping value-level behavior in `runtime` prevents the VM from baking every
 operation directly into the backend. The VM should be a consumer of checked MIR
 plus runtime primitives, not a second checker.

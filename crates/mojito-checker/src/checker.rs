@@ -2109,6 +2109,7 @@ mod indexing;
 mod method_calls;
 
 mod call_inference;
+mod ffi_calls;
 
 mod statements;
 

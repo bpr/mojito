@@ -40,9 +40,9 @@ use pliron_llvm::op_interfaces::{
 use pliron_llvm::ops::{
     AShrOp, AddOp, AddressOfOp, AllocaOp, AndOp, BitcastOp, BrOp, CallIntrinsicOp, CallOp,
     CondBrOp, ConstantOp, FAddOp, FCmpOp, FDivOp, FMulOp, FNegOp, FPExtOp, FPTruncOp, FSubOp,
-    FuncOp, GepIndex, GetElementPtrOp, GlobalOp, ICmpOp, LShrOp, LoadOp, MulOp, OrOp, ReturnOp,
-    SDivOp, SExtOp, SIToFPOp, SRemOp, SelectOp, ShlOp, StoreOp, SubOp, TruncOp, UDivOp, UIToFPOp,
-    URemOp, UnreachableOp, XorOp, ZExtOp, ZeroOp,
+    FuncOp, GepIndex, GetElementPtrOp, GlobalOp, ICmpOp, LShrOp, LoadOp, MulOp, OrOp, PtrToIntOp,
+    ReturnOp, SDivOp, SExtOp, SIToFPOp, SRemOp, SelectOp, ShlOp, StoreOp, SubOp, TruncOp, UDivOp,
+    UIToFPOp, URemOp, UnreachableOp, XorOp, ZExtOp, ZeroOp,
 };
 use pliron_llvm::types::{ArrayType, FuncType, PointerType, VoidType};
 
@@ -53,7 +53,8 @@ use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_common::token::SourceSpan;
 use mojito_mir::mir::{
     Const as MirConst, MirBlock, MirBlockId, MirCaptureMode, MirClosureCapture, MirFunction,
-    MirFunctionDeclaration, MirInstr, MirPlace, MirStructDeclaration, MirTerm, Proj, Reg, UseMode,
+    MirFunctionDeclaration, MirInstr, MirParamArg, MirPlace, MirStructDeclaration, MirTerm, Proj,
+    Reg, UseMode,
 };
 use mojito_types::types::Ty;
 
@@ -147,6 +148,9 @@ pub(super) struct ContractAbi {
 pub(super) struct ModuleShared {
     module: ModuleOp,
     rt_types: HashMap<&'static str, TypedHandle<FuncType>>,
+    /// The libc callees `external_call` has declared so far (see
+    /// `externs.rs`); like `rt_types`, declared once per module on demand.
+    extern_types: HashMap<&'static str, TypedHandle<FuncType>>,
     strings: HashMap<Vec<u8>, Identifier>,
     pow_ty: Option<TypedHandle<FuncType>>,
     /// Interned callable thunks, keyed by (mangled target, capture-mode
@@ -171,6 +175,7 @@ mod ctors;
 mod drops;
 mod emit;
 mod errors;
+mod externs;
 mod instr;
 mod iter;
 mod methods;

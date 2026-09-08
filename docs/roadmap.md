@@ -125,6 +125,12 @@ exempt from the ordering.
      - `value()` on a temporary `Optional` holding a view
        (`it.peek_next().value()`) is rejected as a reference to a non-place
        (bind the Optional first).
+     - A `String` copied from a temporary view of a local at the local's last
+       use inside a `return` expression or a self-assignment (`return
+       String(head.rstrip("/"))`, `head = String(head.rstrip("/"))`) frees
+       the local before the copy reads it
+       (`conformance/probes/view_copy_return_use_after_free.mojo`); bind the
+       copy to a local first, as `std/os/path/path.mojo` does.
      - Boundary, not work: casting a tracked pointer to an untracked origin
        at its source's last use
        (`s.unsafe_ptr().unsafe_origin_cast[ImmUntrackedOrigin]()`) frees
@@ -225,6 +231,24 @@ exempt from the ordering.
      - `if`/`while` accept a width-1 bool lane through the `Bool(x)`
        truthiness conversion, but `and`/`or` still demand `Bool` operands
        (`a == b or c < d` over `UInt64`s rejects; nest the tests).
+     - A string literal does not bind a trait-bounded type parameter the
+       nominal `String` satisfies (`isdir("/tmp")` reports `'StringLiteral'
+       ... does not conform to trait 'PathLike'`); spell `String("/tmp")`.
+     - Struct-level `comptime NAME = Self(n)` constants (upstream's
+       `ErrNo.ENOENT`) do not fold: the associated-constant evaluator handles
+       prefix/infix/tuple/list expressions only.
+     - `@fieldwise_init` beside a hand-written `__init__` rejects; spell every
+       constructor by hand.
+     - A bound-generic def whose template body calls itself with a concrete
+       argument (`makedirs(head, exist_ok=...)` inside `makedirs[PathLike]`)
+       mints its own specialization while checking and reports it undefined;
+       recurse through a non-generic helper.
+     - Nullary construction of a sized-scalar array (`Array[Int8, 1024]()`)
+       reports the scalar's `Defaultable` construction unsupported; spell
+       `Array[Int8, 1024](fill=0)`.
+     - `Pointer.unsafe_bitcast[U]()` is not typed (an origin-cast-style
+       forwarding leaves the MIR register at the old element type);
+       `CStringSlice` views `Byte` elements instead of upstream's `c_char`.
      - No `std.builtin.rebind.downcast`: `Dict`/`Set` guard `keys`/`values`/
        `items`/`__iter__` (and `Dict.keys` needs copyable values as well as
        keys, since the key view wraps the entry view) with `where
@@ -239,8 +263,24 @@ exempt from the ordering.
        Extended_Pictographic or Prepend data); reverse iteration re-scans
        forward from the nearest CR/LF/Control boundary.
 
-- [ ] **Filesystem and I/O slice** — representative file/path/stream APIs
-  on the Writer and explicit-destroy foundations.
+- [ ] **Filesystem and I/O slice: files, streams, paths, tempfile** — over
+  the landed `external_call` libc table and `std.os`, upstream's signatures:
+  1. the `with` statement as a type-aware checker desugar (today the comptime
+     elaborator emits an unconditional `__exit__`): `__enter__` consuming `var
+     self`, optional `__exit__`, the error-taking `__exit__(self, err) -> Bool`
+     overload, cleanup before error processing and on `break`/`continue`/
+     `return`;
+  2. `std.io.file` (`FileHandle` over raw descriptors, `open` with upstream's
+     mode and error texts), `FileDescriptor`, `std.sys` `stdin`/`stdout`/
+     `stderr`, `print(sep=, end=, flush=, file=)`;
+  3. `std.pathlib` (`Path`, `cwd`, `DIR_SEPARATOR`) and `std.tempfile`
+     (`gettempdir`, `mkdtemp`, `TemporaryDirectory`; `_get_random_name` from
+     `/dev/urandom` until `std.random` lands);
+  4. then the deferred tail: public `stat`/`lstat`/`stat_result`, `realpath`,
+     `symlink`/`link`/`chdir`, `isatty`, `OptionalPointer` (null tests spell
+     `Int(ptr) == 0` today), `ErrNo`'s named constants, `~user` expansion
+     (`getpwnam`), and the VM's per-process environment overlay (native
+     `setenv` writes the real environment; unobservable in-process).
 - [ ] **Time, random, and testing slices** — deterministic testable cores;
   host-dependent behavior behind runtime services.
 

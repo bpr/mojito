@@ -4,5 +4,6 @@
 //! every checking/lowering phase.
 
 pub mod ct;
+pub mod ffi;
 pub mod origin;
 pub mod types;

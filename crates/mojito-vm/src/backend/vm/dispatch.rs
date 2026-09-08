@@ -266,6 +266,18 @@ impl VmBackend {
                 self.output.push('\n');
                 Ok(Value::None)
             }
+            // Upstream's libc FFI over the closed callee table: the callee
+            // name is the first compile-time parameter argument; the result
+            // is coerced to the destination's checked type by the caller.
+            "external_call" => {
+                let Some(Some(Value::Str(callee))) = param_vals.first() else {
+                    return Err(RuntimeError::TypeError(
+                        "vm: external_call without a callee parameter argument".to_string(),
+                    ));
+                };
+                let callee = callee.clone();
+                self.external_call(&callee, args, arg_types)
+            }
             // The `std.os.abort` crossing: an uncatchable trap carrying the
             // nominal String message (only `Raised` is catchable).
             "_mojito_abort" => {

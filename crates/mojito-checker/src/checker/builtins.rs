@@ -792,6 +792,12 @@ impl Checker {
             });
         }
         let arg_ty = self.infer(&args[0])?;
+        // `Int(pointer)` is the address conversion (upstream `Pointer.__int__`);
+        // a null pointer converts to 0, which is how the libc-facing stdlib
+        // tests an optional result.
+        if target == Ty::Int && matches!(arg_ty, Ty::Pointer { .. }) {
+            return Ok(Ty::Int);
+        }
         // A concrete value routes through its conversion dunder
         // (`Int(x)` → `x.__int__() -> Int`, `Float64`/`Bool` likewise); the
         // same protocol an opaque `T: Intable/Floatable/Boolable` uses.

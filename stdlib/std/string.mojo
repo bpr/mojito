@@ -586,6 +586,14 @@ def atof(str: String) raises -> Float64:
     return _atof_lemire(w, q) * sign
 
 
+# `std.os.PathLike` (re-exported there): a value that names a filesystem
+# path. Declared here because the trait names `String` and this module loads
+# before `std.os`.
+trait PathLike:
+    def __fspath__(self) -> String:
+        ...
+
+
 struct String(
     Boolable,
     Comparable,
@@ -595,6 +603,7 @@ struct String(
     ImplicitlyCopyable,
     Iterable,
     Movable,
+    PathLike,
     Writable,
     Writer,
 ):
@@ -638,6 +647,19 @@ struct String(
         self.size = unsafe_uninit_length
         self.cap = unsafe_uninit_length if unsafe_uninit_length > 0 else 1
         self.data = unsafe_alloc[Byte](self.cap)
+
+    # Upstream's constructor from a NUL-terminated UTF-8 pointer (a C string
+    # a libc call returned): the bytes up to the terminator are copied.
+    def __init__(out self, *, unsafe_from_utf8_ptr: Pointer[UInt8, _]):
+        self.size = Int(external_call["strlen", UInt](unsafe_from_utf8_ptr))
+        self.cap = self.size if self.size > 0 else 1
+        self.data = unsafe_alloc[Byte](self.cap)
+        # The source is usually C-owned memory (a `getenv`/`readdir`/`strerror`
+        # result), so the bytes are copied by libc rather than read through
+        # the provenance-guarded pointer loads.
+        var copied = external_call["memcpy", Pointer[UInt8, MutUntrackedOrigin]](
+            self.data, unsafe_from_utf8_ptr, UInt(self.size)
+        )
 
     def __init__(out self, *, copy: Self):
         self.size = copy.size
@@ -883,6 +905,19 @@ struct String(
 
     def capacity_bytes(self) -> Int:
         return self.cap
+
+    # Upstream's C-string view: writes a NUL terminator past the text (the
+    # byte is not part of the string and every mutation may overwrite it, so
+    # the view is taken fresh at each call site) and views the buffer as
+    # `c_char` bytes.
+    def as_c_string_slice(mut self) -> CStringSlice[origin_of(self)]:
+        self.reserve_bytes(self.size + 1)
+        self.data[self.size] = 0
+        return CStringSlice(self)
+
+    # `os.PathLike`: a String is its own filesystem path.
+    def __fspath__(self) -> String:
+        return self
 
     # Grow with `fill_byte` (ASCII only) or shrink to a codepoint boundary;
     # violations abort with upstream's assertion texts.
@@ -1270,7 +1305,14 @@ struct Codepoint(
 # and grapheme scans (indexing, counting, slicing, forward and reverse
 # iteration) that run in place over this buffer.
 struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
-    Boolable, Equatable, Hashable, ImplicitlyCopyable, Iterable, Movable, Writable
+    Boolable,
+    Equatable,
+    Hashable,
+    ImplicitlyCopyable,
+    Iterable,
+    Movable,
+    PathLike,
+    Writable,
 ):
     comptime Element = StringSpan[Self.origin]
     comptime IteratorType[
@@ -1305,6 +1347,10 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
 
     def byte_length(self) -> Int:
         return self._size
+
+    # `os.PathLike`: the viewed text names the path.
+    def __fspath__(self) -> String:
+        return String(self)
 
     def __bool__(self) -> Bool:
         return self._size > 0
@@ -2363,3 +2409,32 @@ struct _BytesIter[
 
     def __len__(self) -> Int:
         return self.src.byte_length() - self.index
+
+
+
+# Upstream's `CStringSlice` (std.ffi, re-exported there): a view over the
+# NUL-terminated bytes of a String, the argument C-string parameters take.
+# `String.as_c_string_slice()` writes the terminator and mints the view; the
+# constructor itself does not, so it is not `@implicit`. Mojito views `Byte`
+# rather than upstream's `c_char` (`Int8`) elements.
+struct CStringSlice[mut: Bool, //, origin: Origin[mut=mut]](
+    ImplicitlyCopyable, Movable, Writable
+):
+    var _data: Pointer[Byte, Self.origin._get_owned_interior["bytes"]]
+
+    def __init__(out self, ref [Self.origin] src: String):
+        self._data = src.data.unsafe_origin_cast[
+            origin._get_owned_interior["bytes"]
+        ]()
+
+    def unsafe_ptr(self) -> Pointer[Byte, Self.origin._get_owned_interior["bytes"]]:
+        return self._data
+
+    def byte_length(self) -> Int:
+        return Int(external_call["strlen", UInt](self._data))
+
+    def __len__(self) -> Int:
+        return self.byte_length()
+
+    def write_to(self, mut writer: Some[Writer]):
+        writer.write(String(unsafe_from_utf8_ptr=self._data))

@@ -70,10 +70,13 @@ assets/ok/dunder_contains.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dunder_index.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dunder_setitem.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dunder_vec2.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/env_roundtrip.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/errno_strerror.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/exceptions.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/explicit_destroy_partial_fields.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/explicit_destroy_raising.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/explicit_transfer_convention.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/external_call_write_stdout.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/forward_struct_reference_iterator.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/funarg_call_through_after_last_use.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/func_styles.mojo	-	ineligible	no-scalar-entry-shape
@@ -197,6 +200,8 @@ assets/ok/origin_delegated_multi_binder_alias_field.mojo	-	ineligible	no-scalar-
 assets/ok/origin_delegated_parameter_receiver.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_placeholder_initialized_local.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_placeholder_parameter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/os_dir_operations.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/os_path_functions.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overload_transfer_effect_isolation.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overloading_arity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overloading_literal_default.mojo	-	ineligible	no-scalar-entry-shape

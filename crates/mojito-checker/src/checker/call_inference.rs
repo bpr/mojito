@@ -291,6 +291,11 @@ impl Checker {
                     });
                 }
                 "print" => return self.infer_print(args),
+                // Upstream's libc FFI spelling over Mojito's closed callee
+                // table (`mojito_types::ffi`); the backends read the callee
+                // from the first parameter argument and the result type from
+                // the destination register.
+                "external_call" => return self.infer_external_call(param_args, args),
                 "size_of" => {
                     if param_args.len() != 1 {
                         return Err(TypeError::WrongTypeArgCount {

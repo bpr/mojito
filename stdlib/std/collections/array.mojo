@@ -160,6 +160,15 @@ struct Array[T: AnyType, length: Int](
     def __len__(self) -> Int:
         return Self.length
 
+    # Upstream's raw element pointer (as `List.unsafe_ptr`): the interior
+    # of the array's own origin.
+    def unsafe_ptr(ref self) -> Pointer[
+        Self.T, origin_of(self)._get_owned_interior["element"]
+    ]:
+        return self.data.unsafe_origin_cast[
+            origin_of(self)._get_owned_interior["element"]
+        ]()
+
     def __getitem__(
         ref self, index: Int
     ) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:

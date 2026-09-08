@@ -131,10 +131,26 @@ only from their authoritative `std` modules.
   lent while any copy of the view lives. Element access is a reference
   result with abort bounds; the strict `ContiguousSlice` overload returns a
   sub-view; there is no strided slicing.
-- `std/os.mojo` — the `os` proof subset: `abort(message)`, the uncatchable
-  trap behind strict slice bounds, crossing to the VM through the
-  compiler-private `_mojito_abort` primitive (which stdlib-internal trap
-  sites call directly with a literal to avoid import cycles).
+- `std/os/` — upstream's `os` package subset: `os.mojo` (`sep`, `SEEK_*`,
+  `listdir` over a private `opendir`/`readdir` stream read as glibc `dirent`
+  bytes, `mkdir`/`makedirs`, `remove`/`unlink`, `rmdir`/`removedirs`, and
+  `abort(message)` — the uncatchable trap crossing to the VM through the
+  compiler-private `_mojito_abort` primitive, which stdlib-internal trap sites
+  call directly to avoid import cycles), `env.mojo` (`getenv`/`setenv`/
+  `unsetenv`), `pathlike.mojo` (re-exports the `PathLike` trait declared beside
+  `String`), `_linux_x86.mojo` (the scalar-only `_c_stat` record glibc's
+  `__xstat`/`__lxstat` fill), and `path/path.mojo` (`exists`, `lexists`,
+  `isdir`, `isfile`, `islink`, `getsize`, `is_absolute`, `join`, `split`,
+  `basename`, `dirname`, `split_extension`, `splitroot`, `expandvars`,
+  `expanduser`). Every host call is upstream's `external_call` over the closed
+  libc table (`std/ffi`).
+- `std/ffi/__init__.mojo` — the `c_*` scalar aliases, the `external_call`
+  builtin's import home, `CStringSlice` (declared in `std/string.mojo`, which
+  loads first) and `get_errno` re-exports.
+- `std/sys/_libc_errno.mojo` — `ErrNo` (`String(err)` renders glibc's
+  `strerror` text), `get_errno`, `set_errno`. `std/stat/` — the `S_IF*`
+  mode constants and `S_ISDIR`/`S_ISREG`/`S_ISLNK`. `std/time/time.mojo` —
+  the C `timespec` record `_CTimeSpec`.
 - `std/string.mojo` also hosts `StringSpan[mut: Bool, //, origin]` (the
   canonical string view; `StringSlice` is a never-emitted annotation alias)
   and `_GraphemeIter`, the grapheme-cluster iterator behind ordinary

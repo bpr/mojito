@@ -124,6 +124,13 @@ impl<'a> FnLowering<'a> {
                 let cast = ZExtOp::new_with_nneg(ctx, value, i64_ty, false);
                 self.define(ctx, dest, cast.get_operation(), cast.get_result(ctx))
             }
+            // `Int(pointer)`: the address (the VM's synthetic provenance
+            // address; 0 for null on both backends).
+            (ScalarTy::Ptr, ScalarTy::Int | ScalarTy::UInt) => {
+                let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+                let cast = PtrToIntOp::new(ctx, value, i64_ty);
+                self.define(ctx, dest, cast.get_operation(), cast.get_result(ctx))
+            }
             (ScalarTy::Bool, ScalarTy::Float64) => {
                 let f64_ty: TypeHandle = FP64Type::get(ctx).into();
                 let cast = UIToFPOp::new_with_nneg(ctx, value, f64_ty, false);

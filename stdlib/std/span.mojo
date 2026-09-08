@@ -10,7 +10,6 @@ from std.collections.list import List
 
 from std.iterable import Iterable, Iterator, StopIteration
 
-from std.os import abort
 
 
 from std.string import String
@@ -35,19 +34,19 @@ def _check_span_slice_bounds(start: Int, end: Int, length: Int):
         message.write(
             "slice start index ", start, " is out of bounds, valid range is 0 to ", length
         )
-        abort(message.text)
+        _mojito_abort(message.text)
     if end < 0 or end > length:
         var message = _BoundsMessage()
         message.write(
             "slice end index ", end, " is out of bounds, valid range is 0 to ", length
         )
-        abort(message.text)
+        _mojito_abort(message.text)
     if start > end:
         var message = _BoundsMessage()
         message.write(
             "slice start index ", start, " is greater than slice end index ", end
         )
-        abort(message.text)
+        _mojito_abort(message.text)
 
 
 struct Span[mut: Bool, //, T: Movable, origin: Origin[mut=mut]](
@@ -95,7 +94,7 @@ struct Span[mut: Bool, //, T: Movable, origin: Origin[mut=mut]](
         Self.origin._get_owned_interior["element"]
     ] Self.T:
         if index < 0 or index >= self._size:
-            abort("Span index out of range")
+            _mojito_abort("Span index out of range")
         return self._data[index]
 
     # Strict contiguous slice (current Mojo bounds): negative, out-of-range,

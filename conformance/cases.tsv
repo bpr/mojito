@@ -340,3 +340,8 @@ tuple-nested-type-arguments	run	assets/ok/tuple_nested_type_arguments.mojo
 nested-type-name-spellings	run	conformance/fixtures/nested_type_name_spellings.mojo
 dict-movable-only-elements	run	assets/ok/dict_movable_only_elements.mojo
 list-unsafe-uninit-length	run	assets/ok/list_unsafe_uninit_length.mojo
+os-path-functions	run	assets/ok/os_path_functions.mojo
+os-dir-operations	run	assets/ok/os_dir_operations.mojo
+env-roundtrip	run	assets/ok/env_roundtrip.mojo
+errno-strerror	run	assets/ok/errno_strerror.mojo
+external-call-write-stdout	run	assets/ok/external_call_write_stdout.mojo

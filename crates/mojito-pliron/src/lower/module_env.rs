@@ -9,6 +9,7 @@ impl ModuleShared {
         ModuleShared {
             module,
             rt_types: HashMap::new(),
+            extern_types: HashMap::new(),
             strings: HashMap::new(),
             pow_ty: None,
             thunks: HashMap::new(),
@@ -73,6 +74,35 @@ impl ModuleShared {
         let func = FuncOp::new(ctx, identifier, func_ty);
         self.module.append_operation(ctx, func.get_operation(), 0);
         self.rt_types.insert(symbol, func_ty);
+        func_ty
+    }
+
+    /// Declare an allowlisted libc callee (`mojito_types::ffi::CALLEES` row)
+    /// once and return its call type. The declared C signature comes from the
+    /// row: `open` is variadic (`int open(const char *, int, ...)`), so its
+    /// `mode` travels as a promoted `i32` vararg exactly as C passes it.
+    pub(super) fn ensure_extern(
+        &mut self,
+        ctx: &mut Context,
+        row: &'static super::externs::LibcCallee,
+    ) -> TypedHandle<FuncType> {
+        if let Some(ty) = self.extern_types.get(row.name) {
+            return *ty;
+        }
+        let ret = super::externs::c_type(ctx, row.ret);
+        let params = row
+            .params
+            .iter()
+            .map(|kind| super::externs::c_type(ctx, *kind))
+            .collect();
+        let func_ty = FuncType::get(ctx, ret, params, row.variadic());
+        let identifier: Identifier = row
+            .name
+            .try_into()
+            .expect("libc callee names are identifier-safe");
+        let func = FuncOp::new(ctx, identifier, func_ty);
+        self.module.append_operation(ctx, func.get_operation(), 0);
+        self.extern_types.insert(row.name, func_ty);
         func_ty
     }
 

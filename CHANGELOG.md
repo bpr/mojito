@@ -8,6 +8,23 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The filesystem slice's host boundary and `std.os`: upstream's
+  `external_call[callee, return_type, num_fixed_args=](*args)` builtin over a
+  closed libc callee table (`mojito_types::ffi`; the VM runs each callee on
+  Rust's standard library with libc's return, `errno`, and buffer contract,
+  the native backend calls libc directly, no runtime-ABI change), `std.ffi`
+  (`c_*` aliases, `CStringSlice`, `get_errno`), `String.as_c_string_slice()`
+  and `String(unsafe_from_utf8_ptr=)`, `std.sys._libc_errno` (`ErrNo`
+  rendering glibc's `strerror` text), `std.stat` mode predicates, and the
+  `std.os` package with upstream's signatures — `listdir`, `mkdir`/`makedirs`,
+  `remove`/`unlink`, `rmdir`/`removedirs`, `getenv`/`setenv`/`unsetenv`, `sep`,
+  `SEEK_*`, `PathLike` (conformed to by `String`/`StringSpan`), and `os.path`
+  (`exists`, `lexists`, `isdir`, `isfile`, `islink`, `getsize`, `is_absolute`,
+  `join`, `split`, `basename`, `dirname`, `split_extension`, `splitroot`,
+  `expandvars`, `expanduser`); `Int(pointer)` is the address conversion and
+  `String(error)` converts natively; sized scalar aliases (`Int8`, ...) are
+  module-level `comptime` type values; exe ratchet 429 → 434.
+
 - Diagnostic wording and strictness in upstream's shape: a failed
   message-less `where` clause reports `invalid call to 'show': violated
   constraint; constraint declared here evaluated to False, expected

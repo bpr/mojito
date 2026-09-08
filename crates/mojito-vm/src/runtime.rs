@@ -845,8 +845,24 @@ pub fn builtin_input(prompt: Value) -> Result<Value, RuntimeError> {
 /// `Int(x)` / `UInt(x)` / `Float64(x)` / `Bool(x)`: convert one numeric-or-`Bool`
 /// value (`Float64`→integer truncates toward zero, `Bool` is 0/1, `Bool(x)` is
 /// truthiness — a nonzero value is `True`), following Mojo.
+/// The synthetic integer address of a VM pointer: 0 for the null
+/// (allocation 0) pointer, otherwise the allocation id in the high word
+/// with the element offset added, so distinct provenances never collide.
+pub fn pointer_address(allocation: u64, offset: i64) -> i64 {
+    if allocation == 0 {
+        return 0;
+    }
+    ((allocation as i64) << 32).wrapping_add(offset)
+}
+
 pub fn builtin_convert(name: &str, v: Value) -> Result<Value, RuntimeError> {
     match &v {
+        // `Int(pointer)`: a synthetic address (provenance-unique, 0 for the
+        // null/dangling pointer) — the libc-facing stdlib tests optional
+        // results with `Int(ptr) == 0`, and never prints an address.
+        Value::Pointer { allocation, offset } if name == "Int" => {
+            return Ok(Value::Int(pointer_address(*allocation, *offset)));
+        }
         Value::IntLiteral(value) => {
             return Ok(match name {
                 "Int" => Value::Int(

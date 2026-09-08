@@ -411,6 +411,12 @@ impl<'a> FnLowering<'a> {
                 // only at `mut`/`ref` parameter positions (borrowed read
                 // arguments pass their value copy).
                 let _ = capture_accesses;
+                // The libc FFI builtin carries its callee as a parameter
+                // argument by design; every other value parameter argument
+                // is a contract the native backend does not lower.
+                if func.0 == "external_call" {
+                    return self.lower_external_call(ctx, *dest, args, param_arg_regs);
+                }
                 if param_arg_regs.iter().any(|arg| arg.value.is_some()) {
                     return Err(self.unsupported_reg(
                         format!("non-positional call contract for `{}`", func.0),
