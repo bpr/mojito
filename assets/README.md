@@ -29,7 +29,8 @@ groups (named `assets_extensions_<folder>::…`, `vm_ok::extensions::…`, and
 so on) and the native parity manifest covers `extensions/ok` and
 `extensions/ownership_ok`. When a `ref`-field fixture has a Mojo-valid twin
 that spells the storage through `Pointer[T, origin]`, the twin keeps the
-same file name in the ordinary folder.
+same file name in the ordinary folder, with a `ref_field_` prefix respelled
+`pointer_field_`.
 
 Grab a Mojo file off the net, decide where mojito should currently land on it,
 and drop it in that folder. When mojito gains a feature, a file "graduates" to an

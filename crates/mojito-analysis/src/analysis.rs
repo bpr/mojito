@@ -273,6 +273,7 @@ mod interior_origin_tests {
             place: MirPlace::root(0, None),
             mutable,
             interior,
+            shared: false,
         }
     }
 

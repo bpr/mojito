@@ -696,11 +696,14 @@ impl Checker {
                     && match (actual_origin, expected_origin) {
                         // A concrete place provenance may bind a declared origin
                         // parameter, but storage must not invent mutable
-                        // capability an immutable place never had.
+                        // capability an immutable place never had: only a
+                        // binder spelled `mut=True` demands a mutable place;
+                        // a parametric `mut=m` takes its mutability from the
+                        // place.
                         (
                             mojito_types::origin::PointerOrigin::Place { mutable, .. },
-                            mojito_types::origin::PointerOrigin::Param { mutability, .. },
-                        ) => *mutable || *mutability == mojito_types::origin::Mutability::Immutable,
+                            expected @ mojito_types::origin::PointerOrigin::Param { .. },
+                        ) => *mutable || expected.statically_mutable() != Some(true),
                         _ => actual_origin.coerces_to(expected_origin),
                     }
             }

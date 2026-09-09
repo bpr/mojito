@@ -551,6 +551,7 @@ impl Flatten<'_> {
                 place: MirPlace::root(canonical.root, self.var_types.get(&canonical.root).cloned()),
                 mutable: reference.mutability == mojito_types::origin::Mutability::Mutable,
                 interior,
+                shared: false,
             });
         }
         if !loans.is_empty() {

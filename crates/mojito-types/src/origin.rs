@@ -333,8 +333,8 @@ impl PointerOrigin {
 
     /// Whether writes through the pointer are permitted, when that is statically
     /// known. A symbolic parameter mutability returns `None`: storage coercion
-    /// only admits mutable places into fields whose declared mutability is not
-    /// explicitly immutable.
+    /// rejects an immutable place only for a field whose declared mutability
+    /// is explicitly `mut=True`.
     pub fn statically_mutable(&self) -> Option<bool> {
         match self {
             PointerOrigin::Place { mutable, .. }

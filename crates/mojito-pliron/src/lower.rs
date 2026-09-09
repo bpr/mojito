@@ -248,6 +248,7 @@ pub(super) fn lower_body(
         loaded_places: collect_loaded_places(&func.blocks),
         pointer_slot_refs: HashSet::new(),
         initialized_vars: HashSet::new(),
+        reference_places: HashMap::new(),
         drop_flags: HashMap::new(),
         var_slots: Vec::new(),
         blocks: Vec::new(),
@@ -474,6 +475,10 @@ struct FnLowering<'a> {
     /// bindings may be represented only by `EstablishLoans`; this separates
     /// them from reference-result variables whose handle was stored normally.
     initialized_vars: HashSet<u32>,
+    /// The loan place whose address each static `ref` binding's slot holds
+    /// (`EstablishLoans`): a place accessed through that binding addresses
+    /// from the stored handle with only the projections beyond that place.
+    reference_places: HashMap<u32, MirPlace>,
     /// The `i1` initialization flag of each droppable variable. Drop
     /// elaboration legitimately drops not-yet-initialized slots (ahead of
     /// `try` regions) and lists variables on cleanup edges they already died

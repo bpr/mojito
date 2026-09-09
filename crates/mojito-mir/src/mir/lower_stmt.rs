@@ -451,6 +451,7 @@ impl Flatten<'_> {
             place: loan_place,
             mutable,
             interior,
+            shared: false,
         }];
         let marker = self.fresh_typed(span, Some(loans[0].place.root), Ty::None);
         self.emit(MirInstr::EstablishLoans {
@@ -2071,6 +2072,7 @@ impl Flatten<'_> {
                             place,
                             mutable,
                             interior,
+                            shared: false,
                         });
                     }
                     if let Some(first) = loans.first() {
@@ -2120,6 +2122,7 @@ impl Flatten<'_> {
                         place: place.clone(),
                         mutable,
                         interior,
+                        shared: false,
                     });
                 }
                 if loans.is_empty() {
@@ -2127,6 +2130,7 @@ impl Flatten<'_> {
                         place: place.clone(),
                         mutable,
                         interior: None,
+                        shared: false,
                     });
                 }
                 // A substituted local alias has no runtime handle value, but

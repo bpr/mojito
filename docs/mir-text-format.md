@@ -340,7 +340,8 @@ loan {
   interior: present(interior_origin {
     root: $v0,
     path: [interior(element)]
-  })
+  }),
+  shared: false
 }
 ```
 
@@ -350,9 +351,9 @@ type, preserving `projection_tys`. Root and terminal types retain their explicit
 optionality for compatibility MIR, although verified production artifacts
 require them.
 
-`MirPlace::through`, loan mutability, interior roots/paths, destination domains,
-invalidation exceptions, and capture accesses are semantic data even when the
-VM erases them. Verification must prove that a through slot is a compatible
+`MirPlace::through`, loan mutability, the shared flag of a `Pointer(to=place)`
+alias loan, interior roots/paths, destination domains, invalidation exceptions,
+and capture accesses are semantic data even when the VM erases them. Verification must prove that a through slot is a compatible
 reference capability, mutable loans do not recover unavailable permission, and
 canonical interior identities agree with their executable place/reference
 origin relationship.

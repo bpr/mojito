@@ -331,6 +331,7 @@ impl Flatten<'_> {
                     place,
                     mutable: transfer.mutable,
                     interior,
+                    shared: false,
                 });
             }
             if loans.is_empty() || loans.len() == before {

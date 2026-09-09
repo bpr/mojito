@@ -82,54 +82,12 @@ exempt from the ordering.
   - Copy the element out, mutate it, and write it back (`xs[i] = e`), or
     mutate through a `mut` parameter, which works.
 
-- [ ] **VM: a pointer view returned from a plain-`self` method is rooted in
-  the callee frame**
-
-  Problem: `def view(self) -> EntryIter[origin_of(self.entries)]: return
-  EntryIter(self.entries, 0)` runs natively but the VM reports `stale
-  reference to frame N` on the first read through the view. The same shape
-  with `ref self` works on both backends.
-  - Blocks the twin of `assets/extensions/ok/ref_field_view_plain_self.mojo`.
-
-- [ ] **Native: a `ref` rebinding of a pointer dereference inside a method
-  dangles**
-
-  Problem: `ref s = self.src[]` followed by `s[0]` inside a method of a
-  struct with a `Pointer[List[Int], Self.o]` field fails natively with
-  `dereference of dangling Pointer`; the VM prints the right value, and
-  reading `self.src[][0]` directly works natively.
-  - Blocks the twin of `assets/extensions/ok/ref_field_reborrow_read.mojo`.
-  - Related MIR gap: passing that `s` to a `ref[Self.o]` constructor
-    parameter fails verification (`loan place root type Holder is
-    incompatible with its through-reference capability target List[Int]`).
-
-- [ ] **Checker: `@fieldwise_init` with a parametric-mutability origin
-  binder rejects `Pointer(to=x)` arguments**
-
-  Problem: for `struct P[m: Bool, //, o: Origin[mut=m]]` with a
-  `Pointer[T, Self.o]` field, `P(Pointer(to=xs), 0)` where `xs` is a `ref`
-  or read parameter, or a field reached through `self`, reports `type
-  mismatch for field 1 of 'P': expected Pointer[…, origin#1], found
-  Pointer[…, origin@N]`. A `var` local in `main`, a fixed
-  `Origin[mut=False]` binder, and an explicit `__init__(out self,
-  ref[Self.o] xs: T, …)` storing `Pointer(to=xs)` all work.
-  - The twins use the explicit constructor; the fieldwise spelling is the
-    one to fix.
-
-- [ ] **Ownership: two `Pointer(to=rx)` through one `ref` binding conflict**
-
-  Problem: `ref rx = xs; var p = Pointer(to=rx); var q = Pointer(to=rx)`
-  is rejected (`access to 'xs' conflicts with live reference 'rx'`) at the
-  first pointer, while `Pointer(to=xs)` twice is accepted. Mojo accepts the
-  program.
-  - The twins take the pointers from the owner directly.
-
 - [ ] **Checker: `Pointer(to=<temporary>)` is unsupported**
 
   Not planned: `View(Pointer(to=make_list()), 0)` reports `Pointer(to=...)
   requires a place expression`; a temporary bound to an explicit
   `ref[Self.o]` constructor parameter covers the same fixture point
-  (`assets/ok/ref_field_ctor_temporary_explicit_init.mojo`).
+  (`assets/ok/pointer_field_ctor_temporary_explicit_init.mojo`).
 
 - [ ] **Native generic-holder temporaries with heap-owning implicitly
   copyable fields read freed memory**
@@ -204,8 +162,8 @@ exempt from the ordering.
     the ordinary `assets/` folders hold only programs the pinned Mojo
     compiles (`assets/README.md`).
   - Where a `ref`-field fixture has a Mojo-valid twin, the twin spells the
-    storage through `Pointer[T, origin]` under the same name in the ordinary
-    folder.
+    storage through `Pointer[T, origin]` under the same name with
+    "ref_field" replaced by "pointer_field" in the ordinary folder.
   - `conformance/fixtures/reference_valued_aggregate.mojo` stays a
     `mojito-only` row until upstream decides.
   - If upstream lands `ref` fields, re-probe the extension fixtures against

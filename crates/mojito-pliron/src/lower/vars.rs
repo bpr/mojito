@@ -30,6 +30,7 @@ impl<'a> FnLowering<'a> {
             let store = StoreOp::new(ctx, address, self.var_slots[reference as usize]);
             self.append(ctx, store.get_operation(), Some(marker));
             self.initialized_vars.insert(reference);
+            self.reference_places.insert(reference, place);
         }
         self.erased.insert(marker.0);
         Ok(())

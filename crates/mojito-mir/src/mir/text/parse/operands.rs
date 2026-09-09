@@ -198,11 +198,13 @@ impl Decoder {
                     .and_then(|v| d.mir_interior_origin(v)),
             )
         })?;
-        self.unknown(fields, &["place", "mutable", "interior"]);
+        let shared = self.req(value, fields, "shared", Self::boolean)?;
+        self.unknown(fields, &["place", "mutable", "interior", "shared"]);
         Some(MirLoan {
             place,
             mutable,
             interior,
+            shared,
         })
     }
 

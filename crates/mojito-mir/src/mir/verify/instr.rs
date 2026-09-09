@@ -126,15 +126,16 @@ pub(super) fn verify_instruction(
                         "{prefix}: mutable loan recovers permission unavailable through its source capability"
                     ));
                 }
+                // A through-reference handle designates the loan place's
+                // storage (`make_ref_target`), not the place's root.
                 if let Some(capability) = through_capability
-                    && let Some(root) = loan.place.root_ty.as_ref()
-                    && let Some(target) = reference_capability(root)
-                        .map(|root| root.target)
-                        .or(Some(root))
+                    && let Some(target) = place_capability
+                        .map(|(target, _)| target)
+                        .or(loan.place.root_ty.as_ref())
                     && !types_compatible(capability.target, target)
                 {
                     errors.push(format!(
-                        "{prefix}: loan place root type {target} is incompatible with its through-reference capability target {}",
+                        "{prefix}: loan place target {target} is incompatible with its through-reference capability target {}",
                         capability.target
                     ));
                 }

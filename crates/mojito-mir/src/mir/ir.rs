@@ -227,11 +227,15 @@ pub struct MirInteriorOrigin {
 /// One owner dependency carried by a reference or reference-bearing value.
 /// `place` is the executable target; `interior` is the distinct analytical
 /// generation identity when the target lives behind container-owned storage.
+/// A `shared` loan (a `Pointer(to=place)` alias) never conflicts with another
+/// shared loan of overlapping storage; against owner accesses and exclusive
+/// loans it is an ordinary borrow.
 #[derive(Debug, Clone)]
 pub struct MirLoan {
     pub place: MirPlace,
     pub mutable: bool,
     pub interior: Option<MirInteriorOrigin>,
+    pub shared: bool,
 }
 
 /// Complete checker-selected contract for a nominal subscript invocation.

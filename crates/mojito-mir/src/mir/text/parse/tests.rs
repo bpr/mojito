@@ -497,11 +497,13 @@ fn instruction_families_reprint_byte_identically() {
                     place: place(1),
                     mutable: true,
                     interior: Some(interior(1)),
+                    shared: false,
                 },
                 MirLoan {
                     place: place(2),
                     mutable: false,
                     interior: None,
+                    shared: true,
                 },
             ],
             marker: Reg(0),

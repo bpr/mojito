@@ -2307,8 +2307,11 @@ explicit.
 Local `ref name = place` bindings are checked references, not copied referent
 values. MIR emits one grouped `EstablishLoans` operation for each fresh binding
 generation; every `MirLoan` retains the executable owner `MirPlace`, permission,
-and optional canonical `MirInteriorOrigin`. Statically resolvable aliases use
-the frozen place, while cross-call aliases use explicit reference operations.
+optional canonical `MirInteriorOrigin`, and whether it is a shared alias (a
+`Pointer(to=place)` loan: two shared loans of overlapping storage coexist,
+while owner accesses and exclusive loans treat each as an ordinary borrow).
+Statically resolvable aliases use the frozen place, while cross-call aliases
+use explicit reference operations.
 `MirPlace::through` records which reference authorized an access. The VM erases
 both loan and interior-generation metadata after checking.
 

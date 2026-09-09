@@ -21,9 +21,11 @@ impl VmBackend {
     }
 
     /// Structural reference-content test over MIR struct declarations, with a
-    /// visited set for recursive aggregates. Conservative `false` for generic
-    /// parameters and non-aggregate types: pointer-backed views (`Span`) copy
-    /// by value safely; only stored `ref` handles are frame-rooted.
+    /// visited set for recursive aggregates. A stored `ref` handle and a
+    /// single-pointee origin-bearing pointer (`Pointer[T, o]` over one place)
+    /// are frame-rooted handles; multi-element pointer-backed views (`Span`)
+    /// copy by value safely, and generic parameters are conservatively
+    /// `false`.
     pub(super) fn type_carries_reference_handle(
         prog: &Prog,
         ty: &Ty,
@@ -31,6 +33,7 @@ impl VmBackend {
     ) -> bool {
         match ty {
             Ty::Ref(_) => true,
+            Ty::Pointer { .. } if super::references::single_pointee_pointer(Some(ty)) => true,
             Ty::Struct(name, _) => {
                 visited.insert(name.clone())
                     && prog.structs.get(name).is_some_and(|declaration| {

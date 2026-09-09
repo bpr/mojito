@@ -48,6 +48,19 @@ fn pointer_loan_blocks_owner_access_while_live() {
 }
 
 #[test]
+fn pointer_loans_are_shared_aliases() {
+    // Two live `Pointer(to=owner)` loans coexist (a pointer is not an
+    // exclusive borrow), while the owner stays guarded by either of them.
+    let ok = "def main():\n    var x = 1\n    var p = UnsafePointer(to=x)\n    var q = UnsafePointer(to=x)\n    print(p[0] + q[0])\n";
+    assert!(own(ok).is_ok(), "{:?}", own(ok));
+    let conflict = "def main():\n    var x = 1\n    var p = UnsafePointer(to=x)\n    var q = UnsafePointer(to=x)\n    x = 5\n    print(p[0] + q[0])\n";
+    assert!(matches!(
+        own(conflict),
+        Err(OwnershipError::LoanConflict { .. })
+    ));
+}
+
+#[test]
 fn pointer_loan_transfers_through_copies() {
     let src = "def main():\n    var x = 1\n    var p = UnsafePointer(to=x)\n    var q = p\n    x = 5\n    print(q[0])\n";
     assert!(matches!(own(src), Err(OwnershipError::LoanConflict { .. })));

@@ -33,9 +33,32 @@ impl<'a> FnLowering<'a> {
                 self.unsupported_reg(format!("place root ${} out of range", place.root), dest)
             })?;
         // A place through a local reference designates the referent behind
-        // the handle stored in the root's slot: load the pointer, then
-        // project relative to the referent type.
+        // the handle stored in the reference's slot. A static `ref` binding's
+        // handle already addresses its loan place, so only the projections
+        // beyond that place apply on top of it; a reference-result handle
+        // (no recorded place) designates the root's referent and takes the
+        // whole projection.
         let through_var = place.through.unwrap_or(place.root);
+        let recorded_prefix = place
+            .through
+            .filter(|through| *through != place.root)
+            .and_then(|through| self.reference_places.get(&through))
+            .filter(|recorded| {
+                recorded.root == place.root
+                    && recorded.ty.is_some()
+                    && recorded.proj.len() <= place.proj.len()
+                    && recorded
+                        .proj
+                        .iter()
+                        .zip(&place.proj)
+                        .all(|(a, b)| projections_agree(a, b))
+            })
+            .map(|recorded| {
+                (
+                    recorded.ty.clone().expect("recorded place is typed"),
+                    recorded.proj.len(),
+                )
+            });
         let through_slot = self
             .var_slots
             .get(through_var as usize)
@@ -60,29 +83,36 @@ impl<'a> FnLowering<'a> {
                 .get(through_var as usize)
                 .copied()
                 .unwrap_or(false);
-        let (mut ty, mut address) = if place.through.is_some() || matches!(root_ty, Ty::Ref(_)) {
-            match &through_ty {
-                Ty::Ref(_) | Ty::Pointer { .. } => {
-                    let handle = ScalarTy::Ptr.handle(ctx);
-                    let load = LoadOp::new(ctx, through_slot, handle);
-                    self.append(ctx, load.get_operation(), Some(dest));
-                    (designated_ty, load.get_result(ctx))
-                }
-                // A `mut`/`ref` parameter is typed as its referent and its
-                // aliased slot already IS the referent address.
-                _ if ref_param_root => (designated_ty, through_slot),
-                _ => {
-                    return Err(self.unsupported_reg(
-                        format!("place through non-reference handle `{through_ty}`"),
-                        dest,
-                    ));
-                }
-            }
-        } else {
-            (root_ty, root_slot)
-        };
+        let (mut ty, mut address, projected) =
+            if let Some((recorded_ty, projected)) = recorded_prefix {
+                let handle = ScalarTy::Ptr.handle(ctx);
+                let load = LoadOp::new(ctx, through_slot, handle);
+                self.append(ctx, load.get_operation(), Some(dest));
+                (recorded_ty, load.get_result(ctx), projected)
+            } else if place.through.is_some() || matches!(root_ty, Ty::Ref(_)) {
+                let (ty, address) = match &through_ty {
+                    Ty::Ref(_) | Ty::Pointer { .. } => {
+                        let handle = ScalarTy::Ptr.handle(ctx);
+                        let load = LoadOp::new(ctx, through_slot, handle);
+                        self.append(ctx, load.get_operation(), Some(dest));
+                        (designated_ty, load.get_result(ctx))
+                    }
+                    // A `mut`/`ref` parameter is typed as its referent and its
+                    // aliased slot already IS the referent address.
+                    _ if ref_param_root => (designated_ty, through_slot),
+                    _ => {
+                        return Err(self.unsupported_reg(
+                            format!("place through non-reference handle `{through_ty}`"),
+                            dest,
+                        ));
+                    }
+                };
+                (ty, address, 0)
+            } else {
+                (root_ty, root_slot, 0)
+            };
         let mut offset: u64 = 0;
-        for proj in &place.proj {
+        for proj in &place.proj[projected..] {
             while let Ty::Ref(reference) = ty {
                 if offset != 0 {
                     address = self.gep_byte(ctx, address, offset, dest);
@@ -464,5 +494,20 @@ impl<'a> FnLowering<'a> {
         }
         self.reg_values.insert(dest.0, storage);
         Ok(())
+    }
+}
+
+/// Whether a recorded loan-place projection and a later use's projection
+/// select the same storage step: dynamic indices agree regardless of the
+/// register that carries them (a rebound `ref` binding's index register is
+/// not the use's).
+fn projections_agree(recorded: &Proj, used: &Proj) -> bool {
+    match (recorded, used) {
+        (Proj::Field(a), Proj::Field(b)) => a == b,
+        (Proj::Index(_), Proj::Index(_)) => true,
+        (Proj::ConstIndex(a), Proj::ConstIndex(b)) => a == b,
+        (Proj::Variant(a), Proj::Variant(b)) => a == b,
+        (Proj::UninitPayload, Proj::UninitPayload) => true,
+        _ => false,
     }
 }

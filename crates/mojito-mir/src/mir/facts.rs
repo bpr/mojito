@@ -99,6 +99,7 @@ impl Flatten<'_> {
                 place,
                 mutable,
                 interior: None,
+                shared: false,
             }];
         }
         // A materialized borrow-source temporary loans its hidden owned slot:
@@ -112,6 +113,7 @@ impl Flatten<'_> {
                 place: MirPlace::root(var, self.var_types.get(&var).cloned()),
                 mutable: true,
                 interior: None,
+                shared: false,
             }];
         }
         let borrow = self
@@ -148,6 +150,7 @@ impl Flatten<'_> {
                 place: MirPlace::root(var, ty),
                 mutable,
                 interior: None,
+                shared: false,
             }];
         }
         if let Some(mutable) = borrow
@@ -163,6 +166,7 @@ impl Flatten<'_> {
                     place,
                     mutable,
                     interior: None,
+                    shared: false,
                 }];
             }
             return interiors
@@ -174,6 +178,7 @@ impl Flatten<'_> {
                         place,
                         mutable,
                         interior: Some(interior),
+                        shared: false,
                     }
                 })
                 .collect();
@@ -224,6 +229,7 @@ impl Flatten<'_> {
                                 place: self.place(argument),
                                 mutable,
                                 interior: None,
+                                shared: false,
                             })
                         })
                         .collect::<Vec<_>>();
@@ -248,6 +254,10 @@ impl Flatten<'_> {
                         )
                     })
                 {
+                    let source = &kwargs
+                        .first()
+                        .expect("checked pointer construction has a 'to=' argument")
+                        .value;
                     if let Some(Ty::Pointer {
                         origin: mojito_types::origin::PointerOrigin::Place { place, .. },
                         ..
@@ -257,18 +267,19 @@ impl Flatten<'_> {
                             Some(mojito_types::origin::OriginSeg::Subtree)
                         )
                     {
-                        return self.pointer_place_loan(place.clone(), mutable);
+                        // The pointer reborrows through the `ref` binding it
+                        // was taken from, so its loan keeps that binding's
+                        // place and link instead of competing with the
+                        // binding's own loan.
+                        let source = self.place(source);
+                        return self.pointer_place_loan(place.clone(), mutable, Some(source), true);
                     }
-                    let place = self.place(
-                        &kwargs
-                            .first()
-                            .expect("checked pointer construction has a 'to=' argument")
-                            .value,
-                    );
+                    let place = self.place(source);
                     return vec![MirLoan {
                         place,
                         mutable,
                         interior: None,
+                        shared: true,
                     }];
                 }
                 // A free-function call returning a ref-field struct (a
@@ -302,6 +313,7 @@ impl Flatten<'_> {
                             place: self.place(argument),
                             mutable: false,
                             interior: None,
+                            shared: false,
                         })
                         .collect();
                     if !loans.is_empty() {
@@ -345,6 +357,7 @@ impl Flatten<'_> {
                             place: self.place(object),
                             mutable: false,
                             interior: None,
+                            shared: false,
                         }];
                     }
                 }
@@ -379,6 +392,7 @@ impl Flatten<'_> {
                                 place: self.place(argument),
                                 mutable,
                                 interior: None,
+                                shared: false,
                             })
                         })
                         .collect::<Vec<_>>();
@@ -396,7 +410,7 @@ impl Flatten<'_> {
                             _ => None,
                         });
                 if let Some(mojito_types::origin::PointerOrigin::Place { place, mutable }) = cast {
-                    return self.pointer_place_loan(place, mutable);
+                    return self.pointer_place_loan(place, mutable, None, false);
                 }
                 // A method whose selected contract returns an origin-bearing
                 // pointer (`xs.unsafe_ptr()`) loans that rebased place.
@@ -406,7 +420,7 @@ impl Flatten<'_> {
                         ..
                     } = &contract.result_ty
                 {
-                    return self.pointer_place_loan(place.clone(), *mutable);
+                    return self.pointer_place_loan(place.clone(), *mutable, None, false);
                 }
                 // `unsafe_offset` preserves provenance: forward the receiver's
                 // loans onto the offset pointer.
@@ -481,6 +495,7 @@ impl Flatten<'_> {
                             place,
                             mutable,
                             interior: None,
+                            shared: false,
                         });
                         loans
                     };
@@ -501,16 +516,23 @@ impl Flatten<'_> {
     /// The loan an origin-bearing pointer's concrete place induces: rooted at
     /// the owner's variable, with an interior-generation tail becoming the
     /// loan's interior domain (container mutation stales it without ordinary
-    /// reads conflicting). An unmapped owner (no live variable) loans nothing.
+    /// reads conflicting). A `source` place rooted at that owner (the `ref`
+    /// binding the pointer was taken through) is the executable loan place,
+    /// `through` link included. An unmapped owner (no live variable) loans
+    /// nothing.
     fn pointer_place_loan(
         &mut self,
         place: mojito_types::origin::OriginPlace,
         mutable: bool,
+        source: Option<MirPlace>,
+        shared: bool,
     ) -> Vec<MirLoan> {
         let Some(root) = self.owner_vars.get(&place.root).copied() else {
             return Vec::new();
         };
-        let mir_place = MirPlace::root(root, self.var_types.get(&root).cloned());
+        let mir_place = source
+            .filter(|source| source.root == root)
+            .unwrap_or_else(|| MirPlace::root(root, self.var_types.get(&root).cloned()));
         let interior = matches!(
             place.path.last(),
             Some(mojito_types::origin::OriginSeg::Interior(_))
@@ -522,6 +544,7 @@ impl Flatten<'_> {
             place: mir_place,
             mutable,
             interior,
+            shared,
         }]
     }
 
@@ -548,6 +571,7 @@ impl Flatten<'_> {
                 place: MirPlace::root(var, self.var_types.get(&var).cloned()),
                 mutable: matches!(capture.kind, CaptureKind::Mut | CaptureKind::Ref),
                 interior: None,
+                shared: false,
             });
         }
         if let Some(callable) = self.nested.get(&capture.binding).cloned() {
