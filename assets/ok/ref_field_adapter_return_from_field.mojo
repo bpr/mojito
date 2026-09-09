@@ -1,15 +1,19 @@
-# The upstream iterator-adapter shape: a wrapper struct holding a ref-field
-# struct, built inside an ordinary method from the receiver's own field and
-# returned to the caller. The caller-side view loan keeps the source alive.
-@fieldwise_init
+# The upstream iterator-adapter shape: a wrapper struct holding a
+# pointer-field struct, built inside an ordinary method from the receiver's
+# own field and returned to the caller. The caller-side view loan keeps the
+# source alive.
 struct EntryIter[m: Bool, //, o: Origin[mut=m]]:
-    var src: ref[o] List[Int]
+    var src: Pointer[List[Int], Self.o]
     var index: Int
+
+    def __init__(out self, ref[Self.o] src: List[Int], index: Int):
+        self.src = Pointer(to=src)
+        self.index = index
 
     def next_val(mut self) -> Int:
         var r = self.index
         self.index += 1
-        return self.src[r]
+        return self.src[][r]
 
 @fieldwise_init
 struct KeyIter[m: Bool, //, o: Origin[mut=m]]:

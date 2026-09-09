@@ -1,6 +1,6 @@
 @fieldwise_init
 struct RefBox[origin: Origin[mut=True]]:
-    var value: ref[origin] List[Int]
+    var value: Pointer[List[Int], Self.origin]
 
 @fieldwise_init
 struct Stasher(def(mut List[RefBox], RefBox)):
@@ -14,7 +14,7 @@ def main():
     var sink = List[RefBox]()
     var local: List[Int] = [9]
     ref alias = local
-    s(sink, RefBox(alias))
-    print(sink[0].value[0])
+    s(sink, RefBox(Pointer(to=alias)))
+    print(sink[0].value[][0])
     local.append(1)
     print(local[1])

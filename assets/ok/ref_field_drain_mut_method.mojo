@@ -1,14 +1,14 @@
-# A mutating method dispatched through a `ref`-typed field: the receiver is a
-# stored reference handle, so the VM reads through it to dispatch and writes
-# the mutation back through the same handle into the ultimate source.
+# A mutating method dispatched through a `Pointer`-typed field: the receiver
+# is a stored pointer handle, so the VM reads through it to dispatch and
+# writes the mutation back through the same handle into the ultimate source.
 @fieldwise_init
 struct Drain[
     view_origin: Origin[mut=True],
 ]:
-    var src: ref[view_origin] List[Int]
+    var src: Pointer[List[Int], Self.view_origin]
 
     def take(mut self) -> Int:
-        return self.src.pop()
+        return self.src[].pop()
 
 struct Box:
     comptime DrainType[view_origin: Origin[mut=True]] = Drain
@@ -22,7 +22,7 @@ struct Box:
 
     def drain(mut self) -> Self.DrainType[origin_of(self)]:
         ref source = self.items
-        return Drain(source)
+        return Drain(Pointer(to=source))
 
 def main():
     var b = Box()

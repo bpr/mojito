@@ -1,5 +1,5 @@
-# An explicit `^` transfer through a `ref` field moves the value into the
-# referent without a copy, and reads that project past the ref field route
+# An explicit `^` transfer through a `Pointer` field moves the value into the
+# referent without a copy, and reads that project past the pointer field route
 # through the handle-chasing reference walk.
 struct SoleList(Movable):
     var items: List[Int]
@@ -8,15 +8,15 @@ struct SoleList(Movable):
 
 @fieldwise_init
 struct RefCell[origin: Origin[mut=True]]:
-    var value: ref[origin] SoleList
+    var value: Pointer[SoleList, Self.origin]
     def put(mut self, var replacement: SoleList):
-        self.value = replacement^
+        self.value[] = replacement^
     def first(self) -> Int:
-        return self.value.items[0]
+        return self.value[].items[0]
 
 def main():
     var keep = SoleList(1)
     ref whole = keep
-    var cell = RefCell(whole)
+    var cell = RefCell(Pointer(to=whole))
     cell.put(SoleList(9))
     print(cell.first())

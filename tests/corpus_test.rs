@@ -73,6 +73,30 @@ fn fixtures(category: &str) -> Vec<PathBuf> {
     files
 }
 
+/// A category's fixtures across its two folders — the Mojo-compilable ones
+/// under `assets/<category>` and the Mojito-extension ones under
+/// `assets/extensions/<category>` (`assets/README.md`) — each with the
+/// trial-name label of its folder (`ok`, `extensions_ok`).
+fn labeled_fixtures(category: &str) -> Vec<(PathBuf, String)> {
+    let mut all: Vec<(PathBuf, String)> = fixtures(category)
+        .into_iter()
+        .map(|path| (path, category.to_string()))
+        .collect();
+    let extension = format!("extensions/{category}");
+    if Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("assets")
+        .join(&extension)
+        .is_dir()
+    {
+        all.extend(
+            fixtures(&extension)
+                .into_iter()
+                .map(|path| (path, format!("extensions_{category}"))),
+        );
+    }
+    all
+}
+
 fn stem(path: &Path) -> String {
     path.file_stem()
         .expect("fixture stem")
@@ -173,11 +197,11 @@ fn assets_outcome_trials(trials: &mut Vec<Trial>) {
         ("ownership_error", Outcome::OwnershipError),
         ("runtime_error", Outcome::RuntimeError),
     ] {
-        for path in fixtures(category) {
+        for (path, label) in labeled_fixtures(category) {
             if category == "ok" && reads_stdin(&path) {
                 continue;
             }
-            let name = format!("assets_{category}::{}", stem(&path));
+            let name = format!("assets_{label}::{}", stem(&path));
             trials.push(Trial::test(name, move || {
                 let source = fs::read_to_string(&path).expect("read fixture");
                 let (got, message) = classify(&path);
@@ -207,9 +231,9 @@ fn assets_outcome_trials(trials: &mut Vec<Trial>) {
 }
 
 fn vm_ok_trials(trials: &mut Vec<Trial>) {
-    let paths: Vec<PathBuf> = fixtures("ok")
+    let paths: Vec<(PathBuf, String)> = labeled_fixtures("ok")
         .into_iter()
-        .filter(|path| !reads_stdin(path))
+        .filter(|(path, _)| !reads_stdin(path))
         .collect();
     let count = paths.len();
     trials.push(Trial::test("vm_ok::guard_nonempty", move || {
@@ -222,8 +246,13 @@ fn vm_ok_trials(trials: &mut Vec<Trial>) {
     // the authoritative whole-program discovery/specialization pipeline and
     // run without error. (Exact-output correctness is asserted by targeted
     // tests.)
-    for path in paths {
-        trials.push(Trial::test(format!("vm_ok::{}", stem(&path)), move || {
+    for (path, label) in paths {
+        let name = if label == "ok" {
+            format!("vm_ok::{}", stem(&path))
+        } else {
+            format!("vm_ok::extensions::{}", stem(&path))
+        };
+        trials.push(Trial::test(name, move || {
             let compiler = Compiler::default();
             let program = compiler
                 .compile_path(&path)
@@ -239,12 +268,12 @@ fn vm_ok_trials(trials: &mut Vec<Trial>) {
 fn verify_trials(trials: &mut Vec<Trial>) {
     let mut total = 0usize;
     for category in ["ok", "origin_ok", "ownership_ok"] {
-        for path in fixtures(category) {
+        for (path, label) in labeled_fixtures(category) {
             if requires_discovery(&path) {
                 continue;
             }
             total += 1;
-            let name = format!("verify::{category}::{}", stem(&path));
+            let name = format!("verify::{label}::{}", stem(&path));
             trials.push(Trial::test(name, move || {
                 let program = link(&path).map_err(|error| fail(format!("link: {error}")))?;
                 let program =
@@ -323,9 +352,9 @@ fn first_divergence(first: &str, second: &str) -> String {
 fn roundtrip_trials(trials: &mut Vec<Trial>) {
     let mut total = 0usize;
     for category in ["ok", "origin_ok", "ownership_ok"] {
-        for path in fixtures(category) {
+        for (path, label) in labeled_fixtures(category) {
             total += 1;
-            let name = format!("roundtrip::{category}::{}", stem(&path));
+            let name = format!("roundtrip::{label}::{}", stem(&path));
             trials.push(Trial::test(name, move || {
                 // A program schema 1.0 cannot represent is exactly the finding
                 // this group exists to surface.
@@ -367,9 +396,9 @@ fn roundtrip_trials(trials: &mut Vec<Trial>) {
 }
 
 fn origin_trials(trials: &mut Vec<Trial>) {
-    for path in fixtures("origin_ok") {
+    for (path, label) in labeled_fixtures("origin_ok") {
         trials.push(Trial::test(
-            format!("origin_ok::{}", stem(&path)),
+            format!("{label}::{}", stem(&path)),
             move || {
                 let compiler = Compiler::default();
                 let program = compiler
@@ -382,8 +411,8 @@ fn origin_trials(trials: &mut Vec<Trial>) {
             },
         ));
     }
-    for path in fixtures("origin_error") {
-        let name = format!("origin_error::{}", stem(&path));
+    for (path, label) in labeled_fixtures("origin_error") {
+        let name = format!("{label}::{}", stem(&path));
         trials.push(Trial::test(name, move || {
             let source = fs::read_to_string(&path).expect("read origin fixture");
             let message = match Compiler::default().compile_path(&path) {
@@ -415,7 +444,7 @@ fn own(src: &str) -> Result<(), OwnershipError> {
 }
 
 fn ownership_trials(trials: &mut Vec<Trial>) {
-    let error_paths = fixtures("ownership_error");
+    let error_paths = labeled_fixtures("ownership_error");
     let count = error_paths.len();
     trials.push(Trial::test(
         "ownership_error::guard_corpus_size",
@@ -430,8 +459,8 @@ fn ownership_trials(trials: &mut Vec<Trial>) {
     ));
     // Every `assets/ownership_error/*.mojo` must be a move violation whose
     // message contains its required `# expect:` substring.
-    for path in error_paths {
-        let name = format!("ownership_error::{}", stem(&path));
+    for (path, label) in error_paths {
+        let name = format!("{label}::{}", stem(&path));
         trials.push(Trial::test(name, move || {
             let src = fs::read_to_string(&path).expect("read fixture");
             let expect = expected_substring(&src)
@@ -452,8 +481,8 @@ fn ownership_trials(trials: &mut Vec<Trial>) {
     }
     // Every `assets/ownership_ok/*.mojo` must pass the ownership analysis
     // (analysis only — no VM execution).
-    for path in fixtures("ownership_ok") {
-        let name = format!("ownership_ok::{}", stem(&path));
+    for (path, label) in labeled_fixtures("ownership_ok") {
+        let name = format!("{label}::{}", stem(&path));
         trials.push(Trial::test(name, move || {
             let src = fs::read_to_string(&path).expect("read fixture");
             own(&src).map_err(|error| fail(format!("expected no ownership error, got {error:?}")))

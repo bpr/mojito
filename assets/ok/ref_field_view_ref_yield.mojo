@@ -1,9 +1,8 @@
-# A ref-field view returned from an ordinary method yields references
+# A pointer-field view returned from an ordinary method yields references
 # (`__next__` returns `ref [...]`): the receiver loan established at the call
 # keeps the ultimate source alive under reference-yielding iteration.
 from std.iterable import Iterator, StopIteration
 
-@fieldwise_init
 struct View[
     view_mut: Bool, //,
     view_origin: Origin[mut=view_mut],
@@ -13,8 +12,12 @@ struct View[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
     ] = View
 
-    var src: ref[view_origin] List[Int]
+    var src: Pointer[List[Int], Self.view_origin]
     var index: Int
+
+    def __init__(out self, ref[Self.view_origin] xs: List[Int], index: Int):
+        self.src = Pointer(to=xs)
+        self.index = index
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self.copy()
@@ -22,11 +25,11 @@ struct View[
     def __next__(mut self) raises StopIteration -> ref[
         Origin[mut=False].cast_from[Self.view_origin._get_owned_interior["element"]]
     ] Int:
-        if self.index >= len(self.src):
+        if self.index >= len(self.src[]):
             raise StopIteration()
         var r = self.index
         self.index += 1
-        return self.src[r]
+        return self.src[][r]
 
 struct Box:
     comptime ViewType[

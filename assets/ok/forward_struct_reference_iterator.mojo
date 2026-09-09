@@ -1,19 +1,19 @@
 # P1c: iterator declared before its container, reaching the container only
-# through method calls on the ref field (the exact list.mojo shape).
+# through method calls on the pointer field (the exact list.mojo shape).
 from std.iterable import StopIteration
 
 
 @fieldwise_init
 struct BoxIter[o: Origin[mut=False]]:
-    var src: ref[o] Box
+    var src: Pointer[Box, Self.o]
     var index: Int
 
     def __next__(mut self) raises StopIteration -> Int:
-        if self.index >= self.src.length():
+        if self.index >= self.src[].length():
             raise StopIteration()
         var r = self.index
         self.index += 1
-        return self.src.get(r)
+        return self.src[].get(r)
 
 
 struct Box:
@@ -30,7 +30,7 @@ struct Box:
 
     def __iter__(ref self) -> BoxIter[origin_of(self)]:
         ref source = self
-        return BoxIter(source, 0)
+        return BoxIter(Pointer(to=source), 0)
 
 
 def main():

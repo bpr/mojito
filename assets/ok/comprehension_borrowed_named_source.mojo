@@ -7,15 +7,15 @@ from std.iterable import StopIteration
 
 @fieldwise_init
 struct NumbersIter[o: Origin[mut=False]]:
-    var src: ref[o] List[Int]
+    var src: Pointer[List[Int], Self.o]
     var index: Int
 
     def __next__(mut self) raises StopIteration -> ref[Self.o] Int:
-        if self.index >= len(self.src):
+        if self.index >= len(self.src[]):
             raise StopIteration()
         var r = self.index
         self.index += 1
-        return self.src[r]
+        return self.src[][r]
 
 
 struct Numbers:
@@ -33,7 +33,7 @@ struct Numbers:
 
     def __iter__(ref self) -> NumbersIter[origin_of(self.items)]:
         ref items = self.items
-        return NumbersIter(items, 0)
+        return NumbersIter(Pointer(to=items), 0)
 
 
 def main():

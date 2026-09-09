@@ -1,6 +1,6 @@
 @fieldwise_init
 struct RefBox[origin: Origin[mut=True]]:
-    var value: ref[origin] List[Int]
+    var value: Pointer[List[Int], Self.origin]
 
 @fieldwise_init
 struct Carrier[origin: Origin[mut=True]]:
@@ -15,10 +15,10 @@ def feed[callback: def(mut Carrier, RefBox) thin](mut sink: Carrier, box: RefBox
 def main():
     var keep: List[Int] = [1]
     ref whole = keep
-    var sink = Carrier(RefBox(whole))
+    var sink = Carrier(RefBox(Pointer(to=whole)))
     var local: List[Int] = [9]
     ref alias = local
-    feed[stash](sink, RefBox(alias))
-    print(sink.slot.value[0])
+    feed[stash](sink, RefBox(Pointer(to=alias)))
+    print(sink.slot.value[][0])
     local.append(1)
     print(local[1])

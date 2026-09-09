@@ -1,5 +1,5 @@
 # The upstream dict-iterator adapter shape end-to-end: a wrapper iterator
-# holding an origin-applied ref-field entry iterator (monomorphic comptime
+# holding an origin-applied pointer-field entry iterator (monomorphic comptime
 # alias in field position), full raising-iterator protocol, and a for-loop
 # driving the wrapped chain through `keys()`.
 from std.iterable import Iterator, StopIteration
@@ -9,13 +9,16 @@ struct Pair(Copyable, Movable):
     var key: Int
     var value: Int
 
-@fieldwise_init
 struct EntryIter[m: Bool, //, o: Origin[mut=m]](Copyable, Iterator):
     comptime Element = Pair
     comptime IteratorType[vm: Bool, //, vo: Origin[mut=vm]] = EntryIter[vo]
 
-    var src: ref[o] List[Pair]
+    var src: Pointer[List[Pair], Self.o]
     var index: Int
+
+    def __init__(out self, ref[Self.o] xs: List[Pair], index: Int):
+        self.src = Pointer(to=xs)
+        self.index = index
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self.copy()
@@ -23,11 +26,11 @@ struct EntryIter[m: Bool, //, o: Origin[mut=m]](Copyable, Iterator):
     def __next__(mut self) raises StopIteration -> ref[
         Origin[mut=False].cast_from[Self.o._get_owned_interior["element"]]
     ] Pair:
-        if self.index >= len(self.src):
+        if self.index >= len(self.src[]):
             raise StopIteration()
         var r = self.index
         self.index += 1
-        return self.src[r]
+        return self.src[][r]
 
 @fieldwise_init
 struct KeyIter[m: Bool, //, o: Origin[mut=m]](Copyable, Iterator):

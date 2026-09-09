@@ -1,6 +1,7 @@
 # An argument-taking delegated-call origin expression drives an iterator
 # adapter end-to-end: `ref[self.iter.step(1).key]` resolves the wrapped
-# iterator's contract, and stepping happens through the delegated call.
+# iterator's contract, and stepping happens through the delegated call. The
+# wrapped iterator stores its source through a `Pointer[T, Self.o]` field.
 from std.iterable import Iterator, StopIteration
 
 @fieldwise_init
@@ -10,17 +11,17 @@ struct Pair(Copyable, Movable):
 
 @fieldwise_init
 struct EntryIter[m: Bool, //, o: Origin[mut=m]]:
-    var src: ref[o] List[Pair]
+    var src: Pointer[List[Pair], Self.o]
     var index: Int
 
     def step(mut self, by: Int) raises StopIteration -> ref[
         Origin[mut=False].cast_from[Self.o._get_owned_interior["element"]]
     ] Pair:
-        if self.index >= len(self.src):
+        if self.index >= len(self.src[]):
             raise StopIteration()
         var r = self.index
         self.index += by
-        return self.src[r]
+        return self.src[][r]
 
 @fieldwise_init
 struct KeyIter[m: Bool, //, o: Origin[mut=m]]:
@@ -36,7 +37,7 @@ def main():
     data.append(Pair(1, 10))
     data.append(Pair(2, 20))
     ref r = data
-    var ki = KeyIter(EntryIter(r, 0))
+    var ki = KeyIter(EntryIter(Pointer(to=r), 0))
     try:
         while True:
             print(ki.__next__())

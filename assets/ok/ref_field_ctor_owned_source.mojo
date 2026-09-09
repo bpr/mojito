@@ -1,13 +1,17 @@
-# A bare owned place auto-borrows into a ref ctor parameter: constructing a
-# view no longer requires an explicit `ref` binding of the source first. Both
-# an owned local and an owned field feed the ref slot directly.
-@fieldwise_init
+# A bare owned place auto-borrows into a pointer-storing view's ref ctor
+# parameter: constructing a view no longer requires an explicit `ref` binding
+# of the source first. Both an owned local and an owned field feed the ref
+# slot directly, and the constructor stores `Pointer(to=...)` of it.
 struct View[m: Bool, //, o: Origin[mut=m]]:
-    var src: ref[o] List[Int]
+    var src: Pointer[List[Int], Self.o]
     var index: Int
 
+    def __init__(out self, ref[Self.o] src: List[Int], index: Int):
+        self.src = Pointer(to=src)
+        self.index = index
+
     def first(self) -> Int:
-        return self.src[self.index]
+        return self.src[][self.index]
 
 @fieldwise_init
 struct Bag:

@@ -1,12 +1,13 @@
-# A temporary auto-borrows into an explicit `__init__`'s ref parameter, and
-# the parameter's origin clause uses upstream's qualified `Self.o` binder
-# spelling (accepted in parameter clauses like in return clauses).
+# A temporary auto-borrows into an explicit `__init__`'s ref parameter, whose
+# address the pointer field stores, and the parameter's origin clause uses
+# upstream's qualified `Self.o` binder spelling (accepted in parameter clauses
+# like in return clauses).
 struct View[m: Bool, //, o: Origin[mut=m]]:
-    var src: ref[o] List[Int]
+    var src: Pointer[List[Int], Self.o]
     var index: Int
 
     def __init__(out self, ref [Self.o] src: List[Int], index: Int):
-        self.src = src
+        self.src = Pointer(to=src)
         self.index = index
 
 def make_list() -> List[Int]:
@@ -17,5 +18,5 @@ def make_list() -> List[Int]:
 
 def main():
     var v = View(make_list(), 0)
-    print(v.src[0])
-    print(v.src[1])
+    print(v.src[][0])
+    print(v.src[][1])

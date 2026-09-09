@@ -16,6 +16,21 @@ changes.
 | `type_error/`     | parses, but the checker rejects it                            |
 | `runtime_error/`  | compiles, but fails during VM execution, including explicit late `Unsupported` boundaries |
 
+## `extensions/`: Mojito-only language extensions
+
+Every fixture in the folders above must compile with the pinned Mojo.
+A program that uses a Mojito extension — today, direct `ref` struct fields
+(`var f: ref[o] T`), which upstream rejects and may adopt later; in future,
+experiments such as pattern matching or enums — lives under
+`assets/extensions/<folder>/` instead, where `<folder>` is the same outcome
+folder it would otherwise use (`extensions/ok`, `extensions/type_error`,
+`extensions/ownership_error`, …). The harnesses run these through the same
+groups (named `assets_extensions_<folder>::…`, `vm_ok::extensions::…`, and
+so on) and the native parity manifest covers `extensions/ok` and
+`extensions/ownership_ok`. When a `ref`-field fixture has a Mojo-valid twin
+that spells the storage through `Pointer[T, origin]`, the twin keeps the
+same file name in the ordinary folder.
+
 Grab a Mojo file off the net, decide where mojito should currently land on it,
 and drop it in that folder. When mojito gains a feature, a file "graduates" to an
 earlier-passing folder (e.g. `parse_error/ → ok/`) — a nice, greppable diff.

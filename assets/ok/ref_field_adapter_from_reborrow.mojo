@@ -1,21 +1,25 @@
-# A ref-field struct constructed from a REBORROW of another struct's ref field
-# forwards the stored handle (the MakeRef forwarding interpretation) instead of
-# borrowing the field slot as storage.
-@fieldwise_init
+# A pointer-field struct constructed from a REBORROW of another struct's
+# pointer field forwards the stored handle (the MakeRef forwarding
+# interpretation) instead of borrowing the field slot as storage.
 struct EntryIter[m: Bool, //, o: Origin[mut=m]]:
-    var src: ref[o] List[Int]
+    var src: Pointer[List[Int], Self.o]
     var index: Int
 
-    def get(self) -> Int:
-        return self.src[self.index]
+    def __init__(out self, ref[Self.o] src: List[Int], index: Int):
+        self.src = Pointer(to=src)
+        self.index = index
 
-@fieldwise_init
+    def get(self) -> Int:
+        return self.src[][self.index]
+
 struct Holder[m: Bool, //, o: Origin[mut=m]]:
-    var src: ref[o] List[Int]
+    var src: Pointer[List[Int], Self.o]
+
+    def __init__(out self, ref[Self.o] src: List[Int]):
+        self.src = Pointer(to=src)
 
     def head(self) -> Int:
-        ref s = self.src
-        var e = EntryIter(s, 0)
+        var e = EntryIter(self.src[], 0)
         return e.get()
 
 def main():

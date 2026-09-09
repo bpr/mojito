@@ -1,15 +1,18 @@
-# A ref-field view returned from a free function borrows its place argument:
-# the caller-side view loan keeps the source list alive (and unmutated) while
-# the view is used.
-@fieldwise_init
+# A pointer-field view returned from a free function borrows its place
+# argument: the caller-side view loan keeps the source list alive (and
+# unmutated) while the view is used.
 struct EntryIter[m: Bool, //, o: Origin[mut=m]]:
-    var src: ref[o] List[Int]
+    var src: Pointer[List[Int], Self.o]
     var index: Int
+
+    def __init__(out self, ref[Self.o] xs: List[Int], index: Int):
+        self.src = Pointer(to=xs)
+        self.index = index
 
     def next_val(mut self) -> Int:
         var r = self.index
         self.index += 1
-        return self.src[r]
+        return self.src[][r]
 
 def make_view(ref xs: List[Int]) -> EntryIter[origin_of(xs)]:
     return EntryIter(xs, 0)

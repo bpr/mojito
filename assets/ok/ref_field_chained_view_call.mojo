@@ -2,19 +2,22 @@
 # retains the view in a hidden slot whose loans keep the source alive across
 # the chained call — no intermediate `var` binding required. A view-to-view
 # method chains one level deeper the same way.
-@fieldwise_init
 struct Pane[m: Bool, //, o: Origin[mut=m]]:
-    var items: ref[o] List[Int]
+    var items: Pointer[List[Int], Self.o]
     var start: Int
 
+    def __init__(out self, ref[Self.o] items: List[Int], start: Int):
+        self.items = Pointer(to=items)
+        self.start = start
+
     def shifted(self) -> Pane[o]:
-        return Pane(self.items, self.start + 1)
+        return Pane(self.items[], self.start + 1)
 
     def first(self) -> Int:
-        return self.items[self.start]
+        return self.items[][self.start]
 
     def __getitem__(self, i: Int) -> Int:
-        return self.items[self.start + i]
+        return self.items[][self.start + i]
 
 struct Board:
     comptime PaneType[m: Bool, //, o: Origin[mut=m]] = Pane

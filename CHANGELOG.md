@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Direct `ref` struct fields (`var f: ref[o] T`) are kept as a tracked
+  Mojito extension: upstream rejects them today but may adopt them. Their
+  fixtures move to the new `assets/extensions/<folder>/` class (110 files),
+  which the corpus and native-parity harnesses run under
+  `extensions_<folder>` names, so every ordinary `assets/` fixture now
+  compiles with the pinned Mojo. Where a `ref`-field fixture has a Mojo-valid
+  twin, the twin spells the storage through `Pointer[T, origin]` under the
+  same name in the ordinary folder.
 - Diagnostics respelled to the pinned Mojo's texts: a use after a transfer —
   definite, path-dependent, or through a `try` region — is `use of
   uninitialized value 'x'`; `len` on a value that is not `Sized` is `no
@@ -37,6 +45,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- VM: a write through a `Pointer` to a `List` element (`p[][1] = 99`,
+  `p[][0] += 1`, a method's `self.src[][i] = v`) no longer fails with a
+  reference-projection error; the pointer boundary detector steps through
+  the dereference like the reader does.
 - A positional variadic pack (`var *values: T`) of a non-`Deinitable` `T`
   is no longer linear — upstream destroys its elements implicitly — while
   `**kwargs` packs, `mut`/`var` parameters, and locals of such a `T` stay

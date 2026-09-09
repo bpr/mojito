@@ -570,6 +570,11 @@ impl VmBackend {
                     value = *payload;
                 }
                 (RefProjection::UninitPayload, Value::UninitStorage(None)) => return Ok(None),
+                // A `to=place` pointer's handle already designates the
+                // pointee (`navigate_reference_mut` treats the dereference as
+                // the identity), so a boundary further along — `p[][i] = v`
+                // into a List's heap storage — is still reachable.
+                (RefProjection::Deref, current) => value = current,
                 _ => return Ok(None),
             }
         }

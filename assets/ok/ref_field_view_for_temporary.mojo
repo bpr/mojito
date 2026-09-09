@@ -1,9 +1,8 @@
-# A ref-field view returned from an ordinary method drives a for-loop both as
-# a temporary iterable and through a stored binding: the receiver loan flows
-# through GetIter onto the loop iterator.
+# A pointer-field view returned from an ordinary method drives a for-loop
+# both as a temporary iterable and through a stored binding: the receiver
+# loan flows through GetIter onto the loop iterator.
 from std.iterable import Iterator, StopIteration
 
-@fieldwise_init
 struct View[
     view_mut: Bool, //,
     view_origin: Origin[mut=view_mut],
@@ -13,18 +12,22 @@ struct View[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
     ] = View
 
-    var src: ref[view_origin] List[Int]
+    var src: Pointer[List[Int], Self.view_origin]
     var index: Int
+
+    def __init__(out self, ref[Self.view_origin] src: List[Int], index: Int):
+        self.src = Pointer(to=src)
+        self.index = index
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self.copy()
 
     def __next__(mut self) raises StopIteration -> Int:
-        if self.index >= len(self.src):
+        if self.index >= len(self.src[]):
             raise StopIteration()
         var r = self.index
         self.index += 1
-        return self.src[r]
+        return self.src[][r]
 
 struct Box:
     comptime ViewType[

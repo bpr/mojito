@@ -2,12 +2,12 @@
 # the returned collection: parameter origins do not escape.
 @fieldwise_init
 struct RefBox[origin: Origin[mut=True]]:
-    var value: ref[origin] List[Int]
+    var value: Pointer[List[Int], Self.origin]
 
 def fill(mut source: List[Int]) -> List[RefBox[origin_of(source)]]:
     var sink = List[RefBox]()
     ref alias = source
-    sink.append(RefBox(alias))
+    sink.append(RefBox(Pointer(to=alias)))
     return sink^
 
 def main():

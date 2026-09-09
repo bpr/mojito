@@ -1122,7 +1122,8 @@ fn parametric_mut_iterator_writes_through_a_mutable_source() {
     // The loop site resolves `Mutability::Param` from the source: a mutable
     // named source yields mutable references, `for ref x: x += 10` lands in
     // the source, and the comprehension path resolves the same way.
-    let source = include_str!("../assets/ok/reference_yielding_iteration_parametric_mut.mojo");
+    let source =
+        include_str!("../assets/extensions/ok/reference_yielding_iteration_parametric_mut.mojo");
     assert_eq!(
         run_compiled(source).expect("parametric-mut iterator writes through"),
         "45\n28 32\n"
@@ -1133,7 +1134,7 @@ fn parametric_mut_iterator_writes_through_a_mutable_source() {
 fn parametric_mut_iterator_reads_through_the_immutable_fallback() {
     // A parametric-mut origin iterator (`m: Bool, //, o: Origin[mut=m]`) over
     // a read-only loop: the unresolved `Mutability::Param` binds immutably.
-    let source = include_str!("../assets/ok/parametric_mut_iterator_read.mojo");
+    let source = include_str!("../assets/extensions/ok/parametric_mut_iterator_read.mojo");
     assert_eq!(
         run_compiled(source).expect("parametric-mut iterator reads"),
         "15\n"

@@ -3,7 +3,7 @@
 # mutates freely while sibling storage stays live.
 @fieldwise_init
 struct RefBox[origin: Origin[mut=True]]:
-    var value: ref[origin] List[Int]
+    var value: Pointer[List[Int], Self.origin]
 
 @fieldwise_init
 struct Carrier[origin: Origin[mut=True]]:
@@ -20,12 +20,12 @@ def stash_into_a(mut t: Two, box: RefBox):
 def main():
     var keep: List[Int] = [1]
     ref whole = keep
-    var t = Two(Carrier(RefBox(whole)), [1])
+    var t = Two(Carrier(RefBox(Pointer(to=whole))), [1])
     var local: List[Int] = [9]
     ref alias = local
-    stash_into_a(t, RefBox(alias))
+    stash_into_a(t, RefBox(Pointer(to=alias)))
     var keep2: List[Int] = [2]
     ref again = keep2
-    t.a = Carrier(RefBox(again))
+    t.a = Carrier(RefBox(Pointer(to=again)))
     local.append(1)
     print(t.b[0], local[1])

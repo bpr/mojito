@@ -477,7 +477,9 @@ fn assert_jit_matches(fixture: &str, level: &str, native: JitValue, printed: &st
 /// trailing guards fail if eligible coverage unexpectedly shrinks.
 #[test]
 fn scalar_capability_manifest_and_differential() {
-    let ok_rows = parallel_map(fixture_sources("assets/ok"), |(rel, src)| {
+    let mut scalar_sources = fixture_sources("assets/ok");
+    scalar_sources.extend(fixture_sources("assets/extensions/ok"));
+    let ok_rows = parallel_map(scalar_sources, |(rel, src)| {
         if !has_compute_entry(&src) {
             return (
                 rel,
@@ -846,6 +848,8 @@ fn run_executable(exe: &Path, stdin: Option<&[u8]>, envs: &[(&str, &str)]) -> st
 fn parity_exe_manifest_and_differential() {
     let mut runnable = fixture_sources("assets/ok");
     runnable.extend(fixture_sources("assets/ownership_ok"));
+    runnable.extend(fixture_sources("assets/extensions/ok"));
+    runnable.extend(fixture_sources("assets/extensions/ownership_ok"));
     let ok_rows = parallel_map(runnable, |(rel, src)| {
         let compiler = Compiler::default();
         let Ok(compiled) = compiler.compile_source(&src, Path::new(&rel)) else {
@@ -1104,8 +1108,8 @@ fn parity_exe_manifest_and_differential() {
     let excluded = count("excluded");
     if !focused {
         assert!(
-            differential == 464,
-            "exe-differential coverage must cover the complete runnable inventory: {differential} != 464"
+            differential == 506,
+            "exe-differential coverage must cover the complete runnable inventory: {differential} != 506"
         );
         assert!(
             errors == 34,
@@ -1200,7 +1204,9 @@ fn unsupported_constructs_produce_contextual_diagnostics() {
 /// never hand them to the native backend.
 #[test]
 fn negative_ownership_fixtures_fail_before_the_backend() {
-    parallel_map(fixture_sources("assets/ownership_error"), |(rel, src)| {
+    let mut negatives = fixture_sources("assets/ownership_error");
+    negatives.extend(fixture_sources("assets/extensions/ownership_error"));
+    parallel_map(negatives, |(rel, src)| {
         let compiler = Compiler::default();
         let error = compiler
             .compile_source(&src, Path::new(&rel))

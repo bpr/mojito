@@ -1,7 +1,8 @@
 # A multi-origin-binder delegated correspondence: the field application
 # (`var second: EntryCursor[Self.o2]`) records which caller binder each
 # callee binder bound, so the delegated origin resolves through the right
-# field — the returned reference loans only the second source.
+# field — the returned reference loans only the second source. The cursor
+# stores its source through a `Pointer[T, Self.o]` field.
 @fieldwise_init
 struct Pair(Copyable, Movable):
     var key: Int
@@ -9,10 +10,10 @@ struct Pair(Copyable, Movable):
 
 @fieldwise_init
 struct EntryCursor[m: Bool, //, o: Origin[mut=m]]:
-    var src: ref[o] Pair
+    var src: Pointer[Pair, Self.o]
 
     def current(self) -> ref[Self.o] Pair:
-        return self.src
+        return self.src[]
 
 @fieldwise_init
 struct TwoView[m1: Bool, m2: Bool, //, o1: Origin[mut=m1], o2: Origin[mut=m2]]:
@@ -27,5 +28,5 @@ def main():
     var b = Pair(2, 20)
     ref ra = a
     ref rb = b
-    var tv = TwoView(EntryCursor(ra), EntryCursor(rb))
+    var tv = TwoView(EntryCursor(Pointer(to=ra)), EntryCursor(Pointer(to=rb)))
     print(tv.key())

@@ -1,15 +1,19 @@
 # Origin arguments through comptime alias channels: an alias body binding its
 # own origin parameter, a parameterized alias member applied in field
-# position, and upstream dict.mojo's monomorphic-alias-in-field shape.
-@fieldwise_init
+# position, and upstream dict.mojo's monomorphic-alias-in-field shape. The
+# source is stored through `Pointer[T, Self.o]` fields.
 struct EntryIter[m: Bool, //, o: Origin[mut=m]]:
-    var src: ref[o] List[Int]
+    var src: Pointer[List[Int], Self.o]
     var index: Int
+
+    def __init__(out self, ref[Self.o] xs: List[Int], index: Int):
+        self.src = Pointer(to=xs)
+        self.index = index
 
     def next_val(mut self) -> Int:
         var r = self.index
         self.index += 1
-        return self.src[r]
+        return self.src[][r]
 
 @fieldwise_init
 struct KeyIter[m: Bool, //, o: Origin[mut=m]]:
@@ -29,13 +33,16 @@ struct ValueIter[m: Bool, //, o: Origin[mut=m]]:
     def next_val(mut self) -> Int:
         return self.iter.next_val()
 
-@fieldwise_init
 struct Pane[m: Bool, //, o: Origin[mut=m]]:
-    var src: ref[o] List[Int]
+    var src: Pointer[List[Int], Self.o]
     var index: Int
 
+    def __init__(out self, ref[Self.o] xs: List[Int], index: Int):
+        self.src = Pointer(to=xs)
+        self.index = index
+
     def first(self) -> Int:
-        return self.src[0]
+        return self.src[][0]
 
 struct Box:
     comptime PaneType[vm: Bool, //, vo: Origin[mut=vm]] = Pane[vo]

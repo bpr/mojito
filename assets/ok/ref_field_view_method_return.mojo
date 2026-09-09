@@ -1,16 +1,19 @@
-# An ordinary (non-protocol) method hands a ref-field view struct across its
-# return: the call lends the receiver to the result, so the source stays live
-# for the view's whole life even without any later direct use.
-@fieldwise_init
+# An ordinary (non-protocol) method hands a pointer-field view struct across
+# its return: the call lends the receiver to the result, so the source stays
+# live for the view's whole life even without any later direct use.
 struct View[
     view_mut: Bool, //,
     view_origin: Origin[mut=view_mut],
 ]:
-    var src: ref[view_origin] List[Int]
+    var src: Pointer[List[Int], Self.view_origin]
     var index: Int
 
+    def __init__(out self, ref[Self.view_origin] xs: List[Int], index: Int):
+        self.src = Pointer(to=xs)
+        self.index = index
+
     def first(self) -> Int:
-        return self.src[0]
+        return self.src[][0]
 
 struct Box:
     comptime ViewType[

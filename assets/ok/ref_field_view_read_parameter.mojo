@@ -1,17 +1,20 @@
-# A ref-field view returned through a plain read-convention parameter (not a
-# `ref` parameter or receiver): the call retains the argument place as a shared
-# read, so the view's reference field roots in the caller's storage and the
-# caller-side view loan keeps the source alive. Upstream accepts this shape
-# (pin-attested 2026-09-01: the Pointer-field analog prints 3 then 4).
-@fieldwise_init
+# A pointer-field view returned through a plain read-convention parameter (not
+# a `ref` parameter or receiver): the call retains the argument place as a
+# shared read, so the view's pointer field roots in the caller's storage and
+# the caller-side view loan keeps the source alive. Upstream accepts this shape
+# (pin-attested 2026-09-01: prints 3 then 4).
 struct EntryIter[m: Bool, //, o: Origin[mut=m]]:
-    var src: ref[o] List[Int]
+    var src: Pointer[List[Int], Self.o]
     var index: Int
+
+    def __init__(out self, ref[Self.o] xs: List[Int], index: Int):
+        self.src = Pointer(to=xs)
+        self.index = index
 
     def next_val(mut self) -> Int:
         var r = self.index
         self.index += 1
-        return self.src[r]
+        return self.src[][r]
 
 struct Factory:
     var start: Int

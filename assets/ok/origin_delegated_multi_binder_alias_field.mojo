@@ -2,7 +2,8 @@
 # application is recorded from the comptime alias body (`TwoView[Self.o1,
 # Self.o2]`), monomorphic and parameterized alike, so a two-binder delegation
 # resolves to the right enclosing binder instead of the single-binder
-# fallback. Upstream prints 2 for the same program (pin 2026-09-01). Subset
+# fallback. The cursors store their source through a `Pointer[T, Self.o]`
+# field taken from the owned local directly. Upstream prints 2 for the same program (pin 2026-09-01). Subset
 # precision limit: construction-time field origins are recorded per top-level
 # field, so the caller-side loan of a reference delegated through a nested
 # multi-binder carrier covers every source that carrier holds (both `a` and
@@ -14,10 +15,10 @@ struct Pair(Copyable, Movable):
 
 @fieldwise_init
 struct EntryCursor[m: Bool, //, o: Origin[mut=m]]:
-    var src: ref[o] Pair
+    var src: Pointer[Pair, Self.o]
 
     def current(self) -> ref[Self.o] Pair:
-        return self.src
+        return self.src[]
 
 @fieldwise_init
 struct TwoView[m1: Bool, m2: Bool, //, o1: Origin[mut=m1], o2: Origin[mut=m2]]:
@@ -49,9 +50,7 @@ struct WrapApplied[m1: Bool, m2: Bool, //, o1: Origin[mut=m1], o2: Origin[mut=m2
 def main():
     var a = Pair(1, 10)
     var b = Pair(2, 20)
-    ref ra = a
-    ref rb = b
-    var w = Wrap(TwoView(EntryCursor(ra), EntryCursor(rb)))
+    var w = Wrap(TwoView(EntryCursor(Pointer(to=a)), EntryCursor(Pointer(to=b))))
     print(w.key())
-    var x = WrapApplied(TwoView(EntryCursor(rb), EntryCursor(ra)))
+    var x = WrapApplied(TwoView(EntryCursor(Pointer(to=b)), EntryCursor(Pointer(to=a))))
     print(x.key())

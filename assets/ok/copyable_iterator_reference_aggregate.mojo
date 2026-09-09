@@ -8,13 +8,13 @@ trait IteratorContract:
 struct RefBox[origin: Origin[mut=False]](
     Copyable, Deinitable, Movable
 ):
-    var value: ref[origin] Int
+    var value: Pointer[Int, Self.origin]
 
     def __init__(out self, ref[Self.origin] value: Int):
-        self.value = value
+        self.value = Pointer(to=value)
 
     def __init__(out self, *, copy: Self):
-        print("copy", copy.value)
+        print("copy", copy.value[])
         self.value = copy.value
 
 
@@ -42,6 +42,6 @@ def main():
     try:
         var iterator = RefIter(RefBox(alias))
         var copied = take(iterator^)
-        print(copied.value)
+        print(copied.value[])
     except error:
         print(error)

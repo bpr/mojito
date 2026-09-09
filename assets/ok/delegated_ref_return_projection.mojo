@@ -10,17 +10,17 @@ struct Pair(Copyable, Movable):
 
 @fieldwise_init
 struct EntryIter[m: Bool, //, o: Origin[mut=m]]:
-    var src: ref[o] List[Pair]
+    var src: Pointer[List[Pair], Self.o]
     var index: Int
 
     def __next__(mut self) raises StopIteration -> ref[
         Origin[mut=False].cast_from[Self.o._get_owned_interior["element"]]
     ] Pair:
-        if self.index >= len(self.src):
+        if self.index >= len(self.src[]):
             raise StopIteration()
         var r = self.index
         self.index += 1
-        return self.src[r]
+        return self.src[][r]
 
 @fieldwise_init
 struct KeyIter[m: Bool, //, o: Origin[mut=m]]:
@@ -36,7 +36,7 @@ def main():
     data.append(Pair(1, 10))
     data.append(Pair(2, 20))
     ref r = data
-    var ki = KeyIter(EntryIter(r, 0))
+    var ki = KeyIter(EntryIter(Pointer(to=r), 0))
     try:
         while True:
             print(ki.__next__())

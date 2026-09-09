@@ -75,9 +75,13 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
 
 ## Non-Negotiable Invariants
 
-1. Mojito is a strict subset of current Mojo. Accepted programs must use valid
-   Mojo syntax and semantics; Mojito may reject valid Mojo but must not invent a
-   different language.
+1. Mojito is a subset of current Mojo with a short, explicit list of
+   extensions. Accepted programs use valid Mojo syntax and semantics; Mojito
+   may reject valid Mojo but must not invent a different language. An
+   extension is admitted only when it tracks an announced upstream direction
+   (today: direct `ref` struct fields), is listed in `docs/roadmap.md` §2,
+   and keeps its fixtures under `assets/extensions/` — every fixture in the
+   ordinary `assets/` folders must compile with the pinned Mojo.
 2. Unsupported semantics fail explicitly. Prefer an early, contextual checker
    error; use `MirInstr::Unsupported` or `RuntimeError::Unsupported` only for a
    genuine later-phase boundary.
@@ -121,6 +125,10 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
   `docs/architecture.md` and `docs/symbol-map.md`.
 - Keep comments about current invariants. Historical comparisons belong in design
   notes or commit history, not production-code commentary.
+- Write `docs/roadmap.md` entries for a human reader: one problem per
+  checkbox, its first sentence stating the issue (or that it is not to be
+  fixed, and why), then short bullets — never a semicolon-chained paragraph.
+  The roadmap's **Entry Style** section is the rule.
 
 ## Commands
 

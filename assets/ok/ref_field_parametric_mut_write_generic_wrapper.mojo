@@ -1,11 +1,13 @@
 # A write requirement inherited from a wrapped parametric-origin view propagates
 # through the wrapper method and is discharged at its concrete call site.
-@fieldwise_init
 struct View[m: Bool, //, o: Origin[mut=m]]:
-    var src: ref[o] List[Int]
+    var src: Pointer[List[Int], Self.o]
+
+    def __init__(out self, ref[Self.o] xs: List[Int]):
+        self.src = Pointer(to=xs)
 
     def bump(mut self):
-        self.src[0] += 1
+        self.src[][0] += 1
 
 @fieldwise_init
 struct Wrap[m: Bool, //, o: Origin[mut=m]]:

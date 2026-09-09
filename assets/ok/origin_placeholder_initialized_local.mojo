@@ -1,11 +1,11 @@
 # Upstream's origin placeholder spellings (`_`, `...`) mark an origin slot
 # explicitly inferred: an initialized local infers the origin from its
 # initializer, and the application counts as complete (no partial-application
-# rejection). Both the stdlib Span and a user origin-generic struct accept
-# them.
+# rejection). Both the stdlib Span and a user origin-generic struct (storing
+# its source through a `Pointer[T, Self.o]` field) accept them.
 @fieldwise_init
 struct EntryIter[m: Bool, //, o: Origin[mut=m]]:
-    var src: ref[o] List[Int]
+    var src: Pointer[List[Int], Self.o]
     var index: Int
 
 def main():
@@ -17,5 +17,5 @@ def main():
     var t: Span[Int, ...] = xs
     print(t[1])
     ref r = xs
-    var v: EntryIter[_] = EntryIter(r, 0)
-    print(v.src[0])
+    var v: EntryIter[_] = EntryIter(Pointer(to=r), 0)
+    print(v.src[][0])

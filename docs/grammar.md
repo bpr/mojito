@@ -2,9 +2,11 @@
 
 Grammar for the implemented subset of mojo-lite, written as a **PEG** (parsing
 expression grammar). It covers everything currently implemented; update it *before*
-adding syntax. mojo-lite is a **strict subset of Mojo** — every construct here is
+adding syntax. mojo-lite is a **subset of Mojo** — every construct here is
 valid Mojo, restricted (the grammar may tighten Mojo but never invent syntax it
-lacks). This grammar is pure syntax: it has no semantic actions or type annotations.
+lacks) — with one tracked extension, direct `ref` struct fields (`var f:
+ref[o] T`), kept because upstream has signalled it may adopt them
+(`docs/roadmap.md` §2; their fixtures live under `assets/extensions/`). This grammar is pure syntax: it has no semantic actions or type annotations.
 
 (Supersedes the earlier `mojo-lite.ebnf`.)
 

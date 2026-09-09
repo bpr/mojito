@@ -1,21 +1,25 @@
 # A parametric-mut origin iterator (`m: Bool, //, o: Origin[mut=m]`) over a
 # mutable named source: the loop site resolves the yielded reference's
 # mutability from the source, so `for ref` writes through into the source,
-# observed after the loop.
+# observed after the loop. The source is stored through a `Pointer[T, Self.o]`
+# field.
 from std.iterable import StopIteration
 
 
-@fieldwise_init
 struct NumbersIter[m: Bool, //, o: Origin[mut=m]]:
-    var src: ref[o] List[Int]
+    var src: Pointer[List[Int], Self.o]
     var index: Int
 
+    def __init__(out self, ref[Self.o] xs: List[Int], index: Int):
+        self.src = Pointer(to=xs)
+        self.index = index
+
     def __next__(mut self) raises StopIteration -> ref[Self.o] Int:
-        if self.index >= len(self.src):
+        if self.index >= len(self.src[]):
             raise StopIteration()
         var r = self.index
         self.index += 1
-        return self.src[r]
+        return self.src[][r]
 
 
 struct Numbers:
