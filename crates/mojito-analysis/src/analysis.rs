@@ -139,7 +139,9 @@ pub fn elaborate_drops_program(prog: MirProgram) -> MirProgram {
                 let elaborated = if name == "__toplevel__" {
                     f
                 } else {
-                    elaborate_drops(&f)
+                    let mut elaborated = elaborate_drops(&f);
+                    refine_deinit_fields(&mut elaborated, &prog.declarations.structs);
+                    elaborated
                 };
                 (name, elaborated)
             })
@@ -150,6 +152,7 @@ pub fn elaborate_drops_program(prog: MirProgram) -> MirProgram {
 }
 
 mod drops;
+mod field_drops;
 mod interior;
 mod loans;
 mod moves;
@@ -157,6 +160,7 @@ mod register_loans;
 mod scan;
 
 use drops::*;
+use field_drops::*;
 use interior::*;
 use loans::*;
 use moves::*;

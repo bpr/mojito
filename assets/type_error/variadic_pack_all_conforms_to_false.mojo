@@ -2,7 +2,7 @@
 # (`Writable where Ts.all_conforms_to[Writable]()`) is unavailable when an
 # element does not conform: the gated `write_to` is dropped and printing the
 # bag rejects.
-# expect: expected Writable
+# expect: does not conform to trait 'Writable'
 from std.collections.tuple import Tuple
 
 struct Opaque(Copyable, Movable):

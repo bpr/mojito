@@ -54,6 +54,7 @@ mod types;
 use calls::*;
 use instr::*;
 use intrinsics::*;
+pub use places::instruction_places;
 use places::*;
 pub use regs::*;
 use subscripts::*;

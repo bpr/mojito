@@ -1,4 +1,4 @@
-# expect: after it was transferred
+# expect: use of uninitialized value
 # The bare element call reads its receiver like any subscript: calling an
 # element of a container that was moved away is a use-after-move of the
 # container, caught by ownership analysis before the VM runs. (User-defined

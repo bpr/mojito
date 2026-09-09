@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Diagnostics respelled to the pinned Mojo's texts: a use after a transfer —
+  definite, path-dependent, or through a `try` region — is `use of
+  uninitialized value 'x'`; `len` on a value that is not `Sized` is `no
+  matching function in call to 'len'`; `print` on a non-`Writable` value is
+  `invalid call to 'print': an element of 'values' with type '…' does not
+  conform to trait 'Writable'; …`; abandoning, overwriting, or discarding
+  (`_ = x^`) an `@explicit_destroy` or `Movable`-only value is `'x'
+  abandoned without being explicitly destroyed: <message>` and destroying it
+  twice `use of uninitialized value 'x'`; a `@__parameter` def's capture
+  list is `expected ':' in function definition` with no token prefix.
 - `std.memory` is a package (`alloc`, `maybe_uninit`, `owned_pointer`
   submodules mirroring upstream's layout); `unsafe_alloc` is exported only by
   `std.memory.alloc`, so `from std.memory import unsafe_alloc` now rejects as
@@ -27,6 +37,23 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Inside a `__deinit__`/`deinit self` body each direct field of the receiver
+  is destroyed at its own last use on both backends (an unused one at entry,
+  a branch-only one in its arm, a nested read keeping the whole direct field
+  alive), through the new `DropPlace` MIR instruction (`drop.place`) that a
+  field-granular refinement of drop elaboration emits; the receiver's
+  `ConsumeVar` destroys only the survivors. A field read only inside a loop
+  dies after the loop, where the pinned Mojo destroys it at entry (recorded
+  as the `deinit-body-field-loop-read` `output-diff` row).
+- The move checker walks `try` regions: a value consumed before a raising
+  call is uninitialized in the `except` arm, in `else`, and after the `try`
+  (a handler re-initialization does not cover the normal path), a raising
+  named destructor's receiver is consumed at the call, and a double move
+  inside the body rejects statically instead of failing at run time; a
+  value consumed after the body's last raise point stays usable in the
+  handler.
+- Discarding a transferred linear or `@explicit_destroy` value (`_ = x^`)
+  is rejected as abandonment instead of discharging the obligation.
 - Destruction timing and order match the pinned Mojo on both backends: a
   discarded call result (an expression statement, the unbound result of a
   non-consuming `__enter__`) is destroyed before the next statement; an owner

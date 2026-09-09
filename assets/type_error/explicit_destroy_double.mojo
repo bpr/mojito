@@ -1,4 +1,4 @@
-# expect: was destroyed more than once
+# expect: use of uninitialized value 'resource'
 @explicit_destroy("close the resource")
 struct Resource(Deinitable where False):
     def __init__(out self):

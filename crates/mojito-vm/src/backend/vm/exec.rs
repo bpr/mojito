@@ -1932,6 +1932,13 @@ impl VmBackend {
                     }
                 }
             }
+            // A `deinit` parameter's field dying at its own last use: the
+            // field's whole-value destruction, leaving a tombstone the
+            // receiver's later `ConsumeVar` skips.
+            MirInstr::DropPlace { place } => {
+                let value = std::mem::replace(nav_mut(vars, regs, place)?, Value::Moved);
+                self.drop_value(prog, value)?;
+            }
             MirInstr::Unsupported(what) => {
                 return Err(RuntimeError::Unsupported(format!(
                     "vm backend does not support {what} yet"

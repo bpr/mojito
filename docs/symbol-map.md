@@ -23,8 +23,8 @@ map and dependency DAG live in `docs/architecture.md` §Workspace Layout.
 | MIR | `mir::lower_checked_program`, `mir::MirProgram` | Fully register-typed A-normal IR, places, declaration metadata, source table. |
 | MIR text | `mir::text::{disassemble, parse_artifact, verify_artifact, load_artifact, ParsedArtifact, ArtifactSourceMap, ArtifactReport}` | Canonical serialization, source-located Mojo-independent artifact parsing, and the parse-then-verify loading gate that maps canonical `mir::verify` findings to artifact spans. |
 | Verify | `mir::verify::verify` | Semantic verification of typed MIR: register/place types, concrete and inline abstract call contracts, variadic ABI conventions, CFG edges, effects, reference capabilities, loans, and interior origins. |
-| Ownership | `analysis::check_ownership_program` (checked wrapper `check_ownership_checked`) | Move/init and loan validation over lowered MIR. |
-| Drops | `analysis::elaborate_drops_program` | MIR with explicit `DropVar` operations; re-verified before execution. |
+| Ownership | `analysis::check_ownership_program` (checked wrapper `check_ownership_checked`) | Move/init and loan validation over lowered MIR; `analysis/moves.rs` walks `try` regions per channel (`walk_region`/`walk_try`). |
+| Drops | `analysis::elaborate_drops_program` | MIR with explicit `DropVar`/`ConsumeVar` operations, plus per-field `DropPlace`s for `deinit` parameters from `analysis/field_drops.rs` (`refine_deinit_fields`); re-verified before execution. |
 | Execute | `compiler::Compiler::execute`, `backend::Backend::{run, run_elaborated}`, `backend::vm::VmBackend` | Production execution consumes the cached `CompiledProgram::elaborated_mir` artifact; `run_elaborated` executes it or a loaded artifact without rewriting it. |
 | Artifacts | `artifact::{run_artifact, ArtifactRunError}` | Load-then-execute composition for textual MIR artifacts: the `load_artifact` gate plus `Backend::run_elaborated`, shared by the CLI `exec` subcommand and tests. |
 

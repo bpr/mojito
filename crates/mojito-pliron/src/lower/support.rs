@@ -236,6 +236,7 @@ pub(crate) fn collect_projected_move_places<'m>(
         for instr in &block.instrs {
             match instr {
                 MirInstr::MovePlace { place, .. } if !place.proj.is_empty() => out.push(place),
+                MirInstr::DropPlace { place } => out.push(place),
                 MirInstr::MethodCall {
                     recv_place: Some(place),
                     ..
@@ -770,6 +771,7 @@ pub(crate) fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::DropVar { .. } => "DropVar",
         MirInstr::ConsumeVar { .. } => "ConsumeVar",
         MirInstr::ConsumePlace { .. } => "ConsumePlace",
+        MirInstr::DropPlace { .. } => "DropPlace",
         MirInstr::GetIter { .. } => "GetIter",
         MirInstr::HasNext { .. } => "HasNext",
         MirInstr::Next { .. } => "Next",

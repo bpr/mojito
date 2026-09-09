@@ -1,4 +1,4 @@
-# expect: explicit-destroy obligation for 'resource' was abandoned: close the resource
+# expect: 'resource' abandoned without being explicitly destroyed: close the resource
 @explicit_destroy("close the resource")
 struct Resource(Deinitable where False):
     var id: Int

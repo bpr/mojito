@@ -76,7 +76,8 @@ pub(super) fn verify_terminator(
     }
 }
 
-pub(super) fn instruction_places(instruction: &MirInstr) -> Vec<&MirPlace> {
+/// Every place an instruction addresses (operand and receiver places alike).
+pub fn instruction_places(instruction: &MirInstr) -> Vec<&MirPlace> {
     match instruction {
         MirInstr::EstablishLoans { loans, .. } => loans.iter().map(|loan| &loan.place).collect(),
         MirInstr::MakeRef { place, .. }
@@ -87,7 +88,8 @@ pub(super) fn instruction_places(instruction: &MirInstr) -> Vec<&MirPlace> {
         | MirInstr::VariantSet { place, .. }
         | MirInstr::VariantSetInitWith { place, .. }
         | MirInstr::VariantReplace { place, .. }
-        | MirInstr::ConsumePlace { place, .. } => vec![place],
+        | MirInstr::ConsumePlace { place, .. }
+        | MirInstr::DropPlace { place } => vec![place],
         MirInstr::MakeClosure { captures, .. } => {
             captures.iter().map(|capture| &capture.place).collect()
         }

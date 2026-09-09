@@ -985,8 +985,8 @@ fn parity_exe_manifest_and_differential() {
     let excluded = count("excluded");
     if !focused {
         assert!(
-            differential == 448,
-            "exe-differential coverage must cover the complete runnable inventory: {differential} != 448"
+            differential == 450,
+            "exe-differential coverage must cover the complete runnable inventory: {differential} != 450"
         );
         assert!(
             errors == 34,
@@ -1105,6 +1105,7 @@ fn lifecycle_event_traces_match_the_vm() {
     for fixture in [
         "assets/ok/exceptions.mojo",
         "assets/ok/deinit_param_destruction_timing.mojo",
+        "assets/ok/deinit_body_field_last_use.mojo",
         "assets/ok/inplace_raises_try.mojo",
         "assets/ok/pliron_pointer_lifecycle.mojo",
         "assets/ok/try_return.mojo",

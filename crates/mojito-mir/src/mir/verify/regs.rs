@@ -74,6 +74,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
             }
         }
         MirInstr::ConsumePlace { place: p, .. }
+        | MirInstr::DropPlace { place: p }
         | MirInstr::MakeRef { place: p, .. }
         | MirInstr::MovePlace { place: p, .. }
         | MirInstr::LoadPlace { place: p, .. } => place(p, out),

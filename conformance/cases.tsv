@@ -371,3 +371,14 @@ static-origin-local	reject	assets/type_error/static_origin_local.mojo
 mut-untracked-origin-local	reject	assets/type_error/mut_untracked_origin_local.mojo
 indexer-int-return	reject	assets/type_error/indexer_int_return.mojo
 tuple-deinit-with-abandoned-element	reject	assets/type_error/tuple_deinit_with_abandoned_element.mojo
+deinit-body-field-last-use	run	assets/ok/deinit_body_field_last_use.mojo
+deinit-body-field-loop-read	output-diff	conformance/fixtures/deinit_body_field_loop_read.mojo
+use-after-move-in-try-handler	reject	assets/ownership_error/use_after_move_in_try_handler.mojo
+use-after-move-in-try-else	reject	assets/ownership_error/use_after_move_in_try_else.mojo
+use-after-move-after-try	reject	assets/ownership_error/use_after_move_after_try.mojo
+double-move-in-try	reject	assets/ownership_error/double_move_in_try.mojo
+deinit-receiver-raising-in-try	reject	assets/ownership_error/deinit_receiver_raising_in_try.mojo
+move-after-last-raise-in-try	run	assets/ok/move_after_last_raise_in_try.mojo
+tuple-consume-elements-print	reject	assets/type_error/tuple_consume_elements_print.mojo
+tuple-consume-elements-discard	reject	assets/type_error/tuple_consume_elements_discard.mojo
+explicit-destroy-discard	reject	assets/type_error/explicit_destroy_discard.mojo

@@ -427,6 +427,7 @@ impl<'a> FnLowering<'a> {
             }
             MirInstr::DropVar { var } => self.lower_drop_var(ctx, *var),
             MirInstr::ConsumeVar { var } => self.lower_consume_var(ctx, *var, false),
+            MirInstr::DropPlace { place } => self.lower_drop_place(ctx, place),
             MirInstr::ConsumePlace { place, marker } => {
                 // Consumption skips the whole-value destructor and destroys
                 // only residual fields — a no-op unless fields carry their

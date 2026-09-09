@@ -2698,6 +2698,19 @@ distinguish element 0 from element 1. This lets `Tuple(*args^)` and
 `consume_elements` relocate linear pack elements exactly once while public
 runtime-varying indexed transfers remain rejected.
 
+`try` regions are walked with three channels per region (normal fall-off,
+raise points, `return`/escape exits), the interior-origin analysis's shape:
+the `except` arm starts from the join of the states at every potentially
+raising instruction of the body (after that instruction's effects, with a
+named destructor's trailing `ConsumeVar` folded in, since the receiver is
+consumed at the call), `else` from the body's completion, and a `finally` is
+checked from the join of all three and re-summarized per entering channel.
+The states after the `try` are the join of the handler's and `else`/body's
+completions, so a value consumed before a raising call is uninitialized in
+the handler and after the `try`, while one consumed after the body's last
+raise point is initialized in the handler. Definite and path-dependent
+transfers report upstream's `use of uninitialized value 'x'`.
+
 ## Stage 7: Liveness And ASAP Destruction
 
 Same module:
@@ -2761,18 +2774,32 @@ When several variables die at the same point, they are dropped in reverse
 declaration order. Struct destruction runs:
 
 1. the struct's `__deinit__(deinit self)`, if present — its body owns the
-   receiver, so the residual fields are consumed inside it at the receiver's
-   last use (an unused receiver's fields die at the destructor's entry,
-   before its first statement)
+   receiver as independently dying direct fields: each field is destroyed
+   at its own last use inside the body (an unused one at the destructor's
+   entry, before its first statement; a nested projection keeps its whole
+   direct field alive; a transferred field is its new owner's), and the
+   receiver's `ConsumeVar` at its last use destroys only the survivors
 2. otherwise the fields, in declaration order
 
 The compiler-private heterogeneous pack carrier likewise drops elements
 left-to-right, matching current Mojo's pack-storage lifecycle. Public
 collections, including `Tuple`, are nominal structs and follow the ordinary
 declaration order for fields; their library destructors own any
-element-specific teardown. Per-field liveness inside a destructor body (Mojo
-destroys each field of `self` at that field's own last use) is not modeled:
-`conformance/probes/deinit_body_field_last_use.mojo` pins the gap.
+element-specific teardown. Per-field liveness for `deinit` parameters is a
+refinement pass after the variable-granular elaboration
+(`analysis/field_drops.rs`): for every `deinit` parameter of struct type it
+runs a backward liveness over `(parameter, field)` keys — a depth-one field
+projection uses that field, a bare receiver touch uses every field, a loaded
+register carries its field to every consumer as the register-loan rule does
+— with the same fall-off/raise/`finally` seeds and edge splitting as the
+variable pass, recursing into `try` regions, and splices `DropPlace` (a
+whole-value destruction of one field that tombstones it) after each field's
+last use, on block 0 for the unused, and on edges. The receiver's existing
+`ConsumeVar` (in-block, cleanup lists, and the native exit backstop) then
+skips the tombstoned fields, so raise edges stay sound. Fields that root a
+loan, are moved below depth one, or need no destructor work are left to the
+`ConsumeVar`. A field read only inside a loop dies after the loop; the pinned
+Mojo destroys it at entry (recorded as an `output-diff` row).
 
 Types whose `Deinitable` conformance is explicitly unavailable, such
 as `Deinitable where False`, are excluded from this automatic path.

@@ -86,6 +86,18 @@ pub(super) fn string_len_unavailable(ty: &Ty) -> Option<String> {
     ))
 }
 
+/// Upstream's `print` rejection: its variadic `*values` pack element does not
+/// conform to `Writable`.
+pub(super) fn not_writable(ty: &Ty) -> TypeError {
+    TypeError::BadCall {
+        func: "print".to_string(),
+        reason: format!(
+            "an element of 'values' with type '{ty}' does not conform to trait 'Writable'; \
+             either prove the conformance with 'conforms_to', or add conformance"
+        ),
+    }
+}
+
 pub(super) fn has_len_bound(ty: &Ty) -> bool {
     match ty {
         Ty::Param { bounds, .. } => bounds
@@ -433,7 +445,7 @@ impl Checker {
                 });
             }
         }
-        for (i, arg) in args.iter().enumerate() {
+        for arg in args {
             let ty = self.infer(arg)?;
             self.borrow_reference_result_argument(arg);
             self.borrow_nominal_place_argument(arg, &ty);
@@ -458,25 +470,14 @@ impl Checker {
             {
                 continue;
             }
-            if matches!(ty, Ty::Struct(..)) {
+            if matches!(ty, Ty::Struct(..) | Ty::Param { .. }) {
                 if self.conforms_to(&ty, "Writable") {
                     continue;
                 }
-                return Err(TypeError::TypeMismatch {
-                    expected: "Writable".to_string(),
-                    found: ty.to_string(),
-                    context: format!("argument {} to 'print'", i + 1),
-                });
-            }
-            if matches!(ty, Ty::Param { .. }) && self.conforms_to(&ty, "Writable") {
-                continue;
+                return Err(not_writable(&ty));
             }
             if !is_printable(&ty) {
-                return Err(TypeError::TypeMismatch {
-                    expected: "a printable value".to_string(),
-                    found: ty.to_string(),
-                    context: format!("argument {} to 'print'", i + 1),
-                });
+                return Err(not_writable(&ty));
             }
         }
         Ok(Ty::None)
@@ -683,10 +684,8 @@ impl Checker {
         if let Some(result) = self.len_result_for_type(&tys[0])? {
             return Ok(result);
         }
-        Err(TypeError::TypeMismatch {
-            expected: "String, List, or Tuple".to_string(),
-            found: tys[0].to_string(),
-            context: "argument to 'len'".to_string(),
+        Err(TypeError::NoMatchingFunction {
+            name: "len".to_string(),
         })
     }
 

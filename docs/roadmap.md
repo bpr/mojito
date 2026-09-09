@@ -66,25 +66,14 @@ exempt from the ordering.
 - [ ] **Behavioral divergences from the pinned Mojo — burn to zero**
   *(standing; every new one lands here with a probe or a `cases.tsv`
   `mojito-only`/`output-diff` row, and leaves when its probe promotes to an
-  `assets/ok` fixture)*. Open today:
-  1. inside a `__deinit__`/`deinit self` body, Mojo destroys each field of
-     `self` at that field's own last use (an unused field at entry); Mojito
-     consumes the residual fields together at `self`'s last use (drop
-     elaboration is variable-granular) —
-     `conformance/probes/deinit_body_field_last_use.mojo`;
-  2. a NON-linear value consumed by a raising call inside a `try` body is
-     still usable in the `except` arm (`moves.rs` has no `Try` arm; the
-     linear case rejects as upstream) — no probe yet;
-  3. Mojito's rejection texts for an opaque `Movable`-bounded handler
-     element (`type mismatch …`) differ from upstream's (`no matching
-     function in call to 'len'`, `does not conform to trait 'Writable'`),
-     `_ = element^` on such an element is still accepted, and the parser
-     prefixes `Unexpected token LBrace:` to `expected ':' in function
-     definition`.
-  Retained `mojito-only` rows, by decision: `subtree-origin-cast` (a cited
-  bridge to upstream's `#lit.origin.subtree` experiment, re-probed each
-  re-pin) and `reference-valued-aggregate` (the extension tracked by the
-  next task).
+  `assets/ok` fixture)*. Open today: none. Retained rows, by decision:
+  `subtree-origin-cast` (a cited bridge to upstream's `#lit.origin.subtree`
+  experiment, re-probed each re-pin), `reference-valued-aggregate` (the
+  extension tracked by the next task), and the `output-diff` row
+  `deinit-body-field-loop-read` (the pinned Mojo destroys a `deinit self`
+  field read only inside a loop body at the destructor's entry and then
+  reads the destroyed value — an upstream bug Mojito does not reproduce;
+  re-probed each re-pin).
 - [ ] **Direct `ref` struct fields are a Mojito extension** — upstream
   rejects `var f: ref[o] T` fields (`'ref' patterns are only valid on the
   left side of an assignment`) and spells reference storage through

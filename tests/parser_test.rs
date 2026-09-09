@@ -1436,6 +1436,21 @@ fn parses_capturing_and_raises_in_either_effect_order() {
     ));
 }
 
+/// A `@__parameter` def takes no capture list: the `{` reads as a missing
+/// body, with upstream's bare sentence (no token prefix).
+#[test]
+fn parameter_closure_capture_list_reports_the_missing_colon_verbatim() {
+    let error = mojito::parse(
+        "def main():\n    var n = 1\n\n    @__parameter\n    def f[i: Int]() {n}:\n        print(n)\n",
+    )
+    .expect_err("a parametric closure capture list must reject");
+    let rendered = error.to_string();
+    assert!(
+        rendered.starts_with("expected ':' in function definition"),
+        "{rendered}"
+    );
+}
+
 #[test]
 fn parses_current_and_legacy_closure_capture_lists() {
     let program = parse(

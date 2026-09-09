@@ -54,6 +54,7 @@ assets/ok/copyinit_moveinit.mojo	main	exe-differential	sanitized
 assets/ok/decorators.mojo	main	exe-differential	sanitized
 assets/ok/default_args.mojo	main	exe-differential	sanitized
 assets/ok/defines_main.mojo	main	exe-differential	sanitized
+assets/ok/deinit_body_field_last_use.mojo	main	exe-differential	sanitized
 assets/ok/deinit_param_destruction_timing.mojo	main	exe-differential	sanitized
 assets/ok/delegated_ref_return_projection.mojo	main	exe-differential	sanitized
 assets/ok/dict_hasher_forwarding.mojo	main	exe-differential	sanitized
@@ -149,6 +150,7 @@ assets/ok/maybe_uninit_write.mojo	main	exe-differential	sanitized
 assets/ok/method_mut_param.mojo	main	exe-differential	sanitized
 assets/ok/method_value_parameter_binding.mojo	main	exe-differential	sanitized
 assets/ok/movable_where_false_explicit_destroy.mojo	main	exe-differential	sanitized
+assets/ok/move_after_last_raise_in_try.mojo	main	exe-differential	sanitized
 assets/ok/mut_owned_params.mojo	-	ineligible	no-main-entry
 assets/ok/mut_ref_writeback.mojo	main	exe-differential	sanitized
 assets/ok/named_shared_views.mojo	main	exe-differential	sanitized

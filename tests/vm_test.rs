@@ -1247,7 +1247,7 @@ fn layout_allocation_round_trip_and_linearity() {
         "from std.memory import Layout, dealloc\n\ndef main():\n    var a = alloc(Layout[Int](count=1))\n    dealloc(a^)\n    var p = a.unsafe_ptr()\n",
     )
     .expect_err("expected a use-after-transfer rejection");
-    assert!(error.contains("after it was transferred"), "{error}");
+    assert!(error.contains("use of uninitialized value"), "{error}");
     // …and dropping one implicitly abandons its obligation.
     let error = run(
         "from std.memory import Layout\n\ndef main():\n    var a = alloc(Layout[Int](count=1))\n    print(1)\n",

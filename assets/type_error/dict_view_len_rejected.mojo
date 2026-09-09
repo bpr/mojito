@@ -1,4 +1,4 @@
-# expect: type mismatch for argument to 'len'
+# expect: no matching function in call to 'len'
 # Upstream's views are non-indexable iterators without len; Mojito's
 # borrowing views expose the same rejection surface.
 def main() raises:

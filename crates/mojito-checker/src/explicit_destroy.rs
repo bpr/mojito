@@ -321,10 +321,9 @@ impl Env {
                         message: message.clone(),
                     });
                 }
-                return Err(TypeError::ExplicitDestroy {
+                return Err(TypeError::Abandoned {
                     var: var.name.clone(),
                     message: message.clone(),
-                    problem: "was abandoned".to_string(),
                 });
             }
         }
@@ -596,10 +595,22 @@ fn check_stmt(
             env.declare(name, explicit.clone(), message, explicit.is_some());
         }
         StmtKind::Assign { name, value } => {
+            // `_ = x^` destroys the transferred value implicitly, which a
+            // linear or explicit-destroy value cannot be: it is abandoned.
+            if name == "_"
+                && let ExprKind::Transfer(inner) = &value.kind
+                && let Some((id, _)) = obligation_place(inner, &env)
+                && env.vars[id].message.is_some()
+            {
+                env.check_ids([id])?;
+            }
             check_expr(value, &mut env, comprehension_bindings, types)?;
             if let Some(id) = env.lookup(name) {
                 if !env.vars[id].obligations.is_empty() && env.vars[id].message.is_some() {
-                    return explicit_error(&env.vars[id], "was overwritten");
+                    return Err(TypeError::Abandoned {
+                        var: env.vars[id].name.clone(),
+                        message: env.vars[id].message.clone().unwrap_or_default(),
+                    });
                 }
                 env.vars[id].uninitialized = false;
                 env.vars[id].obligations = if env.vars[id].explicit_type.is_some() {
@@ -1055,7 +1066,9 @@ fn consume_destructor(
             "is incomplete and cannot use a whole-value destructor",
         );
     }
-    explicit_error(&env.vars[id], "was destroyed more than once")
+    Err(TypeError::UninitializedUse {
+        var: env.vars[id].name.clone(),
+    })
 }
 
 fn reinitialize_place(

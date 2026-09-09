@@ -1,4 +1,4 @@
-# expect: use of 'p' after it was transferred
+# expect: use of uninitialized value 'p'
 @fieldwise_init
 struct T:
     var x: Int

@@ -54,6 +54,7 @@ assets/ok/copyinit_moveinit.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/decorators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/default_args.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/defines_main.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/deinit_body_field_last_use.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/deinit_param_destruction_timing.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/delegated_ref_return_projection.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_hasher_forwarding.mojo	-	ineligible	no-scalar-entry-shape
@@ -149,6 +150,7 @@ assets/ok/maybe_uninit_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_mut_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_value_parameter_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/movable_where_false_explicit_destroy.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/move_after_last_raise_in_try.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mut_owned_params.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mut_ref_writeback.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/named_shared_views.mojo	-	ineligible	no-scalar-entry-shape

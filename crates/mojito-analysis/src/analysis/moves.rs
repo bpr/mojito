@@ -312,6 +312,9 @@ pub(super) fn place_uses(i: &MirInstr) -> Vec<(VarId, Vec<Key>, Touch, Reg)> {
         MirInstr::ConsumePlace { place, marker } => {
             vec![(place.root, place_path(place), Touch::Read, *marker)]
         }
+        MirInstr::DropPlace { place } => {
+            vec![(place.root, place_path(place), Touch::Read, Reg(0))]
+        }
         MirInstr::MakeClosure { dest, captures, .. } => captures
             .iter()
             .map(|capture| {
@@ -408,7 +411,9 @@ pub(super) fn apply_effects(state: &mut [Node], i: &MirInstr) {
         MirInstr::MovePlace { place, .. } => {
             state[place.root as usize].do_move(&place_path(place));
         }
-        MirInstr::ConsumePlace { place, .. } => {
+        // A named destructor's receiver: consumed by the call it follows.
+        MirInstr::ConsumeVar { var } => state[*var as usize].do_move(&[]),
+        MirInstr::ConsumePlace { place, .. } | MirInstr::DropPlace { place } => {
             state[place.root as usize].do_move(&place_path(place));
         }
         // A field or statically selected private Tuple-element store
@@ -430,54 +435,234 @@ pub(super) fn apply_effects(state: &mut [Node], i: &MirInstr) {
     }
 }
 
-/// Apply a block's instructions to a place-tree state, *without* reporting (used
-/// to reach the dataflow fixpoint).
-pub(super) fn transfer(state: &mut [Node], instrs: &[MirInstr]) {
-    for i in instrs {
-        apply_effects(state, i);
-    }
-}
-
 /// Join two per-variable place-tree states (control-flow merge).
 pub(super) fn join_states(a: &[Node], b: &[Node]) -> Vec<Node> {
     a.iter().zip(b).map(|(x, y)| join_node(x, y)).collect()
 }
 
+/// A region's move states per exit channel: the normal fall-off, every
+/// potentially-raising point, and `return`/escape exits. `None` marks an
+/// unreachable channel.
+struct MoveFlow {
+    normal: Option<Vec<Node>>,
+    raises: Option<Vec<Node>>,
+    exits: Option<Vec<Node>>,
+}
+
+impl MoveFlow {
+    fn unreachable() -> MoveFlow {
+        MoveFlow {
+            normal: None,
+            raises: None,
+            exits: None,
+        }
+    }
+}
+
+/// Join a channel state into `target` (unreachable contributes nothing).
+fn add_state(target: &mut Option<Vec<Node>>, source: &Option<Vec<Node>>) {
+    match (target.as_mut(), source) {
+        (_, None) => {}
+        (None, Some(source)) => *target = Some(source.clone()),
+        (Some(target), Some(source)) => *target = join_states(target, source),
+    }
+}
+
 /// Analyze one function body for move violations, field-sensitively (partial
 /// moves): a value transferred with `^` — whole (`x^`) or a field (`p.a^`) — may
 /// not be read again on that path, but a disjoint sibling (`p.b`) stays usable.
+/// `try` regions are walked with the precise raise-point rule: an `except` arm
+/// starts from the join of the states at every potentially-raising
+/// instruction of the body, so a value consumed before a raising call is
+/// uninitialized there while one consumed after the last raise is not.
 pub(super) fn analyze_moves(f: &MirFunction) -> Result<(), OwnershipError> {
-    let nb = f.blocks.len();
-    let nv = f.n_vars;
-
-    // Predecessor lists, from each block's successors.
-    let mut preds: Vec<Vec<usize>> = vec![Vec::new(); nb];
-    for (b, blk) in f.blocks.iter().enumerate() {
-        for s in successors(&blk.term) {
-            preds[s].push(b);
-        }
-    }
-
     // The entry starts every variable `Owned` — the checker guarantees definite
     // assignment before use, so this never causes a false negative for our
     // purpose (tracking transfers) and avoids a spurious "uninitialized" lattice.
-    let entry: Vec<Node> = vec![Node::owned(); nv];
-    // `Owned` is a real program state, not the lattice bottom. Seeding every
-    // block with it makes a loop header spuriously join a definite preheader
-    // move with an as-yet-unvisited backedge and permanently report
-    // `MaybeMoved`. Keep unreachable/unvisited states absent until a predecessor
-    // supplies a fact instead.
+    let entry: Vec<Node> = vec![Node::owned(); f.n_vars];
+    walk_region(Some(entry), &f.blocks, f, true).map(|_| ())
+}
+
+/// Walk one region's mini-CFG (a function body or a `try` region) from its
+/// entry state: reach the per-block fixpoint, then replay each reachable
+/// block, reporting every place use against the current state when `report`
+/// is set. Nested `try`s recurse through [`walk_try`].
+fn walk_region(
+    entry: Option<Vec<Node>>,
+    blocks: &[MirBlock],
+    f: &MirFunction,
+    report: bool,
+) -> Result<MoveFlow, OwnershipError> {
+    let Some(entry) = entry else {
+        return Ok(MoveFlow::unreachable());
+    };
+    if blocks.is_empty() {
+        return Ok(MoveFlow {
+            normal: Some(entry),
+            raises: None,
+            exits: None,
+        });
+    }
+    let in_states = region_in_states(&entry, blocks, f);
+    let mut flow = MoveFlow::unreachable();
+    for (b, block) in blocks.iter().enumerate() {
+        let Some(mut state) = in_states[b].clone() else {
+            continue;
+        };
+        let mut reachable = true;
+        for (i, instr) in block.instrs.iter().enumerate() {
+            if let MirInstr::Try { .. } = instr {
+                let nested = walk_try(std::mem::take(&mut state), instr, f, report)?;
+                add_state(&mut flow.raises, &nested.raises);
+                add_state(&mut flow.exits, &nested.exits);
+                match nested.normal {
+                    Some(normal) => state = normal,
+                    None => {
+                        reachable = false;
+                        break;
+                    }
+                }
+                continue;
+            }
+            if report {
+                check_instruction_uses(&state, instr, f)?;
+            }
+            apply_effects(&mut state, instr);
+            if interior_instruction_directly_raises(instr) {
+                add_state(
+                    &mut flow.raises,
+                    &Some(raise_seed(&state, block.instrs.get(i + 1))),
+                );
+            }
+        }
+        if !reachable {
+            continue;
+        }
+        match block.term {
+            MirTerm::FallOff => add_state(&mut flow.normal, &Some(state)),
+            MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. } | MirTerm::EscapeJump { .. } => {
+                add_state(&mut flow.exits, &Some(state));
+            }
+            MirTerm::Jump(_) | MirTerm::Branch { .. } => {}
+        }
+    }
+    Ok(flow)
+}
+
+/// The state a raise at this instruction hands its observer. A named
+/// destructor's receiver is consumed at the call itself: the MIR emits the
+/// receiver's `ConsumeVar` right after the call, so fold it into the seed.
+fn raise_seed(state: &[Node], next: Option<&MirInstr>) -> Vec<Node> {
+    let mut seed = state.to_vec();
+    if let Some(MirInstr::ConsumeVar { var }) = next {
+        seed[*var as usize].do_move(&[]);
+    }
+    seed
+}
+
+/// Walk the four regions of one `try`: the body from `entry`, `else` from the
+/// body's normal completion, the handler from the body's raise points, and
+/// `finally` from every channel (checked once from their join; its own
+/// channels compose per entering channel, as the runtime runs it).
+fn walk_try(
+    entry: Vec<Node>,
+    instr: &MirInstr,
+    f: &MirFunction,
+    report: bool,
+) -> Result<MoveFlow, OwnershipError> {
+    let MirInstr::Try {
+        body,
+        handler,
+        orelse,
+        finalbody,
+        ..
+    } = instr
+    else {
+        return Ok(MoveFlow {
+            normal: Some(entry),
+            raises: None,
+            exits: None,
+        });
+    };
+    let body_flow = walk_region(Some(entry), body, f, report)?;
+    let mut normal = None;
+    let mut raises = None;
+    let mut exits = body_flow.exits.clone();
+    if let Some(orelse) = orelse {
+        let else_flow = walk_region(body_flow.normal.clone(), orelse, f, report)?;
+        add_state(&mut normal, &else_flow.normal);
+        add_state(&mut raises, &else_flow.raises);
+        add_state(&mut exits, &else_flow.exits);
+    } else {
+        add_state(&mut normal, &body_flow.normal);
+    }
+    if let Some((_, handler)) = handler {
+        let handler_flow = walk_region(body_flow.raises.clone(), handler, f, report)?;
+        add_state(&mut normal, &handler_flow.normal);
+        add_state(&mut raises, &handler_flow.raises);
+        add_state(&mut exits, &handler_flow.exits);
+    } else {
+        add_state(&mut raises, &body_flow.raises);
+    }
+    let Some(finalbody) = finalbody else {
+        return Ok(MoveFlow {
+            normal,
+            raises,
+            exits,
+        });
+    };
+    if report {
+        let mut all = normal.clone();
+        add_state(&mut all, &raises);
+        add_state(&mut all, &exits);
+        walk_region(all, finalbody, f, true)?;
+    }
+    let normal_final = walk_region(normal, finalbody, f, false)?;
+    let raising_final = walk_region(raises, finalbody, f, false)?;
+    let exiting_final = walk_region(exits, finalbody, f, false)?;
+    let mut raises = raising_final.normal;
+    add_state(&mut raises, &normal_final.raises);
+    add_state(&mut raises, &raising_final.raises);
+    add_state(&mut raises, &exiting_final.raises);
+    let mut exits = exiting_final.normal;
+    add_state(&mut exits, &normal_final.exits);
+    add_state(&mut exits, &raising_final.exits);
+    add_state(&mut exits, &exiting_final.exits);
+    Ok(MoveFlow {
+        normal: normal_final.normal,
+        raises,
+        exits,
+    })
+}
+
+/// Per-block in-states of a region at the dataflow fixpoint:
+/// `in[b] = ⨆ out[pred]`, `out[b] = transfer(in[b])`. `Owned` is a real
+/// program state, not the lattice bottom, so unvisited blocks stay absent
+/// (a loop header must not join a definite preheader move with a seeded
+/// backedge and report `MaybeMoved` forever).
+fn region_in_states(
+    entry: &[Node],
+    blocks: &[MirBlock],
+    f: &MirFunction,
+) -> Vec<Option<Vec<Node>>> {
+    let nb = blocks.len();
+    let mut preds: Vec<Vec<usize>> = vec![Vec::new(); nb];
+    for (b, blk) in blocks.iter().enumerate() {
+        for s in successors(&blk.term) {
+            if s < nb {
+                preds[s].push(b);
+            }
+        }
+    }
     let mut in_states: Vec<Option<Vec<Node>>> = vec![None; nb];
     let mut out_states: Vec<Option<Vec<Node>>> = vec![None; nb];
-
-    // Iterate to a fixpoint: in[b] = ⨆ out[pred], out[b] = transfer(in[b]).
     let mut changed = true;
     while changed {
         changed = false;
         #[allow(clippy::needless_range_loop)]
         for b in 0..nb {
             let new_in = if b == 0 || preds[b].is_empty() {
-                entry.clone() // entry block, or an unreachable one
+                entry.to_vec()
             } else {
                 let mut predecessors = preds[b]
                     .iter()
@@ -491,43 +676,57 @@ pub(super) fn analyze_moves(f: &MirFunction) -> Result<(), OwnershipError> {
                 }
                 acc
             };
-            let mut new_out = new_in.clone();
-            transfer(&mut new_out, &f.blocks[b].instrs);
-            if in_states[b].as_ref() != Some(&new_in) || out_states[b].as_ref() != Some(&new_out) {
+            let new_out = transfer_block(new_in.clone(), &blocks[b].instrs, f);
+            if in_states[b].as_ref() != Some(&new_in) || out_states[b] != new_out {
                 in_states[b] = Some(new_in);
-                out_states[b] = Some(new_out);
+                out_states[b] = new_out;
                 changed = true;
             }
         }
     }
+    in_states
+}
 
-    // Reporting pass: replay each block from its fixed-point in-state, checking
-    // every place use against the current move-state. Returns the first violation.
-    #[allow(clippy::needless_range_loop)]
-    for b in 0..nb {
-        let mut state = in_states[b].clone().unwrap_or_else(|| entry.clone());
-        for instr in &f.blocks[b].instrs {
-            for (root, path, touch, reg) in place_uses(instr) {
-                let node = &state[root as usize];
-                let (sev, blame) = match touch {
-                    Touch::Read => node.read(&path),
-                    Touch::WriteParent => node.base_at(&path),
-                };
-                if sev != Own::Owned {
-                    let span = f
-                        .spans
-                        .0
-                        .get(&reg.0)
-                        .map(|(s, _)| s.clone())
-                        .unwrap_or_else(|| mojito_common::token::SourceSpan::new(None, (0, 0)));
-                    let var = place_display(&f.var_names[root as usize], &blame);
-                    return Err(match sev {
-                        Own::Moved => OwnershipError::UseAfterMove { var, span },
-                        _ => OwnershipError::ConditionallyMoved { var, span },
-                    });
-                }
-            }
+/// Apply a block's instructions to a state without reporting; a nested `try`
+/// continues from its normal completion, and an always-raising or
+/// always-exiting one leaves the rest of the block unreachable.
+fn transfer_block(mut state: Vec<Node>, instrs: &[MirInstr], f: &MirFunction) -> Option<Vec<Node>> {
+    for instr in instrs {
+        if let MirInstr::Try { .. } = instr {
+            let nested = walk_try(state, instr, f, false).ok()?;
+            state = nested.normal?;
+        } else {
             apply_effects(&mut state, instr);
+        }
+    }
+    Some(state)
+}
+
+/// Check one instruction's place uses against the current state, returning
+/// the first violation.
+fn check_instruction_uses(
+    state: &[Node],
+    instr: &MirInstr,
+    f: &MirFunction,
+) -> Result<(), OwnershipError> {
+    for (root, path, touch, reg) in place_uses(instr) {
+        let node = &state[root as usize];
+        let (sev, blame) = match touch {
+            Touch::Read => node.read(&path),
+            Touch::WriteParent => node.base_at(&path),
+        };
+        if sev != Own::Owned {
+            let span = f
+                .spans
+                .0
+                .get(&reg.0)
+                .map(|(s, _)| s.clone())
+                .unwrap_or_else(|| mojito_common::token::SourceSpan::new(None, (0, 0)));
+            let var = place_display(&f.var_names[root as usize], &blame);
+            return Err(match sev {
+                Own::Moved => OwnershipError::UseAfterMove { var, span },
+                _ => OwnershipError::ConditionallyMoved { var, span },
+            });
         }
     }
     Ok(())

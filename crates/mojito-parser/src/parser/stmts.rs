@@ -458,8 +458,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         // upstream reads its `{` as the start of a missing body.
         let parameter_closure = mojito_ast::ast::is_parameter_closure(&decorators);
         if parameter_closure && matches!(self.peek_token()?, Some(Token::LBrace)) {
-            return Err(ParseError::UnexpectedToken(
-                Token::LBrace,
+            return Err(ParseError::Message(
                 "expected ':' in function definition".to_string(),
             ));
         }
@@ -473,8 +472,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
         if matches!(self.peek_token()?, Some(Token::LBrace)) {
             if parameter_closure {
-                return Err(ParseError::UnexpectedToken(
-                    Token::LBrace,
+                return Err(ParseError::Message(
                     "expected ':' in function definition".to_string(),
                 ));
             }

@@ -1,4 +1,4 @@
-# expect: after it was transferred
+# expect: use of uninitialized value
 @fieldwise_init
 struct Pair[*Ts: Copyable & Movable](Copyable, Movable):
     var storage: Tuple[*Ts]

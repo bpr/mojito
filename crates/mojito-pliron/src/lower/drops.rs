@@ -139,6 +139,61 @@ impl<'a> FnLowering<'a> {
         }
     }
 
+    /// `DropPlace`: destroy one depth-1 field of an aggregate variable under
+    /// its leaf presence flag (the VM's tombstone), so the receiver's later
+    /// `ConsumeVar`/exit backstop skips it. The entry-block flag allocation
+    /// tracks every `DropPlace` place, so a missing flag is a lowering bug.
+    pub(super) fn lower_drop_place(
+        &mut self,
+        ctx: &mut Context,
+        place: &MirPlace,
+    ) -> Result<(), PlironError> {
+        let Some(position) = self.leaf_position(place) else {
+            return Err(self.unsupported("field drop of a non-leaf place".into(), None));
+        };
+        let LowerTy::Aggregate { ty, .. } = self.var_lower_ty(place.root)? else {
+            return Ok(());
+        };
+        let element_tys: Vec<Ty> = match ty.as_ref() {
+            Ty::Struct(name, _) => match self.struct_decls.get(name.as_str()).copied() {
+                Some(decl) => decl.fields.iter().map(|(_, field)| field.clone()).collect(),
+                None => return Ok(()),
+            },
+            Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements.clone(),
+            _ => return Ok(()),
+        };
+        let element = element_tys[position].clone();
+        if !self.needs_drop(&element) {
+            return Ok(());
+        }
+        let Some(flag) = self
+            .leaf_flags
+            .get(&place.root)
+            .and_then(|leaves| leaves.get(&position))
+            .copied()
+        else {
+            return Err(self.unsupported("field drop without a leaf flag".into(), None));
+        };
+        let composed = self
+            .layout
+            .struct_layout(&element_tys)
+            .map_err(|error| self.unsupported(format!("drop layout ({error})"), None))?;
+        let ptr = self.var_slots[place.root as usize];
+        let offset = composed.offsets[position];
+        let address = if offset == 0 {
+            ptr
+        } else {
+            self.gep_byte_unspanned(ctx, ptr, offset)
+        };
+        let cont = self.begin_flag_guard(ctx, flag);
+        self.emit_drop_value(ctx, address, &element, false)?;
+        let absent = self.bool_constant(ctx, false);
+        let store = StoreOp::new(ctx, absent, flag);
+        self.append(ctx, store.get_operation(), None);
+        self.end_flag_guard(ctx, cont);
+        Ok(())
+    }
+
     /// Branch on `flag` into a fresh guarded-work block, returning the
     /// continuation block. The caller emits the guarded work into the current
     /// block, then closes with [`Self::end_flag_guard`].

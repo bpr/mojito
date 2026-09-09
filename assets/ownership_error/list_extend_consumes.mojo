@@ -1,4 +1,4 @@
-# expect: use of 'b' after it was transferred
+# expect: use of uninitialized value 'b'
 # extend consumes its argument on both compilers: reading the source list
 # afterward rejects.
 def main():

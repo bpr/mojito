@@ -24,6 +24,8 @@ pub enum LexError {
 pub enum ParseError {
     LexerError(LexError),
     UnexpectedToken(Token, String),
+    /// A complete upstream-shaped sentence, rendered verbatim.
+    Message(String),
     UnexpectedEof(String),
     UnknownType(String),
     At {
@@ -64,6 +66,7 @@ impl ParseError {
             ParseError::LexerError(err) => Some(err.byte_pos()),
             ParseError::At { span, .. } => Some(span.0),
             ParseError::UnexpectedToken(_, _)
+            | ParseError::Message(_)
             | ParseError::UnexpectedEof(_)
             | ParseError::UnknownType(_) => None,
         }
@@ -369,6 +372,17 @@ pub enum TypeError {
     UninitializedUse {
         var: String,
     },
+    /// No overload of a built-in callable accepts the argument (`len` on a
+    /// value that is not `Sized`).
+    NoMatchingFunction {
+        name: String,
+    },
+    /// An `@explicit_destroy` value was abandoned — left at scope end,
+    /// overwritten, or discarded — without reaching a named destructor.
+    Abandoned {
+        var: String,
+        message: String,
+    },
     /// A value typed by a type parameter whose bounds do not prove
     /// `Deinitable` reached the end of its scope without being explicitly
     /// destroyed (moved on or consumed).
@@ -428,6 +442,7 @@ impl fmt::Display for ParseError {
             ParseError::UnexpectedToken(token, msg) => {
                 write!(f, "Unexpected token {:?}: {}", token, msg)
             }
+            ParseError::Message(msg) => write!(f, "{msg}"),
             ParseError::UnexpectedEof(msg) => write!(f, "Unexpected EOF: {}", msg),
             ParseError::UnknownType(name) => write!(f, "Unknown type '{}'", name),
             ParseError::At { err, span } => write!(f, "{err} at byte {}", span.0),
@@ -775,6 +790,13 @@ impl fmt::Display for TypeError {
                 f,
                 "use of uninitialized value '{var}'\nnote: '{var}' declared here"
             ),
+            TypeError::NoMatchingFunction { name } => {
+                write!(f, "no matching function in call to '{name}'")
+            }
+            TypeError::Abandoned { var, message } => write!(
+                f,
+                "'{var}' abandoned without being explicitly destroyed: {message}"
+            ),
             TypeError::LinearAbandoned { var, message } => write!(
                 f,
                 "'{var}' abandoned without being explicitly destroyed: {message}\nnote: consider adding trait conformance to Deinitable"
@@ -837,15 +859,11 @@ impl fmt::Display for OwnershipError {
             OwnershipError::InvalidInput(error) => {
                 write!(f, "ownership analysis requires a checked program: {error}")
             }
-            OwnershipError::UseAfterMove { var, .. } => {
-                write!(
-                    f,
-                    "use of '{var}' after it was transferred (moved) with '^'"
-                )
-            }
-            OwnershipError::ConditionallyMoved { var, .. } => write!(
+            // Upstream reports a definite and a path-dependent transfer alike.
+            OwnershipError::UseAfterMove { var, .. }
+            | OwnershipError::ConditionallyMoved { var, .. } => write!(
                 f,
-                "'{var}' is used here but may have been transferred (moved) on some paths"
+                "use of uninitialized value '{var}'\nnote: '{var}' declared here"
             ),
             OwnershipError::LoanConflict { place, loan, .. } => write!(
                 f,

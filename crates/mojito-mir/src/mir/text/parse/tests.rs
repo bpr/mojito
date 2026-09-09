@@ -847,6 +847,7 @@ fn instruction_families_reprint_byte_identically() {
             place: place(0),
             marker: Reg(3),
         },
+        MirInstr::DropPlace { place: place(0) },
         MirInstr::Unsupported("no lowering for frobnication".into()),
         MirInstr::GetIter {
             source: 0,

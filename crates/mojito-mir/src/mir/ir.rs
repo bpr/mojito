@@ -780,6 +780,14 @@ pub enum MirInstr {
         place: MirPlace,
         marker: Reg,
     },
+    /// Destroy one projected field of an aggregate now — running the field
+    /// value's own destructor — and tombstone it, leaving the rest of the
+    /// aggregate live. Drop elaboration emits this for a `deinit`
+    /// parameter's direct fields, each at its own last use; the receiver's
+    /// later `ConsumeVar` skips the tombstoned fields.
+    DropPlace {
+        place: MirPlace,
+    },
     /// A construct the MIR/backends don't lower yet (a `try` with its exceptional
     /// edges, a nested declaration). Kept as an explicit node — rather than a
     /// lowering-time `panic!` — so a backend can report a clean error instead of

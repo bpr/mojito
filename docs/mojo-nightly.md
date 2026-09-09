@@ -65,6 +65,19 @@ only from `std.memory.alloc`. `subtree-origin-cast` (cited bridge) and
 the only `mojito-only` rows; the residues are listed in the roadmap's
 standing bullet.
 
+**Divergence burn-down, second pass (2026-09-08).** The three residues are
+closed on both backends: a `deinit self` body destroys each direct field of
+the receiver at that field's own last use (`deinit-body-field-last-use`),
+the move checker walks `try` regions with the precise raise-point rule
+(`use-after-move-in-try-handler`/`-else`/`-after-try`, `double-move-in-try`,
+`deinit-receiver-raising-in-try` reject; `move-after-last-raise-in-try`
+runs), and the `Tuple.consume_elements` handler texts, `_ = element^`
+abandonment, the `@explicit_destroy` abandonment/double-destroy texts, and
+the `@__parameter` capture-list parse text match upstream verbatim. One
+upstream bug is recorded instead of matched: a `deinit self` field read only
+inside a loop body is destroyed at the destructor's entry and the loop reads
+the destroyed value (`deinit-body-field-loop-read`, `output-diff`).
+
 ## Prioritized Changeset
 
 The order below is the recommended implementation order. Compatibility aliases

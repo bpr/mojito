@@ -315,6 +315,11 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "no droppable residual fields",
     ),
     (
+        "drop.place",
+        CapabilityStatus::Supported,
+        "destroys one depth-1 struct field under its leaf flag and clears the flag",
+    ),
+    (
         "unsupported",
         CapabilityStatus::Unsupported,
         "explicit lowering marker; rejects by definition",

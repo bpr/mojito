@@ -600,6 +600,9 @@ impl Decoder {
                 place: self.req(value, fields, "place", Self::place)?,
                 marker: self.req(value, fields, "marker", Self::reg)?,
             }),
+            "drop.place" => Some(MirInstr::DropPlace {
+                place: self.req(value, fields, "place", Self::place)?,
+            }),
             "unsupported" => Some(MirInstr::Unsupported(self.req(
                 value,
                 fields,

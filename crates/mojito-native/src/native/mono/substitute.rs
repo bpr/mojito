@@ -298,7 +298,8 @@ pub(super) fn substitute_instruction(
         | Store { place, .. }
         | StoreRef { place, .. }
         | LoadPlace { place, .. }
-        | ConsumePlace { place, .. } => substitute_place(place, bindings)?,
+        | ConsumePlace { place, .. }
+        | DropPlace { place } => substitute_place(place, bindings)?,
         MakeClosure { captures, .. } => {
             for capture in captures {
                 substitute_place(&mut capture.place, bindings)?;

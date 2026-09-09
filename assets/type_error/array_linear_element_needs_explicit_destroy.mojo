@@ -1,6 +1,6 @@
 # Array's `Deinitable` conformance is conditional on the element: an array of
 # non-Deinitable elements is linear, so abandoning it at scope end rejects.
-# expect: explicit-destroy obligation
+# expect: abandoned without being explicitly destroyed
 @fieldwise_init
 struct Res(Deinitable where False, Movable):
     var id: Int
