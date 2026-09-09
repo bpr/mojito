@@ -910,7 +910,7 @@ fn std_memory_exports_the_allocation_vocabulary() {
     // prelude name, and both routes bind one identity.
     let main = d.write(
         "main.mojo",
-        "from std.memory import Layout, Allocation, ThinAllocation, alloc, dealloc, unsafe_alloc\n\ndef main():\n    var allocation: Allocation[Int] = alloc(Layout[Int](count=2))\n    allocation.unsafe_ptr().unsafe_write(5)\n    print(allocation.unsafe_ptr()[])\n    dealloc(allocation^)\n    var raw = unsafe_alloc[Int](1)\n    raw.unsafe_write(7)\n    print(raw[])\n    raw.unsafe_free()\n",
+        "from std.memory import Layout, Allocation, ThinAllocation, alloc, dealloc\nfrom std.memory.alloc import unsafe_alloc\n\ndef main():\n    var allocation: Allocation[Int] = alloc(Layout[Int](count=2))\n    allocation.unsafe_ptr().unsafe_write(5)\n    print(allocation.unsafe_ptr()[])\n    dealloc(allocation^)\n    var raw = unsafe_alloc[Int](1)\n    raw.unsafe_write(7)\n    print(raw[])\n    raw.unsafe_free()\n",
     );
     assert_eq!(run(&main).expect("run"), "5\n7\n");
 
@@ -920,4 +920,20 @@ fn std_memory_exports_the_allocation_vocabulary() {
         "from std.memory import Layout, dealloc\n\ndef main():\n    var a = alloc(Layout[Int](count=1))\n    a.unsafe_ptr().unsafe_write(1)\n    print(a.unsafe_ptr()[])\n    dealloc(a^)\n",
     );
     assert_eq!(run(&prelude).expect("run"), "1\n");
+}
+
+#[test]
+fn std_memory_package_does_not_export_unsafe_alloc() {
+    // As upstream, `unsafe_alloc` lives only in `std.memory.alloc`; the
+    // package `__init__` re-exports the layout-based vocabulary without it.
+    let d = TempDir::new();
+    let main = d.write(
+        "main.mojo",
+        "from std.memory import unsafe_alloc\n\ndef main():\n    var raw = unsafe_alloc[Int](1)\n    raw.unsafe_free()\n",
+    );
+    let err = run(&main).expect_err("the package import must fail");
+    assert!(
+        err.contains("std.memory") && err.contains("unsafe_alloc"),
+        "unexpected error: {err}"
+    );
 }

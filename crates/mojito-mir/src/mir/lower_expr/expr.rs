@@ -1082,6 +1082,22 @@ impl Flatten<'_> {
                     self.emit(MirInstr::ConstructTypeParam { dest, param });
                     return dest;
                 }
+                // `x.__mlir_index__()` on an integer is the identity
+                // conversion to the index representation (`Int`).
+                if method == "__mlir_index__"
+                    && args.is_empty()
+                    && kwargs.is_empty()
+                    && self.checked_ty(object).is_some_and(|ty| {
+                        matches!(
+                            ty,
+                            mojito_types::types::Ty::Int
+                                | mojito_types::types::Ty::IntLiteral
+                                | mojito_types::types::Ty::UInt
+                        )
+                    })
+                {
+                    return self.expr(object);
+                }
                 // `x.copy()` on a built-in copyable value has no callee: the
                 // checker resolved it to the value read itself.
                 if method == "copy"

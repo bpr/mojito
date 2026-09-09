@@ -1,3 +1,7 @@
+# expect: use of uninitialized value 'transaction'
+# A consuming named destructor that raises has still consumed its value: the
+# `except` arm sees `transaction` uninitialized and cannot fall back to
+# another destructor. Both compilers reject (pinned Mojo a79fbdf59f2).
 @explicit_destroy("finish the transaction")
 struct Transaction(Deinitable where False):
     var id: Int

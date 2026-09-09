@@ -21,6 +21,18 @@ use mojito_common::token::Span;
 /// checking and substituted during HIR syntax renaming.
 pub const CONTEXTUAL_SENTINEL: &str = "$contextual";
 
+/// Whether a definition's decorators mark it as a parametric closure
+/// (`@__parameter`; the pre-rename `@parameter` still warns-and-runs
+/// upstream, so it stays accepted as a deprecation bridge). The parser and
+/// the checker share this predicate: such a def takes no capture list and
+/// captures its free variables implicitly.
+pub fn is_parameter_closure(decorators: &[Decorator]) -> bool {
+    decorators.iter().any(|decorator| {
+        decorator.path.len() == 1
+            && matches!(decorator.path[0].as_str(), "__parameter" | "parameter")
+    })
+}
+
 pub fn canonical_trait_name(name: &str) -> &str {
     match name {
         "ImplicitlyDeletable" => "Deinitable",

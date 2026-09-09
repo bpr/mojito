@@ -270,6 +270,17 @@ impl Checker {
             return result;
         }
         let obj_ty = self.infer(object)?;
+        // `Int.__mlir_index__()` is upstream's identity conversion to the
+        // index type (spelled inside a user `Indexer`'s own
+        // `__mlir_index__`); the VM represents the index as `Int`.
+        if method == "__mlir_index__"
+            && args.is_empty()
+            && kwargs.is_empty()
+            && param_args.is_empty()
+            && matches!(obj_ty, Ty::Int | Ty::IntLiteral | Ty::UInt)
+        {
+            return Ok(Ty::Int);
+        }
         // A receiver borrows a reference result for the call rather than
         // reading the referent out as an owned value; a consuming receiver
         // is gated on `ImplicitlyCopyable` below once the method resolves.

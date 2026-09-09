@@ -40,12 +40,10 @@ removed outright (`MaybeUninit` carries the same `unsafe_*` vocabulary), and
 
 | Probe | Question | Expected on both |
 |---|---|---|
-| `parameter_closure_capture_model.mojo` | `@__parameter` capture model: upstream captures implicitly-mutable and rejects an explicit capture list on the decorated def; Mojito is the mirror image (see the probe header). | diverges — see header |
 | `tuple_element_types_public_spelling.mojo` | Does the head keep Tuple's `*Ts` parameter and `element_types` member spellings? (Verified in source at `ae386d1b204`; accepted without warning at `a79fbdf59f2`.) | runs, prints `2` / `7` |
 | `element_call_member_base.mojo` | Does the head dispatch the bare member-base element call `h.items[0](5)` like the confirmed identifier base? (Re-confirmed at `a79fbdf59f2`.) | runs, prints `15` |
 | `element_call_multi_index.mojo` | Does the head dispatch the bare multi-index element call `g[1, 1](10)` through the variadic subscript? (Re-confirmed at `a79fbdf59f2`.) | runs, prints `40` |
-| `discarded_result_destruction.mojo` | Is a discarded call result destroyed at once (Mojo: yes, before the next statement; Mojito's VM never destroys it)? | diverges — see header |
-| `print_argument_drop_order.mojo` | Is a struct whose field feeds `print` destroyed after the line prints (Mojo) or before it (Mojito's VM)? | diverges — see header |
+| `deinit_body_field_last_use.mojo` | Inside a `__deinit__` body, is each field of `self` destroyed at that field's own last use (Mojo) or are the residual fields consumed together at `self`'s last use (Mojito)? | diverges — see header |
 
 ## Re-probes of enforced claims
 

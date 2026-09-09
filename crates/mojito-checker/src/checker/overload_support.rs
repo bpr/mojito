@@ -391,7 +391,9 @@ pub(super) fn is_bundled_collection_source(source: Option<&str>) -> bool {
         || source == stdlib.join("std/collections/array.mojo")
         || source == stdlib.join("std/optional.mojo")
         || source == stdlib.join("optional.mojo")
-        || source == stdlib.join("std/memory.mojo")
+        || source == stdlib.join("std/memory/alloc.mojo")
+        || source == stdlib.join("std/memory/maybe_uninit.mojo")
+        || source == stdlib.join("std/memory/owned_pointer.mojo")
 }
 
 /// The source a struct declaration belongs to for the bundled-crossing gate:
@@ -414,9 +416,11 @@ pub(super) fn bundled_struct_source<'a>(
 
 /// Static `UnsafePointer[T].alloc[_aligned]` is the compiler's heap primitive,
 /// retired from source-language API by the current layout-based model (the
-/// audited head rejects it). `std/memory.mojo` is the bundled allocation
+/// audited head rejects it). The `std/memory/` package modules (`alloc.mojo`,
+/// the allocation crossing; `maybe_uninit.mojo`, which names the
+/// compiler-private `__UninitStorage`; `owned_pointer.mojo`) are the bundled
 /// crossing; every other module — stdlib included — allocates through
-/// `std.memory`. `std/utils/variant.mojo` is the second crossing: the
+/// `std.memory.alloc`. `std/utils/variant.mojo` is the second crossing: the
 /// self-hosted `Variant` names the compiler-private `__VariantStorage`.
 /// A specialization's source tag still belongs to its crossing module.
 pub(super) fn is_bundled_stdlib_source(source: Option<&str>) -> bool {
@@ -425,7 +429,10 @@ pub(super) fn is_bundled_stdlib_source(source: Option<&str>) -> bool {
     };
     let stdlib = root.join("stdlib");
     let source = Path::new(stamped_source_module(source));
-    source == stdlib.join("std/memory.mojo") || source == stdlib.join("std/utils/variant.mojo")
+    source == stdlib.join("std/memory/alloc.mojo")
+        || source == stdlib.join("std/memory/maybe_uninit.mojo")
+        || source == stdlib.join("std/memory/owned_pointer.mojo")
+        || source == stdlib.join("std/utils/variant.mojo")
 }
 
 /// Whether a source belongs to a bundled standard-library module, directly

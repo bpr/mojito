@@ -11,7 +11,7 @@
 from std.reflection.type_info import _unqualified_type_name
 from std.iterable import Iterable, IterableOwned, Iterator, StopIteration
 
-from std.memory import unsafe_alloc
+from std.memory.alloc import unsafe_alloc
 
 @fieldwise_init
 struct EmptyOptionalError[T: AnyType](ImplicitlyCopyable, Movable, Writable):

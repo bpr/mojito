@@ -2,7 +2,7 @@
 # `UnsafePointer[Int]` — the first proof that the language can express a
 # heap-owning container (the Phase 2 / self-hosting milestone). `push` mutates the
 # shared storage *through* the pointer (which aliases across the value-type copy).
-from std.memory import unsafe_alloc
+from std.memory.alloc import unsafe_alloc
 
 struct IntVec:
     var data: UnsafePointer[Int]

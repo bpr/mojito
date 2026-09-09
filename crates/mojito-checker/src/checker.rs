@@ -130,39 +130,56 @@ pub fn check_program_with_materialized_callables(
     // the ordinary statements it checked.
     with_stmt::splice_with_desugars(&mut expanded, &checker.with_desugars.borrow());
     let _finish = timing::span("explicit_destroy");
-    let explicit_destroy_types = checker
-        .structs
-        .iter()
-        .filter_map(|(name, info)| {
-            let self_ty = Ty::Struct(name.clone(), info.decls.iter().map(param_as_arg).collect());
-            (!checker.is_deinitable(&self_ty)).then(|| {
-                (
-                    name.clone(),
-                    mojito_checked::checked::ExplicitDestroyInfo {
-                        message: info.explicit_destroy_message.clone().unwrap_or_else(|| {
-                            "value is not implicitly deletable and must be explicitly destroyed"
-                                .to_string()
-                        }),
-                        destructors: info.explicit_destructors.clone(),
-                        fields: info
-                            .fields
-                            .iter()
-                            .filter_map(|(field, ty)| match ty {
-                                Ty::Struct(field_ty, _) if !checker.is_deinitable(ty) => {
-                                    Some((field.clone(), field_ty.clone()))
-                                }
-                                _ => None,
-                            })
-                            .collect(),
-                    },
-                )
+    let explicit_destroy_types: HashMap<String, mojito_checked::checked::ExplicitDestroyInfo> =
+        checker
+            .structs
+            .iter()
+            .filter_map(|(name, info)| {
+                let self_ty =
+                    Ty::Struct(name.clone(), info.decls.iter().map(param_as_arg).collect());
+                (!checker.is_deinitable(&self_ty)).then(|| {
+                    (
+                        name.clone(),
+                        mojito_checked::checked::ExplicitDestroyInfo {
+                            message: info.explicit_destroy_message.clone().unwrap_or_else(|| {
+                                "value is not implicitly deletable and must be explicitly destroyed"
+                                    .to_string()
+                            }),
+                            destructors: info.explicit_destructors.clone(),
+                            fields: info
+                                .fields
+                                .iter()
+                                .filter_map(|(field, ty)| match ty {
+                                    Ty::Struct(field_ty, _) if !checker.is_deinitable(ty) => {
+                                        Some((field.clone(), field_ty.clone()))
+                                    }
+                                    _ => None,
+                                })
+                                .collect(),
+                        },
+                    )
+                })
             })
-        })
-        .collect();
+            .collect();
     {
         let binding_types = checker.binding_types.borrow();
         let comprehension_bindings = checker.comprehension_bindings.borrow();
         let deletability = checker.explicit_destroy_deletability.borrow();
+        // A value typed by a non-`Deinitable` type parameter is linear with
+        // upstream's message; the entry exists only for this pass, and only
+        // when some binding is one.
+        let mut explicit_destroy_types = explicit_destroy_types.clone();
+        if !deletability.linear_declarations.is_empty() || !deletability.linear_bindings.is_empty()
+        {
+            explicit_destroy_types.insert(
+                crate::explicit_destroy::LINEAR_TYPE_PARAMETER.to_string(),
+                mojito_checked::checked::ExplicitDestroyInfo {
+                    message: "unhandled explicitly destroyed type 'AnyType'".to_string(),
+                    destructors: HashMap::new(),
+                    fields: HashMap::new(),
+                },
+            );
+        }
         crate::explicit_destroy::check(
             &expanded,
             &binding_types,
@@ -388,7 +405,7 @@ pub struct Checker {
     /// placeholder elsewhere as not concrete).
     resolving_parameter_annotation: std::cell::Cell<bool>,
     /// The declaration currently being checked comes from the bundled
-    /// standard-library crossing module (`stdlib/std/memory.mojo`). Only such
+    /// standard-library crossing package (`stdlib/std/memory/`). Only such
     /// declarations may name compiler-private storage types (`__UninitStorage`)
     /// in sourceless type-annotation positions.
     bundled_stdlib_declaration: bool,
@@ -1649,6 +1666,9 @@ struct MethodSig {
     keyword_only: Option<usize>,
     conventions: Vec<Option<ArgConvention>>,
     ret: Ty,
+    /// The return annotation is spelled `__mlir_type.index` (represented as
+    /// `Int`): what upstream's `Indexer.__mlir_index__` requirement demands.
+    ret_mlir_index: bool,
     raises: bool,
     error: Option<Box<Ty>>,
     /// Receiver convention. `None` means plain read-only `self`; explicit
@@ -1689,6 +1709,7 @@ impl MethodSig {
             keyword_only: None,
             conventions: vec![None; len],
             ret,
+            ret_mlir_index: false,
             raises: false,
             error: None,
             self_convention: None,
@@ -1963,6 +1984,9 @@ struct CapturePolicy {
     declaration: SourceSpan,
     entries: HashMap<String, mojito_ast::ast::CaptureKind>,
     default: Option<mojito_ast::ast::CaptureKind>,
+    /// `@__parameter` environment: an unlisted name captures `mut` when its
+    /// binding is mutable, `imm` otherwise.
+    implicit_by_binding: bool,
     /// Whether this policy belongs to a lambda expression's hidden definition
     /// (selects the lambda wording for capture-convention diagnostics).
     lambda: bool,

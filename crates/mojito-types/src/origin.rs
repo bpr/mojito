@@ -389,7 +389,14 @@ pub enum SigOrigin {
     /// the eventual call's argument slots.
     Bound(Origin),
     Static,
+    /// `ImmUntrackedOrigin` / `MutUntrackedOrigin`: an exact origin that only
+    /// an untracked actual (an untracked pointer's dereference) satisfies.
     Untracked {
+        mutable: bool,
+    },
+    /// `ImmUnsafeAnyOrigin` / `MutUnsafeAnyOrigin`: any actual origin binds;
+    /// only the permission is retained.
+    UnsafeAny {
         mutable: bool,
     },
     Projected(Box<SigOrigin>, Vec<OriginSeg>),
@@ -537,6 +544,7 @@ fn cmp_sig_origin(left: &SigOrigin, right: &SigOrigin) -> Ordering {
             SigOrigin::Projected(_, _) => 5,
             SigOrigin::Infer => 6,
             SigOrigin::Union(_) => 7,
+            SigOrigin::UnsafeAny { .. } => 8,
         }
     }
 
@@ -545,7 +553,10 @@ fn cmp_sig_origin(left: &SigOrigin, right: &SigOrigin) -> Ordering {
         .then_with(|| match (left, right) {
             (SigOrigin::Param(a), SigOrigin::Param(b)) => a.cmp(b),
             (SigOrigin::Bound(a), SigOrigin::Bound(b)) => cmp_origin(a, b),
-            (SigOrigin::Untracked { mutable: a }, SigOrigin::Untracked { mutable: b }) => a.cmp(b),
+            (SigOrigin::Untracked { mutable: a }, SigOrigin::Untracked { mutable: b })
+            | (SigOrigin::UnsafeAny { mutable: a }, SigOrigin::UnsafeAny { mutable: b }) => {
+                a.cmp(b)
+            }
             (SigOrigin::Projected(a_base, a_path), SigOrigin::Projected(b_base, b_path)) => {
                 cmp_sig_origin(a_base, b_base).then_with(|| a_path.cmp(b_path))
             }

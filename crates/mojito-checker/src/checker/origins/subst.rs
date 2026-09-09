@@ -151,7 +151,9 @@ pub(in crate::checker) fn instantiate_sig_origin(
         SigOrigin::Param(index) => Origin::Param(OriginParamId(*index as u32)),
         SigOrigin::Bound(origin) => instantiate_bound_origin(origin, arguments),
         SigOrigin::Static => Origin::Static,
-        SigOrigin::Untracked { mutable } => Origin::Untracked { mutable: *mutable },
+        SigOrigin::Untracked { mutable } | SigOrigin::UnsafeAny { mutable } => {
+            Origin::Untracked { mutable: *mutable }
+        }
         SigOrigin::Projected(base, path) => {
             project_origin(instantiate_sig_origin(base, arguments), path)
         }
@@ -268,6 +270,7 @@ pub(in crate::checker) fn map_delegated_sig_origin(
         }
         SigOrigin::Static => Ok(SigOrigin::Static),
         SigOrigin::Untracked { mutable } => Ok(SigOrigin::Untracked { mutable: *mutable }),
+        SigOrigin::UnsafeAny { mutable } => Ok(SigOrigin::UnsafeAny { mutable: *mutable }),
         SigOrigin::Projected(base, path) => Ok(SigOrigin::Projected(
             Box::new(map_delegated_sig_origin(
                 base,
@@ -466,7 +469,9 @@ pub(in crate::checker) fn substitute_sig_origin(
             .and_then(Clone::clone)
             .unwrap_or(Origin::Union(vec![])),
         SigOrigin::Static => Origin::Static,
-        SigOrigin::Untracked { mutable } => Origin::Untracked { mutable: *mutable },
+        SigOrigin::Untracked { mutable } | SigOrigin::UnsafeAny { mutable } => {
+            Origin::Untracked { mutable: *mutable }
+        }
         SigOrigin::Projected(base, path) => {
             project_origin(substitute_sig_origin(base, actual), path)
         }
@@ -548,7 +553,7 @@ pub(in crate::checker) fn ref_binding_is_writable(
     }) else {
         return false;
     };
-    if origin_name == "MutUnsafeAnyOrigin" {
+    if origin_name == "MutUnsafeAnyOrigin" || origin_name == "MutUntrackedOrigin" {
         return true;
     }
     let Some(origin) = type_params.iter().find(|candidate| {

@@ -210,7 +210,7 @@ artifacts and imports from stdin remain unsupported.
 ### function_def
 
 ```
-function_def: decorators 'def' NAME [params_decl] '(' [params] ')' function_effect* [capture_list] ['->' type] where_clause* ':' block
+function_def: decorators 'def' NAME [params_decl] '(' [params] ')' function_effect* [capture_list] ['->' type] where_clause* ':' block   # a `@__parameter`/`@parameter` def takes no capture_list
 decorators: decorator*
 decorator: '@' dotted_name ['(' [args] ')'] NEWLINE   # general — any name (only `@fieldwise_init` is acted on)
 dotted_name: NAME ('.' NAME)*
@@ -310,7 +310,10 @@ not hold a persistent loan from declaration until invocation: intervening outer
 access remains legal, and an `imm` closure observes the then-current value when
 called. The call is still checked under the capture's access convention. The removed
 `unified {capture-list}` spelling is rejected with a contextual parse error
-pointing at the current post-effects `{...}` position.
+pointing at the current post-effects `{...}` position. A `@__parameter` (or
+deprecated `@parameter`) parametric closure takes no capture list at all — a
+`{` there is `expected ':' in function definition`, as upstream — and
+captures implicitly, mutable where the enclosing binding is mutable.
 
 ### Parameterization (generics)
 
@@ -828,6 +831,7 @@ type:
     | function_type               # a checked function/closure contract or value type
     | 'ref' [origin_spec] type    # an origin-checked reference type `ref[origin] T`
     | NAME [param_args]            # struct type, optionally with type/value arguments
+    | '__mlir_type' '.' 'index'    # the Indexer requirement's return spelling (the only `__mlir_type` form accepted)
 function_type: 'def' [params_decl] '(' [','.function_type_param+] ')' fn_effect* '->' type
 function_type_param:
     | 'var' '**' NAME ':' type

@@ -1,7 +1,7 @@
 # `UnsafePointer[T]` — low-level heap storage. `alloc(n)` reserves n slots;
 # `ptr[i]` loads/stores; a copied pointer *aliases* the same storage (unlike a
 # value type); `free()` releases it.
-from std.memory import unsafe_alloc
+from std.memory.alloc import unsafe_alloc
 
 def main():
     var p: UnsafePointer[Int] = unsafe_alloc[Int](4)

@@ -17,7 +17,17 @@ use std::collections::HashSet;
 pub struct CheckedDeletability {
     pub declarations: HashSet<AnnotationSite>,
     pub bindings: HashSet<SourceSpan>,
+    /// Parameters typed by a type parameter (or an opaque dependent pack
+    /// element) whose bounds do not prove `Deinitable`: an owned one is
+    /// linear, as upstream.
+    pub linear_declarations: HashSet<AnnotationSite>,
+    /// Bindings whose declared type is such a type parameter.
+    pub linear_bindings: HashSet<SourceSpan>,
 }
+
+/// The synthetic explicit-destroy type name of a value typed by a
+/// non-`Deinitable` type parameter (`ExplicitDestroyInfo` key).
+pub const LINEAR_TYPE_PARAMETER: &str = "$linear";
 
 pub fn check(
     statements: &[Stmt],
@@ -34,30 +44,15 @@ pub fn check(
     }
     for statement in statements {
         match &statement.kind {
-            StmtKind::Def { params, body, .. } => {
-                let params = params.iter().enumerate().map(|(param, p)| {
-                    let site = AnnotationSite::FunctionParam {
-                        module: statement.module.clone(),
-                        declaration: statement.span,
-                        syntax: statement.syntax_id,
-                        param,
-                    };
-                    (
-                        &p.name,
-                        &p.ty,
-                        p.convention,
-                        deletability.declarations.contains(&site),
-                    )
-                });
-                check_function(
-                    params,
-                    body,
-                    binding_types,
-                    comprehension_bindings,
-                    deletability,
-                    types,
-                )?;
-            }
+            StmtKind::Def { params, body, .. } => check_def(
+                statement,
+                params,
+                body,
+                binding_types,
+                comprehension_bindings,
+                deletability,
+                types,
+            )?,
             // A template shell carries signatures only.
             StmtKind::Struct {
                 template_shell: true,
@@ -81,6 +76,7 @@ pub fn check(
                                 &p.ty,
                                 p.convention,
                                 deletability.declarations.contains(&site),
+                                deletability.linear_declarations.contains(&site),
                             )
                         })
                         .collect::<Vec<_>>();
@@ -129,6 +125,7 @@ fn check_expr(
             }
             if let ExprKind::Transfer(inner) = &object.kind
                 && let Some((id, path)) = obligation_place(inner, env)
+                && ensure_initialized(id, env)?
                 && let Some(type_name) = &env.vars[id].explicit_type
                 && types
                     .get(type_name)
@@ -172,6 +169,11 @@ fn check_expr(
         ExprKind::Index { object, index } => {
             check_expr(object, env, comprehension_bindings, types)?;
             check_expr(index, env, comprehension_bindings, types)?;
+        }
+        ExprKind::Identifier(name) => {
+            if let Some(id) = env.lookup(name) {
+                ensure_initialized(id, env)?;
+            }
         }
         ExprKind::ListLit(values) | ExprKind::TupleLit(values) => {
             for value in values {
@@ -286,6 +288,7 @@ impl Env {
             name: name.to_string(),
             explicit_type,
             message,
+            uninitialized: false,
             obligations: if live {
                 HashSet::from([Vec::new()])
             } else {
@@ -312,6 +315,12 @@ impl Env {
             if !var.obligations.is_empty()
                 && let Some(message) = &var.message
             {
+                if var.explicit_type.as_deref() == Some(LINEAR_TYPE_PARAMETER) {
+                    return Err(TypeError::LinearAbandoned {
+                        var: var.name.clone(),
+                        message: message.clone(),
+                    });
+                }
                 return Err(TypeError::ExplicitDestroy {
                     var: var.name.clone(),
                     message: message.clone(),
@@ -386,11 +395,19 @@ struct Var {
     name: String,
     explicit_type: Option<String>,
     message: Option<String>,
+    /// Consumed on a path that may have raised into the enclosing `except`
+    /// arm: every use there is a use of an uninitialized value, as upstream.
+    uninitialized: bool,
     /// Minimal linear subobjects that still require explicit destruction. The
     /// empty path denotes the intact whole value. Once a field is moved, that
     /// whole obligation is decomposed into its linear child fields.
     obligations: HashSet<Vec<String>>,
     moved: HashSet<Vec<String>>,
+}
+
+/// Whether `expr` is the compiler's diverging runtime trap call.
+fn is_runtime_trap(expr: &Expr) -> bool {
+    matches!(&expr.kind, ExprKind::Call { name, .. } if name == "_mojito_abort")
 }
 
 fn obligation_place(expr: &Expr, env: &Env) -> Option<(usize, Vec<String>)> {
@@ -450,7 +467,15 @@ fn ensure_same(before: &Env, after: &Env) -> Result<(), TypeError> {
 }
 
 fn check_function<'a>(
-    params: impl Iterator<Item = (&'a String, &'a SourceType, Option<ArgConvention>, bool)>,
+    params: impl Iterator<
+        Item = (
+            &'a String,
+            &'a SourceType,
+            Option<ArgConvention>,
+            bool,
+            bool,
+        ),
+    >,
     body: &[Stmt],
     binding_types: &HashMap<SourceSpan, Ty>,
     comprehension_bindings: &HashMap<
@@ -462,11 +487,12 @@ fn check_function<'a>(
 ) -> Result<(), TypeError> {
     let mut env = Env::default();
     env.push();
-    for (name, ty, convention, deinitable) in params {
+    for (name, ty, convention, deinitable, linear) in params {
         let explicit = if deinitable {
             None
         } else {
             source_explicit_name(ty, types)
+                .or_else(|| linear.then(|| LINEAR_TYPE_PARAMETER.to_string()))
         };
         let live = explicit.is_some()
             && matches!(convention, Some(ArgConvention::Var | ArgConvention::Deinit));
@@ -556,6 +582,12 @@ fn check_stmt(
                 binding_types
                     .get(&value.source_span())
                     .and_then(|ty| ty_explicit_name(ty, types))
+                    .or_else(|| {
+                        deletability
+                            .linear_bindings
+                            .contains(&value.source_span())
+                            .then(|| LINEAR_TYPE_PARAMETER.to_string())
+                    })
             };
             let message = explicit
                 .as_ref()
@@ -569,6 +601,7 @@ fn check_stmt(
                 if !env.vars[id].obligations.is_empty() && env.vars[id].message.is_some() {
                     return explicit_error(&env.vars[id], "was overwritten");
                 }
+                env.vars[id].uninitialized = false;
                 env.vars[id].obligations = if env.vars[id].explicit_type.is_some() {
                     HashSet::from([Vec::new()])
                 } else {
@@ -577,7 +610,14 @@ fn check_stmt(
                 env.vars[id].moved.clear();
             }
         }
-        StmtKind::Expr(expr) => check_expr(expr, &mut env, comprehension_bindings, types)?,
+        StmtKind::Expr(expr) => {
+            check_expr(expr, &mut env, comprehension_bindings, types)?;
+            // The runtime trap (the body of an unspecialized generic template
+            // stub) never returns: nothing past it is abandoned.
+            if is_runtime_trap(expr) {
+                return Ok(None);
+            }
+        }
         StmtKind::Return(expr) => {
             if let Some(expr) = expr {
                 check_expr(expr, &mut env, comprehension_bindings, types)?;
@@ -666,6 +706,12 @@ fn check_stmt(
                 binding_types
                     .get(&stmt.source_span())
                     .and_then(|ty| ty_explicit_name(ty, types))
+                    .or_else(|| {
+                        deletability
+                            .linear_bindings
+                            .contains(&stmt.source_span())
+                            .then(|| LINEAR_TYPE_PARAMETER.to_string())
+                    })
             };
             let message = explicit
                 .as_ref()
@@ -737,7 +783,7 @@ fn check_stmt(
             if let Some((_, handler)) = except
                 && let Some(out) = check_block(
                     handler,
-                    before.clone(),
+                    handler_entry(&before, body),
                     true,
                     binding_types,
                     comprehension_bindings,
@@ -806,9 +852,58 @@ fn check_stmt(
             env.check_current_scope()?;
             return Ok(None);
         }
+        // A nested function's parameters and locals carry their own
+        // obligations; its captures never move the enclosing values.
+        StmtKind::Def { params, body, .. } => check_def(
+            stmt,
+            params,
+            body,
+            binding_types,
+            comprehension_bindings,
+            deletability,
+            types,
+        )?,
         _ => {}
     }
     Ok(Some(env))
+}
+
+/// Check one free (top-level or nested) function definition.
+fn check_def(
+    statement: &Stmt,
+    params: &[mojito_ast::ast::FnParam],
+    body: &[Stmt],
+    binding_types: &HashMap<SourceSpan, Ty>,
+    comprehension_bindings: &HashMap<
+        SourceSpan,
+        Vec<mojito_checked::checked::CheckedComprehensionBinding>,
+    >,
+    deletability: &CheckedDeletability,
+    types: &HashMap<String, ExplicitDestroyInfo>,
+) -> Result<(), TypeError> {
+    let params = params.iter().enumerate().map(|(param, p)| {
+        let site = AnnotationSite::FunctionParam {
+            module: statement.module.clone(),
+            declaration: statement.span,
+            syntax: statement.syntax_id,
+            param,
+        };
+        (
+            &p.name,
+            &p.ty,
+            p.convention,
+            deletability.declarations.contains(&site),
+            deletability.linear_declarations.contains(&site),
+        )
+    });
+    check_function(
+        params,
+        body,
+        binding_types,
+        comprehension_bindings,
+        deletability,
+        types,
+    )
 }
 
 /// Check one conceptual comprehension iteration. Each generator introduces a
@@ -902,6 +997,7 @@ fn move_root(
     let Some((id, path)) = obligation_place(expr, env) else {
         return Ok(());
     };
+    ensure_initialized(id, env)?;
     let Some(root_type) = env.vars[id].explicit_type.clone() else {
         return Ok(());
     };
@@ -992,5 +1088,159 @@ fn source_explicit_name(
     match ty {
         SourceType::Named(name, _) if types.contains_key(name) => Some(name.clone()),
         _ => None,
+    }
+}
+
+/// The environment an `except` arm starts from: the pre-`try` state with
+/// every linear value the body consumes marked uninitialized. Consumption
+/// happens at the consuming call, so a raise on that call — or any later
+/// raise — reaches the handler after the value is gone (upstream's rule).
+fn handler_entry(before: &Env, body: &[Stmt]) -> Env {
+    let mut consumed = HashSet::new();
+    consumed_roots_in_stmts(body, before, &mut consumed);
+    let mut entry = before.clone();
+    for id in consumed {
+        let var = &mut entry.vars[id];
+        if var.message.is_some() {
+            var.uninitialized = true;
+            var.obligations.clear();
+            var.moved.insert(Vec::new());
+        }
+    }
+    entry
+}
+
+/// Reject a use of a value consumed on a path that may have raised.
+fn ensure_initialized(id: usize, env: &Env) -> Result<bool, TypeError> {
+    if env.vars[id].uninitialized {
+        return Err(TypeError::UninitializedUse {
+            var: env.vars[id].name.clone(),
+        });
+    }
+    Ok(true)
+}
+
+/// Roots (indices into `env.vars`) transferred anywhere in `statements`.
+fn consumed_roots_in_stmts(statements: &[Stmt], env: &Env, roots: &mut HashSet<usize>) {
+    for statement in statements {
+        match &statement.kind {
+            StmtKind::Expr(value)
+            | StmtKind::Raise(value)
+            | StmtKind::Return(Some(value))
+            | StmtKind::VarDecl { value, .. }
+            | StmtKind::RefDecl { value, .. }
+            | StmtKind::Assign { value, .. }
+            | StmtKind::AugAssign { value, .. }
+            | StmtKind::SetPlace { value, .. }
+            | StmtKind::Comptime { value, .. } => consumed_roots_in_expr(value, env, roots),
+            StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
+                for (condition, body) in branches {
+                    consumed_roots_in_expr(condition, env, roots);
+                    consumed_roots_in_stmts(body, env, roots);
+                }
+                if let Some(orelse) = orelse {
+                    consumed_roots_in_stmts(orelse, env, roots);
+                }
+            }
+            StmtKind::While { cond, body, orelse } => {
+                consumed_roots_in_expr(cond, env, roots);
+                consumed_roots_in_stmts(body, env, roots);
+                if let Some(orelse) = orelse {
+                    consumed_roots_in_stmts(orelse, env, roots);
+                }
+            }
+            StmtKind::For {
+                iter, body, orelse, ..
+            } => {
+                consumed_roots_in_expr(iter, env, roots);
+                consumed_roots_in_stmts(body, env, roots);
+                if let Some(orelse) = orelse {
+                    consumed_roots_in_stmts(orelse, env, roots);
+                }
+            }
+            StmtKind::ComptimeFor { iter, body, .. } => {
+                consumed_roots_in_expr(iter, env, roots);
+                consumed_roots_in_stmts(body, env, roots);
+            }
+            StmtKind::Try {
+                body,
+                except,
+                orelse,
+                finalbody,
+            } => {
+                consumed_roots_in_stmts(body, env, roots);
+                if let Some((_, handler)) = except {
+                    consumed_roots_in_stmts(handler, env, roots);
+                }
+                for block in [orelse, finalbody].into_iter().flatten() {
+                    consumed_roots_in_stmts(block, env, roots);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn consumed_roots_in_expr(expr: &Expr, env: &Env, roots: &mut HashSet<usize>) {
+    match &expr.kind {
+        ExprKind::Transfer(inner) => {
+            if let Some((id, _)) = obligation_place(inner, env) {
+                roots.insert(id);
+            }
+        }
+        ExprKind::MethodCall {
+            object,
+            args,
+            kwargs,
+            ..
+        } => {
+            consumed_roots_in_expr(object, env, roots);
+            for arg in args {
+                consumed_roots_in_expr(arg, env, roots);
+            }
+            for arg in kwargs {
+                consumed_roots_in_expr(&arg.value, env, roots);
+            }
+        }
+        ExprKind::Call { args, kwargs, .. } => {
+            for arg in args {
+                consumed_roots_in_expr(arg, env, roots);
+            }
+            for arg in kwargs {
+                consumed_roots_in_expr(&arg.value, env, roots);
+            }
+        }
+        ExprKind::Invoke {
+            callee,
+            args,
+            kwargs,
+            ..
+        } => {
+            consumed_roots_in_expr(callee, env, roots);
+            for arg in args {
+                consumed_roots_in_expr(arg, env, roots);
+            }
+            for arg in kwargs {
+                consumed_roots_in_expr(&arg.value, env, roots);
+            }
+        }
+        ExprKind::Prefix(_, value) | ExprKind::Named { value, .. } => {
+            consumed_roots_in_expr(value, env, roots)
+        }
+        ExprKind::Infix(_, left, right) => {
+            consumed_roots_in_expr(left, env, roots);
+            consumed_roots_in_expr(right, env, roots);
+        }
+        ExprKind::Member { object, .. } => consumed_roots_in_expr(object, env, roots),
+        ExprKind::Index { object, index } => {
+            consumed_roots_in_expr(object, env, roots);
+            consumed_roots_in_expr(index, env, roots);
+        }
+        ExprKind::ListLit(values) | ExprKind::TupleLit(values) => {
+            for value in values {
+                consumed_roots_in_expr(value, env, roots);
+            }
+        }
+        _ => {}
     }
 }

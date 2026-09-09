@@ -811,6 +811,51 @@ impl Flatten<'_> {
         )
     }
 
+    /// Bind the result of a call whose value no expression consumes (an
+    /// expression statement; the unbound result of a non-consuming
+    /// `__enter__`) to a hidden `$discard_r` slot. Mojo destroys such a
+    /// temporary before the next statement: the slot is dead at its
+    /// definition, so drop elaboration splices its `DropVar` right after the
+    /// call. Only a fresh owned aggregate is bound — a reference result,
+    /// scalar, or pointer owns no storage, and a place read is never re-owned.
+    pub(super) fn bind_discarded_result(
+        &mut self,
+        expression: &mojito_hir::hir::HirExpr,
+        value: Reg,
+    ) {
+        if !matches!(
+            expression.syntax.kind,
+            ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
+        ) {
+            return;
+        }
+        if self
+            .checked_call_contract(&expression.syntax)
+            .is_some_and(|contract| contract.reference_result.is_some())
+        {
+            return;
+        }
+        let Some(ty) = self
+            .f
+            .reg_types
+            .get(&value.0)
+            .cloned()
+            .or_else(|| expression.ty.clone())
+        else {
+            return;
+        };
+        if !owns_droppable_storage(&ty) {
+            return;
+        }
+        let variable = self.var(&format!("$discard_r{}", value.0));
+        self.var_types.insert(variable, ty.clone());
+        self.emit(MirInstr::DefVar {
+            var: variable,
+            src: value,
+            binding_ty: Some(ty),
+        });
+    }
+
     /// Anchor a loan-carrying temporary *argument* in a hidden retained slot
     /// (`$arg_loan_r`) whose loans keep its borrowed sources alive through the
     /// consuming call. Unlike the receiver anchor below, the value is NOT read
@@ -1140,4 +1185,21 @@ impl Flatten<'_> {
         self.emit(MirInstr::LoadPlace { dest, place });
         Some(dest)
     }
+}
+
+/// Whether a value of this type owns storage that destruction must release:
+/// an aggregate (a struct with a destructor or owning fields, tuple/pack
+/// storage, a variant, or a still-abstract parameter type). Kept textually
+/// aligned with the drop analysis' `may_alias_owned_storage`.
+fn owns_droppable_storage(ty: &Ty) -> bool {
+    matches!(
+        ty,
+        Ty::Struct(..)
+            | Ty::Tuple(_)
+            | Ty::RuntimePack(_)
+            | Ty::Variant(_)
+            | Ty::ComptimeList(_)
+            | Ty::Param { .. }
+            | Ty::Assoc { .. }
+    )
 }

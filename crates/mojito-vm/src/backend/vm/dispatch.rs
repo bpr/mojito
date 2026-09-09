@@ -46,10 +46,11 @@ impl VmBackend {
         }
     }
 
-    /// Recursively destroy a value (ASAP drop): run a struct's `__deinit__` if it
-    /// defines one, then drop its fields in reverse declaration order. Internal
-    /// tuple/compile-time storage recurses through its elements. Scalars are a
-    /// no-op; a destructor-less struct still recursively destroys its fields.
+    /// Recursively destroy a value (ASAP drop): run a struct's `__deinit__` if
+    /// it defines one (its body consumes the receiver's fields at their last
+    /// use), else drop the fields in declaration order — Mojo's order.
+    /// Internal tuple/compile-time storage recurses through its elements.
+    /// Scalars are a no-op.
     pub(super) fn drop_value(&mut self, prog: &Prog, v: Value) -> Result<(), RuntimeError> {
         match v {
             Value::Struct { name, fields, .. } => {
@@ -64,7 +65,7 @@ impl VmBackend {
                     .iter()
                     .any(|(_, value)| matches!(value, Value::Moved))
                 {
-                    for (_, field) in fields.into_iter().rev() {
+                    for (_, field) in fields {
                         if !matches!(field, Value::Moved) {
                             self.drop_value(prog, field)?;
                         }
@@ -74,15 +75,18 @@ impl VmBackend {
                 let del = format!("{name}.__deinit__");
                 if let Some(idx) = prog.index_of(&del) {
                     self.record_lifecycle(format!("drop {name}"));
-                    // `self` is the whole struct; the return value is discarded.
+                    // `self` is the whole struct, owned by the destructor: its
+                    // elaborated `ConsumeVar` destroys the residual fields at
+                    // their last use. The return value is discarded.
                     let self_val = Value::Struct {
                         name: name.clone(),
-                        fields: fields.clone(),
+                        fields,
                         value_params: Vec::new(),
                     };
                     self.call_function(prog, idx, vec![self_val], &[])?;
+                    return Ok(());
                 }
-                for (_, fv) in fields.into_iter().rev() {
+                for (_, fv) in fields {
                     self.drop_value(prog, fv)?;
                 }
             }

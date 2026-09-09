@@ -2,7 +2,7 @@
 # overloads for copy (deep-copy the buffer) and move (relocate). The copy
 # initializer gives the type explicit value semantics: `Buf(copy: a)` deep
 # copies, while an implicit `var b = a` would need `ImplicitlyCopyable`.
-from std.memory import unsafe_alloc
+from std.memory.alloc import unsafe_alloc
 
 struct Buf:
     var data: UnsafePointer[Int]

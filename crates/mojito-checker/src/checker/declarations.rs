@@ -355,6 +355,7 @@ impl Checker {
                 Some(ret) => self.resolve_return_annotation(ret)?,
                 None => Ty::None,
             },
+            ret_mlir_index: super::type_resolution::spells_mlir_index(method.ret.as_ref()),
             raises: error.as_ref().is_some_and(|ty| *ty != Ty::Never),
             error: error.map(Box::new),
             self_convention: method.self_convention,
@@ -930,6 +931,11 @@ impl Checker {
                             self.explicit_destroy_deletability
                                 .borrow_mut()
                                 .declarations
+                                .insert(site);
+                        } else if matches!(ty, Ty::Param { .. }) {
+                            self.explicit_destroy_deletability
+                                .borrow_mut()
+                                .linear_declarations
                                 .insert(site);
                         }
                     }

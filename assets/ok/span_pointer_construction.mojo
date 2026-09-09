@@ -4,7 +4,7 @@
 # loans that source; an explicit application (`Span[Int, origin_of(self)]`)
 # is checked against the pointer's provenance; an untracked heap pointer
 # binds the slot untracked (the caller vouches for the storage).
-from std.memory import unsafe_alloc
+from std.memory.alloc import unsafe_alloc
 
 struct Buf:
     var items: List[Int]

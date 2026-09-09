@@ -129,6 +129,33 @@ impl Checker {
             return Ok(reference);
         }
 
+        // Dereferencing a pointer with an abstract provenance (untracked,
+        // unsafe-any, static) supplies that origin rather than a tracked
+        // place: it is what an exact `ref[ImmUntrackedOrigin]` clause binds.
+        if let Some(pointer) = dereferenced_pointer(expr)
+            && let Ok(Ty::Pointer { origin, .. }) = self.infer(pointer)
+        {
+            use mojito_types::origin::PointerOrigin;
+            let abstract_origin = match origin {
+                PointerOrigin::Untracked { mutable } | PointerOrigin::UnsafeAny { mutable } => {
+                    Some((Origin::Untracked { mutable }, mutable))
+                }
+                PointerOrigin::Static => Some((Origin::Static, false)),
+                _ => None,
+            };
+            if let Some((origin, mutable)) = abstract_origin {
+                return Ok(RefTy {
+                    referent: Box::new(self.infer(expr)?),
+                    origin,
+                    mutability: if mutable {
+                        Mutability::Mutable
+                    } else {
+                        Mutability::Immutable
+                    },
+                });
+            }
+        }
+
         let place = self.origin_place(expr)?;
         let mutability = if self.owner_is_mutable(place.root) {
             Mutability::Mutable
@@ -466,5 +493,15 @@ impl Checker {
             return Ok(resolved);
         }
         lower_ref_sig(spec, type_params, params, struct_params)
+    }
+}
+
+/// The pointer object of a dereference expression (`p[]`, `p[i]`,
+/// `p[unsafe_offset=i]`), if `expression` is one.
+fn dereferenced_pointer(expression: &Expr) -> Option<&Expr> {
+    match &expression.kind {
+        ExprKind::Index { object, .. } => Some(object),
+        _ => crate::checker::places::pointer_offset_keyword_subscript(expression)
+            .map(|(object, _)| object),
     }
 }

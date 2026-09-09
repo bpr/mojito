@@ -50,7 +50,7 @@ fn each_value_dropped_at_its_own_last_use() {
     let src = format!(
         "{RES}def main():\n    var a: Res = Res(1)\n    print(\"use a\", a.id)\n    var b: Res = Res(2)\n    print(\"use b\", b.id)\n    print(\"done\")\n"
     );
-    assert_eq!(vm(&src), "del 1\nuse a 1\ndel 2\nuse b 2\ndone\n");
+    assert_eq!(vm(&src), "use a 1\ndel 1\nuse b 2\ndel 2\ndone\n");
 }
 
 #[test]
@@ -100,11 +100,13 @@ fn partial_aggregate_skips_its_whole_destructor_and_drops_residual_fields() {
 }
 
 #[test]
-fn fields_drop_in_reverse_declaration_order() {
-    // Destroying a struct runs its `__deinit__`, then its fields' — in reverse order.
+fn fields_drop_in_declaration_order() {
+    // Destroying a struct runs its `__deinit__`, whose body destroys the
+    // receiver's fields at their last use — an unused field at entry, in
+    // declaration order (Mojo's order) — before the destructor's own statements.
     let src = "@fieldwise_init\nstruct Inner:\n    var id: Int\n    def __deinit__(deinit self):\n        print(\"del inner\", self.id)\n\n@fieldwise_init\nstruct Outer:\n    var a: Inner\n    var b: Inner\n    def __deinit__(deinit self):\n        print(\"del outer\")\n\ndef main():\n    var o: Outer = Outer(Inner(1), Inner(2))\n    print(o.a.id)\n";
-    // `del outer` first, then field `b` (Inner 2) before field `a` (Inner 1).
-    assert_eq!(vm(src), "del outer\ndel inner 2\ndel inner 1\n1\n");
+    // Field `a` (Inner 1), then `b` (Inner 2), then the destructor's `del outer`.
+    assert_eq!(vm(src), "1\ndel inner 1\ndel inner 2\ndel outer\n");
 }
 
 #[test]
@@ -294,7 +296,7 @@ fn value_dying_unused_on_a_branch_is_dropped_on_that_edge() {
             "{RES}def main():\n    var flag: Bool = {flag}\n    var a: Res = Res(1)\n    if flag:\n        print(\"used\", a.id)\n    print(\"done\")\n"
         )
     };
-    assert_eq!(vm(&prog("True")), "del 1\nused 1\ndone\n");
+    assert_eq!(vm(&prog("True")), "used 1\ndel 1\ndone\n");
     assert_eq!(vm(&prog("False")), "del 1\ndone\n");
 }
 
@@ -305,7 +307,7 @@ fn del_in_a_loop_runs_each_iteration() {
     let src = format!(
         "{RES}def main():\n    for i in range(3):\n        var r: Res = Res(i)\n        print(\"iter\", r.id)\n"
     );
-    assert_eq!(vm(&src), "del 0\niter 0\ndel 1\niter 1\ndel 2\niter 2\n");
+    assert_eq!(vm(&src), "iter 0\ndel 0\niter 1\ndel 1\niter 2\ndel 2\n");
 }
 
 #[test]
@@ -334,12 +336,12 @@ fn del_runs_when_a_try_body_is_left() {
     let raising = format!(
         "{RES}def main():\n    try:\n        var r: Res = Res(1)\n        print(\"have\", r.id)\n        raise \"boom\"\n    except e:\n        print(\"caught\")\n    print(\"done\")\n"
     );
-    assert_eq!(vm(&raising), "del 1\nhave 1\ncaught\ndone\n");
+    assert_eq!(vm(&raising), "have 1\ndel 1\ncaught\ndone\n");
 
     let normal = format!(
         "{RES}def main():\n    try:\n        var r: Res = Res(2)\n        print(\"have\", r.id)\n    except e:\n        print(\"caught\")\n    print(\"done\")\n"
     );
-    assert_eq!(vm(&normal), "del 2\nhave 2\ndone\n");
+    assert_eq!(vm(&normal), "have 2\ndel 2\ndone\n");
 }
 
 // Copyable/Movable printing struct plus raising helpers for the try-region
@@ -404,7 +406,7 @@ fn raise_seed_keeps_handler_observed_values_alive_through_the_body() {
     let src = format!(
         "{TRY_NOISY}def main():\n    var n = Noisy(1)\n    try:\n        var x = may(-1)\n        var y = may(-2)\n    except e:\n        print(\"caught\", n.tag)\n    print(\"done\")\n"
     );
-    assert_eq!(vm(&src), "deinit 1\ncaught 1\ndone\n");
+    assert_eq!(vm(&src), "caught 1\ndeinit 1\ndone\n");
 }
 
 #[test]
@@ -496,7 +498,7 @@ fn deinit_move_source_consumes_residual_field_without_running_its_destructor() {
     // and each must be released — two "handle del 7", never a leak and never a
     // double `box del`.
     let src = "struct Handle(Copyable, Movable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __copyinit__(out self, existing: Self):\n        self.id = existing.id\n    def __deinit__(deinit self):\n        print(\"handle del\", self.id)\n\nstruct Box(Movable):\n    var h: Handle\n    def __init__(out self, h: Handle):\n        self.h = h.copy()\n    def __init__(out self, *, deinit move: Self):\n        self.h = move.h.copy()\n    def __deinit__(deinit self):\n        print(\"box del\")\n\ndef main():\n    var b1 = Box(Handle(7))\n    var b2 = b1^\n    print(\"mid\", b2.h.id)\n";
-    assert_eq!(vm(src), "handle del 7\nbox del\nhandle del 7\nmid 7\n");
+    assert_eq!(vm(src), "handle del 7\nmid 7\nhandle del 7\nbox del\n");
 }
 
 // Borrowed iteration source/iterator slot split: a temporary iterable that owns

@@ -8,6 +8,34 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `std.memory` is a package (`alloc`, `maybe_uninit`, `owned_pointer`
+  submodules mirroring upstream's layout); `unsafe_alloc` is exported only by
+  `std.memory.alloc`, so `from std.memory import unsafe_alloc` now rejects as
+  upstream does.
+- Rejections aligned with the pinned Mojo: a tracked local bound to a
+  `ref[ImmStaticOrigin|ImmUntrackedOrigin|MutUntrackedOrigin]` parameter
+  (upstream's conversion text and origin note), an `except` arm re-consuming
+  a value whose raising named destructor already consumed it (`use of
+  uninitialized value`), a `var` parameter or local typed by a type parameter
+  or dependent pack projection that does not prove `Deinitable` being
+  abandoned (`Tuple.consume_elements`/`deinit_with` handlers included), and an
+  `Indexer` whose `__mlir_index__` returns `Int` — upstream's
+  `-> __mlir_type.index` spelling is accepted and `Int.__mlir_index__()` is
+  the identity. `@__parameter` closures capture implicitly per binding
+  (mutable locals as `mut`) and reject an explicit capture list; augmented
+  assignment to an immutable binding reports upstream's in-place text.
+
+### Fixed
+
+- Destruction timing and order match the pinned Mojo on both backends: a
+  discarded call result (an expression statement, the unbound result of a
+  non-consuming `__enter__`) is destroyed before the next statement; an owner
+  whose last use is a field read feeding a call is destroyed after that call
+  returns; a consuming `var`/`deinit` parameter or receiver is destroyed at
+  its last use inside the callee (an unused one at entry, so a raising named
+  destructor no longer leaves the value for an `except` fallback); struct
+  fields destroy in declaration order. Exe ratchet 444 → 448.
+
 - Promote the feature-gated Pliron backend from experimental to supported as
   Mojito's path to LLVM and optimized native binaries. Update to pinned Pliron
   revision `477e6b0e`, `llvm-sys 231.0.0`, and LLVM 23.1 discovered through

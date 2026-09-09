@@ -358,7 +358,7 @@ fn opaque_trait_bound_dispatches_indexing() {
 #[test]
 fn indexer_values_normalize_once_for_nominal_collection_reads_and_writes() {
     let actual = output(
-        "@fieldwise_init\nstruct Offset(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> Int:\n        print(\"normalize\", self.value)\n        return self.value\n\ndef main():\n    var values: List[Int] = [3, 7, 11]\n    values[Offset(1)] = 9\n    print(values[Offset(1)])\n",
+        "@fieldwise_init\nstruct Offset(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        print(\"normalize\", self.value)\n        return self.value\n\ndef main():\n    var values: List[Int] = [3, 7, 11]\n    values[Offset(1)] = 9\n    print(values[Offset(1)])\n",
     );
     assert_eq!(actual, "normalize 1\nnormalize 1\n9\n");
 }
@@ -366,7 +366,7 @@ fn indexer_values_normalize_once_for_nominal_collection_reads_and_writes() {
 #[test]
 fn indexer_values_normalize_once_for_simd_reads_and_writes() {
     let actual = output(
-        "@fieldwise_init\nstruct Offset(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> Int:\n        print(\"normalize\", self.value)\n        return self.value\n\ndef main():\n    var values = SIMD[DType.int32, 4](3, 7, 11, 15)\n    values[Offset(2)] = 13\n    print(values[Offset(2)])\n",
+        "@fieldwise_init\nstruct Offset(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        print(\"normalize\", self.value)\n        return self.value\n\ndef main():\n    var values = SIMD[DType.int32, 4](3, 7, 11, 15)\n    values[Offset(2)] = 13\n    print(values[Offset(2)])\n",
     );
     assert_eq!(actual, "normalize 2\nnormalize 2\n13\n");
 }
@@ -374,7 +374,7 @@ fn indexer_values_normalize_once_for_simd_reads_and_writes() {
 #[test]
 fn a_user_indexer_overload_receives_the_source_value_without_normalization() {
     let actual = output(
-        "@fieldwise_init\nstruct Offset(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> Int:\n        print(\"unexpected normalization\")\n        return self.value\n\n@fieldwise_init\nstruct Bag:\n    var value: Int\n    def __getitem__(self, offset: Offset) -> Int:\n        return self.value + offset.value\n\ndef main():\n    print(Bag(3)[Offset(4)])\n",
+        "@fieldwise_init\nstruct Offset(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        print(\"unexpected normalization\")\n        return self.value\n\n@fieldwise_init\nstruct Bag:\n    var value: Int\n    def __getitem__(self, offset: Offset) -> Int:\n        return self.value + offset.value\n\ndef main():\n    print(Bag(3)[Offset(4)])\n",
     );
     assert_eq!(actual, "7\n");
 }
@@ -382,7 +382,7 @@ fn a_user_indexer_overload_receives_the_source_value_without_normalization() {
 #[test]
 fn a_user_setitem_index_type_receives_the_source_value_without_normalization() {
     let actual = output(
-        "@fieldwise_init\nstruct Offset(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> Int:\n        print(\"unexpected normalization\")\n        return self.value\n\n@fieldwise_init\nstruct Bag:\n    var value: Int\n    def __setitem__(mut self, offset: Offset, value: Int):\n        self.value = value + offset.value\n\ndef main():\n    var bag = Bag(0)\n    bag[Offset(3)] = 7\n    print(bag.value)\n",
+        "@fieldwise_init\nstruct Offset(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        print(\"unexpected normalization\")\n        return self.value\n\n@fieldwise_init\nstruct Bag:\n    var value: Int\n    def __setitem__(mut self, offset: Offset, value: Int):\n        self.value = value + offset.value\n\ndef main():\n    var bag = Bag(0)\n    bag[Offset(3)] = 7\n    print(bag.value)\n",
     );
     assert_eq!(actual, "10\n");
 }
@@ -1556,11 +1556,11 @@ fn walrus_binds_and_produces_its_value() {
 fn unsafe_pointer_provenance_arithmetic_and_deallocation() {
     assert_eq!(
         output(
-            "from std.memory import unsafe_alloc\n\ndef main():\n    var base = unsafe_alloc[Int](3, alignment=16)\n    base[1] = 42\n    var next = base + 1\n    print(next[0], next - base, next == base + 1)\n    base.free()\n"
+            "from std.memory.alloc import unsafe_alloc\n\ndef main():\n    var base = unsafe_alloc[Int](3, alignment=16)\n    base[1] = 42\n    var next = base + 1\n    print(next[0], next - base, next == base + 1)\n    base.free()\n"
         ),
         "42 1 True\n"
     );
-    assert!(run_err("from std.memory import unsafe_alloc\n\ndef main():\n    var p = unsafe_alloc[Int](1)\n    var q = p\n    p.free()\n    print(q[0])\n").to_string().contains("use after"));
+    assert!(run_err("from std.memory.alloc import unsafe_alloc\n\ndef main():\n    var p = unsafe_alloc[Int](1)\n    var q = p\n    p.free()\n    print(q[0])\n").to_string().contains("use after"));
 }
 
 // --- Inferred `var` ---

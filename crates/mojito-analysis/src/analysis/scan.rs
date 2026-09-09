@@ -48,6 +48,10 @@ pub(super) fn var_uses(i: &MirInstr) -> Vec<(VarId, Reg)> {
         MirInstr::VariantSetInitWith { place, factory, .. } => place_loan_uses(place, *factory),
         MirInstr::VariantReplace { place, value, .. } => place_loan_uses(place, *value),
         MirInstr::LoadPlace { dest, place } => place_loan_uses(place, *dest),
+        // Consuming a projected field reads its root: a `deinit` receiver's
+        // whole-variable teardown must follow the field consumption, not
+        // precede it.
+        MirInstr::ConsumePlace { place, marker } => place_loan_uses(place, *marker),
         // Call arguments are evaluated into registers first, but mutable/ref
         // conventions still consume their retained places at the call
         // boundary for handle passing and write-back. Keep those slots alive
@@ -388,25 +392,23 @@ pub(super) fn for_each_instr_deep_mut(
     }
 }
 
-/// Whether the value in variable `v` is dropped by *this* function: locals always;
-/// a consuming `var` parameter (the caller transferred it) yes; a borrowed parameter or
-/// `self` never (the caller owns a borrow; `self` is written back / would recurse).
+/// Whether the value in variable `v` is dropped by *this* function: locals
+/// always; a consuming `var` or `deinit` parameter — receiver included — yes,
+/// at its last use in the body (Mojo destroys an unused `deinit self`'s fields
+/// at the callee's entry); a borrowed parameter or a non-parameter `self`
+/// never (the caller owns a borrow; `self` is written back / would recurse).
 pub(super) fn is_droppable_root(f: &MirFunction, v: VarId) -> bool {
     let vi = v as usize;
-    // `self` is always caller-owned here, including generated/specialized
-    // method CFGs whose stable binding slot is not in the leading parameter
-    // range.  Test this before `n_params`: classifying such a receiver as a
-    // local makes drop elaboration recursively destroy borrowed fields (and,
-    // for pointer-backed collections, free the caller's allocation).
-    if f.var_names.get(vi).is_some_and(|name| name == "self") {
-        return false;
-    }
     if vi < f.n_params {
         // A consuming `var` parameter is destroyed here; a `deinit` parameter is
         // *consumed* here (its teardown is rewritten to `ConsumeVar` below).
-        f.owned_params.get(vi).copied().unwrap_or(false)
-            || f.deinit_params.get(vi).copied().unwrap_or(false)
-    } else {
-        true
+        return f.owned_params.get(vi).copied().unwrap_or(false)
+            || f.deinit_params.get(vi).copied().unwrap_or(false);
     }
+    // A `self` outside the leading parameter range (generated/specialized
+    // method CFGs whose stable binding slot is not leading) is caller-owned:
+    // classifying such a receiver as a local makes drop elaboration
+    // recursively destroy borrowed fields (and, for pointer-backed
+    // collections, free the caller's allocation).
+    f.var_names.get(vi).is_none_or(|name| name != "self")
 }

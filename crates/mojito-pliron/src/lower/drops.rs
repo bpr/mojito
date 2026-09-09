@@ -5,8 +5,9 @@ use super::*;
 
 impl<'a> FnLowering<'a> {
     /// `DropVar` — the VM's `drop_value`: nothing for scalars; for aggregates
-    /// run the compiled `__deinit__` when defined, then destroy fields in
-    /// reverse declaration order. Combinations whose residual state is only
+    /// run the compiled `__deinit__` when defined (its body consumes the
+    /// receiver's fields), else destroy the fields in declaration order.
+    /// Combinations whose residual state is only
     /// dynamically knowable (a destructor plus independently droppable
     /// fields, or a partially-moved variable) reject instead of guessing.
     pub(super) fn lower_drop_var(
@@ -108,9 +109,9 @@ impl<'a> FnLowering<'a> {
                         && (self.name.contains(".deinit_with")
                             || self.name.contains(".consume_elements")));
                 if self.fields_need_drop(&ty) && !fully_drained_tuple {
-                    // The named explicit destructor consumed the aggregate;
-                    // its surviving fields still receive their ordinary
-                    // reverse-order destruction (the VM's `ConsumeVar`).
+                    // The named explicit destructor owns the aggregate; its
+                    // surviving fields receive their ordinary declaration-
+                    // order destruction (the VM's `ConsumeVar`).
                     // Struct and tuple-like consumption destroy their
                     // surviving fields/elements; deeper untracked moves
                     // reject rather than guess.
@@ -257,8 +258,8 @@ impl<'a> FnLowering<'a> {
 
     /// Destroy the surviving droppable top-level leaves of partially-tracked
     /// storage: leaves with a presence flag drop under that flag's guard, the
-    /// rest unconditionally. Struct fields destroy in reverse declaration
-    /// order and pack elements left-to-right — the VM's `drop_value` orders.
+    /// rest unconditionally. Struct fields and pack elements alike destroy in
+    /// declaration order (left-to-right) — the VM's `drop_value` order.
     pub(super) fn emit_surviving_leaf_drops(
         &mut self,
         ctx: &mut Context,
@@ -266,27 +267,21 @@ impl<'a> FnLowering<'a> {
         ty: &Ty,
         leaves: &std::collections::BTreeMap<usize, Value>,
     ) -> Result<(), PlironError> {
-        let (element_tys, forward) = match ty {
+        let element_tys = match ty {
             Ty::Struct(name, _) => {
                 let Some(decl) = self.struct_decls.get(name.as_str()).copied() else {
                     return Ok(());
                 };
-                let tys: Vec<Ty> = decl.fields.iter().map(|(_, field)| field.clone()).collect();
-                (tys, false)
+                decl.fields.iter().map(|(_, field)| field.clone()).collect()
             }
-            Ty::Tuple(elements) | Ty::RuntimePack(elements) => (elements.clone(), true),
+            Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements.clone(),
             _ => return Ok(()),
         };
         let composed = self
             .layout
             .struct_layout(&element_tys)
             .map_err(|error| self.unsupported(format!("drop layout ({error})"), None))?;
-        let order: Vec<usize> = if forward {
-            (0..element_tys.len()).collect()
-        } else {
-            (0..element_tys.len()).rev().collect()
-        };
-        for position in order {
+        for position in 0..element_tys.len() {
             let element = element_tys[position].clone();
             if !self.needs_drop(&element) {
                 continue;
@@ -336,7 +331,7 @@ impl<'a> FnLowering<'a> {
 
     /// Emit the VM's `drop_value` over storage: the struct's compiled
     /// `__deinit__` (its own body consumes the receiver's residual fields),
-    /// else recurse into fields in reverse declaration order.
+    /// else recurse into fields in declaration order.
     pub(super) fn emit_drop_value(
         &mut self,
         ctx: &mut Context,
@@ -422,7 +417,7 @@ impl<'a> FnLowering<'a> {
                     .layout
                     .struct_layout(&field_tys)
                     .map_err(|error| self.unsupported(format!("drop layout ({error})"), None))?;
-                for (position, (_, field_ty)) in fields.iter().enumerate().rev() {
+                for (position, (_, field_ty)) in fields.iter().enumerate() {
                     if !self.needs_drop(field_ty) {
                         continue;
                     }
@@ -442,7 +437,7 @@ impl<'a> FnLowering<'a> {
                     .layout
                     .struct_layout(&elements)
                     .map_err(|error| self.unsupported(format!("drop layout ({error})"), None))?;
-                for (position, element) in elements.iter().enumerate().rev() {
+                for (position, element) in elements.iter().enumerate() {
                     if !self.needs_drop(element) {
                         continue;
                     }

@@ -150,7 +150,8 @@ impl Flatten<'_> {
                 self.emit(MirInstr::KeepAlive { var });
             }
             HirInstr::Eval(e) => {
-                let _ = self.expr_hir(e); // evaluated for its effect; result discarded
+                let value = self.expr_hir(e);
+                self.bind_discarded_result(e, value);
             }
             HirInstr::Stmt(s) => self.lower_hir_stmt(s, outer_map),
             // A `try` whose enclosing loops are function-level: lower each sub-region

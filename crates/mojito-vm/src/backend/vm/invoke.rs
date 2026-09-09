@@ -637,11 +637,22 @@ impl VmBackend {
                 // root the result's `ref` fields in the callee frame, and
                 // return-time canonicalization has no caller storage to re-root
                 // them through. Owned/deinit receivers keep the value transfer.
+                let deinit_receiver = function.deinit_params.first().copied().unwrap_or(false);
                 let receiver_as_reference = ref_params.first().copied().unwrap_or(false)
                     || (recv_place.is_some()
                         && !function.owned_params.first().copied().unwrap_or(false)
-                        && !function.deinit_params.first().copied().unwrap_or(false)
+                        && !deinit_receiver
                         && Self::function_result_carries_reference(prog, fidx));
+                // A named destructor owns its receiver from the call on: the
+                // callee's elaborated `ConsumeVar` destroys the residual fields
+                // at their last use, so the caller's slot is vacated before the
+                // call and its trailing consumption finds nothing to destroy.
+                if deinit_receiver
+                    && !receiver_as_reference
+                    && let Some(place) = recv_place
+                {
+                    self.store_at_call_place(prog, frame_id, place, Value::Moved, regs, vars)?;
+                }
                 let mut reference_inputs = Vec::new();
                 if receiver_as_reference {
                     let place = recv_place.as_ref().ok_or_else(|| {
@@ -762,18 +773,7 @@ impl VmBackend {
                     };
                     d.mut_self_methods.contains(key)
                 });
-                // A named destructor (`deinit self`) also writes its final
-                // receiver state back: the caller's trailing consumption then
-                // destroys exactly the residual fields the body left, instead
-                // of a stale pre-call clone (which would re-drop moved fields
-                // and double-free drained pointer-backed containers).
-                let is_named_destructor = prog.mir.functions[fidx]
-                    .1
-                    .deinit_params
-                    .first()
-                    .copied()
-                    .unwrap_or(false);
-                if (is_mut || is_named_destructor)
+                if is_mut
                     && !receiver_as_reference
                     && let Some(place) = recv_place
                 {

@@ -1192,7 +1192,8 @@ impl Checker {
                 args,
                 kwargs,
                 true,
-            )?;
+            )
+            .map_err(|error| name_ref_origin_mismatch(error, name, &names))?;
         let copied_reads = slots
             .iter()
             .enumerate()
@@ -1436,7 +1437,8 @@ impl Checker {
                 args,
                 kwargs,
                 true,
-            )?;
+            )
+            .map_err(|error| name_ref_origin_mismatch(error, name, names))?;
         let copied_reads = slots
             .iter()
             .enumerate()
@@ -1575,5 +1577,25 @@ impl Checker {
                 context: format!("forwarded keyword arguments to '{callee}'"),
             }),
         }
+    }
+}
+
+/// Rewrite the solver's slot-indexed exact-origin mismatch into upstream's
+/// call diagnostic naming the function and the parameter.
+fn name_ref_origin_mismatch(error: TypeError, func: &str, names: &[String]) -> TypeError {
+    match error {
+        TypeError::RefOriginMismatch {
+            slot,
+            ty,
+            expected,
+            actual,
+        } => TypeError::BadCall {
+            func: func.to_string(),
+            reason: format!(
+                "value passed to '{}' cannot be converted from '{ty}' to ref '{ty}'\nnote: operand origin '{actual}' doesn't match expected origin '{expected}'",
+                names.get(slot).map(String::as_str).unwrap_or("argument")
+            ),
+        },
+        other => other,
     }
 }

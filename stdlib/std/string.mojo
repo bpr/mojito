@@ -11,7 +11,7 @@
 # hand-maintained essentials classifier plus arithmetic Hangul, with GB11
 # simplified to "never break after ZWJ" and GB9b (Prepend) omitted.
 
-from std.memory import unsafe_alloc
+from std.memory.alloc import unsafe_alloc
 
 from std.collections.list import List
 from std.optional import Optional

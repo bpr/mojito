@@ -3,7 +3,7 @@
 # deep-copy an owning pointer field rather than alias it (previously a double
 # free). A Copyable-only element needs `element.copy()` instead
 # (assets/type_error/loop_binding_consuming_non_implicit.mojo).
-from std.memory import unsafe_alloc
+from std.memory.alloc import unsafe_alloc
 
 struct Buf(ImplicitlyCopyable, Movable, Writable):
     var data: UnsafePointer[Byte]

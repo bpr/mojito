@@ -67,17 +67,34 @@ exempt from the ordering.
   *(standing; every new one lands here with a probe or a `cases.tsv`
   `mojito-only`/`output-diff` row, and leaves when its probe promotes to an
   `assets/ok` fixture)*. Open today:
-  1. a discarded call result is never destroyed by the VM (Mojo destroys it
-     before the next statement; `with Mgr():` whose `__enter__` returns a
-     value leaks the result) —
-     `conformance/probes/discarded_result_destruction.mojo`;
-  2. a struct whose field feeds `print` is destroyed before the line prints
-     (Mojo prints first; the VM drops the owner at the field read, its last
-     use) — `conformance/probes/print_argument_drop_order.mojo`; the
-     `__deinit__`-printing fixtures are written around it;
-  3. the `mojito-only` rows of `conformance/cases.tsv` (acceptance
-     divergences) and the `@__parameter` capture-model mirror image
-     (`conformance/probes/parameter_closure_capture_model.mojo`).
+  1. inside a `__deinit__`/`deinit self` body, Mojo destroys each field of
+     `self` at that field's own last use (an unused field at entry); Mojito
+     consumes the residual fields together at `self`'s last use (drop
+     elaboration is variable-granular) —
+     `conformance/probes/deinit_body_field_last_use.mojo`;
+  2. a NON-linear value consumed by a raising call inside a `try` body is
+     still usable in the `except` arm (`moves.rs` has no `Try` arm; the
+     linear case rejects as upstream) — no probe yet;
+  3. Mojito's rejection texts for an opaque `Movable`-bounded handler
+     element (`type mismatch …`) differ from upstream's (`no matching
+     function in call to 'len'`, `does not conform to trait 'Writable'`),
+     `_ = element^` on such an element is still accepted, and the parser
+     prefixes `Unexpected token LBrace:` to `expected ':' in function
+     definition`.
+  Retained `mojito-only` rows, by decision: `subtree-origin-cast` (a cited
+  bridge to upstream's `#lit.origin.subtree` experiment, re-probed each
+  re-pin) and `reference-valued-aggregate` (the extension tracked by the
+  next task).
+- [ ] **Direct `ref` struct fields are a Mojito extension** — upstream
+  rejects `var f: ref[o] T` fields (`'ref' patterns are only valid on the
+  left side of an assignment`) and spells reference storage through
+  `Pointer[T, origin]`. Migrate the stdlib and the ~40 assets declaring ref
+  fields / ~110 using `ref[...]` annotations (e.g.
+  `assets/ok/ref_field_chained_view_call.mojo`,
+  `assets/ok/delegated_ref_return_projection.mojo`,
+  `assets/ok/ref_field_view_for_temporary.mojo`) to Pointer storage, then
+  reject ref fields with upstream's diagnostic and flip
+  `conformance/fixtures/reference_valued_aggregate.mojo` to `reject`.
 - [ ] **Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
   any order)* — places where Mojito's stdlib leans on the Rust runtime
   where upstream is pure Mojo. Each is a candidate port, preferred over any

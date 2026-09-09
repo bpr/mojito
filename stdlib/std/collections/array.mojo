@@ -5,7 +5,7 @@
 # `unsafe_offset(i).unsafe_deinit_pointee()` are the public raw-pointer
 # vocabulary over storage this Array owns.
 
-from std.memory import unsafe_alloc
+from std.memory.alloc import unsafe_alloc
 
 from std.hashlib import Hasher
 from std.iterable import Iterable, IterableOwned, Iterator, StopIteration

@@ -1,7 +1,7 @@
 # Benchmark: exceptions and destructor-heavy control flow. Raising functions
 # inside try/except/else/finally loops, plus a struct whose __deinit__ bumps a
 # shared drop counter through a pointer; only final counts are printed.
-from std.memory import unsafe_alloc
+from std.memory.alloc import unsafe_alloc
 
 struct Tracked(Copyable, Movable):
     var ctr: UnsafePointer[Int]

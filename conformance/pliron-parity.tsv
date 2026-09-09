@@ -54,6 +54,7 @@ assets/ok/copyinit_moveinit.mojo	main	exe-differential	sanitized
 assets/ok/decorators.mojo	main	exe-differential	sanitized
 assets/ok/default_args.mojo	main	exe-differential	sanitized
 assets/ok/defines_main.mojo	main	exe-differential	sanitized
+assets/ok/deinit_param_destruction_timing.mojo	main	exe-differential	sanitized
 assets/ok/delegated_ref_return_projection.mojo	main	exe-differential	sanitized
 assets/ok/dict_hasher_forwarding.mojo	main	exe-differential	sanitized
 assets/ok/dict_insert_linear_capable.mojo	main	exe-differential	sanitized
@@ -62,6 +63,7 @@ assets/ok/dict_movable_only_elements.mojo	main	exe-differential	sanitized
 assets/ok/dict_take_items.mojo	main	exe-differential	sanitized
 assets/ok/dict_upstream_key_value_iteration.mojo	main	exe-differential	sanitized
 assets/ok/dict_views_iteration.mojo	main	exe-differential	sanitized
+assets/ok/discarded_result_destruction.mojo	main	exe-differential	sanitized
 assets/ok/docstrings.mojo	main	exe-differential	sanitized
 assets/ok/dtype_default_param.mojo	main	exe-differential	sanitized
 assets/ok/dtype_struct_param.mojo	main	exe-differential	sanitized
@@ -74,7 +76,6 @@ assets/ok/env_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/errno_strerror.mojo	main	exe-differential	sanitized
 assets/ok/exceptions.mojo	main	exe-differential	sanitized
 assets/ok/explicit_destroy_partial_fields.mojo	main	exe-differential	sanitized
-assets/ok/explicit_destroy_raising.mojo	main	exe-differential	sanitized
 assets/ok/explicit_transfer_convention.mojo	main	exe-differential	sanitized
 assets/ok/external_call_write_stdout.mojo	main	exe-differential	sanitized
 assets/ok/file_descriptor_stdout_order.mojo	main	exe-differential	sanitized
@@ -104,6 +105,7 @@ assets/ok/hashlib_keyed_ahasher.mojo	main	exe-differential	sanitized
 assets/ok/hashlib_values.mojo	main	exe-differential	sanitized
 assets/ok/hello_world.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion.mojo	main	exe-differential	sanitized
+assets/ok/indexer_normalization.mojo	main	exe-differential	sanitized
 assets/ok/init_out_self.mojo	main	exe-differential	sanitized
 assets/ok/inplace_field.mojo	main	exe-differential	sanitized
 assets/ok/inplace_raises_try.mojo	main	exe-differential	sanitized
@@ -305,6 +307,7 @@ assets/ok/pointer_to_ref_binding.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_ref_write_through.mojo	main	exe-differential	sanitized
 assets/ok/pointer_unsafe_vocabulary.mojo	main	exe-differential	sanitized
 assets/ok/positional_only.mojo	main	exe-differential	sanitized
+assets/ok/print_argument_drop_order.mojo	main	exe-differential	sanitized
 assets/ok/print_keywords_file.mojo	main	exe-differential	sanitized
 assets/ok/raise_borrowed_string_parameter.mojo	main	exe-differential	sanitized
 assets/ok/range_zero_step_empty.mojo	main	exe-differential	sanitized
@@ -413,6 +416,7 @@ assets/ok/type_receiver_instance_call.mojo	main	exe-differential	sanitized
 assets/ok/typelist_comptime_vocabulary.mojo	main	exe-differential	sanitized
 assets/ok/typelist_where_clauses.mojo	main	exe-differential	sanitized
 assets/ok/unsafe_pointer.mojo	main	exe-differential	sanitized
+assets/ok/untracked_pointer_ref_params.mojo	main	exe-differential	sanitized
 assets/ok/user_iterator.mojo	main	exe-differential	sanitized
 assets/ok/value_params.mojo	main	exe-differential	sanitized
 assets/ok/variable_scoping.mojo	main	exe-differential	sanitized

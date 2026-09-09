@@ -2721,6 +2721,23 @@ MirInstr::DropVar { var }
 
 after each variable's last use.
 
+Three timing rules complete the last-use model, each pinned against the
+current Mojo:
+
+- A call result no expression consumes (an expression statement; the unbound
+  result of a non-consuming `__enter__`) is an owned temporary: MIR lowering
+  binds it to a hidden `$discard_r` slot that is dead at its definition, so
+  its `DropVar` follows the call immediately — before the next statement.
+- A scalar `LoadPlace` (`t.n` fed to `print`) keeps its owner alive through
+  the one instruction consuming the loaded register (the register-loan
+  dataflow's single-hop retention), so the owner's `DropVar` follows the call
+  that reads the field rather than the load; an aggregate load retains its
+  owner through every consumer as before.
+- A consuming parameter (`var`, `deinit`, receiver or not) is a drop root of
+  the callee: it is destroyed — for `deinit`, consumed — at its last use in
+  the body, and one the body never uses dies at the function's entry, before
+  the first statement runs.
+
 The VM does not need to discover last uses dynamically. It just executes
 `DropVar` where the compiler placed it.
 
@@ -2733,25 +2750,29 @@ and it naturally covers destructor-less structs containing aggregate storage.
 Ownership is limited to:
 
 - locals
-- consuming `var` parameters
+- consuming `var` and `deinit` parameters, receivers included
 
-Borrowed parameters are not dropped by the callee. They are owned by the caller.
-`self` is handled carefully to avoid destructor recursion and to support method
-write-back.
+Borrowed parameters are not dropped by the callee. They are owned by the caller,
+as is a `self` outside the leading parameter range of a generated method CFG.
 
 ### Drop Order
 
 When several variables die at the same point, they are dropped in reverse
 declaration order. Struct destruction runs:
 
-1. the struct's `__deinit__(deinit self)`, if present
-2. fields in reverse declaration order
+1. the struct's `__deinit__(deinit self)`, if present — its body owns the
+   receiver, so the residual fields are consumed inside it at the receiver's
+   last use (an unused receiver's fields die at the destructor's entry,
+   before its first statement)
+2. otherwise the fields, in declaration order
 
-The compiler-private heterogeneous pack carrier drops elements left-to-right,
-matching current Mojo's pack-storage lifecycle. Public collections, including
-`Tuple`, are nominal structs and otherwise follow the ordinary reverse
-declaration order for fields; their library destructors own any element-specific
-teardown.
+The compiler-private heterogeneous pack carrier likewise drops elements
+left-to-right, matching current Mojo's pack-storage lifecycle. Public
+collections, including `Tuple`, are nominal structs and follow the ordinary
+declaration order for fields; their library destructors own any
+element-specific teardown. Per-field liveness inside a destructor body (Mojo
+destroys each field of `self` at that field's own last use) is not modeled:
+`conformance/probes/deinit_body_field_last_use.mojo` pins the gap.
 
 Types whose `Deinitable` conformance is explicitly unavailable, such
 as `Deinitable where False`, are excluded from this automatic path.
@@ -2779,16 +2800,14 @@ whole binding or `ConsumePlace` for a projected field. Drop elaboration treats a
 pending `ConsumeVar` as the variable's teardown — the variable stays live up to
 it and counts as moved there — so no competing ordinary `DropVar` is spliced
 between the call and the consumption (which would re-run the whole-value
-`__deinit__` the named destructor replaced). The call retains its receiver
-place, and the VM writes the callee's final `self` state back before the
-consumption runs, so residual-field destruction sees exactly what the body
-left: moved fields are tombstones (no re-drop), and a drained pointer-backed
-container field is empty rather than a stale pre-call clone (no double free).
-Consumption then destroys those residual fields in reverse order without the
-whole-value `__deinit__`.
-Because consumption occurs only after a successful return, a raising destructor
-leaves the source slot live on the exceptional edge so an `except` handler can
-invoke a fallback destructor.
+`__deinit__` the named destructor replaced). The callee owns its `deinit`
+receiver from the call on: its own elaborated `ConsumeVar` destroys the
+residual fields at the receiver's last use inside the body (moved fields are
+tombstones, so nothing re-drops), the VM vacates the caller's receiver place
+before the call, and the caller's trailing consumption therefore finds
+nothing left to destroy. Consumption is unconditional: a raising named
+destructor leaves the source uninitialized on both edges (upstream's rule),
+and the checker rejects an `except` arm that re-consumes it.
 
 ### Explicit-Destruction Partial Moves
 
@@ -3114,7 +3133,9 @@ never see a `With` node. The one compiler-private spelling it emits is
 so a later block rebinding the same `as` name anchors its own slot): it keeps
 the manager — or a consuming `__enter__`'s result standing in for it — alive
 to the end of the block without a copy or a move, while an `as` binding is an
-ordinary local destroyed at its last use, as the pinned Mojo does.
+ordinary local destroyed at its last use, as the pinned Mojo does. The unbound
+result of a non-consuming `__enter__` is not anchored: it is a discarded
+temporary destroyed before the body runs.
 
 Keeping value-level behavior in `runtime` prevents the VM from baking every
 operation directly into the backend. The VM should be a consumer of checked MIR

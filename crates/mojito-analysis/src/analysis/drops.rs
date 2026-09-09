@@ -291,6 +291,19 @@ pub(super) fn elaborate_drops(f: &MirFunction) -> MirFunction {
         });
     }
 
+    // (1b) Entry deaths: a consuming parameter the body never uses is dead on
+    // arrival — Mojo destroys an unused `deinit self`'s fields before the
+    // first statement runs — so it drops at the function's entry.
+    if nb > 0 {
+        let entry_live =
+            effective_drop_liveness(live_in[0].clone(), &generation_entries[0], &loan_roots);
+        let entry_dead: Vec<VarId> = (0..f.n_params)
+            .map(|v| v as VarId)
+            .filter(|v| is_droppable_root(f, *v) && !entry_live.contains(v))
+            .collect();
+        prepend_drops(&mut blocks[0].instrs, entry_dead);
+    }
+
     // (2) Edge drops: a variable live out of `p` but dead entering successor `s`
     // dies on the edge `p → s` (e.g. a value used on one `if` arm but not the
     // other). Drop it on that edge — at the end of `p` (if `p` has one successor),

@@ -193,7 +193,20 @@ impl Checker {
             .iter()
             .filter(|policy| scope < policy.base && name != policy.function_name)
         {
-            let kind = policy.entries.get(name).copied().or(policy.default);
+            let kind = policy
+                .entries
+                .get(name)
+                .copied()
+                .or(policy.default)
+                .or_else(|| {
+                    policy.implicit_by_binding.then(|| {
+                        if self.is_binding_mutable(name) {
+                            mojito_ast::ast::CaptureKind::Mut
+                        } else {
+                            mojito_ast::ast::CaptureKind::Imm
+                        }
+                    })
+                });
             if let Some(kind) = kind {
                 self.check_capture_capability(name, kind)?;
                 let binding = self.lookup_owner(name).ok_or_else(|| {
@@ -237,7 +250,7 @@ impl Checker {
                 }
                 (None, _) => {
                     return Err(TypeError::Unsupported(format!(
-                        "nested function must explicitly capture '{name}' with {{...}}"
+                        "Could not infer capture convention of the captured value {name}"
                     )));
                 }
             }

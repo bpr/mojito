@@ -514,6 +514,11 @@ impl Checker {
                         .borrow_mut()
                         .bindings
                         .insert(value.source_span());
+                } else if matches!(declared, Ty::Param { .. }) {
+                    self.explicit_destroy_deletability
+                        .borrow_mut()
+                        .linear_bindings
+                        .insert(value.source_span());
                 }
                 let (aggregate_origins, aggregate_field_origins) =
                     if !matches!(declared, Ty::Ref(_)) && self.type_may_carry_loans(&declared) {
@@ -709,7 +714,13 @@ impl Checker {
 
             StmtKind::AugAssign { place, op, value } => {
                 if let Some(root) = place_root_name(place) {
-                    self.check_capture_access(root, true)?;
+                    self.check_capture_access(root, true)
+                        .map_err(|error| match error {
+                            TypeError::ImmutableBinding(name) => {
+                                TypeError::ImmutableInPlaceDestination(name)
+                            }
+                            other => other,
+                        })?;
                 }
                 let nominal_subscript = match &place.kind {
                     ExprKind::Index { object, index }
@@ -1575,6 +1586,11 @@ impl Checker {
                         .borrow_mut()
                         .bindings
                         .insert(stmt.source_span());
+                } else if matches!(binding_ty, Ty::Param { .. }) {
+                    self.explicit_destroy_deletability
+                        .borrow_mut()
+                        .linear_bindings
+                        .insert(stmt.source_span());
                 }
                 if linear_element.is_some() {
                     let baseline = self.handled_raise_depth;
@@ -2002,13 +2018,7 @@ impl Checker {
         // becomes a `GenericFunc` (its call sites infer/supply parameters).
         let declared_error = self.declared_error(*raises, raises_type.as_ref())?;
         let effect_raises = declared_error.as_ref().is_some_and(|ty| *ty != Ty::Never);
-        // `@__parameter` is the canonical parametric-closure decorator; the
-        // pre-rename `@parameter` still warns-and-runs upstream (2026-08), so
-        // it stays accepted as a deprecation bridge.
-        let parameter_closure = decorators.iter().any(|decorator| {
-            decorator.path.len() == 1
-                && matches!(decorator.path[0].as_str(), "__parameter" | "parameter")
-        });
+        let parameter_closure = mojito_ast::ast::is_parameter_closure(decorators);
         let initial_environment = if parameter_closure {
             mojito_types::origin::CallableEnvironment::Capturing(
                 mojito_types::origin::CaptureOriginSet::Infer,
@@ -2178,27 +2188,53 @@ impl Checker {
                 declaration: stmt.source_span(),
                 entries,
                 // A lambda with the capture list omitted entirely imm-captures
-                // its free variables, exactly like a `@parameter` closure; an
-                // explicit `{}` keeps the no-default policy and rejects them.
+                // its free variables; an explicit `{}` keeps the no-default
+                // policy and rejects them.
                 default: captures.as_ref().and_then(|list| list.default).or_else(|| {
-                    (parameter_closure || (lambda && captures.is_none()))
-                        .then_some(mojito_ast::ast::CaptureKind::Imm)
+                    (lambda && captures.is_none()).then_some(mojito_ast::ast::CaptureKind::Imm)
                 }),
+                // A `@__parameter` closure (which takes no capture list)
+                // captures each free variable by its binding's mutability, as
+                // upstream: `mut` for a mutable local, `imm` otherwise.
+                implicit_by_binding: parameter_closure && captures.is_none(),
                 lambda,
             })
         };
         self.assumed_conformances.push(function_assumptions);
-        for (param, ty) in param_tys.iter().enumerate() {
-            if self.is_deinitable(ty) {
-                self.explicit_destroy_deletability
-                    .borrow_mut()
-                    .declarations
-                    .insert(mojito_checked::checked::AnnotationSite::FunctionParam {
-                        module: stmt.module.clone(),
-                        declaration: stmt.span,
-                        syntax: stmt.syntax_id,
-                        param,
-                    });
+        // A parameter typed by a dependent pack projection (`values.Ts[index]`
+        // in a `Tuple.consume_elements` handler) is opaque inside the user's
+        // handler body, as upstream: the pack's `Movable` bound is all the
+        // body may use of it. Generated (`$`) clones bind the concrete
+        // element instead.
+        let opaque_params: Vec<Option<Ty>> = params
+            .iter()
+            .zip(&param_tys)
+            .map(|(param, ty)| {
+                (!name.contains('$')
+                    && param.kind == mojito_ast::ast::ParamKind::Regular
+                    && matches!(ty, Ty::Dependent(_)))
+                .then(|| Ty::Param {
+                    name: dependent_projection_spelling(&param.ty),
+                    bounds: vec!["Movable".to_string()],
+                    callable_bound: None,
+                })
+            })
+            .collect();
+        for (param, (ty, opaque)) in param_tys.iter().zip(&opaque_params).enumerate() {
+            let site = mojito_checked::checked::AnnotationSite::FunctionParam {
+                module: stmt.module.clone(),
+                declaration: stmt.span,
+                syntax: stmt.syntax_id,
+                param,
+            };
+            let bound_ty = opaque.as_ref().unwrap_or(ty);
+            let mut deletability = self.explicit_destroy_deletability.borrow_mut();
+            // A type parameter whose bounds do not prove `Deinitable` makes an
+            // owned parameter linear, as upstream.
+            if matches!(bound_ty, Ty::Param { .. }) && !self.is_deinitable(bound_ty) {
+                deletability.linear_declarations.insert(site);
+            } else if self.is_deinitable(bound_ty) {
+                deletability.declarations.insert(site);
             }
         }
         self.push_scope();
@@ -2225,7 +2261,7 @@ impl Checker {
             }
         }
         if result.is_ok() {
-            for (param, ty) in params.iter().zip(&param_tys) {
+            for ((param, ty), opaque) in params.iter().zip(&param_tys).zip(&opaque_params) {
                 // A `*args` parameter is compiler pack storage inside the
                 // body; it must not impersonate the nominal stdlib List.
                 let bind_ty = match param.kind {
@@ -2237,7 +2273,9 @@ impl Checker {
                         ty.clone(),
                         &format!("keyword collector '{}'", param.name),
                     )?,
-                    mojito_ast::ast::ParamKind::Regular => ty.clone(),
+                    mojito_ast::ast::ParamKind::Regular => {
+                        opaque.clone().unwrap_or_else(|| ty.clone())
+                    }
                 };
                 // Duplicate parameter names are a redeclaration.
                 result = self.declare_with_mutability(
@@ -2578,3 +2616,25 @@ impl Checker {
 }
 
 const RESERVED_FUNCTION_NAMES: &[&str] = &["class", "del", "match", "yield"];
+
+/// The source spelling of a dependent pack projection annotation
+/// (`values.Ts[index]`), used as the opaque element's type name inside a
+/// handler body.
+fn dependent_projection_spelling(annotation: &SourceType) -> String {
+    fn type_text(annotation: &SourceType) -> String {
+        match annotation {
+            SourceType::Named(name, _) => name.clone(),
+            SourceType::Assoc { base, name, .. } => format!("{}.{name}", type_text(base)),
+            SourceType::IndexedProjection { base, index } => {
+                let index = match &index.kind {
+                    ExprKind::Identifier(name) => name.clone(),
+                    ExprKind::Int(value) => value.to_string(),
+                    _ => "_".to_string(),
+                };
+                format!("{}[{index}]", type_text(base))
+            }
+            _ => "element".to_string(),
+        }
+    }
+    type_text(annotation)
+}

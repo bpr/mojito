@@ -2011,6 +2011,9 @@ fn sig_origin(value: &SigOrigin) -> String {
         SigOrigin::Untracked { mutable } => {
             record("sig_untracked", &[("mutable", mutable.to_string())])
         }
+        SigOrigin::UnsafeAny { mutable } => {
+            record("sig_unsafe_any", &[("mutable", mutable.to_string())])
+        }
         SigOrigin::Projected(base, path) => record(
             "sig_projected",
             &[

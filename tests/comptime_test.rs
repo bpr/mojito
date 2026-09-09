@@ -1098,7 +1098,7 @@ fn pre_rename_trivially_spelling_no_longer_resolves() {
 #[test]
 fn module_comptime_binding_does_not_shadow_specialized_type_parameters() {
     // A module-level `comptime T` must not substitute into a same-named
-    // type parameter retained on a specialized generic def clone. std.memory's
+    // type parameter retained on a specialized generic def clone. std.memory.alloc's
     // `unsafe_alloc[T]` is prelude-linked, so before the specializer removed
     // its own compile-time parameter names from the materialization
     // substitution, any user constant named `T` corrupted the clone's

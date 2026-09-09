@@ -238,7 +238,10 @@ impl<'a> FnLowering<'a> {
                 kwarg_places,
             )?);
         }
-        self.emit_bound_call(ctx, dest, resolved, lowered)?;
+        // A named destructor owns its aliased receiver from the call on (the
+        // callee consumes the residual fields at their last use), so the
+        // caller's presence flags clear before the call: the raise edge must
+        // not destroy that storage again.
         if deinit_receiver && receiver_alias {
             let place = recv_place.expect("aliased deinit receiver has a place");
             if place.proj.is_empty() {
@@ -256,6 +259,7 @@ impl<'a> FnLowering<'a> {
                 self.partially_moved.insert(place.root);
             }
         }
+        self.emit_bound_call(ctx, dest, resolved, lowered)?;
         // `mut self` (the struct's mut_self_methods set — keyed by either the
         // overload-qualified or the source method name) and named destructors
         // write the receiver back; a missing place means a discarded

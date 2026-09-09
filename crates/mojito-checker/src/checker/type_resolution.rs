@@ -476,6 +476,21 @@ impl Checker {
                 Some(ty) => ty.clone(),
                 None => return Err(TypeError::UnknownSelfParam("Self".to_string())),
             },
+            // Upstream's `Indexer` requirement returns `__mlir_type.index`;
+            // the VM represents that index as `Int`. Every other MLIR type
+            // spelling is outside the subset.
+            SourceType::Assoc { base, name, args }
+                if matches!(base.as_ref(), SourceType::Named(base, base_args)
+                    if base == "__mlir_type" && base_args.is_empty()) =>
+            {
+                if name != "index" || !args.is_empty() {
+                    return Err(TypeError::Unsupported(format!(
+                        "'__mlir_type.{name}' is outside the supported subset; only \
+                         '__mlir_type.index' is accepted"
+                    )));
+                }
+                Ty::Int
+            }
             SourceType::Assoc { base, name, .. } => {
                 let base_ty = self.ty_from_anno(base)?;
                 self.associated_type_from_base(&base_ty, name, &[])?
@@ -1047,7 +1062,7 @@ impl Checker {
 
         // Public Tuple exposes its concrete element pack as `element_types`.
         // Use the checked nominal arguments, never its generated symbol text.
-        if name == "element_types"
+        if (name == "element_types" || name == "Ts")
             && let Some(elements) = tuple_elements(&base_ty)
         {
             return Ok(elements.into_iter().cloned().collect());
@@ -2664,4 +2679,17 @@ fn syntactic_origin_argument(argument: &mojito_ast::ast::ParamArg) -> bool {
         }
         _ => false,
     }
+}
+
+/// Whether a return annotation is spelled `__mlir_type.index`, the exact
+/// return type upstream's `Indexer.__mlir_index__` requirement demands.
+pub(super) fn spells_mlir_index(annotation: Option<&SourceType>) -> bool {
+    matches!(
+        annotation,
+        Some(SourceType::Assoc { base, name, args })
+            if name == "index"
+                && args.is_empty()
+                && matches!(base.as_ref(), SourceType::Named(base, base_args)
+                    if base == "__mlir_type" && base_args.is_empty())
+    )
 }

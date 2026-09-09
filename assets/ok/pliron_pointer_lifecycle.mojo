@@ -4,7 +4,7 @@
 # element destructor in place at the element offset, and free releases the
 # allocation. The interleaved destructor prints pin the order — `taken`
 # drops eagerly after its last read, so "deinit 1" lands before "took 1".
-from std.memory import unsafe_alloc
+from std.memory.alloc import unsafe_alloc
 
 struct Res(Movable, Deinitable):
     var id: Int

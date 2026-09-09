@@ -1664,7 +1664,7 @@ fn implicit_public_identity(module: &str, declaration: &str) -> Option<&'static 
         ("std.iterable", "next") => Some("next"),
         ("std.builtin.reversed", "reversed") => Some("reversed"),
         ("std.collections.string_dict", "StringDict") => Some("StringDict"),
-        ("std.memory", "alloc") => Some("alloc"),
+        ("std.memory.alloc", "alloc") => Some("alloc"),
         ("std.span", "Span") => Some("Span"),
         ("std.string", "StringSpan") => Some("StringSpan"),
         _ => None,

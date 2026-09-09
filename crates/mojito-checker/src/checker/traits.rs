@@ -217,6 +217,7 @@ impl Checker {
                     keyword_only: m.keyword_only,
                     conventions: regular.iter().map(|(_, param)| param.convention).collect(),
                     ret,
+                    ret_mlir_index: super::type_resolution::spells_mlir_index(m.ret.as_ref()),
                     raises: error.as_ref().is_some_and(|ty| *ty != Ty::Never),
                     error: error.map(Box::new),
                     self_convention: m.self_convention,
@@ -1065,6 +1066,7 @@ impl Checker {
                         keyword_only: req_sig.keyword_only,
                         conventions: req_sig.conventions.clone(),
                         ret: self.resolve_assoc_ty(&substitute_self(&req_sig.ret, self_ty)),
+                        ret_mlir_index: req_sig.ret_mlir_index,
                         raises: req_sig.raises,
                         error: req_sig.error.as_ref().map(|error| {
                             Box::new(self.resolve_assoc_ty(&substitute_self(error, self_ty)))
@@ -1364,11 +1366,9 @@ impl Checker {
             "Movable" => true,
             "Deinitable" => true,
             "Indexer" => self.structs.get(name).is_some_and(|info| {
-                info.methods.get("__mlir_index__").is_some_and(|methods| {
-                    methods.iter().any(|method| {
-                        method.has_self && method.params.is_empty() && method.ret == Ty::Int
-                    })
-                })
+                info.methods
+                    .get("__mlir_index__")
+                    .is_some_and(|methods| methods.iter().any(is_indexer_requirement))
             }),
             "Writer" => self.structs.get(name).is_some_and(|info| {
                 info.methods.get("write_string").is_some_and(|methods| {
@@ -2180,6 +2180,24 @@ impl Checker {
                         )
                     })
             }
+            "Indexer" => {
+                let mut reason = format!(
+                    "'{name}' does not implement all requirements for 'Indexer'\nnote: no \
+                     '__mlir_index__' candidates have type 'def(self: {name}) thin -> \
+                     __mlir_type.index'"
+                );
+                for method in info.methods.get("__mlir_index__").into_iter().flatten() {
+                    reason.push_str(&format!(
+                        "\nnote: candidate declared here with type 'def(self: {name}) thin -> {}'",
+                        if method.ret_mlir_index {
+                            "__mlir_type.index".to_string()
+                        } else {
+                            method.ret.to_string()
+                        }
+                    ));
+                }
+                Some(reason)
+            }
             "Copyable" => field_failure(&|field_ty| self.is_copyable(field_ty)),
             "ImplicitlyCopyable" => {
                 field_failure(&|field_ty| self.is_implicitly_copyable(field_ty))
@@ -2951,3 +2969,9 @@ type StructMemberTypes = (
     HashMap<String, ParameterizedMember>,
     Option<Ty>,
 );
+
+/// Whether a method satisfies upstream's `Indexer` requirement:
+/// `def __mlir_index__(self) -> __mlir_type.index`.
+pub(super) fn is_indexer_requirement(method: &MethodSig) -> bool {
+    method.has_self && method.params.is_empty() && method.ret == Ty::Int && method.ret_mlir_index
+}

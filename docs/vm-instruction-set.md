@@ -163,7 +163,7 @@ accessed; the compact notation omits this analysis-only field.
 | `ref.write` | `WriteRef` | Write through a runtime reference handle |
 | `lifetime.keep_alive` | `KeepAlive` | Extend an owner's MIR live range without copying it; a VM no-op after checking |
 | `drop.var` | `DropVar` | Destroy the value in a variable slot |
-| `consume.var` | `ConsumeVar` | Consume an explicitly destroyed aggregate after its named destructor succeeds; then destroy its fields in reverse order |
+| `consume.var` | `ConsumeVar` | Consume an explicitly destroyed aggregate — the named destructor's own receiver at its last use; then destroy its residual fields in declaration order |
 | `consume.place` | `ConsumePlace` | Consume one projected subobject after its named destructor succeeds |
 | `drop.reg` | `Drop` | Reserved register-drop operation |
 

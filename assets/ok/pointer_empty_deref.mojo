@@ -1,7 +1,7 @@
 # The empty subscript `p[]` is the direct pointer dereference: offset-0
 # load/store on a heap pointer, and pointee access on a `Pointer(to=x)`
 # place pointer (writes reach the owner through the handle).
-from std.memory import unsafe_alloc
+from std.memory.alloc import unsafe_alloc
 
 def main():
     var p = unsafe_alloc[Int](1)

@@ -59,12 +59,4 @@ def main():
     print("sd fresh", Bool(sd.insert("b", 3)))
     sd^.deinit_with(lambda (var key: StringLiteral, var value: Int): print("sd torn", key, value))
 
-    # Tuple.deinit_with (consume_elements family spelling)
-    var t = ([Res(5)], 6)
-
-    @parameter
-    def toss[index: Int](var element: t.element_types[index]):
-        pass
-
-    t^.deinit_with[toss]()
     print("done")

@@ -1,4 +1,4 @@
-from std.memory import unsafe_alloc
+from std.memory.alloc import unsafe_alloc
 
 
 def total(p: Pointer[Int, MutUntrackedOrigin], n: Int) -> Int:

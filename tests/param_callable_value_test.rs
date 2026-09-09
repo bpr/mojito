@@ -267,7 +267,7 @@ def main():
     ref alias = value
 
     @parameter
-    def replace() {mut value}:
+    def replace():
         value = 2
 
     invoke[replace]()
@@ -293,7 +293,7 @@ def main():
     var value = 1
 
     @parameter
-    def replace() {mut value}:
+    def replace():
         value = 2
 
     ref alias = value

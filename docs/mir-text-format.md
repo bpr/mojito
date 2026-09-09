@@ -307,7 +307,7 @@ are required.
 
 Mutability is `immutable`, `mutable`, or `mutability_param(id)`. Signature
 origins are `sig_self`, `sig_param(index)`, `sig_bound(origin)`, `sig_static`,
-`sig_untracked`, `sig_projected`, `sig_union`, and `sig_infer`. Signature
+`sig_untracked`, `sig_unsafe_any`, `sig_projected`, `sig_union`, and `sig_infer`. Signature
 mutability is `sig_immutable`, `sig_mutable`, `sig_bool_param(index)`, or
 `sig_infer`. A `RefSig` is `ref_sig { origin, mutability }`.
 

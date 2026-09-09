@@ -45,12 +45,25 @@ green in the same state (`scripts/check`: 3371/3371 workspace tests, Clippy
 with warnings denied, format and diff checks). All four changeset sections
 completed in one pass; sixteen new fixtures joined `cases.tsv` (five as
 documented one-sided rows) and the `SIMDSize`/`TypeList.size` probes were
-promoted to rejection claims. One upstream regression surfaced during the
-sweep: the head rejects its own `Tuple.consume_elements` docstring example
-(`len` on the dependent element type fails overload resolution under the
-Array literal retarget, canonical `Ts` and deprecated `element_types`
-spellings alike), so `tuple-consume-elements` is a documented `mojito-only`
-row until the head recovers — re-probe at the next re-pin.
+promoted to rejection claims. One head behavior was first misread as
+a regression: the head rejects its own `Tuple.consume_elements` docstring
+example because the dependent handler element is opaque under the pack's
+`Movable` bound (`len` finds no `Sized`); Mojito now rejects it too
+(`tuple-consume-elements` is a `reject` row).
+
+**Divergence burn-down (2026-09-08).** The three open probes (discarded-result
+destruction, print-argument drop order, the `@__parameter` capture model) and
+three divergences found while probing (`deinit self` field teardown timing,
+struct fields destroying in declaration order, `Movable`-only `var`
+parameters being linear) are fixed and pinned as `assets/ok`/`type_error`/`conformance`
+fixtures; `pointer-provenance`, `projected-pointer-subscript`, and
+`indexer-normalization` (respelled `-> __mlir_type.index`) run on both;
+`advanced-origins`, `raising-explicit-destroy`, and `tuple-consume-elements`
+are shared rejections; `std.memory` is a package and `unsafe_alloc` imports
+only from `std.memory.alloc`. `subtree-origin-cast` (cited bridge) and
+`reference-valued-aggregate` (extension with a roadmap removal task) remain
+the only `mojito-only` rows; the residues are listed in the roadmap's
+standing bullet.
 
 ## Prioritized Changeset
 
@@ -66,8 +79,9 @@ upstream's migration diagnostic (MIR text emits/accepts only `imm`;
 origin vocabulary is unified on the surviving set with targeted diagnostics
 for removed spellings; `MaybeUninit` renamed with the head's triviality-gated
 conformance header; `@__parameter` accepted (`@parameter` stays a warn-era
-bridge; the diverging capture model is probed by
-`conformance/probes/parameter_closure_capture_model.mojo`).
+bridge; the capture model matches since 2026-09-08 — implicit per-binding
+mutable capture, explicit capture list rejected —
+`parameter-closure-capture-model`).
 
 Upstream made the `read` argument convention a hard error and completed the
 removal of the v1.0-cycle deprecated APIs. Mojito's corresponding bridges must
@@ -93,7 +107,8 @@ surviving spelling:
   head whether the old name retains a deprecated alias; mirror its state.
 - The `@parameter` decorator on parametric closures is renamed `@__parameter`.
   Accept the new spelling where the checker consumes the decorator; probe the
-  old spelling's fate at the head and mirror it.
+  old spelling's fate at the head and mirror it. (Probed 2026-09-08: it
+  warns-and-runs, so the bridge stays; the capture model is aligned.)
 
 ### 1. Constrain function types with trailing `where` clauses
 

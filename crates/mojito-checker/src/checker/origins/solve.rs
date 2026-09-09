@@ -252,16 +252,32 @@ impl Checker {
             }
         }
         for (index, signature) in signatures.iter().enumerate() {
-            if signature.as_ref().is_some_and(|signature| {
-                matches!(signature.origin, mojito_types::origin::SigOrigin::Static)
-            }) && origins
-                .get(index)
-                .and_then(Option::as_ref)
-                .is_some_and(|origin| !matches!(origin, Origin::Static))
+            // An exact-origin clause (`ImmStaticOrigin`, `ImmUntrackedOrigin`,
+            // `MutUntrackedOrigin`) binds only an actual carrying that origin:
+            // a tracked place does not convert, as upstream. (`*UnsafeAnyOrigin`
+            // binds anything.)
+            if let Some(signature) = signature
+                && let Some(actual) = origins.get(index).and_then(Option::as_ref)
+                && let Some(expected) = exact_origin_mismatch(&signature.origin, actual)
             {
-                return Err(TypeError::Unsupported(
-                    "a local place cannot satisfy ImmStaticOrigin".to_string(),
-                ));
+                let expression = match slots.get(index) {
+                    Some(ArgSlot::Positional(position)) => Some(&args[*position]),
+                    Some(ArgSlot::Keyword(position)) => Some(&kwargs[*position].value),
+                    _ => None,
+                };
+                let ty = expression
+                    .map(|expression| self.infer(expression))
+                    .transpose()?
+                    .map(|ty| ty.to_string())
+                    .unwrap_or_default();
+                return Err(TypeError::RefOriginMismatch {
+                    slot: index,
+                    ty,
+                    expected: expected.to_string(),
+                    actual: expression
+                        .and_then(spelled_origin)
+                        .unwrap_or_else(|| actual.to_string()),
+                });
             }
             if let Some(signature) = signature
                 && sig_origin_has_bound(&signature.origin)
@@ -378,4 +394,40 @@ impl Checker {
         }
         Ok(())
     }
+}
+
+/// The declared exact origin `signature` demands when `actual` does not
+/// carry it: `Static` needs a static actual; `Untracked { mutable }` needs an
+/// untracked actual whose permission covers the demand.
+fn exact_origin_mismatch(
+    signature: &mojito_types::origin::SigOrigin,
+    actual: &mojito_types::origin::Origin,
+) -> Option<&'static str> {
+    use mojito_types::origin::{Origin, SigOrigin};
+    match signature {
+        SigOrigin::Static => (!matches!(actual, Origin::Static)).then_some("ImmStaticOrigin"),
+        SigOrigin::Untracked { mutable } => {
+            let satisfied =
+                matches!(actual, Origin::Untracked { mutable: have } if !*mutable || *have);
+            (!satisfied).then_some(if *mutable {
+                "MutUntrackedOrigin"
+            } else {
+                "ImmUntrackedOrigin"
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Upstream's `origin_of(<place>)` spelling of an argument's origin, for a
+/// place spelled as an identifier or a member chain.
+fn spelled_origin(expression: &Expr) -> Option<String> {
+    fn place_text(expression: &Expr) -> Option<String> {
+        match &expression.kind {
+            ExprKind::Identifier(name) => Some(name.clone()),
+            ExprKind::Member { object, field } => Some(format!("{}.{field}", place_text(object)?)),
+            _ => None,
+        }
+    }
+    place_text(expression).map(|text| format!("origin_of({text})"))
 }

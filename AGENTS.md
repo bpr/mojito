@@ -174,3 +174,7 @@ contract as the production `Compiler`: `VmBackend::run` runs the ownership
 analysis before executing. It remains non-authoritative only for the
 whole-program discovery/specialization handoff, which `Compiler`-based
 helpers (`run_compiled`) still own.
+- DO NOT generate narrative comments that merely restate what the code does.
+- DO NOT re-implement existing types or functions; check existing modules first.
+- Prefer idiomatic Rust patterns (e.g., `.map()`, `.and_then()`, `?` operator) over nested `match` or `if let` blocks.
+- Never generate placeholder `todo!()`, `unimplemented!()`, or panic macros unless explicitly instructed.

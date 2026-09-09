@@ -4251,7 +4251,7 @@ fn augmented_subscript_freezes_distinct_getter_and_setter_value_adjustments() {
 fn augmented_subscript_freezes_setter_only_index_normalization() {
     use mojito::checked::CheckedCallValueAdjustment;
 
-    let source = "@fieldwise_init\nstruct Axis(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> Int:\n        return self.value\n\n@fieldwise_init\nstruct Box:\n    var value: Int\n    def __getitem__(self, index: Axis) -> Int:\n        return self.value\n    def __setitem__(mut self, index: Int, value: Int):\n        self.value = value + index\n\ndef main():\n    var box = Box(1)\n    var axis = Axis(0)\n    box[axis] += 2\n";
+    let source = "@fieldwise_init\nstruct Axis(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        return self.value\n\n@fieldwise_init\nstruct Box:\n    var value: Int\n    def __getitem__(self, index: Axis) -> Int:\n        return self.value\n    def __setitem__(mut self, index: Int, value: Int):\n        self.value = value + index\n\ndef main():\n    var box = Box(1)\n    var axis = Axis(0)\n    box[axis] += 2\n";
     let checked = check_program(&parse(source).expect("parse")).expect("check");
     let pair = checked
         .expressions()
@@ -4337,7 +4337,7 @@ fn augmented_subscript_rejects_an_immutable_reference_getter() {
 
 #[test]
 fn multi_indexer_normalization_uses_each_argument_position() {
-    let source = "@fieldwise_init\nstruct Axis(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> Int:\n        return self.value\n\n@fieldwise_init\nstruct Grid:\n    var value: Int\n    def __getitem__(self, row: Axis, column: Int) -> Int:\n        return row.value + column\n    def __setitem__(mut self, row: Axis, column: Int, value: Int):\n        self.value = row.value + column + value\n\ndef main():\n    var grid = Grid(0)\n    print(grid[Axis(1), Axis(2)])\n    grid[Axis(3), Axis(4)] = 5\n";
+    let source = "@fieldwise_init\nstruct Axis(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        return self.value\n\n@fieldwise_init\nstruct Grid:\n    var value: Int\n    def __getitem__(self, row: Axis, column: Int) -> Int:\n        return row.value + column\n    def __setitem__(mut self, row: Axis, column: Int, value: Int):\n        self.value = row.value + column + value\n\ndef main():\n    var grid = Grid(0)\n    print(grid[Axis(1), Axis(2)])\n    grid[Axis(3), Axis(4)] = 5\n";
     let checked = check_program(&parse(source).expect("parse")).expect("check");
     let normalizations = checked
         .expressions()
@@ -4349,7 +4349,7 @@ fn multi_indexer_normalization_uses_each_argument_position() {
 
     assert!(matches!(
         err(
-            "@fieldwise_init\nstruct Axis(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> Int:\n        return self.value\n\n@fieldwise_init\nstruct Plain:\n    var value: Int\n\n@fieldwise_init\nstruct Grid:\n    var value: Int\n    def __getitem__(self, row: Axis, column: Int) -> Int:\n        return row.value + column\n\ndef main():\n    var grid = Grid(0)\n    print(grid[Axis(1), Plain(2)])\n"
+            "@fieldwise_init\nstruct Axis(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        return self.value\n\n@fieldwise_init\nstruct Plain:\n    var value: Int\n\n@fieldwise_init\nstruct Grid:\n    var value: Int\n    def __getitem__(self, row: Axis, column: Int) -> Int:\n        return row.value + column\n\ndef main():\n    var grid = Grid(0)\n    print(grid[Axis(1), Plain(2)])\n"
         ),
         TypeError::BadCall { .. }
     ));

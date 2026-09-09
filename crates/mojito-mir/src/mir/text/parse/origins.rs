@@ -211,6 +211,11 @@ impl Decoder {
                     self.unknown(fields, &["mutable"]);
                     Some(SigOrigin::Untracked { mutable })
                 }
+                "sig_unsafe_any" => {
+                    let mutable = self.req(value, fields, "mutable", Self::boolean)?;
+                    self.unknown(fields, &["mutable"]);
+                    Some(SigOrigin::UnsafeAny { mutable })
+                }
                 "sig_projected" => {
                     let base = Box::new(self.req(value, fields, "base", Self::sig_origin)?);
                     let path = self.req(value, fields, "path", |d, v| Some(d.origin_path(v)))?;

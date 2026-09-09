@@ -6,6 +6,11 @@ use super::*;
 #[derive(Clone, Default, PartialEq, Eq)]
 pub(super) struct RegisterLoanState {
     owners: BTreeMap<u32, BTreeSet<VarId>>,
+    /// Roots a scalar `LoadPlace` result keeps alive through its consumers
+    /// only: reported as uses at every instruction reading the register, but
+    /// never inherited by that instruction's own results (`t.n + 1` borrows
+    /// `t` for `__add__` alone; the sum owns its bits).
+    single_hop: BTreeMap<u32, BTreeSet<VarId>>,
 }
 
 pub(super) fn join_register_loan_states(
@@ -14,6 +19,9 @@ pub(super) fn join_register_loan_states(
 ) -> RegisterLoanState {
     for (register, owners) in &right.owners {
         left.owners.entry(*register).or_default().extend(owners);
+    }
+    for (register, owners) in &right.single_hop {
+        left.single_hop.entry(*register).or_default().extend(owners);
     }
     left
 }
@@ -64,11 +72,15 @@ pub(super) fn transfer_register_loans(
     register_types: &HashMap<u32, mojito_types::types::Ty>,
 ) -> Vec<VarId> {
     let mut owners = BTreeSet::new();
+    let mut single_hop_uses: BTreeSet<VarId> = BTreeSet::new();
     let mut operands = Vec::new();
     mojito_mir::mir::verify::instruction_operand_regs(instruction, &mut operands);
     for operand in operands {
         if let Some(provenance) = registers.owners.get(&operand.0) {
             owners.extend(provenance);
+        }
+        if let Some(provenance) = registers.single_hop.get(&operand.0) {
+            single_hop_uses.extend(provenance);
         }
     }
 
@@ -89,17 +101,28 @@ pub(super) fn transfer_register_loans(
     // place shallowly, so a pointer-owning (lifecycle) result register aliases
     // the root's storage until a `CopyValue` runs the copy lifecycle or a
     // consuming call finishes. Dropping the root between the load and that
-    // consumer would free storage the pending register still references. A
-    // scalar read owns its value outright and keeps the pre-existing ASAP
-    // destruction point; only an aggregate (or unknown-typed) result retains.
+    // consumer would free storage the pending register still references, so
+    // an aggregate (or unknown-typed) result retains through every consumer.
+    // A scalar read owns its bits, but the read is still a borrow of its
+    // owner that lasts through the instruction consuming the register (Mojo
+    // passes `t.n` to `print` as a reference to `t`, which therefore outlives
+    // the call): the root is retained for that single hop only.
+    let mut single_hop_place = None;
     let retained_place = match instruction {
         MirInstr::MakeRef { place, .. } => Some(place),
-        MirInstr::LoadPlace { dest, place } => place
-            .ty
-            .as_ref()
-            .or_else(|| register_types.get(&dest.0))
-            .is_none_or(may_alias_owned_storage)
-            .then_some(place),
+        MirInstr::LoadPlace { dest, place } => {
+            if place
+                .ty
+                .as_ref()
+                .or_else(|| register_types.get(&dest.0))
+                .is_none_or(may_alias_owned_storage)
+            {
+                Some(place)
+            } else {
+                single_hop_place = Some((dest, place));
+                None
+            }
+        }
         _ => None,
     };
     if let Some(place) = retained_place {
@@ -107,6 +130,11 @@ pub(super) fn transfer_register_loans(
         if let Some(reference) = place.through {
             owners.insert(reference);
         }
+    }
+    if let Some((dest, place)) = single_hop_place {
+        let mut roots = BTreeSet::from([place.root]);
+        roots.extend(place.through);
+        registers.single_hop.insert(dest.0, roots);
     }
 
     // A nominal subscript returning `ref T` establishes a transient handle to
@@ -214,6 +242,7 @@ pub(super) fn transfer_register_loans(
             registers.owners.insert(result.0, result_owners.clone());
         }
     }
+    owners.extend(single_hop_uses);
     owners.into_iter().collect()
 }
 

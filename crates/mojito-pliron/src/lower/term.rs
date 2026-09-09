@@ -144,7 +144,9 @@ impl<'a> FnLowering<'a> {
                 self.lower_drop_var(ctx, var as u32)?;
             }
         }
-        // A `deinit` receiver consumes its residual fields at function exit.
+        // A `deinit` receiver's elaborated `ConsumeVar` consumes its residual
+        // fields at its last use and clears its flag; this flag-guarded exit
+        // consume is the backstop for a receiver the body never uses.
         // `ConsumeVar` skips the whole-value destructor, so collection APIs
         // which dismantled their elements still release surviving shell
         // fields (for example StringDict's bucket index) exactly once.

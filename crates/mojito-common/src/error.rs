@@ -148,6 +148,8 @@ pub enum TypeError {
     /// function parameter. Mojo function arguments are immutable unless their
     /// convention makes them writable (`mut`, `ref`, `out`).
     ImmutableBinding(String),
+    /// An augmented assignment whose destination binding is immutable.
+    ImmutableInPlaceDestination(String),
     /// A reference return is rooted in storage not named by its declared origin.
     ReturnsReferenceToLocal,
     /// A store into storage that outlives the frame carries a loan rooted in
@@ -362,6 +364,28 @@ pub enum TypeError {
         func: String,
         reason: String,
     },
+    /// A value consumed inside a `try` body is used in its `except` arm: the
+    /// consuming call may have raised after taking it.
+    UninitializedUse {
+        var: String,
+    },
+    /// A value typed by a type parameter whose bounds do not prove
+    /// `Deinitable` reached the end of its scope without being explicitly
+    /// destroyed (moved on or consumed).
+    LinearAbandoned {
+        var: String,
+        message: String,
+    },
+    /// A `ref[<exact origin>]` parameter (`ImmStaticOrigin`,
+    /// `ImmUntrackedOrigin`, `MutUntrackedOrigin`) received an actual whose
+    /// origin is not that origin. The call site rewrites it into a `BadCall`
+    /// naming the function and parameter.
+    RefOriginMismatch {
+        slot: usize,
+        ty: String,
+        expected: String,
+        actual: String,
+    },
 }
 
 impl fmt::Display for LexError {
@@ -494,6 +518,12 @@ impl fmt::Display for TypeError {
             }
             TypeError::ImmutableBinding(name) => {
                 write!(f, "expression must be mutable in assignment ('{name}')")
+            }
+            TypeError::ImmutableInPlaceDestination(name) => {
+                write!(
+                    f,
+                    "expression must be mutable for in-place operator destination ('{name}')"
+                )
             }
             TypeError::AssignToUndeclared(name) => {
                 write!(
@@ -741,6 +771,23 @@ impl fmt::Display for TypeError {
             TypeError::BadCall { func, reason } => {
                 write!(f, "invalid call to '{}': {}", func, reason)
             }
+            TypeError::UninitializedUse { var } => write!(
+                f,
+                "use of uninitialized value '{var}'\nnote: '{var}' declared here"
+            ),
+            TypeError::LinearAbandoned { var, message } => write!(
+                f,
+                "'{var}' abandoned without being explicitly destroyed: {message}\nnote: consider adding trait conformance to Deinitable"
+            ),
+            TypeError::RefOriginMismatch {
+                slot,
+                ty,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "value passed to argument {slot} cannot be converted from '{ty}' to ref '{ty}'\nnote: operand origin '{actual}' doesn't match expected origin '{expected}'"
+            ),
         }
     }
 }

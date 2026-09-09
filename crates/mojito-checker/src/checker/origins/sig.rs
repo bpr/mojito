@@ -339,14 +339,16 @@ pub(in crate::checker) fn lower_ref_sig(
                 members.push(SigOrigin::Untracked { mutable: false });
                 mutability = SigMutability::Immutable;
             }
-            ExprKind::Identifier(name)
-                if name == "MutUnsafeAnyOrigin" || name == "MutUntrackedOrigin" =>
-            {
+            ExprKind::Identifier(name) if name == "MutUntrackedOrigin" => {
                 members.push(SigOrigin::Untracked { mutable: true });
                 mutability = SigMutability::Mutable;
             }
+            ExprKind::Identifier(name) if name == "MutUnsafeAnyOrigin" => {
+                members.push(SigOrigin::UnsafeAny { mutable: true });
+                mutability = SigMutability::Mutable;
+            }
             ExprKind::Identifier(name) if name == "ImmUnsafeAnyOrigin" => {
-                members.push(SigOrigin::Untracked { mutable: false });
+                members.push(SigOrigin::UnsafeAny { mutable: false });
                 mutability = SigMutability::Immutable;
             }
             ExprKind::Identifier(name) => {

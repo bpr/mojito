@@ -496,6 +496,6 @@ pub(crate) fn synthesize_exe_wrapper(
 /// only exist at the specialized call sites the backend intercepts.
 /// `reachable_set` skips these edges so the erased bodies are never declared.
 pub(crate) fn intercepted_call(name: &str) -> bool {
-    name == "__module$std$memory$unsafe_alloc"
-        || name.starts_with("__module$std$memory$unsafe_alloc$")
+    name == "__module$std$memory$alloc$unsafe_alloc"
+        || name.starts_with("__module$std$memory$alloc$unsafe_alloc$")
 }

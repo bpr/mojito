@@ -1916,10 +1916,10 @@ impl VmBackend {
                     self.record_lifecycle(format!("consume {name}"));
                 }
                 if let Value::Struct { fields, .. } = value {
-                    // The named explicit destructor has already consumed the
-                    // aggregate. Its fields still receive their ordinary
-                    // reverse-order destruction after that call succeeds.
-                    for (_, field) in fields.into_iter().rev() {
+                    // The named explicit destructor owns the aggregate: its
+                    // residual fields receive their ordinary declaration-order
+                    // destruction here, at the receiver's last use.
+                    for (_, field) in fields {
                         self.drop_value(prog, field)?;
                     }
                 }
@@ -1927,7 +1927,7 @@ impl VmBackend {
             MirInstr::ConsumePlace { place, .. } => {
                 let value = std::mem::replace(nav_mut(vars, regs, place)?, Value::Moved);
                 if let Value::Struct { fields, .. } = value {
-                    for (_, field) in fields.into_iter().rev() {
+                    for (_, field) in fields {
                         self.drop_value(prog, field)?;
                     }
                 }

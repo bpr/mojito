@@ -1699,12 +1699,17 @@ impl Checker {
 
     /// Whether a value can be normalized to the VM's index representation.
     /// Numeric literals/Int use the identity path; an opaque `Indexer` or a
-    /// concrete conformer supplies `__mlir_index__() -> Int`.
+    /// concrete conformer supplies `__mlir_index__() -> __mlir_type.index`
+    /// (represented as `Int`).
     pub(super) fn is_index_type(&self, ty: &Ty) -> bool {
         coerces(ty, &Ty::Int)
             || matches!(ty, Ty::Param { bounds, .. } if bounds.iter().any(|bound| bound == "Indexer"))
-            || matches!(ty, Ty::Struct(..))
-                && self.struct_dunder(ty, "__mlir_index__", &[]) == Some(Ok(Ty::Int))
+            || matches!(ty, Ty::Struct(name, _)
+            if self.structs.get(name).is_some_and(|info| {
+                info.methods
+                    .get("__mlir_index__")
+                    .is_some_and(|methods| methods.iter().any(super::traits::is_indexer_requirement))
+            }))
     }
 
     /// Resolve the exact normalization method for a non-Int `Indexer`. The
@@ -1719,6 +1724,7 @@ impl Checker {
                 let selected = methods.iter().find(|method| {
                     method.has_self
                         && method.params.is_empty()
+                        && method.ret_mlir_index
                         && substitute(&method.ret, &substitution) == Ty::Int
                 })?;
                 Some(if methods.len() == 1 {

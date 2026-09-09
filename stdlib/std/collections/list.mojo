@@ -8,7 +8,7 @@
 
 from std.string import check_slice_bounds
 
-from std.memory import unsafe_alloc
+from std.memory.alloc import unsafe_alloc
 
 from std.reflection.type_info import _unqualified_type_name
 from std.hashlib import Hasher

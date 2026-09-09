@@ -1,7 +1,7 @@
 # The current unsafe_* pointer vocabulary: unsafe_write (move and copy=),
 # unsafe_offset chaining, empty-subscript reads, unsafe_take_pointee,
 # unsafe_deinit_pointee, and unsafe_free, plus the place-pointer write-through.
-from std.memory import unsafe_alloc
+from std.memory.alloc import unsafe_alloc
 
 def main():
     var p = unsafe_alloc[Int](2)

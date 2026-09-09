@@ -216,6 +216,35 @@ mod constant_tuple_place_tests {
         assert!(!is_droppable_root(&function, 1));
         assert!(is_droppable_root(&function, 2));
     }
+
+    #[test]
+    fn consuming_receivers_are_droppable_roots_of_the_callee() {
+        let mut function = MirFunction {
+            blocks: Vec::new(),
+            n_regs: 0,
+            n_vars: 3,
+            var_names: vec!["self".into(), "other".into(), "local".into()],
+            n_params: 2,
+            param_types: Vec::new(),
+            owned_params: vec![false, false],
+            deinit_params: vec![true, false],
+            ref_params: vec![false, false],
+            returns_reference: false,
+            var_tys: HashMap::new(),
+            ret_ty: None,
+            raises: false,
+            error_ty: None,
+            spans: SpanTable::default(),
+            reg_types: HashMap::new(),
+        };
+        assert!(is_droppable_root(&function, 0));
+        assert!(!is_droppable_root(&function, 1));
+
+        function.deinit_params = vec![false, false];
+        assert!(!is_droppable_root(&function, 0));
+        function.owned_params = vec![true, false];
+        assert!(is_droppable_root(&function, 0));
+    }
 }
 
 #[cfg(test)]

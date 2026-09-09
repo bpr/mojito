@@ -1,4 +1,4 @@
-# std.memory — the current layout-based allocation model.
+# std.memory.alloc — the current layout-based allocation model.
 #
 # `alloc(Layout[T](count=n))` returns an `Allocation[T]` that owns its heap
 # storage through a `ThinAllocation[T]` and retains the `Layout[T]` used to
@@ -89,100 +89,6 @@ def dealloc[T: AnyType](var allocation: Allocation[T], /):
 
 def unsafe_alloc[T: AnyType](count: Int, *, alignment: Int = 0) -> Pointer[T, MutUntrackedOrigin]:
     return _RawAlloc[T](count, alignment).ptr
-
-
-# Inline possibly-uninitialized storage for one T. Every method is unsafe:
-# the caller tracks whether the memory is initialized. Lifecycle conformances
-# mirror the pinned upstream header: moving/copying/destroying a MaybeUninit
-# only touches its raw bits, never the payload's lifecycle methods, so each is
-# available only for a trivially movable/copyable/deinitable payload (a
-# non-trivially-deinitable payload makes the wrapper linear — unsafe_deinit()
-# or unsafe_forget() it explicitly). The compiler traps deterministically
-# where upstream leaves undefined behavior (reading uninitialized storage).
-struct MaybeUninit[T: AnyType](
-    Defaultable,
-    Deinitable where (
-        IsTriviallyDeinitable[T],
-        "T must be trivially deinitable, since MaybeUninit never runs T's __deinit__",
-    ),
-    ImplicitlyCopyable where (
-        IsTriviallyCopyable[T] and IsTriviallyMovable[T],
-        "T must be trivially copyable and movable, since copying MaybeUninit only copies the underlying bits",
-    ),
-    Movable where (
-        IsTriviallyMovable[T],
-        "T must be trivially movable, since moving MaybeUninit only moves the underlying bits",
-    ),
-    RegisterPassable where (
-        conforms_to(T, RegisterPassable) and IsTriviallyMovable[T]
-    ),
-):
-    var _storage: __UninitStorage[Self.T]
-
-    def __init__(out self):
-        self._storage = __UninitStorage[Self.T]()
-
-    def __init__(out self, var value: Self.T, /) where conforms_to(Self.T, Movable):
-        self._storage = __UninitStorage[Self.T](value^)
-
-    def unsafe_write(mut self, var value: Self.T, /) where conforms_to(Self.T, Movable):
-        self._storage.unsafe_write(value^)
-
-    # Safe counterpart of unsafe_write for trivially-deinitable payloads
-    # (2026-08): a trivial deinitializer is a no-op, so overwriting a live
-    # value cannot leak a resource.
-    def write(
-        mut self, var value: Self.T, /
-    ) where IsTriviallyDeinitable[T] and conforms_to(Self.T, Movable):
-        self._storage.unsafe_write(value^)
-
-    def unsafe_assume_init(deinit self) -> Self.T where conforms_to(Self.T, Movable):
-        return self._storage^.take()
-
-    def unsafe_assume_init(ref self) -> ref[origin_of(self)] Self.T:
-        return self._storage[0]
-
-    def unsafe_deinit(deinit self) where conforms_to(Self.T, Deinitable):
-        self._storage^.destroy()
-
-    def unsafe_forget(deinit self):
-        pass
-
-
-# An owning smart pointer over one heap slot: current Mojo's `OwnedPointer`
-# proof subset with its current naming from day one (`into_inner`, never the
-# pre-rename `take`). Deletion conformance is conditional on the pointee's,
-# so an `OwnedPointer` of a linear value is itself linear and must be
-# consumed through `into_inner`.
-struct OwnedPointer[T: AnyType](
-    Movable,
-    Deinitable where conforms_to(T, Deinitable),
-):
-    var _ptr: Pointer[Self.T, MutUntrackedOrigin]
-
-    def __init__(out self, var value: Self.T, /) where conforms_to(Self.T, Movable):
-        self._ptr = unsafe_alloc[Self.T](1)
-        self._ptr[0] = value^
-
-    # Upstream's borrowed dereference is the empty subscript (`p[]`), which
-    # Mojito reserves for raw pointers — a recorded subset gap. Borrowed
-    # access goes through `unsafe_ptr()[0]`: the interior-generation origin
-    # keeps the OwnedPointer alive and stales the view when it is consumed.
-    def unsafe_ptr(ref self) -> Pointer[
-        Self.T, origin_of(self)._get_owned_interior["element"]
-    ]:
-        return self._ptr.unsafe_origin_cast[
-            origin_of(self)._get_owned_interior["element"]
-        ]()
-
-    def into_inner(deinit self) -> Self.T where conforms_to(Self.T, Movable):
-        var result = self._ptr.unsafe_take_pointee()
-        self._ptr.unsafe_free()
-        return result^
-
-    def __deinit__(deinit self) where conforms_to(Self.T, Deinitable):
-        self._ptr.unsafe_deinit_pointee()
-        self._ptr.unsafe_free()
 
 
 # The single crossing to the compiler's heap primitive. A constructor rather

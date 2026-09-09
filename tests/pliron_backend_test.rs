@@ -985,8 +985,8 @@ fn parity_exe_manifest_and_differential() {
     let excluded = count("excluded");
     if !focused {
         assert!(
-            differential == 444,
-            "exe-differential coverage must cover the complete runnable inventory: {differential} != 444"
+            differential == 448,
+            "exe-differential coverage must cover the complete runnable inventory: {differential} != 448"
         );
         assert!(
             errors == 34,
@@ -1043,7 +1043,7 @@ fn unsupported_constructs_produce_contextual_diagnostics() {
         // Pointer element arithmetic lowers `+` only (the `unsafe_offset`
         // form); `-` keeps a contextual rejection.
         (
-            "from std.memory import unsafe_alloc\n\ndef compute() -> Int:\n    var p = unsafe_alloc[Int](2)\n    var q = p + 1\n    var d = q - 1\n    p.unsafe_free()\n    return 1\n",
+            "from std.memory.alloc import unsafe_alloc\n\ndef compute() -> Int:\n    var p = unsafe_alloc[Int](2)\n    var q = p + 1\n    var d = q - 1\n    p.unsafe_free()\n    return 1\n",
             &["compute"],
             &["operator `Sub` on Pointer operands"],
         ),
@@ -1104,7 +1104,7 @@ fn negative_ownership_fixtures_fail_before_the_backend() {
 fn lifecycle_event_traces_match_the_vm() {
     for fixture in [
         "assets/ok/exceptions.mojo",
-        "assets/ok/explicit_destroy_raising.mojo",
+        "assets/ok/deinit_param_destruction_timing.mojo",
         "assets/ok/inplace_raises_try.mojo",
         "assets/ok/pliron_pointer_lifecycle.mojo",
         "assets/ok/try_return.mojo",

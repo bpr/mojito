@@ -337,7 +337,8 @@ pub(super) fn verify_callable_contract_call(
                             reference.origin
                                 == mojito_types::origin::Origin::Untracked { mutable: *mutable }
                         }
-                        mojito_types::origin::SigOrigin::Self_
+                        mojito_types::origin::SigOrigin::UnsafeAny { .. }
+                        | mojito_types::origin::SigOrigin::Self_
                         | mojito_types::origin::SigOrigin::Param(_)
                         | mojito_types::origin::SigOrigin::Projected(_, _)
                         | mojito_types::origin::SigOrigin::Union(_)

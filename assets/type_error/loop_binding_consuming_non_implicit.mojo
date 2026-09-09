@@ -1,7 +1,7 @@
 # A borrowed loop binding of a Copyable-only element cannot be consumed
 # implicitly: `append(var value)` needs an explicit `element.copy()`.
 # expect: cannot be implicitly copied
-from std.memory import unsafe_alloc
+from std.memory.alloc import unsafe_alloc
 
 struct Buf(Copyable, Movable):
     var data: UnsafePointer[Byte]

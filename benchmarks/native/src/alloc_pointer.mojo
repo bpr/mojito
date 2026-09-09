@@ -1,6 +1,6 @@
 # Benchmark: allocation and pointer traffic. List growth/shrink churn plus
 # UnsafePointer alloc/store/load/free loops.
-from std.memory import unsafe_alloc
+from std.memory.alloc import unsafe_alloc
 
 def main():
     var churn_sum: Int = 0
