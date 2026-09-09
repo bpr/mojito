@@ -117,8 +117,9 @@ impl ScalarTy {
 /// registers) stay SSA; `None` is zero-sized; struct, tuple, and
 /// `StringLiteral`-descriptor aggregates take their shared-engine layout, as
 /// does the two-word `{ invoke, env }` retained-callable value. Multi-lane
-/// SIMD values are deliberately memory-resident scalar aggregates; native
-/// vector types belong to the later SIMD optimization stage.
+/// SIMD values keep the lane-aligned aggregate as their storage and ABI
+/// form; `lower/simd.rs` computes on them as LLVM fixed vectors between the
+/// loads and stores.
 pub(crate) fn lower_ty(
     function: &str,
     ty: &Ty,

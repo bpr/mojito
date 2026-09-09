@@ -591,6 +591,27 @@ impl<'a> FnLowering<'a> {
         alloca.get_result(ctx)
     }
 
+    /// [`Self::entry_typed_alloca`] with an explicit alignment — a
+    /// multi-lane SIMD slot is typed at its storage vector but aligned like
+    /// one lane (the `LayoutCx` contract), not at the vector's preferred
+    /// alignment.
+    pub(super) fn entry_typed_alloca_aligned(
+        &mut self,
+        ctx: &mut Context,
+        handle: TypeHandle,
+        align: u64,
+    ) -> Value {
+        let entry = self.entry.expect("lowering is inside a function");
+        let i64_int = IntegerType::get(ctx, 64, Signedness::Signless);
+        let attr = IntegerAttr::new(i64_int, APInt::from_u64(1, bw(64)));
+        let count = ConstantOp::new(ctx, Box::new(attr));
+        let alloca = AllocaOp::new(ctx, handle, count.get_result(ctx), 0);
+        alloca.set_alignment(ctx, align as u32);
+        alloca.get_operation().insert_at_front(entry, ctx);
+        count.get_operation().insert_at_front(entry, ctx);
+        alloca.get_result(ctx)
+    }
+
     /// Fresh byte storage hoisted to the top of the entry block, so blocks
     /// that execute repeatedly (loops) reuse one slot instead of growing the
     /// stack. Zero-sized storage still allocates one byte for a stable

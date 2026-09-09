@@ -869,7 +869,7 @@ fn std_traits_and_std_origin_export_builtin_identities() {
     // An alias rewrites to the canonical structural spelling.
     let aliased = d.write(
         "aliased.mojo",
-        "from std.traits import Movable as M\n\ndef consume[T: M](var value: T) -> Int:\n    return 1\n\ndef main():\n    print(consume(42))\n",
+        "from std.traits import Movable as M\n\ndef consume[T: M](value: T) -> Int:\n    return 1\n\ndef main():\n    print(consume(42))\n",
     );
     assert_eq!(run(&aliased).expect("run"), "1\n");
 

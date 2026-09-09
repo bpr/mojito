@@ -295,7 +295,7 @@ impl<'a> Specializer<'a> {
 
     /// A parameter defaulting to a recorded constructor over a generic
     /// struct instance (`dir: Optional[String] = None` records
-    /// `Optional.__init__$ov$None`): the omitted-argument path runs the
+    /// `Optional.__init__` overload keyed on `None`): the omitted-argument path runs the
     /// constructor's instance for the concrete parameter type, so enqueue it
     /// and respell the default's target to that instance.
     fn instantiate_constructed_defaults(

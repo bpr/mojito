@@ -55,8 +55,10 @@ fn each_value_dropped_at_its_own_last_use() {
 
 #[test]
 fn transferred_value_is_dropped_once_at_destination() {
-    // `b = a^` moves the value; it is destroyed once, at `b`'s last use — the moved
-    // source `a` is not dropped (no double-free).
+    // `b = a^` moves the value; it is destroyed once, after the `print` call
+    // that reads its field (an owner whose field feeds a call outlives the
+    // call, as in the pinned Mojo) — the moved source `a` is not dropped (no
+    // double-free).
     let src = format!(
         "{RES}def main():\n    var a: Res = Res(5)\n    var b: Res = a^\n    print(b.id)\n"
     );
@@ -66,7 +68,7 @@ fn transferred_value_is_dropped_once_at_destination() {
         1,
         "moved value dropped exactly once"
     );
-    assert_eq!(out, "del 5\n5\n");
+    assert_eq!(out, "5\ndel 5\n");
 }
 
 #[test]
@@ -86,8 +88,9 @@ fn partially_moved_field_is_dropped_once_at_its_new_owner() {
         1,
         "retained field dropped once"
     );
-    // `x` (Inner 1) dies at `x.id`; `p`'s retained field `b` (Inner 2) dies at `p.b.id`.
-    assert_eq!(out, "del 1\nx = 1\ndel 2\nb = 2\n");
+    // `x` (Inner 1) dies after the `print` reading `x.id`; `p`'s retained
+    // field `b` (Inner 2) after the one reading `p.b.id`.
+    assert_eq!(out, "x = 1\ndel 1\nb = 2\ndel 2\n");
 }
 
 #[test]
@@ -224,15 +227,15 @@ fn tuple_field_is_cleaned_on_a_raising_try_edge() {
 #[test]
 fn owned_parameter_is_dropped_by_the_callee() {
     // `consume(a^)` transfers `a` to a `var` parameter: the value is destroyed
-    // once, inside the callee (at the parameter's last use) — not by the caller,
-    // and not twice. Consuming parameter ownership is what
-    // makes this expressible.
+    // once, inside the callee (after the `print` its field feeds) — not by the
+    // caller, and not twice. Consuming parameter ownership is what makes this
+    // expressible.
     let src = format!(
         "{RES}def consume(var t: Res):\n    print(\"consuming\", t.id)\n\ndef main():\n    var a: Res = Res(1)\n    consume(a^)\n    print(\"done\")\n"
     );
     let out = vm(&src);
     assert_eq!(out.matches("del 1").count(), 1, "destroyed exactly once");
-    assert_eq!(out, "del 1\nconsuming 1\ndone\n");
+    assert_eq!(out, "consuming 1\ndel 1\ndone\n");
 }
 
 #[test]
@@ -359,7 +362,7 @@ fn overwritten_try_rebind_value_drops_at_the_rebind() {
     );
     assert_eq!(
         vm(&src),
-        "deinit 1\ndeinit 7\npost 7\ncaught\ndeinit 1\npost 1\n"
+        "deinit 1\npost 7\ndeinit 7\ncaught\npost 1\ndeinit 1\n"
     );
 }
 
@@ -371,7 +374,7 @@ fn silent_try_rebind_drops_the_old_value_before_the_region() {
     let src = format!(
         "{TRY_NOISY}def main():\n    var keep = Noisy(1)\n    var n = Noisy(2)\n    try:\n        n = keep^\n    except e:\n        pass\n    print(\"post\", n.tag)\n"
     );
-    assert_eq!(vm(&src), "deinit 2\ndeinit 1\npost 1\n");
+    assert_eq!(vm(&src), "deinit 2\npost 1\ndeinit 1\n");
 }
 
 #[test]
@@ -448,7 +451,7 @@ fn nested_try_rebind_drops_each_value_once() {
     let src = format!(
         "{TRY_NOISY}def main():\n    var n = Noisy(1)\n    try:\n        try:\n            n = make(7)\n        except e:\n            print(\"inner\")\n    except e:\n        print(\"outer\")\n    print(\"post\", n.tag)\n"
     );
-    assert_eq!(vm(&src), "deinit 1\ndeinit 7\npost 7\n");
+    assert_eq!(vm(&src), "deinit 1\npost 7\ndeinit 7\n");
 }
 
 #[test]

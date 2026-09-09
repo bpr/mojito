@@ -2011,8 +2011,14 @@ fn accepts_print_of_various_values() {
 
 #[test]
 fn rejects_printing_a_function() {
+    // Upstream's text: a `print` argument that is not `Writable` is a bad
+    // call naming the conformance, not a type mismatch.
     let e = err("def f() -> Int:\n    return 1\n\nprint(f)\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(
+        matches!(&e, TypeError::BadCall { func, reason } if func == "print" && reason.contains("'Writable'")),
+        "got {:?}",
+        e
+    );
 }
 
 // --- Builtins: StringLiteral / abs / min / max / round / len ---
@@ -2040,8 +2046,14 @@ fn rejects_stringify_of_non_stringable() {
 
 #[test]
 fn rejects_len_of_non_string() {
+    // Upstream's text: `len` over a non-`Sized` operand has no matching
+    // function.
     let e = err("var n: Int = len(5)\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(
+        matches!(&e, TypeError::NoMatchingFunction { name } if name == "len"),
+        "got {:?}",
+        e
+    );
 }
 
 #[test]
@@ -2662,11 +2674,11 @@ fn transferred_string_dict_can_forward_keyword_arguments() {
 #[test]
 fn generic_and_method_kwargs_share_collection_and_forwarding_checks() {
     ok(
-        "def generic_size[T: Copyable & Movable](var **options: T) -> Int:\n    return 0\n\n@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size[T: Copyable & Movable](self, var **options: T) -> Int:\n        return self.bias\n    def relay(self, var **options: Int) -> Int:\n        return self.size(**options^)\n    @staticmethod\n    def static_size[T: Copyable & Movable](var **options: T) -> Int:\n        return 0\n\ndef main():\n    var counter = Counter(10)\n    print(generic_size(first=1, second=2))\n    print(counter.size(left=\"a\", right=\"b\"))\n    print(counter.relay(one=1, two=2, three=3))\n    print(Counter.static_size(a=1, b=2, c=3, d=4))\n",
+        "def generic_size[T: Copyable & Movable & Deinitable](var **options: T) -> Int:\n    return 0\n\n@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size[T: Copyable & Movable & Deinitable](self, var **options: T) -> Int:\n        return self.bias\n    def relay(self, var **options: Int) -> Int:\n        return self.size(**options^)\n    @staticmethod\n    def static_size[T: Copyable & Movable & Deinitable](var **options: T) -> Int:\n        return 0\n\ndef main():\n    var counter = Counter(10)\n    print(generic_size(first=1, second=2))\n    print(counter.size(left=\"a\", right=\"b\"))\n    print(counter.relay(one=1, two=2, three=3))\n    print(Counter.static_size(a=1, b=2, c=3, d=4))\n",
     );
     assert!(matches!(
         err(
-            "def generic_size[T: Copyable & Movable](var **options: T) -> Int:\n    return 0\n\nvar value = generic_size(first=1, second=\"wrong\")\n"
+            "def generic_size[T: Copyable & Movable & Deinitable](var **options: T) -> Int:\n    return 0\n\nvar value = generic_size(first=1, second=\"wrong\")\n"
         ),
         TypeError::TypeMismatch { .. }
     ));
@@ -3489,7 +3501,7 @@ fn nightly_implicit_deletion_controls_linearity_independently_of_the_decorator()
     );
     assert!(matches!(
         error,
-        TypeError::ExplicitDestroy { message, .. }
+        TypeError::Abandoned { message, .. }
             if message.contains("not implicitly deletable")
     ));
 }
@@ -3511,7 +3523,7 @@ fn conditional_deletability_is_retained_at_checked_binding_sites() {
         "{conditional}def abandon[T: Movable](var incoming: Box[T]):\n    var local = incoming^\n"
     ));
     assert!(
-        matches!(error, TypeError::ExplicitDestroy { ref var, .. } if var == "local"),
+        matches!(error, TypeError::Abandoned { ref var, .. } if var == "local"),
         "got {error:?}"
     );
 }
@@ -4850,7 +4862,7 @@ fn any_type_bound_does_not_permit_len() {
     // (Phase 5 stop point: `Sized` enables container helpers, `AnyType` does not).
     assert!(matches!(
         err("def is_empty[T: AnyType](x: T) -> Bool:\n    return len(x) == 0\n"),
-        TypeError::TypeMismatch { .. }
+        TypeError::NoMatchingFunction { name } if name == "len"
     ));
 }
 
@@ -6097,8 +6109,10 @@ fn implicitly_copyable_refining_bounds_permit_place_copies() {
     ok(
         "def dup[T: TrivialRegisterPassable](x: T) -> T:\n    var y: T = x\n    return y\n\nvar n: Int = dup(5)\n",
     );
+    // The local copy of a non-`Deinitable` `T` must still be consumed
+    // (upstream rejects `return y` there as abandonment).
     ok(
-        "def dup[T: ImplicitlyCopyable](x: T) -> T:\n    var y: T = x\n    return y\n\nvar n: Int = dup(5)\n",
+        "def dup[T: ImplicitlyCopyable](x: T) -> T:\n    var y: T = x\n    return y^\n\nvar n: Int = dup(5)\n",
     );
     assert!(matches!(
         err(

@@ -323,7 +323,6 @@ impl<'a> FnLowering<'a> {
             Ty::Simd { dtype, width } if *width > 1 && dtype.is_float() => {
                 // A float vector folds each lane into a fresh copy.
                 let scalar = ScalarTy::of_dtype(*dtype);
-                let handle = scalar.handle(ctx);
                 let lane_layout = self
                     .layout
                     .layout_of(&Ty::Simd {
@@ -332,14 +331,12 @@ impl<'a> FnLowering<'a> {
                     })
                     .expect("SIMD lane layout");
                 let layout = self.layout.layout_of(receiver).expect("SIMD layout");
-                let source_ptr = self.reg_ptr(ctx, recv)?;
+                let width = *width as usize;
+                let vector = self.simd_load_vector(ctx, recv, *dtype, width, dest)?;
                 let storage = self.entry_alloca(ctx, layout.size, layout.align);
-                for lane in 0..*width as usize {
-                    let source_address =
-                        self.offset_address(ctx, source_ptr, lane_layout.size * lane as u64);
-                    let load = LoadOp::new(ctx, source_address, handle);
-                    self.append(ctx, load.get_operation(), Some(dest));
-                    let folded = self.folded_float(ctx, load.get_result(ctx), scalar, dest);
+                for lane in 0..width {
+                    let value = self.simd_extract(ctx, vector, lane, dest);
+                    let folded = self.folded_float(ctx, value, scalar, dest);
                     let target_address =
                         self.offset_address(ctx, storage, lane_layout.size * lane as u64);
                     let store = StoreOp::new(ctx, folded, target_address);
@@ -613,22 +610,15 @@ impl<'a> FnLowering<'a> {
         width: usize,
         dest: Reg,
     ) -> Result<(), PlironError> {
-        let ptr = self.reg_ptr(ctx, arg)?;
+        let vector = self.simd_load_vector(ctx, arg, dtype, width, dest)?;
         let lane_ty = ScalarTy::of_dtype(dtype);
-        let lane_handle = lane_ty.handle(ctx);
-        let lane_layout = self
-            .layout
-            .layout_of(&Ty::Simd { dtype, width: 1 })
-            .expect("SIMD lane layout");
         self.write_literal_bytes(ctx, b"[", dest);
         for lane in 0..width {
             if lane > 0 {
                 self.write_literal_bytes(ctx, b", ", dest);
             }
-            let address = self.offset_address(ctx, ptr, lane_layout.size * lane as u64);
-            let load = LoadOp::new(ctx, address, lane_handle);
-            self.append(ctx, load.get_operation(), Some(dest));
-            self.print_scalar(ctx, lane_ty, load.get_result(ctx), dest)?;
+            let value = self.simd_extract(ctx, vector, lane, dest);
+            self.print_scalar(ctx, lane_ty, value, dest)?;
         }
         self.write_literal_bytes(ctx, b"]", dest);
         Ok(())

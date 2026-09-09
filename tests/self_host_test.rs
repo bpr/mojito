@@ -500,7 +500,7 @@ fn generic_and_method_kwargs_execute_through_string_dict() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "def generic_size[T: Copyable & Movable](var **options: T) -> Int:\n    return len(options)\n\n@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size[T: Copyable & Movable](self, var **options: T) -> Int:\n        return self.bias + len(options)\n    def relay(self, var **options: Int) -> Int:\n        return self.size(**options^)\n    @staticmethod\n    def static_size[T: Copyable & Movable](var **options: T) -> Int:\n        return len(options)\n\ndef main():\n    var counter = Counter(10)\n    print(generic_size(first=1, second=2))\n    print(counter.size(left=\"a\", right=\"b\"))\n    print(counter.relay(one=1, two=2, three=3))\n    print(Counter.static_size(a=1, b=2, c=3, d=4))\n",
+        "def generic_size[T: Copyable & Movable & Deinitable](var **options: T) -> Int:\n    return len(options)\n\n@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size[T: Copyable & Movable & Deinitable](self, var **options: T) -> Int:\n        return self.bias + len(options)\n    def relay(self, var **options: Int) -> Int:\n        return self.size(**options^)\n    @staticmethod\n    def static_size[T: Copyable & Movable & Deinitable](var **options: T) -> Int:\n        return len(options)\n\ndef main():\n    var counter = Counter(10)\n    print(generic_size(first=1, second=2))\n    print(counter.size(left=\"a\", right=\"b\"))\n    print(counter.relay(one=1, two=2, three=3))\n    print(Counter.static_size(a=1, b=2, c=3, d=4))\n",
     );
     assert_eq!(run(&main).unwrap(), "2\n12\n13\n4\n");
 }
@@ -510,7 +510,7 @@ fn bounded_trait_method_kwargs_execute_through_the_selected_method() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "trait Counts:\n    def count[Element: Copyable & Movable](self, var **options: Element) -> Int: ...\n\n@fieldwise_init\nstruct Counter(Counts):\n    var bias: Int\n    def count[Element: Copyable & Movable](self, var **options: Element) -> Int:\n        return self.bias + len(options)\n\ndef count_through_bound[Target: Counts](target: Target, var **options: Int) -> Int:\n    return target.count(**options^)\n\ndef main():\n    var counter = Counter(10)\n    print(count_through_bound(counter, left=1, right=2))\n",
+        "trait Counts:\n    def count[Element: Copyable & Movable & Deinitable](self, var **options: Element) -> Int: ...\n\n@fieldwise_init\nstruct Counter(Counts):\n    var bias: Int\n    def count[Element: Copyable & Movable & Deinitable](self, var **options: Element) -> Int:\n        return self.bias + len(options)\n\ndef count_through_bound[Target: Counts](target: Target, var **options: Int) -> Int:\n    return target.count(**options^)\n\ndef main():\n    var counter = Counter(10)\n    print(count_through_bound(counter, left=1, right=2))\n",
     );
     assert_eq!(run(&main).unwrap(), "12\n");
 }

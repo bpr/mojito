@@ -901,6 +901,35 @@ fn simd_dtype_cast_wraps_and_truncates() {
 }
 
 #[test]
+fn simd_int_lanes_wrap_at_64_bits() {
+    // `DType.int` lanes are the native 64-bit `Int`: multi-lane arithmetic
+    // wraps at 64 bits exactly like the canonical scalar.
+    let e = run(
+        "var big = SIMD[DType.int, 2](9223372036854775807, 1)\nvar sum = big + SIMD[DType.int, 2](1, 1)\nvar prod = big * big\nvar shifted = SIMD[DType.int, 2](1, -1) << 63\nvar total: Int = (big + 1).reduce_add()\n",
+    );
+    assert_eq!(binding(&e, "sum").to_string(), "[-9223372036854775808, 2]");
+    assert_eq!(binding(&e, "prod").to_string(), "[1, 1]");
+    assert_eq!(
+        binding(&e, "shifted").to_string(),
+        "[-9223372036854775808, -9223372036854775808]"
+    );
+    assert_eq!(binding(&e, "total").to_string(), "-9223372036854775806");
+}
+
+#[test]
+fn width_one_simd_operand_splats_across_a_vector() {
+    // A width-1 SIMD value (an `Int32`-typed scalar) beside a multi-lane
+    // vector splats like a bare scalar instead of narrowing the result.
+    let actual = output(
+        "def bump(v: SIMD[DType.int32, 4], by: Int32) -> SIMD[DType.int32, 4]:\n    return v + by\n\ndef main():\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var k: Int32 = 10\n    print(bump(v, k), k - v, v * k, v < k, (v > k).select(v, k))\n",
+    );
+    assert_eq!(
+        actual,
+        "[11, 12, 13, 14] [9, 8, 7, 6] [10, 20, 30, 40] [True, True, True, True] [10, 10, 10, 10]\n"
+    );
+}
+
+#[test]
 fn simd_shuffle_gathers_lanes() {
     let e = run(
         "var v = SIMD[DType.int32, 4](10, 20, 30, 40)\nvar r = v.shuffle[3, 2, 1, 0]()\nvar pair = v.shuffle[1, 1]()\nvar m = (v < SIMD[DType.int32, 4](25, 25, 25, 25)).shuffle[3, 0]()\n",
@@ -1760,12 +1789,14 @@ fn ref_param_also_writes_back() {
 #[test]
 fn maybe_uninit_leak_semantics() {
     // The exact destructor trace: unsafe_deinit runs the payload destructor;
-    // a plain discard, unsafe_forget, and an overwriting unsafe_write leak
-    // (never running it); a taken payload drops normally at its last use.
+    // unsafe_forget and an overwriting unsafe_write leak (never running it);
+    // a taken payload drops normally after the `print` that reads it. A
+    // plain `_ = b^` discard of the linear wrapper is a checker error
+    // (upstream's rule).
     let ev = output(
-        "from std.memory import MaybeUninit\n\nstruct Recorder(Movable, Deinitable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __deinit__(deinit self):\n        print(\"deinit\", self.id)\n\ndef main():\n    var a = MaybeUninit[Recorder](Recorder(1))\n    a^.unsafe_deinit()\n    var b = MaybeUninit[Recorder](Recorder(2))\n    _ = b^\n    var c = MaybeUninit[Recorder](Recorder(3))\n    c^.unsafe_forget()\n    var d = MaybeUninit[Recorder]()\n    d.unsafe_write(Recorder(4))\n    d.unsafe_write(Recorder(5))\n    var got = d^.unsafe_assume_init()\n    print(\"got\", got.id)\n",
+        "from std.memory import MaybeUninit\n\nstruct Recorder(Movable, Deinitable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __deinit__(deinit self):\n        print(\"deinit\", self.id)\n\ndef main():\n    var a = MaybeUninit[Recorder](Recorder(1))\n    a^.unsafe_deinit()\n    var c = MaybeUninit[Recorder](Recorder(3))\n    c^.unsafe_forget()\n    var d = MaybeUninit[Recorder]()\n    d.unsafe_write(Recorder(4))\n    d.unsafe_write(Recorder(5))\n    var got = d^.unsafe_assume_init()\n    print(\"got\", got.id)\n",
     );
-    assert_eq!(ev, "deinit 1\ndeinit 5\ngot 5\n");
+    assert_eq!(ev, "deinit 1\ngot 5\ndeinit 5\n");
 }
 
 #[test]

@@ -1067,9 +1067,17 @@ pub fn set_simd_lane(
 /// mask. (The checker guarantees dtype/width agreement and operator validity.)
 pub fn simd_binop(op: InfixOp, l: &Value, r: &Value) -> Result<Value, RuntimeError> {
     use InfixOp::*;
-    let (dtype, width) = simd_shape(l).or_else(|| simd_shape(r)).ok_or_else(|| {
-        RuntimeError::TypeError("SIMD dispatch requires at least one SIMD operand".to_string())
-    })?;
+    // The result takes the wider operand's width: a width-1 SIMD operand (a
+    // `Int32`-typed scalar) splats exactly like a bare scalar.
+    let (dtype, width) = match (simd_shape(l), simd_shape(r)) {
+        (Some((dtype, left)), Some((_, right))) => (dtype, left.max(right)),
+        (Some(shape), None) | (None, Some(shape)) => shape,
+        (None, None) => {
+            return Err(RuntimeError::TypeError(
+                "SIMD dispatch requires at least one SIMD operand".to_string(),
+            ));
+        }
+    };
     let is_cmp = matches!(op, Eq | Ne | Lt | Gt | Le | Ge);
     match dtype {
         Dtype::Bool => {
@@ -1827,13 +1835,14 @@ fn simd_reduce(dtype: Dtype, lanes: &SimdLanes, method: &str) -> Result<Value, R
 }
 
 /// Materialize an operand as `width` integer lanes of `dtype` — its own lanes if
-/// it is a SIMD, else the scalar splatted across all lanes.
+/// it is a SIMD of that width, else the scalar (or width-1 SIMD) splatted
+/// across all lanes.
 fn to_int_lanes(v: &Value, dtype: Dtype, width: usize) -> Result<Vec<i128>, RuntimeError> {
     match v {
         Value::Simd {
             lanes: SimdLanes::Int(l),
             ..
-        } => Ok(l.clone()),
+        } if l.len() == width => Ok(l.clone()),
         scalar => Ok(vec![value_to_int_lane(scalar, dtype)?; width]),
     }
 }
@@ -1843,7 +1852,7 @@ fn to_float_lanes(v: &Value, dtype: Dtype, width: usize) -> Result<Vec<f64>, Run
         Value::Simd {
             lanes: SimdLanes::Float(l),
             ..
-        } => Ok(l.clone()),
+        } if l.len() == width => Ok(l.clone()),
         scalar => Ok(vec![value_to_float_lane(scalar, dtype)?; width]),
     }
 }
@@ -1853,7 +1862,7 @@ fn to_bool_lanes(v: &Value, width: usize) -> Result<Vec<bool>, RuntimeError> {
         Value::Simd {
             lanes: SimdLanes::Bool(l),
             ..
-        } => Ok(l.clone()),
+        } if l.len() == width => Ok(l.clone()),
         scalar => Ok(vec![value_to_bool_lane(scalar)?; width]),
     }
 }
@@ -2249,7 +2258,7 @@ pub fn bounds_check(idx: i64, len: usize, what: &str) -> Result<usize, RuntimeEr
 /// post-wrap mathematical value (non-negative for unsigned dtypes).
 fn wrap(dtype: Dtype, v: i128) -> i128 {
     match dtype {
-        Dtype::Int => v,
+        Dtype::Int => v as i64 as i128,
         Dtype::Int8 => v as i8 as i128,
         Dtype::Int16 => v as i16 as i128,
         Dtype::Int32 => v as i32 as i128,

@@ -2490,11 +2490,8 @@ struct CStringSlice[mut: Bool, //, origin: Origin[mut=mut]](
     def unsafe_ptr(self) -> Pointer[Byte, Self.origin._get_owned_interior["bytes"]]:
         return self._data
 
-    def byte_length(self) -> Int:
-        return Int(external_call["strlen", UInt](self._data))
-
     def __len__(self) -> Int:
-        return self.byte_length()
+        return Int(external_call["strlen", UInt](self._data))
 
     def write_to(self, mut writer: Some[Writer]):
         writer.write(String(unsafe_from_utf8_ptr=self._data))

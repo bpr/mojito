@@ -48,15 +48,16 @@ instruction	variant.take	supported	checked and unchecked consuming payload extra
 instruction	variant.set_init_with	supported	indirect factory invocation followed by owning replacement
 instruction	variant.deinit_with	supported	tag-checked consuming handler invocation
 instruction	variant.replace	supported	owning replacement returning the previous payload
-instruction	simd.make	supported	width-1 scalar aliases and multi-lane scalar aggregates with VM-exact lane conversion
-instruction	simd.cast	partial	element-wise int rewrap, f64-mediated float conversion, and i128-saturating float-to-int; bool casts reject in the checker
-instruction	simd.shuffle	supported	compile-time lane gather over scalar-aggregate storage
+instruction	simd.make	supported	width-1 scalar aliases; multi-lane values assemble a fixed vector (insertelement/splat) with VM-exact lane conversion into lane-aligned storage
+instruction	simd.cast	partial	vector int rewrap and f64-mediated float conversion; i128-saturating float-to-int lane by lane; bool casts reject in the checker
+instruction	simd.shuffle	supported	one shufflevector per compile-time mask (a one-lane mask extracts the scalar)
 instruction	raise	supported	tagged-outcome error edge
 instruction	try	supported	structural flattening with cleanup drops and finally dispatch
 instruction	drop.reg	unsupported	reserved for the future assembler VM; the VM rejects it too
 instruction	drop.var	partial	flag-guarded compiled destructors, including destructor-bearing structs with droppable fields; depth-1 partial moves drop surviving leaves under per-leaf presence flags (any tombstone suppresses `__deinit__`); deeper moves reject
 instruction	consume.var	supported	clears the initialization flag; surviving droppable struct fields destroy in reverse order under the per-leaf flags
 instruction	consume.place	partial	no droppable residual fields
+instruction	drop.place	supported	destroys one depth-1 struct field under its leaf flag and clears the flag
 instruction	unsupported	unsupported	explicit lowering marker; rejects by definition
 instruction	iter.init	partial	concrete post-mono `__iter__` chains: aliased `ref`/`mut`, byte-copied `read`, and consuming `var` receivers; raising `__iter__` steps and stepless heap-owning splits reject
 instruction	iter.has_next	partial	bounded nominal `__len__() > 0`; the compiler-private pack fallback rejects
@@ -81,7 +82,7 @@ type	assoc	unsupported	semantic-only; Stage 5 monomorphization target
 type	dependent_index	unsupported	semantic-only; Stage 5 monomorphization target
 type	Self	unsupported	semantic-only
 type	struct_type	partial	concrete field layouts only
-type	simd	supported	width-1 scalar aliases plus multi-lane scalar aggregates with element-wise arithmetic, conversion, indexing, shuffle, reductions, selection, and formatting
+type	simd	supported	width-1 scalar aliases; multi-lane values compute as LLVM fixed vectors (arithmetic, masked shifts, floor div/mod, comparisons, select, casts, to_bits, shuffle, extract, llvm.vector.reduce.* and minnum/maxnum reductions) over lane-aligned aggregate storage with byte-per-lane Bool; lane writes and formatting go lane-wise
 type	Error	supported	MjError storage
 type	comptime_list	unsupported	CTFE bridge; no runtime values
 type	tuple	partial	concrete element layouts only

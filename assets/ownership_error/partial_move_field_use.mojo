@@ -1,4 +1,4 @@
-# expect: use of 'p.a'
+# expect: use of uninitialized value 'p.a'
 @fieldwise_init
 struct Inner:
     var id: Int

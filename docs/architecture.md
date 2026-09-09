@@ -210,10 +210,10 @@ specification.
 
 Variant storage lowering (the `__VariantStorage` primitive behind the
 self-hosted `std.utils.Variant`) uses the shared native tag/payload layout
-and dispatches owning operations and destruction from the runtime tag. Multi-lane SIMD is a
-contiguous scalar aggregate whose semantic operations are statically unrolled;
-native vector types are an optimization over that completed behavior, not a
-different semantic path. User `__moveinit__` and `__deinit__` bodies remain
+and dispatches owning operations and destruction from the runtime tag. Multi-lane SIMD is
+stored as a contiguous lane-aligned scalar aggregate and computed as LLVM
+fixed vectors in SSA between loads and stores; the vector representation is
+backend-private, and the VM's lane semantics remain the contract. User `__moveinit__` and `__deinit__` bodies remain
 ordinary compiled MIR calls, with a `deinit self` callee owning residual-field
 teardown.
 

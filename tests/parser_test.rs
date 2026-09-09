@@ -2097,7 +2097,7 @@ fn parses_variadic_and_kw_variadic() {
 #[test]
 fn parses_generic_method_keyword_collectors_and_forwarding() {
     let parsed = parse(
-        "struct Relay:\n    def target[T: Copyable & Movable](self, var **options: T):\n        pass\n    def forward(self, var **options: Int):\n        self.target(**options^)\n",
+        "struct Relay:\n    def target[T: Copyable & Movable & Deinitable](self, var **options: T):\n        pass\n    def forward(self, var **options: Int):\n        self.target(**options^)\n",
     );
     let StmtKind::Struct { methods, .. } = &parsed[0].kind else {
         panic!("expected struct declaration")

@@ -246,7 +246,6 @@ impl<'a> FnLowering<'a> {
             let Some(Ty::Simd { dtype, width }) = self.func.reg_types.get(&base.0).cloned() else {
                 return Err(self.unsupported_reg("SIMD subscript base type".into(), dest));
             };
-            let element = Ty::Simd { dtype, width: 1 };
             self.emit_simd_index_guard(ctx, index, width as usize, dest)?;
             // A width-1 vector is a scalar register (`LowerTy::Scalar`): its
             // only lane is the value itself.
@@ -255,9 +254,12 @@ impl<'a> FnLowering<'a> {
                 self.reg_values.insert(dest.0, value);
                 return Ok(());
             }
-            let base_ptr = self.reg_ptr(ctx, base)?;
-            let address = self.pointer_element_address(ctx, base_ptr, index, &element, dest)?;
-            return self.load_from(ctx, address, &element, dest);
+            // The guard above makes the dynamic `extractelement` index
+            // in range (an out-of-range LLVM index is poison).
+            let vector = self.simd_load_vector(ctx, base, dtype, width as usize, dest)?;
+            let position = self.reg_value(ctx, index, ScalarTy::Int)?;
+            let extract = ExtractElementOp::new(ctx, vector, position);
+            return self.define(ctx, dest, extract.get_operation(), extract.get_result(ctx));
         }
         if !matches!(intrinsic, Sub::TupleStorage | Sub::VariadicStorage) {
             return Err(self.unsupported_reg("intrinsic subscript".into(), dest));

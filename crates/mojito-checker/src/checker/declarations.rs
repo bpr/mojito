@@ -927,12 +927,17 @@ impl Checker {
                                     param, declaration, m.name
                                 ))
                             })?;
+                        // A positional variadic pack (`var *values: T`) is
+                        // never linear: upstream destroys its elements
+                        // implicitly even for a non-`Deinitable` `T`.
+                        let positional_pack =
+                            m.params[param].kind == mojito_ast::ast::ParamKind::Variadic;
                         if self.is_deinitable(&ty) {
                             self.explicit_destroy_deletability
                                 .borrow_mut()
                                 .declarations
                                 .insert(site);
-                        } else if matches!(ty, Ty::Param { .. }) {
+                        } else if matches!(ty, Ty::Param { .. }) && !positional_pack {
                             self.explicit_destroy_deletability
                                 .borrow_mut()
                                 .linear_declarations

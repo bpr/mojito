@@ -37,6 +37,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A positional variadic pack (`var *values: T`) of a non-`Deinitable` `T`
+  is no longer linear — upstream destroys its elements implicitly — while
+  `**kwargs` packs, `mut`/`var` parameters, and locals of such a `T` stay
+  linear as upstream; `CStringSlice.byte_length` (absent upstream) is
+  removed in favor of `len`; the try-region, drop-order, and diagnostic
+  pins moved by the last two parity passes are aligned with the pinned
+  Mojo, and the `p.a^`-while-`p`-is-used shape is recorded as a Mojito
+  divergence (`partial-field-move-parent-used`).
+- VM SIMD: `DType.int` lanes wrap at 64 bits like the native `Int`, and a
+  width-one SIMD operand beside a vector splats instead of narrowing the
+  result. Native SIMD: float `/`, a splatting left operand, `DType.int` lane
+  operators, Bool-lane `& | ^`, and NaN lanes in float `reduce_min`/
+  `reduce_max` (now `minnum`/`maxnum`, the VM's rule) lower correctly.
 - Inside a `__deinit__`/`deinit self` body each direct field of the receiver
   is destroyed at its own last use on both backends (an unused one at entry,
   a branch-only one in its arm, a nested read keeping the whole direct field
@@ -72,6 +85,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Native SIMD lowering: the Pliron backend computes multi-lane `SIMD`
+  values as LLVM fixed vectors in SSA (construction, elementwise operators
+  with masked shifts and trap-free floor division, comparisons, `select`,
+  `shuffle`, lane extraction, casts, `to_bits`, and `llvm.vector.reduce.*`
+  reductions) over the unchanged lane-aligned storage ABI; 14 new
+  `assets/ok/simd_*` differential fixtures cover every dtype, widths up to
+  16, stored Bool masks, ABI crossings, and the numeric edges.
 - The filesystem slice's files, streams, paths, and temporary directories:
   the `with` statement as a checker desugar selected by the manager's methods
   (a consuming `__enter__` whose result lives to the block end, a plain

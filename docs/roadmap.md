@@ -22,21 +22,25 @@ exempt from the ordering.
   build-cost, or upstream-risk evidence, implement the same acceptance slices
   with the shared target/layout/runtime ABI and differential corpus. Do not
   fork language semantics or make Cranelift a required compiler layer.
-- [ ] **Native SIMD lowering** — after language parity, replace the
-  lane-by-lane memory computation with LLVM fixed-vector SSA
-  (`docs/notes/native-simd-pliron-assessment.md`), keeping the storage/call
-  ABI and width-one scalars scalar. Order:
-  1. construction/splat and aggregate↔vector boundary conversion;
-  2. elementwise arithmetic, bitwise, comparisons, mask select;
-  3. checked dynamic extract/insert, compile-time shuffle;
-  4. casts (VM-exact wrapping, Float32 rounding, saturating float→int);
-  5. reductions (signedness, NaN, deterministic float order).
-  - Bounds-check dynamic lane indexes before LLVM ops; convert `<N x i1>`
-    masks to byte-lane storage only at boundaries.
-  - Acceptance: VM/native differentials at `O0` and release per dtype,
-    width, op, conversion, shuffle, reduction; sanitizer-clean crossings;
-    unchanged `LayoutCx`/`docs/native-abi.md` (or an ABI-versioned
-    revision); target-code inspection showing vector instructions.
+- [ ] **Native SIMD lowering residues** — the vector lowering (LLVM fixed
+  vectors in SSA over the unchanged lane-aligned storage ABI;
+  `docs/notes/native-simd-pliron-assessment.md` §As Built) leaves: lane
+  *writes* (`v[i] = x`) store one lane through the place address (SROA
+  rebuilds the vector at release; `O0` keeps the store); float→int casts
+  saturate lane by lane through `llvm.fptosi.sat.i128.f64` (the
+  `v{N}i128` vector intrinsic's x86-64 legalization is unverified); float
+  `reduce_min`/`reduce_max` fold lane by lane through `llvm.minnum`/
+  `llvm.maxnum` (the VM's `f64::min`/`max`), whose `(-0.0, +0.0)` result is
+  unspecified on both backends, so fixtures avoid mixed-sign zeros; a
+  lane-index trap exits natively with the `unhandled error` category while
+  the VM raises `SIMD lane index … out of range` (a dedicated category is a
+  `mojito-runtime` ABI bump); vectors wider than a register legalize by
+  splitting, so `simd_lowering_emits_vector_code`'s object listing, not IR,
+  is the vectorization evidence. Front end: a struct with a multi-lane SIMD
+  field rejects a bare literal argument (`P(1)` for `SIMD[DType.int32, 4]`:
+  upstream's implicit `SIMD(IntLiteral)` initializer), and a field write
+  through a `List` subscript (`xs[i].field = v`) fails MIR verification for
+  every element type.
 - [ ] **Native generic-holder temporaries with heap-owning implicitly
   copyable fields** — `GenericHolder[Box](Box(5))` or Dict's
   `DictEntry[Optional[Int], V]` appended to a `List` reads freed memory
@@ -66,7 +70,12 @@ exempt from the ordering.
 - [ ] **Behavioral divergences from the pinned Mojo — burn to zero**
   *(standing; every new one lands here with a probe or a `cases.tsv`
   `mojito-only`/`output-diff` row, and leaves when its probe promotes to an
-  `assets/ok` fixture)*. Open today: none. Retained rows, by decision:
+  `assets/ok` fixture)*. Open today: `partial-field-move-parent-used` —
+  moving one field out of a struct (`p.a^`) while the parent is used
+  afterwards (`p.b`) is rejected upstream (`value 'p.a' cannot be consumed,
+  because 'p' is used later`) but accepted and tracked field-wise by Mojito
+  (`tests/drops_test.rs::partially_moved_field_is_dropped_once_at_its_new_owner`
+  pins the Mojito behavior). Retained rows, by decision:
   `subtree-origin-cast` (a cited bridge to upstream's `#lit.origin.subtree`
   experiment, re-probed each re-pin), `reference-valued-aggregate` (the
   extension tracked by the next task), and the `output-diff` row

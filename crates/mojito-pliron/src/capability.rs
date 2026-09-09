@@ -272,17 +272,17 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "simd.make",
         CapabilityStatus::Supported,
-        "width-1 scalar aliases and multi-lane scalar aggregates with VM-exact lane conversion",
+        "width-1 scalar aliases; multi-lane values assemble a fixed vector (insertelement/splat) with VM-exact lane conversion into lane-aligned storage",
     ),
     (
         "simd.cast",
         CapabilityStatus::Partial,
-        "element-wise int rewrap, f64-mediated float conversion, and i128-saturating float-to-int; bool casts reject in the checker",
+        "vector int rewrap and f64-mediated float conversion; i128-saturating float-to-int lane by lane; bool casts reject in the checker",
     ),
     (
         "simd.shuffle",
         CapabilityStatus::Supported,
-        "compile-time lane gather over scalar-aggregate storage",
+        "one shufflevector per compile-time mask (a one-lane mask extracts the scalar)",
     ),
     (
         "raise",
@@ -419,7 +419,7 @@ pub const TYPE_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "simd",
         CapabilityStatus::Supported,
-        "width-1 scalar aliases plus multi-lane scalar aggregates with element-wise arithmetic, conversion, indexing, shuffle, reductions, selection, and formatting",
+        "width-1 scalar aliases; multi-lane values compute as LLVM fixed vectors (arithmetic, masked shifts, floor div/mod, comparisons, select, casts, to_bits, shuffle, extract, llvm.vector.reduce.* and minnum/maxnum reductions) over lane-aligned aggregate storage with byte-per-lane Bool; lane writes and formatting go lane-wise",
     ),
     ("Error", CapabilityStatus::Supported, "MjError storage"),
     (

@@ -150,9 +150,12 @@ specialized name). Rules:
   the first offset aligned to the widest alternative; size pads to
   `max(4, payload align)`.
 - `SIMD[dtype, width]` with `width > 1` is a contiguous scalar aggregate of
-  `width` lanes, aligned like one lane. Width-one SIMD aliases retain their
-  scalar ABI. This is the semantic fallback representation; mapping completed
-  SIMD semantics to native vector types is a later backend optimization.
+  `width` lanes (one byte per `bool` lane), aligned like one lane. Width-one
+  SIMD aliases retain their scalar ABI. This storage form is the only
+  ABI-visible representation: the Pliron backend computes on multi-lane
+  values as LLVM fixed vectors in SSA, so its vector loads and stores declare
+  the lane alignment and `bool` lanes convert between `<N x i1>` compute and
+  byte-per-lane storage at that boundary.
 - A **retained callable** (`Ty::Func`) is the two-word value
   `{ invoke: ptr, env: ptr }` (16/8). `invoke` is a backend-interned thunk
   (`mjthunk_<n>`, outside the `mj_` mangle image); `env` points at the

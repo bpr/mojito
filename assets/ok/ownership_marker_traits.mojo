@@ -19,9 +19,9 @@ def duplicate[T: Copyable](x: T) -> T:
 
 def duplicate_implicit[T: ImplicitlyCopyable](x: T) -> T:
     var y: T = x
-    return y
+    return y^
 
-def accept_movable[T: Movable](var x: T):
+def accept_movable[T: Movable & Deinitable](var x: T):
     pass
 
 def accept_deletable[T: Deinitable](x: T):

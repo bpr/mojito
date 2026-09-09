@@ -51,6 +51,33 @@ impl<'a> FnLowering<'a> {
         Ok(gep.get_result(ctx))
     }
 
+    /// `storage + index * lane_size` for a SIMD lane: the vector lives in
+    /// frame or field storage the compiler owns, so no allocation-registry
+    /// classification precedes the address (the caller has already emitted
+    /// the lane-index guard).
+    pub(super) fn simd_lane_address(
+        &mut self,
+        ctx: &mut Context,
+        storage: Value,
+        index: Reg,
+        lane_size: u64,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        let index_value = self.reg_value(ctx, index, ScalarTy::Int)?;
+        let size = self.uint_constant(ctx, lane_size);
+        let bytes = MulOp::new_with_overflow_flag(ctx, index_value, size, no_overflow_flags());
+        self.append(ctx, bytes.get_operation(), Some(dest));
+        let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
+        let gep = GetElementPtrOp::new(
+            ctx,
+            storage,
+            vec![GepIndex::Value(bytes.get_result(ctx))],
+            i8_ty,
+        );
+        self.append(ctx, gep.get_operation(), Some(dest));
+        Ok(gep.get_result(ctx))
+    }
+
     /// Classify a raw-pointer dereference through the runtime allocation
     /// registry before LLVM touches the address.
     pub(super) fn guard_pointer_dereference(

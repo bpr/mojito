@@ -32,10 +32,8 @@ def main():
     var c = MaybeUninit[Recorder](Recorder(2))
     c^.unsafe_deinit()
 
-    # Discard, forget, and overwrite all leak: no "deinit 3"/"deinit 4"/
-    # "deinit 5".
-    var d = MaybeUninit[Recorder](Recorder(3))
-    _ = d^
+    # Forget and overwrite both leak: no "deinit 4"/"deinit 5" (a plain
+    # `_ = x^` discard of the linear wrapper is a checker error).
     var e = MaybeUninit[Recorder](Recorder(4))
     e^.unsafe_forget()
     var f = MaybeUninit[Recorder]()

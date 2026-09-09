@@ -1,11 +1,22 @@
 //! SIMD lowering: constructors, casts, shuffles, lane conversions,
 //! methods/reductions/select, and elementwise unary/binary operators.
+//!
+//! Multi-lane values compute as LLVM fixed vectors (`<N x lane>`) in SSA and
+//! rest in lane-aligned storage between operations: the storage and call ABI
+//! stay the `LayoutCx` aggregate (`docs/native-abi.md`), so every vector
+//! load and store declares the *lane* alignment, Bool lanes convert between
+//! `<N x i1>` compute and byte-per-lane storage at that boundary, and
+//! width-one aliases stay scalars. A register's storage is touched at its
+//! base only by whole-vector typed loads and stores — pliron's mem2reg
+//! forwards a store to a load at the same pointer without comparing their
+//! types — so lane reads extract from the loaded vector instead.
 
 use super::*;
 
 impl<'a> FnLowering<'a> {
     /// Construct a SIMD value with the VM's per-lane conversions. Width-one
-    /// aliases remain SSA scalars; wider values use contiguous scalar storage.
+    /// aliases remain SSA scalars; wider values assemble a vector lane by
+    /// lane (one element splats).
     pub(super) fn lower_make_simd(
         &mut self,
         ctx: &mut Context,
@@ -24,33 +35,29 @@ impl<'a> FnLowering<'a> {
             ));
         }
         let target = ScalarTy::of_dtype(dtype);
-        if width > 1 {
-            let ty = Ty::Simd {
-                dtype,
-                width: width as i64,
-            };
-            let layout = self
-                .layout
-                .layout_of(&ty)
-                .map_err(|error| self.unsupported_reg(format!("SIMD layout ({error})"), dest))?;
-            let lane_layout = self
-                .layout
-                .layout_of(&Ty::Simd { dtype, width: 1 })
-                .expect("SIMD lane has a native layout");
-            let storage = self.entry_alloca(ctx, layout.size, layout.align);
-            for lane in 0..width {
-                let elem = elems[if elems.len() == 1 { 0 } else { lane }];
-                let converted = self.simd_constructor_lane(ctx, elem, target, dest)?;
-                let address = self.offset_address(ctx, storage, lane_layout.size * lane as u64);
-                let store = StoreOp::new(ctx, converted, address);
-                self.append(ctx, store.get_operation(), Some(dest));
-            }
-            self.reg_values.insert(dest.0, storage);
+        if width == 1 {
+            let converted = self.simd_constructor_lane(ctx, elems[0], target, dest)?;
+            self.reg_values.insert(dest.0, converted);
             return Ok(());
         }
-        let elem = elems[0];
-        let converted = self.simd_constructor_lane(ctx, elem, target, dest)?;
-        self.reg_values.insert(dest.0, converted);
+        let vector = if elems.len() == 1 {
+            let lane = self.simd_constructor_lane(ctx, elems[0], target, dest)?;
+            self.simd_splat_value(ctx, lane, width, dest)
+        } else {
+            let vector_ty = self.simd_vector_ty(ctx, dtype, width);
+            let poison = PoisonOp::new(ctx, vector_ty);
+            self.append(ctx, poison.get_operation(), Some(dest));
+            let mut vector = poison.get_result(ctx);
+            for (index, elem) in elems.iter().enumerate() {
+                let lane = self.simd_constructor_lane(ctx, *elem, target, dest)?;
+                let position = self.int_constant(ctx, index as i64);
+                let insert = InsertElementOp::new(ctx, vector, lane, position);
+                self.append(ctx, insert.get_operation(), Some(dest));
+                vector = insert.get_result(ctx);
+            }
+            vector
+        };
+        self.simd_store_vector(ctx, dest, dtype, width, vector);
         Ok(())
     }
 
@@ -122,8 +129,7 @@ impl<'a> FnLowering<'a> {
     /// rounds, and float→int truncates toward zero saturating at the
     /// 128-bit intermediate before wrapping — saturation must happen at
     /// i128, not the target width, or large magnitudes wrap differently
-    /// than the VM. Bool casts reject (VM parity); multi-lane casts stay
-    /// i128, not the target width, or large magnitudes wrap differently.
+    /// than the VM. Bool casts reject (VM parity).
     pub(super) fn lower_simd_cast(
         &mut self,
         ctx: &mut Context,
@@ -150,38 +156,9 @@ impl<'a> FnLowering<'a> {
             if matches!(source_ty, ScalarTy::Bool | ScalarTy::Ptr) {
                 return Err(self.unsupported_reg("SIMD cast of a Bool operand".into(), dest));
             }
-            let source_ptr = self.reg_ptr(ctx, value)?;
-            let source_lane = self
-                .layout
-                .layout_of(&Ty::Simd {
-                    dtype: source_dtype,
-                    width: 1,
-                })
-                .expect("SIMD lane layout");
-            let target_ty = Ty::Simd {
-                dtype,
-                width: width as i64,
-            };
-            let target_layout = self.layout.layout_of(&target_ty).expect("SIMD layout");
-            let target_lane = self
-                .layout
-                .layout_of(&Ty::Simd { dtype, width: 1 })
-                .expect("SIMD lane layout");
-            let storage = self.entry_alloca(ctx, target_layout.size, target_layout.align);
-            let source_handle = source_ty.handle(ctx);
-            for lane in 0..width {
-                let source_address =
-                    self.offset_address(ctx, source_ptr, source_lane.size * lane as u64);
-                let load = LoadOp::new(ctx, source_address, source_handle);
-                self.append(ctx, load.get_operation(), Some(dest));
-                let converted =
-                    self.simd_cast_lane(ctx, load.get_result(ctx), source_ty, dtype, dest)?;
-                let target_address =
-                    self.offset_address(ctx, storage, target_lane.size * lane as u64);
-                let store = StoreOp::new(ctx, converted, target_address);
-                self.append(ctx, store.get_operation(), Some(dest));
-            }
-            self.reg_values.insert(dest.0, storage);
+            let source = self.simd_load_vector(ctx, value, source_dtype, width, dest)?;
+            let converted = self.simd_cast_vector(ctx, source, source_ty, dtype, width, dest)?;
+            self.simd_store_vector(ctx, dest, dtype, width, converted);
             return Ok(());
         }
         let source = self.concrete_scalar_ty(value)?.ok_or_else(|| {
@@ -221,92 +198,18 @@ impl<'a> FnLowering<'a> {
                 return Err(self.unsupported_reg("SIMD to_bits width mismatch".into(), dest));
             }
             let source_ty = ScalarTy::of_dtype(source_dtype);
-            let source_ptr = self.reg_ptr(ctx, value)?;
-            let source_lane = self
-                .layout
-                .layout_of(&Ty::Simd {
-                    dtype: source_dtype,
-                    width: 1,
-                })
-                .expect("SIMD lane layout");
-            let target_ty = Ty::Simd {
-                dtype,
-                width: width as i64,
-            };
-            let target_layout = self.layout.layout_of(&target_ty).expect("SIMD layout");
-            let target_lane = self
-                .layout
-                .layout_of(&Ty::Simd { dtype, width: 1 })
-                .expect("SIMD lane layout");
-            let storage = self.entry_alloca(ctx, target_layout.size, target_layout.align);
-            let source_handle = source_ty.handle(ctx);
-            for lane in 0..width {
-                let source_address =
-                    self.offset_address(ctx, source_ptr, source_lane.size * lane as u64);
-                let load = LoadOp::new(ctx, source_address, source_handle);
-                self.append(ctx, load.get_operation(), Some(dest));
-                let bits =
-                    self.simd_bits_lane(ctx, load.get_result(ctx), source_ty, dtype, dest)?;
-                let target_address =
-                    self.offset_address(ctx, storage, target_lane.size * lane as u64);
-                let store = StoreOp::new(ctx, bits, target_address);
-                self.append(ctx, store.get_operation(), Some(dest));
-            }
-            self.reg_values.insert(dest.0, storage);
+            let source = self.simd_load_vector(ctx, value, source_dtype, width, dest)?;
+            let bits = self.simd_bits_lanes(ctx, source, source_ty, dtype, Some(width), dest)?;
+            self.simd_store_vector(ctx, dest, dtype, width, bits);
             return Ok(());
         }
         let source = self.concrete_scalar_ty(value)?.ok_or_else(|| {
             self.unsupported_reg("SIMD to_bits of an unmaterialized literal".into(), dest)
         })?;
         let lane = self.reg_value(ctx, value, source)?;
-        let bits = self.simd_bits_lane(ctx, lane, source, dtype, dest)?;
+        let bits = self.simd_bits_lanes(ctx, lane, source, dtype, None, dest)?;
         self.reg_values.insert(dest.0, bits);
         Ok(())
-    }
-
-    /// One lane's bit pattern as the unsigned `dtype` lane: a float lane
-    /// bitcasts to its own width, an integer/bool lane is already its bits;
-    /// a narrower source zero-extends.
-    fn simd_bits_lane(
-        &mut self,
-        ctx: &mut Context,
-        lane: Value,
-        source: ScalarTy,
-        dtype: Dtype,
-        dest: Reg,
-    ) -> Result<Value, PlironError> {
-        let (target_bits, _) = ScalarTy::of_dtype(dtype)
-            .int_shape()
-            .ok_or_else(|| self.unsupported_reg("SIMD to_bits target".into(), dest))?;
-        let (raw, raw_bits) = match source {
-            ScalarTy::Float64 => {
-                let int_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
-                let cast = BitcastOp::new(ctx, lane, int_ty);
-                self.append(ctx, cast.get_operation(), Some(dest));
-                (cast.get_result(ctx), 64)
-            }
-            ScalarTy::Sized(Dtype::Float32) => {
-                let int_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Signless).into();
-                let cast = BitcastOp::new(ctx, lane, int_ty);
-                self.append(ctx, cast.get_operation(), Some(dest));
-                (cast.get_result(ctx), 32)
-            }
-            ScalarTy::Bool => (lane, 1),
-            ScalarTy::Ptr => {
-                return Err(self.unsupported_reg("SIMD to_bits of a pointer lane".into(), dest));
-            }
-            integer => {
-                let (bits, _) = integer.int_shape().expect("integer lane shape");
-                (lane, bits)
-            }
-        };
-        if raw_bits == target_bits {
-            return Ok(raw);
-        }
-        let target_ty: TypeHandle = IntegerType::get(ctx, target_bits, Signedness::Signless).into();
-        let widened = ZExtOp::new_with_nneg(ctx, raw, target_ty, false);
-        self.append(ctx, widened.get_operation(), Some(dest));
-        Ok(widened.get_result(ctx))
     }
 
     pub(super) fn simd_cast_lane(
@@ -343,6 +246,8 @@ impl<'a> FnLowering<'a> {
         })
     }
 
+    /// A compile-time lane gather: a one-lane mask extracts the scalar, a
+    /// wider mask is one `shufflevector` (the checker bounds every index).
     pub(super) fn lower_simd_shuffle(
         &mut self,
         ctx: &mut Context,
@@ -353,39 +258,23 @@ impl<'a> FnLowering<'a> {
         let Some(Ty::Simd { dtype, width }) = self.func.reg_types.get(&value.0).cloned() else {
             return Err(self.unsupported_reg("SIMD shuffle source type".into(), dest));
         };
-        let lane_ty = ScalarTy::of_dtype(dtype);
-        let lane_handle = lane_ty.handle(ctx);
-        let source = self.reg_ptr(ctx, value)?;
-        let lane = self
-            .layout
-            .layout_of(&Ty::Simd { dtype, width: 1 })
-            .expect("SIMD lane layout");
-        if mask.len() == 1 {
-            let address = self.offset_address(ctx, source, lane.size * mask[0] as u64);
-            let load = LoadOp::new(ctx, address, lane_handle);
-            return self.define(ctx, dest, load.get_operation(), load.get_result(ctx));
-        }
         if mask.iter().any(|index| *index >= width as usize) {
             return Err(self.unsupported_reg("SIMD shuffle index out of range".into(), dest));
         }
-        let result_ty = Ty::Simd {
-            dtype,
-            width: mask.len() as i64,
-        };
-        let layout = self
-            .layout
-            .layout_of(&result_ty)
-            .expect("SIMD result layout");
-        let storage = self.entry_alloca(ctx, layout.size, layout.align);
-        for (result_lane, source_lane) in mask.iter().enumerate() {
-            let source_address = self.offset_address(ctx, source, lane.size * *source_lane as u64);
-            let load = LoadOp::new(ctx, source_address, lane_handle);
-            self.append(ctx, load.get_operation(), Some(dest));
-            let target_address = self.offset_address(ctx, storage, lane.size * result_lane as u64);
-            let store = StoreOp::new(ctx, load.get_result(ctx), target_address);
-            self.append(ctx, store.get_operation(), Some(dest));
+        let source = self.simd_load_vector(ctx, value, dtype, width as usize, dest)?;
+        if mask.len() == 1 {
+            let position = self.int_constant(ctx, mask[0] as i64);
+            let extract = ExtractElementOp::new(ctx, source, position);
+            return self.define(ctx, dest, extract.get_operation(), extract.get_result(ctx));
         }
-        self.reg_values.insert(dest.0, storage);
+        let shuffle = ShuffleVectorOp::new(
+            ctx,
+            source,
+            source,
+            mask.iter().map(|index| *index as i32).collect(),
+        );
+        self.append(ctx, shuffle.get_operation(), Some(dest));
+        self.simd_store_vector(ctx, dest, dtype, mask.len(), shuffle.get_result(ctx));
         Ok(())
     }
 
@@ -516,6 +405,14 @@ impl<'a> FnLowering<'a> {
         }
     }
 
+    /// The six reductions (`runtime::simd_reduce`): a strict left fold in
+    /// the VM. Integer add/mul wrap per step, so the wrapping vector
+    /// reductions are exact; min/max select the signed or unsigned family;
+    /// the bool reductions are `and`/`or` over `<N x i1>`; float add/mul
+    /// use the *ordered* `llvm.vector.reduce.fadd/fmul` from the exact
+    /// identity (`-0.0`, `1.0`) with no reassociation, which is the VM's
+    /// fold; float min/max fold lane by lane through `minnum`/`maxnum`
+    /// (Rust `f64::min`/`max`, NaN-quieting).
     pub(super) fn lower_simd_reduce(
         &mut self,
         ctx: &mut Context,
@@ -533,114 +430,64 @@ impl<'a> FnLowering<'a> {
             self.reg_values.insert(dest.0, value);
             return Ok(());
         }
-        let handle = lane_ty.handle(ctx);
-        let lane_layout = self
-            .layout
-            .layout_of(&Ty::Simd { dtype, width: 1 })
-            .expect("SIMD lane layout");
-        let ptr = self.reg_ptr(ctx, recv)?;
-        let first = LoadOp::new(ctx, ptr, handle);
-        self.append(ctx, first.get_operation(), Some(dest));
-        let mut accumulator = first.get_result(ctx);
-        for lane in 1..width {
-            let address = self.offset_address(ctx, ptr, lane_layout.size * lane as u64);
-            let load = LoadOp::new(ctx, address, handle);
-            self.append(ctx, load.get_operation(), Some(dest));
-            let next = load.get_result(ctx);
-            accumulator = match method {
-                "reduce_add" => {
-                    if matches!(lane_ty, ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float32)) {
-                        let add = FAddOp::new_with_fast_math_flags(
-                            ctx,
-                            accumulator,
-                            next,
-                            FastmathFlagsAttr::default(),
-                        );
-                        self.append(ctx, add.get_operation(), Some(dest));
-                        add.get_result(ctx)
-                    } else {
-                        let add = AddOp::new_with_overflow_flag(
-                            ctx,
-                            accumulator,
-                            next,
-                            no_overflow_flags(),
-                        );
-                        self.append(ctx, add.get_operation(), Some(dest));
-                        add.get_result(ctx)
+        let vector = self.simd_load_vector(ctx, recv, dtype, width, dest)?;
+        let lane_handle = lane_ty.handle(ctx);
+        let vector_ty = self.simd_vector_ty(ctx, dtype, width);
+        let is_float = lane_ty.int_shape().is_none() && lane_ty != ScalarTy::Bool;
+        let value = match method {
+            "reduce_min" | "reduce_max" if is_float => {
+                let is_min = method == "reduce_min";
+                let mut accumulator = self.simd_extract(ctx, vector, 0, dest);
+                for lane in 1..width {
+                    let next = self.simd_extract(ctx, vector, lane, dest);
+                    accumulator = self.float_min_max(ctx, lane_ty, is_min, accumulator, next, dest);
+                }
+                accumulator
+            }
+            "reduce_add" | "reduce_mul" if is_float => {
+                let (name, start) = match (method, lane_ty) {
+                    ("reduce_add", ScalarTy::Float64) => ("fadd", self.float_constant(ctx, -0.0)),
+                    ("reduce_add", _) => ("fadd", self.f32_constant(ctx, -0.0)),
+                    (_, ScalarTy::Float64) => ("fmul", self.float_constant(ctx, 1.0)),
+                    _ => ("fmul", self.f32_constant(ctx, 1.0)),
+                };
+                let fn_ty = FuncType::get(ctx, lane_handle, vec![lane_handle, vector_ty], false);
+                let name = format!("llvm.vector.reduce.{name}.{}", simd_mangle(dtype, width));
+                let call =
+                    CallIntrinsicOp::new(ctx, StringAttr::new(name), fn_ty, vec![start, vector]);
+                self.append(ctx, call.get_operation(), Some(dest));
+                call.get_result(ctx)
+            }
+            _ => {
+                let name = match (method, lane_ty.int_shape()) {
+                    ("reduce_add", Some(_)) => "add",
+                    ("reduce_mul", Some(_)) => "mul",
+                    ("reduce_min", Some((_, true))) => "smin",
+                    ("reduce_max", Some((_, true))) => "smax",
+                    ("reduce_min", Some((_, false))) => "umin",
+                    ("reduce_max", Some((_, false))) => "umax",
+                    ("reduce_and", None) if lane_ty == ScalarTy::Bool => "and",
+                    ("reduce_or", None) if lane_ty == ScalarTy::Bool => "or",
+                    _ => {
+                        return Err(self.unsupported_reg(
+                            format!("SIMD `{method}` on {} lanes", lane_ty.name()),
+                            dest,
+                        ));
                     }
-                }
-                "reduce_mul" => {
-                    if matches!(lane_ty, ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float32)) {
-                        let mul = FMulOp::new_with_fast_math_flags(
-                            ctx,
-                            accumulator,
-                            next,
-                            FastmathFlagsAttr::default(),
-                        );
-                        self.append(ctx, mul.get_operation(), Some(dest));
-                        mul.get_result(ctx)
-                    } else {
-                        let mul = MulOp::new_with_overflow_flag(
-                            ctx,
-                            accumulator,
-                            next,
-                            no_overflow_flags(),
-                        );
-                        self.append(ctx, mul.get_operation(), Some(dest));
-                        mul.get_result(ctx)
-                    }
-                }
-                "reduce_and" => {
-                    let and = AndOp::new(ctx, accumulator, next);
-                    self.append(ctx, and.get_operation(), Some(dest));
-                    and.get_result(ctx)
-                }
-                "reduce_or" => {
-                    let or = OrOp::new(ctx, accumulator, next);
-                    self.append(ctx, or.get_operation(), Some(dest));
-                    or.get_result(ctx)
-                }
-                "reduce_min" | "reduce_max" => {
-                    let is_min = method == "reduce_min";
-                    let predicate = match lane_ty {
-                        ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float32) => None,
-                        ScalarTy::Sized(kind) => {
-                            let signed = mojito_vm::runtime::integer_dtype_bits(kind)
-                                .is_some_and(|(_, signed)| signed);
-                            Some(match (is_min, signed) {
-                                (true, true) => ICmpPredicateAttr::SLT,
-                                (false, true) => ICmpPredicateAttr::SGT,
-                                (true, false) => ICmpPredicateAttr::ULT,
-                                (false, false) => ICmpPredicateAttr::UGT,
-                            })
-                        }
-                        _ => None,
-                    };
-                    let condition = if let Some(predicate) = predicate {
-                        let cmp = ICmpOp::new(ctx, predicate, next, accumulator);
-                        self.append(ctx, cmp.get_operation(), Some(dest));
-                        cmp.get_result(ctx)
-                    } else {
-                        let predicate = if is_min {
-                            FCmpPredicateAttr::OLT
-                        } else {
-                            FCmpPredicateAttr::OGT
-                        };
-                        let cmp = self.fcmp(ctx, predicate, next, accumulator);
-                        self.append(ctx, cmp.get_operation(), Some(dest));
-                        cmp.get_result(ctx)
-                    };
-                    let select = SelectOp::new(ctx, condition, next, accumulator);
-                    self.append(ctx, select.get_operation(), Some(dest));
-                    select.get_result(ctx)
-                }
-                _ => unreachable!(),
-            };
-        }
-        self.reg_values.insert(dest.0, accumulator);
+                };
+                let fn_ty = FuncType::get(ctx, lane_handle, vec![vector_ty], false);
+                let name = format!("llvm.vector.reduce.{name}.{}", simd_mangle(dtype, width));
+                let call = CallIntrinsicOp::new(ctx, StringAttr::new(name), fn_ty, vec![vector]);
+                self.append(ctx, call.get_operation(), Some(dest));
+                call.get_result(ctx)
+            }
+        };
+        self.reg_values.insert(dest.0, value);
         Ok(())
     }
 
+    /// `mask.select(yes, no)` — one vector `select` over the `<N x i1>`
+    /// mask; either case may be a splatting scalar (`runtime::simd_select`).
     pub(super) fn lower_simd_select(
         &mut self,
         ctx: &mut Context,
@@ -653,70 +500,12 @@ impl<'a> FnLowering<'a> {
         let Some(Ty::Simd { dtype, .. }) = self.func.reg_types.get(&dest.0).cloned() else {
             return Err(self.unsupported_reg("SIMD select result type".into(), dest));
         };
-        let lane_ty = ScalarTy::of_dtype(dtype);
-        let lane_handle = lane_ty.handle(ctx);
-        let lane_layout = self
-            .layout
-            .layout_of(&Ty::Simd { dtype, width: 1 })
-            .expect("SIMD lane layout");
-        let mask_ptr = self.reg_ptr(ctx, mask)?;
-        let yes_ptr = self.reg_ptr(ctx, yes)?;
-        let no_ptr = if matches!(self.func.reg_types.get(&no.0), Some(Ty::Simd { width, .. }) if *width > 1)
-        {
-            Some(self.reg_ptr(ctx, no)?)
-        } else {
-            None
-        };
-        let no_splat = if no_ptr.is_none() {
-            if let Some(literal) = self.pending_literals.get(&no.0).cloned() {
-                Some(self.materialize_pending(ctx, &literal, lane_ty, dest)?)
-            } else {
-                let source = self
-                    .concrete_scalar_ty(no)?
-                    .ok_or_else(|| self.unsupported_reg("SIMD select splat".into(), dest))?;
-                let value = self.reg_value(ctx, no, source)?;
-                Some(self.convert_lane(ctx, source, lane_ty, value, dest)?)
-            }
-        } else {
-            None
-        };
-        let layout = self
-            .layout
-            .layout_of(&Ty::Simd {
-                dtype,
-                width: width as i64,
-            })
-            .expect("SIMD layout");
-        let storage = self.entry_alloca(ctx, layout.size, layout.align);
-        let bool_handle = ScalarTy::Bool.handle(ctx);
-        for lane in 0..width {
-            let offset = lane_layout.size * lane as u64;
-            let mask_address = self.offset_address(ctx, mask_ptr, lane as u64);
-            let condition = LoadOp::new(ctx, mask_address, bool_handle);
-            self.append(ctx, condition.get_operation(), Some(dest));
-            let yes_address = self.offset_address(ctx, yes_ptr, offset);
-            let yes_value = LoadOp::new(ctx, yes_address, lane_handle);
-            self.append(ctx, yes_value.get_operation(), Some(dest));
-            let no_value = if let Some(ptr) = no_ptr {
-                let address = self.offset_address(ctx, ptr, offset);
-                let load = LoadOp::new(ctx, address, lane_handle);
-                self.append(ctx, load.get_operation(), Some(dest));
-                load.get_result(ctx)
-            } else {
-                no_splat.expect("SIMD select splat")
-            };
-            let select = SelectOp::new(
-                ctx,
-                condition.get_result(ctx),
-                yes_value.get_result(ctx),
-                no_value,
-            );
-            self.append(ctx, select.get_operation(), Some(dest));
-            let target = self.offset_address(ctx, storage, offset);
-            let store = StoreOp::new(ctx, select.get_result(ctx), target);
-            self.append(ctx, store.get_operation(), Some(dest));
-        }
-        self.reg_values.insert(dest.0, storage);
+        let condition = self.simd_load_vector(ctx, mask, Dtype::Bool, width, dest)?;
+        let yes_value = self.simd_operand_vector(ctx, yes, dtype, width, dest)?;
+        let no_value = self.simd_operand_vector(ctx, no, dtype, width, dest)?;
+        let select = SelectOp::new(ctx, condition, yes_value, no_value);
+        self.append(ctx, select.get_operation(), Some(dest));
+        self.simd_store_vector(ctx, dest, dtype, width, select.get_result(ctx));
         Ok(())
     }
 
@@ -730,62 +519,43 @@ impl<'a> FnLowering<'a> {
         width: usize,
     ) -> Result<(), PlironError> {
         let lane_ty = ScalarTy::of_dtype(dtype);
-        let lane_handle = lane_ty.handle(ctx);
-        let lane_layout = self
-            .layout
-            .layout_of(&Ty::Simd { dtype, width: 1 })
-            .expect("SIMD lane layout");
-        let layout = self
-            .layout
-            .layout_of(&Ty::Simd {
-                dtype,
-                width: width as i64,
-            })
-            .expect("SIMD layout");
-        let source = self.reg_ptr(ctx, operand)?;
-        let storage = self.entry_alloca(ctx, layout.size, layout.align);
-        for lane in 0..width {
-            let address = self.offset_address(ctx, source, lane_layout.size * lane as u64);
-            let load = LoadOp::new(ctx, address, lane_handle);
-            self.append(ctx, load.get_operation(), Some(dest));
-            let value = load.get_result(ctx);
-            let result = match (op, lane_ty) {
-                (PrefixOp::Neg, ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float32)) => {
-                    let neg =
-                        FNegOp::new_with_fast_math_flags(ctx, value, FastmathFlagsAttr::default());
-                    self.append(ctx, neg.get_operation(), Some(dest));
-                    neg.get_result(ctx)
-                }
-                (PrefixOp::Neg, ScalarTy::Sized(kind)) => {
-                    let zero = self.sized_int_constant(ctx, kind, 0);
-                    let neg = SubOp::new_with_overflow_flag(ctx, zero, value, no_overflow_flags());
-                    self.append(ctx, neg.get_operation(), Some(dest));
-                    neg.get_result(ctx)
-                }
-                (PrefixOp::Invert, ScalarTy::Sized(kind)) if !kind.is_float() => {
-                    let ones = self.sized_int_constant(ctx, kind, u64::MAX);
-                    let inverted = XorOp::new(ctx, value, ones);
-                    self.append(ctx, inverted.get_operation(), Some(dest));
-                    inverted.get_result(ctx)
-                }
-                (PrefixOp::Invert, ScalarTy::Bool) => {
-                    let one = self.bool_constant(ctx, true);
-                    let inverted = XorOp::new(ctx, value, one);
-                    self.append(ctx, inverted.get_operation(), Some(dest));
-                    inverted.get_result(ctx)
-                }
-                _ => {
-                    return Err(self.unsupported_reg(format!("SIMD unary operator `{op:?}`"), dest));
-                }
-            };
-            let target = self.offset_address(ctx, storage, lane_layout.size * lane as u64);
-            let store = StoreOp::new(ctx, result, target);
-            self.append(ctx, store.get_operation(), Some(dest));
-        }
-        self.reg_values.insert(dest.0, storage);
+        let vector = self.simd_load_vector(ctx, operand, dtype, width, dest)?;
+        let result = match (op, lane_ty) {
+            (PrefixOp::Neg, ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float32)) => {
+                let neg =
+                    FNegOp::new_with_fast_math_flags(ctx, vector, FastmathFlagsAttr::default());
+                self.append(ctx, neg.get_operation(), Some(dest));
+                neg.get_result(ctx)
+            }
+            (PrefixOp::Neg, _) if lane_ty.int_shape().is_some() => {
+                let zero = self.lane_constant(ctx, dtype, 0, Some(width), dest);
+                let neg = SubOp::new_with_overflow_flag(ctx, zero, vector, no_overflow_flags());
+                self.append(ctx, neg.get_operation(), Some(dest));
+                neg.get_result(ctx)
+            }
+            (PrefixOp::Invert, _) if lane_ty.int_shape().is_some() => {
+                let ones = self.lane_constant(ctx, dtype, u64::MAX, Some(width), dest);
+                let inverted = XorOp::new(ctx, vector, ones);
+                self.append(ctx, inverted.get_operation(), Some(dest));
+                inverted.get_result(ctx)
+            }
+            (PrefixOp::Invert, ScalarTy::Bool) => {
+                let one = self.bool_constant(ctx, true);
+                let ones = self.simd_splat_value(ctx, one, width, dest);
+                let inverted = XorOp::new(ctx, vector, ones);
+                self.append(ctx, inverted.get_operation(), Some(dest));
+                inverted.get_result(ctx)
+            }
+            _ => {
+                return Err(self.unsupported_reg(format!("SIMD unary operator `{op:?}`"), dest));
+            }
+        };
+        self.simd_store_vector(ctx, dest, dtype, width, result);
         Ok(())
     }
 
+    /// An elementwise binary operator over compute vectors: either side may
+    /// be a splatting scalar/literal; comparisons yield a Bool vector.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_simd_binop(
         &mut self,
@@ -798,90 +568,525 @@ impl<'a> FnLowering<'a> {
         width: usize,
     ) -> Result<(), PlironError> {
         let lane_ty = ScalarTy::of_dtype(dtype);
-        let lane_handle = lane_ty.handle(ctx);
-        let result_dtype = if is_comparison(op) {
-            Dtype::Bool
-        } else {
-            dtype
-        };
-        let source_lane = self
-            .layout
-            .layout_of(&Ty::Simd { dtype, width: 1 })
-            .expect("SIMD lane layout");
-        let result_lane = self
-            .layout
-            .layout_of(&Ty::Simd {
-                dtype: result_dtype,
-                width: 1,
-            })
-            .expect("SIMD lane layout");
-        let layout = self
-            .layout
-            .layout_of(&Ty::Simd {
-                dtype: result_dtype,
-                width: width as i64,
-            })
-            .expect("SIMD layout");
-        let lhs_ptr = self.reg_ptr(ctx, a)?;
-        let rhs_ptr = if matches!(self.func.reg_types.get(&b.0), Some(Ty::Simd { width, .. }) if *width > 1)
-        {
-            Some(self.reg_ptr(ctx, b)?)
-        } else {
-            None
-        };
-        let rhs_splat = if rhs_ptr.is_none() {
-            if let Some(literal) = self.pending_literals.get(&b.0).cloned() {
-                Some(self.materialize_pending(ctx, &literal, lane_ty, dest)?)
-            } else {
-                let source = self.concrete_scalar_ty(b)?.ok_or_else(|| {
-                    self.unsupported_reg("unmaterialized SIMD splat operand".into(), dest)
-                })?;
-                let value = self.reg_value(ctx, b, source)?;
-                Some(self.convert_lane(ctx, source, lane_ty, value, dest)?)
+        let lhs = self.simd_operand_vector(ctx, a, dtype, width, dest)?;
+        let rhs = self.simd_operand_vector(ctx, b, dtype, width, dest)?;
+        if is_comparison(op) {
+            let mask = self.simd_compare_vectors(ctx, op, lane_ty, lhs, rhs, dest)?;
+            self.simd_store_vector(ctx, dest, Dtype::Bool, width, mask);
+            return Ok(());
+        }
+        let result = match lane_ty {
+            ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float32) => {
+                self.simd_float_binop_vectors(ctx, op, lhs, rhs, dest)?
             }
-        } else {
-            None
+            ScalarTy::Bool => self.simd_bool_binop_vectors(ctx, op, lhs, rhs, dest)?,
+            // `DType.int` lanes are 64-bit signed lanes (the VM wraps them
+            // at 64 bits like `Int64`), never the scalar `Int` path with
+            // its zero-divisor trap.
+            ScalarTy::Int | ScalarTy::UInt | ScalarTy::Sized(_) => {
+                self.sized_int_binop_value(ctx, op, lhs, rhs, dtype, Some(width), dest)?
+            }
+            ScalarTy::Ptr => {
+                return Err(self.unsupported_reg(format!("SIMD binary operator `{op:?}`"), dest));
+            }
         };
-        let storage = self.entry_alloca(ctx, layout.size, layout.align);
-        for lane in 0..width {
-            let offset = source_lane.size * lane as u64;
-            let lhs_address = self.offset_address(ctx, lhs_ptr, offset);
-            let lhs = LoadOp::new(ctx, lhs_address, lane_handle);
-            self.append(ctx, lhs.get_operation(), Some(dest));
-            let rhs = if let Some(rhs_ptr) = rhs_ptr {
-                let rhs_address = self.offset_address(ctx, rhs_ptr, offset);
-                let rhs = LoadOp::new(ctx, rhs_address, lane_handle);
-                self.append(ctx, rhs.get_operation(), Some(dest));
-                rhs.get_result(ctx)
-            } else {
-                rhs_splat.expect("scalar SIMD operand was materialized")
-            };
-            if is_comparison(op) {
-                self.lower_compare(ctx, op, dest, lhs.get_result(ctx), rhs, lane_ty)?;
-            } else {
-                match lane_ty {
-                    ScalarTy::Sized(Dtype::Float32) => {
-                        self.lower_f32_binop(ctx, op, dest, lhs.get_result(ctx), rhs)?
-                    }
-                    ScalarTy::Float64 => {
-                        self.lower_float_binop(ctx, op, dest, lhs.get_result(ctx), rhs)?
-                    }
-                    ScalarTy::Sized(kind) => {
-                        self.lower_sized_int_binop(ctx, op, dest, lhs.get_result(ctx), rhs, kind)?
-                    }
-                    _ => {
-                        return Err(
-                            self.unsupported_reg(format!("SIMD binary operator `{op:?}`"), dest)
-                        );
+        self.simd_store_vector(ctx, dest, dtype, width, result);
+        Ok(())
+    }
+
+    // --- vector compute plumbing -------------------------------------------
+
+    /// The `<width x lane>` compute type of a multi-lane value (`i1` lanes
+    /// for Bool).
+    pub(super) fn simd_vector_ty(
+        &mut self,
+        ctx: &mut Context,
+        dtype: Dtype,
+        width: usize,
+    ) -> TypeHandle {
+        let lane = ScalarTy::of_dtype(dtype).handle(ctx);
+        VectorType::get(ctx, lane, width as u32, VectorTypeKind::Fixed).into()
+    }
+
+    /// A multi-lane register's storage as its compute vector: one vector
+    /// load at the lane alignment; Bool lanes load as bytes and compare
+    /// non-zero into `<N x i1>`.
+    pub(super) fn simd_load_vector(
+        &mut self,
+        ctx: &mut Context,
+        reg: Reg,
+        dtype: Dtype,
+        width: usize,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        let ptr = self.reg_ptr(ctx, reg)?;
+        Ok(self.simd_load_vector_from(ctx, ptr, dtype, width, dest))
+    }
+
+    pub(super) fn simd_load_vector_from(
+        &mut self,
+        ctx: &mut Context,
+        ptr: Value,
+        dtype: Dtype,
+        width: usize,
+        dest: Reg,
+    ) -> Value {
+        let storage_ty = self.simd_storage_ty(ctx, dtype, width);
+        let align = self.simd_lane_layout(dtype).align as u32;
+        let load = LoadOp::new(ctx, ptr, storage_ty);
+        load.set_alignment(ctx, align);
+        self.append(ctx, load.get_operation(), Some(dest));
+        let value = load.get_result(ctx);
+        if dtype != Dtype::Bool {
+            return value;
+        }
+        let zero = self.lane_constant(ctx, Dtype::UInt8, 0, Some(width), dest);
+        let set = ICmpOp::new(ctx, ICmpPredicateAttr::NE, value, zero);
+        self.append(ctx, set.get_operation(), Some(dest));
+        set.get_result(ctx)
+    }
+
+    /// Store a compute vector into fresh lane-aligned storage and define
+    /// `dest` as that storage (Bool lanes widen to bytes first). Nothing
+    /// else may store through this slot at its base: mem2reg forwards a
+    /// same-pointer store to a load without comparing their types.
+    pub(super) fn simd_store_vector(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        dtype: Dtype,
+        width: usize,
+        value: Value,
+    ) {
+        let storage_ty = self.simd_storage_ty(ctx, dtype, width);
+        let lane = self.simd_lane_layout(dtype);
+        let value = if dtype == Dtype::Bool {
+            let widened = ZExtOp::new_with_nneg(ctx, value, storage_ty, false);
+            self.append(ctx, widened.get_operation(), Some(dest));
+            widened.get_result(ctx)
+        } else {
+            value
+        };
+        let storage = self.entry_typed_alloca_aligned(ctx, storage_ty, lane.align);
+        let store = StoreOp::new(ctx, value, storage);
+        store.set_alignment(ctx, lane.align as u32);
+        self.append(ctx, store.get_operation(), Some(dest));
+        self.reg_values.insert(dest.0, storage);
+    }
+
+    /// `lane` broadcast to every lane: an insert into lane 0 of a poison
+    /// vector and a zero-mask shuffle (LLVM folds constant splats).
+    pub(super) fn simd_splat_value(
+        &mut self,
+        ctx: &mut Context,
+        lane: Value,
+        width: usize,
+        dest: Reg,
+    ) -> Value {
+        let lane_ty = lane.get_type(ctx);
+        let vector_ty: TypeHandle =
+            VectorType::get(ctx, lane_ty, width as u32, VectorTypeKind::Fixed).into();
+        let poison = PoisonOp::new(ctx, vector_ty);
+        self.append(ctx, poison.get_operation(), Some(dest));
+        let zero = self.int_constant(ctx, 0);
+        let insert = InsertElementOp::new(ctx, poison.get_result(ctx), lane, zero);
+        self.append(ctx, insert.get_operation(), Some(dest));
+        let seeded = insert.get_result(ctx);
+        let shuffle = ShuffleVectorOp::new(ctx, seeded, seeded, vec![0; width]);
+        self.append(ctx, shuffle.get_operation(), Some(dest));
+        shuffle.get_result(ctx)
+    }
+
+    /// Lane `index` of a compute vector as a scalar.
+    pub(super) fn simd_extract(
+        &mut self,
+        ctx: &mut Context,
+        vector: Value,
+        index: usize,
+        dest: Reg,
+    ) -> Value {
+        let position = self.int_constant(ctx, index as i64);
+        let extract = ExtractElementOp::new(ctx, vector, position);
+        self.append(ctx, extract.get_operation(), Some(dest));
+        extract.get_result(ctx)
+    }
+
+    /// An operand beside a multi-lane vector as a compute vector: a vector
+    /// register's loaded value, or a scalar/literal converted once to the
+    /// lane type and splatted (`runtime::to_int_lanes`).
+    pub(super) fn simd_operand_vector(
+        &mut self,
+        ctx: &mut Context,
+        reg: Reg,
+        dtype: Dtype,
+        width: usize,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        if matches!(self.func.reg_types.get(&reg.0), Some(Ty::Simd { width, .. }) if *width > 1) {
+            return self.simd_load_vector(ctx, reg, dtype, width, dest);
+        }
+        let lane_ty = ScalarTy::of_dtype(dtype);
+        let lane = if let Some(literal) = self.pending_literals.get(&reg.0).cloned() {
+            self.materialize_pending(ctx, &literal, lane_ty, dest)?
+        } else {
+            let source = self.concrete_scalar_ty(reg)?.ok_or_else(|| {
+                self.unsupported_reg("unmaterialized SIMD splat operand".into(), dest)
+            })?;
+            let value = self.reg_value(ctx, reg, source)?;
+            self.convert_lane(ctx, source, lane_ty, value, dest)?
+        };
+        Ok(self.simd_splat_value(ctx, lane, width, dest))
+    }
+
+    /// The byte-per-lane storage type of a multi-lane value.
+    fn simd_storage_ty(&mut self, ctx: &mut Context, dtype: Dtype, width: usize) -> TypeHandle {
+        let lane: TypeHandle = if dtype == Dtype::Bool {
+            IntegerType::get(ctx, 8, Signedness::Signless).into()
+        } else {
+            ScalarTy::of_dtype(dtype).handle(ctx)
+        };
+        VectorType::get(ctx, lane, width as u32, VectorTypeKind::Fixed).into()
+    }
+
+    fn simd_lane_layout(&self, dtype: Dtype) -> Layout {
+        self.layout
+            .layout_of(&Ty::Simd { dtype, width: 1 })
+            .expect("SIMD lane has a native layout")
+    }
+
+    /// `simd_cast_lane` over a whole vector: integer resizes and int↔float
+    /// conversions are vector casts (`Float32` targets round through f64,
+    /// as the VM does); float→int saturates lane by lane at i128 — the
+    /// only per-lane step — and re-assembles.
+    fn simd_cast_vector(
+        &mut self,
+        ctx: &mut Context,
+        source: Value,
+        source_ty: ScalarTy,
+        dtype: Dtype,
+        width: usize,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        let target = ScalarTy::of_dtype(dtype);
+        Ok(match target {
+            ScalarTy::Float64 => self.simd_lanes_to_f64(ctx, source, source_ty, width, dest)?,
+            ScalarTy::Sized(Dtype::Float32) => {
+                let wide = self.simd_lanes_to_f64(ctx, source, source_ty, width, dest)?;
+                let f32_vec = self.simd_vector_ty(ctx, Dtype::Float32, width);
+                let cast = FPTruncOp::new(ctx, wide, f32_vec);
+                cast.set_fast_math_flags(ctx, FastmathFlagsAttr::default());
+                self.append(ctx, cast.get_operation(), Some(dest));
+                cast.get_result(ctx)
+            }
+            integer => {
+                let (to_bits, _) = integer
+                    .int_shape()
+                    .expect("bool targets are rejected above");
+                match source_ty.int_shape() {
+                    Some(from) => self.simd_resize_int(ctx, source, from, to_bits, width, dest),
+                    None => {
+                        let wide = self.simd_lanes_to_f64(ctx, source, source_ty, width, dest)?;
+                        let target_vec = self.simd_vector_ty(ctx, dtype, width);
+                        let poison = PoisonOp::new(ctx, target_vec);
+                        self.append(ctx, poison.get_operation(), Some(dest));
+                        let mut out = poison.get_result(ctx);
+                        for lane in 0..width {
+                            let value = self.simd_extract(ctx, wide, lane, dest);
+                            let saturated = self.fptosi_sat_i128(ctx, value, dest);
+                            let narrowed =
+                                self.resize_int(ctx, saturated, (128, true), to_bits, dest);
+                            let position = self.int_constant(ctx, lane as i64);
+                            let insert = InsertElementOp::new(ctx, out, narrowed, position);
+                            self.append(ctx, insert.get_operation(), Some(dest));
+                            out = insert.get_result(ctx);
+                        }
+                        out
                     }
                 }
             }
-            let result = self.reg_values[&dest.0];
-            let target = self.offset_address(ctx, storage, result_lane.size * lane as u64);
-            let store = StoreOp::new(ctx, result, target);
-            self.append(ctx, store.get_operation(), Some(dest));
-        }
-        self.reg_values.insert(dest.0, storage);
-        Ok(())
+        })
     }
+
+    /// `lane_to_f64` over a whole vector.
+    fn simd_lanes_to_f64(
+        &mut self,
+        ctx: &mut Context,
+        source: Value,
+        source_ty: ScalarTy,
+        width: usize,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        let f64_vec = self.simd_vector_ty(ctx, Dtype::Float64, width);
+        match source_ty {
+            ScalarTy::Float64 => Ok(source),
+            ScalarTy::Sized(Dtype::Float32) => {
+                let cast = FPExtOp::new(ctx, source, f64_vec);
+                cast.set_fast_math_flags(ctx, FastmathFlagsAttr::default());
+                self.append(ctx, cast.get_operation(), Some(dest));
+                Ok(cast.get_result(ctx))
+            }
+            other => match other.int_shape() {
+                Some((_, true)) => {
+                    let cast = SIToFPOp::new(ctx, source, f64_vec);
+                    self.append(ctx, cast.get_operation(), Some(dest));
+                    Ok(cast.get_result(ctx))
+                }
+                Some((_, false)) => {
+                    let cast = UIToFPOp::new_with_nneg(ctx, source, f64_vec, false);
+                    self.append(ctx, cast.get_operation(), Some(dest));
+                    Ok(cast.get_result(ctx))
+                }
+                None => {
+                    Err(self
+                        .unsupported_reg(format!("{} as a float SIMD element", other.name()), dest))
+                }
+            },
+        }
+    }
+
+    /// `resize_int` over a whole vector (the VM's `wrap` at the target
+    /// width): truncate, or extend by the source's signedness.
+    fn simd_resize_int(
+        &mut self,
+        ctx: &mut Context,
+        value: Value,
+        from: (u32, bool),
+        to: u32,
+        width: usize,
+        dest: Reg,
+    ) -> Value {
+        let (from_bits, from_signed) = from;
+        if from_bits == to {
+            return value;
+        }
+        let lane: TypeHandle = IntegerType::get(ctx, to, Signedness::Signless).into();
+        let to_ty: TypeHandle =
+            VectorType::get(ctx, lane, width as u32, VectorTypeKind::Fixed).into();
+        if to < from_bits {
+            let cast = TruncOp::new(ctx, value, to_ty);
+            self.append(ctx, cast.get_operation(), Some(dest));
+            cast.get_result(ctx)
+        } else if from_signed {
+            let cast = SExtOp::new(ctx, value, to_ty);
+            self.append(ctx, cast.get_operation(), Some(dest));
+            cast.get_result(ctx)
+        } else {
+            let cast = ZExtOp::new_with_nneg(ctx, value, to_ty, false);
+            self.append(ctx, cast.get_operation(), Some(dest));
+            cast.get_result(ctx)
+        }
+    }
+
+    /// Lanes' bit patterns as unsigned `dtype` lanes: a float lane bitcasts
+    /// to its own width, an integer/bool lane is already its bits; a
+    /// narrower source zero-extends. `shape` is `None` for one scalar lane.
+    fn simd_bits_lanes(
+        &mut self,
+        ctx: &mut Context,
+        source: Value,
+        source_ty: ScalarTy,
+        dtype: Dtype,
+        shape: Option<usize>,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        let (target_bits, _) = ScalarTy::of_dtype(dtype)
+            .int_shape()
+            .ok_or_else(|| self.unsupported_reg("SIMD to_bits target".into(), dest))?;
+        let int_ty = |ctx: &mut Context, bits: u32| -> TypeHandle {
+            let lane: TypeHandle = IntegerType::get(ctx, bits, Signedness::Signless).into();
+            match shape {
+                Some(width) => {
+                    VectorType::get(ctx, lane, width as u32, VectorTypeKind::Fixed).into()
+                }
+                None => lane,
+            }
+        };
+        let (raw, raw_bits) = match source_ty {
+            ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float32) => {
+                let bits = if source_ty == ScalarTy::Float64 {
+                    64
+                } else {
+                    32
+                };
+                let as_int = int_ty(ctx, bits);
+                let cast = BitcastOp::new(ctx, source, as_int);
+                self.append(ctx, cast.get_operation(), Some(dest));
+                (cast.get_result(ctx), bits)
+            }
+            ScalarTy::Bool => (source, 1),
+            ScalarTy::Ptr => {
+                return Err(self.unsupported_reg("SIMD to_bits of a pointer lane".into(), dest));
+            }
+            integer => {
+                let (bits, _) = integer.int_shape().expect("integer lane shape");
+                (source, bits)
+            }
+        };
+        if raw_bits == target_bits {
+            return Ok(raw);
+        }
+        let target_ty = int_ty(ctx, target_bits);
+        let widened = ZExtOp::new_with_nneg(ctx, raw, target_ty, false);
+        self.append(ctx, widened.get_operation(), Some(dest));
+        Ok(widened.get_result(ctx))
+    }
+
+    /// An elementwise comparison as an `<N x i1>` mask, by the lane kind's
+    /// predicate table (`lower_compare`).
+    fn simd_compare_vectors(
+        &mut self,
+        ctx: &mut Context,
+        op: InfixOp,
+        lane_ty: ScalarTy,
+        lhs: Value,
+        rhs: Value,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        Ok(match lane_ty {
+            ScalarTy::Bool => {
+                if !matches!(op, InfixOp::Eq | InfixOp::Ne) {
+                    return Err(
+                        self.unsupported_reg(format!("SIMD bool-lane operator `{op:?}`"), dest)
+                    );
+                }
+                let cmp = ICmpOp::new(ctx, unsigned_predicate(op), lhs, rhs);
+                self.append(ctx, cmp.get_operation(), Some(dest));
+                cmp.get_result(ctx)
+            }
+            ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float32) => {
+                let cmp = self.fcmp(ctx, float_predicate(op), lhs, rhs);
+                self.append(ctx, cmp.get_operation(), Some(dest));
+                cmp.get_result(ctx)
+            }
+            other => {
+                let (_, signed) = other
+                    .int_shape()
+                    .ok_or_else(|| self.unsupported_reg("SIMD comparison lane".into(), dest))?;
+                let predicate = if signed {
+                    signed_predicate(op)
+                } else {
+                    unsigned_predicate(op)
+                };
+                let cmp = ICmpOp::new(ctx, predicate, lhs, rhs);
+                self.append(ctx, cmp.get_operation(), Some(dest));
+                cmp.get_result(ctx)
+            }
+        })
+    }
+
+    /// Float lanes: IEEE `+ - * /` at the lane width with no fast-math
+    /// (`runtime::float_arith`; a `Float32` result computed at f32 equals
+    /// the VM's f64 computation rounded once). A zero divisor flows through
+    /// as inf/NaN lanes.
+    fn simd_float_binop_vectors(
+        &mut self,
+        ctx: &mut Context,
+        op: InfixOp,
+        lhs: Value,
+        rhs: Value,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        let flags = FastmathFlagsAttr::default;
+        Ok(match op {
+            InfixOp::Add => {
+                let add = FAddOp::new_with_fast_math_flags(ctx, lhs, rhs, flags());
+                self.append(ctx, add.get_operation(), Some(dest));
+                add.get_result(ctx)
+            }
+            InfixOp::Sub => {
+                let sub = FSubOp::new_with_fast_math_flags(ctx, lhs, rhs, flags());
+                self.append(ctx, sub.get_operation(), Some(dest));
+                sub.get_result(ctx)
+            }
+            InfixOp::Mul => {
+                let mul = FMulOp::new_with_fast_math_flags(ctx, lhs, rhs, flags());
+                self.append(ctx, mul.get_operation(), Some(dest));
+                mul.get_result(ctx)
+            }
+            InfixOp::Div => {
+                let div = FDivOp::new_with_fast_math_flags(ctx, lhs, rhs, flags());
+                self.append(ctx, div.get_operation(), Some(dest));
+                div.get_result(ctx)
+            }
+            other => {
+                return Err(
+                    self.unsupported_reg(format!("SIMD float-lane operator `{other:?}`"), dest)
+                );
+            }
+        })
+    }
+
+    /// Bool lanes combine with `& | ^` over `<N x i1>` (`==`/`!=` split off
+    /// as comparisons); the checker rejects anything else.
+    fn simd_bool_binop_vectors(
+        &mut self,
+        ctx: &mut Context,
+        op: InfixOp,
+        lhs: Value,
+        rhs: Value,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        Ok(match op {
+            InfixOp::BitAnd => {
+                let and = AndOp::new(ctx, lhs, rhs);
+                self.append(ctx, and.get_operation(), Some(dest));
+                and.get_result(ctx)
+            }
+            InfixOp::BitOr => {
+                let or = OrOp::new(ctx, lhs, rhs);
+                self.append(ctx, or.get_operation(), Some(dest));
+                or.get_result(ctx)
+            }
+            InfixOp::BitXor => {
+                let xor = XorOp::new(ctx, lhs, rhs);
+                self.append(ctx, xor.get_operation(), Some(dest));
+                xor.get_result(ctx)
+            }
+            other => {
+                return Err(
+                    self.unsupported_reg(format!("SIMD bool-lane operator `{other:?}`"), dest)
+                );
+            }
+        })
+    }
+
+    /// `llvm.minnum`/`llvm.maxnum` on two lanes — Rust's `f64::min`/`max`
+    /// (the VM's float `reduce_min`/`reduce_max` step): a NaN operand
+    /// yields the other operand, so a NaN lane never poisons the fold.
+    fn float_min_max(
+        &mut self,
+        ctx: &mut Context,
+        lane_ty: ScalarTy,
+        is_min: bool,
+        a: Value,
+        b: Value,
+        dest: Reg,
+    ) -> Value {
+        let (suffix, handle) = match lane_ty {
+            ScalarTy::Sized(Dtype::Float32) => ("f32", FP32Type::get(ctx).into()),
+            _ => ("f64", FP64Type::get(ctx).into()),
+        };
+        let handle: TypeHandle = handle;
+        let fn_ty = FuncType::get(ctx, handle, vec![handle, handle], false);
+        let name = format!("llvm.{}.{suffix}", if is_min { "minnum" } else { "maxnum" });
+        let call = CallIntrinsicOp::new(ctx, StringAttr::new(name), fn_ty, vec![a, b]);
+        self.append(ctx, call.get_operation(), Some(dest));
+        call.get_result(ctx)
+    }
+}
+
+/// LLVM's overloaded-intrinsic suffix for a `<width x lane>` vector
+/// (`v4i32`, `v8f32`, `v16i1`).
+fn simd_mangle(dtype: Dtype, width: usize) -> String {
+    let lane = match dtype {
+        Dtype::Float32 => "f32".to_string(),
+        Dtype::Float64 => "f64".to_string(),
+        Dtype::Bool => "i1".to_string(),
+        integer => {
+            let (bits, _) =
+                mojito_vm::runtime::integer_dtype_bits(integer).expect("integer SIMD dtype");
+            format!("i{bits}")
+        }
+    };
+    format!("v{width}{lane}")
 }

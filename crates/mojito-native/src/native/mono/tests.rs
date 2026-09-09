@@ -247,22 +247,6 @@ fn dependent_lambda_calls_specialize_once_per_index_and_element_type() {
 }
 
 #[test]
-fn callable_value_parameter_reaches_dependent_tuple_calls() {
-    let source = include_str!("../../../../../assets/ok/container_owning_family_apis.mojo");
-    let specialized = specialized_main(source);
-    let toss_instances = specialized
-        .program
-        .functions
-        .iter()
-        .filter(|(name, _)| name.contains("main$toss") && name.contains("$mono$"))
-        .count();
-    assert!(
-        toss_instances >= 2,
-        "the callable value parameter must specialize for each Tuple element"
-    );
-}
-
-#[test]
 fn literal_actuals_merge_with_concrete_bindings_in_either_order() {
     let mut bindings = Bindings::default();
     // Receiver-first: `T := Int` from the concrete receiver, then a

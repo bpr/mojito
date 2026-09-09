@@ -30,10 +30,6 @@ def main():
     var c = MaybeUninit[Recorder](Recorder(2))
     c^.unsafe_deinit()
 
-    # Discarding initialized storage leaks: no "deinit 3".
-    var d = MaybeUninit[Recorder](Recorder(3))
-    _ = d^
-
     # unsafe_forget: the explicit spelling of the same leak.
     var e = MaybeUninit[Recorder](Recorder(4))
     e^.unsafe_forget()

@@ -1,0 +1,22 @@
+# Every integer dtype at width 4: elementwise `+ - *` wrap at the lane width,
+# `~` and `-` per lane, bitwise `& | ^`, and a splatting scalar on either side.
+def main():
+    var i8 = SIMD[DType.int8, 4](100, -100, 127, -128)
+    print(i8 + i8, i8 - SIMD[DType.int8, 4](1), i8 * i8, -i8, ~i8)
+    var i16 = SIMD[DType.int16, 4](30000, -30000, 32767, -32768)
+    print(i16 + i16, i16 * 2, -i16, ~i16)
+    var i32 = SIMD[DType.int32, 4](2000000000, -2000000000, 2147483647, -2147483648)
+    print(i32 + i32, i32 * i32, -i32, 5 - i32)
+    var i64 = SIMD[DType.int64, 4](9223372036854775807, -9223372036854775807, 1, 3037000500)
+    print(i64 + 1, i64 * i64, -i64, ~i64)
+    var u8 = SIMD[DType.uint8, 4](200, 100, 255, 0)
+    print(u8 + u8, u8 - 1, u8 * 3, -u8, ~u8)
+    var u16 = SIMD[DType.uint16, 4](65535, 1, 300, 65000)
+    print(u16 + 1, u16 * u16, 0 - u16, ~u16)
+    var u32 = SIMD[DType.uint32, 4](4294967295, 65536, 3, 4000000000)
+    print(u32 + 1, u32 * u32, -u32, ~u32)
+    var u64 = SIMD[DType.uint64, 4](18446744073709551615, 4294967296, 7, 9223372036854775808)
+    print(u64 + 1, u64 * u64, -u64, ~u64)
+    print(i8 & 15, i8 | u8.cast[DType.int8](), i8 ^ -1, u64 & u64, u64 | 1, u64 ^ u64)
+    var n = SIMD[DType.int, 4](1, 2, 3, 4)
+    print(n + 10, 10 - n, n * n, -n, ~n, n & 2, n | 8, n ^ 1)

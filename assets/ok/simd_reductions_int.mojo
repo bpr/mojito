@@ -1,0 +1,25 @@
+# Integer reductions: `reduce_add`/`reduce_mul` wrap at the lane width at
+# every step, `reduce_min`/`reduce_max` order signed lanes by sign and
+# unsigned lanes by magnitude.
+def main():
+    var i8 = SIMD[DType.int8, 4](100, 100, -128, 127)
+    print(i8.reduce_add(), i8.reduce_mul(), i8.reduce_min(), i8.reduce_max())
+    var u8 = SIMD[DType.uint8, 4](200, 100, 255, 0)
+    print(u8.reduce_add(), u8.reduce_mul(), u8.reduce_min(), u8.reduce_max())
+    var i16 = SIMD[DType.int16, 8](-32768, 32767, 1, -1, 300, -300, 0, 5)
+    print(i16.reduce_add(), i16.reduce_mul(), i16.reduce_min(), i16.reduce_max())
+    var u16 = SIMD[DType.uint16, 2](65535, 2)
+    print(u16.reduce_add(), u16.reduce_mul(), u16.reduce_min(), u16.reduce_max())
+    var i32 = SIMD[DType.int32, 4](2147483647, 1, -2147483648, -1)
+    print(i32.reduce_add(), i32.reduce_mul(), i32.reduce_min(), i32.reduce_max())
+    var u32 = SIMD[DType.uint32, 4](4294967295, 2, 65536, 65536)
+    print(u32.reduce_add(), u32.reduce_mul(), u32.reduce_min(), u32.reduce_max())
+    var i64 = SIMD[DType.int64, 4](9223372036854775807, 1, -9223372036854775807 - 1, 3037000500)
+    print(i64.reduce_add(), i64.reduce_mul(), i64.reduce_min(), i64.reduce_max())
+    var u64 = SIMD[DType.uint64, 4](18446744073709551615, 2, 9223372036854775808, 1)
+    print(u64.reduce_add(), u64.reduce_mul(), u64.reduce_min(), u64.reduce_max())
+    var n = SIMD[DType.int, 4](9223372036854775807, 1, -5, 4294967296)
+    var total: Int = n.reduce_add()
+    print(total, n.reduce_mul(), n.reduce_min(), n.reduce_max())
+    var x = SIMD[DType.uint64, 16](3)
+    print(x.reduce_add(), x.reduce_mul(), (x + 1).reduce_max())

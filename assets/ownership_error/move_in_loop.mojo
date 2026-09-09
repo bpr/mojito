@@ -1,4 +1,4 @@
-# expect: transferred
+# expect: use of uninitialized value 'a'
 @fieldwise_init
 struct Thing:
     var x: Int

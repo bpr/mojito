@@ -77,6 +77,30 @@ def main():
     print(compute())
 ";
 
+/// Every multi-lane SIMD form (construction, splat, elementwise, compare,
+/// select, shuffle, lane access, casts, `to_bits`, reductions) — the
+/// vector-typed pliron surface the canonical text must round-trip.
+const SIMD_SURFACE: &str = "\
+def compute() -> Int:
+    var v = SIMD[DType.int32, 4](1, 2, 3, 4)
+    var w = v * 3 + SIMD[DType.int32, 4](7)
+    var m = w > 10
+    var picked = m.select(w, -v)
+    var f = picked.cast[DType.float64]() / 2.0
+    var g = f.shuffle[3, 2, 1, 0]()
+    var b = g.cast[DType.int8]().to_bits[DType.uint16]()
+    var i = 2
+    b[i] = b[i - 1] << 3
+    var flags = SIMD[DType.bool, 8](True)
+    var total: Int = SIMD[DType.int, 4](b[0].cast[DType.int](), 1, 2, 3).reduce_add()
+    if m.reduce_and() and not flags.reduce_or():
+        total += 1
+    return total + Int(g.reduce_max()) + Int(w.reduce_mul()) + Int(f.reduce_add())
+
+def main():
+    print(compute())
+";
+
 #[test]
 fn fib_lowers_verifies_and_prints_canonically() {
     let module = native_compile(FIB, &["compute"]);
@@ -155,31 +179,126 @@ fn backend_monomorphizes_one_generic_function_at_multiple_types() {
     assert!(text.contains("identity_24y4_3aBool"), "{text}");
 }
 
+/// Vector kernels over run-time values (constants would fold away), for
+/// inspecting the code the release pipeline actually selects.
+const SIMD_KERNELS: &str = "\
+def scale(v: SIMD[DType.int32, 8], k: Int32) -> SIMD[DType.int32, 8]:
+    return v * k + v
+
+def total(v: SIMD[DType.int32, 8]) -> Int32:
+    return (v << 1).reduce_add()
+
+def mask_sum(v: SIMD[DType.float32, 8], limit: Float32) -> Float32:
+    var m = v > limit
+    return m.select(v, 0.0).reduce_add()
+
+def compute() -> Int:
+    var v = SIMD[DType.int32, 8](1, 2, 3, 4, 5, 6, 7, 8)
+    var acc = 0
+    for i in range(3):
+        acc += Int(total(scale(v, Int32(i))))
+    return acc + Int(mask_sum(v.cast[DType.float32](), 3.5))
+
+def main():
+    print(compute())
+";
+
+/// The vector lowering must survive the release pipeline *as vector code*:
+/// legal vector IR proves nothing if LLVM scalarizes it. Release IR keeps
+/// the `<8 x i32>` arithmetic, the `<8 x i1>` select, and the
+/// `llvm.vector.reduce.*` calls, and the emitted object selects packed SSE
+/// instructions for them (checked when the pinned toolchain's
+/// `llvm-objdump` is present; the baseline x86-64 target has no SSE4.1, so
+/// the i32 multiply is `pmuludq` pairs rather than `pmulld`).
+#[test]
+fn simd_lowering_emits_vector_code() {
+    let mut module = native_compile(SIMD_KERNELS, &["compute", "main"]);
+    let ir = module.llvm_ir(OptLevel::Release).expect("LLVM conversion");
+    for needle in [
+        "mul <8 x i32>",
+        "shl <8 x i32>",
+        "@llvm.vector.reduce.add.v8i32(",
+        "fcmp ogt <8 x float>",
+        "select <8 x i1>",
+        "@llvm.vector.reduce.fadd.v8f32(float -0.000000e+00",
+    ] {
+        assert!(ir.contains(needle), "release IR lacks `{needle}`:\n{ir}");
+    }
+    let Some(objdump) = llvm_objdump() else {
+        eprintln!("skipping object inspection: no llvm-objdump in the pinned toolchain");
+        return;
+    };
+    let dir = tempfile::tempdir().expect("tempdir");
+    let object = dir.path().join("simd_kernels.o");
+    module
+        .write_object(&object, OptLevel::Release, DebugInfo::Lines)
+        .expect("object emission");
+    let listing = std::process::Command::new(objdump)
+        .arg("-d")
+        .arg(&object)
+        .output()
+        .expect("llvm-objdump runs");
+    let text = String::from_utf8_lossy(&listing.stdout);
+    for mnemonic in ["paddd", "pslld", "cmpltps"] {
+        assert!(
+            text.contains(mnemonic),
+            "object code selects no `{mnemonic}`:\n{text}"
+        );
+    }
+}
+
+/// The pinned toolchain's `llvm-objdump`, if installed: beside the LLVM
+/// prefix the backend links against, else a versioned or bare name on
+/// `PATH`.
+fn llvm_objdump() -> Option<std::path::PathBuf> {
+    let prefix = std::env::var_os("LLVM_SYS_231_PREFIX")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("/opt/llvm-23"));
+    [
+        prefix.join("bin/llvm-objdump"),
+        std::path::PathBuf::from("llvm-objdump-23"),
+        std::path::PathBuf::from("llvm-objdump"),
+    ]
+    .into_iter()
+    .find(|candidate| {
+        std::process::Command::new(candidate)
+            .arg("--version")
+            .output()
+            .is_ok_and(|output| output.status.success())
+    })
+}
+
 #[test]
 fn compilation_is_deterministic() {
-    let first = native_compile(FIB, &["compute"]);
-    let second = native_compile(FIB, &["compute"]);
-    assert_eq!(first.plir_text(), second.plir_text());
-    assert_eq!(
-        first.llvm_ir(OptLevel::O0).expect("LLVM conversion"),
-        second.llvm_ir(OptLevel::O0).expect("LLVM conversion"),
-        "repeated builds must produce byte-identical LLVM IR"
-    );
+    for program in [FIB, SIMD_SURFACE] {
+        let first = native_compile(program, &["compute"]);
+        let second = native_compile(program, &["compute"]);
+        assert_eq!(first.plir_text(), second.plir_text());
+        assert_eq!(
+            first.llvm_ir(OptLevel::O0).expect("LLVM conversion"),
+            second.llvm_ir(OptLevel::O0).expect("LLVM conversion"),
+            "repeated builds must produce byte-identical LLVM IR"
+        );
+    }
 }
 
 /// Canonical text parses back and reprints byte-identically.
 #[test]
 fn canonical_text_round_trips() {
+    // The first parse attaches `<in-memory>` locations to ops that carried
+    // none, so byte stability is asserted from the first reparse onward
+    // (the same policy the Stage 0 spike pinned; see docs/notes).
+    for program in [FIB, SIMD_SURFACE] {
+        round_trip_module(native_compile(program, &["compute"]));
+    }
+}
+
+fn round_trip_module(module: NativeModule) {
     use pliron::irfmt::parsers::spaced;
     use pliron::operation::Operation;
     use pliron::parsable::parse_from_str;
     use pliron::printable::Printable;
     use pliron::result::ExpectOk;
-
-    // The first parse attaches `<in-memory>` locations to ops that carried
-    // none, so byte stability is asserted from the first reparse onward
-    // (the same policy the Stage 0 spike pinned; see docs/notes).
-    let module = native_compile(FIB, &["compute"]);
 
     let ctx1 = &mut pliron::context::Context::new();
     let round1 = parse_from_str(
@@ -985,8 +1104,8 @@ fn parity_exe_manifest_and_differential() {
     let excluded = count("excluded");
     if !focused {
         assert!(
-            differential == 450,
-            "exe-differential coverage must cover the complete runnable inventory: {differential} != 450"
+            differential == 464,
+            "exe-differential coverage must cover the complete runnable inventory: {differential} != 464"
         );
         assert!(
             errors == 34,
@@ -1256,9 +1375,10 @@ mod native_abi_cross_checks {
 
     use expect_test::expect;
     use llvm_sys::core::{
-        LLVMContextCreate, LLVMContextDispose, LLVMDoubleTypeInContext, LLVMInt1TypeInContext,
-        LLVMInt32TypeInContext, LLVMInt64TypeInContext, LLVMPointerTypeInContext,
-        LLVMStructTypeInContext,
+        LLVMArrayType2, LLVMContextCreate, LLVMContextDispose, LLVMDoubleTypeInContext,
+        LLVMFloatTypeInContext, LLVMInt1TypeInContext, LLVMInt8TypeInContext,
+        LLVMInt16TypeInContext, LLVMInt32TypeInContext, LLVMInt64TypeInContext,
+        LLVMPointerTypeInContext, LLVMStructTypeInContext,
     };
     use llvm_sys::prelude::{LLVMContextRef, LLVMTypeRef};
     use llvm_sys::target::{
@@ -1266,6 +1386,7 @@ mod native_abi_cross_checks {
         LLVMOffsetOfElement, LLVMTargetDataRef,
     };
     use mojito::Compiler;
+    use mojito::ast::Dtype;
     use mojito::native::layout::{LayoutCx, StructFieldIndex, StructLayout};
     use mojito::native::rt_abi::{self, CAbiTy, RtFieldTy};
     use mojito::native::target::{NativeTarget, Triple};
@@ -1359,6 +1480,30 @@ mod native_abi_cross_checks {
                             .collect();
                         self.strukt(&fields)
                     }
+                    // Multi-lane SIMD storage is an *array* of lanes (lane
+                    // alignment, byte-per-lane Bool), never an LLVM vector
+                    // type: the backend computes in vectors but stores in
+                    // this shape.
+                    Ty::Simd { dtype, width } => {
+                        let lane = match dtype {
+                            Dtype::Bool if *width == 1 => LLVMInt1TypeInContext(self.ctx),
+                            Dtype::Bool | Dtype::Int8 | Dtype::UInt8 => {
+                                LLVMInt8TypeInContext(self.ctx)
+                            }
+                            Dtype::Int16 | Dtype::UInt16 => LLVMInt16TypeInContext(self.ctx),
+                            Dtype::Int32 | Dtype::UInt32 => LLVMInt32TypeInContext(self.ctx),
+                            Dtype::Float32 => LLVMFloatTypeInContext(self.ctx),
+                            Dtype::Int | Dtype::Int64 | Dtype::UInt64 => {
+                                LLVMInt64TypeInContext(self.ctx)
+                            }
+                            Dtype::Float64 => LLVMDoubleTypeInContext(self.ctx),
+                        };
+                        if *width == 1 {
+                            lane
+                        } else {
+                            LLVMArrayType2(lane, *width as u64)
+                        }
+                    }
                     other => panic!("no LLVM realization in this test for {other}"),
                 }
             }
@@ -1437,6 +1582,33 @@ mod native_abi_cross_checks {
                     Ty::Struct("Outer".to_string(), vec![]),
                 ],
             ),
+            (
+                "simd_fields_lane_aligned",
+                vec![
+                    Ty::Bool,
+                    Ty::Simd {
+                        dtype: Dtype::Int32,
+                        width: 4,
+                    },
+                    Ty::Bool,
+                    Ty::Simd {
+                        dtype: Dtype::Float64,
+                        width: 2,
+                    },
+                    Ty::Simd {
+                        dtype: Dtype::Bool,
+                        width: 8,
+                    },
+                    Ty::Simd {
+                        dtype: Dtype::UInt8,
+                        width: 16,
+                    },
+                    Ty::Simd {
+                        dtype: Dtype::Int16,
+                        width: 1,
+                    },
+                ],
+            ),
         ];
         for (label, fields) in aggregate_cases {
             let expected = cx.struct_layout(fields).expect("layout");
@@ -1444,6 +1616,26 @@ mod native_abi_cross_checks {
             td.assert_agrees(label, llvm_ty, &expected);
         }
         let scalar_cases = [
+            Ty::Simd {
+                dtype: Dtype::Int32,
+                width: 4,
+            },
+            Ty::Simd {
+                dtype: Dtype::Bool,
+                width: 8,
+            },
+            Ty::Simd {
+                dtype: Dtype::Float32,
+                width: 16,
+            },
+            Ty::Simd {
+                dtype: Dtype::Int,
+                width: 2,
+            },
+            Ty::Simd {
+                dtype: Dtype::Bool,
+                width: 1,
+            },
             Ty::Int,
             Ty::UInt,
             Ty::Bool,

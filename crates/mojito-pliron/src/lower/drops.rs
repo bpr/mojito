@@ -336,8 +336,8 @@ impl<'a> FnLowering<'a> {
             .layout
             .struct_layout(&element_tys)
             .map_err(|error| self.unsupported(format!("drop layout ({error})"), None))?;
-        for position in 0..element_tys.len() {
-            let element = element_tys[position].clone();
+        for (position, element) in element_tys.iter().enumerate() {
+            let element = element.clone();
             if !self.needs_drop(&element) {
                 continue;
             }

@@ -309,7 +309,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   tagged-outcome raising ABI, structural `try`/`finally` flattening with
   per-variable initialization flags and pending-outcome dispatch, references
   as place addresses, Variant tag/payload operations with dynamic payload
-  destruction, scalar-aggregate multi-lane SIMD lowering, compiled user
+  destruction, fixed-vector multi-lane SIMD lowering over lane-aligned
+  storage, compiled user
   `__moveinit__` transfers and residual-field destructor ownership,
   `mjrt_trace` lifecycle emission under
   `CompileOptions::trace_lifecycle`, and the exe wrapper that references

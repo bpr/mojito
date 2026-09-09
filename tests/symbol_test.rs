@@ -54,7 +54,7 @@ fn keyword_variadic_role_is_part_of_callable_identity() {
 
 #[test]
 fn generic_keyword_variadic_role_is_part_of_callable_identity() {
-    let source = "def route[T: Copyable & Movable](value: T) -> Int:\n    return 1\n\ndef route[T: Copyable & Movable](var **options: T) -> Int:\n    return 2\n\ndef main():\n    print(route(7))\n    print(route(answer=7))\n";
+    let source = "def route[T: Copyable & Movable](value: T) -> Int:\n    return 1\n\ndef route[T: Copyable & Movable & Deinitable](var **options: T) -> Int:\n    return 2\n\ndef main():\n    print(route(7))\n    print(route(answer=7))\n";
     let names = lowered_names(source);
     let route_names: HashSet<_> = names
         .iter()

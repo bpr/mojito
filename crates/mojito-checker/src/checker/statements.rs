@@ -2230,8 +2230,14 @@ impl Checker {
             let bound_ty = opaque.as_ref().unwrap_or(ty);
             let mut deletability = self.explicit_destroy_deletability.borrow_mut();
             // A type parameter whose bounds do not prove `Deinitable` makes an
-            // owned parameter linear, as upstream.
-            if matches!(bound_ty, Ty::Param { .. }) && !self.is_deinitable(bound_ty) {
+            // owned parameter linear, as upstream — except a positional
+            // variadic pack (`var *values: T`), whose elements upstream
+            // destroys implicitly (a `**kwargs` pack stays linear).
+            let positional_pack = params[param].kind == mojito_ast::ast::ParamKind::Variadic;
+            if matches!(bound_ty, Ty::Param { .. })
+                && !self.is_deinitable(bound_ty)
+                && !positional_pack
+            {
                 deletability.linear_declarations.insert(site);
             } else if self.is_deinitable(bound_ty) {
                 deletability.declarations.insert(site);

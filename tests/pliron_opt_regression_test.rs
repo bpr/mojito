@@ -264,6 +264,55 @@ def main():
     );
 }
 
+/// SIMD lane semantics the vector lowering must keep exact across profiles:
+/// masked shift counts, zero-divisor lanes, saturating float-to-int casts,
+/// NaN-skipping float reductions, and a width beyond one register.
+#[test]
+fn pliron_opt_preserves_simd_edge_semantics() {
+    assert_vm_o0_release_agree(
+        "simd-edges",
+        "\
+def main():
+    var s = SIMD[DType.int8, 4](-128, 64, -1, 1)
+    print(s << 9, s >> -1, SIMD[DType.uint8, 4](128, 64, 255, 1) >> 9)
+    var d = SIMD[DType.int32, 4](-2147483648, 7, -7, 5)
+    print(d // SIMD[DType.int32, 4](-1, 0, 2, 0), d % SIMD[DType.int32, 4](-1, 0, 2, 0))
+    var f = SIMD[DType.float64, 4](1e30, -1e30, 2.5, 0.0) / SIMD[DType.float64, 4](1.0, 1.0, 1.0, 0.0)
+    print(f.cast[DType.int32](), f.cast[DType.uint8](), f.cast[DType.int64]())
+    print(f.reduce_min(), f.reduce_max(), f.reduce_add())
+    var w = SIMD[DType.int64, 16](3) << SIMD[DType.int64, 16](0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60)
+    print(w.reduce_add(), w.reduce_max(), (w > 1000).reduce_and())
+",
+    );
+}
+
+/// A dynamic lane index outside the width traps identically at both
+/// profiles, for a read and for a write (the VM raises its type error).
+#[test]
+fn pliron_opt_preserves_simd_lane_bounds_trap() {
+    assert_trap_parity(
+        "simd-lane-read-oob",
+        "\
+def main():
+    var v = SIMD[DType.int32, 4](1, 2, 3, 4)
+    var i = 0
+    while i < 5:
+        print(v[i])
+        i += 1
+",
+    );
+    assert_trap_parity(
+        "simd-lane-write-oob",
+        "\
+def main():
+    var v = SIMD[DType.float32, 8](0.0)
+    var i = 8
+    v[i] = 1.0
+    print(v)
+",
+    );
+}
+
 #[test]
 fn pliron_opt_preserves_aliasing_collections() {
     assert_vm_o0_release_agree(

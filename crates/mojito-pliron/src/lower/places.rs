@@ -152,8 +152,8 @@ impl<'a> FnLowering<'a> {
                         }
                         self.emit_simd_index_guard(ctx, *index, width as usize, dest)?;
                         let element = Ty::Simd { dtype, width: 1 };
-                        address =
-                            self.pointer_element_address(ctx, address, *index, &element, dest)?;
+                        let lane = self.layout.layout_of(&element).expect("SIMD lane layout");
+                        address = self.simd_lane_address(ctx, address, *index, lane.size, dest)?;
                         ty = element;
                         continue;
                     }

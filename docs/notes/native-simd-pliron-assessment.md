@@ -1,9 +1,59 @@
 # Native SIMD Through Pliron: Capability Assessment
 
-Date: 2026-09-03  
+Date: 2026-09-03 (assessment); 2026-09-08 (as built, below)\
 Mojito target: current `master` after the crate split  
 Examined dependency: `pliron = 0.17.0`, `pliron-llvm = 0.17.0`,
-`llvm-sys = 221.0.1` / LLVM 22
+`llvm-sys = 221.0.1` / LLVM 22 — re-verified equivalent at the promoted pin
+(Pliron revision `477e6b0`, `llvm-sys 231` / LLVM 23.1): `VectorType`,
+`InsertElementOp`/`ExtractElementOp`/`ShuffleVectorOp`, `SelectOp` over
+`<N x i1>`, vector-shaped comparisons and casts, and `CallIntrinsicOp` are
+all present and round-trip through the canonical text.
+
+## As Built (2026-09-08)
+
+The dual representation below is implemented in
+`crates/mojito-pliron/src/lower/simd.rs`. Storage and the call ABI are the
+unchanged lane-aligned `LayoutCx` aggregate (`docs/native-abi.md`); every
+multi-lane operation loads its operands as `<N x lane>` (lane alignment
+declared; Bool lanes load as bytes and compare non-zero into `<N x i1>`),
+computes in vector SSA, and stores the result into a fresh typed vector
+alloca at lane alignment (Bool lanes zero-extend to bytes). No SSA cache
+exists: pliron's mem2reg forwards the whole-vector store to the loads at
+`O0`, and SROA does the rest at release. The invariant that makes mem2reg
+safe: a register's storage is touched at its base only by whole-vector
+typed loads and stores (mem2reg does not compare access types), so lane
+reads — dynamic subscripts, formatting, the hashing fold — extract from the
+loaded vector, and lane *writes* go through the place address into variable
+or field storage, never a register's slot.
+
+Per operation: construction is `poison` plus `insertelement` per lane (one
+element splats via `shufflevector`); `+ - *` carry no `nsw`/`nuw`; shift
+counts are masked lane-wise (`and` with `bits - 1`) before `shl`/`ashr`/
+`lshr`; `//` and `%` reuse the scalar select chain with splat constants (a
+zero divisor selects a zero lane, `MIN // -1` wraps); float `+ - * /` run at
+the lane width with no fast-math (a `Float32` result computed at f32 equals
+the VM's f64 computation rounded once); comparisons produce `<N x i1>`
+directly; `select` blends over the mask; `shuffle` is one `shufflevector`
+(a one-lane mask extracts the scalar); casts are vector `trunc`/`sext`/
+`zext`/`sitofp`/`uitofp`/`fpext`/`fptrunc` (a `Float32` target rounds
+through f64, as the VM does) except float→int, which extracts each lane
+through `llvm.fptosi.sat.i128.f64` and re-inserts (the `v{N}i128` vector
+form's legalization is unverified); `to_bits` is a vector `bitcast` plus
+`zext`; reductions call `llvm.vector.reduce.{add,mul,smin,smax,umin,umax}`,
+`llvm.vector.reduce.{and,or}.v{N}i1`, and the *ordered*
+`llvm.vector.reduce.{fadd,fmul}` from the exact identity (`-0.0`, `1.0`)
+with no reassociation, while float min/max fold lane by lane through
+`llvm.minnum`/`llvm.maxnum` (Rust's `f64::min`/`max`, the VM's step).
+
+Evidence: 20 `assets/ok/simd_*` fixtures agree VM/`O0`/release
+(`conformance/pliron-parity.tsv`), the release IR of
+`tests/pliron_backend_test.rs::simd_lowering_emits_vector_code` keeps
+`mul <8 x i32>`, `shl`, `fcmp ogt <8 x float>`, `select <8 x i1>`, and the
+`llvm.vector.reduce.add.v8i32`/`fadd.v8f32` calls, and its object code
+selects `paddd`, `pmuludq`, `pslld`, `cmpltps`, `pshufd`, and `movups`
+(baseline x86-64: no `pmulld`). `LayoutCx` is unchanged and now pinned for
+SIMD against LLVM target data (multi-lane storage realized as `[N x lane]`
+arrays, never vector types).
 
 ## Conclusion
 

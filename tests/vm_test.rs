@@ -622,7 +622,7 @@ fn method_argument_binding_matches_free_functions() {
 
 #[test]
 fn generic_argument_binding_matches_free_functions() {
-    let src = "def collect[T: AnyType](head: T, /, extra: Int = 2, *rest: Int, scale: Int = 1) -> Int:\n    return (extra + len(rest)) * scale\n\ndef replace[T: Copyable & Movable](mut value: T, replacement: T):\n    value = replacement.copy()\n\ndef main():\n    print(collect(\"x\", extra=3, scale=4))\n    print(collect(1, 2, 8, 9, scale=3))\n    var n: Int = 5\n    replace(n, replacement=9)\n    print(n)\n";
+    let src = "def collect[T: AnyType](head: T, /, extra: Int = 2, *rest: Int, scale: Int = 1) -> Int:\n    return (extra + len(rest)) * scale\n\ndef replace[T: Copyable & Movable & Deinitable](mut value: T, replacement: T):\n    value = replacement.copy()\n\ndef main():\n    print(collect(\"x\", extra=3, scale=4))\n    print(collect(1, 2, 8, 9, scale=3))\n    var n: Int = 5\n    replace(n, replacement=9)\n    print(n)\n";
     assert_eq!(parity(src), "12\n12\n9\n");
 }
 
