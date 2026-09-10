@@ -132,16 +132,24 @@ pub(super) fn verify_instruction(
                         "{prefix}: mutable loan recovers permission unavailable through its source capability"
                     ));
                 }
-                // A through-reference handle designates the loan place's
-                // storage (`make_ref_target`), not the place's root.
+                // A through-reference handle designates a prefix of the loan
+                // place — the root storage, or the result of any projection
+                // the place applies on top of it — and the place's remaining
+                // projections extend it. Which prefix is not recorded, so the
+                // capability target has to match one of them.
                 if let Some(capability) = through_capability
-                    && let Some(target) = place_capability
-                        .map(|(target, _)| target)
-                        .or(loan.place.root_ty.as_ref())
-                    && !types_compatible(capability.target, target)
+                    && let Some(designations) = through_designations(&loan.place)
+                    && !designations
+                        .iter()
+                        .any(|target| types_compatible(capability.target, target))
                 {
                     errors.push(format!(
-                        "{prefix}: loan place target {target} is incompatible with its through-reference capability target {}",
+                        "{prefix}: no prefix of the loan place ({}) has the through-reference capability target {}",
+                        designations
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(", "),
                         capability.target
                     ));
                 }
@@ -1334,4 +1342,18 @@ pub(super) fn verify_instruction(
             "{prefix}: unprotected raising call in nonraising function"
         ));
     }
+}
+
+/// The storage types a place's `through` handle may designate: the root
+/// storage (the referent when the root slot is itself a capability) followed
+/// by the result of each projection the place applies. The handle enters the
+/// chain at one of these positions and the place's remaining projections run
+/// from there; `through` does not record which position, so every one of them
+/// is an admissible capability target.
+fn through_designations(place: &MirPlace) -> Option<Vec<&Ty>> {
+    let root = place.root_ty.as_ref()?;
+    let mut designations =
+        vec![reference_capability(root).map_or(root, |capability| capability.target)];
+    designations.extend(place.projection_tys.iter());
+    Some(designations)
 }

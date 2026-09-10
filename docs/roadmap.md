@@ -138,6 +138,19 @@ exempt from the ordering.
     but accepted and tracked field-wise by Mojito. The Mojito behavior is
     pinned by
     `tests/drops_test.rs::partially_moved_field_is_dropped_once_at_its_new_owner`.
+  - `symbolic-origin-pointer-write`: a write through a pointer field whose
+    origin binder has symbolic mutability (`Origin[mut=m]`, or a bare
+    `Origin`) is accepted however the binder was bound, while upstream
+    judges the binder per instantiation and rejects the write from an
+    immutable place (`expression must be mutable in assignment`). Origin
+    arguments are erased from checked identity, so no per-instance binding
+    reaches `check_pointer_write`; carrying it there is the fix.
+  - `simd-subscript-indexer`: Mojito normalizes any `Indexer` through
+    `__mlir_index__` at every subscript, so a `SIMD` lane accepts one,
+    while upstream's `SIMD.__getitem__` takes a plain `Int` and rejects it.
+    A user type's own `__getitem__` does take an `Indexer` upstream
+    (`assets/ok/indexer_normalization.mojo`), so only the builtin SIMD
+    subscript diverges.
 
   Retained on purpose, re-probed at each re-pin:
   - `subtree-origin-cast`: a cited bridge to upstream's

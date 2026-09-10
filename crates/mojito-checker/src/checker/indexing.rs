@@ -1692,8 +1692,10 @@ impl Checker {
 
     /// Reject a write through a pointer whose provenance does not carry
     /// statically known mutable capability. A symbolic parameter mutability is
-    /// writable: storage coercion only admits mutable places into fields whose
-    /// declared mutability is not explicitly immutable.
+    /// writable here and judged per instantiation upstream; Mojito does not
+    /// yet make that per-instantiation judgment, so an immutable place bound
+    /// to a symbolic binder writes through (a tracked divergence in
+    /// `docs/roadmap.md`).
     #[allow(
         clippy::unused_self,
         reason = "TODO: make an associated function or use the receiver"

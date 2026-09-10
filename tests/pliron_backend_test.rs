@@ -3,6 +3,7 @@
 
 #![cfg(feature = "backend-pliron")]
 
+use std::fmt::Write as _;
 use std::path::Path;
 
 use expect_test::expect;
@@ -23,7 +24,11 @@ fn host_target() -> NativeTarget {
 /// The linked `mojito-runtime` exports as an explicit JIT symbol mapping, so
 /// a JIT'd module referencing runtime-contract functions (`mjrt_trap` from
 /// trap guards) resolves them deterministically instead of relying on
-/// process-symbol resolution.
+/// process-symbol resolution. Every function in `rt_abi::RT_SYMBOLS` is
+/// mapped: a module reaches the JIT already lowered, so a symbol missing
+/// here surfaces as an opaque `Symbols not found` materialization failure on
+/// whichever fixture first calls it. `runtime_jit_symbols_cover_the_contract`
+/// keeps the two lists in step.
 fn runtime_jit_symbols() -> Vec<(&'static str, u64)> {
     macro_rules! address {
         ($symbol:ident) => {
@@ -36,6 +41,8 @@ fn runtime_jit_symbols() -> Vec<(&'static str, u64)> {
     vec![
         address!(mjrt_version),
         address!(mjrt_alloc),
+        address!(mjrt_free),
+        address!(mjrt_pointer_status),
         address!(mjrt_dealloc),
         address!(mjrt_write_stdout),
         address!(mjrt_fmt_i64),
@@ -43,8 +50,25 @@ fn runtime_jit_symbols() -> Vec<(&'static str, u64)> {
         address!(mjrt_fmt_f64),
         address!(mjrt_repr_string),
         address!(mjrt_trap),
+        address!(mjrt_unhandled_error),
+        address!(mjrt_abort),
+        address!(mjrt_trace),
         address!(mjrt_read_line),
     ]
+}
+
+/// The JIT mapping is the whole runtime function contract, in its order.
+#[test]
+fn runtime_jit_symbols_cover_the_contract() {
+    let mapped: Vec<&str> = runtime_jit_symbols()
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    let contract: Vec<&str> = mojito::native::rt_abi::RT_SYMBOLS
+        .iter()
+        .map(|signature| signature.symbol)
+        .collect();
+    assert_eq!(mapped, contract);
 }
 
 /// Compile `src` through the production pipeline and hand its cached
@@ -55,7 +79,7 @@ fn native_compile(src: &str, entries: &[&str]) -> NativeModule {
         .compile_source(src, Path::new(FIXTURE_NAME))
         .unwrap_or_else(|error| panic!("fixture must compile: {error}"));
     let options = CompileOptions {
-        entries: entries.iter().map(|s| s.to_string()).collect(),
+        entries: entries.iter().map(ToString::to_string).collect(),
         sources: vec![(FIXTURE_NAME.to_string(), src.to_string())],
         target: host_target(),
         trace_lifecycle: false,
@@ -251,9 +275,10 @@ fn simd_lowering_emits_vector_code() {
 /// prefix the backend links against, else a versioned or bare name on
 /// `PATH`.
 fn llvm_objdump() -> Option<std::path::PathBuf> {
-    let prefix = std::env::var_os("LLVM_SYS_231_PREFIX")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from("/opt/llvm-23"));
+    let prefix = std::env::var_os("LLVM_SYS_231_PREFIX").map_or_else(
+        || std::path::PathBuf::from("/opt/llvm-23"),
+        std::path::PathBuf::from,
+    );
     [
         prefix.join("bin/llvm-objdump"),
         std::path::PathBuf::from("llvm-objdump-23"),
@@ -289,11 +314,11 @@ fn canonical_text_round_trips() {
     // none, so byte stability is asserted from the first reparse onward
     // (the same policy the Stage 0 spike pinned; see docs/notes).
     for program in [FIB, SIMD_SURFACE] {
-        round_trip_module(native_compile(program, &["compute"]));
+        round_trip_module(&native_compile(program, &["compute"]));
     }
 }
 
-fn round_trip_module(module: NativeModule) {
+fn round_trip_module(module: &NativeModule) {
     use pliron::irfmt::parsers::spaced;
     use pliron::operation::Operation;
     use pliron::parsable::parse_from_str;
@@ -344,7 +369,10 @@ fn fixture_sources(dir: &str) -> Vec<(String, String)> {
         .filter_map(|entry| {
             let path = entry.expect("readable dir entry").path();
             let name = path.file_name()?.to_str()?;
-            name.ends_with(".mojo").then(|| name.to_string())
+            std::path::Path::new(name)
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("mojo"))
+                .then(|| name.to_string())
         })
         .filter(|name| {
             filters
@@ -375,8 +403,7 @@ fn has_compute_entry(src: &str) -> bool {
 /// Once-guarded.)
 fn parallel_map<T: Send, R: Send>(items: Vec<T>, work: impl Fn(T) -> R + Sync) -> Vec<R> {
     let workers = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
+        .map_or(4, std::num::NonZero::get)
         .min(items.len().max(1));
     let queue = std::sync::Mutex::new(items.into_iter().enumerate().rev().collect::<Vec<_>>());
     let results = std::sync::Mutex::new(Vec::new());
@@ -399,7 +426,7 @@ fn parallel_map<T: Send, R: Send>(items: Vec<T>, work: impl Fn(T) -> R + Sync) -
 }
 
 /// The manifest spelling of a JIT value's kind.
-fn ret_kind_name(value: JitValue) -> &'static str {
+const fn ret_kind_name(value: JitValue) -> &'static str {
     match value {
         JitValue::Int(_) => "Int",
         JitValue::UInt(_) => "UInt",
@@ -494,7 +521,7 @@ fn scalar_capability_manifest_and_differential() {
             .unwrap_or_else(|error| panic!("{rel}: ok fixture must compile: {error}"));
         let options = CompileOptions {
             entries: vec!["compute".to_string()],
-            sources: vec![(rel.clone(), src.clone())],
+            sources: vec![(rel.clone(), src)],
             target: host_target(),
             trace_lifecycle: false,
         };
@@ -549,7 +576,7 @@ fn scalar_capability_manifest_and_differential() {
         });
         let options = CompileOptions {
             entries: vec!["main".to_string()],
-            sources: vec![(rel.clone(), src.clone())],
+            sources: vec![(rel.clone(), src)],
             target: host_target(),
             trace_lifecycle: false,
         };
@@ -597,7 +624,7 @@ fn scalar_capability_manifest_and_differential() {
          #   cargo nextest run --features backend-pliron scalar_capability_manifest\n",
     );
     for (fixture, entry, status, detail) in &rows {
-        manifest.push_str(&format!("{fixture}\t{entry}\t{status}\t{detail}\n"));
+        writeln!(manifest, "{fixture}\t{entry}\t{status}\t{detail}").expect("String write");
     }
     expect_test::expect_file!["../conformance/pliron-scalar.tsv"].assert_eq(&manifest);
 
@@ -886,7 +913,7 @@ fn parity_exe_manifest_and_differential() {
         }
         let options = CompileOptions {
             entries,
-            sources: vec![(rel.clone(), src.clone())],
+            sources: vec![(rel.clone(), src)],
             target: host_target(),
             trace_lifecycle: false,
         };
@@ -972,16 +999,13 @@ fn parity_exe_manifest_and_differential() {
 
     let error_rows = parallel_map(fixture_sources("assets/runtime_error"), |(rel, src)| {
         let compiler = Compiler::default();
-        let compiled = match compiler.compile_source(&src, Path::new(&rel)) {
-            Ok(compiled) => compiled,
-            Err(_) => {
-                return (
-                    rel,
-                    "-".into(),
-                    "ineligible".into(),
-                    "non-conforming-snippet".into(),
-                );
-            }
+        let Ok(compiled) = compiler.compile_source(&src, Path::new(&rel)) else {
+            return (
+                rel,
+                "-".into(),
+                "ineligible".into(),
+                "non-conforming-snippet".into(),
+            );
         };
         let vm_error = match compiler
             .execute(&compiled)
@@ -1018,7 +1042,7 @@ fn parity_exe_manifest_and_differential() {
         let entry_detail = entries.join(",");
         let options = CompileOptions {
             entries,
-            sources: vec![(rel.clone(), src.clone())],
+            sources: vec![(rel.clone(), src)],
             target: host_target(),
             trace_lifecycle: false,
         };
@@ -1088,7 +1112,7 @@ fn parity_exe_manifest_and_differential() {
          #   cargo nextest run --features backend-pliron parity_exe_manifest\n",
     );
     for (fixture, entry, status, detail) in &rows {
-        manifest.push_str(&format!("{fixture}\t{entry}\t{status}\t{detail}\n"));
+        writeln!(manifest, "{fixture}\t{entry}\t{status}\t{detail}").expect("String write");
     }
     let focused = std::env::var_os("MOJITO_PARITY_ONLY").is_some();
     assert!(
@@ -1108,8 +1132,8 @@ fn parity_exe_manifest_and_differential() {
     let excluded = count("excluded");
     if !focused {
         assert!(
-            differential == 513,
-            "exe-differential coverage must cover the complete runnable inventory: {differential} != 513"
+            differential == 514,
+            "exe-differential coverage must cover the complete runnable inventory: {differential} != 514"
         );
         assert!(
             errors == 34,
@@ -1146,7 +1170,7 @@ fn native_error(src: &str, entries: &[&str]) -> String {
         .compile_source(src, Path::new(FIXTURE_NAME))
         .unwrap_or_else(|error| panic!("fixture must reach the backend: {error}"));
     let options = CompileOptions {
-        entries: entries.iter().map(|s| s.to_string()).collect(),
+        entries: entries.iter().map(ToString::to_string).collect(),
         sources: vec![(FIXTURE_NAME.to_string(), src.to_string())],
         target: host_target(),
         trace_lifecycle: false,
@@ -1302,7 +1326,7 @@ fn unknown_entry_is_rejected() {
 }
 
 /// One compact function per Stage 2 surface: float arithmetic and compares,
-/// UInt operators, conversions, the div-by-zero and pow-exponent trap blocks,
+/// `UInt` operators, conversions, the div-by-zero and pow-exponent trap blocks,
 /// and the shared `mjrt_pow`/`mjrt_trap` scaffolding all print canonically.
 const STAGE2_SURFACE: &str = "\
 def mix(a: Int, b: UInt, x: Float64) -> Float64:
@@ -1408,10 +1432,10 @@ mod native_abi_cross_checks {
     }
 
     impl TargetData {
-        fn new(triple: Triple) -> TargetData {
+        fn new(triple: Triple) -> Self {
             let layout = CString::new(triple.data_layout()).expect("no NUL in data layout");
             unsafe {
-                TargetData {
+                Self {
                     ctx: LLVMContextCreate(),
                     td: LLVMCreateTargetData(layout.as_ptr()),
                 }
@@ -1671,7 +1695,7 @@ mod native_abi_cross_checks {
     /// The mechanical LLVM rendering of the runtime contract table.
     #[test]
     fn pliron_runtime_declarations_render_the_contract_table() {
-        expect![[r#"
+        expect![[r"
             @mjrt_abi_version = external global i32
             declare i32 @mjrt_version()
             declare ptr @mjrt_alloc(i64, i64)
@@ -1688,7 +1712,7 @@ mod native_abi_cross_checks {
             declare void @mjrt_abort(ptr, i64) noreturn
             declare void @mjrt_trace(i32, ptr, i64)
             declare void @mjrt_read_line(ptr)
-        "#]]
+        "]]
         .assert_eq(&mojito::backend::pliron::runtime_declarations());
     }
 

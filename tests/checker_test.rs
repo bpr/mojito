@@ -3754,14 +3754,20 @@ fn pointer_aggregates_bind_declared_origin_parameters_per_binding() {
     ok(
         "@fieldwise_init\nstruct Borrowed[origin: Origin]:\n    var ptr: UnsafePointer[Int, Self.origin]\n\ndef main():\n    var value = 42\n    var b = Borrowed(UnsafePointer(to=value))\n    print(b.ptr[0])\n",
     );
-    // An immutable place binds only an explicitly immutable field origin, and
+    // An explicitly immutable field origin binds an immutable place, and
     // writes through the stored pointer stay rejected.
     ok(
         "@fieldwise_init\nstruct View[origin: Origin[mut=False]]:\n    var ptr: UnsafePointer[Int, Self.origin]\n\ndef f(x: Int):\n    var v = View(UnsafePointer(to=x))\n    print(v.ptr[0])\n\ndef main():\n    f(3)\n",
     );
+    // A binder whose mutability is symbolic (bare `Origin`, or `Origin[mut=m]`)
+    // takes it from the place, so an immutable place binds it; only a binder
+    // spelled `mut=True` demands a mutable place.
+    ok(
+        "@fieldwise_init\nstruct Borrowed[origin: Origin]:\n    var ptr: UnsafePointer[Int, Self.origin]\n\ndef f(x: Int):\n    var b = Borrowed(UnsafePointer(to=x))\n    print(b.ptr[0])\n\ndef main():\n    f(3)\n",
+    );
     assert!(matches!(
         err(
-            "@fieldwise_init\nstruct Borrowed[origin: Origin]:\n    var ptr: UnsafePointer[Int, Self.origin]\n\ndef f(x: Int):\n    var b = Borrowed(UnsafePointer(to=x))\n\ndef main():\n    f(3)\n"
+            "@fieldwise_init\nstruct Owned[origin: Origin[mut=True]]:\n    var ptr: UnsafePointer[Int, Self.origin]\n\ndef f(x: Int):\n    var b = Owned(UnsafePointer(to=x))\n\ndef main():\n    f(3)\n"
         ),
         TypeError::TypeMismatch { .. }
     ));

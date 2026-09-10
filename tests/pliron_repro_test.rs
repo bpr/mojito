@@ -208,7 +208,7 @@ fn pliron_repro_link_rejects_manifest_mismatches() {
         let tampered: String = pristine
             .lines()
             .map(|line| {
-                if line.starts_with(&format!("{}\t", name)) {
+                if line.starts_with(&format!("{name}\t")) {
                     tampered_row.to_string()
                 } else {
                     line.to_string()

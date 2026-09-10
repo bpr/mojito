@@ -260,6 +260,11 @@ fn pliron_debug_zero_degradations_across_the_corpus() {
 
     let report: Vec<String> = std::thread::scope(|scope| {
         let chunk = fixtures.len().div_ceil(8);
+        #[allow(
+            clippy::needless_collect,
+            reason = "collecting spawns every worker before the first join; \
+                      lazily joining would serialize the chunks"
+        )]
         let handles: Vec<_> = fixtures
             .chunks(chunk)
             .map(|chunk| {

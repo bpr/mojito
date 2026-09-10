@@ -4,6 +4,11 @@
 //! so a revision bump that changes upstream behaviour fails here — against a
 //! small hand-built module — rather than deep inside MIR lowering.
 
+#![allow(
+    dead_code,
+    reason = "each upstream_* test binary includes the whole module and uses part of it"
+)]
+
 pub mod const_fold;
 pub mod ir_build;
 

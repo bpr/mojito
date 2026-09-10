@@ -13,7 +13,7 @@ use mojito::backend::pliron::{NativeTarget, OptLevel, toolchain_report};
 use mojito::native::rt_abi;
 use mojito::native::target::Triple;
 
-fn host_target() -> NativeTarget {
+const fn host_target() -> NativeTarget {
     NativeTarget::new(Triple::X86_64UnknownLinuxGnu)
 }
 

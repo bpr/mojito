@@ -50,6 +50,7 @@ instruction	variant.deinit_with	supported	tag-checked consuming handler invocati
 instruction	variant.replace	supported	owning replacement returning the previous payload
 instruction	simd.make	supported	width-1 scalar aliases; multi-lane values assemble a fixed vector (insertelement/splat) with VM-exact lane conversion into lane-aligned storage
 instruction	simd.cast	partial	vector int rewrap and f64-mediated float conversion; i128-saturating float-to-int lane by lane; bool casts reject in the checker
+instruction	simd.bits	supported	each lane's bit pattern zero-extended into the unsigned target lane (floats through bitcast, bool as 0/1); a reinterpretation, not a conversion, so it is exact by construction and matches the VM's `simd_to_bits` on every lane
 instruction	simd.shuffle	supported	one shufflevector per compile-time mask (a one-lane mask extracts the scalar)
 instruction	raise	supported	tagged-outcome error edge
 instruction	try	supported	structural flattening with cleanup drops and finally dispatch

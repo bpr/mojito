@@ -477,14 +477,11 @@ fn run_compile(file: Option<&str>, cli: &CliArgs) -> Result<(), String> {
     let mut module = compile_native_module(file, cli)?;
 
     let write_text = |text: &str| -> Result<(), String> {
-        match &cli.output {
-            Some(path) => {
-                std::fs::write(path, text).map_err(|e| format!("cannot write {path}: {e}"))
-            }
-            None => {
-                print!("{text}");
-                Ok(())
-            }
+        if let Some(path) = &cli.output {
+            std::fs::write(path, text).map_err(|e| format!("cannot write {path}: {e}"))
+        } else {
+            print!("{text}");
+            Ok(())
         }
     };
     let output_path = || Path::new(cli.output.as_deref().expect("checked for binary kinds"));
