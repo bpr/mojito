@@ -1,6 +1,7 @@
 //! Reference actuals: origin places for argument expressions,
 //! materialized borrows, and receiver origin-argument resolution.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Checker {
@@ -218,14 +219,15 @@ impl Checker {
             Some(mojito_checked::checked::SemanticAdjustment::BorrowRefArguments {
                 materialized,
                 ..
-            }) => match materialized {
-                Some(owner) => Ok(*owner),
-                None => {
+            }) => {
+                if let Some(owner) = materialized {
+                    Ok(*owner)
+                } else {
                     let owner = self.fresh_owner()?;
                     *materialized = Some(owner);
                     Ok(owner)
                 }
-            },
+            }
             Some(_) => Err(TypeError::Unsupported(
                 "reference binding to a non-place expression".to_string(),
             )),

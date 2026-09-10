@@ -1,5 +1,6 @@
 //! AST rewriting helpers used by compile-time elaboration and specialization.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::{FnParam, ImportNames, Method};
 
@@ -175,7 +176,7 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
             {
                 match &*bound {
                     Ty::Struct(struct_name, struct_args) if struct_args.is_empty() => {
-                        *name = struct_name.clone();
+                        name.clone_from(struct_name);
                     }
                     Ty::Simd { dtype, width } => {
                         if let (Some(dtype), Some(width)) = (
@@ -209,7 +210,7 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
                 *e = materialized;
                 return;
             }
-            rewrite_expr(object, subs)
+            rewrite_expr(object, subs);
         }
         ExprKind::MethodCall {
             object,
@@ -280,7 +281,7 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
                 match argument {
                     mojito_ast::ast::SubscriptArg::Index(value)
                     | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
-                        rewrite_expr(value, subs)
+                        rewrite_expr(value, subs);
                     }
                     mojito_ast::ast::SubscriptArg::Slice {
                         lower, upper, step, ..
@@ -472,7 +473,7 @@ fn projection_to_subscript(e: &mut Expr, subs: Subs) -> bool {
     let mut receiver = e.clone();
     receiver.kind = ExprKind::Identifier(name);
     let mut index = index;
-    index.source = e.source.clone();
+    index.source.clone_from(&e.source);
     e.kind = ExprKind::Index {
         object: Box::new(receiver),
         index: Box::new(index),
@@ -664,7 +665,7 @@ impl PackRewriter {
         rewriter
     }
 
-    fn fresh_binding(&mut self) -> ElabBindingId {
+    const fn fresh_binding(&mut self) -> ElabBindingId {
         let binding = ElabBindingId(self.next_binding);
         self.next_binding += 1;
         binding
@@ -929,7 +930,7 @@ impl PackRewriter {
                 }
             }
             StmtKind::Raise(value) | StmtKind::Return(Some(value)) | StmtKind::Expr(value) => {
-                self.expand_expression(value)
+                self.expand_expression(value);
             }
             StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
                 self.expand_expression(place);
@@ -1292,7 +1293,7 @@ impl PackRewriter {
             }
             ExprKind::TypeApply { args, .. } => self.expand_type_pack_arguments(args),
             ExprKind::Prefix(_, value) | ExprKind::Transfer(value) | ExprKind::Spread(value) => {
-                self.expand_expression(value)
+                self.expand_expression(value);
             }
             ExprKind::Infix(_, left, right)
             | ExprKind::Index {
@@ -1341,7 +1342,7 @@ impl PackRewriter {
                     match argument {
                         mojito_ast::ast::SubscriptArg::Index(value)
                         | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
-                            self.expand_expression(value)
+                            self.expand_expression(value);
                         }
                         mojito_ast::ast::SubscriptArg::Slice {
                             lower, upper, step, ..
@@ -1384,7 +1385,7 @@ impl PackRewriter {
                             self.declare_value(var, None);
                         }
                         mojito_ast::ast::ComprehensionClause::If(condition) => {
-                            self.expand_expression(condition)
+                            self.expand_expression(condition);
                         }
                     }
                 }
@@ -1436,13 +1437,14 @@ impl PackRewriter {
             };
             let (pack, transferring) = match &value.kind {
                 ExprKind::Identifier(name) => (name.as_str(), false),
-                ExprKind::Transfer(value) => match &value.kind {
-                    ExprKind::Identifier(name) => (name.as_str(), true),
-                    _ => {
+                ExprKind::Transfer(value) => {
+                    if let ExprKind::Identifier(name) = &value.kind {
+                        (name.as_str(), true)
+                    } else {
                         expanded.push(argument);
                         continue;
                     }
-                },
+                }
                 _ => {
                     expanded.push(argument);
                     continue;
@@ -1564,6 +1566,11 @@ fn rewrite_decorators(decorators: &mut [mojito_ast::ast::Decorator], subs: Subs)
     }
 }
 
+#[allow(
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    reason = "TODO: split this pass; TODO: split this pass"
+)]
 fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
     match &mut s.kind {
         StmtKind::VarDecl { value, .. }
@@ -2297,7 +2304,7 @@ fn retype_expr(e: &mut Expr, subs: TypeSubs) {
                 match argument {
                     mojito_ast::ast::SubscriptArg::Index(value)
                     | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
-                        retype_expr(value, subs)
+                        retype_expr(value, subs);
                     }
                     mojito_ast::ast::SubscriptArg::Slice {
                         lower, upper, step, ..
@@ -2350,10 +2357,10 @@ fn retype_expr(e: &mut Expr, subs: TypeSubs) {
             for clause in clauses {
                 match clause {
                     mojito_ast::ast::ComprehensionClause::For { iter, .. } => {
-                        retype_expr(iter, subs)
+                        retype_expr(iter, subs);
                     }
                     mojito_ast::ast::ComprehensionClause::If(condition) => {
-                        retype_expr(condition, subs)
+                        retype_expr(condition, subs);
                     }
                 }
             }

@@ -16,3 +16,6 @@ mojito-mir = { path = "../mojito-mir" }
 mojito-native-core = { path = "../mojito-native-core" }
 mojito-symbol = { path = "../mojito-symbol" }
 mojito-types = { path = "../mojito-types" }
+
+[lints]
+workspace = true

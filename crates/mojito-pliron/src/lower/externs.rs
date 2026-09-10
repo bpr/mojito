@@ -5,10 +5,11 @@
 //! the checked `Pointer` value or the single pointer field of a
 //! `CStringSlice` view.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::ffi::{self, CType, FfiCallee};
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     /// Lower `external_call["callee", Ret, ...](args)`: the callee name is
     /// the first parameter argument's string constant; the result type is
     /// the destination register's checked type.
@@ -174,7 +175,7 @@ impl<'a> FnLowering<'a> {
 }
 
 /// The LLVM type of a C parameter/return kind.
-pub(super) fn c_type(ctx: &mut Context, kind: CType) -> TypeHandle {
+pub(super) fn c_type(ctx: &Context, kind: CType) -> TypeHandle {
     match kind {
         CType::Int | CType::UInt => IntegerType::get(ctx, 32, Signedness::Signless).into(),
         CType::SizeT | CType::SSizeT | CType::OffT => {

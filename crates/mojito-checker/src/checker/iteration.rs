@@ -2,13 +2,14 @@
 //! loop-site resolution of parametric yielded references. Extracted from
 //! `checker.rs`; see `docs/symbol-map.md`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Checker {
     /// Select source ownership independently from the loop target convention.
     /// A top-level transfer is the source-language request for consuming
     /// `__iter__(var self)`; every other expression uses borrowed iteration.
-    pub(super) fn iteration_mode(iter: &Expr) -> mojito_checked::checked::IterationMode {
+    pub(super) const fn iteration_mode(iter: &Expr) -> mojito_checked::checked::IterationMode {
         if matches!(iter.kind, ExprKind::Transfer(_)) {
             mojito_checked::checked::IterationMode::Owned
         } else {
@@ -19,7 +20,7 @@ impl Checker {
     /// Combine a target convention with the exact checked `__next__` result.
     /// This is the single matrix shared by statements and comprehensions.
     pub(super) fn iteration_binding_plan(
-        &mut self,
+        &self,
         mode: mojito_ast::ast::LoopBindingMode,
         yielded_ty: &Ty,
     ) -> Result<mojito_checked::checked::CheckedIterationBinding, TypeError> {
@@ -199,8 +200,8 @@ impl Checker {
         }
         let next = protocol.next.as_mut()?;
         let reference = next.reference_result.as_mut()?;
-        let mut resolved = false;
-        if matches!(reference.mutability, Mutability::Param(_)) {
+        let mut resolved = matches!(reference.mutability, Mutability::Param(_));
+        if resolved {
             let mutable = match self.origin_place(iter) {
                 Ok(place) => self.owner_is_mutable(place.root),
                 Err(_) => true,
@@ -210,7 +211,6 @@ impl Checker {
             } else {
                 Mutability::Immutable
             };
-            resolved = true;
         }
         if matches!(reference.origin, Origin::Param(_) | Origin::SelfParam)
             && let Some(borrowed) = protocol.borrowed_origin.clone()
@@ -226,8 +226,8 @@ impl Checker {
         Some(yielded)
     }
 
-    /// Convert a StringLiteral iterable into the nominal String temporary:
-    /// current Mojo's literal iteration yields grapheme-cluster StringSpan
+    /// Convert a `StringLiteral` iterable into the nominal String temporary:
+    /// current Mojo's literal iteration yields grapheme-cluster `StringSpan`
     /// views, so the literal takes the same owned-temporary path as any
     /// other unplaced String source. Seams without the linked stdlib struct
     /// keep the literal (and reject downstream).
@@ -437,7 +437,7 @@ impl Checker {
                     IterationMode::Borrowed => "a borrowed '__iter__' method",
                 }
                 .to_string(),
-                found: format!("{}.__iter__", c_ty),
+                found: format!("{c_ty}.__iter__"),
                 context: "for-loop iterator selection".to_string(),
             });
         };
@@ -577,7 +577,7 @@ impl Checker {
                     mode,
                     binding: None,
                     borrowed_origin: None,
-                    yield_interior: yield_interior.clone(),
+                    yield_interior,
                     prepare: vec![prepare_symbol],
                     has_next: None,
                     next: Some(Box::new(checked_next)),
@@ -758,13 +758,9 @@ impl Checker {
         Some((
             result,
             reference_result,
-            signature.raises.then(|| {
-                signature
-                    .error
-                    .as_deref()
-                    .map(instantiate)
-                    .unwrap_or(Ty::Error)
-            }),
+            signature
+                .raises
+                .then(|| signature.error.as_deref().map_or(Ty::Error, instantiate)),
         ))
     }
 }

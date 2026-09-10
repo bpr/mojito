@@ -1,8 +1,9 @@
 //! Binary operator lowering across the sized-int/float lattice.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     pub(super) fn lower_binop(
         &mut self,
         ctx: &mut Context,

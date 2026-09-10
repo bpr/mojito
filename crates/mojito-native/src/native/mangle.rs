@@ -16,6 +16,10 @@
 //! interned callable thunks (`mjthunk_<n>`, `mjdrop_<n>`).
 
 /// Mangle a MIR symbol name into a C-safe native symbol.
+#[allow(
+    clippy::format_push_string,
+    reason = "TODO: write! into the buffer instead"
+)]
 pub fn mangle(name: &str) -> String {
     let mut out = String::with_capacity(3 + name.len());
     out.push_str("mj_");

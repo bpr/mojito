@@ -1,9 +1,10 @@
 //! SSA emission plumbing: constants, op append/define, register
 //! values, pending-literal materialization, and diagnostics.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     /// Mask a shift amount with `& 63`, matching the VM's
     /// `wrapping_shl`/`wrapping_shr` modulo-width semantics.
     pub(super) fn masked_shift_amount(
@@ -85,7 +86,11 @@ impl<'a> FnLowering<'a> {
 
     /// Append `op` to the current block, stamping the span of `span_reg`
     /// (usually the instruction's dest) as its location when available.
-    pub(super) fn append(&mut self, ctx: &mut Context, op: Ptr<Operation>, span_reg: Option<Reg>) {
+    #[allow(
+        clippy::needless_pass_by_ref_mut,
+        reason = "Op construction mutates the context"
+    )]
+    pub(super) fn append(&mut self, ctx: &Context, op: Ptr<Operation>, span_reg: Option<Reg>) {
         let block = self.current.expect("lowering is inside a block");
         op.insert_at_back(block, ctx);
         if let Some(reg) = span_reg
@@ -97,6 +102,14 @@ impl<'a> FnLowering<'a> {
     }
 
     /// Append a value-producing op and record its result for `dest`.
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "TODO: drop the Result once callers stop using ?"
+    )]
+    #[allow(
+        clippy::needless_pass_by_ref_mut,
+        reason = "Op construction mutates the context"
+    )]
     pub(super) fn define(
         &mut self,
         ctx: &mut Context,
@@ -298,8 +311,7 @@ impl<'a> FnLowering<'a> {
                     self.func
                         .var_names
                         .get(var as usize)
-                        .map(String::as_str)
-                        .unwrap_or("?")
+                        .map_or("?", String::as_str)
                 ),
                 None,
             ));

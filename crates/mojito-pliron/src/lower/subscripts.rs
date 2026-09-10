@@ -1,8 +1,9 @@
 //! Subscript-call, index-intrinsic, and slice-index lowering.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     /// One checker-selected subscript invocation (`Index`/`Slice`/
     /// `MultiIndex`/`MultiSet` nominal dispatch): bind the receiver by its
     /// compiled convention, match the actuals (index registers and
@@ -239,7 +240,7 @@ impl<'a> FnLowering<'a> {
         dest: Reg,
         base: Reg,
         index: Reg,
-        intrinsic: &mojito_mir::mir::MirIntrinsicSubscript,
+        intrinsic: mojito_mir::mir::MirIntrinsicSubscript,
     ) -> Result<(), PlironError> {
         use mojito_mir::mir::MirIntrinsicSubscript as Sub;
         if matches!(intrinsic, Sub::Simd) {
@@ -270,7 +271,9 @@ impl<'a> FnLowering<'a> {
                 return Err(self.unsupported_reg(
                     format!(
                         "intrinsic subscript on `{}`",
-                        other.map(|ty| ty.to_string()).unwrap_or_default()
+                        other
+                            .map(std::string::ToString::to_string)
+                            .unwrap_or_default()
                     ),
                     dest,
                 ));

@@ -1,6 +1,7 @@
 //! Type/field equivalence, constant-register scans, and callable
 //! canonicalization.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 /// Field-list equivalence for name-colliding struct instances: strict

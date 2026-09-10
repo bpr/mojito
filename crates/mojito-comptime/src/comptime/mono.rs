@@ -2,9 +2,10 @@
 //! and struct-specialization argument resolution.
 //! Extracted from `comptime.rs`; see `docs/symbol-map.md`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> Elab<'a> {
+impl Elab<'_> {
     pub(super) fn mono_block(
         &self,
         stmts: &mut [Stmt],
@@ -401,7 +402,7 @@ impl<'a> Elab<'a> {
                 self.mono_expr(origin, method_consts, mono)?;
             }
         }
-        for parameter in m.params.iter_mut() {
+        for parameter in &mut m.params {
             self.mono_fn_parameter(parameter, method_consts, mono)?;
         }
         if let Some(error) = &mut m.raises_type {
@@ -621,6 +622,7 @@ impl<'a> Elab<'a> {
         }
     }
 
+    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn mono_expr(
         &self,
         e: &mut Expr,
@@ -655,9 +657,7 @@ impl<'a> Elab<'a> {
                 // occurrence without a target — the discovery round or a
                 // retained abstract template body — deliberately survives
                 // for the eager MIR fallback.
-                let Some(target) = mono
-                    .tstring_call_targets
-                    .get(&source_span.clone().without_syntax())
+                let Some(target) = mono.tstring_call_targets.get(&source_span.without_syntax())
                 else {
                     return Ok(());
                 };
@@ -676,7 +676,7 @@ impl<'a> Elab<'a> {
                     match part {
                         TStringPart::Literal(text) => {
                             let mut literal = Expr::new(ExprKind::Str(text), span);
-                            literal.source = source.clone();
+                            literal.source.clone_from(&source);
                             let mut conversion = Expr::new(
                                 ExprKind::Call {
                                     name: "String".to_string(),
@@ -686,7 +686,7 @@ impl<'a> Elab<'a> {
                                 },
                                 span,
                             );
-                            conversion.source = source.clone();
+                            conversion.source.clone_from(&source);
                             args.push(conversion);
                         }
                         TStringPart::Expr(value) => {
@@ -700,7 +700,7 @@ impl<'a> Elab<'a> {
                                     },
                                     value.span,
                                 );
-                                conversion.source = value.source.clone();
+                                conversion.source.clone_from(&value.source);
                                 let ExprKind::Call { args: inner, .. } = &mut conversion.kind
                                 else {
                                     unreachable!("the conversion was just built as a call");
@@ -840,9 +840,7 @@ impl<'a> Elab<'a> {
                     && mono.resolves_top_template(name)
                     && self.struct_template(name)
                 {
-                    if let Some(target) = mono
-                        .tuple_call_targets
-                        .get(&source_span.clone().without_syntax())
+                    if let Some(target) = mono.tuple_call_targets.get(&source_span.without_syntax())
                     {
                         *name = target.clone();
                     }
@@ -885,13 +883,13 @@ impl<'a> Elab<'a> {
                             // checker-discovered request for this occurrence
                             // before falling back to the abstract path.
                             Err(_) => {
-                                match self.def_request_target(name, &source_span, param_args, mono)
+                                if let Some((values, kept)) =
+                                    self.def_request_target(name, &source_span, param_args, mono)
                                 {
-                                    Some((values, kept)) => (values, kept, false),
-                                    None => {
-                                        mono.retained.insert(name.clone());
-                                        return Ok(());
-                                    }
+                                    (values, kept, false)
+                                } else {
+                                    mono.retained.insert(name.clone());
+                                    return Ok(());
                                 }
                             }
                         }
@@ -934,13 +932,13 @@ impl<'a> Elab<'a> {
                             // evident either: its arguments are the
                             // checker's to solve.
                             Ok(_) | Err(_) => {
-                                match self.def_request_target(name, &source_span, param_args, mono)
+                                if let Some((values, kept)) =
+                                    self.def_request_target(name, &source_span, param_args, mono)
                                 {
-                                    Some((values, kept)) => (values, kept, whole_pack_abi),
-                                    None => {
-                                        mono.retained.insert(name.clone());
-                                        return Ok(());
-                                    }
+                                    (values, kept, whole_pack_abi)
+                                } else {
+                                    mono.retained.insert(name.clone());
+                                    return Ok(());
                                 }
                             }
                         }
@@ -1026,7 +1024,7 @@ impl<'a> Elab<'a> {
                     match argument {
                         mojito_ast::ast::SubscriptArg::Index(value)
                         | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
-                            self.mono_expr(value, consts, mono)?
+                            self.mono_expr(value, consts, mono)?;
                         }
                         mojito_ast::ast::SubscriptArg::Slice {
                             lower, upper, step, ..
@@ -1071,7 +1069,7 @@ impl<'a> Elab<'a> {
                             mono.bind_value(var, false);
                         }
                         mojito_ast::ast::ComprehensionClause::If(condition) => {
-                            self.mono_expr(condition, consts, mono)?
+                            self.mono_expr(condition, consts, mono)?;
                         }
                     }
                 }
@@ -1229,33 +1227,32 @@ impl<'a> Elab<'a> {
                     parameter.name
                 )));
             }
-            let value = match arguments.first() {
-                Some(argument) => self.resolve_ct_arg(&decl, argument, &environment)?,
-                None => {
-                    let ParamDecl::Value {
-                        default: Some(default),
-                        ty,
-                        ..
-                    } = &decl
-                    else {
-                        return Err(ComptimeError::Arity(format!(
-                            "generic '{name}' requires compile-time parameter '{}'",
-                            parameter.name
-                        )));
-                    };
-                    let evaluated = default.evaluate(&environment).ok_or_else(|| {
-                        ComptimeError::NotComptime(format!(
-                            "cannot evaluate default for parameter '{}'",
-                            parameter.name
-                        ))
-                    })?;
-                    materialize_ct_value(evaluated.clone(), ty).ok_or_else(|| {
-                        ComptimeError::NotComptime(format!(
-                            "default for parameter '{}' expects {ty}, got {evaluated}",
-                            parameter.name
-                        ))
-                    })?
-                }
+            let value = if let Some(argument) = arguments.first() {
+                self.resolve_ct_arg(&decl, argument, &environment)?
+            } else {
+                let ParamDecl::Value {
+                    default: Some(default),
+                    ty,
+                    ..
+                } = &decl
+                else {
+                    return Err(ComptimeError::Arity(format!(
+                        "generic '{name}' requires compile-time parameter '{}'",
+                        parameter.name
+                    )));
+                };
+                let evaluated = default.evaluate(&environment).ok_or_else(|| {
+                    ComptimeError::NotComptime(format!(
+                        "cannot evaluate default for parameter '{}'",
+                        parameter.name
+                    ))
+                })?;
+                materialize_ct_value(evaluated.clone(), ty).ok_or_else(|| {
+                    ComptimeError::NotComptime(format!(
+                        "default for parameter '{}' expects {ty}, got {evaluated}",
+                        parameter.name
+                    ))
+                })?
             };
             environment.insert(
                 decl.name().trim_start_matches('*').to_string(),
@@ -1448,6 +1445,10 @@ impl<'a> Elab<'a> {
     /// kept parameter with no source argument contributes nothing (the
     /// checker re-infers it against the clone's residual signature, and the
     /// mangle already discriminates the identity).
+    #[allow(
+        clippy::unused_self,
+        reason = "TODO: make an associated function or use the receiver"
+    )]
     fn request_kept_param_args(
         &self,
         template: &Stmt,
@@ -1480,6 +1481,10 @@ impl<'a> Elab<'a> {
         Some(kept)
     }
 
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "borrow bundle: destructuring through a reference re-borrows its fields"
+    )]
     pub(super) fn resolve_spec_args_for(
         &self,
         template: &Stmt,

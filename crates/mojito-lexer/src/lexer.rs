@@ -86,7 +86,7 @@ impl<'a> Lexer<'a> {
         }
         let after_e = &rem[1..];
         let sign_len = match after_e.chars().next() {
-            Some('+') | Some('-') => 1,
+            Some('+' | '-') => 1,
             _ => 0,
         };
         if after_e[sign_len..]
@@ -122,9 +122,8 @@ impl<'a> Lexer<'a> {
                     Token::StringLiteral(value)
                 });
             }
-            let c = match rem.chars().next() {
-                Some(c) => c,
-                None => return Err(LexError::UnterminatedString(start)),
+            let Some(c) = rem.chars().next() else {
+                return Err(LexError::UnterminatedString(start));
             };
             match c {
                 // A single-line string cannot contain a raw newline.
@@ -155,9 +154,8 @@ impl<'a> Lexer<'a> {
     /// digit octal `\ooo`, `\xHH`, `\uHHHH`, `\UHHHHHHHH`
     /// — each a Unicode scalar value, encoded UTF-8 into the string.
     fn decode_escape(&mut self, start: usize) -> Result<char, LexError> {
-        let esc = match self.remainder().chars().next() {
-            Some(e) => e,
-            None => return Err(LexError::UnterminatedString(start)),
+        let Some(esc) = self.remainder().chars().next() else {
+            return Err(LexError::UnterminatedString(start));
         };
         // Simple single-character escapes (the escape letter is one byte here).
         let simple = match esc {
@@ -230,7 +228,7 @@ impl<'a> Lexer<'a> {
             code = code * 8 + ch.to_digit(8).unwrap();
             self.pos += 1;
         }
-        if code <= u8::MAX as u32 {
+        if u8::try_from(code).is_ok() {
             Ok(code)
         } else {
             Err(LexError::InvalidEscape('0', start))
@@ -348,9 +346,8 @@ impl<'a> Lexer<'a> {
                 }
                 return Ok(Token::TString { chunks, raw });
             }
-            let c = match rem.chars().next() {
-                Some(c) => c,
-                None => return Err(LexError::UnterminatedString(start)),
+            let Some(c) = rem.chars().next() else {
+                return Err(LexError::UnterminatedString(start));
             };
             match c {
                 '{' if rem.starts_with("{{") => {
@@ -434,9 +431,14 @@ impl<'a> Lexer<'a> {
     }
 }
 
-impl<'a> Iterator for Lexer<'a> {
+impl Iterator for Lexer<'_> {
     type Item = Result<(Token, Span), LexError>;
 
+    #[allow(
+        clippy::cognitive_complexity,
+        clippy::too_many_lines,
+        reason = "TODO: split this pass"
+    )]
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             // 1. Drain any pending tokens first (e.g., multiple Dedents)
@@ -518,13 +520,15 @@ impl<'a> Iterator for Lexer<'a> {
                         continue;
                     } else if spaces < current_indent {
                         while let Some(&top) = self.indent_stack.last() {
-                            if top > spaces {
-                                self.indent_stack.pop();
-                                self.emit(Token::Dedent);
-                            } else if top == spaces {
-                                break;
-                            } else {
-                                return Some(Err(LexError::IndentationError(self.pos)));
+                            match top.cmp(&spaces) {
+                                std::cmp::Ordering::Greater => {
+                                    self.indent_stack.pop();
+                                    self.emit(Token::Dedent);
+                                }
+                                std::cmp::Ordering::Equal => break,
+                                std::cmp::Ordering::Less => {
+                                    return Some(Err(LexError::IndentationError(self.pos)));
+                                }
                             }
                         }
                         if !self.pending_tokens.is_empty() {
@@ -916,9 +920,9 @@ impl<'a> Iterator for Lexer<'a> {
                     // (binary), with optional `_` digit separators.
                     let radix = if c == '0' {
                         match self.remainder()[1..].chars().next() {
-                            Some('x') | Some('X') => Some(16),
-                            Some('o') | Some('O') => Some(8),
-                            Some('b') | Some('B') => Some(2),
+                            Some('x' | 'X') => Some(16),
+                            Some('o' | 'O') => Some(8),
+                            Some('b' | 'B') => Some(2),
                             _ => None,
                         }
                     } else {

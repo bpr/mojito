@@ -1,6 +1,7 @@
 //! Binding substitution over functions, declarations, instructions,
 //! places, and types.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 pub(super) fn substitute_function(
@@ -286,7 +287,13 @@ pub(super) fn substitute_instruction(
     instruction: &mut MirInstr,
     bindings: &Bindings,
 ) -> Result<(), MonoError> {
-    use MirInstr::*;
+    use MirInstr::{
+        Call, CallIndirect, Const, ConstructTypeParam, ConsumePlace, DefVar, DropPlace,
+        EstablishLoans, Index, LoadPlace, MakeClosure, MakeRef, MakeTuple, MakeVariant,
+        MaterializeLiteral, MethodCall, MovePlace, MultiIndex, MultiSet, Next,
+        PointerStorageDestroy, PointerStorageTake, SizeOf, Slice, Store, StoreRef, Try, TryNext,
+        UninitStorageDestroy, UninitStorageTake, VariantReplace, VariantSet, VariantSetInitWith,
+    };
     match instruction {
         EstablishLoans { loans, .. } => {
             for loan in loans {

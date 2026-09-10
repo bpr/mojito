@@ -2,11 +2,17 @@
 //! evaluation, reflected-type resolution, and infix/iteration folding.
 //! Extracted from `comptime.rs`; see `docs/symbol-map.md`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> Elab<'a> {
+impl Elab<'_> {
     /// Evaluate a compile-time expression to a `CtValue`. `scope` is the current
     /// variable environment (module constants, or a CTFE call frame's locals).
+    #[allow(
+        clippy::cognitive_complexity,
+        clippy::too_many_lines,
+        reason = "TODO: split this pass; TODO: split this pass"
+    )]
     pub(super) fn eval(
         &self,
         e: &Expr,
@@ -612,6 +618,10 @@ impl<'a> Elab<'a> {
     /// Whether a receiver chain (`a.b(...)[i].c(...)`) is rooted at a binding
     /// of a compile-time value with a runtime form (not a type or reflection
     /// handle).
+    #[allow(
+        clippy::self_only_used_in_recursion,
+        reason = "TODO: lift out of the impl or use the receiver"
+    )]
     fn chain_root_is_value(&self, expr: &Expr, scope: &HashMap<String, CtValue>) -> bool {
         match &expr.kind {
             ExprKind::MethodCall { object, .. }
@@ -697,7 +707,7 @@ impl<'a> Elab<'a> {
     }
 
     /// The value-level core of [`Self::apply_generic_alias`], shared with the
-    /// TypeList `any`/`all` per-element predicate evaluation.
+    /// `TypeList` `any`/`all` per-element predicate evaluation.
     fn apply_generic_alias_values(
         &self,
         name: &str,
@@ -724,7 +734,7 @@ impl<'a> Elab<'a> {
     }
 
     /// Evaluate `TypeList.of[Trait=..., T1, ..., Tn]()` to a compile-time
-    /// TypeList value. The optional `Trait=` keyword names the common bound;
+    /// `TypeList` value. The optional `Trait=` keyword names the common bound;
     /// membership is not re-checked here (each element's uses enforce their
     /// own capabilities).
     fn eval_typelist_of(
@@ -742,8 +752,8 @@ impl<'a> Elab<'a> {
         Ok(make_typelist(types))
     }
 
-    /// Evaluate a member call on a compile-time TypeList value:
-    /// `any`/`all` (per-element predicates: IsTrivially* or a one-parameter
+    /// Evaluate a member call on a compile-time `TypeList` value:
+    /// `any`/`all` (per-element predicates: `IsTrivially`* or a one-parameter
     /// Bool-bodied comptime alias), `all_conforms_to`, and `contains`.
     pub(super) fn eval_typelist_method(
         &self,
@@ -771,9 +781,9 @@ impl<'a> Elab<'a> {
                     ParamArg::Value(Expr {
                         kind: ExprKind::Identifier(name),
                         ..
-                    }),
-                ]
-                | [ParamArg::Type(Type::Named(name, _))] => Ok(name),
+                    })
+                    | ParamArg::Type(Type::Named(name, _)),
+                ] => Ok(name),
                 _ => Err(ComptimeError::NotComptime(format!(
                     "TypeList.{field} takes exactly one compile-time name argument"
                 ))),
@@ -1159,14 +1169,19 @@ impl<'a> Elab<'a> {
     pub(super) fn eval_infix(
         &self,
         op: InfixOp,
-        l: &Expr,
-        r: &Expr,
+        left: &Expr,
+        right: &Expr,
         scope: &HashMap<String, CtValue>,
     ) -> Result<CtValue, ComptimeError> {
+        use InfixOp::{
+            Add, BitAnd, BitOr, BitXor, Div, Eq, FloorDiv, Ge, Gt, Le, Lt, Mod, Mul, Ne, Pow, Shl,
+            Shr, Sub,
+        };
+
         match op {
             InfixOp::In | InfixOp::NotIn => {
-                let item = self.eval(l, scope)?;
-                let container = self.eval(r, scope)?;
+                let item = self.eval(left, scope)?;
+                let container = self.eval(right, scope)?;
                 let found = comptime_contains(&container, &item)?;
                 return Ok(CtValue::Bool(if matches!(op, InfixOp::In) {
                     found
@@ -1176,14 +1191,14 @@ impl<'a> Elab<'a> {
             }
             InfixOp::And => {
                 return Ok(CtValue::Bool(
-                    self.eval(l, scope)?.as_bool("'and'")?
-                        && self.eval(r, scope)?.as_bool("'and'")?,
+                    self.eval(left, scope)?.as_bool("'and'")?
+                        && self.eval(right, scope)?.as_bool("'and'")?,
                 ));
             }
             InfixOp::Or => {
                 return Ok(CtValue::Bool(
-                    self.eval(l, scope)?.as_bool("'or'")?
-                        || self.eval(r, scope)?.as_bool("'or'")?,
+                    self.eval(left, scope)?.as_bool("'or'")?
+                        || self.eval(right, scope)?.as_bool("'or'")?,
                 ));
             }
             _ => {}
@@ -1191,7 +1206,7 @@ impl<'a> Elab<'a> {
         // Type equality is a compile-time proposition used by trailing `where`
         // clauses after their type parameters have been specialized.
         if let (CtValue::Type(left), CtValue::Type(right)) =
-            (self.eval(l, scope)?, self.eval(r, scope)?)
+            (self.eval(left, scope)?, self.eval(right, scope)?)
         {
             return match op {
                 InfixOp::Eq => Ok(CtValue::Bool(left == right)),
@@ -1202,7 +1217,9 @@ impl<'a> Elab<'a> {
             };
         }
         // String concatenation (`+`) and equality (`==`/`!=`) at compile time.
-        if let (CtValue::Str(a), CtValue::Str(b)) = (self.eval(l, scope)?, self.eval(r, scope)?) {
+        if let (CtValue::Str(a), CtValue::Str(b)) =
+            (self.eval(left, scope)?, self.eval(right, scope)?)
+        {
             return match op {
                 InfixOp::Add => Ok(CtValue::Str(a + &b)),
                 InfixOp::Eq => Ok(CtValue::Bool(a == b)),
@@ -1212,9 +1229,8 @@ impl<'a> Elab<'a> {
                 )),
             };
         }
-        let left = self.eval(l, scope)?;
-        let right = self.eval(r, scope)?;
-        use InfixOp::*;
+        let left = self.eval(left, scope)?;
+        let right = self.eval(right, scope)?;
         let bad = |m: &str| ComptimeError::BadArithmetic(m.to_string());
         if matches!(op, Eq | Ne | Lt | Gt | Le | Ge) {
             return Ok(CtValue::Bool(compare_numeric_values(op, &left, &right)?));
@@ -1409,7 +1425,7 @@ impl<'a> Elab<'a> {
 
 /// Wrap element types as the compile-time `TypeList` value: a marker struct
 /// holding the `values` tuple, so member access and predicates dispatch on
-/// the TypeList identity rather than on every plain comptime tuple.
+/// the `TypeList` identity rather than on every plain comptime tuple.
 fn make_typelist(types: Vec<CtValue>) -> CtValue {
     CtValue::Struct {
         name: "TypeList".to_string(),
@@ -1452,9 +1468,9 @@ impl Elab<'_> {
 fn comptime_contains(container: &CtValue, item: &CtValue) -> Result<bool, ComptimeError> {
     match (container, item) {
         (CtValue::Dict { entries, .. }, _) => Ok(entries.iter().any(|(key, _)| key == item)),
-        (CtValue::Set { elements, .. }, _)
-        | (CtValue::List(elements), _)
-        | (CtValue::Tuple(elements), _) => Ok(elements.contains(item)),
+        (CtValue::Set { elements, .. } | CtValue::List(elements) | CtValue::Tuple(elements), _) => {
+            Ok(elements.contains(item))
+        }
         (CtValue::Str(text), CtValue::Str(needle)) => Ok(text.contains(needle.as_str())),
         _ => Err(ComptimeError::NotComptime(
             "'in' needs a compile-time collection or string on the right".to_string(),

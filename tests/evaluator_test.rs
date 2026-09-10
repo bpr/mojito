@@ -74,7 +74,7 @@ fn binding(bindings: &[(String, Value)], name: &str) -> Value {
     bindings
         .iter()
         .find(|(n, _)| n == name)
-        .unwrap_or_else(|| panic!("no binding named '{}'", name))
+        .unwrap_or_else(|| panic!("no binding named '{name}'"))
         .1
         .clone()
 }
@@ -471,6 +471,7 @@ fn floor_division_and_modulo_floor_toward_negative_infinity() {
 }
 
 #[test]
+#[allow(clippy::suboptimal_flops, reason = "mirrors the `**` the VM evaluates")]
 fn power_and_true_division() {
     let e = run("var p: Int = 2 ** 10\nvar h: Float64 = 7 / 2\nvar r: Float64 = 2.0 ** 0.5\n");
     assert_eq!(binding(&e, "p"), Value::Int(1024));
@@ -1011,7 +1012,7 @@ fn simd_lane_index_out_of_range_is_runtime_error() {
     let err = run_err(
         "var v: SIMD[DType.int32, 2] = SIMD[DType.int32, 2](1, 2)\nvar bad: Int32 = v[5]\n",
     );
-    assert!(matches!(err, RuntimeError::TypeError(_)), "got {:?}", err);
+    assert!(matches!(err, RuntimeError::TypeError(_)), "got {err:?}");
 }
 
 // --- Exceptions ---
@@ -1218,7 +1219,7 @@ fn list_assignment_is_a_copy() {
 #[test]
 fn list_index_out_of_range_is_a_runtime_error() {
     let err = run_err("var xs: List[Int] = [1, 2]\nvar y: Int = xs[5]\n");
-    assert!(matches!(err, RuntimeError::TypeError(_)), "got {:?}", err);
+    assert!(matches!(err, RuntimeError::TypeError(_)), "got {err:?}");
 }
 
 // --- List (Steps 2 & 3: index-assign, append, pop) ---
@@ -1267,7 +1268,7 @@ fn list_copy_is_independent_under_mutation() {
 #[test]
 fn pop_from_empty_list_is_a_runtime_error() {
     let err = run_err("var xs: List[Int] = List[Int]()\nvar y: Int = xs.pop()\n");
-    assert!(matches!(err, RuntimeError::TypeError(_)), "got {:?}", err);
+    assert!(matches!(err, RuntimeError::TypeError(_)), "got {err:?}");
 }
 
 // --- List (more methods) ---
@@ -1522,7 +1523,7 @@ fn simd_lane_write_through_a_struct_field() {
 #[test]
 fn simd_lane_write_out_of_range_is_a_runtime_error() {
     let err = run_err("var v: SIMD[DType.int32, 2] = SIMD[DType.int32, 2](1, 2)\nv[5] = 0\n");
-    assert!(matches!(err, RuntimeError::TypeError(_)), "got {:?}", err);
+    assert!(matches!(err, RuntimeError::TypeError(_)), "got {err:?}");
 }
 
 // --- Float64 / SIMD unification ---

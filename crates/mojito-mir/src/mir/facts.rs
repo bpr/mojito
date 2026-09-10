@@ -1,12 +1,14 @@
-//! CheckedProgram fact accessors used by MIR lowering: checked types, owners,
+//! `CheckedProgram` fact accessors used by MIR lowering: checked types, owners,
 //! call contracts, adjustments, capture accesses, and borrow mutability.
 //! Extracted from `mir.rs`; see `docs/symbol-map.md`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
+#[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
 impl Flatten<'_> {
     pub(super) fn facts(&self, expression: &Expr) -> Option<&ExprFacts> {
-        let key = expression as *const Expr as usize;
+        let key = std::ptr::from_ref::<Expr>(expression) as usize;
         self.active_semantics
             .iter()
             .rev()
@@ -76,6 +78,10 @@ impl Flatten<'_> {
     /// Every owner loan carried into an aggregate expression.  An aggregate may
     /// contain more than one reference-valued field, so this must remain plural:
     /// keeping only the first borrow makes later fields dangling-capable.
+    #[allow(
+        clippy::needless_collect,
+        reason = "TODO: needs the intermediate to end the &self borrow"
+    )]
     pub(super) fn aggregate_borrows(&mut self, expression: &Expr) -> Vec<MirLoan> {
         // A view-constructor implicit conversion borrows its source place:
         // the conversion result carries the same whole-place loan the
@@ -272,7 +278,7 @@ impl Flatten<'_> {
                         // place and link instead of competing with the
                         // binding's own loan.
                         let source = self.place(source);
-                        return self.pointer_place_loan(place.clone(), mutable, Some(source), true);
+                        return self.pointer_place_loan(&place, mutable, Some(source), true);
                     }
                     let place = self.place(source);
                     return vec![MirLoan {
@@ -304,10 +310,11 @@ impl Flatten<'_> {
                     if !loans.is_empty() {
                         return loans;
                     }
-                    let places: Vec<&Expr> = arguments()
+
+                    let lending: Vec<_> = arguments()
                         .filter(|argument| self.view_lends_argument(argument))
                         .collect();
-                    let loans: Vec<MirLoan> = places
+                    let loans: Vec<MirLoan> = lending
                         .into_iter()
                         .map(|argument| MirLoan {
                             place: self.place(argument),
@@ -410,7 +417,7 @@ impl Flatten<'_> {
                             _ => None,
                         });
                 if let Some(mojito_types::origin::PointerOrigin::Place { place, mutable }) = cast {
-                    return self.pointer_place_loan(place, mutable, None, false);
+                    return self.pointer_place_loan(&place, mutable, None, false);
                 }
                 // A method whose selected contract returns an origin-bearing
                 // pointer (`xs.unsafe_ptr()`) loans that rebased place.
@@ -420,7 +427,7 @@ impl Flatten<'_> {
                         ..
                     } = &contract.result_ty
                 {
-                    return self.pointer_place_loan(place.clone(), *mutable, None, false);
+                    return self.pointer_place_loan(&place.clone(), *mutable, None, false);
                 }
                 // `unsafe_offset` preserves provenance: forward the receiver's
                 // loans onto the offset pointer.
@@ -522,7 +529,7 @@ impl Flatten<'_> {
     /// nothing.
     fn pointer_place_loan(
         &mut self,
-        place: mojito_types::origin::OriginPlace,
+        place: &mojito_types::origin::OriginPlace,
         mutable: bool,
         source: Option<MirPlace>,
         shared: bool,
@@ -535,10 +542,12 @@ impl Flatten<'_> {
             .unwrap_or_else(|| MirPlace::root(root, self.var_types.get(&root).cloned()));
         let interior = matches!(
             place.path.last(),
-            Some(mojito_types::origin::OriginSeg::Interior(_))
-                | Some(mojito_types::origin::OriginSeg::Subtree)
+            Some(
+                mojito_types::origin::OriginSeg::Interior(_)
+                    | mojito_types::origin::OriginSeg::Subtree
+            )
         )
-        .then(|| self.mir_interior_origin(&place, Some(root)))
+        .then(|| self.mir_interior_origin(place, Some(root)))
         .flatten();
         vec![MirLoan {
             place: mir_place,

@@ -38,26 +38,26 @@ pub struct CallVariadics {
 impl MatchError {
     pub fn into_type_error(self, func: &str) -> TypeError {
         match self {
-            MatchError::TooManyPositional { expected, got } => TypeError::ArityMismatch {
+            Self::TooManyPositional { expected, got } => TypeError::ArityMismatch {
                 name: func.to_string(),
                 expected,
                 got,
             },
-            MatchError::UnknownKeyword(k) => TypeError::BadCall {
+            Self::UnknownKeyword(k) => TypeError::BadCall {
                 func: func.to_string(),
-                reason: format!("unexpected keyword argument '{}'", k),
+                reason: format!("unexpected keyword argument '{k}'"),
             },
-            MatchError::PositionalOnly(k) => TypeError::BadCall {
+            Self::PositionalOnly(k) => TypeError::BadCall {
                 func: func.to_string(),
-                reason: format!("argument '{}' is positional-only", k),
+                reason: format!("argument '{k}' is positional-only"),
             },
-            MatchError::Duplicate(k) => TypeError::BadCall {
+            Self::Duplicate(k) => TypeError::BadCall {
                 func: func.to_string(),
-                reason: format!("argument '{}' supplied more than once", k),
+                reason: format!("argument '{k}' supplied more than once"),
             },
-            MatchError::Missing(m) => TypeError::BadCall {
+            Self::Missing(m) => TypeError::BadCall {
                 func: func.to_string(),
-                reason: format!("missing required argument '{}'", m),
+                reason: format!("missing required argument '{m}'"),
             },
         }
     }
@@ -136,6 +136,10 @@ pub fn match_call_slots(
 }
 
 /// Convert a parser marker to the regular-parameter index space used by calls.
+#[allow(
+    clippy::single_option_map,
+    reason = "all 14 call sites thread Option<usize> through unchanged"
+)]
 pub fn regular_marker_index(params: &[FnParam], marker: Option<usize>) -> Option<usize> {
     marker.map(|index| {
         params[..index]

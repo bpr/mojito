@@ -1,6 +1,7 @@
 //! Subscript receiver/call verification and parameter-argument
 //! checks.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 /// Runtime frame/slot capabilities are represented either by a source-level
@@ -70,6 +71,12 @@ pub(super) fn verify_subscript_receiver_place(
     }
 }
 
+#[allow(
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    clippy::needless_pass_by_value,
+    reason = "TODO: split this pass; `sources` is a borrow bundle of `&mut` fields"
+)]
 pub(super) fn verify_subscript_call(
     prefix: &str,
     function: &MirFunction,

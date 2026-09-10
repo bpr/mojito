@@ -1,8 +1,10 @@
-//! Stage 5: flatten the HIR's nested expressions into
-//! **A-Normal Form** (three-address code) — every subexpression becomes a
-//! `MirInstr` writing a fresh [`Reg`], so `foo(bar(x))` becomes
-//! `t0 = bar(x); t1 = foo(t0)`. The flattened form is what Stages 6–7 dataflow
-//! analysis (liveness / move / borrow) runs over, and what the backends consume.
+//! Stage 5: flatten the HIR's nested expressions into **A-Normal Form**.
+//!
+//! Every subexpression becomes a `MirInstr` writing a fresh [`Reg`] — three-
+//! address code — so `foo(bar(x))` becomes `t0 = bar(x); t1 = foo(t0)`.
+//!
+//! The flattened form is what Stages 6–7 dataflow analysis (liveness / move /
+//! borrow) runs over, and what the backends consume.
 //!
 //! One current limitation, intentional at this stage:
 //! * **Fields/methods are name-based.** There is no type/layout info here, so
@@ -40,10 +42,12 @@ mod facts;
 mod lower_expr;
 mod lower_stmt;
 
-/// Lower a whole HIR control-flow graph (one function body) into a `MirFunction`.
-/// Each HIR block becomes a MIR block (same order); a single [`Flatten`] threads
-/// the register counter, the variable interner (seeded from `cfg.vars` so IDs
-/// agree with the HIR), and the span table across the whole function.
+/// Lower a whole HIR control-flow graph (one function body) into a
+/// `MirFunction`.
+///
+/// Each HIR block becomes a MIR block (same order); a single [`Flatten`]
+/// threads the register counter, the variable interner (seeded from `cfg.vars`
+/// so IDs agree with the HIR), and the span table across the whole function.
 pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
     lower_cfg_nested(
         cfg,
@@ -57,9 +61,11 @@ pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
     )
 }
 
-/// A whole program's worth of lowered functions, keyed by name. The synthetic
-/// `__toplevel__` holds module initialization and explicit legacy test snippets.
-/// Production compilation rejects executable file-scope source statements.
+/// A whole program's worth of lowered functions, keyed by name.
+///
+/// The synthetic `__toplevel__` holds module initialization and explicit
+/// legacy test snippets. Production compilation rejects executable file-scope
+/// source statements.
 #[derive(Debug, Clone)]
 pub struct MirProgram {
     pub functions: Vec<(String, MirFunction)>,
@@ -78,9 +84,10 @@ pub struct MirDeclarations {
     pub functions: Vec<MirFunctionDeclaration>,
 }
 
-/// Build the native layout's struct-field index from MIR declaration
-/// metadata. Lives with MIR (not `native::layout`) so the layout vocabulary
-/// stays below the MIR waist while this MIR-consuming constructor sits at it.
+/// Build the native layout's struct-field index from MIR declaration metadata.
+///
+/// Lives with MIR (not `native::layout`) so the layout vocabulary stays below
+/// the MIR waist while this MIR-consuming constructor sits at it.
 pub fn struct_field_index(
     declarations: &MirDeclarations,
 ) -> mojito_native_core::layout::StructFieldIndex {
@@ -154,6 +161,11 @@ pub struct MirFunctionDeclaration {
     pub param_writes: Vec<bool>,
 }
 
+/// # Panics
+///
+/// Panics if a checked declaration names a parameter absent from its own
+/// signature, which `CheckedProgram` construction rules out.
+#[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
 pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
     let program = checked.statements();
     let mut functions = Vec::new();
@@ -225,7 +237,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             p,
                             checked_type_or_record(
                                 checked,
-                                AnnotationSite::FunctionParam {
+                                &AnnotationSite::FunctionParam {
                                     module: s.module.clone(),
                                     declaration: s.span,
                                     syntax: s.syntax_id,
@@ -267,7 +279,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                 };
                 let ret_ty = checked_type_or_record(
                     checked,
-                    return_site.clone(),
+                    &return_site.clone(),
                     &format!("return type of function '{name}'"),
                     &mut invariant_errors,
                 );
@@ -292,7 +304,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         .map(|p| {
                             checked_type_or_record(
                                 checked,
-                                AnnotationSite::FunctionParam {
+                                &AnnotationSite::FunctionParam {
                                     module: s.module.clone(),
                                     declaration: s.span,
                                     syntax: s.syntax_id,
@@ -314,7 +326,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                     variadic: variadic_idx.map(|i| {
                         checked_type_or_record(
                             checked,
-                            AnnotationSite::FunctionParam {
+                            &AnnotationSite::FunctionParam {
                                 module: s.module.clone(),
                                 declaration: s.span,
                                 syntax: s.syntax_id,
@@ -329,7 +341,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                     kw_variadic: kw_variadic_idx.map(|i| {
                         checked_type_or_record(
                             checked,
-                            AnnotationSite::FunctionParam {
+                            &AnnotationSite::FunctionParam {
                                 module: s.module.clone(),
                                 declaration: s.span,
                                 syntax: s.syntax_id,
@@ -422,7 +434,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                                 field.name.clone(),
                                 checked_type_or_record(
                                     checked,
-                                    AnnotationSite::StructField {
+                                    &AnnotationSite::StructField {
                                         module: s.module.clone(),
                                         declaration: name.clone(),
                                         field: field_index,
@@ -487,7 +499,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                     };
                     let ret_ty = checked_type_or_record(
                         checked,
-                        return_site.clone(),
+                        &return_site.clone(),
                         &format!("return type of method '{source_mangled}'"),
                         &mut invariant_errors,
                     );
@@ -560,7 +572,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             .map(|param| {
                                 checked_type_or_record(
                                     checked,
-                                    AnnotationSite::MethodParam {
+                                    &AnnotationSite::MethodParam {
                                         module: s.module.clone(),
                                         declaration: name.clone(),
                                         method: method_index,
@@ -589,7 +601,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         variadic: variadic_idx.map(|index| {
                             checked_type_or_record(
                                 checked,
-                                AnnotationSite::MethodParam {
+                                &AnnotationSite::MethodParam {
                                     module: s.module.clone(),
                                     declaration: name.clone(),
                                     method: method_index,
@@ -605,7 +617,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         kw_variadic: kw_variadic_idx.map(|index| {
                             checked_type_or_record(
                                 checked,
-                                AnnotationSite::MethodParam {
+                                &AnnotationSite::MethodParam {
                                     module: s.module.clone(),
                                     declaration: name.clone(),
                                     method: method_index,
@@ -674,7 +686,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             p,
                             checked_type_or_record(
                                 checked,
-                                AnnotationSite::MethodParam {
+                                &AnnotationSite::MethodParam {
                                     module: s.module.clone(),
                                     declaration: name.clone(),
                                     method: method_index,
@@ -786,16 +798,15 @@ fn mir_default(checked: &CheckedProgram, default: Option<&Expr>) -> Option<Check
 
 fn checked_type_or_record(
     checked: &CheckedProgram,
-    site: AnnotationSite,
+    site: &AnnotationSite,
     description: &str,
     invariant_errors: &mut Vec<String>,
 ) -> Ty {
-    match checked.checked_type_at(&site) {
-        Some(ty) => ty.clone(),
-        None => {
-            invariant_errors.push(format!("missing checked type for {description}"));
-            Ty::None
-        }
+    if let Some(ty) = checked.checked_type_at(site) {
+        ty.clone()
+    } else {
+        invariant_errors.push(format!("missing checked type for {description}"));
+        Ty::None
     }
 }
 
@@ -1282,7 +1293,7 @@ impl Flatten<'_> {
     /// read through the returned handle yields `target`. This distinguishes
     /// writing a `List[ref T]` element's referent from replacing the stored
     /// `ref T` handle.
-    fn peel_reference_handle_to(&mut self, mut handle: Reg, target: &Ty, site: SourceSpan) -> Reg {
+    fn peel_reference_handle_to(&mut self, mut handle: Reg, target: &Ty, site: &SourceSpan) -> Reg {
         while let Some(Ty::Ref(outer)) = self.f.reg_types.get(&handle.0).cloned() {
             if outer.referent.as_ref() == target {
                 break;
@@ -1308,28 +1319,27 @@ impl Flatten<'_> {
         if let Some(owner) = mojito_checked::checked::materialized_borrow_owner(
             &self.checked_adjustments(expression),
         ) {
-            let variable = match self.owner_vars.get(&owner).copied() {
-                Some(variable) => variable,
-                None => {
-                    let value = self.expr_unconverted(expression);
-                    let ty = self
-                        .f
-                        .reg_types
-                        .get(&value.0)
-                        .cloned()
-                        .or_else(|| self.checked_ty(expression));
-                    let variable = self.var(&format!("$mat_r{}", value.0));
-                    if let Some(ty) = ty.clone() {
-                        self.var_types.insert(variable, ty);
-                    }
-                    self.emit(MirInstr::DefVar {
-                        var: variable,
-                        src: value,
-                        binding_ty: ty,
-                    });
-                    self.owner_vars.insert(owner, variable);
-                    variable
+            let variable = if let Some(variable) = self.owner_vars.get(&owner).copied() {
+                variable
+            } else {
+                let value = self.expr_unconverted(expression);
+                let ty = self
+                    .f
+                    .reg_types
+                    .get(&value.0)
+                    .cloned()
+                    .or_else(|| self.checked_ty(expression));
+                let variable = self.var(&format!("$mat_r{}", value.0));
+                if let Some(ty) = ty.clone() {
+                    self.var_types.insert(variable, ty);
                 }
+                self.emit(MirInstr::DefVar {
+                    var: variable,
+                    src: value,
+                    binding_ty: ty,
+                });
+                self.owner_vars.insert(owner, variable);
+                variable
             };
             let place = MirPlace::root(variable, self.var_types.get(&variable).cloned());
             let dest = self.fresh(expression.source_span(), Some(variable));
@@ -1353,16 +1363,14 @@ impl Flatten<'_> {
                 return dest;
             }
             let mut result = self.expr_unconverted(expression);
-            self.f
-                .reg_types
-                .insert(result.0, Ty::Ref(reference.clone()));
+            self.f.reg_types.insert(result.0, Ty::Ref(reference));
             // A reference-returning subscript over reference-valued storage has
             // an outer handle to the container slot and an inner handle stored
             // in that slot. Peel only the outer layers that expression typing
             // read through. The returned register remains a handle whose single
             // read produces the checker's ordinary expression type.
             if let Some(checked) = self.checked_ty(expression) {
-                result = self.peel_reference_handle_to(result, &checked, expression.source_span());
+                result = self.peel_reference_handle_to(result, &checked, &expression.source_span());
             }
             return result;
         }
@@ -1589,29 +1597,29 @@ impl Flatten<'_> {
 
     fn binding_place(&mut self, binding: mojito_types::origin::OwnerId, name: &str) -> MirPlace {
         let var = self.binding_var(binding, name);
-        self.aliases
-            .get(&var)
-            .map(|loan| {
+        self.aliases.get(&var).map_or_else(
+            || MirPlace::root(var, self.var_types.get(&var).cloned()),
+            |loan| {
                 let mut place = loan.place.clone();
                 place.through = Some(var);
                 place
-            })
-            .unwrap_or_else(|| MirPlace::root(var, self.var_types.get(&var).cloned()))
+            },
+        )
     }
 
     fn resolved_place(&mut self, name: &str) -> MirPlace {
         let var = self.var(name);
-        self.aliases
-            .get(&var)
-            .map(|loan| {
+        self.aliases.get(&var).map_or_else(
+            || {
+                let ty = self.var_types.get(&var).cloned();
+                MirPlace::root(var, ty)
+            },
+            |loan| {
                 let mut place = loan.place.clone();
                 place.through = Some(var);
                 place
-            })
-            .unwrap_or_else(|| {
-                let ty = self.var_types.get(&var).cloned();
-                MirPlace::root(var, ty)
-            })
+            },
+        )
     }
 
     fn expression_place_root(&mut self, name: &str, expression: &Expr) -> MirPlace {
@@ -1619,14 +1627,14 @@ impl Flatten<'_> {
             .checked_owner(expression)
             .map(|owner| self.binding_var(owner, name));
         let mut place = if let Some(var) = checked_var {
-            self.aliases
-                .get(&var)
-                .map(|loan| {
+            self.aliases.get(&var).map_or_else(
+                || MirPlace::root(var, self.var_types.get(&var).cloned()),
+                |loan| {
                     let mut place = loan.place.clone();
                     place.through = Some(var);
                     place
-                })
-                .unwrap_or_else(|| MirPlace::root(var, self.var_types.get(&var).cloned()))
+                },
+            )
         } else {
             self.resolved_place(name)
         };
@@ -1634,8 +1642,8 @@ impl Flatten<'_> {
             let ty = self
                 .checked_place_ty(expression)
                 .or_else(|| self.checked_ty(expression));
-            place.root_ty = ty.clone();
-            place.ty = ty.clone();
+            place.root_ty.clone_from(&ty);
+            place.ty.clone_from(&ty);
             if let Some(ty) = ty {
                 self.var_types.insert(place.root, ty);
             }
@@ -1935,8 +1943,8 @@ fn lower_cfg_nested(
         // The MIR flattener may intern additional locals beyond the HIR's set
         // (short-circuit / iterator temporaries), so take the final interner.
         fl.f.n_vars = fl.vars.len();
-        fl.f.var_names = fl.vars.clone();
-        fl.f.var_tys = fl.var_types.clone();
+        fl.f.var_names.clone_from(&fl.vars);
+        fl.f.var_tys.clone_from(&fl.var_types);
     } // `fl` (the &mut borrow of `mir`) ends here
 
     mir
@@ -1945,6 +1953,10 @@ fn lower_cfg_nested(
 /// Translate a source parameter marker into the runtime frame layout. Named
 /// `out` results are callee-local slots, so they do not consume an incoming
 /// argument position; variadic collectors do consume one frame position.
+#[allow(
+    clippy::single_option_map,
+    reason = "all 14 call sites thread Option<usize> through unchanged"
+)]
 fn runtime_parameter_index(params: &[FnParam], marker: Option<usize>) -> Option<usize> {
     marker.map(|index| {
         params[..index]
@@ -1960,6 +1972,10 @@ fn runtime_parameter_index(params: &[FnParam], marker: Option<usize>) -> Option<
 /// `*args` is inserted among regular incoming arguments before the collector is
 /// materialized, so only preceding non-`out` regular parameters determine its
 /// insertion point.
+#[allow(
+    clippy::single_option_map,
+    reason = "all 14 call sites thread Option<usize> through unchanged"
+)]
 fn runtime_variadic_index(params: &[FnParam], marker: Option<usize>) -> Option<usize> {
     marker.map(|index| {
         params[..index]
@@ -2120,7 +2136,8 @@ fn expression_children(expression: &Expr) -> Vec<&Expr> {
                     | mojito_ast::ast::SubscriptArg::KeywordSlice {
                         lower, upper, step, ..
                     } => {
-                        children.extend([lower, upper, step].into_iter().flatten().map(Box::as_ref))
+                        children
+                            .extend([lower, upper, step].into_iter().flatten().map(Box::as_ref));
                     }
                 }
             }
@@ -2144,7 +2161,7 @@ fn index_hir_expression(
     index: &mut HashMap<usize, ExprFacts>,
 ) {
     index.insert(
-        syntax as *const Expr as usize,
+        std::ptr::from_ref::<Expr>(syntax) as usize,
         ExprFacts {
             ty: expression.ty.clone(),
             place_ty: expression.place.as_ref().map(|place| place.ty.clone()),
@@ -2246,6 +2263,7 @@ fn region_error_type(blocks: &[MirBlock], reg_types: &HashMap<u32, Ty>) -> Optio
 /// even when the stored value is itself a reference. Handle loan bookkeeping
 /// lives in `EstablishLoans`/`through` metadata, not in the synthetic register
 /// origin.
+#[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
 fn close_register_types(
     name: &str,
     f: &mut MirFunction,
@@ -2299,7 +2317,7 @@ fn close_register_types(
             }
         };
         for block in blocks {
-            for instr in block.instrs.iter() {
+            for instr in &block.instrs {
                 if let MirInstr::TryNext { yielded, .. } = instr {
                     changed |= record(reg_types, yielded, Some(Ty::Bool));
                 }
@@ -2700,6 +2718,7 @@ struct ComprehensionPlan<'a> {
 
 mod nested;
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use nested::*;
 
 /// The keyword pointer subscript (`p[unsafe_offset=i]`) as its object and

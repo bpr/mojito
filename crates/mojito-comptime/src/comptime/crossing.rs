@@ -3,6 +3,7 @@
 //! use of a compile-time collection (`Array`, `Dict`, `Set` are not implicitly
 //! copyable) is rejected with upstream's diagnostic.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::{ComprehensionClause, SubscriptArg};
 
@@ -287,10 +288,10 @@ impl Elab<'_> {
                 for clause in clauses {
                     match clause {
                         ComprehensionClause::For { iter, .. } => {
-                            self.cross_expr(iter, env, &shadowed)?
+                            self.cross_expr(iter, env, &shadowed)?;
                         }
                         ComprehensionClause::If(condition) => {
-                            self.cross_expr(condition, env, &shadowed)?
+                            self.cross_expr(condition, env, &shadowed)?;
                         }
                     }
                 }
@@ -334,7 +335,7 @@ impl Elab<'_> {
                 for argument in args {
                     match argument {
                         SubscriptArg::Index(value) | SubscriptArg::Keyword { value, .. } => {
-                            self.cross_expr(value, env, shadowed)?
+                            self.cross_expr(value, env, shadowed)?;
                         }
                         SubscriptArg::Slice {
                             lower, upper, step, ..

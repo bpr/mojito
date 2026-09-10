@@ -35,13 +35,13 @@ pub struct CompiledProgram {
 impl CompiledProgram {
     /// The semantically checked program carried by this ownership-verified
     /// pipeline result.
-    pub fn checked(&self) -> &CheckedProgram {
+    pub const fn checked(&self) -> &CheckedProgram {
         &self.checked
     }
 
     /// The ownership-verified, pre-drop MIR produced by the authoritative
     /// compiler pipeline, from which the elaborated backend artifact derives.
-    pub fn mir(&self) -> &MirProgram {
+    pub const fn mir(&self) -> &MirProgram {
         &self.mir
     }
 
@@ -161,7 +161,8 @@ pub fn validate_module_scope(stmts: &[Stmt]) -> Result<(), TypeError> {
 }
 impl Compiler {
     /// Construct a compiler with explicit module-link and backend policy.
-    pub fn new(link_options: LinkOptions, backend: BackendKind) -> Self {
+    #[must_use]
+    pub const fn new(link_options: LinkOptions, backend: BackendKind) -> Self {
         Self {
             link_options,
             backend,
@@ -171,7 +172,8 @@ impl Compiler {
     /// Permit executable module-scope statements for isolated compiler tests.
     /// This accepts a non-Mojo snippet dialect and must not be used by the CLI or
     /// by conformance tests.
-    pub fn with_snippet_module_scope(mut self) -> Self {
+    #[must_use]
+    pub const fn with_snippet_module_scope(mut self) -> Self {
         self.allow_executable_module_scope = true;
         self
     }
@@ -179,7 +181,7 @@ impl Compiler {
     pub fn compile_path(&self, entry: &Path) -> Result<CompiledProgram, CompilerError> {
         let linked =
             link_with_options(entry, self.link_options.clone()).map_err(CompilerError::Module)?;
-        self.compile_linked(linked)
+        self.compile_linked(&linked)
     }
     /// Link in-memory source as `entry` and compile it through ownership
     /// verification.
@@ -190,18 +192,18 @@ impl Compiler {
     ) -> Result<CompiledProgram, CompilerError> {
         let linked = link_source_with_options(source, entry, self.link_options.clone())
             .map_err(CompilerError::Module)?;
-        self.compile_linked(linked)
+        self.compile_linked(&linked)
     }
     /// Compile source without a module base, as used for standard input.
     pub fn compile_unlinked(&self, source: &str) -> Result<CompiledProgram, CompilerError> {
         let parsed = parse(source).map_err(CompilerError::Parse)?;
         let linked = inject_prelude(parsed).map_err(CompilerError::Module)?;
-        self.compile_linked(linked)
+        self.compile_linked(&linked)
     }
     /// Elaborate, check, verify, and ownership-verify an already linked
     /// statement set. Verification, ownership, artifact emission, and backend
     /// execution all consume the one cached `MirProgram` lowered here.
-    pub fn compile_linked(&self, linked: Vec<Stmt>) -> Result<CompiledProgram, CompilerError> {
+    pub fn compile_linked(&self, linked: &[Stmt]) -> Result<CompiledProgram, CompilerError> {
         // Public `Tuple[*Ts]` is a nominal variadic struct, but the element
         // types of a bare `Tuple(exprs...)` or tuple display are semantic
         // facts, and an inferred bound-generic call's instantiation is
@@ -216,13 +218,13 @@ impl Compiler {
         // exactly once, on the fixpoint program.
         const SPECIALIZATION_ROUNDS: usize = 5;
         let templates = {
-            let mut templates = bound_generic_template_names(&linked);
-            templates.extend(pack_generic_template_names(&linked));
+            let mut templates = bound_generic_template_names(linked);
+            templates.extend(pack_generic_template_names(linked));
             templates
         };
-        let range_templates = scalar_range_template_names(&linked);
-        let variadic_templates = variadic_struct_template_names(&linked);
-        let user_structs = user_struct_names(&linked);
+        let range_templates = scalar_range_template_names(linked);
+        let variadic_templates = variadic_struct_template_names(linked);
+        let user_structs = user_struct_names(linked);
         let mut tuple_requests: Vec<TupleSpecializationRequest> = Vec::new();
         let mut tstring_requests: Vec<TStringSpecializationRequest> = Vec::new();
         let mut def_requests: Vec<DefSpecializationRequest> = Vec::new();
@@ -243,7 +245,7 @@ impl Compiler {
                 instances: minted,
             } = {
                 let _elaborate = timing::span("discovery.initial.elaborate");
-                elaborate_with_requests(linked.clone(), &[], &[], &[], &[], &[], &[])
+                elaborate_with_requests(linked.to_vec(), &[], &[], &[], &[], &[], &[])
                     .map_err(CompilerError::Comptime)?
             };
             struct_requests.extend(minted);
@@ -352,7 +354,7 @@ impl Compiler {
             } = {
                 let _elaborate = timing::span("elaborate");
                 elaborate_with_requests(
-                    linked.clone(),
+                    linked.to_vec(),
                     &tuple_requests,
                     &tstring_requests,
                     &def_requests,
@@ -376,7 +378,7 @@ impl Compiler {
             let _check = timing::span("check");
             checked = crate::checker::check_program_with_materialized_callables(
                 &elaborated,
-                tuple_materialized_callables(&tuple_requests),
+                &tuple_materialized_callables(&tuple_requests),
             )
             .map_err(CompilerError::Type)?;
         }
@@ -776,9 +778,8 @@ fn closed_generic_argument(argument: &TyArg) -> bool {
     let empty = EMPTY.get_or_init(std::collections::HashSet::new);
     match argument {
         TyArg::Ty(ty) => tuple_specialization_type_is_closed(ty),
-        TyArg::Val(CtValue::Param(_)) => true,
+        TyArg::Val(CtValue::Param(_)) | TyArg::Origin(_) => true,
         TyArg::Val(value) => tuple_specialization_value_is_closed_in(value, empty, empty),
-        TyArg::Origin(_) => true,
     }
 }
 
@@ -859,7 +860,11 @@ fn closed_public_tuple_elements(ty: &Ty) -> Option<Vec<Ty>> {
 }
 
 fn tuple_specialization_type_is_closed(ty: &Ty) -> bool {
-    tuple_specialization_type_is_closed_in(ty, &Default::default(), &Default::default())
+    tuple_specialization_type_is_closed_in(
+        ty,
+        &std::collections::HashSet::default(),
+        &std::collections::HashSet::default(),
+    )
 }
 
 fn tuple_specialization_type_is_closed_in(
@@ -1302,6 +1307,7 @@ impl Default for Compiler {
 #[cfg(test)]
 mod tuple_callable_closedness_tests {
     use super::*;
+    use crate::types::TransferSet;
 
     fn type_parameter(name: &str) -> Ty {
         Ty::Param {
@@ -1336,7 +1342,7 @@ mod tuple_callable_closedness_tests {
             conventions: vec![None],
             ref_params: Box::new(vec![None]),
             ref_return: None,
-            transfers: Default::default(),
+            transfers: TransferSet::default(),
         }
     }
 

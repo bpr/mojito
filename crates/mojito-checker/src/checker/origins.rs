@@ -3,6 +3,7 @@
 //! parameter handles, capture-origin collection, per-call origin solving, and
 //! origin-signature lowering. Extracted from `checker.rs`; see `docs/symbol-map.md`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 pub(super) fn collect_origin_params(

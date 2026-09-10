@@ -11,3 +11,6 @@ mojito-checked = { path = "../mojito-checked" }
 mojito-common = { path = "../mojito-common" }
 mojito-types = { path = "../mojito-types" }
 petgraph = { workspace = true }
+
+[lints]
+workspace = true

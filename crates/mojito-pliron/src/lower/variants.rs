@@ -1,9 +1,10 @@
 //! `Convert` and variant (`MakeVariant`/`VariantIs`/`Get`/`Take`/`Set`/
 //! `Replace`) lowering.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     /// `Int(x)` / `UInt(x)` / `Float64(x)` / `Bool(x)` over a scalar operand,
     /// mirroring `runtime::builtin_convert`: float-to-integer saturates (NaN
     /// becomes 0), integer reinterpretations are bit-exact, and `Bool` is a

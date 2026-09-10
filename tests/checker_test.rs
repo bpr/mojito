@@ -283,7 +283,7 @@ fn accepts_omitted_return_type_as_none() {
 #[test]
 fn rejects_var_init_type_mismatch() {
     let e = err("var x: Int = True\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]
@@ -296,14 +296,14 @@ fn rejects_wrong_argument_type() {
             assert_eq!(expected, "Int");
             assert_eq!(found, "Bool");
         }
-        other => panic!("expected a type mismatch, got {:?}", other),
+        other => panic!("expected a type mismatch, got {other:?}"),
     }
 }
 
 #[test]
 fn rejects_wrong_return_type() {
     let e = err("def f() -> Int:\n    return True\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]
@@ -324,19 +324,19 @@ fn rejects_arity_mismatch() {
 #[test]
 fn rejects_operand_type_mismatch() {
     let e = err("var x: Int = 1 + True\n");
-    assert!(matches!(e, TypeError::BadOperator { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::BadOperator { .. }), "got {e:?}");
 }
 
 #[test]
 fn rejects_ordering_on_strings() {
     let e = err("var x: Bool = \"a\" < \"b\"\n");
-    assert!(matches!(e, TypeError::BadOperator { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::BadOperator { .. }), "got {e:?}");
 }
 
 #[test]
 fn rejects_cross_type_equality() {
     let e = err("var x: Bool = 1 == True\n");
-    assert!(matches!(e, TypeError::BadOperator { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::BadOperator { .. }), "got {e:?}");
 }
 
 #[test]
@@ -348,7 +348,7 @@ fn rejects_undefined_variable() {
 #[test]
 fn rejects_calling_a_non_function() {
     let e = err("var x: Int = 1\nx(2)\n");
-    assert!(matches!(e, TypeError::NotCallable { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::NotCallable { .. }), "got {e:?}");
 }
 
 #[test]
@@ -412,7 +412,7 @@ fn rejects_unknown_field() {
     let e = err(&format!(
         "{POINT}var p: Point = Point(1, 2)\nvar z: Int = p.z\n"
     ));
-    assert!(matches!(e, TypeError::NoSuchField { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::NoSuchField { .. }), "got {e:?}");
 }
 
 #[test]
@@ -420,7 +420,7 @@ fn rejects_unknown_method() {
     let e = err(&format!(
         "{POINT}var p: Point = Point(1, 2)\nvar z: Int = p.nope()\n"
     ));
-    assert!(matches!(e, TypeError::NoSuchMethod { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::NoSuchMethod { .. }), "got {e:?}");
 }
 
 #[test]
@@ -450,7 +450,7 @@ fn rejects_unknown_type_annotation() {
 #[test]
 fn rejects_member_access_on_non_struct() {
     let e = err("var x: Int = 1\nvar y: Int = x.field\n");
-    assert!(matches!(e, TypeError::NoSuchField { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::NoSuchField { .. }), "got {e:?}");
 }
 
 #[test]
@@ -459,7 +459,7 @@ fn checks_method_body_against_field_types() {
     let e = err(
         "@fieldwise_init\nstruct P:\n    var b: Bool\n\n    def get(self) -> Int:\n        return self.b\n",
     );
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 // --- Numbers: Float64, UInt, conversions ---
@@ -491,7 +491,7 @@ fn literal_arithmetic_mixes_but_concrete_types_do_not() {
     ok("var x: Float64 = 1.0 + 2\n");
     // ...but mixing two *concrete* numeric types is rejected.
     let e = err("var i: Int = 1\nvar u: UInt = UInt(2)\nvar bad: Int = i + u\n");
-    assert!(matches!(e, TypeError::BadOperator { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::BadOperator { .. }), "got {e:?}");
 }
 
 #[test]
@@ -506,7 +506,7 @@ fn true_division_yields_float64() {
             assert_eq!(expected, "Int");
             assert_eq!(found, "Float64");
         }
-        other => panic!("expected a type mismatch, got {:?}", other),
+        other => panic!("expected a type mismatch, got {other:?}"),
     }
 }
 
@@ -520,19 +520,19 @@ fn floor_div_mod_pow_preserve_type() {
 #[test]
 fn rejects_unary_minus_on_uint() {
     let e = err("var u: UInt = UInt(1)\nvar n: UInt = -u\n");
-    assert!(matches!(e, TypeError::BadOperator { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::BadOperator { .. }), "got {e:?}");
 }
 
 #[test]
 fn rejects_cross_numeric_equality() {
     let e = err("var ok: Bool = Int(1) == UInt(1)\n");
-    assert!(matches!(e, TypeError::BadOperator { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::BadOperator { .. }), "got {e:?}");
 }
 
 #[test]
 fn rejects_conversion_of_string() {
     let e = err("var i: Int = Int(\"5\")\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 // --- Assignment ---
@@ -586,7 +586,7 @@ fn rejects_assignment_of_wrong_type() {
             assert_eq!(expected, "Int");
             assert_eq!(found, "Bool");
         }
-        other => panic!("expected a type mismatch, got {:?}", other),
+        other => panic!("expected a type mismatch, got {other:?}"),
     }
 }
 
@@ -704,14 +704,14 @@ fn rejects_non_bool_if_condition() {
             assert_eq!(expected, "Bool");
             assert_eq!(found, "Int");
         }
-        other => panic!("expected a type mismatch, got {:?}", other),
+        other => panic!("expected a type mismatch, got {other:?}"),
     }
 }
 
 #[test]
 fn rejects_non_bool_while_condition() {
     let e = err("while 1:\n    pass\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]
@@ -727,20 +727,20 @@ fn rejects_for_over_non_range() {
             );
             assert_eq!(found, "Int");
         }
-        other => panic!("expected a type mismatch, got {:?}", other),
+        other => panic!("expected a type mismatch, got {other:?}"),
     }
 }
 
 #[test]
 fn rejects_range_with_non_int_argument() {
     let e = err("for i in range(True):\n    pass\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]
 fn rejects_range_with_no_arguments() {
     let e = err("for i in range():\n    pass\n");
-    assert!(matches!(e, TypeError::ArityMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::ArityMismatch { .. }), "got {e:?}");
 }
 
 #[test]
@@ -814,13 +814,13 @@ fn accepts_generic_struct_method_returning_self_param() {
 fn rejects_operator_on_opaque_type_parameter() {
     // An unconstrained `T` supports no operators.
     let e = err("def bad[T: Copyable & Movable](x: T) -> T:\n    return x + x\n");
-    assert!(matches!(e, TypeError::BadOperator { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::BadOperator { .. }), "got {e:?}");
 }
 
 #[test]
 fn rejects_wrong_struct_type_argument() {
     let e = err(&format!("{PAIR}var p: Pair[Int] = Pair(1.5, 2.5)\n"));
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]
@@ -830,7 +830,7 @@ fn rejects_conflicting_type_parameter_solutions() {
     // that cannot coerce is a conflict, not a fresh solution.
     ok(&format!("{PAIR}var p: Pair[Float64] = Pair(1.0, 2)\n"));
     let e = err(&format!("{PAIR}var p = Pair(1.0, \"x\")\n"));
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]
@@ -860,8 +860,7 @@ fn rejects_wrong_type_argument_count() {
                 ..
             }
         ),
-        "got {:?}",
-        e
+        "got {e:?}"
     );
 }
 
@@ -877,8 +876,7 @@ fn rejects_type_arguments_on_non_generic_struct() {
                 ..
             }
         ),
-        "got {:?}",
-        e
+        "got {e:?}"
     );
 }
 
@@ -1054,8 +1052,7 @@ fn rejects_uninferable_type_parameter() {
     );
     assert!(
         matches!(&e, TypeError::CannotInferTypeParam { param, .. } if param == "T"),
-        "got {:?}",
-        e
+        "got {e:?}"
     );
 }
 
@@ -1115,8 +1112,7 @@ fn rejects_trait_receiver_convention_mismatch() {
     );
     assert!(
         matches!(e, TypeError::TraitMethodMismatch { .. }),
-        "got {:?}",
-        e
+        "got {e:?}"
     );
 }
 
@@ -1127,8 +1123,7 @@ fn rejects_argument_not_conforming_to_bound() {
     ));
     assert!(
         matches!(&e, TypeError::TraitNotSatisfied { trait_name, .. } if trait_name == "Quackable"),
-        "got {:?}",
-        e
+        "got {e:?}"
     );
 }
 
@@ -1139,8 +1134,7 @@ fn rejects_struct_missing_a_required_trait_method() {
     );
     assert!(
         matches!(&e, TypeError::MissingTraitMethod { method, .. } if method == "quack"),
-        "got {:?}",
-        e
+        "got {e:?}"
     );
 }
 
@@ -1152,8 +1146,7 @@ fn rejects_struct_with_mismatched_trait_method_signature() {
     );
     assert!(
         matches!(e, TypeError::TraitMethodMismatch { .. }),
-        "got {:?}",
-        e
+        "got {e:?}"
     );
 }
 
@@ -1333,8 +1326,7 @@ fn rejects_missing_trait_comptime_member() {
             &e,
             TypeError::MissingTraitComptimeMember { member, .. } if member == "Element"
         ),
-        "got {:?}",
-        e
+        "got {e:?}"
     );
 }
 
@@ -1348,8 +1340,7 @@ fn rejects_trait_comptime_member_kind_mismatch() {
             &e,
             TypeError::TraitComptimeMemberMismatch { member, .. } if member == "Element"
         ),
-        "got {:?}",
-        e
+        "got {e:?}"
     );
 }
 
@@ -1363,8 +1354,7 @@ fn rejects_associated_value_in_type_position() {
             &e,
             TypeError::NoSuchAssociatedType { member, .. } if member == "size"
         ),
-        "got {:?}",
-        e
+        "got {e:?}"
     );
 }
 
@@ -1435,7 +1425,7 @@ fn rejects_method_not_required_by_any_bound() {
     let e = err(
         "trait Quackable:\n    def quack(self) -> StringLiteral:\n        ...\n\ndef f[T: Quackable](x: T) -> StringLiteral:\n    return x.waddle()\n",
     );
-    assert!(matches!(e, TypeError::NoSuchMethod { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::NoSuchMethod { .. }), "got {e:?}");
 }
 
 #[test]
@@ -1452,8 +1442,7 @@ fn rejects_bounded_type_parameter_forwarded_to_stronger_bound() {
     );
     assert!(
         matches!(e, TypeError::TraitNotSatisfied { .. }),
-        "got {:?}",
-        e
+        "got {e:?}"
     );
 }
 
@@ -1516,7 +1505,7 @@ fn distinct_value_arguments_are_distinct_types() {
     let e = err(&format!(
         "{FIXEDBUF}var b: FixedBuffer[5] = FixedBuffer[6](0)\n"
     ));
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]
@@ -1527,8 +1516,7 @@ fn rejects_uninferable_value_parameter() {
     ));
     assert!(
         matches!(&e, TypeError::CannotInferTypeParam { param, .. } if param == "size"),
-        "got {:?}",
-        e
+        "got {e:?}"
     );
 }
 
@@ -1543,7 +1531,7 @@ fn rejects_non_comptime_value_argument() {
     let e = err(&format!(
         "{FIXEDBUF}var x: Int = 3\nvar b: FixedBuffer[x] = FixedBuffer[x](0)\n"
     ));
-    assert!(matches!(e, TypeError::NotComptime(_)), "got {:?}", e);
+    assert!(matches!(e, TypeError::NotComptime(_)), "got {e:?}");
 }
 
 #[test]
@@ -1551,7 +1539,7 @@ fn rejects_type_argument_for_value_parameter() {
     let e = err(&format!(
         "{FIXEDBUF}var b: FixedBuffer[Int] = FixedBuffer[Int](0)\n"
     ));
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]
@@ -1561,8 +1549,7 @@ fn rejects_wrong_parameter_count() {
     ));
     assert!(
         matches!(e, TypeError::WrongTypeArgCount { .. }),
-        "got {:?}",
-        e
+        "got {e:?}"
     );
 }
 
@@ -1579,8 +1566,7 @@ fn rejects_explicit_params_on_non_generic_function() {
     let e = err("def f(x: Int) -> Int:\n    return x\n\nvar y: Int = f[Int](1)\n");
     assert!(
         matches!(e, TypeError::WrongTypeArgCount { expected: 0, .. }),
-        "got {:?}",
-        e
+        "got {e:?}"
     );
 }
 
@@ -1631,13 +1617,13 @@ fn accepts_comptime_simd_width() {
 #[test]
 fn rejects_non_power_of_two_width() {
     let e = err("var v: SIMD[DType.int32, 3] = SIMD[DType.int32, 3](1, 2, 3)\n");
-    assert!(matches!(e, TypeError::BadSimdWidth(_)), "got {:?}", e);
+    assert!(matches!(e, TypeError::BadSimdWidth(_)), "got {e:?}");
 }
 
 #[test]
 fn rejects_unknown_dtype() {
     let e = err("var v: SIMD[DType.foo, 4] = SIMD[DType.foo, 4](1)\n");
-    assert!(matches!(e, TypeError::BadDtype(_)), "got {:?}", e);
+    assert!(matches!(e, TypeError::BadDtype(_)), "got {e:?}");
 }
 
 #[test]
@@ -1645,8 +1631,7 @@ fn rejects_wrong_simd_element_count() {
     let e = err("var v: SIMD[DType.int32, 4] = SIMD[DType.int32, 4](1, 2)\n");
     assert!(
         matches!(e, TypeError::SimdArity { width: 4, got: 2 }),
-        "got {:?}",
-        e
+        "got {e:?}"
     );
 }
 
@@ -1655,7 +1640,7 @@ fn rejects_mixed_dtype_operands() {
     let e = err(
         "var a: SIMD[DType.int32, 4] = SIMD[DType.int32, 4](1, 2, 3, 4)\nvar b: SIMD[DType.int64, 4] = SIMD[DType.int64, 4](1, 2, 3, 4)\nvar c: SIMD[DType.int32, 4] = a + b\n",
     );
-    assert!(matches!(e, TypeError::BadOperator { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::BadOperator { .. }), "got {e:?}");
 }
 
 #[test]
@@ -1663,13 +1648,13 @@ fn rejects_division_on_integer_simd() {
     let e = err(
         "var a: SIMD[DType.int32, 4] = SIMD[DType.int32, 4](1, 2, 3, 4)\nvar b: SIMD[DType.int32, 4] = a / a\n",
     );
-    assert!(matches!(e, TypeError::BadOperator { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::BadOperator { .. }), "got {e:?}");
 }
 
 #[test]
 fn rejects_indexing_a_non_simd() {
     let e = err("var x: Int = 5\nvar y: Int = x[0]\n");
-    assert!(matches!(e, TypeError::NotIndexable(_)), "got {:?}", e);
+    assert!(matches!(e, TypeError::NotIndexable(_)), "got {e:?}");
 }
 
 #[test]
@@ -1800,13 +1785,13 @@ fn rejects_float_sources_for_integer_lanes() {
 #[test]
 fn rejects_float_literal_for_integer_dtype() {
     let e = err("var v: SIMD[DType.int32, 2] = SIMD[DType.int32, 2](1.5, 2.5)\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]
 fn distinct_simd_widths_are_distinct_types() {
     let e = err("var v: SIMD[DType.int32, 4] = SIMD[DType.int32, 2](1, 2)\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 // --- Path-sensitive return checking ---
@@ -1975,7 +1960,7 @@ fn infers_parametric_error_types_from_callable_arguments() {
 #[test]
 fn rejects_error_constructor_with_non_string() {
     let e = err("var e: Error = Error(5)\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]
@@ -2016,8 +2001,7 @@ fn rejects_printing_a_function() {
     let e = err("def f() -> Int:\n    return 1\n\nprint(f)\n");
     assert!(
         matches!(&e, TypeError::BadCall { func, reason } if func == "print" && reason.contains("'Writable'")),
-        "got {:?}",
-        e
+        "got {e:?}"
     );
 }
 
@@ -2035,13 +2019,13 @@ fn abs_preserves_the_numeric_type() {
     // abs of a Float64 stays Float64 (would fail to bind to Int if it returned Int).
     ok("var x: Float64 = 1.5\nvar y: Float64 = abs(x)\n");
     let e = err("var x: Float64 = 1.5\nvar y: Int = abs(x)\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]
 fn rejects_stringify_of_non_stringable() {
     let e = err("def f() -> Int:\n    return 1\n\nvar s: StringLiteral = String(f)\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]
@@ -2051,21 +2035,20 @@ fn rejects_len_of_non_string() {
     let e = err("var n: Int = len(5)\n");
     assert!(
         matches!(&e, TypeError::NoMatchingFunction { name } if name == "len"),
-        "got {:?}",
-        e
+        "got {e:?}"
     );
 }
 
 #[test]
 fn rejects_min_mixing_concrete_types() {
     let e = err("var i: Int = 1\nvar u: UInt = UInt(2)\nvar m: Int = min(i, u)\n");
-    assert!(matches!(e, TypeError::BadOperator { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::BadOperator { .. }), "got {e:?}");
 }
 
 #[test]
 fn rejects_round_of_an_int() {
     let e = err("var r: Float64 = round(5)\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]
@@ -2108,7 +2091,7 @@ fn collection_literal_annotations_solve_only_direct_type_holes() {
     assert!(
         nested.to_string().contains("Infer")
             || nested.to_string().contains("concrete")
-            || nested.to_string().contains("_"),
+            || nested.to_string().contains('_'),
         "got {nested:?}"
     );
 }
@@ -2131,13 +2114,13 @@ fn accepts_nested_and_struct_lists() {
 #[test]
 fn rejects_heterogeneous_list_literal() {
     let e = err("var xs: List[Int] = [1, \"a\"]\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]
 fn rejects_wrong_list_element_type() {
     let e = err("var xs: List[Int] = List[Int](1, True)\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]
@@ -2145,8 +2128,7 @@ fn rejects_empty_inferred_list() {
     let e = err("var xs: List[Int] = List()\n");
     assert!(
         matches!(e, TypeError::CannotInferTypeParam { .. }),
-        "got {:?}",
-        e
+        "got {e:?}"
     );
 }
 
@@ -2155,15 +2137,14 @@ fn rejects_uncontextualized_empty_list_literal() {
     let e = err("var xs = []\n");
     assert!(
         matches!(e, TypeError::CannotInferTypeParam { .. }),
-        "got {:?}",
-        e
+        "got {e:?}"
     );
 }
 
 #[test]
 fn rejects_non_int_list_index() {
     let e = err("var xs: List[Int] = [1, 2]\nvar y: Int = xs[True]\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 // --- List (Steps 2 & 3: index-assign, append, pop) ---
@@ -2178,13 +2159,13 @@ fn accepts_list_mutation() {
 #[test]
 fn rejects_index_assign_wrong_type() {
     let e = err("var xs: List[Int] = [1]\nxs[0] = True\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]
 fn rejects_append_wrong_type() {
     let e = err("var xs: List[Int] = [1]\nxs.append(True)\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]
@@ -2215,7 +2196,7 @@ fn accepts_simd_lane_write() {
 #[test]
 fn rejects_unknown_list_method() {
     let e = err("var xs: List[Int] = [1]\nxs.frobnicate()\n");
-    assert!(matches!(e, TypeError::NoSuchMethod { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::NoSuchMethod { .. }), "got {e:?}");
 }
 
 #[test]
@@ -2244,21 +2225,20 @@ fn rejects_remove_on_non_equatable_elements() {
     );
     assert!(
         matches!(&e, TypeError::TypeMismatch { context, .. } if context == "'remove'"),
-        "got {:?}",
-        e
+        "got {e:?}"
     );
 }
 
 #[test]
 fn rejects_extend_with_wrong_element_type() {
     let e = err("var a: List[Int] = [1]\nvar b: List[StringLiteral] = [\"x\"]\na.extend(b)\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]
 fn rejects_non_int_insert_index() {
     let e = err("var xs: List[Int] = [1]\nxs.insert(True, 2)\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]
@@ -2267,7 +2247,7 @@ fn rejects_count_on_a_non_variable_when_temporary_is_not_equatable() {
     let e = err(
         "@fieldwise_init\nstruct P:\n    var x: Int\n\nvar c: Int = List[P](P(1)).count(P(1))\n",
     );
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 // --- Membership: in / not in ---
@@ -2282,19 +2262,19 @@ fn accepts_membership_on_list_and_string() {
 #[test]
 fn membership_returns_bool() {
     let e = err("var xs: List[Int] = [1]\nvar n: Int = 1 in xs\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]
 fn rejects_membership_on_non_container() {
     let e = err("var a: Bool = 1 in 5\n");
-    assert!(matches!(e, TypeError::BadOperator { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::BadOperator { .. }), "got {e:?}");
 }
 
 #[test]
 fn rejects_membership_element_type_mismatch() {
     let e = err("var xs: List[Int] = [1, 2]\nvar a: Bool = True in xs\n");
-    assert!(matches!(e, TypeError::BadOperator { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::BadOperator { .. }), "got {e:?}");
 }
 
 #[test]
@@ -2302,7 +2282,7 @@ fn rejects_membership_on_non_equatable_list() {
     let e = err(
         "@fieldwise_init\nstruct P:\n    var x: Int\n\nvar ps: List[P] = [P(1)]\nvar a: Bool = P(1) in ps\n",
     );
-    assert!(matches!(e, TypeError::BadOperator { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::BadOperator { .. }), "got {e:?}");
 }
 
 // --- Member-write: place assignment + mut self ---
@@ -2349,23 +2329,19 @@ fn rejects_mut_self_call_on_a_temporary() {
     let e = err(
         "@fieldwise_init\nstruct C:\n    var n: Int\n\n    def inc(mut self):\n        self.n = self.n + 1\n\nC(0).inc()\n",
     );
-    assert!(
-        matches!(e, TypeError::InvalidAssignTarget(_)),
-        "got {:?}",
-        e
-    );
+    assert!(matches!(e, TypeError::InvalidAssignTarget(_)), "got {e:?}");
 }
 
 #[test]
 fn rejects_unknown_field_write() {
     let e = err(&format!("{MUTPT}var p: Point = Point(1, 2)\np.z = 3\n"));
-    assert!(matches!(e, TypeError::NoSuchField { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::NoSuchField { .. }), "got {e:?}");
 }
 
 #[test]
 fn rejects_wrong_type_field_write() {
     let e = err(&format!("{MUTPT}var p: Point = Point(1, 2)\np.x = True\n"));
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]
@@ -2373,11 +2349,7 @@ fn rejects_write_to_a_call_result() {
     let e = err(&format!(
         "{MUTPT}def mk() -> Point:\n    return Point(0, 0)\n\nmk().x = 5\n"
     ));
-    assert!(
-        matches!(e, TypeError::InvalidAssignTarget(_)),
-        "got {:?}",
-        e
-    );
+    assert!(matches!(e, TypeError::InvalidAssignTarget(_)), "got {e:?}");
 }
 
 // --- Augmented assignment ---
@@ -2398,8 +2370,7 @@ fn rejects_augmented_assignment_that_changes_type() {
     let e = err("var i: Int = 10\ni /= 2\n");
     assert!(
         matches!(&e, TypeError::TypeMismatch { context, .. } if context == "augmented assignment"),
-        "got {:?}",
-        e
+        "got {e:?}"
     );
 }
 
@@ -2448,7 +2419,7 @@ fn rejects_float64_vector_dtype_mismatch() {
     let e = err(
         "var v: SIMD[DType.float64, 2] = SIMD[DType.float64, 2](1.0, 2.0)\nvar w: SIMD[DType.float64, 2] = v + Float32(1.0)\n",
     );
-    assert!(matches!(e, TypeError::BadOperator { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::BadOperator { .. }), "got {e:?}");
 }
 
 // --- Inferred `var` (type from the initializer) ---
@@ -2468,7 +2439,7 @@ fn accepts_inferred_var_and_uses_its_type() {
 fn inferred_var_rejects_wrong_later_use() {
     // `n` is inferred `Int`, so using it as a `Bool` condition is a type error.
     let e = err("var n = 5\nif n:\n    pass\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]
@@ -2597,7 +2568,7 @@ fn rejects_bad_typed_tuple_construction() {
 #[test]
 fn rejects_tuple_wrong_element_type() {
     let e = err("var t: Tuple[Int, Int] = (1, True)\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {:?}", e);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]
@@ -2605,8 +2576,7 @@ fn rejects_runtime_tuple_index() {
     let e = err("var t: Tuple[Int, StringLiteral] = (1, \"x\")\nvar i: Int = 0\nvar y = t[i]\n");
     assert!(
         matches!(&e, TypeError::TypeMismatch { context, .. } if context == "tuple index"),
-        "got {:?}",
-        e
+        "got {e:?}"
     );
 }
 
@@ -2615,8 +2585,7 @@ fn rejects_out_of_range_tuple_index() {
     let e = err("var t: Tuple[Int, Int] = (1, 2)\nvar y = t[5]\n");
     assert!(
         matches!(&e, TypeError::TypeMismatch { context, .. } if context == "tuple index"),
-        "got {:?}",
-        e
+        "got {e:?}"
     );
 }
 
@@ -2629,8 +2598,7 @@ fn rejects_tuple_element_write() {
             e,
             TypeError::NotIndexable(_) | TypeError::InvalidAssignTarget(_)
         ),
-        "got {:?}",
-        e
+        "got {e:?}"
     );
 }
 

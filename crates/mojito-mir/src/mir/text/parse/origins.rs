@@ -1,5 +1,6 @@
 //! Origin and reference-signature decoding.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Decoder {

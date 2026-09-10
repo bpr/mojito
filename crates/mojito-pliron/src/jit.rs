@@ -18,10 +18,10 @@ use super::{JitValue, OptLevel, PlironError, PlironErrorKind, RetKind, emit};
 /// to in-process addresses — explicit and deterministic, rather than relying
 /// on process-symbol resolution. The caller has already checked that `target`
 /// is the host.
-pub(super) fn run_value(
+pub fn run_value(
     ctx: &Context,
     module: ModuleOp,
-    target: &NativeTarget,
+    target: NativeTarget,
     symbol: &str,
     ret: RetKind,
     opt: OptLevel,
@@ -120,7 +120,7 @@ fn ensure_native_target() -> Result<(), PlironError> {
         .map_err(|error| jit_error(format!("native target init: {error}")))
 }
 
-fn jit_error(message: String) -> PlironError {
+const fn jit_error(message: String) -> PlironError {
     PlironError {
         function: None,
         kind: PlironErrorKind::Emit(message),

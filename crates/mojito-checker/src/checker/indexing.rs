@@ -2,6 +2,7 @@
 //! `__setitem__`, slices, multi-index), pointer offset/write checks, and member
 //! access inference. Extracted from `checker.rs`; see `docs/symbol-map.md`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Checker {
@@ -83,6 +84,7 @@ impl Checker {
         }
     }
 
+    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn check_place_impl(&self, place: &Expr) -> Result<Ty, TypeError> {
         match &place.kind {
             ExprKind::Identifier(name) => {
@@ -246,10 +248,11 @@ impl Checker {
                 // `c[i] = e` → `c.__setitem__(i, e)`. The index must coerce to the
                 // first parameter; the *target* type (what `e` must be) is the second.
                 if let Ty::Struct(_, _) = &obj_ty {
-                    let mut idx_ty = self.infer(index)?;
-                    if self.has_index_normalization(index, &Ty::Int) {
-                        idx_ty = Ty::Int;
-                    }
+                    let idx_ty = if self.has_index_normalization(index, &Ty::Int) {
+                        Ty::Int
+                    } else {
+                        self.infer(index)?
+                    };
                     let resolution = self.resolve_struct_setitem(&obj_ty, &[idx_ty], None)?;
                     if let Some(target) = resolution.lowered_name {
                         self.overload_targets
@@ -361,10 +364,11 @@ impl Checker {
                                 "__setitem__",
                                 position,
                             )?;
-                            let mut argument_type = self.infer(value)?;
-                            if self.has_index_normalization(value, &Ty::Int) {
-                                argument_type = Ty::Int;
-                            }
+                            let argument_type = if self.has_index_normalization(value, &Ty::Int) {
+                                Ty::Int
+                            } else {
+                                self.infer(value)?
+                            };
                             argument_types.push(argument_type);
                             descriptors.push(None);
                         }
@@ -435,7 +439,7 @@ impl Checker {
             ExprKind::Call { name, .. } => Err(TypeError::InvalidAssignTarget(format!(
                 "the temporary result of call '{name}()'"
             ))),
-            other => Err(TypeError::InvalidAssignTarget(format!("{:?}", other))),
+            other => Err(TypeError::InvalidAssignTarget(format!("{other:?}"))),
         }
     }
 
@@ -464,7 +468,7 @@ impl Checker {
     /// retaining descriptor construction separately for MIR.
     pub(super) fn synthetic_slice_descriptor(&self, span: &SourceSpan, kind: SliceKind) -> Expr {
         let mut expression = Expr::new(ExprKind::None, span.span);
-        expression.source = span.source.clone();
+        expression.source.clone_from(&span.source);
         self.expression_types.borrow_mut().insert(
             expression.source_span(),
             Ty::Struct(kind.type_name().to_string(), Vec::new()),
@@ -734,7 +738,7 @@ impl Checker {
         self.subscript_descriptors
             .borrow_mut()
             .entry(site.clone())
-            .or_insert((vec![None], false));
+            .or_insert_with(|| (vec![None], false));
         self.expression_types
             .borrow_mut()
             .insert(site.clone(), element.clone());
@@ -1224,6 +1228,11 @@ impl Checker {
 
     /// Type a subscript over tuples, SIMD, lists, pointers, or a user-defined
     /// `__getitem__` implementation.
+    #[allow(
+        clippy::too_many_lines,
+        clippy::maybe_infinite_iter,
+        reason = "TODO: split this pass; the search is bounded by the enclosing collection"
+    )]
     pub(super) fn infer_index(
         &self,
         span: SourceSpan,
@@ -1685,6 +1694,10 @@ impl Checker {
     /// statically known mutable capability. A symbolic parameter mutability is
     /// writable: storage coercion only admits mutable places into fields whose
     /// declared mutability is not explicitly immutable.
+    #[allow(
+        clippy::unused_self,
+        reason = "TODO: make an associated function or use the receiver"
+    )]
     pub(super) fn check_pointer_write(
         &self,
         origin: &mojito_types::origin::PointerOrigin,

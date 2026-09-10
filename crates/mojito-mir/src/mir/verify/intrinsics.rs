@@ -1,6 +1,7 @@
 //! Intrinsic index/slice verification and generic callable-contract
 //! instantiation.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 pub(super) fn verify_intrinsic_index(
@@ -21,10 +22,10 @@ pub(super) fn verify_intrinsic_index(
     }
 
     let result_candidates = match (intrinsic, base) {
-        (MirIntrinsicSubscript::TupleStorage, Some(Ty::Tuple(elements)))
-        | (MirIntrinsicSubscript::TupleStorage, Some(Ty::RuntimePack(elements))) => {
-            Some(elements.iter().collect::<Vec<_>>())
-        }
+        (
+            MirIntrinsicSubscript::TupleStorage,
+            Some(Ty::Tuple(elements) | Ty::RuntimePack(elements)),
+        ) => Some(elements.iter().collect::<Vec<_>>()),
         (MirIntrinsicSubscript::TupleStorage, Some(base)) => tuple_elements(base),
         (MirIntrinsicSubscript::VariadicStorage, Some(Ty::VariadicPack(element))) => {
             Some(vec![element.as_ref()])
@@ -180,8 +181,10 @@ pub(super) fn generic_argument_maps(
             (ParamDecl::Type { .. }, TyArg::Ty(ty)) => {
                 types.insert(name, ty.clone());
             }
-            (ParamDecl::Value { .. }, TyArg::Val(value))
-            | (ParamDecl::Type { variadic: true, .. }, TyArg::Val(value)) => {
+            (
+                ParamDecl::Value { .. } | ParamDecl::Type { variadic: true, .. },
+                TyArg::Val(value),
+            ) => {
                 values.insert(name, value.clone());
             }
             (ParamDecl::Type { .. }, TyArg::Val(_)) => {
@@ -208,7 +211,11 @@ pub(super) fn generic_argument_maps(
 /// callable contract. Unlike nominal dispatch, there is no concrete MIR
 /// declaration to consult: the `Ty::Func` retained on the bounded parameter is
 /// the declaration and must be checked directly.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::ref_option,
+    reason = "TODO: take Option<&T>"
+)]
 pub(super) fn verify_callable_contract_call(
     prefix: &str,
     function: &MirFunction,
@@ -220,44 +227,33 @@ pub(super) fn verify_callable_contract_call(
     arg_places: &[Option<MirPlace>],
     errors: &mut Vec<String>,
 ) {
-    let (params, ret, required, variadic, kw_variadic, conventions, ref_return, raises, error) =
-        match contract {
-            Ty::Func {
-                params,
-                ret,
-                required,
-                variadic,
-                kw_variadic,
-                conventions,
-                ref_return,
-                raises,
-                error,
-                ..
-            }
-            | Ty::GenericFunc {
-                params,
-                ret,
-                required,
-                variadic,
-                kw_variadic,
-                conventions,
-                ref_return,
-                raises,
-                error,
-                ..
-            } => (
-                params,
-                ret,
-                required,
-                variadic,
-                kw_variadic,
-                conventions,
-                ref_return,
-                raises,
-                error,
-            ),
-            _ => return,
-        };
+    let (Ty::Func {
+        params,
+        ret,
+        required,
+        variadic,
+        kw_variadic,
+        conventions,
+        ref_return,
+        raises,
+        error,
+        ..
+    }
+    | Ty::GenericFunc {
+        params,
+        ret,
+        required,
+        variadic,
+        kw_variadic,
+        conventions,
+        ref_return,
+        raises,
+        error,
+        ..
+    }) = contract
+    else {
+        return;
+    };
     if *raises != call_raises.is_some() {
         errors.push(format!(
             "{prefix}: indirect-call raising metadata does not match its callable contract"

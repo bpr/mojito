@@ -2,6 +2,7 @@
 //! callable-type application, generic-call instantiation, and forwarded-kwargs
 //! element typing. Extracted from `checker.rs`; see `docs/symbol-map.md`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 type InferredCall = (Ty, usize, Option<Ty>, HashMap<usize, bool>);
@@ -126,6 +127,7 @@ impl Checker {
         Ok(nominal)
     }
 
+    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn infer_call(
         &self,
         span: SourceSpan,
@@ -195,7 +197,7 @@ impl Checker {
                     .any(|bound| matches!(bound.as_str(), "Hasher" | "Defaultable"))
             {
                 self.operation_adjustments.borrow_mut().insert(
-                    span.clone(),
+                    span,
                     mojito_checked::checked::SemanticAdjustment::ConstructTypeParam {
                         param: name.to_string(),
                     },
@@ -226,7 +228,7 @@ impl Checker {
                         self.infer_stringify(args)?;
                         return self.retarget_string_result(span, name);
                     }
-                    return self.infer_construction(span, name, param_args, args, kwargs);
+                    return self.infer_construction(&span, name, param_args, args, kwargs);
                 }
                 // Tuple specializations are predeclared as one closed set before
                 // their members are checked.  A generated transform may therefore
@@ -914,7 +916,7 @@ impl Checker {
             )),
         );
         if let Some(error) = error.filter(|ty| *ty != Ty::Never) {
-            self.record_call_effect(span.clone(), error.clone());
+            self.record_call_effect(span, error.clone());
             self.require_error("call through a raising callable element", error)?;
         }
         Ok(ret)
@@ -1133,7 +1135,7 @@ impl Checker {
                     return Err(TypeError::TypeMismatch {
                         expected: expected.to_string(),
                         found: arg_ty.to_string(),
-                        context: format!("variadic argument to '{}'", name),
+                        context: format!("variadic argument to '{name}'"),
                     });
                 }
                 score += conversion_count(&arg_ty, expected);
@@ -1227,7 +1229,7 @@ impl Checker {
 
         let result = return_ref
             .map(|mut reference| {
-                reference.referent = ret.clone();
+                reference.referent.clone_from(&ret);
                 Ty::Ref(reference)
             })
             .unwrap_or(*ret);
@@ -1368,7 +1370,7 @@ impl Checker {
                 return Err(TypeError::TypeMismatch {
                     expected: expected.to_string(),
                     found: actual.to_string(),
-                    context: format!("argument to '{}'", name),
+                    context: format!("argument to '{name}'"),
                 });
             }
             conversions += conversion_count(actual, &expected);
@@ -1491,7 +1493,7 @@ impl Checker {
                 span.clone(),
                 mojito_checked::checked::GenericInstantiation {
                     callee: name.to_string(),
-                    arguments: tyargs.clone(),
+                    arguments: tyargs,
                 },
             );
         }
@@ -1593,7 +1595,7 @@ fn name_ref_origin_mismatch(error: TypeError, func: &str, names: &[String]) -> T
             func: func.to_string(),
             reason: format!(
                 "value passed to '{}' cannot be converted from '{ty}' to ref '{ty}'\nnote: operand origin '{actual}' doesn't match expected origin '{expected}'",
-                names.get(slot).map(String::as_str).unwrap_or("argument")
+                names.get(slot).map_or("argument", String::as_str)
             ),
         },
         other => other,

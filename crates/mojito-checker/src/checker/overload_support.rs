@@ -2,6 +2,7 @@
 //! callable identity/equivalence, lowered names, transfer-effect
 //! wrapping, ranking, and overload selection.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 pub use mojito_types::types::canonical_generic_signature;
 
@@ -151,7 +152,7 @@ pub(super) fn canonical_generic_parameter_shape(
     )
 }
 
-pub(super) fn callable_parameter_count(ty: &Ty) -> Option<usize> {
+pub(super) const fn callable_parameter_count(ty: &Ty) -> Option<usize> {
     match ty {
         Ty::Func { params, .. } => Some(params.len()),
         Ty::GenericFunc { params, .. } => Some(params.len()),
@@ -159,7 +160,7 @@ pub(super) fn callable_parameter_count(ty: &Ty) -> Option<usize> {
     }
 }
 
-pub(super) fn method_arity_range(sig: &MethodSig) -> (usize, usize) {
+pub(super) const fn method_arity_range(sig: &MethodSig) -> (usize, usize) {
     (sig.params.len(), sig.params.len())
 }
 
@@ -302,20 +303,20 @@ pub(super) fn place_has_index(expr: &Expr) -> bool {
 /// overloaded free-function call — formatted by the canonical symbol module so
 /// it names exactly the `MirFunction` the MIR emits for that definition.
 pub(super) fn callable_lowered_name(name: &str, ty: &Ty) -> Option<String> {
-    let (params, variadic, kw_variadic) = match ty {
-        Ty::Func {
-            params,
-            variadic,
-            kw_variadic,
-            ..
-        }
-        | Ty::GenericFunc {
-            params,
-            variadic,
-            kw_variadic,
-            ..
-        } => (params, variadic, kw_variadic),
-        _ => return None,
+    let (Ty::Func {
+        params,
+        variadic,
+        kw_variadic,
+        ..
+    }
+    | Ty::GenericFunc {
+        params,
+        variadic,
+        kw_variadic,
+        ..
+    }) = ty
+    else {
+        return None;
     };
     let signature_types: Vec<_> = params
         .iter()
@@ -435,11 +436,12 @@ pub(super) fn is_bundled_stdlib_source(source: Option<&str>) -> bool {
         || source == stdlib.join("std/utils/variant.mojo")
 }
 
-/// Whether a source belongs to a bundled standard-library module, directly
-/// or through a specialization tag layered on its path. Generic-struct
-/// instances reached only from there keep the erased path (always correct):
-/// a program without its own instantiations mints no clones, and the
-/// instances a user-reachable clone reaches through its storage and
+/// Whether a source belongs to a bundled standard-library module, directly or
+/// through a specialization tag layered on its path.
+///
+/// Generic-struct instances reached only from there keep the erased path
+/// (always correct): a program without its own instantiations mints no clones,
+/// and the instances a user-reachable clone reaches through its storage and
 /// signatures are minted by the specializer itself.
 pub fn is_bundled_module_source(source: Option<&str>) -> bool {
     let (Some(root), Some(source)) = (mojito_module::module::bundled_root(), source) else {
@@ -537,7 +539,7 @@ pub(super) fn with_transfer_effects(
 /// for non-callables and for contracts that never had effects baked).
 pub(super) fn contract_transfer_effects(ty: &Ty) -> &[mojito_checked::checked::TransferEffect] {
     match callable_contract_ty(ty) {
-        Some(Ty::Func { transfers, .. }) | Some(Ty::GenericFunc { transfers, .. }) => &transfers.0,
+        Some(Ty::Func { transfers, .. } | Ty::GenericFunc { transfers, .. }) => &transfers.0,
         _ => &[],
     }
 }

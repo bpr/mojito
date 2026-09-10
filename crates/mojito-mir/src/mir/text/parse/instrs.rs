@@ -1,6 +1,7 @@
 //! Function body decoding: blocks, instructions, terminators, and
 //! region blocks.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Decoder {
@@ -142,6 +143,11 @@ impl Decoder {
             .collect()
     }
 
+    #[allow(
+        clippy::cognitive_complexity,
+        clippy::too_many_lines,
+        reason = "TODO: split this pass"
+    )]
     pub(super) fn instruction(&mut self, value: &Value) -> Option<MirInstr> {
         let (tag, fields) = self.any_record(value)?;
         match tag {

@@ -1,6 +1,7 @@
 //! Register-loan dataflow: which registers carry loans of owned
 //! storage across instructions.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -251,7 +252,7 @@ pub(super) fn transfer_register_loans(
 /// self-hosted `String`/`List` shape). Scalars and compile-time values own
 /// their bits; a bare `Pointer` read aliases by design (the `unsafe_*`
 /// vocabulary makes its lifetime the user's obligation).
-pub(super) fn may_alias_owned_storage(ty: &mojito_types::types::Ty) -> bool {
+pub(super) const fn may_alias_owned_storage(ty: &mojito_types::types::Ty) -> bool {
     use mojito_types::types::Ty;
     matches!(
         ty,
@@ -356,6 +357,10 @@ pub(super) fn register_loan_uses_over(
 /// Whether a call result register holds a pointer whose provenance designates
 /// checked storage (a loan-tracked origin), as opposed to an untracked or
 /// unsafe-any pointer.
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "TODO: take by value and update the call sites"
+)]
 fn tracked_pointer_result(
     register_types: &HashMap<u32, mojito_types::types::Ty>,
     dest: &Reg,

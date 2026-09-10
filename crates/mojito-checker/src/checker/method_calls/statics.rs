@@ -1,5 +1,6 @@
 //! Static-method inference on plain and parameterized nominal types.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Checker {
@@ -143,9 +144,7 @@ impl Checker {
         };
         if !compatible {
             return Err(TypeError::TypeMismatch {
-                expected: expected
-                    .map(|ty| ty.to_string())
-                    .unwrap_or_else(|| sname.to_string()),
+                expected: expected.map_or_else(|| sname.to_string(), |ty| ty.to_string()),
                 found: actual.to_string(),
                 context: format!("value passed to 'self' of '{sname}.{method}'"),
             });
@@ -559,7 +558,7 @@ impl Checker {
         }
         if selected.raises {
             let error = selected.error.as_deref().cloned().unwrap_or(Ty::Error);
-            self.record_call_effect(span.clone(), error.clone());
+            self.record_call_effect(span, error.clone());
             self.require_error(format!("call to raising method '{sname}.{method}'"), error)?;
         }
         Ok(selected.return_type)

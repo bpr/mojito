@@ -1,5 +1,6 @@
 //! Per-instruction result/operand register enumeration.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 /// The result registers an instruction defines (call/operation destinations
@@ -275,7 +276,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
             }
         }
         MirInstr::MakeTuple { elems, .. } | MirInstr::MakeSimd { elems, .. } => {
-            out.extend(elems.iter().copied())
+            out.extend(elems.iter().copied());
         }
         MirInstr::SimdCast { value, .. }
         | MirInstr::SimdBitcast { value, .. }
@@ -287,7 +288,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
             }
         }
         MirInstr::VariantIs { variant, .. } | MirInstr::VariantGet { variant, .. } => {
-            out.push(*variant)
+            out.push(*variant);
         }
         MirInstr::VariantTake { variant, .. } => out.push(*variant),
         MirInstr::VariantDeinitWith {

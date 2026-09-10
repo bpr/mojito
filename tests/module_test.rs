@@ -16,7 +16,7 @@ impl TempDir {
         let id = N.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("mojito_mod_{}_{}", std::process::id(), id));
         std::fs::create_dir_all(&dir).expect("create temp dir");
-        TempDir(dir)
+        Self(dir)
     }
     fn write(&self, rel: &str, contents: &str) -> PathBuf {
         let path = self.0.join(rel);

@@ -1,5 +1,6 @@
 //! Token cursor plumbing and the `parse_program` entry points.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
@@ -114,9 +115,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     }
 
     /// Consumes a token and ensures it matches the expected one
-    pub(super) fn expect(&mut self, expected: Token, context_msg: &str) -> Result<(), ParseError> {
+    pub(super) fn expect(&mut self, expected: &Token, context_msg: &str) -> Result<(), ParseError> {
         let token = self.next_token()?;
-        if token == expected {
+        if token == *expected {
             Ok(())
         } else {
             Err(ParseError::UnexpectedToken(token, context_msg.to_string()))

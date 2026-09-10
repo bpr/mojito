@@ -3,6 +3,7 @@
 //! list/tuple/variant construction inference. Extracted from `checker.rs`;
 //! see `docs/symbol-map.md`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Checker {
@@ -235,7 +236,7 @@ impl Checker {
                 .function_bases
                 .last()
                 .copied()
-                .unwrap_or(self.scopes.len().saturating_sub(1));
+                .unwrap_or_else(|| self.scopes.len().saturating_sub(1));
             let existing = self.scopes[base..]
                 .iter()
                 .rev()
@@ -257,7 +258,7 @@ impl Checker {
         }
         match &expression.kind {
             ExprKind::Prefix(_, value) | ExprKind::Transfer(value) => {
-                self.register_named_bindings(value)?
+                self.register_named_bindings(value)?;
             }
             ExprKind::Infix(_, left, right)
             | ExprKind::Index {
@@ -322,7 +323,7 @@ impl Checker {
                     match argument {
                         mojito_ast::ast::SubscriptArg::Index(value)
                         | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
-                            self.register_named_bindings(value)?
+                            self.register_named_bindings(value)?;
                         }
                         mojito_ast::ast::SubscriptArg::Slice {
                             lower, upper, step, ..
@@ -793,6 +794,7 @@ impl Checker {
         }
     }
 
+    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn infer_impl(&self, expr: &Expr) -> Result<Ty, TypeError> {
         match &expr.kind {
             ExprKind::Int(_) => Ok(Ty::IntLiteral),
@@ -1712,10 +1714,12 @@ impl Checker {
                     trait_name: "Deinitable".to_string(),
                     reason: self
                         .trait_failure_reason(alternative, "Deinitable")
-                        .or(Some(
+                        .or_else(|| {
+                            Some(
                         "in-place replacement destroys the previous payload under a runtime tag"
                             .to_string(),
-                    )),
+                    )
+                        }),
                 });
             }
         }
@@ -1797,6 +1801,7 @@ impl Checker {
     /// Candidate scoring uses `record = false`; after overload selection the
     /// checked path repeats this with `record = true`, retaining the chosen root
     /// type and any element conversions for HIR/MIR.
+    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn infer_with_expected(
         &self,
         expression: &Expr,
@@ -2211,6 +2216,10 @@ impl Checker {
     /// Record a fixed-size list display's resolution to `Array`'s variadic
     /// literal constructor, carrying the exact lowered overload symbol so MIR
     /// emits one nominal constructor call.
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "TODO: drop the Result once callers stop using ?"
+    )]
     pub(super) fn record_array_literal_construction(
         &self,
         span: SourceSpan,
@@ -2229,13 +2238,12 @@ impl Checker {
                         && sig.names.iter().any(|name| name == "__list_literal__")
                 })
             })
-            .map(|sig| {
-                method_lowered_name(name, "__init__", sig, self.self_instance_ty(name).as_ref())
-            })
-            // An unlinked seam (no bundled stdlib) has no registered `Array`;
-            // its checked programs are never executed, so the plain constructor
-            // spelling suffices as the recorded symbol.
-            .unwrap_or_else(|| format!("{name}.__init__"));
+            .map_or_else(
+                || format!("{name}.__init__"),
+                |sig| {
+                    method_lowered_name(name, "__init__", sig, self.self_instance_ty(name).as_ref())
+                },
+            );
         self.operation_adjustments.borrow_mut().insert(
             span,
             mojito_checked::checked::SemanticAdjustment::ConstructArrayLiteral {
@@ -2645,11 +2653,11 @@ fn contextual_member_name(expression: &Expr) -> String {
         match &current.kind {
             ExprKind::Identifier(_) => return member,
             ExprKind::Member { object, field } => {
-                member = field.clone();
+                member.clone_from(field);
                 current = object;
             }
             ExprKind::MethodCall { object, method, .. } => {
-                member = method.clone();
+                member.clone_from(method);
                 current = object;
             }
             ExprKind::Index { object, .. } => current = object,

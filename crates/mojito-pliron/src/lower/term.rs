@@ -1,9 +1,10 @@
 //! Terminator lowering: branches, return edges, escapes, and
 //! top-level binding releases.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     pub(super) fn lower_term(
         &mut self,
         ctx: &mut Context,

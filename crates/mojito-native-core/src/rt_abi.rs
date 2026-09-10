@@ -67,11 +67,11 @@ pub enum CAbiTy {
 }
 
 impl CAbiTy {
-    pub fn layout(self, target: &NativeTarget) -> Layout {
+    pub const fn layout(self, target: &NativeTarget) -> Layout {
         match self {
-            CAbiTy::U32 => Layout::new(4, 4),
-            CAbiTy::U64 | CAbiTy::I64 | CAbiTy::F64 => Layout::new(8, 8),
-            CAbiTy::PtrConstU8 | CAbiTy::PtrMutU8 => {
+            Self::U32 => Layout::new(4, 4),
+            Self::U64 | Self::I64 | Self::F64 => Layout::new(8, 8),
+            Self::PtrConstU8 | Self::PtrMutU8 => {
                 Layout::new(target.triple.pointer_size(), target.triple.pointer_align())
             }
         }
@@ -344,6 +344,11 @@ pub fn find_type(name: &str) -> Option<&'static RtTypeSpec> {
 /// The target layout of an exported type, resolving named field references
 /// through [`RT_TYPES`]. Panics on a dangling name — the table is const data
 /// whose integrity the default-lane tests pin.
+///
+/// # Panics
+///
+/// Panics if `spec` names a type absent from `RT_TYPES` — a defect in the
+/// runtime ABI table, not in caller input.
 pub fn type_layout(spec: &RtTypeSpec, target: &NativeTarget) -> StructLayout {
     let fields: Vec<Layout> = spec
         .fields

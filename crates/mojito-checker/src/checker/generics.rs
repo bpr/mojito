@@ -1,5 +1,6 @@
 //! Generic parameter classification, solving, substitution, and bound checks.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 pub(super) use mojito_symbol::symbol::{
     materialized_instantiation_argument, specialized_method_values,
@@ -29,7 +30,7 @@ pub(super) fn unify(
                     return Err(TypeError::TypeMismatch {
                         expected: existing.to_string(),
                         found: solved.to_string(),
-                        context: format!("type parameter '{}'", name),
+                        context: format!("type parameter '{name}'"),
                     });
                 }
             }
@@ -184,10 +185,10 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
             }
         }
         (Ty::Ref(pattern_reference), Ty::Ref(actual_reference)) => {
-            solve_value_args(&pattern_reference.referent, &actual_reference.referent, out)
+            solve_value_args(&pattern_reference.referent, &actual_reference.referent, out);
         }
         (Ty::Ref(pattern_reference), _) => {
-            solve_value_args(&pattern_reference.referent, actual, out)
+            solve_value_args(&pattern_reference.referent, actual, out);
         }
         _ => {}
     }
@@ -338,7 +339,7 @@ fn substitute_values_and_origins(
                     values
                         .get(name)
                         .cloned()
-                        .unwrap_or(CtValue::Param(name.clone())),
+                        .unwrap_or_else(|| CtValue::Param(name.clone())),
                 ),
                 TyArg::Val(value) => TyArg::Val(value.clone()),
                 TyArg::Origin(origin) => TyArg::Origin(substitute_origin(origin, origins)),
@@ -503,23 +504,27 @@ impl Checker {
         Ok((ordinary, bindings))
     }
 
+    #[allow(
+        clippy::unused_self,
+        reason = "TODO: make an associated function or use the receiver"
+    )]
     pub(super) fn bind_callable_origins(
         &self,
         mut callable: Ty,
         bindings: &[(Vec<usize>, mojito_types::origin::Origin)],
     ) -> Ty {
-        let (ref_params, ref_return) = match &mut callable {
-            Ty::Func {
-                ref_params,
-                ref_return,
-                ..
-            }
-            | Ty::GenericFunc {
-                ref_params,
-                ref_return,
-                ..
-            } => (ref_params, ref_return),
-            _ => return callable,
+        let (Ty::Func {
+            ref_params,
+            ref_return,
+            ..
+        }
+        | Ty::GenericFunc {
+            ref_params,
+            ref_return,
+            ..
+        }) = &mut callable
+        else {
+            return callable;
         };
         for signature in ref_params.iter_mut().flatten() {
             signature.origin = bind_sig_origin(&signature.origin, bindings);
@@ -737,7 +742,7 @@ impl Checker {
                 .insert(span.clone(), target);
             self.expression_types
                 .borrow_mut()
-                .insert(span.clone(), selected.clone());
+                .insert(span, selected.clone());
         }
         Ok(Some(selected))
     }

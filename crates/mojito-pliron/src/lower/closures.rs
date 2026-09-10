@@ -1,9 +1,10 @@
 //! Closure lowering: `MakeClosure`, capture drop thunks, and indirect
 //! calls through contract slots.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     /// Build the two-word `{ invoke, env }` value of a retained callable:
     /// intern the target's `invoke` thunk and store its address next to the
     /// environment pointer. Bare function values and empty-capture closures

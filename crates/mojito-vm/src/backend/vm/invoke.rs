@@ -1,6 +1,7 @@
 //! Call machinery: writeback/synchronous calls, caller mirrors,
 //! argument binding, kwargs, and method dispatch.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl VmBackend {
@@ -32,12 +33,11 @@ impl VmBackend {
         // Order the arguments into parameter slots (filling defaults/keywords),
         // keeping the slot map so each parameter's source argument is known.
         let keyword_names: Vec<String> = kwargs.iter().map(|(name, _)| name.clone()).collect();
-        let (bound, slots) = match prog.sigs.get(name) {
-            Some(sig) => self.bind_for_call(prog, name, sig, argv, kwargs)?,
-            None => {
-                let slots = (0..argv.len()).map(ArgSlot::Positional).collect();
-                (argv, slots)
-            }
+        let (bound, slots) = if let Some(sig) = prog.sigs.get(name) {
+            self.bind_for_call(prog, name, sig, &argv, kwargs)?
+        } else {
+            let slots = (0..argv.len()).map(ArgSlot::Positional).collect();
+            (argv, slots)
         };
         let function = &prog.mir.functions[idx].1;
         let ref_params = function.ref_params.clone();
@@ -177,7 +177,7 @@ impl VmBackend {
         prog: &Prog,
         name: &str,
         sig: &FnSig,
-        argv: Vec<Value>,
+        argv: &[Value],
         kwargs: Vec<(String, Value)>,
     ) -> Result<(Vec<Value>, Vec<ArgSlot>), RuntimeError> {
         let mut expanded = Vec::new();
@@ -227,7 +227,7 @@ impl VmBackend {
                 ))),
             }
         };
-        let (mut bound, slots) = bind_args(name, sig, argv, kwargs, make_default)?;
+        let (mut bound, slots) = bind_args(name, sig, argv, &kwargs, make_default)?;
         if let Some(index) = sig.kw_variadic_index {
             bound[index] = self.make_kwargs_dict(prog, collected)?;
         }
@@ -332,6 +332,7 @@ impl VmBackend {
     /// Dispatch a method call. Nominal values resolve to their mangled
     /// `Type.method` function, with a `mut self` receiver written back; only
     /// primitive and compiler-private storage kinds retain intrinsic branches.
+    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn method_call(
         &mut self,
         prog: &Prog,
@@ -620,12 +621,11 @@ impl VmBackend {
                 })?;
                 // Bind ordinary arguments through the same signature metadata as
                 // free functions, then prepend `self` in frame slot zero.
-                let (bound, slots) = match prog.sigs.get(&fname) {
-                    Some(signature) => self.bind_for_call(prog, &fname, signature, args, kwargs)?,
-                    None => {
-                        let slots = (0..args.len()).map(ArgSlot::Positional).collect();
-                        (args, slots)
-                    }
+                let (bound, slots) = if let Some(signature) = prog.sigs.get(&fname) {
+                    self.bind_for_call(prog, &fname, signature, &args, kwargs)?
+                } else {
+                    let slots = (0..args.len()).map(ArgSlot::Positional).collect();
+                    (args, slots)
                 };
                 let mut call_args = Vec::with_capacity(bound.len() + 1);
                 call_args.push(recv.clone());
@@ -766,10 +766,10 @@ impl VmBackend {
                 )?;
                 // `mut self`: write the (possibly mutated) receiver back.
                 let is_mut = prog.structs.get(name).is_some_and(|d| {
-                    let key = if fname != source_fname {
-                        fname.as_str()
-                    } else {
+                    let key = if fname == source_fname {
                         method
+                    } else {
+                        fname.as_str()
                     };
                     d.mut_self_methods.contains(key)
                 });

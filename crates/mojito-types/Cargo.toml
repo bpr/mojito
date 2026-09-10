@@ -8,3 +8,6 @@ publish = false
 [dependencies]
 mojito-ast = { path = "../mojito-ast" }
 mojito-common = { path = "../mojito-common" }
+
+[lints]
+workspace = true

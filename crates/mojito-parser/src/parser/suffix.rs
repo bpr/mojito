@@ -1,15 +1,17 @@
 //! Postfix parsing: call/index/member bracket suffixes, slices,
 //! comparisons, and call arguments.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
+    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn parse_bracket_suffix(
         &mut self,
         object: Expr,
         start: usize,
     ) -> Result<Expr, ParseError> {
-        self.expect(Token::LBracket, "Expected '['")?;
+        self.expect(&Token::LBracket, "Expected '['")?;
         if matches!(self.peek_token()?, Some(Token::RBracket)) {
             self.next_token()?;
             // Empty brackets are the pointer-dereference subscript `p[]`. The
@@ -114,7 +116,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 break;
             }
         }
-        self.expect(Token::RBracket, "Expected ']' after a subscript")?;
+        self.expect(&Token::RBracket, "Expected ']' after a subscript")?;
 
         let contains_slice = items.iter().any(|item| {
             matches!(
@@ -140,7 +142,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 .collect();
             self.next_token()?;
             let (args, kwargs) = self.parse_call_args()?;
-            self.expect(Token::RParen, "Expected ')' after arguments")?;
+            self.expect(&Token::RParen, "Expected ')' after arguments")?;
             let kind = match object.kind {
                 ExprKind::Identifier(name) => ExprKind::Call {
                     name,
@@ -278,7 +280,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                         SubscriptArg::Keyword { name, value }
                     }
                     mojito_ast::ast::ParamArg::Value(value) => SubscriptArg::Index(value),
-                    _ => unreachable!(),
+                    mojito_ast::ast::ParamArg::Type(_) => unreachable!(),
                 })
                 .collect();
             return Ok(self.node(
@@ -419,7 +421,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// for a multi-dimensional subscript; a second colon is retained even when
     /// its step expression is omitted.
     pub(super) fn parse_slice_components(&mut self) -> Result<ParsedSliceTail, ParseError> {
-        self.expect(Token::Colon, "Expected ':' in a slice")?;
+        self.expect(&Token::Colon, "Expected ':' in a slice")?;
         let upper = if matches!(
             self.peek_token()?,
             Some(Token::Colon | Token::Comma | Token::RBracket)
@@ -482,7 +484,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 }
             }
             Token::Not => {
-                self.expect(Token::In, "Expected 'in' after 'not' in a membership test")?;
+                self.expect(&Token::In, "Expected 'in' after 'not' in a membership test")?;
                 InfixOp::NotIn
             }
             other => {
@@ -575,7 +577,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 self.parse_expression(Precedence::Lowest)?
             };
             if let ExprKind::Identifier(name) = &expr.kind
-                && matches!(self.peek_token()?, Some(Token::Assign) | Some(Token::Colon))
+                && matches!(self.peek_token()?, Some(Token::Assign | Token::Colon))
             {
                 self.next_token()?; // consume '=' or ':'
                 let value = self.parse_expression(Precedence::Lowest)?;

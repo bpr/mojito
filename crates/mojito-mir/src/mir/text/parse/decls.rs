@@ -1,5 +1,6 @@
 //! Artifact header plus struct/function declaration decoding.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Decoder {

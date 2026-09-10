@@ -12,6 +12,9 @@ use crate::runtime::{
     builtin_divmod, builtin_error, builtin_input, builtin_min_max, builtin_round, read_simd_lane,
     simd_from_values, value_as_index,
 };
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use calls::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use mojito_ast::ast::Stmt;
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
 use mojito_checked::checked::CheckedConst;
@@ -23,6 +26,8 @@ use mojito_mir::mir::{
 };
 use mojito_types::ct::CtValue;
 use mojito_types::types::{CallableDefault, ParamDecl, Ty};
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use places::*;
 use std::collections::HashMap;
 
 #[derive(Default)]
@@ -354,9 +359,10 @@ impl VmBackend {
         resolved: Option<&str>,
     ) -> Result<Value, RuntimeError> {
         let source_fname = format!("{sname}.{method}");
-        let fname = resolved
-            .map(str::to_string)
-            .unwrap_or_else(|| prog.overload_name(&source_fname, args.len().saturating_sub(1)));
+        let fname = resolved.map_or_else(
+            || prog.overload_name(&source_fname, args.len().saturating_sub(1)),
+            str::to_string,
+        );
         let idx = prog.index_of(&fname).ok_or_else(|| {
             RuntimeError::Unsupported(format!("vm: struct '{sname}' has no method '{method}'"))
         })?;
@@ -383,7 +389,7 @@ impl VmBackend {
         }
         mojito_analysis::analysis::check_ownership_program(&lowered)
             .map_err(|error| RuntimeError::Unsupported(format!("ownership error: {error}")))?;
-        self.run_prog(build_prog_lowered(lowered)?)
+        self.run_prog(&build_prog_lowered(lowered)?)
     }
 
     /// Run a verified, already drop-elaborated MIR program — what
@@ -407,7 +413,7 @@ impl VmBackend {
             Prog { mir, structs, sigs }
         };
         let _run = timing::span("execute");
-        self.run_prog(prog)
+        self.run_prog(&prog)
     }
 
     /// Captured standard output.
@@ -422,13 +428,13 @@ impl VmBackend {
 }
 
 impl VmBackend {
-    fn run_prog(&mut self, prog: Prog) -> Result<(), RuntimeError> {
-        self.configure_lifecycle(&prog);
+    fn run_prog(&mut self, prog: &Prog) -> Result<(), RuntimeError> {
+        self.configure_lifecycle(prog);
         // Run module initialization, then `main()`. Capture the top-level frame's
         // user variables (skipping synthetic `$…` temporaries) as the global
         // bindings.
         if let Some(top) = prog.index_of("__toplevel__") {
-            let (_, vars) = self.call_frame(&prog, top, Vec::new(), &[])?;
+            let (_, vars) = self.call_frame(prog, top, Vec::new(), &[])?;
             let names = &prog.mir.functions[top].1.var_names;
             self.bindings = names
                 .iter()
@@ -438,7 +444,7 @@ impl VmBackend {
                 .collect();
         }
         if let Some(main) = prog.index_of("main") {
-            self.call_function(&prog, main, Vec::new(), &[])?;
+            self.call_function(prog, main, Vec::new(), &[])?;
         }
         Ok(())
     }
@@ -1077,24 +1083,24 @@ fn align_parameter_arguments<T>(
     let mut aligned: Vec<Option<T>> = (0..declarations.len()).map(|_| None).collect();
     let mut next_positional = 0;
     for (name, value) in arguments {
-        let index = match name {
-            Some(name) => declarations
+        let index = if let Some(name) = name {
+            declarations
                 .iter()
-                .position(|declaration| declaration.name().trim_start_matches('*') == name),
-            None => {
-                while declarations
-                    .get(next_positional)
-                    .is_some_and(|declaration| match declaration {
-                        ParamDecl::Type { infer_only, .. }
-                        | ParamDecl::Value { infer_only, .. } => *infer_only,
-                    })
-                {
-                    next_positional += 1;
-                }
-                let index = (next_positional < declarations.len()).then_some(next_positional);
-                next_positional += usize::from(index.is_some());
-                index
+                .position(|declaration| declaration.name().trim_start_matches('*') == name)
+        } else {
+            while declarations
+                .get(next_positional)
+                .is_some_and(|declaration| match declaration {
+                    ParamDecl::Type { infer_only, .. } | ParamDecl::Value { infer_only, .. } => {
+                        *infer_only
+                    }
+                })
+            {
+                next_positional += 1;
             }
+            let index = (next_positional < declarations.len()).then_some(next_positional);
+            next_positional += usize::from(index.is_some());
+            index
         };
         if let Some(index) = index {
             aligned[index] = value;
@@ -1109,6 +1115,14 @@ impl VmBackend {
     /// (`hash[Self.H](key)` in an erased struct body, `Const::Str("H")`)
     /// resolves through the caller frame's reified parameters; a spelling bound
     /// nowhere passes through for the callee's declaration default.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "borrow bundle: `From<&Frame>` builds it at each call site"
+    )]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "borrow bundle: `From<&Frame>` builds it at each call site"
+    )]
     fn runtime_parameter_arguments(
         &self,
         prog: &Prog,
@@ -1370,12 +1384,10 @@ fn navigate_reference_mut<'a>(
                         "Variant holds '{}', not '{}'",
                         alternatives
                             .get(*index)
-                            .map(ToString::to_string)
-                            .unwrap_or_else(|| "<invalid>".to_string()),
+                            .map_or_else(|| "<invalid>".to_string(), ToString::to_string),
                         alternatives
                             .get(*expected)
-                            .map(ToString::to_string)
-                            .unwrap_or_else(|| "<invalid>".to_string())
+                            .map_or_else(|| "<invalid>".to_string(), ToString::to_string)
                     )));
                 }
                 _ => {
@@ -1474,6 +1486,10 @@ fn get_field(base: &Value, field: &str) -> Result<Value, RuntimeError> {
 /// Store through a flattened reference whose final projection selects a SIMD
 /// lane. SIMD lanes are packed scalars rather than independent `Value` slots,
 /// so the ordinary mutable projection navigator cannot return one by address.
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "TODO: only the Index arm stores it"
+)]
 fn write_simd_reference_lane(
     root: &mut Value,
     projection: &[RefProjection],
@@ -1486,7 +1502,7 @@ fn write_simd_reference_lane(
     let Value::Simd { dtype, lanes } = parent else {
         return Ok(false);
     };
-    crate::runtime::set_simd_lane(*dtype, lanes, *index as i64, value)?;
+    crate::runtime::set_simd_lane(*dtype, lanes, *index as i64, &value)?;
     Ok(true)
 }
 
@@ -1557,11 +1573,7 @@ mod frames;
 
 mod references;
 
-use calls::*;
-
 mod places;
-
-use places::*;
 
 #[cfg(test)]
 mod pointer_storage_tests {
@@ -1571,7 +1583,7 @@ mod pointer_storage_tests {
         Prog {
             mir: MirProgram {
                 functions: Vec::new(),
-                declarations: Default::default(),
+                declarations: mojito_mir::mir::MirDeclarations::default(),
                 invariant_errors: Vec::new(),
             },
             structs: HashMap::new(),

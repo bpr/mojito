@@ -62,20 +62,22 @@ pub enum CapabilityStatus {
 }
 
 impl CapabilityStatus {
-    pub fn spelling(self) -> &'static str {
+    pub const fn spelling(self) -> &'static str {
         match self {
-            CapabilityStatus::Supported => "supported",
-            CapabilityStatus::Partial => "partial",
-            CapabilityStatus::Unsupported => "unsupported",
+            Self::Supported => "supported",
+            Self::Partial => "partial",
+            Self::Unsupported => "unsupported",
         }
     }
 }
 
-/// Per-instruction capability, in [`mojito_mir::mir::text::INSTRUCTION_MNEMONICS`]
-/// order (pinned by the module tests). `partial` rows state the lowered
-/// condition; a
-/// `supported` row may still reject a malformed artifact (untyped registers,
-/// missing blocks) — those are verifier-level anomalies, not capability gaps.
+/// Per-instruction capability, in
+/// [`mojito_mir::mir::text::INSTRUCTION_MNEMONICS`] order (pinned by the
+/// module tests).
+///
+/// `partial` rows state the lowered condition; a `supported` row may still
+/// reject a malformed artifact (untyped registers, missing blocks) — those are
+/// verifier-level anomalies, not capability gaps.
 pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "loans.establish",
@@ -280,6 +282,11 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "vector int rewrap and f64-mediated float conversion; i128-saturating float-to-int lane by lane; bool casts reject in the checker",
     ),
     (
+        "simd.bits",
+        CapabilityStatus::Supported,
+        "each lane's bit pattern zero-extended into the unsigned target lane (floats through bitcast, bool as 0/1); a reinterpretation, not a conversion, so it is exact by construction and matches the VM's `simd_to_bits` on every lane",
+    ),
+    (
         "simd.shuffle",
         CapabilityStatus::Supported,
         "one shufflevector per compile-time mask (a one-lane mask extracts the scalar)",
@@ -459,6 +466,10 @@ pub const TYPE_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     ),
 ];
 
+#[allow(
+    clippy::format_push_string,
+    reason = "TODO: write! into the buffer instead"
+)]
 fn push_row(out: &mut String, section: &str, subject: &str, status: CapabilityStatus, note: &str) {
     out.push_str(&format!(
         "{section}\t{subject}\t{status}\t{note}\n",

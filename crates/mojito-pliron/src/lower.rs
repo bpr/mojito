@@ -70,7 +70,7 @@ use super::{PlironError, PlironErrorKind, RetKind, TrapCategory};
 /// [`declare_function`], consumed by call lowering. An aggregate-returning
 /// function takes a prepended sret out-pointer and returns `void`; aggregate
 /// parameters pass by pointer (the shared ABI's by-reference rule).
-pub(super) struct FnSignature {
+pub struct FnSignature {
     pub mangled: String,
     pub func_ty: TypedHandle<FuncType>,
     pub returns_value: bool,
@@ -104,7 +104,7 @@ pub(super) struct FnSignature {
 /// laid out by the ordinary aggregate rules (`native::layout::outcome_layout`;
 /// the tag sits at offset 0).
 #[derive(Clone)]
-pub(super) struct OutcomeAbi {
+pub struct OutcomeAbi {
     pub layout: Layout,
     pub ok_offset: u64,
     pub err_offset: u64,
@@ -122,7 +122,7 @@ pub(super) struct OutcomeAbi {
 /// callable value carries has exactly this signature with the environment
 /// pointer prepended after the out-pointer: `[outcome*|sret*], env*,
 /// params...` (never both an sret and an outcome — the inherited invariant).
-pub(super) struct ContractAbi {
+pub struct ContractAbi {
     /// The `invoke` call type, including the `env*` parameter.
     pub func_ty: TypedHandle<FuncType>,
     pub returns_value: bool,
@@ -147,7 +147,7 @@ pub(super) struct ContractAbi {
 /// `invoke` thunks of retained callables (`mjthunk_<n>`). The `mjrt_` and
 /// `mjthunk_` prefixes, like `main`, are outside the injective `mj_` mangle
 /// image (see `mangle`).
-pub(super) struct ModuleShared {
+pub struct ModuleShared {
     module: ModuleOp,
     rt_types: HashMap<&'static str, TypedHandle<FuncType>>,
     /// The libc callees `external_call` has declared so far (see
@@ -195,14 +195,14 @@ mod types;
 mod variants;
 mod vars;
 
-pub(crate) use module_env::*;
-pub(crate) use support::*;
-pub(crate) use types::*;
+pub use module_env::*;
+pub use support::*;
+pub use types::*;
 
 /// The module-wide read-only lowering environment shared by every function
 /// body: compiled signatures, call-binding declarations, and the span
 /// locator.
-pub(super) struct LowerEnv<'a> {
+pub struct LowerEnv<'a> {
     pub signatures: &'a HashMap<String, FnSignature>,
     pub declarations: &'a HashMap<String, MirFunctionDeclaration>,
     pub struct_decls: &'a HashMap<&'a str, &'a MirStructDeclaration>,
@@ -213,7 +213,7 @@ pub(super) struct LowerEnv<'a> {
 }
 
 /// Lower `func`'s body into the declared `func_op`.
-pub(super) fn lower_body(
+pub fn lower_body(
     ctx: &mut Context,
     name: &str,
     func: &MirFunction,
@@ -275,7 +275,7 @@ pub(super) fn lower_body(
 
 /// Resolves MIR source spans to pliron [`Location`]s against the compilation's
 /// registered sources.
-pub(super) struct Locator {
+pub struct Locator {
     sources: Vec<(String, pliron::location::Source, Vec<usize>)>,
 }
 
@@ -284,7 +284,7 @@ pub(super) struct Locator {
 /// is one opaque target pointer (checked `Pointer` values, origins erased);
 /// `Sized` is a width-1 SIMD scalar alias at its lane width.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum ScalarTy {
+pub enum ScalarTy {
     Int,
     UInt,
     Float64,
@@ -302,7 +302,7 @@ pub(super) enum ScalarTy {
 /// runtime representation. The aggregate's checked type is boxed to keep the
 /// enum scalar-cheap.
 #[derive(Clone)]
-pub(super) enum LowerTy {
+pub enum LowerTy {
     Scalar(ScalarTy),
     Aggregate { ty: Box<Ty>, layout: Layout },
     ZeroSized,
@@ -534,7 +534,7 @@ struct FnLowering<'a> {
     sret_ptr: Option<Value>,
     /// The tagged-outcome out-pointer (argument 0) of a raising function.
     outcome_ptr: Option<Value>,
-    /// The entry-block MjError staging slot: raise sites and propagating
+    /// The entry-block `MjError` staging slot: raise sites and propagating
     /// call edges write the in-flight error here before jumping to the
     /// current raise-edge target. Created lazily.
     err_slot: Option<Value>,

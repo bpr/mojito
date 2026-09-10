@@ -1,9 +1,10 @@
 //! Variable-slot lowering: loans, `UseVar`/`DefVar`, copies, and raw
 //! allocation.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     /// Materialize the runtime handle of a static `ref` binding. MIR normally
     /// erases loan bookkeeping at execution, but a binding whose only
     /// definition is `EstablishLoans` still needs its verified target address

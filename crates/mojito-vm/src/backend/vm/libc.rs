@@ -10,6 +10,7 @@
 //! `write(1, ..)` and `print` interleave exactly), open directory
 //! snapshots, the `errno` slot, and a per-VM environment overlay.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use crate::runtime::{SimdLanes, type_name};
 use mojito_ast::ast::Dtype;
@@ -91,7 +92,7 @@ impl VmBackend {
     pub(super) fn external_call(
         &mut self,
         callee: &str,
-        args: Vec<Value>,
+        args: &[Value],
         arg_types: &[Option<Ty>],
     ) -> Result<Value, RuntimeError> {
         // Every buffer byte a callee writes is stored as a `UInt8` lane
@@ -100,25 +101,25 @@ impl VmBackend {
         let _ = arg_types;
         match callee {
             "open" => {
-                let path = self.c_string_arg(callee, &args, 0)?;
-                let flags = int_arg(callee, &args, 1)?;
+                let path = self.c_string_arg(callee, args, 0)?;
+                let flags = int_arg(callee, args, 1)?;
                 let mode = args.get(2).map(|v| c_integer(callee, 2, v)).transpose()?;
                 self.libc_open(&path, flags, mode.unwrap_or(0o666))
             }
             "read" => {
-                let fd = int_arg(callee, &args, 0)? as i32;
-                let buffer = pointer_arg(callee, &args, 1)?;
-                let count = int_arg(callee, &args, 2)?;
+                let fd = int_arg(callee, args, 0)? as i32;
+                let buffer = pointer_arg(callee, args, 1)?;
+                let count = int_arg(callee, args, 2)?;
                 self.libc_read(fd, buffer, count)
             }
             "write" => {
-                let fd = int_arg(callee, &args, 0)? as i32;
-                let buffer = pointer_arg(callee, &args, 1)?;
-                let count = int_arg(callee, &args, 2)?;
+                let fd = int_arg(callee, args, 0)? as i32;
+                let buffer = pointer_arg(callee, args, 1)?;
+                let count = int_arg(callee, args, 2)?;
                 self.libc_write(fd, buffer, count)
             }
             "close" => {
-                let fd = int_arg(callee, &args, 0)? as i32;
+                let fd = int_arg(callee, args, 0)? as i32;
                 if (0..=2).contains(&fd) || self.host.files.remove(&fd).is_some() {
                     Ok(Value::Int(0))
                 } else {
@@ -126,37 +127,37 @@ impl VmBackend {
                 }
             }
             "lseek" => {
-                let fd = int_arg(callee, &args, 0)? as i32;
-                let offset = int_arg(callee, &args, 1)?;
-                let whence = int_arg(callee, &args, 2)?;
+                let fd = int_arg(callee, args, 0)? as i32;
+                let offset = int_arg(callee, args, 1)?;
+                let whence = int_arg(callee, args, 2)?;
                 self.libc_lseek(fd, offset, whence)
             }
             "unlink" => {
-                let path = self.c_string_arg(callee, &args, 0)?;
+                let path = self.c_string_arg(callee, args, 0)?;
                 self.status(std::fs::remove_file(os_path(&path)))
             }
             "rmdir" => {
-                let path = self.c_string_arg(callee, &args, 0)?;
+                let path = self.c_string_arg(callee, args, 0)?;
                 self.status(std::fs::remove_dir(os_path(&path)))
             }
             "mkdir" => {
-                let path = self.c_string_arg(callee, &args, 0)?;
-                let mode = int_arg(callee, &args, 1)?;
+                let path = self.c_string_arg(callee, args, 0)?;
+                let mode = int_arg(callee, args, 1)?;
                 let result = std::fs::DirBuilder::new()
                     .mode(mode as u32)
                     .create(os_path(&path));
                 self.status(result)
             }
             "opendir" => {
-                let path = self.c_string_arg(callee, &args, 0)?;
+                let path = self.c_string_arg(callee, args, 0)?;
                 self.libc_opendir(&path)
             }
             "readdir" => {
-                let handle = pointer_arg(callee, &args, 0)?;
-                self.libc_readdir(handle)
+                let handle = pointer_arg(callee, args, 0)?;
+                self.libc_readdir(handle.as_ref())
             }
             "closedir" => {
-                let handle = pointer_arg(callee, &args, 0)?;
+                let handle = pointer_arg(callee, args, 0)?;
                 match handle {
                     Some(Value::Pointer { allocation, .. })
                         if self.host.dirs.remove(&allocation).is_some() =>
@@ -167,21 +168,21 @@ impl VmBackend {
                 }
             }
             "getcwd" => {
-                let buffer = pointer_arg(callee, &args, 0)?;
-                let size = int_arg(callee, &args, 1)?;
+                let buffer = pointer_arg(callee, args, 0)?;
+                let size = int_arg(callee, args, 1)?;
                 self.libc_getcwd(buffer, size)
             }
             "getenv" => {
-                let name = self.c_string_arg(callee, &args, 0)?;
+                let name = self.c_string_arg(callee, args, 0)?;
                 match self.env_lookup(&name) {
                     Some(value) => self.alloc_c_string(&value),
                     None => Ok(null_pointer()),
                 }
             }
             "setenv" => {
-                let name = self.c_string_arg(callee, &args, 0)?;
-                let value = self.c_string_arg(callee, &args, 1)?;
-                let overwrite = int_arg(callee, &args, 2)? != 0;
+                let name = self.c_string_arg(callee, args, 0)?;
+                let value = self.c_string_arg(callee, args, 1)?;
+                let overwrite = int_arg(callee, args, 2)? != 0;
                 if name.is_empty() || name.contains(&b'=') {
                     return self.fail_code(EINVAL);
                 }
@@ -191,7 +192,7 @@ impl VmBackend {
                 Ok(Value::Int(0))
             }
             "unsetenv" => {
-                let name = self.c_string_arg(callee, &args, 0)?;
+                let name = self.c_string_arg(callee, args, 0)?;
                 if name.is_empty() || name.contains(&b'=') {
                     return self.fail_code(EINVAL);
                 }
@@ -199,7 +200,7 @@ impl VmBackend {
                 Ok(Value::Int(0))
             }
             "strerror" => {
-                let code = int_arg(callee, &args, 0)? as i32;
+                let code = int_arg(callee, args, 0)? as i32;
                 if let Some(allocation) = self.host.strerror_cache.get(&code) {
                     return Ok(Value::Pointer {
                         allocation: *allocation,
@@ -214,9 +215,9 @@ impl VmBackend {
             }
             "__errno_location" => self.errno_pointer(),
             "memcpy" => {
-                let destination = pointer_arg(callee, &args, 0)?;
-                let source = pointer_arg(callee, &args, 1)?;
-                let count = int_arg(callee, &args, 2)?;
+                let destination = pointer_arg(callee, args, 0)?;
+                let source = pointer_arg(callee, args, 1)?;
+                let count = int_arg(callee, args, 2)?;
                 let (Some(destination), Some(source)) = (destination, source) else {
                     return Err(RuntimeError::TypeError(
                         "vm: memcpy through a null pointer".to_string(),
@@ -229,12 +230,12 @@ impl VmBackend {
                 Ok(destination)
             }
             "strlen" => {
-                let text = self.c_string_arg(callee, &args, 0)?;
+                let text = self.c_string_arg(callee, args, 0)?;
                 Ok(Value::Int(text.len() as i64))
             }
             "__xstat" | "__lxstat" => {
-                let path = self.c_string_arg(callee, &args, 1)?;
-                let handle = pointer_arg(callee, &args, 2)?;
+                let path = self.c_string_arg(callee, args, 1)?;
+                let handle = pointer_arg(callee, args, 2)?;
                 let metadata = if callee == "__xstat" {
                     std::fs::metadata(os_path(&path))
                 } else {
@@ -396,10 +397,8 @@ impl VmBackend {
         // libc yields `.` and `..` first; upstream's `listdir` filters them
         // by name, so both backends see the same stream.
         let mut pending = VecDeque::new();
-        let self_ino = std::fs::metadata(directory).map(|m| m.ino()).unwrap_or(0);
-        let parent_ino = std::fs::metadata(directory.join(".."))
-            .map(|m| m.ino())
-            .unwrap_or(0);
+        let self_ino = std::fs::metadata(directory).map_or(0, |m| m.ino());
+        let parent_ino = std::fs::metadata(directory.join("..")).map_or(0, |m| m.ino());
         pending.push_back(DirentImage {
             ino: self_ino,
             kind: DT_DIR,
@@ -411,7 +410,7 @@ impl VmBackend {
             name: b"..".to_vec(),
         });
         for entry in entries.flatten() {
-            let kind = entry.file_type().map(dirent_kind).unwrap_or(DT_UNKNOWN);
+            let kind = entry.file_type().map_or(DT_UNKNOWN, dirent_kind);
             pending.push_back(DirentImage {
                 ino: entry.ino(),
                 kind,
@@ -435,12 +434,12 @@ impl VmBackend {
         Ok(identity)
     }
 
-    fn libc_readdir(&mut self, handle: Option<Value>) -> Result<Value, RuntimeError> {
+    fn libc_readdir(&mut self, handle: Option<&Value>) -> Result<Value, RuntimeError> {
         let Some(Value::Pointer { allocation, .. }) = handle else {
             self.set_errno(EBADF)?;
             return Ok(null_pointer());
         };
-        let Some(state) = self.host.dirs.get_mut(&allocation) else {
+        let Some(state) = self.host.dirs.get_mut(allocation) else {
             self.set_errno(EBADF)?;
             return Ok(null_pointer());
         };
@@ -530,7 +529,7 @@ impl VmBackend {
                     match spec_name.as_str() {
                         "tv_sec" => *spec_value = retype_scalar(spec_value, i128::from(*seconds)),
                         "tv_subsec" => {
-                            *spec_value = retype_scalar(spec_value, i128::from(*nanoseconds))
+                            *spec_value = retype_scalar(spec_value, i128::from(*nanoseconds));
                         }
                         _ => {}
                     }
@@ -719,7 +718,7 @@ pub fn strerror_text(code: i32) -> String {
     }
 }
 
-fn null_pointer() -> Value {
+const fn null_pointer() -> Value {
     Value::Pointer {
         allocation: 0,
         offset: 0,

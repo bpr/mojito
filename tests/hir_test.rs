@@ -36,7 +36,7 @@ fn checked_function_cfg(src: &str, function: &str) -> Cfg {
 /// Every block must be sealed with exactly one terminator (CFG well-formedness).
 fn assert_all_sealed(cfg: &Cfg) {
     for b in cfg.g.node_indices() {
-        assert!(cfg.term(b).is_some(), "block {:?} has no terminator", b);
+        assert!(cfg.term(b).is_some(), "block {b:?} has no terminator");
     }
 }
 
@@ -275,9 +275,11 @@ fn checked_hir_retains_semantic_identity_type_and_adjustments() {
     )
     .expect("parse");
     let checked = mojito::check_program(&body).expect("check");
-    let main_body = match &checked.statements()[1].kind {
-        mojito::ast::StmtKind::Def { body, .. } => body,
-        _ => panic!("expected main"),
+    let mojito::ast::StmtKind::Def {
+        body: main_body, ..
+    } = &checked.statements()[1].kind
+    else {
+        panic!("expected main")
     };
     let cfg = Cfg::build_checked_fn(&checked, &[], main_body);
     let expression = cfg
@@ -317,9 +319,8 @@ fn checked_hir_places_use_owner_identity_and_typed_projections() {
         "@fieldwise_init\nstruct Cell:\n    var value: Int\n\ndef read(cell: Cell) -> Int:\n    return cell.value\n",
     ).expect("parse");
     let checked = mojito::check_program(&program).expect("check");
-    let body = match &checked.statements()[1].kind {
-        mojito::ast::StmtKind::Def { body, .. } => body,
-        _ => panic!("expected function"),
+    let mojito::ast::StmtKind::Def { body, .. } = &checked.statements()[1].kind else {
+        panic!("expected function")
     };
     let cfg = Cfg::build_checked_fn(&checked, &["cell".to_string()], body);
     let expression = cfg
@@ -343,9 +344,8 @@ fn checked_hir_retains_distinct_comprehension_binding_owners() {
     )
     .expect("parse");
     let checked = mojito::check_program(&program).expect("check");
-    let body = match &checked.statements()[0].kind {
-        mojito::ast::StmtKind::Def { body, .. } => body,
-        _ => panic!("expected function"),
+    let mojito::ast::StmtKind::Def { body, .. } = &checked.statements()[0].kind else {
+        panic!("expected function")
     };
     let cfg = Cfg::build_checked_fn(&checked, &[], body);
     let expression = cfg
@@ -378,9 +378,8 @@ fn checked_hir_carries_nested_declaration_and_call_binding_identity() {
     )
     .expect("parse");
     let checked = mojito::check_program(&program).expect("check");
-    let body = match &checked.statements()[0].kind {
-        mojito::ast::StmtKind::Def { body, .. } => body,
-        _ => panic!("expected function"),
+    let mojito::ast::StmtKind::Def { body, .. } = &checked.statements()[0].kind else {
+        panic!("expected function")
     };
     let cfg = Cfg::build_checked_fn(&checked, &[], body);
 
@@ -429,9 +428,8 @@ fn checked_hir_next_retains_a_shadowed_loop_binder_identity() {
     )
     .expect("parse");
     let checked = mojito::check_program(&program).expect("check");
-    let body = match &checked.statements()[0].kind {
-        mojito::ast::StmtKind::Def { body, .. } => body,
-        _ => panic!("expected function"),
+    let mojito::ast::StmtKind::Def { body, .. } = &checked.statements()[0].kind else {
+        panic!("expected function")
     };
     let cfg = Cfg::build_checked_fn(&checked, &[], body);
     let outer = cfg
@@ -531,8 +529,8 @@ fn checked_hir_retains_the_abstract_iterator_copy_adapter() {
         .find_map(|instruction| match instruction {
             mojito::hir::HirInstr::Next {
                 call: Some(call), ..
-            } => Some(call.result_adapter),
-            mojito::hir::HirInstr::TryNext { call, .. } => Some(call.result_adapter),
+            }
+            | mojito::hir::HirInstr::TryNext { call, .. } => Some(call.result_adapter),
             _ => None,
         })
         .expect("abstract iterator next");

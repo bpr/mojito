@@ -12,3 +12,6 @@ mojito-common = { path = "../mojito-common" }
 mojito-module = { path = "../mojito-module" }
 mojito-symbol = { path = "../mojito-symbol" }
 mojito-types = { path = "../mojito-types" }
+
+[lints]
+workspace = true

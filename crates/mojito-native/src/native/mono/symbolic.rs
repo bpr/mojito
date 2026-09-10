@@ -1,9 +1,10 @@
 //! Symbolic-type detection and concreteness enforcement.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 pub(super) fn eval_ct(expr: &CtExpr, bindings: &Bindings) -> Result<CtValue, MonoError> {
-    use CtExpr::*;
+    use CtExpr::{Add, FloorDiv, Mod, Mul, Neg, Param, Pow, Sub, Value};
     let int = |value: CtValue| match value {
         CtValue::Int(v) => Ok(v),
         _ => Err(MonoError {
@@ -216,10 +217,10 @@ pub(super) fn collect_nested_types(ty: &Ty, output: &mut Vec<Ty>) {
             }
         })),
         Ty::Tuple(v) | Ty::RuntimePack(v) | Ty::Variant(v) | Ty::Overload(v) => {
-            output.extend(v.iter().cloned())
+            output.extend(v.iter().cloned());
         }
         Ty::ComptimeList(v) | Ty::VariadicPack(v) | Ty::Pointer { element: v, .. } => {
-            output.push((**v).clone())
+            output.push((**v).clone());
         }
         Ty::Ref(v) => output.push((*v.referent).clone()),
         _ => {}

@@ -1,7 +1,13 @@
 //! The per-instruction verifier.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
+#[allow(
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    reason = "TODO: split this pass"
+)]
 pub(super) fn verify_instruction(
     name: &str,
     function: &MirFunction,
@@ -40,7 +46,7 @@ pub(super) fn verify_instruction(
         }
     }
     let reg_ty = |register: &Reg| function.reg_types.get(&register.0);
-    let valid_simd_width = |width: usize| width >= 1 && (width & (width - 1)) == 0;
+    let valid_simd_width = |width: usize| width >= 1 && width.is_power_of_two();
     match instruction {
         // Widths are validated during checked elaboration; this is the
         // phase-boundary backstop for assembled artifacts.
@@ -388,51 +394,49 @@ pub(super) fn verify_instruction(
             let convention_matches = |convention| match mode {
                 mojito_checked::checked::IterationMode::Borrowed => matches!(
                     convention,
-                    None | Some(mojito_ast::ast::ArgConvention::Imm)
-                        | Some(mojito_ast::ast::ArgConvention::Ref)
+                    None | Some(
+                        mojito_ast::ast::ArgConvention::Imm | mojito_ast::ast::ArgConvention::Ref
+                    )
                 ),
                 mojito_checked::checked::IterationMode::Owned => {
                     convention == Some(mojito_ast::ast::ArgConvention::Var)
                 }
             };
-            match declared(declarations, first) {
-                Some(declaration) => {
-                    if !declaration.has_receiver || !declaration.param_types.is_empty() {
-                        errors.push(format!(
-                            "{prefix}: GetIter preparation method '{first}' is not a nullary receiver operation"
-                        ));
-                    }
-                    if !convention_matches(declaration.receiver_convention) {
-                        errors.push(format!(
-                            "{prefix}: GetIter {mode:?} mode does not match preparation method '{first}' receiver convention {:?}",
-                            declaration.receiver_convention
-                        ));
-                    }
+            if let Some(declaration) = declared(declarations, first) {
+                if !declaration.has_receiver || !declaration.param_types.is_empty() {
+                    errors.push(format!(
+                        "{prefix}: GetIter preparation method '{first}' is not a nullary receiver operation"
+                    ));
                 }
-                None => {
-                    let matches_dispatch = match mode {
-                        mojito_checked::checked::IterationMode::Borrowed => {
-                            first
+                if !convention_matches(declaration.receiver_convention) {
+                    errors.push(format!(
+                        "{prefix}: GetIter {mode:?} mode does not match preparation method '{first}' receiver convention {:?}",
+                        declaration.receiver_convention
+                    ));
+                }
+            } else {
+                let matches_dispatch = match mode {
+                    mojito_checked::checked::IterationMode::Borrowed => {
+                        first
+                            == &mojito_symbol::symbol::iterator_dispatch_symbol(
+                                mojito_ast::ast::ArgConvention::Imm,
+                            )
+                            || first
                                 == &mojito_symbol::symbol::iterator_dispatch_symbol(
-                                    mojito_ast::ast::ArgConvention::Imm,
+                                    mojito_ast::ast::ArgConvention::Ref,
                                 )
-                                || first
-                                    == &mojito_symbol::symbol::iterator_dispatch_symbol(
-                                        mojito_ast::ast::ArgConvention::Ref,
-                                    )
-                        }
-                        mojito_checked::checked::IterationMode::Owned => {
-                            first
-                                == &mojito_symbol::symbol::iterator_dispatch_symbol(
-                                    mojito_ast::ast::ArgConvention::Var,
-                                )
-                        }
-                    };
-                    if !matches_dispatch {
-                        errors.push(format!(
-                            "{prefix}: GetIter refers to undeclared preparation method '{first}'"
-                        ));
                     }
+                    mojito_checked::checked::IterationMode::Owned => {
+                        first
+                            == &mojito_symbol::symbol::iterator_dispatch_symbol(
+                                mojito_ast::ast::ArgConvention::Var,
+                            )
+                    }
+                };
+                if !matches_dispatch {
+                    errors.push(format!(
+                        "{prefix}: GetIter refers to undeclared preparation method '{first}'"
+                    ));
                 }
             }
         }

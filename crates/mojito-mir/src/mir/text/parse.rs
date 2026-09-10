@@ -96,7 +96,7 @@ pub(super) fn artifact(
     }
 }
 
-fn report(source_name: String, diagnostics: Vec<ArtifactDiagnostic>) -> ArtifactReport {
+const fn report(source_name: String, diagnostics: Vec<ArtifactDiagnostic>) -> ArtifactReport {
     ArtifactReport {
         source_name,
         diagnostics,

@@ -13,9 +13,11 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct CheckedNodeId(pub u32);
 
-/// How an expression participates in evaluation. New categories can be added
-/// without changing source syntax; in particular, future patterns and suspended
-/// computations can refer to nodes rather than impersonating ordinary values.
+/// How an expression participates in evaluation.
+///
+/// New categories can be added without changing source syntax; in particular,
+/// future patterns and suspended computations can refer to nodes rather than
+/// impersonating ordinary values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ValueCategory {
@@ -25,9 +27,11 @@ pub enum ValueCategory {
     CompileTime,
 }
 
-/// Extensible control/effect summary. Suspension is deliberately independent
-/// from raising: future coroutines, generators, and delimited continuations can
-/// introduce resume edges without being encoded as exceptions or calls.
+/// Extensible control/effect summary.
+///
+/// Suspension is deliberately independent from raising: future coroutines,
+/// generators, and delimited continuations can introduce resume edges without
+/// being encoded as exceptions or calls.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct EffectFacts {
     pub raises: Option<Ty>,
@@ -36,8 +40,10 @@ pub struct EffectFacts {
 }
 
 /// One source argument after ordinary call binding selected a concrete method
-/// parameter.  Keeping the source slot and effective convention together lets
-/// HIR/MIR retain caller storage without rebuilding keyword/default binding or
+/// parameter.
+///
+/// Keeping the source slot and effective convention together lets HIR/MIR
+/// retain caller storage without rebuilding keyword/default binding or
 /// origin-dependent `ref` mutability.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckedCallArgument {
@@ -57,9 +63,11 @@ pub enum CheckedCallArgumentSource {
     Default,
 }
 
-/// One source-ordered compile-time method argument. Type arguments occupy a
-/// declaration slot with no runtime value; value arguments name the checked
-/// expression occurrence whose already-evaluated register lowering must reuse.
+/// One source-ordered compile-time method argument.
+///
+/// Type arguments occupy a declaration slot with no runtime value; value
+/// arguments name the checked expression occurrence whose already-evaluated
+/// register lowering must reuse.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckedCallParameterArgument {
     pub name: Option<String>,
@@ -67,6 +75,7 @@ pub struct CheckedCallParameterArgument {
 }
 
 /// One checker-selected adaptation of an already-evaluated call argument.
+///
 /// These are deliberately call-local: augmented subscripts may send the same
 /// source value through different getter and setter parameter contracts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,11 +86,13 @@ pub enum CheckedCallValueAdjustment {
     MaterializeLiteral { target: Box<Ty> },
 }
 
-/// Call-boundary facts for one supplied argument. `value_source` identifies the
-/// source occurrence which MIR evaluates once. Lowering must derive a separate
-/// per-call register by applying `adjustments`, retain the original caller place
-/// when the corresponding [`CheckedCallArgument`] requires it, and emit the
-/// invalidations immediately at this call rather than at source evaluation.
+/// Call-boundary facts for one supplied argument.
+///
+/// `value_source` identifies the source occurrence which MIR evaluates once.
+/// Lowering must derive a separate per-call register by applying
+/// `adjustments`, retain the original caller place when the corresponding
+/// [`CheckedCallArgument`] requires it, and emit the invalidations immediately
+/// at this call rather than at source evaluation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckedCallArgumentBoundary {
     pub source: CheckedCallArgumentSource,
@@ -91,6 +102,7 @@ pub struct CheckedCallArgumentBoundary {
 }
 
 /// Effects and value adaptations whose semantic location is one selected call.
+///
 /// Keeping this on the contract makes two calls over shared syntax independent:
 /// the source operands are still evaluated once, but conversions and mutation
 /// effects occur according to each callee's own signature.
@@ -101,10 +113,11 @@ pub struct CheckedCallBoundary {
     pub invalidations: Vec<InteriorInvalidation>,
 }
 
-/// A checker-proven adaptation applied at an abstract call boundary.  This is
-/// deliberately not inferred from the runtime value: a value-returning method
-/// may itself produce a reference-valued element.  Execution consults the
-/// retargeted declaration's ABI and performs this adapter only when that
+/// A checker-proven adaptation applied at an abstract call boundary.
+///
+/// This is deliberately not inferred from the runtime value: a value-returning
+/// method may itself produce a reference-valued element.  Execution consults
+/// the retargeted declaration's ABI and performs this adapter only when that
 /// declaration returns through the reference ABI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckedResultAdapter {
@@ -116,6 +129,7 @@ pub enum CheckedResultAdapter {
 }
 
 /// Canonical checker-to-lowering contract for one selected method-like call.
+///
 /// Nominal subscripts use this exact record rather than a reduced parallel
 /// resolver.  Future syntactic call forms can share it without teaching MIR
 /// overload resolution, origin solving, or effect inference.
@@ -146,10 +160,12 @@ pub struct CheckedCallContract {
     pub boundary: CheckedCallBoundary,
 }
 
-/// The operation selected for `receiver[index] OP= rhs`. A value-returning
-/// getter is followed by a setter, while a mutable-reference getter writes the
-/// computed result directly through that handle and therefore has no setter.
-/// In either case the receiver and indices are evaluated only once.
+/// The operation selected for `receiver[index] OP= rhs`.
+///
+/// A value-returning getter is followed by a setter, while a mutable-reference
+/// getter writes the computed result directly through that handle and
+/// therefore has no setter. In either case the receiver and indices are
+/// evaluated only once.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckedAugmentedSubscript {
     pub getter: CheckedCallContract,
@@ -172,10 +188,11 @@ pub struct CheckedAugmentedSubscript {
 
 /// The two-call plan for a bare element call `value[i](args)` (also member
 /// bases and multi-index brackets): subscript the indexable runtime value,
-/// then dispatch the element as a callable. The getter contract lives here
-/// rather than in `SelectedCall` so node-level consumers (reference-result
-/// diversion, `resolved_callable`, `checked_raises`) see the element call,
-/// not the subscript read.
+/// then dispatch the element as a callable.
+///
+/// The getter contract lives here rather than in `SelectedCall` so node-level
+/// consumers (reference-result diversion, `resolved_callable`,
+/// `checked_raises`) see the element call, not the subscript read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckedElementInvocation {
     /// The selected `__getitem__` contract for the subscript read.
@@ -189,10 +206,11 @@ pub struct CheckedElementInvocation {
     pub raises: Option<Ty>,
 }
 
-/// Ownership mode selected for a checked iteration expression.  This is a
-/// semantic distinction, not a runtime guess: owned iteration must dispatch to
-/// an `__iter__(var self)` implementation, while ordinary iteration uses a
-/// borrowed receiver.
+/// Ownership mode selected for a checked iteration expression.
+///
+/// This is a semantic distinction, not a runtime guess: owned iteration must
+/// dispatch to an `__iter__(var self)` implementation, while ordinary
+/// iteration uses a borrowed receiver.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IterationMode {
     Borrowed,
@@ -200,9 +218,11 @@ pub enum IterationMode {
 }
 
 /// Checker-proven adaptation from one raw `__next__` result into the loop
-/// target's storage convention.  Source ownership is deliberately absent:
-/// [`IterationMode`] selects borrowed versus consuming `__iter__`, while this
-/// enum describes only what the target spelling does with each yielded item.
+/// target's storage convention.
+///
+/// Source ownership is deliberately absent: [`IterationMode`] selects borrowed
+/// versus consuming `__iter__`, while this enum describes only what the target
+/// spelling does with each yielded item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IterationBindingAction {
     /// Move a freshly yielded value into an explicit `var` target that owns it
@@ -220,9 +240,11 @@ pub enum IterationBindingAction {
     BorrowReference,
 }
 
-/// Complete checked plan for one loop/comprehension target. `yielded_ty` is the
-/// exact result type of `__next__`; `binding_ty` is the user-visible storage
-/// type. `mutable` is the loop variable's declared mutability.
+/// Complete checked plan for one loop/comprehension target.
+///
+/// `yielded_ty` is the exact result type of `__next__`; `binding_ty` is the
+/// user-visible storage type. `mutable` is the loop variable's declared
+/// mutability.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckedIterationBinding {
     pub mode: mojito_ast::ast::LoopBindingMode,
@@ -232,11 +254,13 @@ pub struct CheckedIterationBinding {
     pub mutable: bool,
 }
 
-/// Exact checked contract for one iterator `__next__` call.  The result type is
-/// the type produced by the call itself, so a reference-yielding iterator keeps
-/// its `Ty::Ref` handle type rather than collapsing to the referent.  The
-/// parallel reference fact carries the executable origin/capability contract
-/// needed by lowering, while `raises` records the selected exhaustion effect.
+/// Exact checked contract for one iterator `__next__` call.
+///
+/// The result type is the type produced by the call itself, so a
+/// reference-yielding iterator keeps its `Ty::Ref` handle type rather than
+/// collapsing to the referent.  The parallel reference fact carries the
+/// executable origin/capability contract needed by lowering, while `raises`
+/// records the selected exhaustion effect.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckedIteratorCall {
     pub target: String,
@@ -249,19 +273,21 @@ pub struct CheckedIteratorCall {
 /// One resolved generic free-function application at a call site: the source
 /// callee name and the compile-time arguments, in declaration order, exactly
 /// as `resolve_use_params` returned them.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenericInstantiation {
     pub callee: String,
     pub arguments: Vec<mojito_types::types::TyArg>,
 }
 
 /// One resolved application of a struct method that declares its own
-/// compile-time parameters (`v.isa[Int]()`, `v.set(3)` inferring `T`): the
-/// receiver struct as checked, the source method name, and the method's
-/// declaration-order arguments from `resolve_use_params`. The compiler's
-/// discovery loop replays closed recordings on specialized variadic structs
-/// as per-call method clones.
-#[derive(Debug, Clone, PartialEq)]
+/// compile-time parameters (`v.isa[Int]()`, `v.set(3)` inferring `T`).
+///
+/// The receiver struct as checked, the source method name, and the method's
+/// declaration-order arguments from `resolve_use_params`.
+///
+/// The compiler's discovery loop replays closed recordings on specialized
+/// variadic structs as per-call method clones.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MethodInstantiation {
     pub owner: String,
     /// The receiver instance's declaration-order type arguments when `owner`
@@ -276,18 +302,20 @@ pub struct MethodInstantiation {
     pub arguments: Vec<mojito_types::types::TyArg>,
 }
 
-/// One closed application of an ordinary generic struct the checker reached
-/// as a constructor target or method-call receiver (`Optional[Int]`): the
-/// template name and its declaration-order arguments. The compiler's
-/// discovery loop replays closed recordings as per-instantiation method
-/// clones appended to the template.
-#[derive(Debug, Clone, PartialEq)]
+/// One closed application of an ordinary generic struct the checker reached as
+/// a constructor target or method-call receiver (`Optional[Int]`): the
+/// template name and its declaration-order arguments.
+///
+/// The compiler's discovery loop replays closed recordings as
+/// per-instantiation method clones appended to the template.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructInstantiation {
     pub template: String,
     pub arguments: Vec<mojito_types::types::TyArg>,
 }
 
 /// Fully resolved iterator protocol retained across the checked boundary.
+///
 /// `prepare` contains the exact `__iter__` symbols needed to normalize a user
 /// iterable; builtin ranges/collections leave it empty.  User iterators carry
 /// exact iterator-operation symbols so the VM never performs name/arity
@@ -322,12 +350,14 @@ pub struct IterationProtocol {
     pub exhaustion: Option<Ty>,
 }
 
-/// A checked mutation of an origin that owns interior storage. `except` names
-/// the reference through which the mutation occurs, when there is one: writing
-/// through `element` keeps that reference's generation valid while still
-/// invalidating interiors nested below the element. `include_base_generation`
-/// distinguishes defining a fresh named owned-interior generation (which
-/// replaces that exact generation) from an ordinary write through its storage.
+/// A checked mutation of an origin that owns interior storage.
+///
+/// `except` names the reference through which the mutation occurs, when there
+/// is one: writing through `element` keeps that reference's generation valid
+/// while still invalidating interiors nested below the element.
+/// `include_base_generation` distinguishes defining a fresh named
+/// owned-interior generation (which replaces that exact generation) from an
+/// ordinary write through its storage.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InteriorInvalidation {
     pub base: mojito_types::origin::OriginPlace,
@@ -524,7 +554,7 @@ pub enum SemanticAdjustment {
     /// rewritten method call itself recorded at the same span (an inverted
     /// write, a parameterized clone selection), reported alongside.
     ReceiverFromFirstArgument {
-        inner: Option<Box<SemanticAdjustment>>,
+        inner: Option<Box<Self>>,
     },
     /// A condition (`if`/`while`/ternary/comprehension filter) whose value
     /// is a `Boolable` struct: MIR converts it through `Bool(x)`, i.e. the
@@ -733,9 +763,11 @@ pub struct CheckedTupleUnpackElement {
     pub reference: Option<mojito_types::origin::RefTy>,
 }
 
-/// One expression in the typed semantic arena. `syntax` is retained for
-/// diagnostics and incremental migration only; identity, type, category, edges,
-/// and adjustments no longer have to be reconstructed from it.
+/// One expression in the typed semantic arena.
+///
+/// `syntax` is retained for diagnostics and incremental migration only;
+/// identity, type, category, edges, and adjustments no longer have to be
+/// reconstructed from it.
 #[derive(Debug, Clone)]
 pub struct CheckedExpr {
     pub id: CheckedNodeId,
@@ -776,9 +808,11 @@ pub struct CheckedComprehensionBinding {
 
 pub use mojito_types::types::CheckedDeclId;
 
-/// Declaration identity is independent of declaration spelling. Future classes,
-/// pattern binders, coroutine state declarations, and generated declarations can
-/// add variants without changing consumers of the common metadata.
+/// Declaration identity is independent of declaration spelling.
+///
+/// Future classes, pattern binders, coroutine state declarations, and
+/// generated declarations can add variants without changing consumers of the
+/// common metadata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CheckedDeclKind {
@@ -849,7 +883,7 @@ impl CheckedTables {
             .enumerate()
             .map(|(index, declaration)| (declaration.location.clone(), index))
             .collect();
-        CheckedTables {
+        Self {
             expressions,
             declarations,
             expressions_by_span,
@@ -866,8 +900,7 @@ impl CheckedTables {
     pub fn expression_ids_at(&self, span: &SourceSpan) -> &[CheckedNodeId] {
         self.expressions_by_span
             .get(span)
-            .map(Vec::as_slice)
-            .unwrap_or(&[])
+            .map_or(&[][..], Vec::as_slice)
     }
 
     pub fn declaration(&self, id: CheckedDeclId) -> Option<&CheckedDeclaration> {
@@ -995,12 +1028,15 @@ pub enum GenericSite {
 
 pub use mojito_types::types::{TransferEffect, TransferSet};
 
-/// A higher-order transfer residue: the callable's body calls through one of
-/// its own callable parameters, whose transfer effects are unknowable in the
-/// body (a `def(...)` annotation cannot spell effects). Each call site —
-/// which knows the concrete callable — translates that callable's effects
-/// through the recorded argument mapping into effects of THIS callable and
-/// replays them against its own actuals.
+/// A higher-order transfer residue.
+///
+/// The callable's body calls through one of its own callable parameters, whose
+/// transfer effects are unknowable in the body (a `def(...)` annotation cannot
+/// spell effects).
+///
+/// Each call site — which knows the concrete callable — translates that
+/// callable's effects through the recorded argument mapping into effects of
+/// THIS callable and replays them against its own actuals.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallThroughEffect {
     pub callee: CallThroughCallee,
@@ -1030,7 +1066,7 @@ pub struct CallThroughArg {
 
 /// One caller-substituted transfer at a call site: which actual receives
 /// loans rooted at which caller origins. MIR lowering installs the loans.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckedCallTransfer {
     pub dest: CheckedTransferDest,
     /// Interior path below the destination actual's root that receives the
@@ -1107,7 +1143,7 @@ pub enum CheckedConst {
     /// an implicit conversion at the default expression's span.
     Construct {
         target: String,
-        arg: Box<CheckedConst>,
+        arg: Box<Self>,
     },
 }
 
@@ -1137,7 +1173,7 @@ impl CheckedProgram {
     pub fn new(
         statements: Vec<Stmt>,
         overload_targets: HashMap<SourceSpan, String>,
-        contextual_bases: HashMap<SourceSpan, String>,
+        contextual_bases: &HashMap<SourceSpan, String>,
         generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
         method_instantiations: HashMap<SourceSpan, MethodInstantiation>,
         struct_instantiations: Vec<StructInstantiation>,
@@ -1145,75 +1181,75 @@ impl CheckedProgram {
         call_transfers: HashMap<SourceSpan, Vec<CheckedCallTransfer>>,
         implicit_conversions: HashMap<SourceSpan, String>,
         implicit_conversion_types: HashMap<SourceSpan, Ty>,
-        conversion_source_borrows: HashMap<SourceSpan, bool>,
+        conversion_source_borrows: &HashMap<SourceSpan, bool>,
         checked_types: HashMap<AnnotationSite, Ty>,
         generic_parameters: HashMap<GenericSite, Vec<mojito_types::types::ParamDecl>>,
-        expression_types: HashMap<SourceSpan, Ty>,
-        expression_bindings: HashMap<SourceSpan, mojito_types::origin::OwnerId>,
-        statement_bindings: HashMap<SourceSpan, mojito_types::origin::OwnerId>,
-        declaration_captures: HashMap<SourceSpan, Vec<CheckedCapture>>,
-        comprehension_bindings: HashMap<SourceSpan, Vec<CheckedComprehensionBinding>>,
-        expression_place_types: HashMap<SourceSpan, Ty>,
-        binding_types: HashMap<SourceSpan, Ty>,
-        expression_effects: HashMap<SourceSpan, EffectFacts>,
-        selected_calls: HashMap<SourceSpan, CheckedCallContract>,
-        subscript_descriptors: HashMap<
+        expression_types: &HashMap<SourceSpan, Ty>,
+        expression_bindings: &HashMap<SourceSpan, mojito_types::origin::OwnerId>,
+        statement_bindings: &HashMap<SourceSpan, mojito_types::origin::OwnerId>,
+        declaration_captures: &HashMap<SourceSpan, Vec<CheckedCapture>>,
+        comprehension_bindings: &HashMap<SourceSpan, Vec<CheckedComprehensionBinding>>,
+        expression_place_types: &HashMap<SourceSpan, Ty>,
+        binding_types: &HashMap<SourceSpan, Ty>,
+        expression_effects: &HashMap<SourceSpan, EffectFacts>,
+        selected_calls: &HashMap<SourceSpan, CheckedCallContract>,
+        subscript_descriptors: &HashMap<
             SourceSpan,
             (Vec<Option<mojito_types::types::SliceKind>>, bool),
         >,
-        iteration_protocols: HashMap<SourceSpan, IterationProtocol>,
-        simd_constructions: HashMap<SourceSpan, (mojito_ast::ast::Dtype, i64)>,
-        operation_adjustments: HashMap<SourceSpan, SemanticAdjustment>,
-        parameterized_method_calls: HashMap<SourceSpan, Vec<mojito_types::types::ParamDecl>>,
-        tuple_unpack_plans: HashMap<SourceSpan, Vec<CheckedTupleUnpackElement>>,
-        interior_references: HashMap<SourceSpan, mojito_types::origin::OriginPlace>,
-        interior_invalidations: HashMap<SourceSpan, Vec<InteriorInvalidation>>,
+        iteration_protocols: &HashMap<SourceSpan, IterationProtocol>,
+        simd_constructions: &HashMap<SourceSpan, (mojito_ast::ast::Dtype, i64)>,
+        operation_adjustments: &HashMap<SourceSpan, SemanticAdjustment>,
+        parameterized_method_calls: &HashMap<SourceSpan, Vec<mojito_types::types::ParamDecl>>,
+        tuple_unpack_plans: &HashMap<SourceSpan, Vec<CheckedTupleUnpackElement>>,
+        interior_references: &HashMap<SourceSpan, mojito_types::origin::OriginPlace>,
+        interior_invalidations: &HashMap<SourceSpan, Vec<InteriorInvalidation>>,
         explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
-        explicit_destroy_calls: HashSet<SourceSpan>,
-        reference_value_uses: HashMap<SourceSpan, bool>,
-        copy_place_value_uses: HashSet<SourceSpan>,
-        call_place_uses: HashSet<SourceSpan>,
-        borrowed_read_call_places: HashSet<SourceSpan>,
-        implicitly_copied_consuming_receivers: HashSet<SourceSpan>,
-        truthiness_conditions: HashSet<SourceSpan>,
+        explicit_destroy_calls: &HashSet<SourceSpan>,
+        reference_value_uses: &HashMap<SourceSpan, bool>,
+        copy_place_value_uses: &HashSet<SourceSpan>,
+        call_place_uses: &HashSet<SourceSpan>,
+        borrowed_read_call_places: &HashSet<SourceSpan>,
+        implicitly_copied_consuming_receivers: &HashSet<SourceSpan>,
+        truthiness_conditions: &HashSet<SourceSpan>,
         declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
     ) -> Self {
         let (expressions, expression_index) = build_checked_expressions(
             &statements,
-            &contextual_bases,
-            &expression_types,
-            &expression_bindings,
-            &comprehension_bindings,
-            &expression_place_types,
-            &binding_types,
-            &expression_effects,
-            &selected_calls,
-            &subscript_descriptors,
-            &iteration_protocols,
-            &simd_constructions,
-            &operation_adjustments,
-            &parameterized_method_calls,
-            &tuple_unpack_plans,
-            &interior_references,
-            &interior_invalidations,
+            contextual_bases,
+            expression_types,
+            expression_bindings,
+            comprehension_bindings,
+            expression_place_types,
+            binding_types,
+            expression_effects,
+            selected_calls,
+            subscript_descriptors,
+            iteration_protocols,
+            simd_constructions,
+            operation_adjustments,
+            parameterized_method_calls,
+            tuple_unpack_plans,
+            interior_references,
+            interior_invalidations,
             &overload_targets,
             &implicit_conversions,
             &implicit_conversion_types,
-            &conversion_source_borrows,
-            &explicit_destroy_calls,
-            &reference_value_uses,
-            &copy_place_value_uses,
-            &call_place_uses,
-            &borrowed_read_call_places,
-            &implicitly_copied_consuming_receivers,
-            &truthiness_conditions,
+            conversion_source_borrows,
+            explicit_destroy_calls,
+            reference_value_uses,
+            copy_place_value_uses,
+            call_place_uses,
+            borrowed_read_call_places,
+            implicitly_copied_consuming_receivers,
+            truthiness_conditions,
         );
         let declarations = build_checked_declarations(
             &statements,
             &checked_types,
-            &statement_bindings,
-            &declaration_captures,
-            &binding_types,
+            statement_bindings,
+            declaration_captures,
+            binding_types,
         );
         Self {
             statements,
@@ -1240,7 +1276,7 @@ impl CheckedProgram {
     }
 
     /// Checker-selected lowered callable name at each resolved call site.
-    pub fn overload_targets(&self) -> &HashMap<SourceSpan, String> {
+    pub const fn overload_targets(&self) -> &HashMap<SourceSpan, String> {
         &self.compatibility_overload_targets
     }
 
@@ -1249,13 +1285,13 @@ impl CheckedProgram {
     /// selected (types, values, and origins, symbolic entries included).
     /// Recorded so instantiation discovery can monomorphize call sites the
     /// elaborator cannot re-infer on its own.
-    pub fn generic_instantiations(&self) -> &HashMap<SourceSpan, GenericInstantiation> {
+    pub const fn generic_instantiations(&self) -> &HashMap<SourceSpan, GenericInstantiation> {
         &self.generic_instantiations
     }
 
     /// The resolved compile-time arguments per generic method call site,
     /// retained for per-call method specialization discovery.
-    pub fn method_instantiations(&self) -> &HashMap<SourceSpan, MethodInstantiation> {
+    pub const fn method_instantiations(&self) -> &HashMap<SourceSpan, MethodInstantiation> {
         &self.method_instantiations
     }
 
@@ -1273,13 +1309,13 @@ impl CheckedProgram {
     }
 
     /// The caller-substituted loan transfers per call occurrence.
-    pub fn call_transfers(&self) -> &HashMap<SourceSpan, Vec<CheckedCallTransfer>> {
+    pub const fn call_transfers(&self) -> &HashMap<SourceSpan, Vec<CheckedCallTransfer>> {
         &self.call_transfers
     }
 
     /// Checker-selected converting constructor for an expression used in a
     /// context that permits a user-defined implicit conversion.
-    pub fn implicit_conversions(&self) -> &HashMap<SourceSpan, String> {
+    pub const fn implicit_conversions(&self) -> &HashMap<SourceSpan, String> {
         &self.compatibility_implicit_conversions
     }
 
@@ -1316,7 +1352,7 @@ impl CheckedProgram {
 
     /// The shared expression/declaration tables that HIR and MIR lowering
     /// borrow per function.
-    pub fn tables(&self) -> &Arc<CheckedTables> {
+    pub const fn tables(&self) -> &Arc<CheckedTables> {
         &self.tables
     }
 
@@ -1334,11 +1370,10 @@ impl CheckedProgram {
     pub fn expression_ids_at(&self, span: &SourceSpan) -> &[CheckedNodeId] {
         self.expression_index
             .get(span)
-            .map(Vec::as_slice)
-            .unwrap_or(&[])
+            .map_or(&[][..], Vec::as_slice)
     }
 
-    pub fn explicit_destroy_types(&self) -> &HashMap<String, ExplicitDestroyInfo> {
+    pub const fn explicit_destroy_types(&self) -> &HashMap<String, ExplicitDestroyInfo> {
         &self.explicit_destroy_types
     }
 
@@ -1350,7 +1385,11 @@ impl CheckedProgram {
 
 // Mirrors `CheckedProgram::new` while the fact tables are folded into stable
 // checked nodes. A named input record can replace this once the old maps retire.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "TODO: split this pass"
+)]
 fn build_checked_expressions(
     statements: &[Stmt],
     contextual_bases: &HashMap<SourceSpan, String>,
@@ -1417,13 +1456,23 @@ fn build_checked_expressions(
         truthiness_conditions: &'a HashSet<SourceSpan>,
     }
     impl Builder<'_> {
+        #[allow(
+            clippy::cognitive_complexity,
+            clippy::too_many_lines,
+            reason = "TODO: split this pass"
+        )]
         fn expr(&mut self, expression: &Expr) -> CheckedNodeId {
-            use ExprKind::*;
+            use ExprKind::{
+                Bool, BraceLit, Call, Compare, Comprehension, EmptySubscript, Float, Identifier,
+                IfExpr, Index, Infix, Int, Invoke, Lambda, ListLit, Member, MethodCall, MultiIndex,
+                Named, None, Prefix, Slice, Spread, Str, TString, Transfer, TupleLit, TypeApply,
+                TypeValue, Uninitialized,
+            };
             let mut children = Vec::new();
             let mut add = |this: &mut Self, child: &Expr| children.push(this.expr(child));
             match &expression.kind {
                 Prefix(_, value) | Transfer(value) | Spread(value) | Named { value, .. } => {
-                    add(self, value)
+                    add(self, value);
                 }
                 Infix(_, left, right)
                 | Index {
@@ -1519,10 +1568,10 @@ fn build_checked_expressions(
                     for clause in clauses {
                         match clause {
                             mojito_ast::ast::ComprehensionClause::For { iter, .. } => {
-                                add(self, iter)
+                                add(self, iter);
                             }
                             mojito_ast::ast::ComprehensionClause::If(condition) => {
-                                add(self, condition)
+                                add(self, condition);
                             }
                         }
                     }
@@ -1564,7 +1613,7 @@ fn build_checked_expressions(
                         match argument {
                             mojito_ast::ast::SubscriptArg::Index(value)
                             | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
-                                add(self, value)
+                                add(self, value);
                             }
                             mojito_ast::ast::SubscriptArg::Slice {
                                 lower, upper, step, ..
@@ -1761,7 +1810,11 @@ fn build_checked_expressions(
         }
 
         fn block(&mut self, statements: &[Stmt]) {
-            use mojito_ast::ast::StmtKind::*;
+            use mojito_ast::ast::StmtKind::{
+                Assign, AugAssign, Break, Comptime, ComptimeFor, ComptimeIf, Continue, Def, Expr,
+                For, FromImport, If, Import, Pass, Raise, RefDecl, Return, SetPlace, Struct, Trait,
+                Try, Unpack, VarDecl, While, With,
+            };
             for statement in statements {
                 match &statement.kind {
                     VarDecl { value, .. }
@@ -2189,9 +2242,11 @@ fn build_checked_declarations(
     declarations
 }
 
-/// The anonymous owner a temporary expression materializes as (a
-/// `MaterializeBorrowSource`, or a `BorrowRefArguments` construction that is
-/// also a borrow source), or `None` when the expression is not materialized.
+/// The anonymous owner a temporary expression materializes as.
+///
+/// Either a `MaterializeBorrowSource` or a `BorrowRefArguments` construction
+/// that is also a borrow source; `None` when the expression is not
+/// materialized.
 pub fn materialized_borrow_owner(
     adjustments: &[SemanticAdjustment],
 ) -> Option<mojito_types::origin::OwnerId> {

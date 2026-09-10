@@ -258,10 +258,10 @@ fn format_module_error(err: &ModuleError, entry_path: &str, entry_source: &str) 
             if module == entry_path {
                 format_parse_error(module, entry_source, err)
             } else {
-                match std::fs::read_to_string(module) {
-                    Ok(source) => format_parse_error(module, &source, err),
-                    Err(_) => format!("in module '{module}': {err}"),
-                }
+                std::fs::read_to_string(module).map_or_else(
+                    |_| format!("in module '{module}': {err}"),
+                    |source| format_parse_error(module, &source, err),
+                )
             }
         }
         _ => err.to_string(),
@@ -394,7 +394,7 @@ fn run_program(
         compile_input(&compiler, file)?
     };
     let execution = {
-        let _backend = mojito::timing::span("backend");
+        let _backend_span = mojito::timing::span("backend");
         compiler
             .execute(&compiled)
             .map_err(|error| error.to_string())?
@@ -686,8 +686,14 @@ fn stage_exec(file: Option<&str>, backend: mojito::BackendKind) -> ExitCode {
         Err(mojito::ArtifactRunError::Load(report)) => {
             let source = std::str::from_utf8(&bytes).ok();
             for diagnostic in &report.diagnostics {
-                let message = match &source {
-                    Some(source) => {
+                let message = source.map_or_else(
+                    || {
+                        format!(
+                            "{label}: bytes {}..{}: {}",
+                            diagnostic.span.0, diagnostic.span.1, diagnostic.message
+                        )
+                    },
+                    |source| {
                         let mut message = format_source_error(
                             label,
                             source,
@@ -695,15 +701,12 @@ fn stage_exec(file: Option<&str>, backend: mojito::BackendKind) -> ExitCode {
                             &diagnostic.message,
                         );
                         for context in &diagnostic.context {
-                            message.push_str(&format!("\n  in {context}"));
+                            message.push_str("\n  in ");
+                            message.push_str(context);
                         }
                         message
-                    }
-                    None => format!(
-                        "{label}: bytes {}..{}: {}",
-                        diagnostic.span.0, diagnostic.span.1, diagnostic.message
-                    ),
-                };
+                    },
+                );
                 eprintln!("exec error: {message}");
             }
             ExitCode::FAILURE
@@ -776,14 +779,14 @@ fn stage(name: &str, file: Option<&str>, f: fn(&str) -> Result<(), String>) -> E
     let source = match read_source(file) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("{}: cannot read input: {}", name, e);
+            eprintln!("{name}: cannot read input: {e}");
             return ExitCode::FAILURE;
         }
     };
     match f(&source) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("{} error: {}", name, e);
+            eprintln!("{name} error: {e}");
             ExitCode::FAILURE
         }
     }
@@ -793,7 +796,7 @@ fn stage_parse(file: Option<&str>) -> ExitCode {
     let source = match read_source(file) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("parse: cannot read input: {}", e);
+            eprintln!("parse: cannot read input: {e}");
             return ExitCode::FAILURE;
         }
     };
@@ -837,8 +840,7 @@ fn format_source_error(label: &str, source: &str, byte: usize, message: &str) ->
     }
     let line_end = source[line_start..]
         .find('\n')
-        .map(|n| line_start + n)
-        .unwrap_or(source.len());
+        .map_or(source.len(), |n| line_start + n);
     let line = source[line_start..line_end].trim_end_matches('\r');
     let col = source[line_start..byte].chars().count() + 1;
     let caret = format!("{}^", " ".repeat(col.saturating_sub(1)));
@@ -849,7 +851,7 @@ fn format_source_error(label: &str, source: &str, byte: usize, message: &str) ->
 fn run_lex(source: &str) -> Result<(), String> {
     let tokens = lex(source).map_err(|e| e.to_string())?;
     for tok in tokens {
-        println!("{:?}", tok);
+        println!("{tok:?}");
     }
     Ok(())
 }

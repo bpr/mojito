@@ -1,6 +1,7 @@
 //! Value construction and mutation: operators, place stores,
 //! constructors, strings, cloning, and moves.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl VmBackend {
@@ -305,16 +306,15 @@ impl VmBackend {
                     _ => None,
                 })
         {
-            value_params = source.clone();
+            value_params.clone_from(source);
         }
         let skeleton = Value::Struct {
             name: name.to_string(),
             fields,
             value_params,
         };
-        let constructor = target
-            .map(str::to_string)
-            .unwrap_or_else(|| prog.constructor_name(name, args.len()));
+        let constructor =
+            target.map_or_else(|| prog.constructor_name(name, args.len()), str::to_string);
         let fidx = prog.index_of(&constructor).ok_or_else(|| {
             RuntimeError::Unsupported(format!(
                 "vm: checked constructor '{constructor}' is missing from MIR"
@@ -322,7 +322,7 @@ impl VmBackend {
         })?;
         let user_args = match prog.sigs.get(&constructor) {
             Some(signature) => {
-                self.bind_for_call(prog, &constructor, signature, args, kwargs)?
+                self.bind_for_call(prog, &constructor, signature, &args, kwargs)?
                     .0
             }
             None => args,
@@ -540,7 +540,7 @@ impl VmBackend {
     pub(super) fn invoke_callable_value(
         &mut self,
         prog: &Prog,
-        callable: Value,
+        callable: &Value,
         arguments: Vec<Value>,
         caller: (FrameId, usize, &mut Vec<Value>),
     ) -> Result<Value, RuntimeError> {
@@ -588,8 +588,8 @@ impl VmBackend {
         &mut self,
         prog: &Prog,
         name: &str,
-        args: Vec<Value>,
-        kwargs: Vec<(String, Value)>,
+        args: &[Value],
+        kwargs: &[(String, Value)],
         param_vals: &[Option<Value>],
     ) -> Result<Value, RuntimeError> {
         if !args.is_empty() || kwargs.len() != 1 || kwargs[0].0 != "copy" {
@@ -617,7 +617,7 @@ impl VmBackend {
             && source_name == name
             && !source_params.is_empty()
         {
-            value_params = source_params.clone();
+            value_params.clone_from(source_params);
         }
         let skeleton = self.struct_skeleton(prog, name, value_params);
         let (_, frame_vars) =

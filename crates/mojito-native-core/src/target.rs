@@ -17,9 +17,9 @@ pub enum Triple {
 
 impl Triple {
     /// Parse a target-triple spelling.
-    pub fn parse(s: &str) -> Result<Triple, String> {
+    pub fn parse(s: &str) -> Result<Self, String> {
         match s {
-            "x86_64-unknown-linux-gnu" => Ok(Triple::X86_64UnknownLinuxGnu),
+            "x86_64-unknown-linux-gnu" => Ok(Self::X86_64UnknownLinuxGnu),
             other => Err(format!(
                 "unsupported target triple '{other}' (supported: x86_64-unknown-linux-gnu)"
             )),
@@ -27,45 +27,45 @@ impl Triple {
     }
 
     /// The canonical triple spelling stamped on emitted modules.
-    pub fn name(self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         match self {
-            Triple::X86_64UnknownLinuxGnu => "x86_64-unknown-linux-gnu",
+            Self::X86_64UnknownLinuxGnu => "x86_64-unknown-linux-gnu",
         }
     }
 
     /// The pinned LLVM data-layout string for this triple. Must match what
     /// the pinned toolchain (LLVM 23.1 clang) produces for [`Triple::name`];
     /// the pliron-lane cross-check test enforces that.
-    pub fn data_layout(self) -> &'static str {
+    pub const fn data_layout(self) -> &'static str {
         match self {
-            Triple::X86_64UnknownLinuxGnu => {
+            Self::X86_64UnknownLinuxGnu => {
                 "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
             }
         }
     }
 
     /// The triple of the build host, when it is a supported target.
-    pub fn host() -> Option<Triple> {
+    pub const fn host() -> Option<Self> {
         if cfg!(all(
             target_arch = "x86_64",
             target_os = "linux",
             target_env = "gnu"
         )) {
-            Some(Triple::X86_64UnknownLinuxGnu)
+            Some(Self::X86_64UnknownLinuxGnu)
         } else {
             None
         }
     }
 
     /// Pointer size in bytes.
-    pub fn pointer_size(self) -> u64 {
+    pub const fn pointer_size(self) -> u64 {
         match self {
-            Triple::X86_64UnknownLinuxGnu => 8,
+            Self::X86_64UnknownLinuxGnu => 8,
         }
     }
 
     /// Pointer alignment in bytes.
-    pub fn pointer_align(self) -> u64 {
+    pub const fn pointer_align(self) -> u64 {
         self.pointer_size()
     }
 }
@@ -77,16 +77,16 @@ impl Triple {
 pub struct CpuFeatures;
 
 impl CpuFeatures {
-    pub fn parse(s: &str) -> Result<CpuFeatures, String> {
+    pub fn parse(s: &str) -> Result<Self, String> {
         match s {
-            "" | "baseline" => Ok(CpuFeatures),
+            "" | "baseline" => Ok(Self),
             other => Err(format!(
                 "unsupported CPU feature set '{other}' (supported: baseline)"
             )),
         }
     }
 
-    pub fn name(self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         "baseline"
     }
 }
@@ -99,16 +99,16 @@ pub struct NativeTarget {
 }
 
 impl NativeTarget {
-    pub fn new(triple: Triple) -> NativeTarget {
-        NativeTarget {
+    pub const fn new(triple: Triple) -> Self {
+        Self {
             triple,
             cpu: CpuFeatures,
         }
     }
 
     /// The build host as a native target, when supported.
-    pub fn host() -> Option<NativeTarget> {
-        Triple::host().map(NativeTarget::new)
+    pub fn host() -> Option<Self> {
+        Triple::host().map(Self::new)
     }
 }
 
@@ -136,11 +136,12 @@ impl BuildConfig {
     }
 }
 
-/// The native optimization profile. `O0` runs only the backend's baseline
-/// cleanup (for Pliron: mem2reg/DCE); `Release` additionally runs LLVM's
-/// pinned release pipeline over the emitted bitcode before JIT, object, or
-/// executable production. `--native-opt` spells them `0` and `release`,
-/// with `1` as a permanent alias of `release`.
+/// The native optimization profile.
+///
+/// `O0` runs only the backend's baseline cleanup (for Pliron: mem2reg/DCE);
+/// `Release` additionally runs LLVM's pinned release pipeline over the emitted
+/// bitcode before JIT, object, or executable production. `--native-opt` spells
+/// them `0` and `release`, with `1` as a permanent alias of `release`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OptLevel {
     #[default]
@@ -150,17 +151,17 @@ pub enum OptLevel {
 
 impl OptLevel {
     /// The profile's public CLI spelling.
-    pub fn name(self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         match self {
-            OptLevel::O0 => "0",
-            OptLevel::Release => "release",
+            Self::O0 => "0",
+            Self::Release => "release",
         }
     }
 
-    pub fn parse(s: &str) -> Result<OptLevel, String> {
+    pub fn parse(s: &str) -> Result<Self, String> {
         match s {
-            "0" => Ok(OptLevel::O0),
-            "release" | "1" => Ok(OptLevel::Release),
+            "0" => Ok(Self::O0),
+            "release" | "1" => Ok(Self::Release),
             other => Err(format!(
                 "unknown native opt level '{other}' (expected: 0, release (alias: 1))"
             )),
@@ -168,10 +169,11 @@ impl OptLevel {
     }
 }
 
-/// How much debug information native binary artifacts carry. `Lines` —
-/// the default — attaches DWARF subprograms and call-site file/line
-/// locations to objects and executables; textual IR and JIT paths never
-/// carry debug information. `--native-debug` spells them `lines`/`none`.
+/// How much debug information native binary artifacts carry.
+///
+/// `Lines` — the default — attaches DWARF subprograms and call-site file/line
+/// locations to objects and executables; textual IR and JIT paths never carry
+/// debug information. `--native-debug` spells them `lines`/`none`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DebugInfo {
     None,
@@ -180,10 +182,10 @@ pub enum DebugInfo {
 }
 
 impl DebugInfo {
-    pub fn parse(s: &str) -> Result<DebugInfo, String> {
+    pub fn parse(s: &str) -> Result<Self, String> {
         match s {
-            "none" => Ok(DebugInfo::None),
-            "lines" => Ok(DebugInfo::Lines),
+            "none" => Ok(Self::None),
+            "lines" => Ok(Self::Lines),
             other => Err(format!(
                 "unknown native debug level '{other}' (expected: none, lines)"
             )),
@@ -207,13 +209,13 @@ pub enum EmitKind {
 }
 
 impl EmitKind {
-    pub fn parse(s: &str) -> Result<EmitKind, String> {
+    pub fn parse(s: &str) -> Result<Self, String> {
         match s {
-            "plir" => Ok(EmitKind::Plir),
-            "ll" => Ok(EmitKind::LlvmIr),
-            "bc" => Ok(EmitKind::Bitcode),
-            "obj" => Ok(EmitKind::Object),
-            "exe" => Ok(EmitKind::Exe),
+            "plir" => Ok(Self::Plir),
+            "ll" => Ok(Self::LlvmIr),
+            "bc" => Ok(Self::Bitcode),
+            "obj" => Ok(Self::Object),
+            "exe" => Ok(Self::Exe),
             other => Err(format!(
                 "unknown emit kind '{other}' (expected: plir, ll, bc, obj, exe)"
             )),
@@ -221,8 +223,8 @@ impl EmitKind {
     }
 
     /// Binary kinds must go to a file; text kinds may print to stdout.
-    pub fn is_binary(self) -> bool {
-        matches!(self, EmitKind::Bitcode | EmitKind::Object | EmitKind::Exe)
+    pub const fn is_binary(self) -> bool {
+        matches!(self, Self::Bitcode | Self::Object | Self::Exe)
     }
 }
 

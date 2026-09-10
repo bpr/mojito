@@ -1,8 +1,13 @@
 //! The `ConformanceOracle` implementation.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl ConformanceOracle {
+    /// # Panics
+    ///
+    /// Panics if a trait recorded during collection is missing when its
+    /// conformances are resolved.
     pub fn from_program(stmts: &[Stmt]) -> Result<Self, TypeError> {
         let mut checker = Checker::new();
 

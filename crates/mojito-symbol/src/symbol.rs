@@ -114,14 +114,17 @@ pub fn resolve_method_symbol<'a>(
     resolve_callable_symbol(declarations, &format!("{receiver_type}.{method}"), argc)
 }
 
-/// A type or value argument as a specialization clone spells it: literal
-/// types materialize (a string literal bound to a method's `T: Movable`
-/// instantiates the `String` clone, which the call reaches through the
-/// ordinary literal conversion), so two applications differing only in
+/// A type or value argument as a specialization clone spells it.
+///
+/// Literal types materialize (a string literal bound to a method's `T:
+/// Movable` instantiates the `String` clone, which the call reaches through
+/// the ordinary literal conversion), so two applications differing only in
 /// literal-ness share one clone instead of minting two symbol-equivalent
-/// overloads. A generic *struct* instance is the exception: its stored
-/// values keep the literal representation, so `instance_method_clone_name`
-/// refuses a `StringLiteral` argument before this materialization.
+/// overloads.
+///
+/// A generic *struct* instance is the exception: its stored values keep the
+/// literal representation, so `instance_method_clone_name` refuses a
+/// `StringLiteral` argument before this materialization.
 pub fn materialized_instantiation_argument(argument: &TyArg) -> TyArg {
     match argument {
         TyArg::Ty(Ty::StringLiteral) => {
@@ -134,9 +137,10 @@ pub fn materialized_instantiation_argument(argument: &TyArg) -> TyArg {
 
 /// The name of a hasher's `_update_with_simd` clone for one SIMD leaf type
 /// (`_update_with_simd$y3:Int`, `_update_with_simd$y21:SIMD[DType.int32, 2]`).
+///
 /// The declaration `_update_with_simd(mut self, value: SIMD[_, _])` carries
-/// the vector type as an inferred type parameter, so the clone is keyed by
-/// the leaf's own checked type through the ordinary `mangle`; the checker's
+/// the vector type as an inferred type parameter, so the clone is keyed by the
+/// leaf's own checked type through the ordinary `mangle`; the checker's
 /// retargeting, the elaborator's minting, and every backend's leaf dispatch
 /// agree through this one function.
 pub fn simd_update_clone_name(leaf: &Ty) -> String {
@@ -152,13 +156,15 @@ pub fn simd_update_clone_name(leaf: &Ty) -> String {
     mangle("_update_with_simd", &[CtValue::Type(Box::new(leaf))])
 }
 
-/// The specialization values of a method or struct instantiation in
-/// declaration order — the list `mangle` bakes into a clone's name — or
+/// The list `mangle` bakes into a clone's name for a method or struct
+/// instantiation: its specialization values in declaration order.
+///
 /// `None` when the instantiation cannot name a clone: callable-bounded
 /// parameters stay symbolic on the clone and contribute nothing; packs and
-/// symbolic placeholders make it unspecializable. The checker's retargeting,
-/// the specializer's `method_request_values`, and the backends' instance
-/// lookups all agree through this one function.
+/// symbolic placeholders make it unspecializable.
+///
+/// The checker's retargeting, the specializer's `method_request_values`, and
+/// the backends' instance lookups all agree through this one function.
 pub fn specialized_method_values(decls: &[ParamDecl], arguments: &[TyArg]) -> Option<Vec<CtValue>> {
     let mut values = Vec::new();
     for (decl, argument) in decls.iter().zip(arguments) {
@@ -189,9 +195,11 @@ pub fn specialized_method_values(decls: &[ParamDecl], arguments: &[TyArg]) -> Op
 }
 
 /// The per-instantiation clone name of `method` on a generic struct instance
-/// (`get$y3:Int` for `Optional[Int]`), or `None` when the instance cannot
-/// name one. Callers check that the declaration exists: an instance without
-/// clones keeps the template's erased path.
+/// (`get$y3:Int` for `Optional[Int]`), or `None` when the instance cannot name
+/// one.
+///
+/// Callers check that the declaration exists: an instance without clones keeps
+/// the template's erased path.
 pub fn instance_method_clone_name(
     method: &str,
     decls: &[ParamDecl],
@@ -248,8 +256,8 @@ pub struct TypeKey(String);
 
 impl TypeKey {
     /// Mangle a declared parameter annotation (the MIR/VM definition side).
-    pub fn from_ast(ty: &Type) -> TypeKey {
-        TypeKey(sanitize(&ast_raw(
+    pub fn from_ast(ty: &Type) -> Self {
+        Self(sanitize(&ast_raw(
             ty,
             &HashMap::new(),
             &HashMap::new(),
@@ -260,16 +268,16 @@ impl TypeKey {
     /// Mangle a checker-resolved type (the call-resolution side). Aligned with
     /// [`TypeKey::from_ast`]: a struct/parameter/`Self.T` type spells exactly as
     /// its annotation does, so checker-recorded callees name real MIR functions.
-    pub fn from_ty(ty: &Ty) -> TypeKey {
-        TypeKey(sanitize(&ty_raw(ty, None)))
+    pub fn from_ty(ty: &Ty) -> Self {
+        Self(sanitize(&ty_raw(ty, None)))
     }
 
     /// Like [`TypeKey::from_ty`], but canonicalizes the enclosing struct type
     /// (however spelled) to `Self`. Use this for a method's own parameter types
     /// so a same-arity `self`-typed overload keys as `$ov$Self` — matching the
     /// declaration side, which mangles the bare `Self` annotation identically.
-    pub fn from_ty_with_self(ty: &Ty, self_ty: &Ty) -> TypeKey {
-        TypeKey(sanitize(&ty_raw(ty, Some(self_ty))))
+    pub fn from_ty_with_self(ty: &Ty, self_ty: &Ty) -> Self {
+        Self(sanitize(&ty_raw(ty, Some(self_ty))))
     }
 }
 
@@ -293,8 +301,8 @@ pub struct SignatureKey {
 
 impl SignatureKey {
     /// The signature of a declared `def`/method parameter list.
-    pub fn from_ast_params(params: &[FnParam]) -> SignatureKey {
-        SignatureKey {
+    pub fn from_ast_params(params: &[FnParam]) -> Self {
+        Self {
             types: params
                 .iter()
                 .filter(|parameter| parameter.kind != mojito_ast::ast::ParamKind::KwVariadic)
@@ -309,8 +317,8 @@ impl SignatureKey {
     }
 
     /// The signature of a checker-resolved parameter-type list.
-    pub fn from_tys<'a>(tys: impl IntoIterator<Item = &'a Ty>) -> SignatureKey {
-        SignatureKey {
+    pub fn from_tys<'a>(tys: impl IntoIterator<Item = &'a Ty>) -> Self {
+        Self {
             types: tys.into_iter().map(TypeKey::from_ty).collect(),
             kw_variadic: None,
             keywords: Vec::new(),
@@ -325,8 +333,8 @@ impl SignatureKey {
     pub fn from_tys_with_self<'a>(
         tys: impl IntoIterator<Item = &'a Ty>,
         self_ty: Option<&Ty>,
-    ) -> SignatureKey {
-        SignatureKey {
+    ) -> Self {
+        Self {
             types: tys
                 .into_iter()
                 .map(|ty| match self_ty {
@@ -340,13 +348,15 @@ impl SignatureKey {
     }
 
     /// Attach the homogeneous keyword-variadic collector to callable identity.
-    pub fn with_kw_variadic(mut self, ty: Option<&Ty>) -> SignatureKey {
+    #[must_use]
+    pub fn with_kw_variadic(mut self, ty: Option<&Ty>) -> Self {
         self.kw_variadic = ty.map(TypeKey::from_ty);
         self
     }
 
     /// Attach the keyword-only parameter names to this signature's identity.
-    pub fn with_keyword_names(mut self, names: Vec<String>) -> SignatureKey {
+    #[must_use]
+    pub fn with_keyword_names(mut self, names: Vec<String>) -> Self {
         self.keywords = names;
         self
     }
@@ -370,7 +380,7 @@ impl SignatureKey {
         suffix
     }
 
-    fn with_receiver(&self, convention: Option<ArgConvention>) -> SignatureKey {
+    fn with_receiver(&self, convention: Option<ArgConvention>) -> Self {
         let receiver = match convention {
             None | Some(ArgConvention::Imm) => "SelfRead",
             Some(ArgConvention::Mut) => "SelfMut",
@@ -381,7 +391,7 @@ impl SignatureKey {
         };
         let mut parts = vec![TypeKey(receiver.to_string())];
         parts.extend(self.types.iter().cloned());
-        SignatureKey {
+        Self {
             types: parts,
             kw_variadic: self.kw_variadic.clone(),
             keywords: self.keywords.clone(),
@@ -402,14 +412,16 @@ pub fn function_symbol(base: &str, sig: &SignatureKey) -> String {
     format!("{base}{}", sig.suffix())
 }
 
-/// The struct a literal→String conversion constructor symbol targets:
+/// The struct a literal→String conversion constructor symbol targets.
+///
 /// `<name>.__init__$ov$StringLiteral` is the nominal String's
 /// `StringLiteral`-typed constructor, whose declared body is a never-execute
 /// field-contract stub, so native lowering routes the call to the string
-/// constructor bridge instead of the compiled signature. Returns the
-/// receiver struct name when `symbol` has that exact shape. Compiled
-/// unconditionally (its only caller is the pliron backend) so this crate's
-/// surface does not vary by feature.
+/// constructor bridge instead of the compiled signature.
+///
+/// Returns the receiver struct name when `symbol` has that exact shape.
+/// Compiled unconditionally (its only caller is the pliron backend) so this
+/// crate's surface does not vary by feature.
 pub fn string_ctor_overload_struct(symbol: &str) -> Option<&str> {
     symbol
         .strip_suffix(".__init__$ov$StringLiteral")
@@ -430,12 +442,14 @@ pub fn single_nominal_string_ctor(symbol: &str) -> bool {
     symbol.ends_with(".__init__$ov$String")
 }
 
-/// The view struct a literal→`StringSpan` constructor symbol targets:
+/// The view struct a literal→`StringSpan` constructor symbol targets.
+///
 /// `StringSpan.__init__$ov$StringLiteral` is the bundled view's `@implicit`
 /// `StringLiteral` constructor (upstream's `StaticString` initializer), whose
 /// declared body is a never-execute field-contract stub; the backends build
-/// the view over the literal's bytes instead. Returns the struct name when
-/// `symbol` has that exact shape.
+/// the view over the literal's bytes instead.
+///
+/// Returns the struct name when `symbol` has that exact shape.
 pub fn string_span_ctor_overload_struct(symbol: &str) -> Option<&str> {
     symbol
         .strip_suffix(".__init__$ov$StringLiteral")
@@ -448,11 +462,14 @@ pub fn method_symbol(type_name: &str, method: &str, sig: &SignatureKey) -> Strin
     format!("{type_name}.{method}{}", sig.suffix())
 }
 
-/// Methods whose callable identity includes the receiver convention: current
-/// Mojo overloads them purely on the receiver (borrowed vs owned `__iter__`,
-/// `ref` vs `deinit` `unsafe_assume_init`) with identical explicit parameters,
-/// so the convention participates in registration and symbol mangling. A
-/// specialization clone (`__iter__$y3:Int`) keeps its source method's rule.
+/// Methods whose callable identity includes the receiver convention.
+///
+/// Current Mojo overloads them purely on the receiver (borrowed vs owned
+/// `__iter__`, `ref` vs `deinit` `unsafe_assume_init`) with identical explicit
+/// parameters, so the convention participates in registration and symbol
+/// mangling.
+///
+/// A specialization clone (`__iter__$y3:Int`) keeps its source method's rule.
 pub fn receiver_overloaded_method(method: &str) -> bool {
     matches!(
         method.split('$').next().unwrap_or(method),
@@ -485,9 +502,11 @@ pub fn static_method_symbol(type_name: &str, method: &str, sig: &SignatureKey) -
     )
 }
 
-/// Convention-qualified symbol for `__iter__` overloads. Current Mojo permits
-/// borrowed and owned `__iter__` methods with identical explicit parameters;
-/// receiver convention is therefore part of this method's callable identity.
+/// Convention-qualified symbol for `__iter__` overloads.
+///
+/// Current Mojo permits borrowed and owned `__iter__` methods with identical
+/// explicit parameters; receiver convention is therefore part of this method's
+/// callable identity.
 pub fn iterator_method_symbol(
     type_name: &str,
     convention: Option<ArgConvention>,
@@ -497,9 +516,11 @@ pub fn iterator_method_symbol(
 }
 
 /// Convention-qualified abstract `__iter__` symbol for a bounded generic
-/// receiver. The checker records this exact symbol in the iteration protocol;
-/// the VM only retargets its receiver prefix once the erased generic value's
-/// nominal runtime type is known.
+/// receiver.
+///
+/// The checker records this exact symbol in the iteration protocol; the VM
+/// only retargets its receiver prefix once the erased generic value's nominal
+/// runtime type is known.
 pub fn iterator_dispatch_symbol(convention: ArgConvention) -> String {
     iterator_method_symbol(
         "__trait_dispatch",
@@ -513,10 +534,12 @@ pub fn iterator_dispatch_symbol(convention: ArgConvention) -> String {
 }
 
 /// The sibling borrowed-receiver spelling of an abstract `__iter__` dispatch
-/// symbol. A borrowed conformer may declare `self` (Read) or `ref self` (Ref),
-/// while the checker pins one spelling in the iteration protocol; runtime
-/// retargeting probes the sibling before giving up. Owned (`var self`) dispatch
-/// has no sibling.
+/// symbol.
+///
+/// A borrowed conformer may declare `self` (Read) or `ref self` (Ref), while
+/// the checker pins one spelling in the iteration protocol; runtime
+/// retargeting probes the sibling before giving up. Owned (`var self`)
+/// dispatch has no sibling.
 pub fn borrowed_iterator_dispatch_alternate(symbol: &str) -> Option<String> {
     let read = iterator_dispatch_symbol(ArgConvention::Imm);
     let reference = iterator_dispatch_symbol(ArgConvention::Ref);
@@ -529,10 +552,13 @@ pub fn borrowed_iterator_dispatch_alternate(symbol: &str) -> Option<String> {
     }
 }
 
-/// Retarget a checker-selected method symbol from an abstract receiver (for
-/// example `__trait_dispatch.pick$ov$Int`) to the concrete runtime type while
-/// preserving the exact selected method/signature suffix. Keeping this parsing
-/// here preserves this module's ownership of the overload encoding.
+/// Retarget a checker-selected method symbol to a concrete runtime type.
+///
+/// The abstract receiver (for example `__trait_dispatch.pick$ov$Int`) is
+/// replaced while the exact selected method/signature suffix is preserved.
+///
+/// Keeping this parsing here preserves this module's ownership of the overload
+/// encoding.
 pub fn retarget_method_symbol(symbol: &str, type_name: &str) -> Option<String> {
     let (_, method_and_signature) = symbol.rsplit_once('.')?;
     Some(format!("{type_name}.{method_and_signature}"))
@@ -552,8 +578,10 @@ pub fn is_index_normalization_symbol(symbol: &str) -> bool {
 
 /// The overloaded declarations of a program, scanned from its top level: which
 /// free-function names and `Type.method` names have more than one definition
-/// (and at which arities). Definitions of non-overloaded names keep their plain
-/// source name, so lowering consults this before qualifying anything.
+/// (and at which arities).
+///
+/// Definitions of non-overloaded names keep their plain source name, so
+/// lowering consults this before qualifying anything.
 #[derive(Debug, Default, Clone)]
 pub struct OverloadSets {
     functions: HashMap<String, HashSet<usize>>,
@@ -563,7 +591,7 @@ pub struct OverloadSets {
 }
 
 impl OverloadSets {
-    pub fn scan(program: &[Stmt]) -> OverloadSets {
+    pub fn scan(program: &[Stmt]) -> Self {
         let mut functions: HashMap<String, Vec<usize>> = HashMap::new();
         let mut methods: HashMap<String, Vec<usize>> = HashMap::new();
         let mut comptimes = HashMap::new();
@@ -594,7 +622,7 @@ impl OverloadSets {
                 _ => {}
             }
         }
-        OverloadSets {
+        Self {
             all_functions: functions.keys().cloned().collect(),
             functions: keep_overloaded(functions),
             methods: keep_overloaded(methods),
@@ -686,9 +714,11 @@ pub fn lowered_method_name(
     }
 }
 
-/// The name a method is *registered and counted* under: current Mojo spells the
-/// copy constructor as an `__init__` overload with an `out self, copy: Self`
-/// shape, which the whole pipeline models as `__copyinit__`.
+/// The name a method is *registered and counted* under.
+///
+/// Current Mojo spells the copy constructor as an `__init__` overload with an
+/// `out self, copy: Self` shape, which the whole pipeline models as
+/// `__copyinit__`.
 pub fn lifecycle_method_name(m: &Method) -> &str {
     if is_mojo_copy_constructor(m) {
         "__copyinit__"
@@ -704,9 +734,11 @@ pub fn nested_lifted_name(outer: &str, inner: &str) -> String {
     format!("{outer}${inner}")
 }
 
-/// A same-spelled nested declaration's lifted name. Declaration identity, not
-/// a source offset, provides the disambiguator so cloned/synthesized syntax and
-/// ordinary block shadowing follow one stable scheme.
+/// A same-spelled nested declaration's lifted name.
+///
+/// Declaration identity, not a source offset, provides the disambiguator so
+/// cloned/synthesized syntax and ordinary block shadowing follow one stable
+/// scheme.
 pub fn nested_lifted_declaration_name(
     outer: &str,
     inner: &str,
@@ -716,8 +748,10 @@ pub fn nested_lifted_declaration_name(
 }
 
 /// A deliberate **poison name** for an overloaded call the checker recorded no
-/// target for (only reachable off the checked path): it can never name a real
-/// function, so the VM reports it instead of guessing among overloads.
+/// target for (only reachable off the checked path).
+///
+/// It can never name a real function, so the VM reports it instead of guessing
+/// among overloads.
 pub fn unresolved_overload_marker(name: &str, argc: usize) -> String {
     format!("{name}#{argc}")
 }
@@ -731,9 +765,10 @@ pub fn is_overload_of(symbol: &str, base: &str) -> bool {
 }
 
 /// Whether an overload symbol's signature qualifier is exactly the `NoneType`
-/// parameter spelling (`…$ov$None`) — the `@implicit` None-conversion
-/// constructor, which arity-based selection must exclude when a bound can
-/// never be `None`.
+/// parameter spelling (`…$ov$None`).
+///
+/// The `@implicit` None-conversion constructor, which arity-based selection
+/// must exclude when a bound can never be `None`.
 pub fn is_none_overload(symbol: &str) -> bool {
     symbol.ends_with("$ov$None")
 }
@@ -760,6 +795,10 @@ fn ty_raw(ty: &Ty, self_ty: Option<&Ty>) -> String {
     ty_raw_in(ty, self_ty, KeyMode::Overload)
 }
 
+#[allow(
+    clippy::format_push_string,
+    reason = "TODO: write! into the buffer instead"
+)]
 fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
     // Canonicalize the enclosing struct type to `Self` however it is spelled
     // (`Self`, `Pair`, or `List[Self.T]` inside `List`). The declaration side
@@ -889,6 +928,10 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
 /// Encode source-controlled identifier text injectively while leaving ordinary
 /// ASCII identifiers unchanged. Structural `$` separators are added only after
 /// this encoding, so stropped names such as `A-B` and `A_B` cannot collide.
+#[allow(
+    clippy::format_push_string,
+    reason = "TODO: write! into the buffer instead"
+)]
 fn encode_identifier(name: &str) -> String {
     let mut encoded = String::new();
     for ch in name.chars() {
@@ -992,7 +1035,7 @@ fn ast_raw(
                 s.push('$');
                 match arg {
                     ParamArg::Type(t) => {
-                        s.push_str(&ast_raw(t, comptimes, type_bounds, self_spelling))
+                        s.push_str(&ast_raw(t, comptimes, type_bounds, self_spelling));
                     }
                     // The parser cannot tell a type parameter from a value
                     // in argument position (`List[T]` arrives as a value
@@ -1017,7 +1060,7 @@ fn ast_raw(
                         s.push('=');
                         match &**value {
                             ParamArg::Type(t) => {
-                                s.push_str(&ast_raw(t, comptimes, type_bounds, self_spelling))
+                                s.push_str(&ast_raw(t, comptimes, type_bounds, self_spelling));
                             }
                             ParamArg::Value(v) => s.push_str(&value_expr_raw(v, comptimes)),
                             ParamArg::Named { .. } => unreachable!(),
@@ -1062,6 +1105,10 @@ fn ast_raw(
 /// nominal names the linker qualifies) keep a stable source spelling that a
 /// qualified call-site type will not match — no worse than the previous
 /// Debug-format fallback, which embedded spans and never matched anything.
+#[allow(
+    clippy::format_push_string,
+    reason = "TODO: write! into the buffer instead"
+)]
 fn func_annotation_raw(ty: &Type) -> String {
     let Type::Func {
         type_params,
@@ -1121,6 +1168,10 @@ fn func_annotation_raw(ty: &Type) -> String {
 /// Render one annotation as the checked `Ty` Display would, for use inside
 /// [`func_annotation_raw`] only: parameters print bare (no bounds), nominal
 /// arguments print bracketed and comma-separated.
+#[allow(
+    clippy::format_push_string,
+    reason = "TODO: write! into the buffer instead"
+)]
 fn annotation_display(ty: &Type) -> String {
     match ty {
         Type::Int => "Int".to_string(),
@@ -1412,20 +1463,22 @@ fn is_mojo_copy_constructor(m: &Method) -> bool {
 }
 
 /// A signature-qualified abstract `__call__` symbol for an indirect callable
-/// contract. The VM retargets this symbol to a nominal receiver's runtime type;
-/// ordinary function and closure values ignore it. Keeping the signature here
-/// avoids falling back to arity when a callable struct overloads `__call__` on
+/// contract.
+///
+/// The VM retargets this symbol to a nominal receiver's runtime type; ordinary
+/// function and closure values ignore it. Keeping the signature here avoids
+/// falling back to arity when a callable struct overloads `__call__` on
 /// parameter type.
 pub fn callable_contract_target(ty: &Ty) -> Option<String> {
     let contract = mojito_types::types::callable_contract_ty(ty)?;
-    let (params, variadic, kw_variadic) = match contract {
-        Ty::Func {
-            params,
-            variadic,
-            kw_variadic,
-            ..
-        } => (params, variadic, kw_variadic),
-        _ => return None,
+    let Ty::Func {
+        params,
+        variadic,
+        kw_variadic,
+        ..
+    } = contract
+    else {
+        return None;
     };
     let signature_types = params.iter().chain(variadic.iter().map(Box::as_ref));
     let signature =
@@ -1435,6 +1488,7 @@ pub fn callable_contract_target(ty: &Ty) -> Option<String> {
 
 /// Whether `name` is a minted `Tuple`/`TString` specialization symbol
 /// (`Tuple$t2[y3:Inty4:Bool]`): its element types are baked into the name.
+///
 /// The checked instance type also carries them as arguments while the
 /// annotation does not, so an overload key spells the bare symbol
 /// (`KeyMode::Overload`).
@@ -1444,10 +1498,13 @@ pub fn is_tuple_specialization_symbol(name: &str) -> bool {
         .is_some_and(|rest| rest.starts_with('t'))
 }
 
-/// The specialization-key spelling of a type: a minted public-Tuple instance
-/// that carries its element arguments (`Tuple$t2[...]` over `[Int, Bool]`)
-/// spells as the canonical `Tuple[Int, Bool]` application, so a key nesting
-/// it is the same before and after that inner specialization is declared.
+/// The specialization-key spelling of a type.
+///
+/// A minted public-Tuple instance that carries its element arguments
+/// (`Tuple$t2[...]` over `[Int, Bool]`) spells as the canonical `Tuple[Int,
+/// Bool]` application, so a key nesting it is the same before and after that
+/// inner specialization is declared.
+///
 /// Argument-erased symbols (`Tuple$t2[...]` over `[]`) carry no elements to
 /// respell and stay verbatim.
 pub fn canonical_specialization_type(ty: &Ty) -> Ty {
@@ -1504,11 +1561,13 @@ pub fn tuple_specialization_values(elements: &[Ty]) -> Vec<CtValue> {
     )]
 }
 
-/// Current Mojo's unqualified spelling of a checked type where a minted
-/// value specialization spells its baked arguments (`AHasher[[0, 0, 0, 0] :
-/// SIMD[DType.uint64, 4]]` for the clone `mangle` named) at every nesting
-/// level (`Dict[String, SIMD[DType.int, 1], AHasher[...]]`); every other
-/// type spells as `unqualified_type_name`.
+/// Current Mojo's unqualified spelling of a checked type, with minted value
+/// specializations spelled through their baked arguments.
+///
+/// A minted specialization spells `AHasher[[0, 0, 0, 0] : SIMD[DType.uint64,
+/// 4]]` for the clone `mangle` named, at every nesting level
+/// (`Dict[String, SIMD[DType.int, 1], AHasher[...]]`); every other type
+/// spells as `unqualified_type_name`.
 pub fn unqualified_instance_name(ty: &Ty) -> String {
     use mojito_types::types::{unqualified_type_name, unqualified_value_argument};
 
@@ -1552,7 +1611,7 @@ pub fn unqualified_instance_name(ty: &Ty) -> String {
                             .join(", ")
                     }
                     TyArg::Val(value) => spell_value(value),
-                    other => other.to_string(),
+                    other @ TyArg::Origin(_) => other.to_string(),
                 }
             }));
             if spelled.is_empty() {
@@ -1573,11 +1632,14 @@ pub fn unqualified_instance_name(ty: &Ty) -> String {
     }
 }
 
-/// The inverse of [`mangle`] for a self-delimiting value suffix: the template
-/// name and the baked values, or `None` when the symbol carries no
-/// specialization suffix or one of the text-only codes (a type spelling
-/// cannot be rebuilt into a `Ty`). A module-qualified template
-/// (`__module$$ahash$AHasher$v…`) keeps its qualification.
+/// The inverse of [`mangle`] for a self-delimiting value suffix.
+///
+/// The template name and the baked values, or `None` when the symbol carries
+/// no specialization suffix or one of the text-only codes (a type spelling
+/// cannot be rebuilt into a `Ty`).
+///
+/// A module-qualified template (`__module$$ahash$AHasher$v…`) keeps its
+/// qualification.
 pub fn demangle_specialization(symbol: &str) -> Option<(&str, Vec<CtValue>)> {
     let mut cursor = 0;
     while let Some(offset) = symbol[cursor..].find('$') {
@@ -1762,6 +1824,10 @@ pub fn mangle(orig: &str, vals: &[CtValue]) -> String {
     s
 }
 
+#[allow(
+    clippy::format_push_string,
+    reason = "TODO: write! into the buffer instead"
+)]
 fn encode_specialization_value(value: &CtValue, out: &mut String) {
     match value {
         CtValue::Int(value) => out.push_str(&format!("i{value};")),

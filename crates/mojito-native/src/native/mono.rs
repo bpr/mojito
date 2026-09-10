@@ -3,8 +3,16 @@
 //! This pass consumes only verified, drop-elaborated MIR and returns an owned
 //! entry-rooted concrete graph. It never mutates the canonical MIR artifact.
 
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use equiv::*;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use substitute::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use symbolic::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use unify::*;
 
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
 use mojito_checked::checked::CheckedConst;
@@ -103,11 +111,6 @@ mod specializer;
 mod substitute;
 mod symbolic;
 mod unify;
-
-use equiv::*;
-use substitute::*;
-use symbolic::*;
-use unify::*;
 
 #[cfg(test)]
 mod tests;

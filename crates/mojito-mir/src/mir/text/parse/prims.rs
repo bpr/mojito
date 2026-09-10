@@ -1,8 +1,13 @@
 //! Primitive field decoding: scalars, lists, records, options, and
 //! required-field plumbing.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
+#[allow(
+    clippy::unused_self,
+    reason = "TODO: make an associated function or use the receiver"
+)]
 impl Decoder {
     pub(super) fn dtype(&mut self, value: &Value) -> Option<Dtype> {
         let atom = self.atom(value)?;
@@ -118,12 +123,11 @@ impl Decoder {
         }
     }
     pub(super) fn list<'a>(&mut self, value: &'a Value) -> Result<&'a [Value], ()> {
-        match &value.kind {
-            ValueKind::List(v) => Ok(v),
-            _ => {
-                self.error(value.span, "expected list");
-                Err(())
-            }
+        if let ValueKind::List(v) = &value.kind {
+            Ok(v)
+        } else {
+            self.error(value.span, "expected list");
+            Err(())
         }
     }
     pub(super) fn record<'a>(
@@ -147,12 +151,11 @@ impl Decoder {
         }
     }
     pub(super) fn any_record<'a>(&mut self, value: &'a Value) -> Option<(&'a str, &'a [Field])> {
-        match &value.kind {
-            ValueKind::Record(tag, fields) => Some((tag, fields)),
-            _ => {
-                self.error(value.span, "expected record");
-                None
-            }
+        if let ValueKind::Record(tag, fields) = &value.kind {
+            Some((tag, fields))
+        } else {
+            self.error(value.span, "expected record");
+            None
         }
     }
     pub(super) fn field<'a>(&self, fields: &'a [Field], name: &str) -> Result<&'a Value, ()> {
@@ -174,21 +177,19 @@ impl Decoder {
         }
     }
     pub(super) fn atom<'a>(&mut self, value: &'a Value) -> Option<&'a str> {
-        match &value.kind {
-            ValueKind::Atom(v) => Some(v),
-            _ => {
-                self.error(value.span, "expected word or number");
-                None
-            }
+        if let ValueKind::Atom(v) = &value.kind {
+            Some(v)
+        } else {
+            self.error(value.span, "expected word or number");
+            None
         }
     }
     pub(super) fn string(&mut self, value: &Value) -> Option<String> {
-        match &value.kind {
-            ValueKind::String(v) => Some(v.clone()),
-            _ => {
-                self.error(value.span, "expected string");
-                None
-            }
+        if let ValueKind::String(v) = &value.kind {
+            Some(v.clone())
+        } else {
+            self.error(value.span, "expected string");
+            None
         }
     }
     pub(super) fn symbol(&mut self, value: &Value) -> Option<String> {
@@ -234,12 +235,11 @@ impl Decoder {
         fields: &'a [Field],
         name: &str,
     ) -> Option<&'a Value> {
-        match self.field(fields, name) {
-            Ok(found) => Some(found),
-            Err(()) => {
-                self.error(value.span, format!("missing required field `{name}`"));
-                None
-            }
+        if let Ok(found) = self.field(fields, name) {
+            Some(found)
+        } else {
+            self.error(value.span, format!("missing required field `{name}`"));
+            None
         }
     }
     /// Look up a required field and decode it in one step — the nesting
@@ -251,24 +251,22 @@ impl Decoder {
         name: &str,
         decode: impl FnOnce(&mut Self, &Value) -> Option<T>,
     ) -> Option<T> {
-        match self.field(fields, name) {
-            Ok(found) => decode(self, found),
-            Err(()) => {
-                self.error(value.span, format!("missing required field `{name}`"));
-                None
-            }
+        if let Ok(found) = self.field(fields, name) {
+            decode(self, found)
+        } else {
+            self.error(value.span, format!("missing required field `{name}`"));
+            None
         }
     }
     pub(super) fn positional_value<'a>(
         &mut self,
         value: &'a Value,
     ) -> Option<(&'a str, &'a Value)> {
-        match &value.kind {
-            ValueKind::Positional(tag, inner) => Some((tag, inner)),
-            _ => {
-                self.error(value.span, "expected tagged value");
-                None
-            }
+        if let ValueKind::Positional(tag, inner) = &value.kind {
+            Some((tag, inner))
+        } else {
+            self.error(value.span, "expected tagged value");
+            None
         }
     }
     pub(super) fn option_uint(&mut self, value: &Value) -> Option<usize> {

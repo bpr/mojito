@@ -8,7 +8,7 @@
 use crate::token::Token;
 use std::fmt;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LexError {
     IndentationError(usize),
     UnmatchedParenthesis(usize),
@@ -29,46 +29,47 @@ pub enum ParseError {
     UnexpectedEof(String),
     UnknownType(String),
     At {
-        err: Box<ParseError>,
+        err: Box<Self>,
         span: crate::token::Span,
     },
 }
 
 impl LexError {
-    pub fn byte_pos(&self) -> usize {
+    pub const fn byte_pos(&self) -> usize {
         match self {
-            LexError::IndentationError(pos)
-            | LexError::UnmatchedParenthesis(pos)
-            | LexError::UnexpectedCharacter(_, pos)
-            | LexError::InvalidInteger(pos)
-            | LexError::InvalidFloat(pos)
-            | LexError::UnterminatedString(pos)
-            | LexError::UnterminatedIdentifier(pos)
-            | LexError::InvalidEscape(_, pos) => *pos,
+            Self::IndentationError(pos)
+            | Self::UnmatchedParenthesis(pos)
+            | Self::UnexpectedCharacter(_, pos)
+            | Self::InvalidInteger(pos)
+            | Self::InvalidFloat(pos)
+            | Self::UnterminatedString(pos)
+            | Self::UnterminatedIdentifier(pos)
+            | Self::InvalidEscape(_, pos) => *pos,
         }
     }
 }
 
 impl ParseError {
+    #[must_use]
     pub fn at(self, span: crate::token::Span) -> Self {
         if self.byte_pos().is_some() {
             self
         } else {
-            ParseError::At {
+            Self::At {
                 err: Box::new(self),
                 span,
             }
         }
     }
 
-    pub fn byte_pos(&self) -> Option<usize> {
+    pub const fn byte_pos(&self) -> Option<usize> {
         match self {
-            ParseError::LexerError(err) => Some(err.byte_pos()),
-            ParseError::At { span, .. } => Some(span.0),
-            ParseError::UnexpectedToken(_, _)
-            | ParseError::Message(_)
-            | ParseError::UnexpectedEof(_)
-            | ParseError::UnknownType(_) => None,
+            Self::LexerError(err) => Some(err.byte_pos()),
+            Self::At { span, .. } => Some(span.0),
+            Self::UnexpectedToken(_, _)
+            | Self::Message(_)
+            | Self::UnexpectedEof(_)
+            | Self::UnknownType(_) => None,
         }
     }
 }
@@ -354,7 +355,7 @@ pub enum TypeError {
     PostInstantiation {
         receiver: String,
         method: String,
-        error: Box<TypeError>,
+        error: Box<Self>,
     },
     /// A compiler phase received state that violates a contract established by
     /// an earlier phase. This is a Mojito bug, not an error in the source file.
@@ -405,31 +406,27 @@ pub enum TypeError {
 impl fmt::Display for LexError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            LexError::IndentationError(pos) => write!(f, "Indentation error at byte {}", pos),
-            LexError::UnmatchedParenthesis(pos) => {
-                write!(f, "Unmatched closing parenthesis at byte {}", pos)
+            Self::IndentationError(pos) => write!(f, "Indentation error at byte {pos}"),
+            Self::UnmatchedParenthesis(pos) => {
+                write!(f, "Unmatched closing parenthesis at byte {pos}")
             }
-            LexError::UnexpectedCharacter(c, pos) => {
-                write!(f, "Unexpected character '{}' at byte {}", c, pos)
+            Self::UnexpectedCharacter(c, pos) => {
+                write!(f, "Unexpected character '{c}' at byte {pos}")
             }
-            LexError::InvalidInteger(pos) => {
-                write!(f, "Invalid integer literal starting at byte {}", pos)
+            Self::InvalidInteger(pos) => {
+                write!(f, "Invalid integer literal starting at byte {pos}")
             }
-            LexError::InvalidFloat(pos) => {
-                write!(f, "Invalid float literal starting at byte {}", pos)
+            Self::InvalidFloat(pos) => {
+                write!(f, "Invalid float literal starting at byte {pos}")
             }
-            LexError::UnterminatedString(pos) => {
-                write!(f, "Unterminated string literal starting at byte {}", pos)
+            Self::UnterminatedString(pos) => {
+                write!(f, "Unterminated string literal starting at byte {pos}")
             }
-            LexError::UnterminatedIdentifier(pos) => {
-                write!(
-                    f,
-                    "Unterminated backtick identifier starting at byte {}",
-                    pos
-                )
+            Self::UnterminatedIdentifier(pos) => {
+                write!(f, "Unterminated backtick identifier starting at byte {pos}")
             }
-            LexError::InvalidEscape(c, pos) => {
-                write!(f, "Invalid string escape '\\{}' at byte {}", c, pos)
+            Self::InvalidEscape(c, pos) => {
+                write!(f, "Invalid string escape '\\{c}' at byte {pos}")
             }
         }
     }
@@ -438,49 +435,50 @@ impl fmt::Display for LexError {
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ParseError::LexerError(err) => write!(f, "Lexer error: {}", err),
-            ParseError::UnexpectedToken(token, msg) => {
-                write!(f, "Unexpected token {:?}: {}", token, msg)
+            Self::LexerError(err) => write!(f, "Lexer error: {err}"),
+            Self::UnexpectedToken(token, msg) => {
+                write!(f, "Unexpected token {token:?}: {msg}")
             }
-            ParseError::Message(msg) => write!(f, "{msg}"),
-            ParseError::UnexpectedEof(msg) => write!(f, "Unexpected EOF: {}", msg),
-            ParseError::UnknownType(name) => write!(f, "Unknown type '{}'", name),
-            ParseError::At { err, span } => write!(f, "{err} at byte {}", span.0),
+            Self::Message(msg) => write!(f, "{msg}"),
+            Self::UnexpectedEof(msg) => write!(f, "Unexpected EOF: {msg}"),
+            Self::UnknownType(name) => write!(f, "Unknown type '{name}'"),
+            Self::At { err, span } => write!(f, "{err} at byte {}", span.0),
         }
     }
 }
 
 impl fmt::Display for TypeError {
+    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TypeError::UndefinedVariable(name) => write!(f, "Undefined variable '{}'", name),
-            TypeError::NotConcrete(name) => write!(
+            Self::UndefinedVariable(name) => write!(f, "Undefined variable '{name}'"),
+            Self::NotConcrete(name) => write!(
                 f,
                 "'{name}[_]' is not concrete; use '[]' to bind missing parameters"
             ),
-            TypeError::CannotInferParam { name, param } => write!(
+            Self::CannotInferParam { name, param } => write!(
                 f,
                 "'{name}' failed to infer parameter '{param}'; specify the parameter or use '_' or '...' to unbind the parameter explicitly"
             ),
-            TypeError::InvalidModuleScope(statement) => write!(
+            Self::InvalidModuleScope(statement) => write!(
                 f,
                 "{statement} is not allowed at file scope; move executable code into a function body"
             ),
-            TypeError::UnhandledRaise(operation) => write!(
+            Self::UnhandledRaise(operation) => write!(
                 f,
                 "{operation} requires a surrounding 'try' block or enclosing function to declare 'raises'"
             ),
-            TypeError::ContextManager(message) => f.write_str(message),
-            TypeError::RaiseTypeMismatch { expected, found } => write!(
+            Self::ContextManager(message) => f.write_str(message),
+            Self::RaiseTypeMismatch { expected, found } => write!(
                 f,
                 "raising operation produces '{found}', but this context propagates '{expected}'"
             ),
-            TypeError::NonCopyable { ty, context } => write!(
+            Self::NonCopyable { ty, context } => write!(
                 f,
                 "cannot copy non-Copyable type '{ty}' ({context}); transfer it with '^' \
                  or make '{ty}' Copyable"
             ),
-            TypeError::ImplicitCopy {
+            Self::ImplicitCopy {
                 ty,
                 context,
                 transferable,
@@ -498,12 +496,12 @@ impl fmt::Display for TypeError {
                 }
                 Ok(())
             }
-            TypeError::AliasingViolation { var } => write!(
+            Self::AliasingViolation { var } => write!(
                 f,
                 "'{var}' is borrowed mutably and also used at the same call \
                  (a mutable borrow must be exclusive)"
             ),
-            TypeError::ExplicitDestroy {
+            Self::ExplicitDestroy {
                 var,
                 message,
                 problem,
@@ -511,130 +509,119 @@ impl fmt::Display for TypeError {
                 f,
                 "explicit-destroy obligation for '{var}' {problem}: {message}"
             ),
-            TypeError::NotCallable { name, ty } => {
-                write!(f, "'{}' has type {} and is not callable", name, ty)
+            Self::NotCallable { name, ty } => {
+                write!(f, "'{name}' has type {ty} and is not callable")
             }
-            TypeError::ArityMismatch {
+            Self::ArityMismatch {
                 name,
                 expected,
                 got,
             } => {
-                write!(
-                    f,
-                    "'{}' expects {} argument(s), got {}",
-                    name, expected, got
-                )
+                write!(f, "'{name}' expects {expected} argument(s), got {got}")
             }
-            TypeError::Redeclaration(name) => {
-                write!(f, "'{}' is already declared in this scope", name)
+            Self::Redeclaration(name) => {
+                write!(f, "'{name}' is already declared in this scope")
             }
-            TypeError::ReservedName(name) => {
+            Self::ReservedName(name) => {
                 write!(f, "'{name}' is a reserved word and cannot name a function")
             }
-            TypeError::ImmutableBinding(name) => {
+            Self::ImmutableBinding(name) => {
                 write!(f, "expression must be mutable in assignment ('{name}')")
             }
-            TypeError::ImmutableInPlaceDestination(name) => {
+            Self::ImmutableInPlaceDestination(name) => {
                 write!(
                     f,
                     "expression must be mutable for in-place operator destination ('{name}')"
                 )
             }
-            TypeError::AssignToUndeclared(name) => {
+            Self::AssignToUndeclared(name) => {
                 write!(
                     f,
                     "cannot assign to undeclared variable '{name}'; declare it with `var {name} = …`"
                 )
             }
-            TypeError::ReturnsReferenceToLocal => {
+            Self::ReturnsReferenceToLocal => {
                 write!(
                     f,
                     "returned reference escapes storage outside its declared origin"
                 )
             }
-            TypeError::PostInstantiation {
+            Self::PostInstantiation {
                 receiver,
                 method,
                 error,
             } => {
                 write!(f, "in '{method}' instantiated for '{receiver}': {error}")
             }
-            TypeError::TransferEffectDivergence { rounds, callable } => {
+            Self::TransferEffectDivergence { rounds, callable } => {
                 write!(
                     f,
                     "transfer-effect inference did not stabilize after {rounds} rounds; '{callable}' kept growing its effects"
                 )
             }
-            TypeError::StoredReferenceEscapesOrigin => {
+            Self::StoredReferenceEscapesOrigin => {
                 write!(
                     f,
                     "stored reference escapes storage outside its declared origin"
                 )
             }
-            TypeError::PointerEscapesOrigin => {
+            Self::PointerEscapesOrigin => {
                 write!(
                     f,
                     "returned pointer escapes storage outside its declared origin"
                 )
             }
-            TypeError::ClosureEscape => {
+            Self::ClosureEscape => {
                 write!(
                     f,
                     "closures cannot escape their defining scope (downward funargs only)"
                 )
             }
-            TypeError::ReturnOutsideFunction => write!(f, "'return' outside of a function"),
-            TypeError::BreakOutsideLoop => write!(f, "'break' outside of a loop"),
-            TypeError::ContinueOutsideLoop => write!(f, "'continue' outside of a loop"),
-            TypeError::TypeMismatch {
+            Self::ReturnOutsideFunction => write!(f, "'return' outside of a function"),
+            Self::BreakOutsideLoop => write!(f, "'break' outside of a loop"),
+            Self::ContinueOutsideLoop => write!(f, "'continue' outside of a loop"),
+            Self::TypeMismatch {
                 expected,
                 found,
                 context,
             } => {
                 write!(
                     f,
-                    "type mismatch for {}: expected {}, found {}",
-                    context, expected, found
+                    "type mismatch for {context}: expected {expected}, found {found}"
                 )
             }
-            TypeError::BadOperator { op, operands } => {
-                write!(f, "operator '{}' is not defined for {}", op, operands)
+            Self::BadOperator { op, operands } => {
+                write!(f, "operator '{op}' is not defined for {operands}")
             }
-            TypeError::MissingInPlaceOperator { op, ty } => {
+            Self::MissingInPlaceOperator { op, ty } => {
                 write!(
                     f,
-                    "augmented assignment '{}' requires an in-place method on '{}'",
-                    op, ty
+                    "augmented assignment '{op}' requires an in-place method on '{ty}'"
                 )
             }
-            TypeError::UnknownType(name) => write!(f, "unknown type '{}'", name),
-            TypeError::NoSuchField { object_type, field } => {
-                write!(f, "type '{}' has no field '{}'", object_type, field)
+            Self::UnknownType(name) => write!(f, "unknown type '{name}'"),
+            Self::NoSuchField { object_type, field } => {
+                write!(f, "type '{object_type}' has no field '{field}'")
             }
-            TypeError::NoSuchAssociatedType {
+            Self::NoSuchAssociatedType {
                 object_type,
                 member,
             } => {
-                write!(
-                    f,
-                    "type '{}' has no associated type '{}'",
-                    object_type, member
-                )
+                write!(f, "type '{object_type}' has no associated type '{member}'")
             }
-            TypeError::NoSuchMethod {
+            Self::NoSuchMethod {
                 object_type,
                 method,
             } => {
-                write!(f, "type '{}' has no method '{}'", object_type, method)
+                write!(f, "type '{object_type}' has no method '{method}'")
             }
-            TypeError::NoConstructor(name) => {
+            Self::NoConstructor(name) => {
                 write!(
                     f,
-                    "struct '{}' has no constructor (add @fieldwise_init)",
-                    name
+                    "struct '{name}' has no constructor (add @fieldwise_init)"
                 )
             }
-            TypeError::UninitializedField {
+            Self::UninitializedField {
                 struct_name,
                 method,
                 field,
@@ -644,53 +631,50 @@ impl fmt::Display for TypeError {
                     "'{struct_name}.{method}' does not initialize field '{field}'"
                 )
             }
-            TypeError::ConflictingConstructor(name) => {
+            Self::ConflictingConstructor(name) => {
                 write!(
                     f,
                     "struct '{name}' has both @fieldwise_init and a hand-written __init__"
                 )
             }
-            TypeError::UnknownTrait(name) => {
-                write!(f, "unknown trait '{}' in a type-parameter bound", name)
+            Self::UnknownTrait(name) => {
+                write!(f, "unknown trait '{name}' in a type-parameter bound")
             }
-            TypeError::ContextualMember { member, reason } => {
+            Self::ContextualMember { member, reason } => {
                 write!(f, "cannot resolve leading '.{member}': {reason}")
             }
-            TypeError::WrongTypeArgCount {
+            Self::WrongTypeArgCount {
                 name,
                 expected,
                 got,
             } => {
                 write!(
                     f,
-                    "type '{}' expects {} type argument(s), got {}",
-                    name, expected, got
+                    "type '{name}' expects {expected} type argument(s), got {got}"
                 )
             }
-            TypeError::UnknownSelfParam(name) => {
+            Self::UnknownSelfParam(name) => {
                 write!(
                     f,
-                    "'Self.{}' is not a type parameter of the enclosing struct",
-                    name
+                    "'Self.{name}' is not a type parameter of the enclosing struct"
                 )
             }
-            TypeError::UnqualifiedStructParam(name) => write!(
+            Self::UnqualifiedStructParam(name) => write!(
                 f,
                 "unqualified access to struct parameter '{name}'; use 'Self.{name}' instead"
             ),
-            TypeError::InstanceFieldWithoutInstance { field, ty } => write!(
+            Self::InstanceFieldWithoutInstance { field, ty } => write!(
                 f,
                 "cannot access instance field '{field}' without an instance of '{ty}'"
             ),
-            TypeError::FieldNotDeinitable { field, ty } => {
+            Self::FieldNotDeinitable { field, ty } => {
                 write!(f, "field '{field}' has non-'Deinitable' type '{ty}'")
             }
-            TypeError::CannotInferTypeParam { name, param } => write!(
+            Self::CannotInferTypeParam { name, param } => write!(
                 f,
-                "cannot infer type parameter '{}' of '{}' from the arguments",
-                param, name
+                "cannot infer type parameter '{param}' of '{name}' from the arguments"
             ),
-            TypeError::TraitNotSatisfied {
+            Self::TraitNotSatisfied {
                 param,
                 ty,
                 trait_name,
@@ -698,110 +682,99 @@ impl fmt::Display for TypeError {
             } => {
                 write!(
                     f,
-                    "type '{}' for parameter '{}' does not conform to trait '{}'",
-                    ty, param, trait_name
+                    "type '{ty}' for parameter '{param}' does not conform to trait '{trait_name}'"
                 )?;
                 if let Some(reason) = reason {
                     write!(f, ": {reason}")?;
                 }
                 Ok(())
             }
-            TypeError::MissingTraitMethod {
+            Self::MissingTraitMethod {
                 struct_name,
                 trait_name,
                 method,
             } => write!(
                 f,
-                "struct '{}' declares conformance to trait '{}' but is missing method '{}'",
-                struct_name, trait_name, method
+                "struct '{struct_name}' declares conformance to trait '{trait_name}' but is missing method '{method}'"
             ),
-            TypeError::TraitMethodMismatch {
+            Self::TraitMethodMismatch {
                 struct_name,
                 trait_name,
                 method,
             } => write!(
                 f,
-                "struct '{}' method '{}' does not match the signature required by trait '{}'",
-                struct_name, method, trait_name
+                "struct '{struct_name}' method '{method}' does not match the signature required by trait '{trait_name}'"
             ),
-            TypeError::MissingTraitComptimeMember {
+            Self::MissingTraitComptimeMember {
                 struct_name,
                 trait_name,
                 member,
             } => write!(
                 f,
-                "struct '{}' declares conformance to trait '{}' but is missing comptime member '{}'",
-                struct_name, trait_name, member
+                "struct '{struct_name}' declares conformance to trait '{trait_name}' but is missing comptime member '{member}'"
             ),
-            TypeError::TraitComptimeMemberMismatch {
+            Self::TraitComptimeMemberMismatch {
                 struct_name,
                 trait_name,
                 member,
             } => write!(
                 f,
-                "struct '{}' comptime member '{}' does not match the requirement from trait '{}'",
-                struct_name, member, trait_name
+                "struct '{struct_name}' comptime member '{member}' does not match the requirement from trait '{trait_name}'"
             ),
-            TypeError::BadValueParamType { name, ty } => {
-                write!(
-                    f,
-                    "value parameter '{}' must have type Int, not '{}'",
-                    name, ty
-                )
+            Self::BadValueParamType { name, ty } => {
+                write!(f, "value parameter '{name}' must have type Int, not '{ty}'")
             }
-            TypeError::NotComptime(what) => {
-                write!(f, "not a compile-time Int constant: {}", what)
+            Self::NotComptime(what) => {
+                write!(f, "not a compile-time Int constant: {what}")
             }
-            TypeError::BadDtype(what) => write!(f, "not a valid SIMD element type: {}", what),
-            TypeError::BadSimdWidth(w) => {
-                write!(f, "SIMD width must be a positive power of two, got {}", w)
+            Self::BadDtype(what) => write!(f, "not a valid SIMD element type: {what}"),
+            Self::BadSimdWidth(w) => {
+                write!(f, "SIMD width must be a positive power of two, got {w}")
             }
-            TypeError::SimdArity { width, got } => write!(
+            Self::SimdArity { width, got } => write!(
                 f,
-                "SIMD construction expects {} element(s) or 1 to splat, got {}",
-                width, got
+                "SIMD construction expects {width} element(s) or 1 to splat, got {got}"
             ),
-            TypeError::NotIndexable(ty) => {
-                write!(f, "type '{}' cannot be indexed here", ty)
+            Self::NotIndexable(ty) => {
+                write!(f, "type '{ty}' cannot be indexed here")
             }
-            TypeError::MissingReturn(name) => {
-                write!(f, "'{}' does not return a value on every path", name)
+            Self::MissingReturn(name) => {
+                write!(f, "'{name}' does not return a value on every path")
             }
-            TypeError::MutationRequiresVariable(method) => write!(
+            Self::MutationRequiresVariable(method) => write!(
                 f,
-                "'{}' must be called on a plain list variable (mutating a temporary or field is not supported)",
-                method
+                "'{method}' must be called on a plain list variable (mutating a temporary or field is not supported)"
             ),
-            TypeError::ImmutableSelf => write!(
+            Self::ImmutableSelf => write!(
                 f,
                 "cannot assign to a field of 'self' in a method with a read-only receiver (use 'mut self')"
             ),
-            TypeError::InvalidAssignTarget(what) => {
-                write!(f, "invalid assignment target: {}", what)
+            Self::InvalidAssignTarget(what) => {
+                write!(f, "invalid assignment target: {what}")
             }
-            TypeError::Unsupported(what) => write!(f, "unsupported feature: {}", what),
-            TypeError::InvariantViolation(detail) => {
+            Self::Unsupported(what) => write!(f, "unsupported feature: {what}"),
+            Self::InvariantViolation(detail) => {
                 write!(f, "compiler invariant violated: {detail}")
             }
-            TypeError::BadCall { func, reason } => {
-                write!(f, "invalid call to '{}': {}", func, reason)
+            Self::BadCall { func, reason } => {
+                write!(f, "invalid call to '{func}': {reason}")
             }
-            TypeError::UninitializedUse { var } => write!(
+            Self::UninitializedUse { var } => write!(
                 f,
                 "use of uninitialized value '{var}'\nnote: '{var}' declared here"
             ),
-            TypeError::NoMatchingFunction { name } => {
+            Self::NoMatchingFunction { name } => {
                 write!(f, "no matching function in call to '{name}'")
             }
-            TypeError::Abandoned { var, message } => write!(
+            Self::Abandoned { var, message } => write!(
                 f,
                 "'{var}' abandoned without being explicitly destroyed: {message}"
             ),
-            TypeError::LinearAbandoned { var, message } => write!(
+            Self::LinearAbandoned { var, message } => write!(
                 f,
                 "'{var}' abandoned without being explicitly destroyed: {message}\nnote: consider adding trait conformance to Deinitable"
             ),
-            TypeError::RefOriginMismatch {
+            Self::RefOriginMismatch {
                 slot,
                 ty,
                 expected,
@@ -814,12 +787,14 @@ impl fmt::Display for TypeError {
     }
 }
 
-/// Errors from the ownership analysis (`analysis`), a compiler pass over the MIR
-/// that runs after type-checking. These model Mojo's move semantics — a value
-/// transferred with `^` is left uninitialized, so using it again is an error.
-/// Each carries the source `Span` (byte range) of the offending use, recovered
-/// from the MIR `SpanTable`.
-#[derive(Debug, Clone, PartialEq)]
+/// Errors from the ownership analysis (`analysis`), a compiler pass over the
+/// MIR that runs after type-checking.
+///
+/// These model Mojo's move semantics — a value transferred with `^` is left
+/// uninitialized, so using it again is an error. Each carries the source
+/// `Span` (byte range) of the offending use, recovered from the MIR
+/// `SpanTable`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OwnershipError {
     /// Ownership analysis was requested for a program that did not pass semantic
     /// checking. The production compiler reports the earlier error directly;
@@ -856,20 +831,19 @@ pub enum OwnershipError {
 impl fmt::Display for OwnershipError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            OwnershipError::InvalidInput(error) => {
+            Self::InvalidInput(error) => {
                 write!(f, "ownership analysis requires a checked program: {error}")
             }
             // Upstream reports a definite and a path-dependent transfer alike.
-            OwnershipError::UseAfterMove { var, .. }
-            | OwnershipError::ConditionallyMoved { var, .. } => write!(
+            Self::UseAfterMove { var, .. } | Self::ConditionallyMoved { var, .. } => write!(
                 f,
                 "use of uninitialized value '{var}'\nnote: '{var}' declared here"
             ),
-            OwnershipError::LoanConflict { place, loan, .. } => write!(
+            Self::LoanConflict { place, loan, .. } => write!(
                 f,
                 "access to '{place}' conflicts with live reference '{loan}'"
             ),
-            OwnershipError::InvalidatedInteriorReference {
+            Self::InvalidatedInteriorReference {
                 reference,
                 origin,
                 invalidated_at,
@@ -888,23 +862,23 @@ impl fmt::Display for OwnershipError {
 
 impl OwnershipError {
     /// The source span (byte range) of the offending use.
-    pub fn span(&self) -> (usize, usize) {
+    pub const fn span(&self) -> (usize, usize) {
         match self {
-            OwnershipError::InvalidInput(_) => crate::token::DUMMY_SPAN,
-            OwnershipError::UseAfterMove { span, .. }
-            | OwnershipError::ConditionallyMoved { span, .. }
-            | OwnershipError::LoanConflict { span, .. }
-            | OwnershipError::InvalidatedInteriorReference { span, .. } => span.span,
+            Self::InvalidInput(_) => crate::token::DUMMY_SPAN,
+            Self::UseAfterMove { span, .. }
+            | Self::ConditionallyMoved { span, .. }
+            | Self::LoanConflict { span, .. }
+            | Self::InvalidatedInteriorReference { span, .. } => span.span,
         }
     }
 
     pub fn source(&self) -> Option<&str> {
         match self {
-            OwnershipError::InvalidInput(_) => None,
-            OwnershipError::UseAfterMove { span, .. }
-            | OwnershipError::ConditionallyMoved { span, .. }
-            | OwnershipError::LoanConflict { span, .. }
-            | OwnershipError::InvalidatedInteriorReference { span, .. } => span.source.as_deref(),
+            Self::InvalidInput(_) => None,
+            Self::UseAfterMove { span, .. }
+            | Self::ConditionallyMoved { span, .. }
+            | Self::LoanConflict { span, .. }
+            | Self::InvalidatedInteriorReference { span, .. } => span.source.as_deref(),
         }
     }
 
@@ -912,7 +886,7 @@ impl OwnershipError {
     /// when this is an invalidated-reference diagnostic.
     pub fn invalidation_span(&self) -> Option<&crate::token::SourceSpan> {
         match self {
-            OwnershipError::InvalidatedInteriorReference { invalidated_at, .. } => {
+            Self::InvalidatedInteriorReference { invalidated_at, .. } => {
                 Some(invalidated_at.as_ref())
             }
             _ => None,

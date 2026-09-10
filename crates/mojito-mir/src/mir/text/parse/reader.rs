@@ -1,10 +1,11 @@
 //! The value-tree reader: tokenizes the textual artifact into nested
 //! `Value` records for the decoder.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl<'a> Parser<'a> {
-    pub(super) fn new(source: &'a str) -> Self {
+    pub(super) const fn new(source: &'a str) -> Self {
         Self {
             source,
             pos: 0,

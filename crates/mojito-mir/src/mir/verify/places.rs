@@ -1,5 +1,6 @@
 //! Terminator and place verification.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 pub(super) fn verify_terminator(
@@ -211,8 +212,7 @@ pub(super) fn verify_place(
                 let declared = function
                     .var_tys
                     .get(&through)
-                    .map(ToString::to_string)
-                    .unwrap_or_else(|| "<untyped>".to_string());
+                    .map_or_else(|| "<untyped>".to_string(), ToString::to_string);
                 errors.push(format!(
                     "{prefix} place through slot {through} is not a checked reference-capability binding (declared {declared})"
                 ));

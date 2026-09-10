@@ -1,6 +1,7 @@
 //! Origin-signature syntax: interior/subtree origin spellings,
 //! origin-expression validation, and ref-signature lowering.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 /// Recognize the current-nightly origin-attribute spelling

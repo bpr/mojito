@@ -1,9 +1,10 @@
 //! Printing and hashing: `print`, `write_to` bridging, hash leaves,
 //! scalar formatting, and string comparison operators.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     pub(super) fn append_string_pair(
         &mut self,
         ctx: &mut Context,
@@ -483,7 +484,7 @@ impl<'a> FnLowering<'a> {
 
     /// Write the UTF-8 bytes of a string-valued register to stdout when the
     /// register holds one of the supported string shapes — an interned
-    /// constant, a runtime StringLiteral (descriptor or typed storage), or a
+    /// constant, a runtime `StringLiteral` (descriptor or typed storage), or a
     /// nominal String. Returns whether the register was such a string.
     pub(super) fn try_write_string_bytes(
         &mut self,
@@ -818,7 +819,7 @@ impl<'a> FnLowering<'a> {
     /// Compile-time folding of the string-literal operators the VM evaluates
     /// on `Value::Str`: `+` concatenates into a new interned literal, `==` and
     /// `!=` fold to Bool constants. Both operands must be compile-time
-    /// literals — no runtime StringLiteral representation exists.
+    /// literals — no runtime `StringLiteral` representation exists.
     /// The `(data, len)` byte pair of a string-shaped operand: an interned
     /// constant, a runtime string pair, or StringLiteral/String descriptor
     /// storage.

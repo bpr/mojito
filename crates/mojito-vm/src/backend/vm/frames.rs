@@ -2,6 +2,7 @@
 //! the `drive_frames` loop, `finish_frame`, and `prepare_direct_call`.
 //! Extracted from `backend/vm.rs`; see `docs/symbol-map.md`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl VmBackend {
@@ -217,13 +218,11 @@ impl VmBackend {
                 }
                 MirTerm::Return(reg) => reg
                     .as_ref()
-                    .map(|reg| frame.registers[reg.0 as usize].clone())
-                    .unwrap_or(Value::None),
+                    .map_or(Value::None, |reg| frame.registers[reg.0 as usize].clone()),
                 MirTerm::ReturnWithCleanup { value, cleanup } => {
                     let returned = value
                         .as_ref()
-                        .map(|reg| frame.registers[reg.0 as usize].clone())
-                        .unwrap_or(Value::None);
+                        .map_or(Value::None, |reg| frame.registers[reg.0 as usize].clone());
                     self.run_cleanup(prog, cleanup, &mut frame.variables)?;
                     returned
                 }
@@ -288,6 +287,7 @@ impl VmBackend {
         Ok(None)
     }
 
+    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn prepare_direct_call(
         &mut self,
         prog: &Prog,
@@ -351,7 +351,7 @@ impl VmBackend {
             let keyword_names: Vec<String> = kwargs.iter().map(|(name, _)| name.clone()).collect();
             let (mut bound, slots) = match prog.sigs.get(&function_name) {
                 Some(signature) => {
-                    self.bind_for_call(prog, &function_name, signature, positional, keywords)?
+                    self.bind_for_call(prog, &function_name, signature, &positional, keywords)?
                 }
                 None => (
                     positional,
@@ -517,7 +517,7 @@ impl VmBackend {
             let keyword_names: Vec<String> = kwargs.iter().map(|(name, _)| name.clone()).collect();
             let (mut bound, slots) = match prog.sigs.get(&function_name) {
                 Some(signature) => {
-                    self.bind_for_call(prog, &function_name, signature, positional, keywords)?
+                    self.bind_for_call(prog, &function_name, signature, &positional, keywords)?
                 }
                 None => (
                     positional,
@@ -629,7 +629,7 @@ impl VmBackend {
         let keyword_names: Vec<String> = kwargs.iter().map(|(name, _)| name.clone()).collect();
         let (mut bound, slots) = match prog.sigs.get(&func.0) {
             Some(signature) => {
-                self.bind_for_call(prog, &func.0, signature, positional, keywords)?
+                self.bind_for_call(prog, &func.0, signature, &positional, keywords)?
             }
             None => (
                 positional,

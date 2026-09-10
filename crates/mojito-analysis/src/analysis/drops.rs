@@ -1,6 +1,7 @@
 //! Drop elaboration: inserting `DropVar`s on liveness edges, try-region
 //! interior/escape cleanups, and drop-liveness transfer.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 /// Insert `DropVar`s at each variable's last use. A backward liveness dataflow
@@ -12,6 +13,7 @@ use super::*;
 /// `try` region interiors get the same per-instruction and edge elaboration
 /// through [`elaborate_try_interior`], leaving the region cleanup lists as
 /// raise-edge/scope-exit backstops.
+#[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
 pub(super) fn elaborate_drops(f: &MirFunction) -> MirFunction {
     let nb = f.blocks.len();
     // Function-wide `DefVar` counts (deep through `try` regions): the reference
@@ -92,7 +94,7 @@ pub(super) fn elaborate_drops(f: &MirFunction) -> MirFunction {
         let mut ordinary_live_after = vec![HashSet::new(); instrs.len()];
         let mut ordinary_live_before = vec![HashSet::new(); instrs.len()];
         for i in (0..instrs.len()).rev() {
-            ordinary_live_after[i] = live.clone();
+            ordinary_live_after[i].clone_from(&live);
             if let Some(d) = var_def(&instrs[i]) {
                 live.remove(&d);
             }
@@ -105,7 +107,7 @@ pub(super) fn elaborate_drops(f: &MirFunction) -> MirFunction {
                 live.insert(*var);
             }
             live.extend(&register_loan_uses[b][i]);
-            ordinary_live_before[i] = live.clone();
+            ordinary_live_before[i].clone_from(&live);
         }
 
         let mut generation_state = generation_entries[b].clone();
@@ -631,7 +633,7 @@ pub(super) fn elaborate_region_drops(
         let mut ordinary_live_after = vec![HashSet::new(); instrs.len()];
         let mut ordinary_live_before = vec![HashSet::new(); instrs.len()];
         for i in (0..instrs.len()).rev() {
-            ordinary_live_after[i] = live.clone();
+            ordinary_live_after[i].clone_from(&live);
             if let Some(d) = var_def(&instrs[i]) {
                 live.remove(&d);
             }
@@ -645,7 +647,7 @@ pub(super) fn elaborate_region_drops(
             if may_raise(&instrs[i]) {
                 live.extend(seeds.raise.iter().copied());
             }
-            ordinary_live_before[i] = live.clone();
+            ordinary_live_before[i].clone_from(&live);
         }
 
         let mut generation_state = generation_entries[b].clone();
@@ -1188,7 +1190,7 @@ pub(super) fn fill_escape_cleanups(
         }
         for blocks in regions {
             for b in blocks.iter_mut() {
-                for instr in b.instrs.iter_mut() {
+                for instr in &mut b.instrs {
                     fill_escape_cleanups(instr, base, live_in); // nested `try`s
                 }
                 if let MirTerm::EscapeJump { target, cleanup } = &mut b.term {
@@ -1214,7 +1216,7 @@ pub(super) fn fill_escape_cleanups(
 /// locals.
 pub(super) fn set_try_cleanups(blocks: &mut [MirBlock], function_defs: &HashMap<VarId, usize>) {
     for b in blocks.iter_mut() {
-        for instr in b.instrs.iter_mut() {
+        for instr in &mut b.instrs {
             if let MirInstr::Try {
                 body,
                 handler,
@@ -1286,7 +1288,7 @@ pub(super) fn prepend_drops(instrs: &mut Vec<MirInstr>, mut vars: Vec<VarId>) {
 }
 
 /// Redirect a terminator's `old` target to `new` (for critical-edge splitting).
-pub(super) fn rewire_target(term: &mut MirTerm, old: usize, new: usize) {
+pub(super) const fn rewire_target(term: &mut MirTerm, old: usize, new: usize) {
     match term {
         MirTerm::Jump(t) => {
             if *t == old {

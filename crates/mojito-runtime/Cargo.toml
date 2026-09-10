@@ -15,3 +15,6 @@ publish = false
 
 [lib]
 crate-type = ["rlib", "staticlib"]
+
+[lints]
+workspace = true

@@ -1,6 +1,7 @@
 //! Overload scoring, call-boundary snapshots, and selected-method
 //! conversion recording.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Checker {

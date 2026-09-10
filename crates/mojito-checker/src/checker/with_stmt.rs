@@ -18,6 +18,7 @@
 //! lowers to a liveness anchor. Extracted from `statements.rs`; see
 //! `docs/symbol-map.md`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::WithItem;
 
@@ -279,6 +280,10 @@ impl Checker {
 }
 
 /// The context-manager protocol a manager type offers.
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "TODO: group the flags into a state enum"
+)]
 struct ManagerShape {
     enter_consumes: bool,
     enter_returns_none: bool,
@@ -299,13 +304,13 @@ struct Synth {
 impl Synth {
     fn stmt(&self, kind: StmtKind) -> Stmt {
         let mut statement = Stmt::new(kind, self.span);
-        statement.module = self.module.clone();
+        statement.module.clone_from(&self.module);
         statement
     }
 
     fn expr(&self, kind: ExprKind) -> Expr {
         let mut expression = Expr::new(kind, self.span);
-        expression.source = self.source.clone();
+        expression.source.clone_from(&self.source);
         expression
     }
 

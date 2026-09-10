@@ -1,6 +1,7 @@
 //! The ownership move checker: per-place init/move lattice (`Own`,
 //! `Key`, `Node`) and the flow-sensitive `analyze_moves` driver.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 /// A place's move/init state. A three-point lattice ordered by how "moved" a
@@ -18,7 +19,7 @@ pub(super) enum Own {
 /// The dataflow join (least upper bound): equal states are preserved; any
 /// disagreement between `Owned` and `Moved`, or anything involving `MaybeMoved`,
 /// becomes `MaybeMoved`.
-pub(super) fn join(a: Own, b: Own) -> Own {
+pub(super) const fn join(a: Own, b: Own) -> Own {
     match (a, b) {
         (Own::Owned, Own::Owned) => Own::Owned,
         (Own::Moved, Own::Moved) => Own::Moved,
@@ -27,7 +28,7 @@ pub(super) fn join(a: Own, b: Own) -> Own {
 }
 
 /// A total order on the lattice: `Moved(2) > MaybeMoved(1) > Owned(0)`.
-pub(super) fn severity(o: Own) -> u8 {
+pub(super) const fn severity(o: Own) -> u8 {
     match o {
         Own::Owned => 0,
         Own::MaybeMoved => 1,
@@ -111,12 +112,12 @@ pub(super) fn place_display(root: &str, path: &[Key]) -> String {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(super) struct Node {
     base: Own,
-    children: BTreeMap<Key, Node>,
+    children: BTreeMap<Key, Self>,
 }
 
 impl Node {
-    pub(super) fn owned() -> Node {
-        Node {
+    pub(super) const fn owned() -> Self {
+        Self {
             base: Own::Owned,
             children: BTreeMap::new(),
         }
@@ -199,7 +200,7 @@ impl Node {
     pub(super) fn do_move(&mut self, path: &[Key]) {
         match path.split_first() {
             None => {
-                *self = Node {
+                *self = Self {
                     base: Own::Moved,
                     children: BTreeMap::new(),
                 }
@@ -208,7 +209,7 @@ impl Node {
                 let base = self.base;
                 self.children
                     .entry(k.clone())
-                    .or_insert_with(|| Node {
+                    .or_insert_with(|| Self {
                         base,
                         children: BTreeMap::new(),
                     })
@@ -220,7 +221,7 @@ impl Node {
     /// Re-initialize the place at `path` to `Owned` (a def / field store).
     pub(super) fn do_def(&mut self, path: &[Key]) {
         match path.split_first() {
-            None => *self = Node::owned(),
+            None => *self = Self::owned(),
             Some((k, rest)) => {
                 // Reinitializing a field of a wholly-moved value is itself invalid
                 // (caught as a write through a moved parent); don't corrupt state.
@@ -230,7 +231,7 @@ impl Node {
                 let base = self.base;
                 self.children
                     .entry(k.clone())
-                    .or_insert_with(|| Node {
+                    .or_insert_with(|| Self {
                         base,
                         children: BTreeMap::new(),
                     })
@@ -450,8 +451,8 @@ struct MoveFlow {
 }
 
 impl MoveFlow {
-    fn unreachable() -> MoveFlow {
-        MoveFlow {
+    const fn unreachable() -> Self {
+        Self {
             normal: None,
             raises: None,
             exits: None,
@@ -460,6 +461,7 @@ impl MoveFlow {
 }
 
 /// Join a channel state into `target` (unreachable contributes nothing).
+#[allow(clippy::ref_option, reason = "TODO: take Option<&T>")]
 fn add_state(target: &mut Option<Vec<Node>>, source: &Option<Vec<Node>>) {
     match (target.as_mut(), source) {
         (_, None) => {}
@@ -515,12 +517,11 @@ fn walk_region(
                 let nested = walk_try(std::mem::take(&mut state), instr, f, report)?;
                 add_state(&mut flow.raises, &nested.raises);
                 add_state(&mut flow.exits, &nested.exits);
-                match nested.normal {
-                    Some(normal) => state = normal,
-                    None => {
-                        reachable = false;
-                        break;
-                    }
+                if let Some(normal) = nested.normal {
+                    state = normal;
+                } else {
+                    reachable = false;
+                    break;
                 }
                 continue;
             }
@@ -716,12 +717,10 @@ fn check_instruction_uses(
             Touch::WriteParent => node.base_at(&path),
         };
         if sev != Own::Owned {
-            let span = f
-                .spans
-                .0
-                .get(&reg.0)
-                .map(|(s, _)| s.clone())
-                .unwrap_or_else(|| mojito_common::token::SourceSpan::new(None, (0, 0)));
+            let span = f.spans.0.get(&reg.0).map_or_else(
+                || mojito_common::token::SourceSpan::new(None, (0, 0)),
+                |(s, _)| s.clone(),
+            );
             let var = place_display(&f.var_names[root as usize], &blame);
             return Err(match sev {
                 Own::Moved => OwnershipError::UseAfterMove { var, span },

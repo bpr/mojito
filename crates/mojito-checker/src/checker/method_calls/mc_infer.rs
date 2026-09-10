@@ -1,5 +1,6 @@
 //! The `infer_method_call` dispatcher.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Checker {
@@ -8,6 +9,11 @@ impl Checker {
     /// type arguments; on a bounded type parameter (`x: T` with `T: SomeTrait`)
     /// the method is resolved from the bound trait's requirement, with `Self`
     /// substituted to `T`.
+    #[allow(
+        clippy::cognitive_complexity,
+        clippy::too_many_lines,
+        reason = "TODO: split this pass"
+    )]
     pub(in crate::checker) fn infer_method_call(
         &self,
         span: SourceSpan,
@@ -145,7 +151,7 @@ impl Checker {
             // message replaces `NoMatch` only when this is the sole callable shape.
             let single_candidate = signatures.iter().filter(|sig| !sig.has_self).count() == 1;
             for sig in signatures.iter().filter(|sig| !sig.has_self) {
-                let (params, variadic, kw_variadic, method_subst, method_arguments) = match self
+                let Ok((params, variadic, kw_variadic, method_subst, method_arguments)) = self
                     .instantiate_method_generics(
                         &format!("{sname}.{method}"),
                         sig,
@@ -155,9 +161,9 @@ impl Checker {
                         param_args,
                         args,
                         kwargs,
-                    ) {
-                    Ok(instantiated) => instantiated,
-                    Err(_) => continue,
+                    )
+                else {
+                    continue;
                 };
                 if let Err(failure) = self.method_constraint_result(sig, &method_arguments) {
                     if single_candidate
@@ -299,7 +305,7 @@ impl Checker {
                     method,
                     "append" | "insert" | "remove" | "pop" | "clear" | "reverse" | "extend"
                 ) {
-                    self.record_interior_invalidation(span.clone(), object);
+                    self.record_interior_invalidation(span, object);
                 }
                 return Ok(result);
             }
@@ -1194,7 +1200,7 @@ impl Checker {
                 {
                     let field_ty = substitute(field_ty, &struct_subst(&info.decls, targs));
                     if callable_contract_ty(&field_ty).is_some() {
-                        return self.infer_field_invocation(span, object, field_ty, args, kwargs);
+                        return self.infer_field_invocation(span, object, &field_ty, args, kwargs);
                     }
                 }
                 return Err(TypeError::NoSuchMethod {
@@ -1878,8 +1884,7 @@ impl Checker {
                     raises: call_error,
                     result_ty: reference_result
                         .clone()
-                        .map(Ty::Ref)
-                        .unwrap_or_else(|| return_type.clone()),
+                        .map_or_else(|| return_type.clone(), Ty::Ref),
                     result_adapter: resolved.result_adapter,
                     receiver_requires_place: matches!(
                         resolved.self_convention,
@@ -1896,8 +1901,9 @@ impl Checker {
                 },
             );
         }
-        Ok(reference_result
-            .map(|reference| *reference.referent)
-            .unwrap_or_else(|| self.rebase_self_place_pointer(resolved.return_type, object)))
+        Ok(reference_result.map_or_else(
+            || self.rebase_self_place_pointer(resolved.return_type, object),
+            |reference| *reference.referent,
+        ))
     }
 }

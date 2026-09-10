@@ -3,6 +3,7 @@
 //! invalidation emission.
 //! Extracted from `mir.rs`; see `docs/symbol-map.md`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Flatten<'_> {
@@ -326,6 +327,7 @@ impl Flatten<'_> {
         })
     }
 
+    #[allow(clippy::ref_option, reason = "TODO: take Option<&T>")]
     pub(super) fn checked_call_source_place(
         contract: &mojito_checked::checked::CheckedCallContract,
         source: mojito_checked::checked::CheckedCallArgumentSource,
@@ -448,18 +450,19 @@ impl Flatten<'_> {
     pub(super) fn emit_checked_call_boundary(
         &mut self,
         contract: &mojito_checked::checked::CheckedCallContract,
-        site: SourceSpan,
+        site: &SourceSpan,
     ) {
         for argument in &contract.boundary.arguments {
             self.emit_interior_invalidation_facts(
                 &argument.invalidations,
-                argument.value_source.clone(),
+                &argument.value_source.clone(),
                 None,
             );
         }
         self.emit_interior_invalidation_facts(&contract.boundary.invalidations, site, None);
     }
 
+    #[allow(clippy::ref_option, reason = "TODO: take Option<&T>")]
     pub(super) fn reload_augmented_source(
         &mut self,
         raw: Reg,
@@ -525,7 +528,7 @@ impl Flatten<'_> {
         &mut self,
         expression: &Expr,
         handle: Reg,
-        reference: mojito_types::origin::RefTy,
+        reference: &mojito_types::origin::RefTy,
     ) -> MirPlace {
         let variable = self.var(&format!("$call_ref_r{}", handle.0));
         let storage_ty = Ty::Ref(reference.clone());
@@ -591,7 +594,7 @@ impl Flatten<'_> {
             Some(Ty::Ref(reference)) => reference.clone(),
             _ => reference,
         };
-        Some(self.materialize_call_reference_place(expression, handle, materialized_reference))
+        Some(self.materialize_call_reference_place(expression, handle, &materialized_reference))
     }
 
     /// Lower ordinary field/intrinsic-index projections whose base is produced
@@ -636,8 +639,7 @@ impl Flatten<'_> {
                 let mut place = base_place(self, object)?;
                 let projection = match self.checked_ty(object) {
                     Some(Ty::Tuple(_)) => exact_nonnegative_index(index)
-                        .map(Proj::ConstIndex)
-                        .unwrap_or_else(|| Proj::Index(self.expr(index))),
+                        .map_or_else(|| Proj::Index(self.expr(index)), Proj::ConstIndex),
                     _ => Proj::Index(self.expr(index)),
                 };
                 if let Some(ty) = self
@@ -781,27 +783,26 @@ impl Flatten<'_> {
         owner: mojito_types::origin::OwnerId,
         value: Reg,
     ) -> (Reg, Option<MirPlace>) {
-        let variable = match self.owner_vars.get(&owner).copied() {
-            Some(variable) => variable,
-            None => {
-                let ty = self
-                    .f
-                    .reg_types
-                    .get(&value.0)
-                    .cloned()
-                    .or_else(|| self.checked_ty(expression));
-                let variable = self.var(&format!("$mat_r{}", value.0));
-                if let Some(ty) = ty.clone() {
-                    self.var_types.insert(variable, ty);
-                }
-                self.emit(MirInstr::DefVar {
-                    var: variable,
-                    src: value,
-                    binding_ty: ty,
-                });
-                self.owner_vars.insert(owner, variable);
-                variable
+        let variable = if let Some(variable) = self.owner_vars.get(&owner).copied() {
+            variable
+        } else {
+            let ty = self
+                .f
+                .reg_types
+                .get(&value.0)
+                .cloned()
+                .or_else(|| self.checked_ty(expression));
+            let variable = self.var(&format!("$mat_r{}", value.0));
+            if let Some(ty) = ty.clone() {
+                self.var_types.insert(variable, ty);
             }
+            self.emit(MirInstr::DefVar {
+                var: variable,
+                src: value,
+                binding_ty: ty,
+            });
+            self.owner_vars.insert(owner, variable);
+            variable
         };
         (
             value,
@@ -981,7 +982,7 @@ impl Flatten<'_> {
         for adjustment in self.checked_adjustments(expression) {
             match adjustment {
                 mojito_checked::checked::SemanticAdjustment::InteriorReference { origin } => {
-                    places.push(origin)
+                    places.push(origin);
                 }
                 mojito_checked::checked::SemanticAdjustment::ReferenceResult { reference } => {
                     collect(&reference.origin, &mut places);
@@ -1075,13 +1076,13 @@ impl Flatten<'_> {
         fallback: Option<VarId>,
     ) {
         let invalidations = self.checked_interior_invalidations(expression);
-        self.emit_interior_invalidation_facts(&invalidations, expression.source_span(), fallback);
+        self.emit_interior_invalidation_facts(&invalidations, &expression.source_span(), fallback);
     }
 
     pub(super) fn emit_interior_invalidation_facts(
         &mut self,
         invalidations: &[mojito_checked::checked::InteriorInvalidation],
-        site: SourceSpan,
+        site: &SourceSpan,
         fallback: Option<VarId>,
     ) {
         for invalidation in invalidations {
@@ -1192,7 +1193,7 @@ impl Flatten<'_> {
 /// an aggregate (a struct with a destructor or owning fields, tuple/pack
 /// storage, a variant, or a still-abstract parameter type). Kept textually
 /// aligned with the drop analysis' `may_alias_owned_storage`.
-fn owns_droppable_storage(ty: &Ty) -> bool {
+const fn owns_droppable_storage(ty: &Ty) -> bool {
     matches!(
         ty,
         Ty::Struct(..)

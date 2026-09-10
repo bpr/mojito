@@ -2,7 +2,9 @@
 //! satisfaction, associated-requirement merging, and the built-in
 //! trait table.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TransferSet;
 
 /// Materialize trait default methods into each conforming struct before semantic
 /// checking. This keeps default dispatch static: downstream MIR sees an ordinary
@@ -137,7 +139,7 @@ pub(super) fn merge_associated_requirement(
                 )));
             }
             if params.is_empty() {
-                *params = more_params.clone();
+                params.clone_from(more_params);
             }
             for bound in more {
                 if !bounds.contains(bound) {
@@ -273,7 +275,7 @@ pub(super) fn method_callable_ty(method: &MethodSig) -> Ty {
         conventions: method.conventions.clone(),
         ref_params: Box::new(method.ref_params.clone()),
         ref_return: method.ref_return.clone().map(Box::new),
-        transfers: Default::default(),
+        transfers: TransferSet::default(),
     }
 }
 

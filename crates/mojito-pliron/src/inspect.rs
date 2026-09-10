@@ -1,16 +1,20 @@
-//! Mechanical ELF inspection (Stage 6, S6.4.5): pure-Rust (`object` crate)
-//! reads of emitted artifacts for tests and diagnostics — per-section
-//! digests for reproducibility diffs, symbol surfaces, and the
-//! machine/PIE/executable-stack facts the artifact contract pins. Shared by
-//! the repro/dist test lanes and error reporting; never load-bearing for
-//! emission itself.
+//! Mechanical ELF inspection (Stage 6, S6.4.5).
+//!
+//! Pure-Rust (`object` crate) reads of emitted artifacts for tests and
+//! diagnostics — per-section digests for reproducibility diffs, symbol
+//! surfaces, and the machine/PIE/executable-stack facts the artifact contract
+//! pins.
+//!
+//! Shared by the repro/dist test lanes and error reporting; never load-bearing
+//! for emission itself.
 
 use std::path::Path;
 
 use object::{Object, ObjectSection, ObjectSymbol};
 
-/// One row per allocated/code/data section: `(name, size, sha256)`. The
-/// reproducibility tests print a diff of two reports when whole-file bytes
+/// One row per allocated/code/data section: `(name, size, sha256)`.
+///
+/// The reproducibility tests print a diff of two reports when whole-file bytes
 /// mismatch, so failures name the drifting section instead of a bare hash.
 pub fn section_report(path: &Path) -> Result<Vec<(String, u64, String)>, String> {
     let data = read(path)?;
@@ -21,14 +25,17 @@ pub fn section_report(path: &Path) -> Result<Vec<(String, u64, String)>, String>
         let size = section.size();
         let digest = section
             .data()
-            .map(sha256_hex)
-            .unwrap_or_else(|_| "<no data>".to_string());
+            .map_or_else(|_| "<no data>".to_string(), sha256_hex);
         rows.push((name, size, digest));
     }
     Ok(rows)
 }
 
 /// Render two section reports side by side, keeping only differing rows.
+#[allow(
+    clippy::format_push_string,
+    reason = "TODO: write! into the buffer instead"
+)]
 pub fn section_diff(left: &[(String, u64, String)], right: &[(String, u64, String)]) -> String {
     let mut out = String::new();
     let names: Vec<&String> = left
@@ -64,7 +71,7 @@ pub fn undefined_symbols(path: &Path) -> Result<Vec<String>, String> {
     let file = parse(&data, path)?;
     let mut names: Vec<String> = file
         .symbols()
-        .filter(|symbol| symbol.is_undefined())
+        .filter(object::ObjectSymbol::is_undefined)
         .filter_map(|symbol| symbol.name().ok().map(str::to_string))
         .filter(|name| !name.is_empty())
         .collect();
@@ -172,8 +179,11 @@ fn parse<'a>(data: &'a [u8], path: &Path) -> Result<object::File<'a>, String> {
 
 fn sha256_hex(data: &[u8]) -> String {
     use sha2::{Digest, Sha256};
+    use std::fmt::Write;
     Sha256::digest(data)
         .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+        .fold(String::new(), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
 }

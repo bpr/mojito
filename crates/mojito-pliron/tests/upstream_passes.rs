@@ -1,12 +1,9 @@
-//! Stage 0 facility: a hand-written rewriting pass (constant folding) plus a
+//! Upstream contract: a hand-written rewriting pass (constant folding) plus a
 //! built-in pass (DCE) composed through the pass manager, with the
-//! AnalysisManager driving invalidation between them.
-//!
-//! Finding (recorded in docs/notes/pliron-stage0.md): `llvm.constant` is
-//! missing from pliron-llvm 0.17.0's `SideEffects`-false list
-//! (`interface_impls.rs`), so built-in DCE conservatively keeps dead
-//! constants. DCE does remove the dead `llvm.sub`, which has the interface.
-//! Both behaviors are pinned below.
+//! `AnalysisManager` driving invalidation between them — the machinery
+//! `pipeline.rs` runs mem2reg/DCE through.
+
+mod support;
 
 use expect_test::expect;
 use pliron::{
@@ -17,7 +14,7 @@ use pliron::{
     result::ExpectOk,
 };
 use pliron_llvm::ops::FuncOp;
-use pliron_stage0_spike::{const_fold::FoldConstAdd, ir_build::build_main_with_dead_sub, print_ir};
+use support::{const_fold::FoldConstAdd, ir_build::build_main_with_dead_sub, print_ir};
 
 #[test]
 fn constfold_folds_add_and_dce_removes_dead_sub() {
@@ -36,7 +33,7 @@ fn constfold_folds_add_and_dce_removes_dead_sub() {
 
     pliron::op::verify_op(&module, ctx).expect_ok(ctx);
     let printed = print_ir(ctx, module.get_operation());
-    expect![[r#"
+    expect![[r"
         builtin.module @spike_dead 
         {
           ^block1v1():
@@ -47,7 +44,7 @@ fn constfold_folds_add_and_dce_removes_dead_sub() {
                 v4 = llvm.constant <builtin.integer <42: i32>> : builtin.integer i32;
                 llvm.return v4
             }
-        }"#]]
+        }"]]
     .assert_eq(&printed);
 
     assert!(

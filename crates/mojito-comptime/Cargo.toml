@@ -15,3 +15,6 @@ mojito-vm = { path = "../mojito-vm" }
 
 [dev-dependencies]
 mojito = { path = "../.." }
+
+[lints]
+workspace = true

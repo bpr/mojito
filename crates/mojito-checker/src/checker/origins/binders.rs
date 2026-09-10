@@ -1,6 +1,7 @@
 //! Origin binders: delegated receiver/field binder maps, explicit
 //! origin arguments, and origin-parameter argument resolution.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Checker {
@@ -9,7 +10,7 @@ impl Checker {
     /// The composed origin-binder correspondence along a `self`-rooted field
     /// path: for each origin parameter of the FINAL field's struct, the
     /// enclosing origin-parameter index the chained field applications bound
-    /// (`self.iter` typed `EntryIter[Self.o2]` maps EntryIter's binder to
+    /// (`self.iter` typed `EntryIter[Self.o2]` maps `EntryIter`'s binder to
     /// `o2`). `None` when any hop lacks a recorded application (alias-typed
     /// fields) or the path does not root at `self`.
     pub(super) fn delegated_receiver_binder_map(&self, object: &Expr) -> Option<Vec<(u32, u32)>> {

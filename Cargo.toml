@@ -34,10 +34,57 @@ include = [
 [workspace]
 # The root facade package plus one crate per compiler phase and the
 # independently versioned native runtime (see AGENTS.md "Workspace Layout").
-# The `spikes/` crates deliberately stay outside (each carries its own empty
-# `[workspace]` table), and only `crates/mojito-pliron` — reached via the
-# optional `backend-pliron` feature — may require LLVM.
+# Only `crates/mojito-pliron` — reached via the optional `backend-pliron`
+# feature — may require LLVM.
 members = ["crates/*"]
+
+[workspace.lints.clippy]
+# Enable entire lint groups. `nursery` stays at `warn`: its lints are
+# explicitly unstable and false-positive-prone, so they inform without
+# breaking the build.
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+
+# Configure individual rules.
+todo = "deny"
+cognitive_complexity = "warn"
+missing_errors_doc = "allow"
+
+# Mojo source fragments in tests and diagnostics contain `{...}` placeholders.
+literal_string_with_formatting_args = "allow"
+
+# Index, span, register, and lane arithmetic converts between `usize` and the
+# fixed widths the MIR/native ABI pins. The ranges are structural invariants,
+# not values a cast lint can see.
+cast_lossless = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+
+# `ty`/`tys`, `read`/`reg`, `body`/`block` pairs are the vocabulary of a
+# compiler; renaming them for the lint would make the code read worse.
+similar_names = "allow"
+
+# The crates expose hundreds of small accessors; `#[must_use]` on each is
+# noise rather than signal.
+must_use_candidate = "allow"
+
+# Arms in the checker/MIR dispatch matches coincide incidentally, not
+# semantically. Merging them writes a claim that two independently maintained
+# cases are one case, which the next divergence has to undo.
+match_same_arms = "allow"
+
+# The lowering and checking methods take `&mut self`, so the suggested
+# `map_or_else` closures cannot both borrow the receiver (E0499/E0524). Where
+# it does compile, the `if let` still reads in source order.
+option_if_let_else = "allow"
+
+# The lexer's character-dispatch arms end in a uniform `continue`; that
+# terminator is what distinguishes them from the arms that fall through to the
+# shared tail below the match.
+needless_continue = "allow"
 
 [workspace.package]
 edition = "2024"
@@ -103,6 +150,9 @@ expect-test = "1.5.1"
 libtest-mimic = "0.8.2"
 mojito-runtime = { path = "crates/mojito-runtime" }
 tempfile = "3.20.0"
+
+[lints]
+workspace = true
 
 [[test]]
 name = "corpus_test"

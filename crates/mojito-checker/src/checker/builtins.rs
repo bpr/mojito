@@ -1,5 +1,6 @@
 //! Typing and capability rules for compiler-known builtin types and operations.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 pub use mojito_types::types::{
     builtin_copy_is_value_read, callable_environment_coerces, callable_environment_value_coerces,
@@ -10,7 +11,7 @@ pub(super) use mojito_types::types::default_literal;
 
 /// Whether `ty` is a non-numeric scalar value type — what `==`/`!=` compare once
 /// the numeric cases (handled by `common_numeric`) are out of the way.
-pub(super) fn is_scalar(ty: &Ty) -> bool {
+pub(super) const fn is_scalar(ty: &Ty) -> bool {
     matches!(ty, Ty::Bool | Ty::StringLiteral | Ty::None)
 }
 
@@ -150,8 +151,11 @@ pub(super) fn builtin_trait_operation(trait_name: &str) -> Option<&'static str> 
 /// `and`/`or` (Bool short-circuit), `in`/`not in` (`__contains__` on the right
 /// operand), `is`/`is not` (identity — `__is__`/`__isnot__` struct dunders
 /// only, no scalar meaning), and `@`/matmul (struct dunder only).
-pub(super) fn infix_operation_trait(op: mojito_ast::ast::InfixOp) -> Option<&'static str> {
-    use mojito_ast::ast::InfixOp::*;
+pub(super) const fn infix_operation_trait(op: mojito_ast::ast::InfixOp) -> Option<&'static str> {
+    use mojito_ast::ast::InfixOp::{
+        Add, And, BitAnd, BitOr, BitXor, Div, Eq, FloorDiv, Ge, Gt, In, Is, IsNot, Le, Lt, MatMul,
+        Mod, Mul, Ne, NotIn, Or, Pow, Shl, Shr, Sub,
+    };
     Some(match op {
         Add => "Addable",
         Sub => "Subtractable",
@@ -172,7 +176,7 @@ pub(super) fn infix_operation_trait(op: mojito_ast::ast::InfixOp) -> Option<&'st
 }
 
 /// The operation trait a prefix operator dispatches through.
-pub(super) fn prefix_operation_trait(op: mojito_ast::ast::PrefixOp) -> &'static str {
+pub(super) const fn prefix_operation_trait(op: mojito_ast::ast::PrefixOp) -> &'static str {
     match op {
         mojito_ast::ast::PrefixOp::Neg => "Negatable",
         mojito_ast::ast::PrefixOp::Not => "Boolable",
@@ -208,7 +212,7 @@ pub(super) fn math_dunder_bound(method: &str, argc: usize) -> &'static [&'static
     }
 }
 
-pub(super) fn builtin_hashable_ty(ty: &Ty) -> bool {
+pub(super) const fn builtin_hashable_ty(ty: &Ty) -> bool {
     matches!(
         ty,
         Ty::Int | Ty::UInt | Ty::Bool | Ty::StringLiteral | Ty::Float64 | Ty::Simd { .. }
@@ -217,12 +221,12 @@ pub(super) fn builtin_hashable_ty(ty: &Ty) -> bool {
 
 /// Whether `ty` is a SIMD value — a native scalar (a width-1 vector) or a
 /// `SIMD[dtype, width]` — the types the hidden `$SIMD` bound admits.
-pub(super) fn simd_valued_ty(ty: &Ty) -> bool {
+pub(super) const fn simd_valued_ty(ty: &Ty) -> bool {
     mojito_types::types::simd_shape(ty).is_some()
 }
 
 /// The bit width of one lane of `dtype` (`bool` is one bit).
-pub(super) fn dtype_bit_width(dtype: Dtype) -> u32 {
+pub(super) const fn dtype_bit_width(dtype: Dtype) -> u32 {
     match dtype {
         Dtype::Bool => 1,
         Dtype::Int8 | Dtype::UInt8 => 8,
@@ -234,7 +238,7 @@ pub(super) fn dtype_bit_width(dtype: Dtype) -> u32 {
 
 /// `SIMD.to_bits`'s default target: the unsigned dtype of the source lane's
 /// width (a `bool` lane reads through `uint8`, as upstream casts it first).
-pub(super) fn unsigned_dtype_of_width(bits: u32) -> Dtype {
+pub(super) const fn unsigned_dtype_of_width(bits: u32) -> Dtype {
     match bits {
         16 => Dtype::UInt16,
         32 => Dtype::UInt32,
@@ -314,7 +318,7 @@ pub(super) fn is_printable(ty: &Ty) -> bool {
 }
 
 /// Whether `ty` is a numeric type (concrete or literal).
-pub(super) fn is_numeric(ty: &Ty) -> bool {
+pub(super) const fn is_numeric(ty: &Ty) -> bool {
     matches!(
         ty,
         Ty::Int | Ty::UInt | Ty::Float64 | Ty::IntLiteral | Ty::FloatLiteral
@@ -874,7 +878,7 @@ impl Checker {
             return Err(TypeError::TypeMismatch {
                 expected: "a numeric or Bool value".to_string(),
                 found: arg_ty.to_string(),
-                context: format!("argument to '{}'", target),
+                context: format!("argument to '{target}'"),
             });
         }
         Ok(target)

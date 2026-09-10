@@ -3,6 +3,7 @@
 //! prints the clause as declared, with the enclosing struct's parameters
 //! spelled bare (`conforms_to(T, Copyable)`, `Ts.all_conforms_to[Deinitable]()`).
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::{InfixOp, PrefixOp};
 
@@ -141,7 +142,7 @@ fn render_type(ty: &Type) -> String {
     }
 }
 
-fn infix_spelling(op: InfixOp) -> &'static str {
+const fn infix_spelling(op: InfixOp) -> &'static str {
     match op {
         InfixOp::Add => "+",
         InfixOp::Sub => "-",

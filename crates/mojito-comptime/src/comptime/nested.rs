@@ -7,6 +7,7 @@
 //! replaced there by only the concrete instances requested in that lexical
 //! context.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::ParamKind;
 
@@ -171,7 +172,7 @@ impl NestedMono {
         }
     }
 
-    fn fresh_template(&mut self) -> NestedTemplateId {
+    const fn fresh_template(&mut self) -> NestedTemplateId {
         let id = NestedTemplateId(self.next_template);
         self.next_template += 1;
         id
@@ -530,7 +531,7 @@ impl NestedMono {
                 let id = self.fresh_template();
                 let marker = self.marker(id, &source_name);
                 self.bind(&source_name, TemplateBinding::Template(id));
-                *name = marker.clone();
+                name.clone_from(&marker);
                 (Some(id), Some(marker))
             } else {
                 self.bind(&source_name, TemplateBinding::Other);
@@ -655,7 +656,7 @@ impl NestedMono {
                 if let Some(TemplateBinding::Template(id)) = self.resolve(name)
                     && let Some(template) = self.templates.get(&id)
                 {
-                    *name = template.marker_name.clone();
+                    name.clone_from(&template.marker_name);
                 } else if let Some(TemplateBinding::Template(id)) = self.resolve(name) {
                     // Self references are qualified before the declaration clone
                     // has been entered into `templates`.
@@ -694,7 +695,7 @@ impl NestedMono {
                 }
             }
             ExprKind::Prefix(_, value) | ExprKind::Transfer(value) | ExprKind::Spread(value) => {
-                self.qualify_expression(value)
+                self.qualify_expression(value);
             }
             ExprKind::Infix(_, left, right)
             | ExprKind::Index {
@@ -743,7 +744,7 @@ impl NestedMono {
                     match argument {
                         mojito_ast::ast::SubscriptArg::Index(value)
                         | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
-                            self.qualify_expression(value)
+                            self.qualify_expression(value);
                         }
                         mojito_ast::ast::SubscriptArg::Slice {
                             lower, upper, step, ..
@@ -785,7 +786,7 @@ impl NestedMono {
                             self.bind(var, TemplateBinding::Other);
                         }
                         mojito_ast::ast::ComprehensionClause::If(condition) => {
-                            self.qualify_expression(condition)
+                            self.qualify_expression(condition);
                         }
                     }
                 }
@@ -818,11 +819,10 @@ impl NestedMono {
             }
             ExprKind::Identifier(name) => {
                 if let Some(TemplateBinding::Template(id)) = self.resolve(name) {
-                    *name = self
-                        .templates
-                        .get(&id)
-                        .map(|template| template.marker_name.clone())
-                        .unwrap_or_else(|| self.marker(id, name));
+                    *name = self.templates.get(&id).map_or_else(
+                        || self.marker(id, name),
+                        |template| template.marker_name.clone(),
+                    );
                 }
             }
             // A lambda's hidden definition qualifies like a nested `def`
@@ -862,6 +862,7 @@ impl NestedMono {
         result
     }
 
+    #[allow(clippy::cognitive_complexity, reason = "TODO: split this pass")]
     fn scan_statement(
         &mut self,
         elab: &Elab<'_>,
@@ -1332,7 +1333,7 @@ impl NestedMono {
                     match argument {
                         mojito_ast::ast::SubscriptArg::Index(value)
                         | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
-                            self.scan_expression(elab, value, runtime_packs)?
+                            self.scan_expression(elab, value, runtime_packs)?;
                         }
                         mojito_ast::ast::SubscriptArg::Slice {
                             lower, upper, step, ..
@@ -1377,7 +1378,7 @@ impl NestedMono {
                             runtime_packs.bind_other(var);
                         }
                         mojito_ast::ast::ComprehensionClause::If(condition) => {
-                            self.scan_expression(elab, condition, runtime_packs)?
+                            self.scan_expression(elab, condition, runtime_packs)?;
                         }
                     }
                 }
@@ -1519,7 +1520,7 @@ impl NestedMono {
                 }
             }
             StmtKind::ComptimeFor { body, .. } | StmtKind::With { body, .. } => {
-                self.replace_templates(body)
+                self.replace_templates(body);
             }
             StmtKind::Try {
                 body,

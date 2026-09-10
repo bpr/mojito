@@ -1,6 +1,7 @@
 //! Expression parsing: precedence climbing, comprehensions, string
 //! sequences, lambdas, and prefix/infix forms.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
@@ -57,7 +58,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     let binding = self.parse_loop_binding_mode()?;
                     let var =
                         self.expect_identifier("Expected a comprehension variable after 'for'")?;
-                    self.expect(Token::In, "Expected 'in' in comprehension")?;
+                    self.expect(&Token::In, "Expected 'in' in comprehension")?;
                     let iter = self.parse_expression(Precedence::Conditional)?;
                     clauses.push(ComprehensionClause::For {
                         var,
@@ -103,7 +104,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         } else {
             matches!(
                 self.peek_token()?,
-                Some(Token::StringLiteral(_)) | Some(Token::TripleStringLiteral(_))
+                Some(Token::StringLiteral(_) | Token::TripleStringLiteral(_))
             )
         } {
             tokens.push(self.next_token()?);
@@ -132,7 +133,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                         match chunk {
                             TStringChunk::Text(text) => push_tstring_literal(&mut parts, text),
                             TStringChunk::Interp(src) => {
-                                parts.push(TStringPart::Expr(Box::new(parse_interpolation(&src)?)))
+                                parts.push(TStringPart::Expr(Box::new(parse_interpolation(&src)?)));
                             }
                         }
                     }
@@ -166,7 +167,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             params = list.params;
             positional_only = list.positional_only;
             keyword_only = list.keyword_only;
-            self.expect(Token::RParen, "Expected ')' after lambda arguments")?;
+            self.expect(&Token::RParen, "Expected ')' after lambda arguments")?;
         } else if matches!(
             self.peek_token()?,
             Some(Token::Identifier(word)) if !matches!(word.as_str(), "capturing" | "thin" | "abi")
@@ -185,7 +186,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         } else {
             None
         };
-        self.expect(Token::Colon, "Expected ':' before the lambda body")?;
+        self.expect(&Token::Colon, "Expected ':' before the lambda body")?;
         // The body is one expression above walrus level: a trailing ternary is
         // part of the body, while `:=`, `,`, and statement structure are not.
         let body = self.parse_expression(Precedence::Walrus)?;
@@ -233,11 +234,11 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             // runtime position; elaboration folds it to its materialized result.
             Token::Comptime => {
                 self.expect(
-                    Token::LParen,
+                    &Token::LParen,
                     "Expected '(' after 'comptime' in an expression",
                 )?;
                 let inner = self.parse_expression(Precedence::Lowest)?;
-                self.expect(Token::RParen, "Expected ')' after the comptime expression")?;
+                self.expect(&Token::RParen, "Expected ')' after the comptime expression")?;
                 Ok(self.node(
                     ExprKind::Call {
                         name: "comptime".to_string(),
@@ -278,10 +279,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                         }
                         elems.push(self.parse_expression(Precedence::Lowest)?);
                     }
-                    self.expect(Token::RParen, "Expected ')' after tuple elements")?;
+                    self.expect(&Token::RParen, "Expected ')' after tuple elements")?;
                     Ok(self.node(ExprKind::TupleLit(elems), start))
                 } else {
-                    self.expect(Token::RParen, "Expected closing ')' after expression")?;
+                    self.expect(&Token::RParen, "Expected closing ')' after expression")?;
                     Ok(first)
                 }
             }
@@ -295,7 +296,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 let first = self.parse_expression(Precedence::Lowest)?;
                 if matches!(self.peek_token()?, Some(Token::For)) {
                     let clauses = self.parse_comprehension_clauses()?;
-                    self.expect(Token::RBracket, "Expected ']' after list comprehension")?;
+                    self.expect(&Token::RBracket, "Expected ']' after list comprehension")?;
                     return Ok(self.node(
                         ExprKind::Comprehension {
                             kind: mojito_ast::ast::CollectionKind::List,
@@ -314,7 +315,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     }
                     elems.push(self.parse_expression(Precedence::Lowest)?);
                 }
-                self.expect(Token::RBracket, "Expected ']' after list elements")?;
+                self.expect(&Token::RBracket, "Expected ']' after list elements")?;
                 Ok(self.node(ExprKind::ListLit(elems), start))
             }
             Token::LBrace => {
@@ -337,7 +338,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     };
                     let value = first_value.unwrap_or_else(|| first_key.clone());
                     let clauses = self.parse_comprehension_clauses()?;
-                    self.expect(Token::RBrace, "Expected '}' after collection comprehension")?;
+                    self.expect(
+                        &Token::RBrace,
+                        "Expected '}' after collection comprehension",
+                    )?;
                     return Ok(self.node(
                         ExprKind::Comprehension {
                             kind,
@@ -372,7 +376,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     }
                     entries.push((key, value));
                 }
-                self.expect(Token::RBrace, "Expected '}' after brace literal")?;
+                self.expect(&Token::RBrace, "Expected '}' after brace literal")?;
                 Ok(self.node(ExprKind::BraceLit(entries), start))
             }
             // A leading-dot contextual member reference (`.red`,
@@ -390,7 +394,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 if matches!(self.peek_token()?, Some(Token::LParen)) {
                     self.next_token()?; // consume '('
                     let (args, kwargs) = self.parse_call_args()?;
-                    self.expect(Token::RParen, "Expected ')' after arguments")?;
+                    self.expect(&Token::RParen, "Expected ')' after arguments")?;
                     Ok(self.node(
                         ExprKind::MethodCall {
                             object: Box::new(sentinel),
@@ -434,7 +438,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             if matches!(self.peek_token()?, Some(Token::LParen)) {
                 self.next_token()?; // consume '('
                 let (args, kwargs) = self.parse_call_args()?;
-                self.expect(Token::RParen, "Expected ')' after arguments")?;
+                self.expect(&Token::RParen, "Expected ')' after arguments")?;
                 return Ok(self.node(
                     ExprKind::MethodCall {
                         object: Box::new(left),
@@ -466,7 +470,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         if matches!(self.peek_token()?, Some(Token::LParen)) {
             self.next_token()?; // consume '('
             let (args, kwargs) = self.parse_call_args()?;
-            self.expect(Token::RParen, "Expected ')' after arguments")?;
+            self.expect(&Token::RParen, "Expected ')' after arguments")?;
             let kind = match left.kind {
                 ExprKind::Identifier(name) => ExprKind::Call {
                     name,
@@ -510,7 +514,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         if matches!(self.peek_token()?, Some(Token::If)) {
             self.next_token()?; // consume 'if'
             let cond = self.parse_expression(Precedence::Conditional)?;
-            self.expect(Token::Else, "Expected 'else' in a conditional expression")?;
+            self.expect(&Token::Else, "Expected 'else' in a conditional expression")?;
             let else_branch = self.parse_expression(Precedence::Lowest)?;
             return Ok(self.node(
                 ExprKind::IfExpr {

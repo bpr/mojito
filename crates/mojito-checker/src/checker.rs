@@ -1,10 +1,12 @@
-//! Static semantic checker: the authoritative handoff between elaborated AST and
-//! compiler lowering. It resolves annotations, calls, traits, and conventions
-//! into [`CheckedProgram`](mojito_checked::checked::CheckedProgram). It is a *sound*
-//! approximation: if [`check`] succeeds, compiled execution will not raise
-//! `UndefinedVariable`, `TypeError`, `NotCallable`, `ArityMismatch`, or
-//! `ClosureEscape`. It is deliberately not *complete* — see the forward-reference
-//! note below — so a few valid Mojo programs are rejected.
+//! Static semantic checker: the authoritative handoff between elaborated AST
+//! and compiler lowering.
+//!
+//! It resolves annotations, calls, traits, and conventions into
+//! [`CheckedProgram`](mojito_checked::checked::CheckedProgram). It is a
+//! *sound* approximation: if [`check`] succeeds, compiled execution will not
+//! raise `UndefinedVariable`, `TypeError`, `NotCallable`, `ArityMismatch`, or
+//! `ClosureEscape`. It is deliberately not *complete* — see the
+//! forward-reference note below — so a few valid Mojo programs are rejected.
 //!
 //! ## Scoping
 //! A stack of scopes (`Vec<HashMap<String, Ty>>`) models lexical name lookup.
@@ -14,9 +16,30 @@
 //! declared later in the same block (mutual recursion). Choosing soundness over completeness here keeps
 //! the checker simple; hoisting `def` signatures per block is future work.
 
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use annotations::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use builtins::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use calls::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use declarations::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use generics::*;
+use mojito_types::types::TransferSet;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use operators::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use origins::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use overload_support::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use places::*;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use traits_support::*;
 
 use mojito_common::timing;
 
@@ -44,15 +67,37 @@ pub fn check(stmts: &[Stmt]) -> Result<(), TypeError> {
 
 /// Type-check and retain the semantic facts consumed by lowering/backends.
 pub fn check_program(stmts: &[Stmt]) -> Result<mojito_checked::checked::CheckedProgram, TypeError> {
-    check_program_with_materialized_callables(stmts, HashMap::new())
+    check_program_with_materialized_callables(stmts, &HashMap::new())
 }
 
 /// Check compiler-generated Tuple declarations with the exact callable types
 /// referenced by their opaque, parser-unconstructible annotation ids.
+#[allow(clippy::implicit_hasher, reason = "TODO: generalize over BuildHasher")]
 pub fn check_program_with_materialized_callables(
     stmts: &[Stmt],
-    materialized_callables: HashMap<String, Ty>,
+    materialized_callables: &HashMap<String, Ty>,
 ) -> Result<mojito_checked::checked::CheckedProgram, TypeError> {
+    // Two-phase transfer effects: a call site checked before its callee's
+    // body only sees effects already committed, so the check reruns — seeded
+    // with the prior round's committed map — whenever some call site
+    // observed a stale (since-grown) callee entry. Effects grow
+    // monotonically over a finite lattice, so the fixpoint is small; the cap
+    // guards checker defects, not user programs.
+    const TRANSFER_EFFECT_ROUNDS: usize = 4;
+
+    fn first_stale<E: PartialEq + Clone>(
+        committed: &HashMap<String, Vec<E>>,
+        observations: &HashMap<String, Vec<E>>,
+    ) -> Option<String> {
+        observations
+            .iter()
+            .find(|(name, seen)| {
+                let now = committed.get(*name).cloned().unwrap_or_default();
+                now.len() != seen.len() || now.iter().any(|effect| !seen.contains(effect))
+            })
+            .map(|(name, _)| name.clone())
+    }
+
     let mut expanded = {
         let _expand = timing::span("trait_defaults_expand");
         expand_trait_defaults(stmts)?
@@ -64,13 +109,6 @@ pub fn check_program_with_materialized_callables(
         let _rekey = timing::span("syntax_rekey");
         mojito_ast::ast::rekey_syntax(&mut expanded);
     }
-    // Two-phase transfer effects: a call site checked before its callee's
-    // body only sees effects already committed, so the check reruns — seeded
-    // with the prior round's committed map — whenever some call site
-    // observed a stale (since-grown) callee entry. Effects grow
-    // monotonically over a finite lattice, so the fixpoint is small; the cap
-    // guards checker defects, not user programs.
-    const TRANSFER_EFFECT_ROUNDS: usize = 4;
     let mut transfer_seed: HashMap<String, Vec<mojito_checked::checked::TransferEffect>> =
         HashMap::new();
     let mut call_through_seed: HashMap<String, Vec<mojito_checked::checked::CallThroughEffect>> =
@@ -90,18 +128,6 @@ pub fn check_program_with_materialized_callables(
         {
             let _reads = timing::span("reference_reads");
             checker.check_reference_result_reads()?;
-        }
-        fn first_stale<E: PartialEq + Clone>(
-            committed: &HashMap<String, Vec<E>>,
-            observations: &HashMap<String, Vec<E>>,
-        ) -> Option<String> {
-            observations
-                .iter()
-                .find(|(name, seen)| {
-                    let now = committed.get(*name).cloned().unwrap_or_default();
-                    now.len() != seen.len() || now.iter().any(|effect| !seen.contains(effect))
-                })
-                .map(|(name, _)| name.clone())
         }
         let stale = first_stale(
             &checker.transfer_effects.borrow(),
@@ -123,8 +149,8 @@ pub fn check_program_with_materialized_callables(
                 callable,
             });
         }
-        transfer_seed = checker.transfer_effects.borrow().clone();
-        call_through_seed = checker.call_through_effects.borrow().clone();
+        transfer_seed.clone_from(&checker.transfer_effects.borrow());
+        call_through_seed.clone_from(&checker.call_through_effects.borrow());
     };
     // Context managers are desugared by the checker; later phases see only
     // the ordinary statements it checked.
@@ -191,7 +217,7 @@ pub fn check_program_with_materialized_callables(
     Ok(mojito_checked::checked::CheckedProgram::new(
         expanded,
         checker.overload_targets.into_inner(),
-        checker.contextual_bases.into_inner(),
+        &checker.contextual_bases.into_inner(),
         checker.generic_instantiations.into_inner(),
         checker.method_instantiations.into_inner(),
         checker.struct_instantiations.into_inner(),
@@ -199,43 +225,44 @@ pub fn check_program_with_materialized_callables(
         checker.call_transfers.into_inner(),
         checker.implicit_conversions.into_inner(),
         checker.implicit_conversion_types.into_inner(),
-        checker.conversion_source_borrows.into_inner(),
+        &checker.conversion_source_borrows.into_inner(),
         checker.declaration_types.into_inner(),
         checker.generic_parameters.into_inner(),
-        checker.expression_types.into_inner(),
-        checker.expression_bindings.into_inner(),
-        checker.statement_bindings.into_inner(),
-        checker.declaration_captures.into_inner(),
-        checker.comprehension_bindings.into_inner(),
-        checker.expression_place_types.into_inner(),
-        checker.binding_types.into_inner(),
-        checker.expression_effects.into_inner(),
-        checker.selected_calls.into_inner(),
-        checker.subscript_descriptors.into_inner(),
-        checker.iteration_protocols.into_inner(),
-        checker.simd_constructions.into_inner(),
-        checker.operation_adjustments.into_inner(),
-        checker.parameterized_method_calls.into_inner(),
-        checker.tuple_unpack_plans.into_inner(),
-        checker.interior_references.into_inner(),
-        checker.interior_invalidations.into_inner(),
+        &checker.expression_types.into_inner(),
+        &checker.expression_bindings.into_inner(),
+        &checker.statement_bindings.into_inner(),
+        &checker.declaration_captures.into_inner(),
+        &checker.comprehension_bindings.into_inner(),
+        &checker.expression_place_types.into_inner(),
+        &checker.binding_types.into_inner(),
+        &checker.expression_effects.into_inner(),
+        &checker.selected_calls.into_inner(),
+        &checker.subscript_descriptors.into_inner(),
+        &checker.iteration_protocols.into_inner(),
+        &checker.simd_constructions.into_inner(),
+        &checker.operation_adjustments.into_inner(),
+        &checker.parameterized_method_calls.into_inner(),
+        &checker.tuple_unpack_plans.into_inner(),
+        &checker.interior_references.into_inner(),
+        &checker.interior_invalidations.into_inner(),
         explicit_destroy_types,
-        checker.explicit_destroy_calls.into_inner(),
-        checker.reference_value_uses.into_inner(),
-        checker.copy_place_value_uses.into_inner(),
-        checker.call_place_uses.into_inner(),
-        checker.borrowed_read_call_places.into_inner(),
-        checker.implicitly_copied_consuming_receivers.into_inner(),
-        checker.truthiness_conditions.into_inner(),
+        &checker.explicit_destroy_calls.into_inner(),
+        &checker.reference_value_uses.into_inner(),
+        &checker.copy_place_value_uses.into_inner(),
+        &checker.call_place_uses.into_inner(),
+        &checker.borrowed_read_call_places.into_inner(),
+        &checker.implicitly_copied_consuming_receivers.into_inner(),
+        &checker.truthiness_conditions.into_inner(),
         checker.declaration_effects.into_inner(),
     ))
 }
 
 /// A declaration-only view of the checker's conformance registry for phases
-/// that necessarily run before whole-program type checking.  Compile-time
-/// specialization uses this to validate an inferred heterogeneous type pack at
-/// its call site; it must not grow a second, subtly different implementation of
-/// trait conformance.
+/// that necessarily run before whole-program type checking.
+///
+/// Compile-time specialization uses this to validate an inferred heterogeneous
+/// type pack at its call site; it must not grow a second, subtly different
+/// implementation of trait conformance.
 ///
 /// The oracle records trait refinement, nominal struct conformances,
 /// conformance conditions, field types, and lifecycle method presence.  Method
@@ -255,21 +282,25 @@ mod overload_support;
 pub use overload_support::is_bundled_module_source;
 mod traits_support;
 
-use overload_support::*;
-use traits_support::*;
-
-/// Type-check a program and return the concrete lowered callee chosen for every
-/// overloaded call site. MIR lowering uses this side table so source calls like
-/// `f(x)` can lower to a signature-specific function even when overloads share
-/// the same arity.
+/// Type-check a program and return the concrete lowered callee chosen for
+/// every overloaded call site.
+///
+/// MIR lowering uses this side table so source calls like `f(x)` can lower to
+/// a signature-specific function even when overloads share the same arity.
 pub fn resolve_overload_targets(stmts: &[Stmt]) -> Result<HashMap<SourceSpan, String>, TypeError> {
     Ok(check_program(stmts)?.overload_targets().clone())
 }
 
-/// A static type checker over the parsed AST. Top-level struct and trait
-/// declarations register order-independently (shells, member types, method
-/// signatures) before the source-order walk checks conformance and bodies;
-/// everything else checks in a single source-order pass.
+/// A static type checker over the parsed AST.
+///
+/// Top-level struct and trait declarations register order-independently
+/// (shells, member types, method signatures) before the source-order walk
+/// checks conformance and bodies; everything else checks in a single
+/// source-order pass.
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "TODO: group the flags into a state enum"
+)]
 pub struct Checker {
     /// Lexical scope chain, innermost last. Starts with the global scope.
     scopes: Vec<HashMap<String, Ty>>,
@@ -786,14 +817,18 @@ impl Checker {
             other => Some(other),
         };
         match callable {
-            Some(Ty::Func {
-                environment: CallableEnvironment::Capturing(CaptureOriginSet::Concrete(captures)),
-                ..
-            })
-            | Some(Ty::GenericFunc {
-                environment: CallableEnvironment::Capturing(CaptureOriginSet::Concrete(captures)),
-                ..
-            }) => captures.clone(),
+            Some(
+                Ty::Func {
+                    environment:
+                        CallableEnvironment::Capturing(CaptureOriginSet::Concrete(captures)),
+                    ..
+                }
+                | Ty::GenericFunc {
+                    environment:
+                        CallableEnvironment::Capturing(CaptureOriginSet::Concrete(captures)),
+                    ..
+                },
+            ) => captures.clone(),
             _ => Vec::new(),
         }
     }
@@ -915,6 +950,10 @@ impl Checker {
         }))
     }
 
+    #[allow(
+        clippy::unused_self,
+        reason = "TODO: make an associated function or use the receiver"
+    )]
     fn lower_callable_environment(
         &self,
         type_params: &[mojito_ast::ast::TypeParam],
@@ -1146,7 +1185,7 @@ impl Checker {
             conventions: conventions.clone(),
             ref_params: ref_params.clone(),
             ref_return: ref_return.clone(),
-            transfers: Default::default(),
+            transfers: TransferSet::default(),
         };
         coerces(&instantiated, to)
     }
@@ -1230,8 +1269,7 @@ impl Checker {
                     ty: actual.to_string(),
                     trait_name: contract.to_string(),
                     reason: Some(format!(
-                        "declared callable contract '{}' is incompatible",
-                        actual_contract
+                        "declared callable contract '{actual_contract}' is incompatible"
                     )),
                 });
             }
@@ -1521,6 +1559,10 @@ impl Checker {
         }
     }
 
+    #[allow(
+        clippy::unused_self,
+        reason = "TODO: make an associated function or use the receiver"
+    )]
     fn literal_value_fits_target(&self, value: &CtValue, target: &Ty) -> bool {
         match (value, target) {
             (CtValue::IntLiteral(_), Ty::Simd { dtype, width: 1 }) => {
@@ -1650,6 +1692,10 @@ impl Default for Checker {
 }
 
 #[derive(Clone, PartialEq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "TODO: group the flags into a state enum"
+)]
 struct MethodSig {
     decls: Vec<ParamDecl>,
     availability: Vec<GenericConstraint>,
@@ -1692,9 +1738,9 @@ struct MethodSig {
 }
 
 impl MethodSig {
-    fn intrinsic(params: Vec<Ty>, ret: Ty) -> MethodSig {
+    fn intrinsic(params: Vec<Ty>, ret: Ty) -> Self {
         let len = params.len();
-        MethodSig {
+        Self {
             decls: Vec::new(),
             availability: Vec::new(),
             has_self: true,
@@ -1754,7 +1800,7 @@ struct StructInfo {
     /// For each field whose SOURCE annotation applied origin-binder
     /// arguments (`var iter: EntryIter[Self.o2]`), the (callee origin-param
     /// index, enclosing origin-param index) pairs the application bound —
-    /// both in their declaration lists' full-index (OriginParamId) domain.
+    /// both in their declaration lists' full-index (`OriginParamId`) domain.
     /// Origin arguments are erased from checked identity, so this is the
     /// surviving record delegated-call origin clauses resolve binder
     /// correspondences through.
@@ -1905,6 +1951,7 @@ struct MethodCallResolution {
 type SubscriptDescriptorPlan = (Vec<Option<SliceKind>>, bool);
 
 /// How strictly a storage annotation must bind explicit origin slots.
+///
 /// `Full`: bare origin-slotted generics and partial applications both reject
 /// (struct fields, uninitialized locals). `AllowBare`: a bare generic may
 /// infer wholly from the binding's initializer, but a partial application
@@ -1938,7 +1985,7 @@ struct MethodCallArguments<'a> {
 }
 
 impl<'a> MethodCallArguments<'a> {
-    fn ordinary(args: &'a [Expr], kwargs: &'a [mojito_ast::ast::KwArg]) -> Self {
+    const fn ordinary(args: &'a [Expr], kwargs: &'a [mojito_ast::ast::KwArg]) -> Self {
         Self {
             param_args: &[],
             args,
@@ -1948,14 +1995,14 @@ impl<'a> MethodCallArguments<'a> {
         }
     }
 
-    fn interior_preserving(args: &'a [Expr], kwargs: &'a [mojito_ast::ast::KwArg]) -> Self {
+    const fn interior_preserving(args: &'a [Expr], kwargs: &'a [mojito_ast::ast::KwArg]) -> Self {
         Self {
             preserves_receiver_interiors: true,
             ..Self::ordinary(args, kwargs)
         }
     }
 
-    fn parameterized(
+    const fn parameterized(
         param_args: &'a [mojito_ast::ast::ParamArg],
         args: &'a [Expr],
         kwargs: &'a [mojito_ast::ast::KwArg],
@@ -2089,33 +2136,19 @@ type SplitCallableSpecialization = (
 
 mod places;
 
-use places::*;
-
 mod generics;
-
-use generics::*;
 
 mod declarations;
 
-use declarations::*;
-
 mod annotations;
 
-use annotations::*;
-
 mod calls;
-
-use calls::*;
 
 mod builtins;
 
 pub use builtins::{builtin_copy_is_value_read, callable_environment_coerces};
 
-use builtins::*;
-
 mod operators;
-
-use operators::*;
 
 mod iteration;
 
@@ -2129,7 +2162,6 @@ mod origins;
 
 pub use mojito_symbol::symbol::callable_contract_target;
 pub use mojito_types::types::{callable_bound_accepts, callable_contract_ty};
-use origins::*;
 
 mod traits;
 
@@ -2185,7 +2217,7 @@ mod dependent_callable_signature_tests {
             conventions: vec![Some(ArgConvention::Var)],
             ref_params: Box::new(vec![None]),
             ref_return: None,
-            transfers: Default::default(),
+            transfers: TransferSet::default(),
         }
     }
 

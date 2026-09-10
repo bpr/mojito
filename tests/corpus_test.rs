@@ -12,7 +12,7 @@
 //! - `vm_ok::<name>` — the production `Compiler::default()` compile+execute
 //!   path over `assets/ok`.
 //! - `verify::<category>::<name>` — raw phase functions (link → elaborate →
-//!   check_program → lower_checked_program → elaborate_drops_program →
+//!   `check_program` → `lower_checked_program` → `elaborate_drops_program` →
 //!   verify) over every executable fixture category.
 //! - `roundtrip::<category>::<name>` — canonical-text round trips over the
 //!   drop-elaborated MIR of every executable fixture: disassemble → parse →
@@ -22,7 +22,7 @@
 //! - `origin_ok::<name>` / `origin_error::<name>` — production `Compiler`
 //!   accept/reject for checked-origin fixtures.
 //! - `ownership_ok::<name>` / `ownership_error::<name>` — the standalone
-//!   ownership analysis (parse → elaborate → check → check_ownership); every
+//!   ownership analysis (parse → elaborate → check → `check_ownership`); every
 //!   error fixture must pin its message with `# expect:`.
 //!
 //! A fixture may pin the reported message with a top `# expect: <substring>`
@@ -155,13 +155,13 @@ enum Outcome {
 }
 
 impl Outcome {
-    fn label(self) -> &'static str {
+    const fn label(self) -> &'static str {
         match self {
-            Outcome::Ok => "ok",
-            Outcome::ParseError => "parse_error",
-            Outcome::TypeError => "type_error",
-            Outcome::OwnershipError => "ownership_error",
-            Outcome::RuntimeError => "runtime_error",
+            Self::Ok => "ok",
+            Self::ParseError => "parse_error",
+            Self::TypeError => "type_error",
+            Self::OwnershipError => "ownership_error",
+            Self::RuntimeError => "runtime_error",
         }
     }
 }

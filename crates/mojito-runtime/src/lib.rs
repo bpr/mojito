@@ -130,23 +130,32 @@ fn allocations() -> &'static Mutex<[Option<(usize, AllocationRecord)>; MAX_TRACK
 
 /// Returns [`ABI_VERSION`].
 #[unsafe(no_mangle)]
-pub extern "C" fn mjrt_version() -> u32 {
+pub const extern "C" fn mjrt_version() -> u32 {
     ABI_VERSION
 }
 
 /// Allocates `size` bytes aligned to `align`, prefixed by a hidden layout
-/// header, and records it in the allocation registry. Never
-/// returns null: allocation failure traps with [`TRAP_ALLOC_FAILURE`]. A
+/// header, and records it in the allocation registry.
+///
+/// Never returns null: allocation failure traps with [`TRAP_ALLOC_FAILURE`]. A
 /// zero-size request allocates nothing and returns the aligned dangling
-/// sentinel (`align` as an address — the same "aligned, never null" family
-/// as dangling ZST pointers); [`mjrt_free`]/[`mjrt_dealloc`] recognize
-/// sentinels as no-ops, so every returned pointer is freeable and an
-/// abandoned zero-size allocation leaks nothing.
+/// sentinel (`align` as an address — the same "aligned, never null" family as
+/// dangling ZST pointers); [`mjrt_free`]/[`mjrt_dealloc`] recognize sentinels
+/// as no-ops, so every returned pointer is freeable and an abandoned zero-size
+/// allocation leaks nothing.
 ///
 /// # Safety
 ///
 /// `align` must be a nonzero power of two.
+///
+/// # Panics
+///
+/// Panics if the allocation registry mutex is poisoned.
 #[unsafe(no_mangle)]
+#[allow(
+    clippy::significant_drop_tightening,
+    reason = "TODO: narrow the lock scope"
+)]
 pub unsafe extern "C" fn mjrt_alloc(size: u64, align: u64) -> *mut u8 {
     let (Ok(size), Ok(align)) = (usize::try_from(size), usize::try_from(align)) else {
         trap(TRAP_ALLOC_FAILURE)
@@ -169,9 +178,12 @@ pub unsafe extern "C" fn mjrt_alloc(size: u64, align: u64) -> *mut u8 {
         trap(TRAP_ALLOC_FAILURE)
     }
     let ptr = unsafe { base.add(header) };
+    // The header is `align.max(16)` and the block carries that alignment, so
+    // `ptr - 16` and `ptr - 8` are `u64`-aligned by construction.
+    #[allow(clippy::cast_ptr_alignment, reason = "header alignment is >= 16")]
     unsafe {
-        (ptr.sub(16) as *mut u64).write(size as u64);
-        (ptr.sub(8) as *mut u64).write(align as u64);
+        ptr.sub(16).cast::<u64>().write(size as u64);
+        ptr.sub(8).cast::<u64>().write(align as u64);
     }
     let mut records = allocations().lock().expect("allocation registry lock");
     // Reuse the existing identity before taking an empty slot. Allocators may
@@ -206,15 +218,24 @@ fn is_dangling_sentinel(ptr: *const u8) -> bool {
     (ptr as usize) < 65536
 }
 
-/// Releases any allocation obtained from [`mjrt_alloc`] using its header —
-/// the size-less free the language's `Pointer.unsafe_free()` family lowers
-/// to. A null pointer or a zero-size aligned-dangling sentinel is a no-op.
+/// Releases any allocation obtained from [`mjrt_alloc`] using its header — the
+/// size-less free the language's `Pointer.unsafe_free()` family lowers to.
+///
+/// A null pointer or a zero-size aligned-dangling sentinel is a no-op.
 ///
 /// # Safety
 ///
 /// A non-sentinel `ptr` must come from [`mjrt_alloc`] and must not be used
 /// afterwards.
+///
+/// # Panics
+///
+/// Panics if the allocation registry mutex is poisoned.
 #[unsafe(no_mangle)]
+#[allow(
+    clippy::significant_drop_tightening,
+    reason = "TODO: narrow the lock scope"
+)]
 pub unsafe extern "C" fn mjrt_free(ptr: *mut u8) {
     if is_dangling_sentinel(ptr) {
         return;
@@ -242,7 +263,15 @@ pub unsafe extern "C" fn mjrt_free(ptr: *mut u8) {
 
 /// Classifies a pointer dereference: 0 live/ordinary, 1 dangling sentinel,
 /// 2 an address inside a freed Mojito allocation.
+///
+/// # Panics
+///
+/// Panics if the allocation registry mutex is poisoned.
 #[unsafe(no_mangle)]
+#[allow(
+    clippy::significant_drop_tightening,
+    reason = "TODO: narrow the lock scope"
+)]
 pub extern "C" fn mjrt_pointer_status(ptr: *const u8) -> u32 {
     if is_dangling_sentinel(ptr) {
         return 1;
@@ -277,15 +306,26 @@ pub extern "C" fn mjrt_pointer_status(ptr: *const u8) -> u32 {
 }
 
 /// Releases an allocation obtained from [`mjrt_alloc`], validating the
-/// caller's `size` and `align` against the allocation header — a mismatch
-/// traps with [`TRAP_ALLOC_FAILURE`] instead of corrupting the heap. A null
-/// pointer or a zero-size aligned-dangling sentinel is a no-op.
+/// caller's `size` and `align` against the allocation header.
+///
+/// A mismatch traps with [`TRAP_ALLOC_FAILURE`] instead of corrupting the
+/// heap.
+///
+/// A null pointer or a zero-size aligned-dangling sentinel is a no-op.
 ///
 /// # Safety
 ///
 /// A non-sentinel `ptr` must come from [`mjrt_alloc`] and must not be used
 /// afterwards.
+///
+/// # Panics
+///
+/// Panics if the allocation registry mutex is poisoned.
 #[unsafe(no_mangle)]
+#[allow(
+    clippy::significant_drop_tightening,
+    reason = "TODO: narrow the lock scope"
+)]
 pub unsafe extern "C" fn mjrt_dealloc(ptr: *mut u8, size: u64, align: u64) {
     if is_dangling_sentinel(ptr) {
         return;
@@ -352,10 +392,12 @@ pub unsafe extern "C" fn mjrt_fmt_u64(value: u64, out: *mut u8) -> u64 {
     unsafe { copy_out(&value.to_string(), out) }
 }
 
-/// Formats `value` as the VM displays `Float64` — Rust's `{:?}`: the shortest
-/// text that round-trips, always keeping a decimal point or exponent (`3.0`,
-/// `1e300`, `inf`), with NaN spelled `nan` as Mojo prints it — into `out` and
-/// returns the byte length written.
+/// Formats `value` as the VM displays `Float64`.
+///
+/// Rust's `{:?}`: the shortest text that round-trips, always keeping a decimal
+/// point or exponent (`3.0`, `1e300`, `inf`), with NaN spelled `nan` as Mojo
+/// prints it — into `out` and returns the byte length written.
+///
 /// `out` must hold at least 32 bytes. No NUL terminator.
 ///
 /// # Safety
@@ -416,9 +458,10 @@ pub extern "C" fn mjrt_trap(category: u32) -> ! {
     trap(category)
 }
 
-/// Reports an uncaught raised error — `unhandled error: <message>` on
-/// stderr — and exits with the [`TRAP_UNHANDLED_ERROR`] exit code. `data` is
-/// the borrowed UTF-8 message. Never returns; runs no destructors.
+/// Reports an uncaught raised error — `unhandled error: <message>` on stderr —
+/// and exits with the [`TRAP_UNHANDLED_ERROR`] exit code.
+///
+/// `data` is the borrowed UTF-8 message. Never returns; runs no destructors.
 ///
 /// # Safety
 ///
@@ -460,9 +503,11 @@ pub unsafe extern "C" fn mjrt_abort(data: *const u8, len: u64) -> ! {
 
 /// Reports one ordered lifecycle event — `mjtrace <kind> <payload>` (or
 /// `mjtrace <kind>` for an empty payload) on stderr — from a
-/// trace-instrumented build. Default emission never calls this; stdout byte
-/// parity is untouched because the trace goes to stderr. Write errors are
-/// ignored: tracing must never perturb observable program behavior.
+/// trace-instrumented build.
+///
+/// Default emission never calls this; stdout byte parity is untouched because
+/// the trace goes to stderr. Write errors are ignored: tracing must never
+/// perturb observable program behavior.
 ///
 /// # Safety
 ///
@@ -484,11 +529,14 @@ pub unsafe extern "C" fn mjrt_trace(kind: u32, data: *const u8, len: u64) {
 }
 
 /// Reads one line from stdin for the `input()` builtin, writing an
-/// [`MjString`] into `out`: `data` is a fresh [`mjrt_alloc`] allocation the
-/// caller owns, with `size == cap ==` the line length after stripping the
-/// trailing `\n` (then `\r`). EOF yields size 0 with a valid header-only
-/// allocation, so every result is uniformly freeable and noninteractive runs
-/// never block. A read error traps with [`TRAP_STDIN_FAILURE`].
+/// [`MjString`] into `out`.
+///
+/// `data` is a fresh [`mjrt_alloc`] allocation the caller owns, with `size ==
+/// cap ==` the line length after stripping the trailing `\n` (then `\r`).
+///
+/// EOF yields size 0 with a valid header-only allocation, so every result is
+/// uniformly freeable and noninteractive runs never block. A read error traps
+/// with [`TRAP_STDIN_FAILURE`].
 ///
 /// # Safety
 ///
@@ -518,7 +566,7 @@ pub unsafe extern "C" fn mjrt_read_line(out: *mut u8) {
 }
 
 /// The stable stderr name of a lifecycle-event kind.
-pub fn trace_kind_name(kind: u32) -> &'static str {
+pub const fn trace_kind_name(kind: u32) -> &'static str {
     match kind {
         TRACE_DROP => "drop",
         TRACE_CONSUME => "consume",
@@ -531,7 +579,7 @@ pub fn trace_kind_name(kind: u32) -> &'static str {
 
 /// The stderr text for a trap category. Known categories reuse the VM's
 /// runtime-error message text so the two backends diagnose identically.
-pub fn trap_message(category: u32) -> &'static str {
+pub const fn trap_message(category: u32) -> &'static str {
     match category {
         TRAP_DIV_MOD_ZERO => "integer division or modulo by zero",
         TRAP_POW_EXPONENT => "'**' exponent must be a non-negative Int that fits in 32 bits",
@@ -576,7 +624,7 @@ unsafe fn release(ptr: *mut u8, size: usize, align: usize) {
 /// Copies `text` into `out`, returning its byte length. Callers guarantee the
 /// buffer contracts above; the widest possible texts are 20 bytes for
 /// `i64`/`u64` and 24 bytes for the `f64` `{:?}` form.
-unsafe fn copy_out(text: &str, out: *mut u8) -> u64 {
+const unsafe fn copy_out(text: &str, out: *mut u8) -> u64 {
     unsafe { std::ptr::copy_nonoverlapping(text.as_ptr(), out, text.len()) };
     text.len() as u64
 }
@@ -663,8 +711,8 @@ mod tests {
             3.0,
             2.5,
             1e300,
-            -1.7976931348623157e308,
-            -2.2250738585072014e-308,
+            -f64::MAX,
+            -f64::MIN_POSITIVE,
             f64::NAN,
             f64::INFINITY,
             f64::NEG_INFINITY,

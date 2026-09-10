@@ -1,9 +1,10 @@
 //! Scalar builtin calls: `len`, `abs`, `min`/`max`, rounding, `divmod`,
 //! `input`, and pointer methods.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     /// `UnsafePointer.unsafe_dangling` / `Pointer.unsafe_dangling`: the null
     /// pointer (the VM's `allocation: 0` sentinel). Dereference and free
     /// misuse are off-gate runtime errors; the VM rejects `free` of a
@@ -66,7 +67,7 @@ impl<'a> FnLowering<'a> {
     }
 
     /// `abs(x)` — the VM's `builtin_abs`: `wrapping_abs` on Int (including
-    /// `abs(i64::MIN) == i64::MIN`), identity on UInt, `fabs` on Float64.
+    /// `abs(i64::MIN) == i64::MIN`), identity on `UInt`, `fabs` on Float64.
     pub(super) fn lower_abs_builtin(
         &mut self,
         ctx: &mut Context,
@@ -116,7 +117,7 @@ impl<'a> FnLowering<'a> {
     }
 
     /// `min(a, b)` / `max(a, b)` — the VM's `builtin_min_max`: promote to the
-    /// higher numeric kind (Int < UInt < Float64) and pick by `x <= y`
+    /// higher numeric kind (Int < `UInt` < Float64) and pick by `x <= y`
     /// (left-biased on ties; NaN loses either side, matching the VM's
     /// ordered `<=`). Post-mono both operand types are concrete, so the
     /// promotion is static. Mixed concrete Int/UInt rejects: the VM compares
@@ -466,7 +467,7 @@ impl<'a> FnLowering<'a> {
     /// flooring division of the negated numerator (with the shared zero trap
     /// and `i64::MIN` divisor sanitizing; the VM's non-wrapping negate would
     /// panic on `-i64::MIN` — an unexercised recorded divergence, native
-    /// wraps). UInt adds one when the remainder is nonzero; Float64 is
+    /// wraps). `UInt` adds one when the remainder is nonzero; Float64 is
     /// `ceil(a / b)` with no trap.
     pub(super) fn lower_ceildiv(
         &mut self,

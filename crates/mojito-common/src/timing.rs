@@ -91,12 +91,11 @@ pub fn report() -> String {
                     Some(open) => format!("{}.{name}", open.path),
                     None => name.to_string(),
                 };
-                match counter_index.get(&path) {
-                    Some(&i) => counters[i].1 += n,
-                    None => {
-                        counter_index.insert(path.clone(), counters.len());
-                        counters.push((path, n));
-                    }
+                if let Some(&i) = counter_index.get(&path) {
+                    counters[i].1 += n;
+                } else {
+                    counter_index.insert(path.clone(), counters.len());
+                    counters.push((path, n));
                 }
             }
         }

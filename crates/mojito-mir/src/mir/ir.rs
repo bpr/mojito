@@ -1,5 +1,6 @@
 //! Flattened MIR data model shared by lowering, analysis, and execution.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 /// Whether the callee is responsible for running a parameter's `__deinit__` when
@@ -12,7 +13,12 @@ use super::*;
 /// its resources (move-only fields with `^`, copyable fields by copy) — so
 /// auto-running its whole-value `__deinit__` at function end would destroy a value
 /// whose resources already moved elsewhere, double-freeing it.
-pub(super) fn is_owned(c: &Option<ArgConvention>) -> bool {
+#[allow(
+    clippy::ref_option,
+    clippy::trivially_copy_pass_by_ref,
+    reason = "TODO: take Option<&T>; TODO: take by value and update the call sites"
+)]
+pub(super) const fn is_owned(c: &Option<ArgConvention>) -> bool {
     matches!(c, Some(ArgConvention::Var))
 }
 
@@ -22,7 +28,12 @@ pub(super) fn is_owned(c: &Option<ArgConvention>) -> bool {
 /// its residual fields are destroyed while its whole-value `__deinit__` is skipped
 /// (its resources moved into the receiver), so drop elaboration emits
 /// `ConsumeVar` rather than `DropVar` for such a parameter.
-pub(super) fn is_deinit(c: &Option<ArgConvention>) -> bool {
+#[allow(
+    clippy::ref_option,
+    clippy::trivially_copy_pass_by_ref,
+    reason = "TODO: take Option<&T>; TODO: take by value and update the call sites"
+)]
+pub(super) const fn is_deinit(c: &Option<ArgConvention>) -> bool {
     matches!(c, Some(ArgConvention::Deinit))
 }
 
@@ -59,7 +70,12 @@ pub(super) fn region_crosses_control(body: &[Stmt]) -> bool {
 }
 
 /// Whether an argument convention is a written-back reference (`mut`/`ref`).
-pub(super) fn is_ref(c: &Option<ArgConvention>) -> bool {
+#[allow(
+    clippy::ref_option,
+    clippy::trivially_copy_pass_by_ref,
+    reason = "TODO: take Option<&T>; TODO: take by value and update the call sites"
+)]
+pub(super) const fn is_ref(c: &Option<ArgConvention>) -> bool {
     matches!(c, Some(ArgConvention::Mut | ArgConvention::Ref))
 }
 use mojito_hir::hir::VarId;
@@ -69,9 +85,11 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Reg(pub u32);
 
-/// One source `[...]` argument after lowering. `name` preserves keyword
-/// binding (`callback=increment`); `value` is absent for an erased type
-/// argument. Semantic Origin/OriginSet arguments do not enter this list.
+/// One source `[...]` argument after lowering.
+///
+/// `name` preserves keyword binding (`callback=increment`); `value` is absent
+/// for an erased type argument. Semantic Origin/OriginSet arguments do not
+/// enter this list.
 ///
 /// Keeping binding identity separate from the optional runtime register lets
 /// the VM normalize arguments to declaration order before applying defaults.
@@ -111,10 +129,11 @@ pub enum MirSubscriptArg {
     },
 }
 
-/// Checked non-nominal dispatch for an index or slice instruction. A missing
-/// [`MirSubscriptCall`] is never an invitation for the VM to inspect the runtime
-/// value and guess semantics: lowering records the exact compiler/runtime
-/// storage family selected by the checked base type.
+/// Checked non-nominal dispatch for an index or slice instruction.
+///
+/// A missing [`MirSubscriptCall`] is never an invitation for the VM to inspect
+/// the runtime value and guess semantics: lowering records the exact
+/// compiler/runtime storage family selected by the checked base type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MirIntrinsicSubscript {
     /// Compiler-private heterogeneous Tuple/RuntimePack storage, including a
@@ -146,15 +165,17 @@ pub enum Const {
 #[derive(Debug, Clone)]
 pub struct FuncRef(pub String);
 impl FuncRef {
-    pub fn named(name: &str) -> FuncRef {
-        FuncRef(name.to_string())
+    pub fn named(name: &str) -> Self {
+        Self(name.to_string())
     }
 }
 
-/// One step of a **place** projection: a field of a struct, or a subscript. A
-/// place is a *writable location* — a root variable followed by projections — as
-/// opposed to an rvalue (a computed register). This mirrors `rustc` MIR's
-/// `Place`/`Projection` split, and is what a write / read-modify-write targets.
+/// One step of a **place** projection: a field of a struct, or a subscript.
+///
+/// A place is a *writable location* — a root variable followed by projections
+/// — as opposed to an rvalue (a computed register). This mirrors `rustc` MIR's
+/// `Place`/`Projection` split, and is what a write / read-modify-write
+/// targets.
 #[derive(Debug, Clone)]
 pub enum Proj {
     Field(String),
@@ -209,15 +230,16 @@ impl MirPlace {
         self.ty = Some(ty);
     }
 
-    pub fn is_typed(&self) -> bool {
+    pub const fn is_typed(&self) -> bool {
         self.root_ty.is_some() && self.ty.is_some() && self.proj.len() == self.projection_tys.len()
     }
 }
 
 /// Canonical, runtime-erased identity of an interior storage generation after
-/// stable checker owners have been mapped to MIR slots. `Interior` path
-/// segments are invalidation domains; ordinary field/index segments retain
-/// field sensitivity.
+/// stable checker owners have been mapped to MIR slots.
+///
+/// `Interior` path segments are invalidation domains; ordinary field/index
+/// segments retain field sensitivity.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MirInteriorOrigin {
     pub root: VarId,
@@ -225,9 +247,10 @@ pub struct MirInteriorOrigin {
 }
 
 /// One owner dependency carried by a reference or reference-bearing value.
+///
 /// `place` is the executable target; `interior` is the distinct analytical
-/// generation identity when the target lives behind container-owned storage.
-/// A `shared` loan (a `Pointer(to=place)` alias) never conflicts with another
+/// generation identity when the target lives behind container-owned storage. A
+/// `shared` loan (a `Pointer(to=place)` alias) never conflicts with another
 /// shared loan of overlapping storage; against owner accesses and exclusive
 /// loans it is an ordinary borrow.
 #[derive(Debug, Clone)]

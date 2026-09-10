@@ -19,20 +19,20 @@ use super::{OptLevel, PlironError, PlironErrorKind};
 /// Run `work` as one phase of the `--timings` report (the bench driver's
 /// per-phase compile-timing channel, keyed by this leaf name).
 /// Instrumentation stays inert unless measurement is requested.
-pub(super) fn timing<T>(phase: &'static str, work: impl FnOnce() -> T) -> T {
+pub fn timing<T>(phase: &'static str, work: impl FnOnce() -> T) -> T {
     let _span = mojito_common::timing::span(phase);
     work()
 }
 
 /// One profile's complete optimization policy: the pliron cleanup stage plus
 /// the profile's LLVM pipeline selection.
-pub(super) struct Pipeline {
+pub struct Pipeline {
     profile: OptLevel,
 }
 
 impl Pipeline {
-    pub(super) fn for_profile(profile: OptLevel) -> Pipeline {
-        Pipeline { profile }
+    pub(super) const fn for_profile(profile: OptLevel) -> Self {
+        Self { profile }
     }
 
     /// Run the profile-independent pliron cleanup stage: rebuild SSA out of
@@ -77,7 +77,7 @@ impl Pipeline {
 
     /// The LLVM pass pipeline the external `opt` runs over emitted bitcode,
     /// when the profile has one.
-    pub(super) fn llvm_pipeline(&self) -> Option<&'static str> {
+    pub(super) const fn llvm_pipeline(&self) -> Option<&'static str> {
         match self.profile {
             OptLevel::O0 => None,
             OptLevel::Release => Some("default<O1>"),
@@ -88,6 +88,10 @@ impl Pipeline {
     /// snapshot tests below so policy changes are always deliberate diffs.
     /// Test-only until the toolchain report surfaces it on the CLI.
     #[cfg(test)]
+    #[allow(
+        clippy::format_push_string,
+        reason = "TODO: write! into the buffer instead"
+    )]
     pub(super) fn describe(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!("profile: {}\n", self.profile_name()));
@@ -108,7 +112,7 @@ impl Pipeline {
     }
 
     #[cfg(test)]
-    fn profile_name(&self) -> &'static str {
+    const fn profile_name(&self) -> &'static str {
         match self.profile {
             OptLevel::O0 => "O0",
             OptLevel::Release => "release (alias: 1)",
@@ -139,7 +143,7 @@ mod tests {
     }
 
     impl Analysis for NestedOpCount {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "nested-op-count"
         }
 
@@ -154,7 +158,7 @@ mod tests {
                     count += block.deref(ctx).iter(ctx).count();
                 }
             }
-            Ok(NestedOpCount { count })
+            Ok(Self { count })
         }
     }
 
@@ -169,7 +173,7 @@ mod tests {
     }
 
     impl Pass for ProbePass {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "probe"
         }
 
@@ -295,7 +299,7 @@ mod tests {
         let mut module_passes = OpPass::<ModuleOp, Passes>::default();
         let mut per_child = Passes::default();
         per_child.add_pass(OpPass::<ModuleOp, ProbePass>::new(
-            Default::default(),
+            pliron::pass::OpGuard::default(),
             ProbePass {
                 target: child,
                 mutate: true,
@@ -317,22 +321,22 @@ mod tests {
 
     #[test]
     fn pliron_pipeline_snapshot_o0() {
-        expect![[r#"
+        expect![[r"
             profile: O0
             pliron function passes: mem2reg, dce
             llvm opt pipeline: (none)
-        "#]]
+        "]]
         .assert_eq(&Pipeline::for_profile(OptLevel::O0).describe());
     }
 
     #[test]
     fn pliron_pipeline_snapshot_release() {
-        expect![[r#"
+        expect![[r"
             profile: release (alias: 1)
             pliron function passes: mem2reg, dce
             llvm opt pipeline: default<O1>
             opt argv template: opt -passes=default<O1> <bitcode> -o <bitcode>
-        "#]]
+        "]]
         .assert_eq(&Pipeline::for_profile(OptLevel::Release).describe());
     }
 }

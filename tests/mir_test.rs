@@ -458,8 +458,7 @@ fn implicitly_copied_tuple_transform_receivers_do_not_retain_a_consuming_place()
                 )
             })
         }),
-        "{:#?}",
-        checked_calls
+        "{checked_calls:#?}"
     );
 
     let mir = mojito::mir::lower_checked_program(compiled.checked());
@@ -999,13 +998,11 @@ fn aug_assign_on_a_name_is_read_modify_write() {
     assert!(matches!(is[0], MirInstr::UseVar { .. }));
     assert!(matches!(is[3], MirInstr::DefVar { .. }));
     // The read and the write-back name the same variable.
-    let read = match is[0] {
-        MirInstr::UseVar { var, .. } => var,
-        _ => unreachable!(),
+    let MirInstr::UseVar { var: read, .. } = is[0] else {
+        unreachable!()
     };
-    let write = match is[3] {
-        MirInstr::DefVar { var, .. } => var,
-        _ => unreachable!(),
+    let MirInstr::DefVar { var: write, .. } = is[3] else {
+        unreachable!()
     };
     assert_eq!(read, write);
 }
@@ -3114,6 +3111,26 @@ fn callable_type_bound_is_retained_and_verifies_indirect_calls() {
 
 #[test]
 fn nominal_indirect_call_mir_retains_and_verifies_the_selected_overload() {
+    fn indirect_target<'a>(
+        program: &'a mut mojito::mir::MirProgram,
+        function_name: &str,
+    ) -> &'a mut Option<String> {
+        program
+            .functions
+            .iter_mut()
+            .find(|(name, _)| name == function_name)
+            .expect("function lowered")
+            .1
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.instrs)
+            .find_map(|instruction| match instruction {
+                MirInstr::CallIndirect { resolved, .. } => Some(resolved),
+                _ => None,
+            })
+            .expect("indirect call lowered")
+    }
+
     let src = "@fieldwise_init\nstruct Choose(def(Int) -> Int):\n    def __call__(self, value: Bool) -> Int:\n        return 0\n\n    def __call__(self, value: Int) -> Int:\n        return value + 1\n\ndef invoke(callback: def(Int) -> Int) -> Int:\n    return callback(41)\n\ndef main():\n    print(Choose()(41))\n    print(invoke(Choose()))\n";
     let mut mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
     assert!(
@@ -3141,25 +3158,6 @@ fn nominal_indirect_call_mir_retains_and_verifies_the_selected_overload() {
     assert_eq!(target(&mir, "main"), "Choose.__call__$ov$Int");
     assert_eq!(target(&mir, "invoke"), "__trait_dispatch.__call__$ov$Int");
 
-    fn indirect_target<'a>(
-        program: &'a mut mojito::mir::MirProgram,
-        function_name: &str,
-    ) -> &'a mut Option<String> {
-        program
-            .functions
-            .iter_mut()
-            .find(|(name, _)| name == function_name)
-            .expect("function lowered")
-            .1
-            .blocks
-            .iter_mut()
-            .flat_map(|block| &mut block.instrs)
-            .find_map(|instruction| match instruction {
-                MirInstr::CallIndirect { resolved, .. } => Some(resolved),
-                _ => None,
-            })
-            .expect("indirect call lowered")
-    }
     *indirect_target(&mut mir, "invoke") = Some("__trait_dispatch.__call__$ov$Bool".to_string());
     let errors = mojito::mir::verify::verify(&mir);
     assert!(
@@ -3454,18 +3452,6 @@ fn function_value_reference_retains_the_bound_generic_template() {
 
 #[test]
 fn subtree_loan_shapes_verify_terminal_only() {
-    // A subtree-origin pointer binding establishes a loan whose interior
-    // path may end in — but never continue past — the subtree segment, and
-    // transfer destination domains never carry one.
-    let src = "@fieldwise_init\nstruct Buf:\n    var value: Int\n\n    def view(ref self) -> Pointer[Int, origin_of(self)._subtree]:\n        return UnsafePointer(to=self.value).unsafe_origin_cast[\n            origin_of(self)._subtree\n        ]()\n\ndef main():\n    var b = Buf(3)\n    var p = b.view()\n    print(p[])\n";
-    let mut mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
-    assert!(
-        mir.invariant_errors.is_empty(),
-        "{:?}",
-        mir.invariant_errors
-    );
-    assert!(mojito::mir::verify::verify(&mir).is_empty());
-
     fn establish_loans(program: &mut mojito::mir::MirProgram) -> &mut mojito::mir::MirInstr {
         program
             .functions
@@ -3479,6 +3465,18 @@ fn subtree_loan_shapes_verify_terminal_only() {
             .find(|instruction| matches!(instruction, MirInstr::EstablishLoans { .. }))
             .expect("subtree binding establishes loans")
     }
+
+    // A subtree-origin pointer binding establishes a loan whose interior
+    // path may end in — but never continue past — the subtree segment, and
+    // transfer destination domains never carry one.
+    let src = "@fieldwise_init\nstruct Buf:\n    var value: Int\n\n    def view(ref self) -> Pointer[Int, origin_of(self)._subtree]:\n        return UnsafePointer(to=self.value).unsafe_origin_cast[\n            origin_of(self)._subtree\n        ]()\n\ndef main():\n    var b = Buf(3)\n    var p = b.view()\n    print(p[])\n";
+    let mut mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+    assert!(mojito::mir::verify::verify(&mir).is_empty());
 
     // A non-terminal subtree segment is a malformed origin path.
     {
@@ -3544,20 +3542,6 @@ fn subtree_loan_shapes_verify_terminal_only() {
 
 #[test]
 fn bare_element_call_lowers_subscript_then_indirect_call() {
-    // One source Call node yields the getter-contract subscript read feeding
-    // the element's CallIndirect; a raising getter keeps its raise on the
-    // subscript instruction while the non-raising __call__ stays clean.
-    let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, ImplicitlyCopyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Container(Copyable):\n    var first: Doubler\n    def __getitem__(self, index: Int) raises -> Doubler:\n        if index != 0:\n            raise Error(\"index out of range\")\n        return self.first\n\ndef main():\n    var c: Container = Container(Doubler(2))\n    try:\n        print(c[0](3))\n    except e:\n        print(\"caught\")\n";
-    let compiler = Compiler::default().with_snippet_module_scope();
-    let compiled = compiler
-        .compile_source(source, Path::new("mir_test.mojo"))
-        .expect("compile bare element call");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
-    let (_, main) = mir
-        .functions
-        .iter()
-        .find(|(name, _)| name == "main")
-        .expect("main lowered");
     fn collect_instructions<'mir>(
         blocks: &'mir [mojito::mir::MirBlock],
         out: &mut Vec<&'mir MirInstr>,
@@ -3587,6 +3571,21 @@ fn bare_element_call_lowers_subscript_then_indirect_call() {
             }
         }
     }
+
+    // One source Call node yields the getter-contract subscript read feeding
+    // the element's CallIndirect; a raising getter keeps its raise on the
+    // subscript instruction while the non-raising __call__ stays clean.
+    let source = "@fieldwise_init\nstruct Doubler(def(Int) -> Int, ImplicitlyCopyable):\n    var gain: Int\n    def __call__(self, x: Int) -> Int:\n        return x * self.gain\n\n@fieldwise_init\nstruct Container(Copyable):\n    var first: Doubler\n    def __getitem__(self, index: Int) raises -> Doubler:\n        if index != 0:\n            raise Error(\"index out of range\")\n        return self.first\n\ndef main():\n    var c: Container = Container(Doubler(2))\n    try:\n        print(c[0](3))\n    except e:\n        print(\"caught\")\n";
+    let compiler = Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile bare element call");
+    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let (_, main) = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered");
     let mut instructions = Vec::new();
     collect_instructions(&main.blocks, &mut instructions);
     let (element, getter) = instructions

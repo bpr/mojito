@@ -13,7 +13,7 @@ use super::{PlironError, PlironErrorKind};
 /// and any existing `dest` is left untouched. The temporary name keeps the
 /// destination's extension: external tools (clang) infer file kinds from
 /// suffixes.
-pub(super) fn write_atomic<T>(
+pub fn write_atomic<T>(
     dest: &Path,
     produce: impl FnOnce(&Path) -> Result<T, PlironError>,
 ) -> Result<T, PlironError> {
@@ -50,7 +50,7 @@ fn temp_sibling(dest: &Path) -> PathBuf {
     dest.with_file_name(format!(".{name}.{}.{unique}.tmp{ext}", std::process::id()))
 }
 
-fn artifact_error(message: String) -> PlironError {
+const fn artifact_error(message: String) -> PlironError {
     PlironError {
         function: None,
         kind: PlironErrorKind::Emit(message),
@@ -105,7 +105,12 @@ mod tests {
         let temp = temp_sibling(Path::new("/some/dir/out.bc"));
         let name = temp.file_name().unwrap().to_string_lossy().into_owned();
         assert!(name.starts_with(".out.bc."), "{name}");
-        assert!(name.ends_with(".bc"), "{name}");
+        assert!(
+            std::path::Path::new(&name)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("bc")),
+            "{name}"
+        );
         assert_eq!(temp.parent(), Some(Path::new("/some/dir")));
     }
 }

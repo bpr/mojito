@@ -1,9 +1,10 @@
 //! Call emission ABI: argument materialization, bound/raising call
 //! shapes, and load/store/GEP/alloca primitives.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     /// The bound operand value of one argument at its expected lowered type.
     /// A consuming (`owned`) parameter takes ownership — an owned temporary
     /// passed there transfers to the callee, which destroys it.
@@ -487,7 +488,7 @@ impl<'a> FnLowering<'a> {
     }
 
     /// The storage pointer of an aggregate-valued register. A compile-time
-    /// StringLiteral consumed as storage materializes on first use as a
+    /// `StringLiteral` consumed as storage materializes on first use as a
     /// borrowed `MjStrDesc` over its interned constant bytes.
     pub(super) fn reg_ptr(&mut self, ctx: &mut Context, reg: Reg) -> Result<Value, PlironError> {
         if let Some(value) = self.reg_values.get(&reg.0) {
@@ -537,6 +538,14 @@ impl<'a> FnLowering<'a> {
         gep.get_result(ctx)
     }
 
+    #[allow(
+        clippy::unused_self,
+        reason = "TODO: make an associated function or use the receiver"
+    )]
+    #[allow(
+        clippy::needless_pass_by_ref_mut,
+        reason = "Op construction mutates the context"
+    )]
     pub(super) fn gep_byte_op(
         &mut self,
         ctx: &mut Context,
@@ -580,6 +589,10 @@ impl<'a> FnLowering<'a> {
     /// loaded and stored at their own type must carry that element type —
     /// mem2reg promotes an alloca at its element type, and a byte-array slot
     /// would promote as `i8` under typed loads.
+    #[allow(
+        clippy::needless_pass_by_ref_mut,
+        reason = "Op construction mutates the context"
+    )]
     pub(super) fn entry_typed_alloca(&mut self, ctx: &mut Context, handle: TypeHandle) -> Value {
         let entry = self.entry.expect("lowering is inside a function");
         let i64_int = IntegerType::get(ctx, 64, Signedness::Signless);
@@ -595,6 +608,10 @@ impl<'a> FnLowering<'a> {
     /// multi-lane SIMD slot is typed at its storage vector but aligned like
     /// one lane (the `LayoutCx` contract), not at the vector's preferred
     /// alignment.
+    #[allow(
+        clippy::needless_pass_by_ref_mut,
+        reason = "Op construction mutates the context"
+    )]
     pub(super) fn entry_typed_alloca_aligned(
         &mut self,
         ctx: &mut Context,
@@ -616,6 +633,10 @@ impl<'a> FnLowering<'a> {
     /// that execute repeatedly (loops) reuse one slot instead of growing the
     /// stack. Zero-sized storage still allocates one byte for a stable
     /// address.
+    #[allow(
+        clippy::needless_pass_by_ref_mut,
+        reason = "Op construction mutates the context"
+    )]
     pub(super) fn entry_alloca(&mut self, ctx: &mut Context, size: u64, align: u64) -> Value {
         let entry = self.entry.expect("lowering is inside a function");
         let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();

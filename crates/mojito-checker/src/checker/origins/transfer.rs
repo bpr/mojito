@@ -1,6 +1,7 @@
 //! Transfer effects: applying/baking/recording value-transfer and
 //! call-through effects and replaying them at call sites.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Checker {
@@ -575,6 +576,7 @@ impl Checker {
     /// nothing (their arguments are caller-visible; the local aggregate path
     /// installs those loans), and self-to-self transfers are skipped so
     /// internal reshuffles do not self-loan every call.
+    #[allow(clippy::ref_option, reason = "TODO: take Option<&T>")]
     pub(in crate::checker) fn record_transfer_effect(
         &self,
         place: &Expr,

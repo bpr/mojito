@@ -1,7 +1,8 @@
-//! Runtime values and their operations, used by the register-VM `backend`. This
-//! module owns the `Value` type (`SimdLanes` and all), scalar/`SIMD` operations,
-//! coercion, and the utility built-ins — the shared value layer the
-//! backend consumes.
+//! Runtime values and their operations, used by the register-VM `backend`.
+//!
+//! This module owns the `Value` type (`SimdLanes` and all), scalar/`SIMD`
+//! operations, coercion, and the utility built-ins — the shared value layer
+//! the backend consumes.
 
 use std::cmp::Ordering;
 use std::fmt;
@@ -45,8 +46,8 @@ pub enum Value {
     /// semantics.
     Struct {
         name: String,
-        fields: Vec<(String, Value)>,
-        value_params: Vec<(String, Value)>,
+        fields: Vec<(String, Self)>,
+        value_params: Vec<(String, Self)>,
     },
     /// A SIMD vector: its element type and lane values. The width-1 case is a
     /// scalar-alias value (`Int32`, …).
@@ -59,16 +60,16 @@ pub enum Value {
     /// A list-shaped compile-time value crossing the narrow VM-CTFE bridge.
     /// This is never a language-level runtime collection: executable List values
     /// are ordinary nominal [`Value::Struct`] instances from the bundled library.
-    ComptimeList(Vec<Value>),
+    ComptimeList(Vec<Self>),
     /// Internal heterogeneous pack storage shared by MIR and VM-CTFE. Public
     /// `Tuple` values are nominal structs and must not use this representation.
-    Tuple(Vec<Value>),
+    Tuple(Vec<Self>),
     /// A tagged union. `alternatives` is the checked type-level ordering and
     /// `index` selects the active payload.
     Variant {
         alternatives: Vec<mojito_types::types::Ty>,
         index: usize,
-        value: Box<Value>,
+        value: Box<Self>,
     },
     /// An `UnsafePointer[T]`: stable allocation identity plus a typed element
     /// offset. Allocation zero is reserved for non-null dangling placeholders.
@@ -93,7 +94,7 @@ pub enum Value {
     /// `None` is uninitialized, `Some` holds the raw payload. Dropping one is
     /// a no-op regardless of contents — the payload leaks by design, matching
     /// upstream's no-op destructor — and reading/taking the `None` state traps.
-    UninitStorage(Option<Box<Value>>),
+    UninitStorage(Option<Box<Self>>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,19 +114,22 @@ pub enum RefProjection {
     UninitPayload,
 }
 
-/// One slot in a lifted closure's environment. Reference captures retain their
-/// original frame handle; copy/move captures own the declaration-time value and
-/// are subsequently borrowed in place on every invocation.
+/// One slot in a lifted closure's environment.
+///
+/// Reference captures retain their original frame handle; copy/move captures
+/// own the declaration-time value and are subsequently borrowed in place on
+/// every invocation.
 #[derive(Debug, Clone)]
 pub struct ClosureCapture {
     pub value: Value,
     pub owned: bool,
 }
 
-/// The lanes of a SIMD value, one representation per element-type kind. Integer
-/// lanes are stored as `i128` holding the post-wrap mathematical value (so an
-/// unsigned lane is its non-negative value), which makes comparisons correct for
-/// both signed and unsigned dtypes.
+/// The lanes of a SIMD value, one representation per element-type kind.
+///
+/// Integer lanes are stored as `i128` holding the post-wrap mathematical value
+/// (so an unsigned lane is its non-negative value), which makes comparisons
+/// correct for both signed and unsigned dtypes.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SimdLanes {
     Int(Vec<i128>),
@@ -134,11 +138,11 @@ pub enum SimdLanes {
 }
 
 impl SimdLanes {
-    pub fn width(&self) -> usize {
+    pub const fn width(&self) -> usize {
         match self {
-            SimdLanes::Int(v) => v.len(),
-            SimdLanes::Float(v) => v.len(),
-            SimdLanes::Bool(v) => v.len(),
+            Self::Int(v) => v.len(),
+            Self::Float(v) => v.len(),
+            Self::Bool(v) => v.len(),
         }
     }
 }
@@ -146,36 +150,36 @@ impl SimdLanes {
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Value::Int(a), Value::Int(b)) => a == b,
-            (Value::UInt(a), Value::UInt(b)) => a == b,
-            (Value::Float64(a), Value::Float64(b)) => a == b,
-            (Value::IntLiteral(a), Value::IntLiteral(b)) => a == b,
-            (Value::FloatLiteral(a), Value::FloatLiteral(b)) => a == b,
-            (Value::Bool(a), Value::Bool(b)) => a == b,
-            (Value::Str(a), Value::Str(b)) => a == b,
+            (Self::Int(a), Self::Int(b)) => a == b,
+            (Self::UInt(a), Self::UInt(b)) => a == b,
+            (Self::Float64(a), Self::Float64(b)) => a == b,
+            (Self::IntLiteral(a), Self::IntLiteral(b)) => a == b,
+            (Self::FloatLiteral(a), Self::FloatLiteral(b)) => a == b,
+            (Self::Bool(a), Self::Bool(b)) => a == b,
+            (Self::Str(a), Self::Str(b)) => a == b,
             (
-                Value::Pointer {
+                Self::Pointer {
                     allocation: aa,
                     offset: ao,
                 },
-                Value::Pointer {
+                Self::Pointer {
                     allocation: ba,
                     offset: bo,
                 },
             ) => aa == ba && ao == bo,
-            (Value::None, Value::None) => true,
+            (Self::None, Self::None) => true,
             // Closures have identity, not structural, equality.
             // Descriptor equality compares the bounds only: a `[a:b]` literal
             // widened into a `Slice`-typed parameter keeps its runtime
             // sub-kind, while upstream constructs a real `Slice` there.
             (
-                Value::Slice {
+                Self::Slice {
                     start: as_,
                     end: ae,
                     step: ap,
                     ..
                 },
-                Value::Slice {
+                Self::Slice {
                     start: bs,
                     end: be,
                     step: bp,
@@ -183,55 +187,55 @@ impl PartialEq for Value {
                 },
             ) => as_ == bs && ae == be && ap == bp,
             (
-                Value::Struct {
+                Self::Struct {
                     name: n1,
                     fields: f1,
                     value_params: p1,
                 },
-                Value::Struct {
+                Self::Struct {
                     name: n2,
                     fields: f2,
                     value_params: p2,
                 },
             ) => n1 == n2 && f1 == f2 && p1 == p2,
             (
-                Value::Simd {
+                Self::Simd {
                     dtype: d1,
                     lanes: l1,
                 },
-                Value::Simd {
+                Self::Simd {
                     dtype: d2,
                     lanes: l2,
                 },
             ) => d1 == d2 && l1 == l2,
-            (Value::Error(a), Value::Error(b)) => a == b,
-            (Value::ComptimeList(a), Value::ComptimeList(b)) => a == b,
-            (Value::Tuple(a), Value::Tuple(b)) => a == b,
+            (Self::Error(a), Self::Error(b)) => a == b,
+            (Self::ComptimeList(a), Self::ComptimeList(b)) => a == b,
+            (Self::Tuple(a), Self::Tuple(b)) => a == b,
             (
-                Value::Variant {
+                Self::Variant {
                     alternatives: aa,
                     index: ai,
                     value: av,
                 },
-                Value::Variant {
+                Self::Variant {
                     alternatives: ba,
                     index: bi,
                     value: bv,
                 },
             ) => aa == ba && ai == bi && av == bv,
             (
-                Value::Ref {
+                Self::Ref {
                     frame: af,
                     slot: as_,
                     projection: ap,
                 },
-                Value::Ref {
+                Self::Ref {
                     frame: bf,
                     slot: bs,
                     projection: bp,
                 },
             ) => af == bf && as_ == bs && ap == bp,
-            (Value::UninitStorage(a), Value::UninitStorage(b)) => a == b,
+            (Self::UninitStorage(a), Self::UninitStorage(b)) => a == b,
             _ => false,
         }
     }
@@ -251,21 +255,21 @@ pub fn float_display(value: f64) -> String {
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Value::Int(n) => write!(f, "{}", n),
-            Value::UInt(n) => write!(f, "{}", n),
+            Self::Int(n) => write!(f, "{n}"),
+            Self::UInt(n) => write!(f, "{n}"),
             // `{:?}` keeps the decimal point (e.g. `3.0`), distinguishing from
             // Int; NaN spells `nan` as upstream prints it.
-            Value::Float64(x) => write!(f, "{}", float_display(*x)),
-            Value::IntLiteral(value) => write!(f, "{value}"),
-            Value::FloatLiteral(value) => write!(f, "{value}"),
-            Value::Bool(b) => write!(f, "{}", if *b { "True" } else { "False" }),
-            Value::Str(s) => write!(f, "{}", s),
-            Value::None => write!(f, "None"),
-            Value::Function(name) => write!(f, "<function {name}>"),
-            Value::Closure { function, .. } => write!(f, "<closure {function}>"),
+            Self::Float64(x) => write!(f, "{}", float_display(*x)),
+            Self::IntLiteral(value) => write!(f, "{value}"),
+            Self::FloatLiteral(value) => write!(f, "{value}"),
+            Self::Bool(b) => write!(f, "{}", if *b { "True" } else { "False" }),
+            Self::Str(s) => write!(f, "{s}"),
+            Self::None => write!(f, "None"),
+            Self::Function(name) => write!(f, "<function {name}>"),
+            Self::Closure { function, .. } => write!(f, "<closure {function}>"),
             // Upstream's `Slice.write_to` text; the contiguous and strided
             // descriptors delegate to it, so every kind prints as `Slice`.
-            Value::Slice {
+            Self::Slice {
                 start, end, step, ..
             } => {
                 let bound = |bound: &Option<i64>| match bound {
@@ -280,19 +284,19 @@ impl fmt::Display for Value {
                     bound(step)
                 )
             }
-            Value::Struct {
+            Self::Struct {
                 name,
                 fields,
                 value_params,
             } => {
-                write!(f, "{}", name)?;
+                write!(f, "{name}")?;
                 if !value_params.is_empty() {
                     write!(f, "[")?;
                     for (i, (_, val)) in value_params.iter().enumerate() {
                         if i > 0 {
                             write!(f, ", ")?;
                         }
-                        write!(f, "{}", val)?;
+                        write!(f, "{val}")?;
                     }
                     write!(f, "]")?;
                 }
@@ -301,14 +305,14 @@ impl fmt::Display for Value {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}={}", fname, val)?;
+                    write!(f, "{fname}={val}")?;
                 }
                 write!(f, ")")
             }
             // A width-1 SIMD prints as the bare lane; wider as `[l0, l1, ...]`.
-            Value::Simd { lanes, .. } => {
+            Self::Simd { lanes, .. } => {
                 let strs: Vec<String> = match lanes {
-                    SimdLanes::Int(v) => v.iter().map(|n| n.to_string()).collect(),
+                    SimdLanes::Int(v) => v.iter().map(std::string::ToString::to_string).collect(),
                     SimdLanes::Float(v) => v.iter().map(|x| float_display(*x)).collect(),
                     SimdLanes::Bool(v) => v
                         .iter()
@@ -329,31 +333,31 @@ impl fmt::Display for Value {
             }
             // Upstream prints an Error as its bare message (`print(e)` ->
             // `boom`), not a constructor rendering.
-            Value::Error(msg) => write!(f, "{}", msg),
-            Value::Pointer { allocation, offset } => {
+            Self::Error(msg) => write!(f, "{msg}"),
+            Self::Pointer { allocation, offset } => {
                 write!(f, "Pointer({allocation:#x}+{offset})")
             }
-            Value::Ref { frame, slot, .. } => write!(f, "<ref {frame}:{slot}>"),
-            Value::Moved => write!(f, "<moved>"),
-            Value::UninitStorage(None) => write!(f, "<uninit>"),
-            Value::UninitStorage(Some(value)) => write!(f, "<uninit-storage {value}>"),
-            Value::ComptimeList(items) => {
+            Self::Ref { frame, slot, .. } => write!(f, "<ref {frame}:{slot}>"),
+            Self::Moved => write!(f, "<moved>"),
+            Self::UninitStorage(None) => write!(f, "<uninit>"),
+            Self::UninitStorage(Some(value)) => write!(f, "<uninit-storage {value}>"),
+            Self::ComptimeList(items) => {
                 write!(f, "<comptime-list [")?;
                 for (i, item) in items.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", item)?;
+                    write!(f, "{item}")?;
                 }
                 write!(f, "]>")
             }
-            Value::Tuple(items) => {
+            Self::Tuple(items) => {
                 write!(f, "(")?;
                 for (i, item) in items.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", item)?;
+                    write!(f, "{item}")?;
                 }
                 // A 1-tuple prints with a trailing comma, like Python/Mojo.
                 if items.len() == 1 {
@@ -361,7 +365,7 @@ impl fmt::Display for Value {
                 }
                 write!(f, ")")
             }
-            Value::Variant { value, .. } => value.fmt(f),
+            Self::Variant { value, .. } => value.fmt(f),
         }
     }
 }
@@ -406,6 +410,10 @@ pub fn type_name(value: &Value) -> String {
 
 /// Structural equality for `==`/`!=`. Numeric values use ordinary promotion;
 /// tuples recurse element-wise. Other scalar values must have the same type.
+#[allow(
+    clippy::float_cmp,
+    reason = "exact comparison is the semantics of Mojo `==` on Float64"
+)]
 pub fn values_equal(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
     if let (Some(a), Some(b)) = (as_finite_numeric(a), as_finite_numeric(b)) {
         return Ok(a.compare(&b) == Ordering::Equal);
@@ -443,10 +451,10 @@ pub fn values_equal(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
                 value: bv,
             },
         ) if aa == ba => {
-            if ai != bi {
-                Ok(false)
-            } else {
+            if ai == bi {
                 values_equal(av, bv)
+            } else {
+                Ok(false)
             }
         }
         (Value::Tuple(left), Value::Tuple(right)) => {
@@ -482,10 +490,12 @@ pub fn values_equal(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
     }
 }
 
-/// The checked type a runtime Hashable leaf hashes as: the key of the
-/// hasher's `_update_with_simd` clone (`canonical_simd_ty` canonicalizes a
-/// width-1 `int`/`float64` vector to the native scalar, as the checker does).
-pub fn hash_leaf_ty(value: &Value) -> Option<Ty> {
+/// The checked type a runtime Hashable leaf hashes as.
+///
+/// The key of the hasher's `_update_with_simd` clone (`canonical_simd_ty`
+/// canonicalizes a width-1 `int`/`float64` vector to the native scalar, as the
+/// checker does).
+pub const fn hash_leaf_ty(value: &Value) -> Option<Ty> {
     Some(match value {
         Value::Int(_) | Value::IntLiteral(_) => Ty::Int,
         Value::UInt(_) => Ty::UInt,
@@ -514,11 +524,14 @@ pub fn fold_negative_zero(value: Value) -> Value {
     }
 }
 
-/// Lane-wise bit reinterpretation (`v.to_bits[DType.<target>]()`): each
-/// lane's bit pattern zero-extended into the unsigned `target` lane — an
+/// Lane-wise bit reinterpretation (`v.to_bits[DType.<target>]()`).
+///
+/// Each lane's bit pattern zero-extended into the unsigned `target` lane — an
 /// integer lane masked to its own dtype's width, a float lane as its IEEE
-/// bits, a bool lane as 0/1. The checker guarantees `target` is unsigned and
-/// at least as wide as the source lane.
+/// bits, a bool lane as 0/1.
+///
+/// The checker guarantees `target` is unsigned and at least as wide as the
+/// source lane.
 pub fn simd_to_bits(target: Dtype, value: &Value) -> Result<Value, RuntimeError> {
     let (dtype, lanes) = match value {
         Value::Simd { dtype, lanes } => (*dtype, lanes.clone()),
@@ -648,7 +661,7 @@ pub fn apply_infix(op: InfixOp, l: Value, r: Value) -> Result<Value, RuntimeErro
     }
     // `+` on two strings concatenates.
     if let (InfixOp::Add, Value::Str(a), Value::Str(b)) = (op, &l, &r) {
-        return Ok(Value::Str(format!("{}{}", a, b)));
+        return Ok(Value::Str(format!("{a}{b}")));
     }
     if let (Value::Tuple(left), Value::Tuple(right)) = (&l, &r) {
         let result = match op {
@@ -732,9 +745,11 @@ pub fn normalize_slice_bounds(
     Ok((start, stop, step))
 }
 
-/// Evaluate primitive/internal `x in c` / `x not in c`. Nominal collections
-/// dispatch through `__contains__`; this helper handles only internal pack
-/// storage, the compile-time-only list bridge, and `String`.
+/// Evaluate primitive/internal `x in c` / `x not in c`.
+///
+/// Nominal collections dispatch through `__contains__`; this helper handles
+/// only internal pack storage, the compile-time-only list bridge, and
+/// `String`.
 pub fn eval_membership(op: InfixOp, l: &Value, r: &Value) -> Result<Value, RuntimeError> {
     let found = match r {
         Value::ComptimeList(items) => {
@@ -782,15 +797,12 @@ pub fn builtin_min_max(is_min: bool, a: Value, b: Value) -> Result<Value, Runtim
     if as_num(&a).is_some() && as_exact_num(&b).is_some() {
         return builtin_min_max(is_min, a.clone(), materialize_like_numeric(b, &a)?);
     }
-    let (na, nb) = match (as_num(&a), as_num(&b)) {
-        (Some(na), Some(nb)) => (na, nb),
-        _ => {
-            return Err(RuntimeError::TypeError(format!(
-                "min()/max() expect numeric values, got {} and {}",
-                type_name(&a),
-                type_name(&b)
-            )));
-        }
+    let (Some(na), Some(nb)) = (as_num(&a), as_num(&b)) else {
+        return Err(RuntimeError::TypeError(format!(
+            "min()/max() expect numeric values, got {} and {}",
+            type_name(&a),
+            type_name(&b)
+        )));
     };
     Ok(match na.rank().max(nb.rank()) {
         2 => {
@@ -809,13 +821,15 @@ pub fn builtin_min_max(is_min: bool, a: Value, b: Value) -> Result<Value, Runtim
 }
 
 /// `round(x)`: nearest `Float64` (ties away from zero, via `f64::round`).
-pub fn builtin_round(v: Value) -> Result<Value, RuntimeError> {
-    Ok(Value::Float64(value_to_float(&v)?.round()))
+pub fn builtin_round(v: &Value) -> Result<Value, RuntimeError> {
+    Ok(Value::Float64(value_to_float(v)?.round()))
 }
 
 /// `input(prompt)`: write the prompt immediately, read one line from standard
-/// input, and return it without the trailing line ending. EOF returns `""`, which
-/// keeps noninteractive asset runs from blocking forever.
+/// input, and return it without the trailing line ending.
+///
+/// EOF returns `""`, which keeps noninteractive asset runs from blocking
+/// forever.
 pub fn builtin_input(prompt: Value) -> Result<Value, RuntimeError> {
     let Value::Str(prompt) = prompt else {
         return Err(RuntimeError::TypeError(format!(
@@ -842,13 +856,16 @@ pub fn builtin_input(prompt: Value) -> Result<Value, RuntimeError> {
     Ok(Value::Str(line))
 }
 
-/// `Int(x)` / `UInt(x)` / `Float64(x)` / `Bool(x)`: convert one numeric-or-`Bool`
-/// value (`Float64`→integer truncates toward zero, `Bool` is 0/1, `Bool(x)` is
-/// truthiness — a nonzero value is `True`), following Mojo.
-/// The synthetic integer address of a VM pointer: 0 for the null
-/// (allocation 0) pointer, otherwise the allocation id in the high word
-/// with the element offset added, so distinct provenances never collide.
-pub fn pointer_address(allocation: u64, offset: i64) -> i64 {
+/// `Int(x)` / `UInt(x)` / `Float64(x)` / `Bool(x)`.
+///
+/// Convert one numeric-or-`Bool` value (`Float64`→integer truncates toward
+/// zero, `Bool` is 0/1, `Bool(x)` is truthiness — a nonzero value is `True`),
+/// following Mojo.
+///
+/// The synthetic integer address of a VM pointer: 0 for the null (allocation
+/// 0) pointer, otherwise the allocation id in the high word with the element
+/// offset added, so distinct provenances never collide.
+pub const fn pointer_address(allocation: u64, offset: i64) -> i64 {
     if allocation == 0 {
         return 0;
     }
@@ -940,9 +957,12 @@ pub fn builtin_convert(name: &str, v: Value) -> Result<Value, RuntimeError> {
 }
 
 /// The intrinsic behind `math.floor`/`ceil`/`trunc` — i.e. the `Floorable`/
-/// `Ceilable`/`Truncable` dunders on a built-in numeric value (roadmap milestone 7). An
-/// integer is already whole, so it is returned unchanged; a `Float64` rounds
-/// toward the requested direction, preserving its type (`__floor__(self) -> Self`).
+/// `Ceilable`/`Truncable` dunders on a built-in numeric value (roadmap
+/// milestone 7).
+///
+/// An integer is already whole, so it is returned unchanged; a `Float64`
+/// rounds toward the requested direction, preserving its type
+/// (`__floor__(self) -> Self`).
 pub fn builtin_round_dir(method: &str, v: &Value) -> Result<Value, RuntimeError> {
     match v {
         Value::Int(_) | Value::UInt(_) => Ok(v.clone()),
@@ -960,9 +980,11 @@ pub fn builtin_round_dir(method: &str, v: &Value) -> Result<Value, RuntimeError>
 }
 
 /// The intrinsic behind `math.ceildiv` — the `CeilDivable` dunder
-/// (`__ceildiv__(self, denominator) -> Self`, roadmap milestone 7): ceiling division,
-/// preserving the operand type. Integer ceildiv rounds toward +∞
-/// (`ceildiv(-7, 2) == -3`); float ceildiv is `ceil(a / b)`.
+/// (`__ceildiv__(self, denominator) -> Self`, roadmap milestone 7): ceiling
+/// division, preserving the operand type.
+///
+/// Integer ceildiv rounds toward +∞ (`ceildiv(-7, 2) == -3`); float ceildiv is
+/// `ceil(a / b)`.
 pub fn builtin_ceildiv(a: &Value, b: &Value) -> Result<Value, RuntimeError> {
     match (a, b) {
         // Ceiling = negated floor of the negated numerator (Python flooring).
@@ -981,9 +1003,10 @@ pub fn builtin_ceildiv(a: &Value, b: &Value) -> Result<Value, RuntimeError> {
 }
 
 /// Primitive core of `divmod(a, b)` (`DivModable`): compute `(a // b, a % b)`
-/// in private pack storage using the operators' flooring rules. The VM wraps
-/// this transient value in the checker-selected nominal public Tuple before it
-/// crosses the instruction-result boundary.
+/// in private pack storage using the operators' flooring rules.
+///
+/// The VM wraps this transient value in the checker-selected nominal public
+/// Tuple before it crosses the instruction-result boundary.
 pub fn builtin_divmod(a: Value, b: Value) -> Result<Value, RuntimeError> {
     let q = apply_infix(InfixOp::FloorDiv, a.clone(), b.clone())?;
     let r = apply_infix(InfixOp::Mod, a, b)?;
@@ -1003,8 +1026,9 @@ pub fn builtin_error(v: Value) -> Result<Value, RuntimeError> {
 
 /// Read lane `i` of a SIMD as a width-1 SIMD (scalar) of the same dtype — the
 /// shared core of `v[i]` reads and SIMD-lane read-modify-write.
-/// Build a SIMD value of `dtype`/`width` from element `values`: exactly `width`
-/// elements (one per lane) or a single element splatted to every lane.
+///
+/// Build a SIMD value of `dtype`/`width` from element `values`: exactly
+/// `width` elements (one per lane) or a single element splatted to every lane.
 pub fn simd_from_values(
     dtype: Dtype,
     width: usize,
@@ -1050,23 +1074,25 @@ pub fn set_simd_lane(
     dtype: Dtype,
     lanes: &mut SimdLanes,
     i: i64,
-    value: Value,
+    value: &Value,
 ) -> Result<(), RuntimeError> {
     let idx = bounds_check(i, lanes.width(), "SIMD lane")?;
     match lanes {
-        SimdLanes::Int(v) => v[idx] = value_to_int_lane(&value, dtype)?,
-        SimdLanes::Float(v) => v[idx] = value_to_float_lane(&value, dtype)?,
-        SimdLanes::Bool(v) => v[idx] = value_to_bool_lane(&value)?,
+        SimdLanes::Int(v) => v[idx] = value_to_int_lane(value, dtype)?,
+        SimdLanes::Float(v) => v[idx] = value_to_float_lane(value, dtype)?,
+        SimdLanes::Bool(v) => v[idx] = value_to_bool_lane(value)?,
     }
     Ok(())
 }
 
-/// Apply an elementwise SIMD operator. One operand may be a scalar that splats
-/// to the other's dtype and width. Integer arithmetic is bit-accurate;
-/// `float32` rounds each result to single precision. Comparisons yield a `bool`
-/// mask. (The checker guarantees dtype/width agreement and operator validity.)
+/// Apply an elementwise SIMD operator.
+///
+/// One operand may be a scalar that splats to the other's dtype and width.
+/// Integer arithmetic is bit-accurate; `float32` rounds each result to single
+/// precision. Comparisons yield a `bool` mask. (The checker guarantees
+/// dtype/width agreement and operator validity.)
 pub fn simd_binop(op: InfixOp, l: &Value, r: &Value) -> Result<Value, RuntimeError> {
-    use InfixOp::*;
+    use InfixOp::{BitAnd, BitOr, BitXor, Eq, Ge, Gt, Le, Lt, Ne};
     // The result takes the wider operand's width: a width-1 SIMD operand (a
     // `Int32`-typed scalar) splats exactly like a bare scalar.
     let (dtype, width) = match (simd_shape(l), simd_shape(r)) {
@@ -1089,8 +1115,8 @@ pub fn simd_binop(op: InfixOp, l: &Value, r: &Value) -> Result<Value, RuntimeErr
                 .map(|(a, b)| match op {
                     Eq => a == b,
                     Ne => a != b,
-                    BitAnd => *a & *b,
-                    BitOr => *a | *b,
+                    BitAnd => *a && *b,
+                    BitOr => *a || *b,
                     BitXor => *a ^ *b,
                     _ => false, // checker rejects other ops on bool lanes
                 })
@@ -1156,14 +1182,18 @@ pub fn simd_binop(op: InfixOp, l: &Value, r: &Value) -> Result<Value, RuntimeErr
 /// Coerce a value to a declared type at a binding site. Only materializes a
 /// numeric literal's default (`Int`/`Float64`) into another numeric type; all
 /// other values pass through unchanged.
+///
+/// # Panics
+///
+/// Panics if a literal that reached the VM does not round to `binary64`, which
+/// the lexer's literal grammar rules out.
 pub fn coerce(value: Value, ty: &Type) -> Value {
     match ty {
         Type::UInt => match value {
             Value::Int(n) => Value::UInt(n as u64),
             Value::IntLiteral(value) => value
                 .to_u64()
-                .map(Value::UInt)
-                .unwrap_or_else(|| Value::IntLiteral(value)),
+                .map_or_else(|| Value::IntLiteral(value), Value::UInt),
             v => v,
         },
         Type::Float64 => match value {
@@ -1330,38 +1360,38 @@ enum Num {
 }
 
 impl Num {
-    fn rank(self) -> u8 {
+    const fn rank(self) -> u8 {
         match self {
-            Num::I(_) => 0,
-            Num::U(_) => 1,
-            Num::F(_) => 2,
+            Self::I(_) => 0,
+            Self::U(_) => 1,
+            Self::F(_) => 2,
         }
     }
-    fn as_i64(self) -> i64 {
+    const fn as_i64(self) -> i64 {
         match self {
-            Num::I(n) => n,
-            Num::U(n) => n as i64,
-            Num::F(x) => x as i64,
+            Self::I(n) => n,
+            Self::U(n) => n as i64,
+            Self::F(x) => x as i64,
         }
     }
-    fn as_u64(self) -> u64 {
+    const fn as_u64(self) -> u64 {
         match self {
-            Num::I(n) => n as u64,
-            Num::U(n) => n,
-            Num::F(x) => x as u64,
+            Self::I(n) => n as u64,
+            Self::U(n) => n,
+            Self::F(x) => x as u64,
         }
     }
-    fn as_f64(self) -> f64 {
+    const fn as_f64(self) -> f64 {
         match self {
-            Num::I(n) => n as f64,
-            Num::U(n) => n as f64,
-            Num::F(x) => x,
+            Self::I(n) => n as f64,
+            Self::U(n) => n as f64,
+            Self::F(x) => x,
         }
     }
 }
 
 /// View a value as a number, if it is one.
-fn as_num(v: &Value) -> Option<Num> {
+const fn as_num(v: &Value) -> Option<Num> {
     match &v {
         Value::Int(n) => Some(Num::I(*n)),
         Value::UInt(n) => Some(Num::U(*n)),
@@ -1379,14 +1409,14 @@ enum ExactNum {
 impl ExactNum {
     fn into_float(self) -> mojito_common::literal::FloatLiteral {
         match self {
-            ExactNum::Int(value) => mojito_common::literal::FloatLiteral::from_int(&value),
-            ExactNum::Float(value) => value,
+            Self::Int(value) => mojito_common::literal::FloatLiteral::from_int(&value),
+            Self::Float(value) => value,
         }
     }
 
     fn compare(&self, rhs: &Self) -> Ordering {
         match (self, rhs) {
-            (ExactNum::Int(left), ExactNum::Int(right)) => left.cmp(right),
+            (Self::Int(left), Self::Int(right)) => left.cmp(right),
             (left, right) => left
                 .clone()
                 .into_float()
@@ -1482,7 +1512,7 @@ fn nonzero(y: i64) -> Result<i64, RuntimeError> {
 /// Python/Mojo floor division: round toward negative infinity. The one
 /// overflowing case, `i64::MIN // -1`, is defined to wrap to `i64::MIN`
 /// (its remainder is 0, so no floor adjustment applies).
-fn floor_div(x: i64, y: i64) -> i64 {
+const fn floor_div(x: i64, y: i64) -> i64 {
     let q = x.wrapping_div(y);
     let r = x.wrapping_rem(y);
     if r != 0 && ((r < 0) != (y < 0)) {
@@ -1500,7 +1530,7 @@ fn nonzero_u(y: u64) -> Result<u64, RuntimeError> {
 
 /// Python/Mojo modulo: the result takes the sign of the divisor.
 /// `i64::MIN % -1` is 0 (see `floor_div` on the wrapped quotient).
-fn floor_mod(x: i64, y: i64) -> i64 {
+const fn floor_mod(x: i64, y: i64) -> i64 {
     let r = x.wrapping_rem(y);
     if r != 0 && ((r < 0) != (y < 0)) {
         r + y
@@ -1510,7 +1540,7 @@ fn floor_mod(x: i64, y: i64) -> i64 {
 }
 
 /// Round an `f64` to single precision (for `float32` lanes).
-fn round_f32(x: f64) -> f64 {
+const fn round_f32(x: f64) -> f64 {
     x as f32 as f64
 }
 
@@ -1606,7 +1636,7 @@ fn pow_exp(y: i64) -> Result<u32, RuntimeError> {
 /// The `(bits, signed)` lane shape of an integer SIMD dtype, or `None` for
 /// the float and bool dtypes. Shared with the native backends so their width
 /// tables cannot drift from the VM's.
-pub fn integer_dtype_bits(dtype: Dtype) -> Option<(u32, bool)> {
+pub const fn integer_dtype_bits(dtype: Dtype) -> Option<(u32, bool)> {
     Some(match dtype {
         Dtype::Int => (64, true),
         Dtype::Int8 => (8, true),
@@ -1622,19 +1652,21 @@ pub fn integer_dtype_bits(dtype: Dtype) -> Option<(u32, bool)> {
 }
 
 /// The `(dtype, width)` of a value if it is a SIMD.
-fn simd_shape(v: &Value) -> Option<(Dtype, usize)> {
+const fn simd_shape(v: &Value) -> Option<(Dtype, usize)> {
     match v {
         Value::Simd { dtype, lanes } => Some((*dtype, lanes.width())),
         _ => None,
     }
 }
 
-/// Elementwise dtype conversion (`v.cast[DType.<dt>]()`): integer targets
-/// re-wrap at the new element width, float targets convert numerically
-/// (`float32` rounds), and a float source converts to an integer lane by
-/// truncating toward zero (saturating at the 128-bit intermediate) and then
-/// wrapping — Mojito's pinned bit-accurate policy. Bool casts are rejected at
-/// checking.
+/// Elementwise dtype conversion (`v.cast[DType.<dt>]()`).
+///
+/// Integer targets re-wrap at the new element width, float targets convert
+/// numerically (`float32` rounds), and a float source converts to an integer
+/// lane by truncating toward zero (saturating at the 128-bit intermediate) and
+/// then wrapping — Mojito's pinned bit-accurate policy.
+///
+/// Bool casts are rejected at checking.
 pub fn simd_cast(target: Dtype, value: &Value) -> Result<Value, RuntimeError> {
     // A canonicalized width-1 receiver arrives as a native scalar.
     let lanes = match value {
@@ -1916,7 +1948,10 @@ fn compare_tuple_values(left: &Value, right: &Value) -> Result<Ordering, Runtime
 }
 
 fn exact_numeric_op(op: InfixOp, left: ExactNum, right: ExactNum) -> Result<Value, RuntimeError> {
-    use InfixOp::*;
+    use InfixOp::{
+        Add, And, BitAnd, BitOr, BitXor, Div, Eq, FloorDiv, Ge, Gt, In, Is, IsNot, Le, Lt, MatMul,
+        Mod, Mul, Ne, NotIn, Or, Pow, Shl, Shr, Sub,
+    };
     if let (ExactNum::Int(left), ExactNum::Int(right)) = (&left, &right) {
         let value =
             match op {
@@ -2034,7 +2069,10 @@ fn numeric_op(op: InfixOp, a: Num, b: Num) -> Result<Value, RuntimeError> {
 }
 
 fn int_op(op: InfixOp, x: i64, y: i64) -> Result<Value, RuntimeError> {
-    use InfixOp::*;
+    use InfixOp::{
+        Add, And, BitAnd, BitOr, BitXor, Div, Eq, FloorDiv, Ge, Gt, In, Is, IsNot, Le, Lt, MatMul,
+        Mod, Mul, Ne, NotIn, Or, Pow, Shl, Shr, Sub,
+    };
     Ok(match op {
         // Int overflow is defined two's-complement wrapping (the native ABI
         // contract, docs/native-abi.md); `//`, `%`, and `**` keep their
@@ -2065,7 +2103,10 @@ fn int_op(op: InfixOp, x: i64, y: i64) -> Result<Value, RuntimeError> {
 }
 
 fn uint_op(op: InfixOp, x: u64, y: u64) -> Result<Value, RuntimeError> {
-    use InfixOp::*;
+    use InfixOp::{
+        Add, And, BitAnd, BitOr, BitXor, Div, Eq, FloorDiv, Ge, Gt, In, Is, IsNot, Le, Lt, MatMul,
+        Mod, Mul, Ne, NotIn, Or, Pow, Shl, Shr, Sub,
+    };
     Ok(match op {
         // UInt overflow wraps mod 2^64 (the native ABI contract).
         Add => Value::UInt(x.wrapping_add(y)),
@@ -2094,14 +2135,21 @@ fn uint_op(op: InfixOp, x: u64, y: u64) -> Result<Value, RuntimeError> {
     })
 }
 
+#[allow(
+    clippy::float_cmp,
+    reason = "exact comparison is the semantics of Mojo `==` on Float64"
+)]
 fn float_op(op: InfixOp, x: f64, y: f64) -> Result<Value, RuntimeError> {
-    use InfixOp::*;
+    use InfixOp::{
+        Add, And, BitAnd, BitOr, BitXor, Div, Eq, FloorDiv, Ge, Gt, In, Is, IsNot, Le, Lt, MatMul,
+        Mod, Mul, Ne, NotIn, Or, Pow, Shl, Shr, Sub,
+    };
     Ok(match op {
         Add => Value::Float64(x + y),
         Sub => Value::Float64(x - y),
         Mul => Value::Float64(x * y),
         FloorDiv => Value::Float64((x / y).floor()),
-        Mod => Value::Float64(x - y * (x / y).floor()),
+        Mod => Value::Float64(y.mul_add(-(x / y).floor(), x)),
         Pow => Value::Float64(x.powf(y)),
         Lt => Value::Bool(x < y),
         Gt => Value::Bool(x > y),
@@ -2119,7 +2167,7 @@ fn float_op(op: InfixOp, x: f64, y: f64) -> Result<Value, RuntimeError> {
 
 /// Round a float result to its lane precision: `float32` truncates to single
 /// precision, `float64` keeps full `f64`. (Called only for float dtypes.)
-fn round_lane(dtype: Dtype, x: f64) -> f64 {
+const fn round_lane(dtype: Dtype, x: f64) -> f64 {
     match dtype {
         Dtype::Float32 => round_f32(x),
         _ => x,
@@ -2205,7 +2253,7 @@ fn int_arith(op: InfixOp, dtype: Dtype, a: i128, b: i128) -> i128 {
     }
 }
 
-fn int_cmp(op: InfixOp, a: i128, b: i128) -> bool {
+const fn int_cmp(op: InfixOp, a: i128, b: i128) -> bool {
     match op {
         InfixOp::Eq => a == b,
         InfixOp::Ne => a != b,
@@ -2227,6 +2275,10 @@ fn float_arith(op: InfixOp, a: f64, b: f64) -> f64 {
     }
 }
 
+#[allow(
+    clippy::float_cmp,
+    reason = "exact comparison is the semantics of Mojo `==` on Float64"
+)]
 fn float_cmp(op: InfixOp, a: f64, b: f64) -> bool {
     match op {
         InfixOp::Eq => a == b,
@@ -2245,8 +2297,7 @@ fn float_cmp(op: InfixOp, a: f64, b: f64) -> bool {
 pub fn bounds_check(idx: i64, len: usize, what: &str) -> Result<usize, RuntimeError> {
     if idx < 0 || idx as usize >= len {
         return Err(RuntimeError::TypeError(format!(
-            "{} index {} out of range 0..{}",
-            what, idx, len
+            "{what} index {idx} out of range 0..{len}"
         )));
     }
     Ok(idx as usize)
@@ -2256,7 +2307,7 @@ pub fn bounds_check(idx: i64, len: usize, what: &str) -> Result<usize, RuntimeEr
 
 /// Wrap an integer to a dtype's bit width (bit-accurate overflow), storing the
 /// post-wrap mathematical value (non-negative for unsigned dtypes).
-fn wrap(dtype: Dtype, v: i128) -> i128 {
+const fn wrap(dtype: Dtype, v: i128) -> i128 {
     match dtype {
         Dtype::Int => v as i64 as i128,
         Dtype::Int8 => v as i8 as i128,
@@ -2326,29 +2377,25 @@ pub enum RuntimeError {
 impl fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RuntimeError::UndefinedVariable(name) => write!(f, "Undefined variable '{}'", name),
-            RuntimeError::TypeError(msg) => write!(f, "Type error: {}", msg),
-            RuntimeError::NotCallable(name) => write!(f, "'{}' is not callable", name),
-            RuntimeError::ArityMismatch {
+            Self::UndefinedVariable(name) => write!(f, "Undefined variable '{name}'"),
+            Self::TypeError(msg) => write!(f, "Type error: {msg}"),
+            Self::NotCallable(name) => write!(f, "'{name}' is not callable"),
+            Self::ArityMismatch {
                 name,
                 expected,
                 got,
             } => {
-                write!(
-                    f,
-                    "'{}' expects {} argument(s), got {}",
-                    name, expected, got
-                )
+                write!(f, "'{name}' expects {expected} argument(s), got {got}")
             }
-            RuntimeError::ClosureEscape => {
+            Self::ClosureEscape => {
                 write!(
                     f,
                     "closures cannot escape their defining scope (downward funargs only)"
                 )
             }
-            RuntimeError::Raised(value) => write!(f, "unhandled error: {}", value),
-            RuntimeError::Unsupported(what) => write!(f, "unsupported feature: {}", what),
-            RuntimeError::Abort(message) => write!(f, "abort: {}", message),
+            Self::Raised(value) => write!(f, "unhandled error: {value}"),
+            Self::Unsupported(what) => write!(f, "unsupported feature: {what}"),
+            Self::Abort(message) => write!(f, "abort: {message}"),
         }
     }
 }

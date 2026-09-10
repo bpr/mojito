@@ -1,7 +1,9 @@
 //! Built-in receiver methods: Pointer, uninit storage, struct
 //! dunders, List, Tuple, and field invocations.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TransferSet;
 
 impl Checker {
     /// Type a `Pointer[T]` instance method: the public `unsafe_*` operation
@@ -418,7 +420,7 @@ impl Checker {
             return Err(TypeError::TypeMismatch {
                 expected: "an equatable element type".to_string(),
                 found: elem.to_string(),
-                context: format!("'{}'", method),
+                context: format!("'{method}'"),
             });
         }
         // Require the argument at position `i` to coerce to the element type.
@@ -429,7 +431,7 @@ impl Checker {
                 Err(TypeError::TypeMismatch {
                     expected: elem.to_string(),
                     found: tys[i].to_string(),
-                    context: format!("argument to '{}'", method),
+                    context: format!("argument to '{method}'"),
                 })
             }
         };
@@ -626,7 +628,7 @@ impl Checker {
                     conventions: vec![Some(ArgConvention::Var)],
                     ref_params: Box::new(vec![None]),
                     ref_return: None,
-                    transfers: Default::default(),
+                    transfers: TransferSet::default(),
                 };
                 let method_decls = vec![ParamDecl::Value {
                     name: "elt_handler".to_string(),
@@ -707,18 +709,18 @@ impl Checker {
         &self,
         span: SourceSpan,
         _object: &Expr,
-        callable: Ty,
+        callable: &Ty,
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
         let (ret, _, error, _) =
             self.infer_callable_ty(&span, "<callable>", callable.clone(), &[], args, kwargs)?;
-        self.record_call_environment_effects(span.clone(), &callable, &[], args, kwargs)?;
-        let carried = contract_transfer_effects(&callable);
+        self.record_call_environment_effects(span.clone(), callable, &[], args, kwargs)?;
+        let carried = contract_transfer_effects(callable);
         if !carried.is_empty() {
             self.replay_transfer_effects(carried, None, args, &span)?;
         }
-        if let Some(target) = self.indirect_callable_target(&callable) {
+        if let Some(target) = self.indirect_callable_target(callable) {
             self.overload_targets
                 .borrow_mut()
                 .insert(span.clone(), target);
@@ -730,7 +732,7 @@ impl Checker {
             },
         );
         if let Some(error) = error.filter(|ty| *ty != Ty::Never) {
-            self.record_call_effect(span.clone(), error.clone());
+            self.record_call_effect(span, error.clone());
             self.require_error("call through a stored callable field", error)?;
         }
         Ok(ret)

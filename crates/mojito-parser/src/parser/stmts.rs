@@ -1,6 +1,7 @@
 //! Statement parsing: assignments, declarations, comptime blocks,
 //! decorators, defs, imports, with/try, and control flow.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
@@ -158,7 +159,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 }
             }
             self.expect(
-                Token::Assign,
+                &Token::Assign,
                 "Expected '=' after the unpacking target list",
             )?;
             let value = self.parse_tuple_display()?;
@@ -228,7 +229,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
     /// `var name[: Type] = value` — the annotation is optional (inferred `var`).
     pub(super) fn parse_var_decl(&mut self) -> Result<StmtKind, ParseError> {
-        self.expect(Token::Var, "Statements must begin with a keyword")?;
+        self.expect(&Token::Var, "Statements must begin with a keyword")?;
         let name = self.expect_identifier("Expected identifier after 'var'")?;
         if matches!(self.peek_token()?, Some(Token::Comma)) {
             let mut targets = vec![Expr::new(ExprKind::Identifier(name), self.last_span)];
@@ -238,7 +239,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 targets.push(Expr::new(ExprKind::Identifier(target), self.last_span));
             }
             self.expect(
-                Token::Assign,
+                &Token::Assign,
                 "Expected '=' after variable unpacking targets",
             )?;
             let value = self.parse_tuple_display()?;
@@ -297,7 +298,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         let keyword = self.expect_identifier("Expected 'ref'")?;
         debug_assert_eq!(keyword, "ref");
         let name = self.expect_identifier("Expected a name after 'ref'")?;
-        self.expect(Token::Assign, "Expected '=' after the reference name")?;
+        self.expect(&Token::Assign, "Expected '=' after the reference name")?;
         let value = self.parse_expression(Precedence::Lowest)?;
         self.expect_stmt_end()?;
         Ok(StmtKind::RefDecl { name, value })
@@ -309,7 +310,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// or a compile-time (unrolled) loop `comptime for …` (Mojo's modern spellings
     /// — the older `@parameter if`/`@parameter for` are deprecated).
     pub(super) fn parse_comptime(&mut self) -> Result<StmtKind, ParseError> {
-        self.expect(Token::Comptime, "Expected 'comptime'")?;
+        self.expect(&Token::Comptime, "Expected 'comptime'")?;
         match self.peek_token()? {
             Some(Token::If) => {
                 let (branches, orelse) = self.parse_if_rest()?;
@@ -320,7 +321,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 let start = self.last_span.0;
                 self.next_token()?; // consume '('
                 let inner = self.parse_expression(Precedence::Lowest)?;
-                self.expect(Token::RParen, "Expected ')' after the comptime expression")?;
+                self.expect(&Token::RParen, "Expected ')' after the comptime expression")?;
                 let call = self.node(
                     ExprKind::Call {
                         name: "comptime".to_string(),
@@ -351,7 +352,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     let mut args = if matches!(self.peek_token()?, Some(Token::LParen)) {
                         self.next_token()?;
                         let (args, _) = self.parse_call_args()?;
-                        self.expect(Token::RParen, "Expected ')' after comptime directive")?;
+                        self.expect(&Token::RParen, "Expected ')' after comptime directive")?;
                         args
                     } else {
                         vec![self.parse_expression(Precedence::Lowest)?]
@@ -387,7 +388,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 };
                 let where_clauses = self.parse_where_clauses()?;
                 self.expect(
-                    Token::Assign,
+                    &Token::Assign,
                     "Expected '=' after the comptime constant name (or its ': Type')",
                 )?;
                 let value = self.parse_expression(Precedence::Lowest)?;
@@ -419,7 +420,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             let (args, kwargs) = if matches!(self.peek_token()?, Some(Token::LParen)) {
                 self.next_token()?; // consume '('
                 let call = self.parse_call_args()?;
-                self.expect(Token::RParen, "Expected ')' after decorator arguments")?;
+                self.expect(&Token::RParen, "Expected ')' after decorator arguments")?;
                 call
             } else {
                 (Vec::new(), Vec::new())
@@ -431,17 +432,17 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     }
 
     pub(super) fn parse_def(&mut self, decorators: Vec<Decorator>) -> Result<StmtKind, ParseError> {
-        self.expect(Token::Def, "Expected 'def'")?;
+        self.expect(&Token::Def, "Expected 'def'")?;
         let name = self.expect_identifier("Expected function name after 'def'")?;
         let type_params = self.parse_type_params()?;
 
-        self.expect(Token::LParen, "Expected '(' after function name")?;
+        self.expect(&Token::LParen, "Expected '(' after function name")?;
         let ParamList {
             params,
             positional_only,
             keyword_only,
         } = self.parse_params()?;
-        self.expect(Token::RParen, "Expected ')' after parameters")?;
+        self.expect(&Token::RParen, "Expected ')' after parameters")?;
 
         // Current Mojo removed the `unified` keyword; the capture list is a
         // bare `{...}` after the effects clause.
@@ -480,12 +481,12 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             while !matches!(self.peek_token()?, Some(Token::RBrace) | None) {
                 self.next_token()?;
             }
-            self.expect(Token::RBrace, "Expected '}' after function effects")?;
+            self.expect(&Token::RBrace, "Expected '}' after function effects")?;
         }
 
         let where_clauses = self.parse_where_clauses()?;
 
-        self.expect(Token::Colon, "Expected ':' before the function body")?;
+        self.expect(&Token::Colon, "Expected ':' before the function body")?;
         let body = self.parse_suite()?;
 
         Ok(StmtKind::Def {
@@ -584,13 +585,11 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     ));
                 }
                 entries.push(Capture { name, kind });
-            } else {
-                if default.replace(kind).is_some() {
-                    return Err(ParseError::UnexpectedToken(
-                        Token::Identifier("capture convention".to_string()),
-                        "default capture convention was already specified".to_string(),
-                    ));
-                }
+            } else if default.replace(kind).is_some() {
+                return Err(ParseError::UnexpectedToken(
+                    Token::Identifier("capture convention".to_string()),
+                    "default capture convention was already specified".to_string(),
+                ));
             }
             if matches!(self.peek_token()?, Some(Token::Comma)) {
                 self.next_token()?;
@@ -658,7 +657,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
     /// `raise expr`
     pub(super) fn parse_raise(&mut self) -> Result<StmtKind, ParseError> {
-        self.expect(Token::Raise, "Expected 'raise'")?;
+        self.expect(&Token::Raise, "Expected 'raise'")?;
         let value = self.parse_expression(Precedence::Lowest)?;
         self.expect_stmt_end()?;
         Ok(StmtKind::Raise(value))
@@ -666,7 +665,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
     /// `import a.b.c [as alias]`
     pub(super) fn parse_import(&mut self) -> Result<StmtKind, ParseError> {
-        self.expect(Token::Import, "Expected 'import'")?;
+        self.expect(&Token::Import, "Expected 'import'")?;
         let path = self.parse_dotted_name()?;
         let alias = self.parse_import_alias()?;
         self.expect_stmt_end()?;
@@ -675,7 +674,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
     /// `from [.]*module import <targets>`
     pub(super) fn parse_from_import(&mut self) -> Result<StmtKind, ParseError> {
-        self.expect(Token::From, "Expected 'from'")?;
+        self.expect(&Token::From, "Expected 'from'")?;
         // Leading dots make the import relative. The lexer tokenizes `...` as one
         // ellipsis, which here counts as three dots.
         let mut level = 0usize;
@@ -704,7 +703,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 "expected a module name after 'from'".into(),
             ));
         }
-        self.expect(Token::Import, "Expected 'import' after the module name")?;
+        self.expect(&Token::Import, "Expected 'import' after the module name")?;
 
         let parenthesized = matches!(self.peek_token()?, Some(Token::LParen));
         if parenthesized {
@@ -728,7 +727,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             mojito_ast::ast::ImportNames::Names(targets)
         };
         if parenthesized {
-            self.expect(Token::RParen, "Expected ')' after imported names")?;
+            self.expect(&Token::RParen, "Expected ')' after imported names")?;
         }
         self.expect_stmt_end()?;
         Ok(StmtKind::FromImport { level, path, names })
@@ -762,7 +761,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// the `as` binding is optional. The parenthesized / tuple-target forms aren't
     /// in the Mojo docs, so they aren't parsed (strict-subset).
     pub(super) fn parse_with(&mut self) -> Result<StmtKind, ParseError> {
-        self.expect(Token::With, "Expected 'with'")?;
+        self.expect(&Token::With, "Expected 'with'")?;
         let mut items = Vec::new();
         loop {
             let context = self.parse_expression(Precedence::Lowest)?;
@@ -779,14 +778,14 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 break;
             }
         }
-        self.expect(Token::Colon, "Expected ':' after the 'with' items")?;
+        self.expect(&Token::Colon, "Expected ':' after the 'with' items")?;
         let body = self.parse_suite()?;
         Ok(StmtKind::With { items, body })
     }
 
     pub(super) fn parse_try(&mut self) -> Result<StmtKind, ParseError> {
-        self.expect(Token::Try, "Expected 'try'")?;
-        self.expect(Token::Colon, "Expected ':' after 'try'")?;
+        self.expect(&Token::Try, "Expected 'try'")?;
+        self.expect(&Token::Colon, "Expected ':' after 'try'")?;
         let body = self.parse_suite()?;
 
         let except = if matches!(self.peek_token()?, Some(Token::Except)) {
@@ -797,7 +796,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             } else {
                 None
             };
-            self.expect(Token::Colon, "Expected ':' after 'except'")?;
+            self.expect(&Token::Colon, "Expected ':' after 'except'")?;
             Some((name, self.parse_suite()?))
         } else {
             None
@@ -805,7 +804,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
         let orelse = if matches!(self.peek_token()?, Some(Token::Else)) {
             self.next_token()?; // consume 'else'
-            self.expect(Token::Colon, "Expected ':' after 'else'")?;
+            self.expect(&Token::Colon, "Expected ':' after 'else'")?;
             Some(self.parse_suite()?)
         } else {
             None
@@ -813,7 +812,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
         let finalbody = if matches!(self.peek_token()?, Some(Token::Finally)) {
             self.next_token()?; // consume 'finally'
-            self.expect(Token::Colon, "Expected ':' after 'finally'")?;
+            self.expect(&Token::Colon, "Expected ':' after 'finally'")?;
             Some(self.parse_suite()?)
         } else {
             None
@@ -840,7 +839,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         ctx: &str,
     ) -> Result<(Expr, Vec<Stmt>), ParseError> {
         let cond = self.parse_expression(Precedence::Lowest)?;
-        self.expect(Token::Colon, ctx)?;
+        self.expect(&Token::Colon, ctx)?;
         let body = self.parse_suite()?;
         Ok((cond, body))
     }
@@ -855,7 +854,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// by the runtime `if` and the compile-time `comptime if` (which differ only in
     /// the wrapping `Stmt` variant).
     pub(super) fn parse_if_rest(&mut self) -> Result<IfChain, ParseError> {
-        self.expect(Token::If, "Expected 'if'")?;
+        self.expect(&Token::If, "Expected 'if'")?;
         let mut branches = vec![self.parse_condition_block("Expected ':' after the if condition")?];
 
         while matches!(self.peek_token()?, Some(Token::Elif)) {
@@ -865,7 +864,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
         let orelse = if matches!(self.peek_token()?, Some(Token::Else)) {
             self.next_token()?; // consume 'else'
-            self.expect(Token::Colon, "Expected ':' after 'else'")?;
+            self.expect(&Token::Colon, "Expected ':' after 'else'")?;
             Some(self.parse_suite()?)
         } else {
             None
@@ -876,7 +875,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
     /// `while cond: <block>`
     pub(super) fn parse_while(&mut self) -> Result<StmtKind, ParseError> {
-        self.expect(Token::While, "Expected 'while'")?;
+        self.expect(&Token::While, "Expected 'while'")?;
         let (cond, body) = self.parse_condition_block("Expected ':' after the while condition")?;
         let orelse = self.parse_loop_else()?;
         Ok(StmtKind::While { cond, body, orelse })
@@ -900,7 +899,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             return Ok(None);
         }
         self.next_token()?;
-        self.expect(Token::Colon, "Expected ':' after loop 'else'")?;
+        self.expect(&Token::Colon, "Expected ':' after loop 'else'")?;
         Ok(Some(self.parse_suite()?))
     }
 
@@ -923,21 +922,21 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     pub(super) fn parse_for_rest(
         &mut self,
     ) -> Result<(String, LoopBindingMode, Expr, Vec<Stmt>), ParseError> {
-        self.expect(Token::For, "Expected 'for'")?;
+        self.expect(&Token::For, "Expected 'for'")?;
         let binding = self.parse_loop_binding_mode()?;
         let var = self.expect_identifier("Expected a loop variable name after 'for'")?;
-        self.expect(Token::In, "Expected 'in' after the loop variable")?;
+        self.expect(&Token::In, "Expected 'in' after the loop variable")?;
         let iter = self.parse_expression(Precedence::Lowest)?;
-        self.expect(Token::Colon, "Expected ':' after the for-loop iterable")?;
+        self.expect(&Token::Colon, "Expected ':' after the for-loop iterable")?;
         let body = self.parse_suite()?;
         Ok((var, binding, iter, body))
     }
 
     /// `return` or `return expr`
     pub(super) fn parse_return(&mut self) -> Result<StmtKind, ParseError> {
-        self.expect(Token::Return, "Expected 'return'")?;
+        self.expect(&Token::Return, "Expected 'return'")?;
         let value = match self.peek_token()? {
-            Some(Token::Newline) | Some(Token::Eof) | None => None,
+            Some(Token::Newline | Token::Eof) | None => None,
             _ => Some(self.parse_tuple_display()?),
         };
         self.expect_stmt_end()?;
@@ -946,7 +945,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
     /// Parses an indented block: `INDENT statement+ DEDENT`.
     pub(super) fn parse_block(&mut self) -> Result<Vec<Stmt>, ParseError> {
-        self.expect(Token::Indent, "Expected an indented block")?;
+        self.expect(&Token::Indent, "Expected an indented block")?;
         self.parse_block_body()
     }
 
@@ -987,12 +986,12 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
         if matches!(self.peek_token()?, Some(Token::Newline)) {
             self.next_token()?; // consume the newline after ':'
-            self.expect(Token::Indent, "Expected an indented trait-method body")?;
+            self.expect(&Token::Indent, "Expected an indented trait-method body")?;
             if matches!(self.peek_token()?, Some(Token::Ellipsis)) {
                 self.next_token()?; // consume indented '...'
                 self.expect_stmt_end()?;
                 self.expect(
-                    Token::Dedent,
+                    &Token::Dedent,
                     "Expected the trait-method body to end after '...'",
                 )?;
                 Ok(None)

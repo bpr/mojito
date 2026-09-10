@@ -11,21 +11,24 @@
 use mojito_common::token::Span;
 
 /// Canonicalize a trait name: upstream deprecated `ImplicitlyDeletable` in
-/// favor of `Deinitable`. The parser normalizes the compat spelling wherever a
-/// trait name enters semantic data (conformance lists, bounds), and the
-/// checker wraps the positions where a trait name is extracted from an
-/// ordinary expression (`conforms_to(T, ...)`), so every later phase sees one
-/// canonical spelling (the `read` → `imm` precedent).
-/// The compiler-internal base of a leading-dot contextual member reference
-/// (`.red`); unspellable in source, resolved against the expected type during
-/// checking and substituted during HIR syntax renaming.
+/// favor of `Deinitable`.
+///
+/// The parser normalizes the compat spelling wherever a trait name enters
+/// semantic data (conformance lists, bounds), and the checker wraps the
+/// positions where a trait name is extracted from an ordinary expression
+/// (`conforms_to(T, ...)`), so every later phase sees one canonical spelling
+/// (the `read` → `imm` precedent). The compiler-internal base of a leading-dot
+/// contextual member reference (`.red`); unspellable in source, resolved
+/// against the expected type during checking and substituted during HIR syntax
+/// renaming.
 pub const CONTEXTUAL_SENTINEL: &str = "$contextual";
 
 /// Whether a definition's decorators mark it as a parametric closure
-/// (`@__parameter`; the pre-rename `@parameter` still warns-and-runs
-/// upstream, so it stays accepted as a deprecation bridge). The parser and
-/// the checker share this predicate: such a def takes no capture list and
-/// captures its free variables implicitly.
+/// (`@__parameter`; the pre-rename `@parameter` still warns-and-runs upstream,
+/// so it stays accepted as a deprecation bridge).
+///
+/// The parser and the checker share this predicate: such a def takes no
+/// capture list and captures its free variables implicitly.
 pub fn is_parameter_closure(decorators: &[Decorator]) -> bool {
     decorators.iter().any(|decorator| {
         decorator.path.len() == 1
@@ -41,9 +44,10 @@ pub fn canonical_trait_name(name: &str) -> &str {
 }
 
 /// Canonicalize the whole-value destructor method name: upstream deprecated
-/// `__del__` in favor of `__deinit__`. Applied to method names at parse time
-/// so symbol mangling, overload maps, and the VM's destructor lookup all see
-/// the canonical spelling.
+/// `__del__` in favor of `__deinit__`.
+///
+/// Applied to method names at parse time so symbol mangling, overload maps,
+/// and the VM's destructor lookup all see the canonical spelling.
 pub fn canonical_destructor_name(name: &str) -> &str {
     match name {
         "__del__" => "__deinit__",
@@ -51,10 +55,12 @@ pub fn canonical_destructor_name(name: &str) -> &str {
     }
 }
 
-/// A type annotation. Covers the scalar types plus nominal (`struct`) types,
-/// which may carry type arguments (`Pair[Int]`), and references to a type
-/// parameter. Function/closure and reference types are represented even though
-/// their runtime semantics are not yet supported.
+/// A type annotation.
+///
+/// Covers the scalar types plus nominal (`struct`) types, which may carry type
+/// arguments (`Pair[Int]`), and references to a type parameter.
+/// Function/closure and reference types are represented even though their
+/// runtime semantics are not yet supported.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Int,
@@ -83,7 +89,7 @@ pub enum Type {
     /// application of a parameterized associated type
     /// (`Self.IteratorType[origin_of(self)]`); it is empty for a bare `C.Element`.
     Assoc {
-        base: Box<Type>,
+        base: Box<Self>,
         name: String,
         args: Vec<ParamArg>,
     },
@@ -96,7 +102,7 @@ pub enum Type {
     /// projection over `values.element_types`, not as the text
     /// `"values.element_types[index]"`.
     IndexedProjection {
-        base: Box<Type>,
+        base: Box<Self>,
         index: Box<Expr>,
     },
     /// Bare `Self` — the enclosing struct type (in a struct method) or the
@@ -111,14 +117,14 @@ pub enum Type {
         /// Compile-time parameters declared by the callable contract.
         type_params: Vec<TypeParam>,
         params: Vec<FunctionTypeParam>,
-        ret: Box<Type>,
+        ret: Box<Self>,
         thin: bool,
         /// `None` when no explicit `capturing` effect was written,
         /// `Some([])` for bare `capturing`, and `Some(origins)` for
         /// `capturing[origins]`.
         capturing: Option<OriginSpec>,
         raises: bool,
-        raises_type: Option<Box<Type>>,
+        raises_type: Option<Box<Self>>,
         /// Trailing `where` clauses constraining the contract's own `def[...]`
         /// parameters. The clause binds to the innermost function type
         /// (upstream requires parenthesizing a function-type result to attach
@@ -142,15 +148,16 @@ pub enum Type {
     /// parsed but **discarded** (origins are not modeled); `ty` is the referent
     /// type. Parsed; the checker flags a `ref` annotation as unsupported.
     Ref {
-        referent: Box<Type>,
+        referent: Box<Self>,
         origin: Option<OriginSpec>,
     },
 }
 
-/// One parameter in a source-level function/closure type. Unlike [`FnParam`],
-/// it has no default; its regular or keyword-variadic role and optional name
-/// are retained from spellings such as `def(mut writer: Writer)` and
-/// `def(var **options: Int)`.
+/// One parameter in a source-level function/closure type.
+///
+/// Unlike [`FnParam`], it has no default; its regular or keyword-variadic role
+/// and optional name are retained from spellings such as `def(mut writer:
+/// Writer)` and `def(var **options: Int)`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionTypeParam {
     pub name: Option<String>,
@@ -160,9 +167,11 @@ pub struct FunctionTypeParam {
     pub ty: Type,
 }
 
-/// Source syntax inside a `ref[...]` clause. Expressions are deliberately
-/// retained verbatim: `origin_of` arguments are never evaluated, and semantic
-/// resolution belongs to the checker where bindings have stable identities.
+/// Source syntax inside a `ref[...]` clause.
+///
+/// Expressions are deliberately retained verbatim: `origin_of` arguments are
+/// never evaluated, and semantic resolution belongs to the checker where
+/// bindings have stable identities.
 pub type OriginSpec = Vec<Expr>;
 
 /// Explicit name for [`Type`] when code handles parsed source annotations rather
@@ -170,13 +179,15 @@ pub type OriginSpec = Vec<Expr>;
 /// compatibility name for the public AST API.
 pub type SourceType = Type;
 
-/// A compile-time **parameter** declared in a `[...]` list on a `struct` or `def`
-/// header. Syntactically uniform (`NAME: X`): it is a **type parameter** when `X`
-/// is one or more trait names (`T: Copyable & Movable`) or a **value parameter**
+/// A compile-time **parameter** declared in a `[...]` list on a `struct` or
+/// `def` header.
+///
+/// Syntactically uniform (`NAME: X`): it is a **type parameter** when `X` is
+/// one or more trait names (`T: Copyable & Movable`) or a **value parameter**
 /// when `X` is a concrete type (`n: Int`). The checker classifies by resolving
-/// `bounds` — a single entry naming a type means a value parameter; trait names
-/// mean a type parameter. The checker retains and validates the declared value
-/// type; runtime materialization is governed by `CtValue::materialize`.
+/// `bounds` — a single entry naming a type means a value parameter; trait
+/// names mean a type parameter. The checker retains and validates the declared
+/// value type; runtime materialization is governed by `CtValue::materialize`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeParam {
     /// The source name. A leading `*` is retained for a variadic type pack.
@@ -210,7 +221,7 @@ impl TypeParam {
     /// it qualifies, such a binder is semantic-only: it is erased from runtime
     /// generic argument binding and inferred from the borrowed place instead
     /// of occupying a source-visible value-parameter slot.
-    pub fn is_origin_mutability_binder(&self, siblings: &[TypeParam]) -> bool {
+    pub fn is_origin_mutability_binder(&self, siblings: &[Self]) -> bool {
         self.infer_only
             && matches!(self.bounds.as_slice(), [only] if only == "Bool")
             && self.value_type.is_none()
@@ -227,11 +238,13 @@ impl TypeParam {
 }
 
 /// A parameter **argument** supplied in a `[...]` list at a use site, i.e. a
-/// `Pair[Int]` / `FixedBuffer[8]`. A type parameter takes a `Type`; a value
-/// parameter takes a comptime value `Expr`. The two forms are distinguished by
-/// the parser where it can (a leading type keyword / `Self` is a `Type`); a bare
-/// identifier or an arithmetic expression parses as `Value`, and the checker
-/// reinterprets a lone identifier as a type when the parameter is a type one.
+/// `Pair[Int]` / `FixedBuffer[8]`.
+///
+/// A type parameter takes a `Type`; a value parameter takes a comptime value
+/// `Expr`. The two forms are distinguished by the parser where it can (a
+/// leading type keyword / `Self` is a `Type`); a bare identifier or an
+/// arithmetic expression parses as `Value`, and the checker reinterprets a
+/// lone identifier as a type when the parameter is a type one.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParamArg {
     Type(Type),
@@ -239,7 +252,7 @@ pub enum ParamArg {
     /// A keyword compile-time argument (`name=value`).
     Named {
         name: String,
-        value: Box<ParamArg>,
+        value: Box<Self>,
     },
 }
 
@@ -265,86 +278,86 @@ pub enum Dtype {
 
 impl Dtype {
     /// The `DType.<name>` spelling → the dtype (e.g. `"int32"` → `Int32`).
-    pub fn from_name(name: &str) -> Option<Dtype> {
+    pub fn from_name(name: &str) -> Option<Self> {
         Some(match name {
-            "int" => Dtype::Int,
-            "int8" => Dtype::Int8,
-            "int16" => Dtype::Int16,
-            "int32" => Dtype::Int32,
-            "int64" => Dtype::Int64,
-            "uint8" => Dtype::UInt8,
-            "uint16" => Dtype::UInt16,
-            "uint32" => Dtype::UInt32,
-            "uint64" => Dtype::UInt64,
-            "float32" => Dtype::Float32,
-            "float64" => Dtype::Float64,
-            "bool" => Dtype::Bool,
+            "int" => Self::Int,
+            "int8" => Self::Int8,
+            "int16" => Self::Int16,
+            "int32" => Self::Int32,
+            "int64" => Self::Int64,
+            "uint8" => Self::UInt8,
+            "uint16" => Self::UInt16,
+            "uint32" => Self::UInt32,
+            "uint64" => Self::UInt64,
+            "float32" => Self::Float32,
+            "float64" => Self::Float64,
+            "bool" => Self::Bool,
             _ => return None,
         })
     }
 
     /// The `DType.<name>` spelling of this dtype.
-    pub fn name(self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         match self {
-            Dtype::Int => "int",
-            Dtype::Int8 => "int8",
-            Dtype::Int16 => "int16",
-            Dtype::Int32 => "int32",
-            Dtype::Int64 => "int64",
-            Dtype::UInt8 => "uint8",
-            Dtype::UInt16 => "uint16",
-            Dtype::UInt32 => "uint32",
-            Dtype::UInt64 => "uint64",
-            Dtype::Float32 => "float32",
-            Dtype::Float64 => "float64",
-            Dtype::Bool => "bool",
+            Self::Int => "int",
+            Self::Int8 => "int8",
+            Self::Int16 => "int16",
+            Self::Int32 => "int32",
+            Self::Int64 => "int64",
+            Self::UInt8 => "uint8",
+            Self::UInt16 => "uint16",
+            Self::UInt32 => "uint32",
+            Self::UInt64 => "uint64",
+            Self::Float32 => "float32",
+            Self::Float64 => "float64",
+            Self::Bool => "bool",
         }
     }
 
     /// The scalar-alias spelling (`Int32`, `Float32`, …) that means
     /// `SIMD[DType.<self>, 1]`, or `None` for `bool` (which has no alias).
-    pub fn scalar_alias(self) -> Option<&'static str> {
+    pub const fn scalar_alias(self) -> Option<&'static str> {
         Some(match self {
-            Dtype::Int8 => "Int8",
-            Dtype::Int16 => "Int16",
-            Dtype::Int32 => "Int32",
-            Dtype::Int64 => "Int64",
-            Dtype::UInt8 => "UInt8",
-            Dtype::UInt16 => "UInt16",
-            Dtype::UInt32 => "UInt32",
-            Dtype::UInt64 => "UInt64",
-            Dtype::Float32 => "Float32",
+            Self::Int8 => "Int8",
+            Self::Int16 => "Int16",
+            Self::Int32 => "Int32",
+            Self::Int64 => "Int64",
+            Self::UInt8 => "UInt8",
+            Self::UInt16 => "UInt16",
+            Self::UInt32 => "UInt32",
+            Self::UInt64 => "UInt64",
+            Self::Float32 => "Float32",
             // `float64` is spelled by the native `Float64` type (with which it is
             // unified), and `bool` by `Bool` — neither is a SIMD *alias* name here.
-            Dtype::Int | Dtype::Float64 | Dtype::Bool => return None,
+            Self::Int | Self::Float64 | Self::Bool => return None,
         })
     }
 
     /// The dtype a scalar alias names (`"Int32"` → `Int32`), or `None`.
-    pub fn from_scalar_alias(name: &str) -> Option<Dtype> {
+    pub fn from_scalar_alias(name: &str) -> Option<Self> {
         // Mojo's `Byte` is an exact public alias of `UInt8`, not a distinct
         // byte-string or character type.
         if name == "Byte" {
-            return Some(Dtype::UInt8);
+            return Some(Self::UInt8);
         }
         [
-            Dtype::Int8,
-            Dtype::Int16,
-            Dtype::Int32,
-            Dtype::Int64,
-            Dtype::UInt8,
-            Dtype::UInt16,
-            Dtype::UInt32,
-            Dtype::UInt64,
-            Dtype::Float32,
+            Self::Int8,
+            Self::Int16,
+            Self::Int32,
+            Self::Int64,
+            Self::UInt8,
+            Self::UInt16,
+            Self::UInt32,
+            Self::UInt64,
+            Self::Float32,
         ]
         .into_iter()
         .find(|d| d.scalar_alias() == Some(name))
     }
 
     /// Whether this dtype's lanes are floating-point.
-    pub fn is_float(self) -> bool {
-        matches!(self, Dtype::Float32 | Dtype::Float64)
+    pub const fn is_float(self) -> bool {
+        matches!(self, Self::Float32 | Self::Float64)
     }
 }
 
@@ -356,8 +369,10 @@ pub struct Param {
 }
 
 /// A function/method parameter, e.g. `a: Int`, `b: Int = 2`, `*rest: Int`,
-/// `var **opts: Int`, or `mut x: Int`. Defaults, variadics, and the supported
-/// conventions participate in checking and VM argument binding.
+/// `var **opts: Int`, or `mut x: Int`.
+///
+/// Defaults, variadics, and the supported conventions participate in checking
+/// and VM argument binding.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnParam {
     pub name: String,
@@ -383,7 +398,9 @@ pub enum ParamKind {
 }
 
 /// An argument-passing convention on an ordinary parameter (Mojo's `imm`
-/// (a.k.a. borrowed, the default), `mut`, `var`, `out`, and `ref` — a
+/// (a.k.a.
+///
+/// borrowed, the default), `mut`, `var`, `out`, and `ref` — a
 /// parametric-mutability reference). `imm`, `mut`, `var`, call-scoped `ref`,
 /// and a single free-function named `out` result are modeled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -441,9 +458,10 @@ pub enum SubscriptArg {
 }
 
 /// Internal call-AST marker for current Mojo's moved keyword-dictionary
-/// forwarding form, `**kwargs^`. Keeping it in the keyword stream preserves
-/// source evaluation order while the checker and VM distinguish it from a named
-/// keyword.
+/// forwarding form, `**kwargs^`.
+///
+/// Keeping it in the keyword stream preserves source evaluation order while
+/// the checker and VM distinguish it from a named keyword.
 pub const FORWARDED_KWARGS_NAME: &str = "**";
 
 impl KwArg {
@@ -453,9 +471,11 @@ impl KwArg {
 }
 
 /// A decorator `@name`, `@dotted.name`, or `@name(args)` preceding a `def` or
-/// `struct` (or a struct method). Parsed into the AST; only `@fieldwise_init` on a
-/// struct is acted on (it sets `Stmt::Struct.fieldwise_init`) — the rest are
-/// recorded but not modeled (syntax-first phase).
+/// `struct` (or a struct method).
+///
+/// Parsed into the AST; only `@fieldwise_init` on a struct is acted on (it
+/// sets `Stmt::Struct.fieldwise_init`) — the rest are recorded but not modeled
+/// (syntax-first phase).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Decorator {
     /// The dotted name parts, e.g. `["always_inline"]` or `["a", "b"]`.
@@ -503,10 +523,12 @@ pub struct Method {
     pub body: Vec<Stmt>,
 }
 
-/// A method in a `trait`: either a **requirement** (`def …:` with a `...` body,
-/// which a conforming struct must supply) or a **default implementation** (a real
-/// body). Like `Method`, `self` is the implicit first parameter and is not stored
-/// in `params`.
+/// A method in a `trait`: either a **requirement** (`def …:` with a `...`
+/// body, which a conforming struct must supply) or a **default
+/// implementation** (a real body).
+///
+/// Like `Method`, `self` is the implicit first parameter and is not stored in
+/// `params`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TraitMethod {
     pub name: String,
@@ -563,7 +585,7 @@ pub struct StructComptime {
 }
 
 /// The names imported by a `from ... import ...` statement.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ImportNames {
     /// `import *`
     Wildcard,
@@ -572,18 +594,22 @@ pub enum ImportNames {
 }
 
 /// One `name [as alias]` in a `from ... import` target list.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportName {
     pub name: String,
     pub alias: Option<String>,
 }
 
-/// One context manager in a `with` statement: an expression whose value is a
-/// context manager, and an optional `as NAME` binding for its `__enter__` result
-/// (`with open(p) as f`, or bindingless `with lock()`). A single `with` may carry
-/// several, comma-separated (`with a() as x, b() as y:`). The `as` target is a
-/// plain `NAME` — the parenthesized and tuple-target forms aren't in the Mojo docs,
-/// so (strict-subset) they aren't parsed.
+/// One context manager in a `with` statement.
+///
+/// An expression whose value is a context manager, and an optional `as NAME`
+/// binding for its `__enter__` result (`with open(p) as f`, or bindingless
+/// `with lock()`).
+///
+/// A single `with` may carry several, comma-separated (`with a() as x, b() as
+/// y:`). The `as` target is a plain `NAME` — the parenthesized and
+/// tuple-target forms aren't in the Mojo docs, so (strict-subset) they aren't
+/// parsed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WithItem {
     pub context: Expr,
@@ -608,7 +634,7 @@ pub struct Stmt {
 impl Stmt {
     /// Construct a spanned statement.
     pub fn new(kind: StmtKind, span: Span) -> Self {
-        Stmt {
+        Self {
             kind,
             span,
             module: None,
@@ -632,7 +658,7 @@ impl PartialEq for Stmt {
 /// building AST literals in tests (where the span is irrelevant).
 impl From<StmtKind> for Stmt {
     fn from(kind: StmtKind) -> Self {
-        Stmt::new(kind, mojito_common::token::DUMMY_SPAN)
+        Self::new(kind, mojito_common::token::DUMMY_SPAN)
     }
 }
 
@@ -910,7 +936,7 @@ pub struct Expr {
 impl Expr {
     /// Construct a spanned expression.
     pub fn new(kind: ExprKind, span: Span) -> Self {
-        Expr {
+        Self {
             kind,
             span,
             source: None,
@@ -928,7 +954,7 @@ impl Expr {
 /// span is irrelevant — [`Expr`]'s equality ignores it).
 impl From<ExprKind> for Expr {
     fn from(kind: ExprKind) -> Self {
-        Expr::new(kind, mojito_common::token::DUMMY_SPAN)
+        Self::new(kind, mojito_common::token::DUMMY_SPAN)
     }
 }
 
@@ -1120,7 +1146,7 @@ pub enum TStringPart {
     Expr(Box<Expr>),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrefixOp {
     /// Arithmetic negation, `-`.
     Neg,
@@ -1134,16 +1160,16 @@ impl PrefixOp {
     /// The dunder a prefix operator dispatches to on a user `struct` operand
     /// (`-x` → `x.__neg__()`, `not x` → `not x.__bool__()`). Shared by the
     /// checker (typing) and the VM (runtime dispatch) so they agree.
-    pub fn dunder(self) -> &'static str {
+    pub const fn dunder(self) -> &'static str {
         match self {
-            PrefixOp::Neg => "__neg__",
-            PrefixOp::Not => "__bool__",
-            PrefixOp::Invert => "__invert__",
+            Self::Neg => "__neg__",
+            Self::Not => "__bool__",
+            Self::Invert => "__invert__",
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InfixOp {
     Add,
     Sub,
@@ -1183,30 +1209,30 @@ impl InfixOp {
     /// dispatch this way (`and`/`or` short-circuit; `in`/`not in` dispatch to
     /// `__contains__` on the *right* operand — see the checker/VM). Shared by the
     /// checker (typing) and the VM (runtime dispatch) so they agree.
-    pub fn dunder(self) -> Option<&'static str> {
+    pub const fn dunder(self) -> Option<&'static str> {
         Some(match self {
-            InfixOp::Add => "__add__",
-            InfixOp::Sub => "__sub__",
-            InfixOp::Mul => "__mul__",
-            InfixOp::Div => "__truediv__",
-            InfixOp::FloorDiv => "__floordiv__",
-            InfixOp::Mod => "__mod__",
-            InfixOp::MatMul => "__matmul__",
-            InfixOp::Shl => "__lshift__",
-            InfixOp::Shr => "__rshift__",
-            InfixOp::BitAnd => "__and__",
-            InfixOp::BitOr => "__or__",
-            InfixOp::BitXor => "__xor__",
-            InfixOp::Pow => "__pow__",
-            InfixOp::Eq => "__eq__",
-            InfixOp::Ne => "__ne__",
-            InfixOp::Lt => "__lt__",
-            InfixOp::Gt => "__gt__",
-            InfixOp::Le => "__le__",
-            InfixOp::Ge => "__ge__",
-            InfixOp::Is => "__is__",
-            InfixOp::IsNot => "__isnot__",
-            InfixOp::And | InfixOp::Or | InfixOp::In | InfixOp::NotIn => return None,
+            Self::Add => "__add__",
+            Self::Sub => "__sub__",
+            Self::Mul => "__mul__",
+            Self::Div => "__truediv__",
+            Self::FloorDiv => "__floordiv__",
+            Self::Mod => "__mod__",
+            Self::MatMul => "__matmul__",
+            Self::Shl => "__lshift__",
+            Self::Shr => "__rshift__",
+            Self::BitAnd => "__and__",
+            Self::BitOr => "__or__",
+            Self::BitXor => "__xor__",
+            Self::Pow => "__pow__",
+            Self::Eq => "__eq__",
+            Self::Ne => "__ne__",
+            Self::Lt => "__lt__",
+            Self::Gt => "__gt__",
+            Self::Le => "__le__",
+            Self::Ge => "__ge__",
+            Self::Is => "__is__",
+            Self::IsNot => "__isnot__",
+            Self::And | Self::Or | Self::In | Self::NotIn => return None,
         })
     }
 
@@ -1214,33 +1240,33 @@ impl InfixOp {
     /// operand has no operator method for the pair (`1 + m` →
     /// `m.__radd__(1)`), or `None` for operators without a reflected form
     /// (comparisons, identity, membership, and the short-circuit operators).
-    pub fn reflected_dunder(self) -> Option<&'static str> {
+    pub const fn reflected_dunder(self) -> Option<&'static str> {
         Some(match self {
-            InfixOp::Add => "__radd__",
-            InfixOp::Sub => "__rsub__",
-            InfixOp::Mul => "__rmul__",
-            InfixOp::Div => "__rtruediv__",
-            InfixOp::FloorDiv => "__rfloordiv__",
-            InfixOp::Mod => "__rmod__",
-            InfixOp::MatMul => "__rmatmul__",
-            InfixOp::Shl => "__rlshift__",
-            InfixOp::Shr => "__rrshift__",
-            InfixOp::BitAnd => "__rand__",
-            InfixOp::BitOr => "__ror__",
-            InfixOp::BitXor => "__rxor__",
-            InfixOp::Pow => "__rpow__",
-            InfixOp::Eq
-            | InfixOp::Ne
-            | InfixOp::Lt
-            | InfixOp::Gt
-            | InfixOp::Le
-            | InfixOp::Ge
-            | InfixOp::Is
-            | InfixOp::IsNot
-            | InfixOp::And
-            | InfixOp::Or
-            | InfixOp::In
-            | InfixOp::NotIn => return None,
+            Self::Add => "__radd__",
+            Self::Sub => "__rsub__",
+            Self::Mul => "__rmul__",
+            Self::Div => "__rtruediv__",
+            Self::FloorDiv => "__rfloordiv__",
+            Self::Mod => "__rmod__",
+            Self::MatMul => "__rmatmul__",
+            Self::Shl => "__rlshift__",
+            Self::Shr => "__rrshift__",
+            Self::BitAnd => "__rand__",
+            Self::BitOr => "__ror__",
+            Self::BitXor => "__rxor__",
+            Self::Pow => "__rpow__",
+            Self::Eq
+            | Self::Ne
+            | Self::Lt
+            | Self::Gt
+            | Self::Le
+            | Self::Ge
+            | Self::Is
+            | Self::IsNot
+            | Self::And
+            | Self::Or
+            | Self::In
+            | Self::NotIn => return None,
         })
     }
 
@@ -1249,27 +1275,29 @@ impl InfixOp {
     /// no augmented form. The parser-accepted augmented operators (see
     /// `aug_assign_op`) have an in-place dunder;
     /// Mojo calls this dedicated method rather than the ordinary binary dunder.
-    pub fn inplace_dunder(self) -> Option<&'static str> {
+    pub const fn inplace_dunder(self) -> Option<&'static str> {
         Some(match self {
-            InfixOp::Add => "__iadd__",
-            InfixOp::Sub => "__isub__",
-            InfixOp::Mul => "__imul__",
-            InfixOp::Div => "__itruediv__",
-            InfixOp::FloorDiv => "__ifloordiv__",
-            InfixOp::Mod => "__imod__",
-            InfixOp::Pow => "__ipow__",
-            InfixOp::BitAnd => "__iand__",
-            InfixOp::BitOr => "__ior__",
-            InfixOp::BitXor => "__ixor__",
+            Self::Add => "__iadd__",
+            Self::Sub => "__isub__",
+            Self::Mul => "__imul__",
+            Self::Div => "__itruediv__",
+            Self::FloorDiv => "__ifloordiv__",
+            Self::Mod => "__imod__",
+            Self::Pow => "__ipow__",
+            Self::BitAnd => "__iand__",
+            Self::BitOr => "__ior__",
+            Self::BitXor => "__ixor__",
             _ => return None,
         })
     }
 }
 
-/// Collect the lambda expression nodes in `expr`, outermost first. The walk
-/// does **not** descend into a collected lambda's own body — inner lambdas
-/// belong to the inner definition's scope and are found when that body is
-/// processed. Type positions are not walked: a lambda is a runtime expression.
+/// Collect the lambda expression nodes in `expr`, outermost first.
+///
+/// The walk does **not** descend into a collected lambda's own body — inner
+/// lambdas belong to the inner definition's scope and are found when that body
+/// is processed. Type positions are not walked: a lambda is a runtime
+/// expression.
 pub fn lambdas_in_expr<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
     match &expr.kind {
         ExprKind::Lambda { .. } => out.push(expr),
@@ -1392,7 +1420,7 @@ pub fn lambdas_in_expr<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
             for argument in args {
                 match argument {
                     SubscriptArg::Index(value) | SubscriptArg::Keyword { value, .. } => {
-                        lambdas_in_expr(value, out)
+                        lambdas_in_expr(value, out);
                     }
                     SubscriptArg::Slice {
                         lower, upper, step, ..
@@ -1427,9 +1455,11 @@ pub fn lambdas_in_expr<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
 }
 
 /// Collect the lambda expression nodes in `stmt`'s **own** expressions,
-/// outermost first. Deliberately shallow: nested statement bodies are not
-/// walked, because every caller already recurses over blocks and a lambda in
-/// an inner statement belongs to that statement's visit.
+/// outermost first.
+///
+/// Deliberately shallow: nested statement bodies are not walked, because every
+/// caller already recurses over blocks and a lambda in an inner statement
+/// belongs to that statement's visit.
 pub fn lambdas_in_stmt<'a>(stmt: &'a Stmt, out: &mut Vec<&'a Expr>) {
     match &stmt.kind {
         StmtKind::VarDecl { value, .. }
@@ -1456,7 +1486,7 @@ pub fn lambdas_in_stmt<'a>(stmt: &'a Stmt, out: &mut Vec<&'a Expr>) {
         }
         StmtKind::While { cond, .. } => lambdas_in_expr(cond, out),
         StmtKind::For { iter, .. } | StmtKind::ComptimeFor { iter, .. } => {
-            lambdas_in_expr(iter, out)
+            lambdas_in_expr(iter, out);
         }
         StmtKind::With { items, .. } => {
             for item in items {
@@ -1482,18 +1512,21 @@ fn lambdas_in_param_args<'a>(args: &'a [ParamArg], out: &mut Vec<&'a Expr>) {
             ParamArg::Type(_) => {}
             ParamArg::Value(value) => lambdas_in_expr(value, out),
             ParamArg::Named { value, .. } => {
-                lambdas_in_param_args(std::slice::from_ref(value.as_ref()), out)
+                lambdas_in_param_args(std::slice::from_ref(value.as_ref()), out);
             }
         }
     }
 }
 
 /// Ensure a unique identity for every statement and expression occurrence in a
-/// final syntax tree. This must run after cloning transformations (trait-default
-/// expansion and compile-time specialization) and before semantic facts are
-/// recorded. Already-unique parser IDs are retained so source-oriented public
-/// lookups remain compatible with the input AST; a repeated ID is never trusted
-/// and receives a deterministic final-tree identity here.
+/// final syntax tree.
+///
+/// This must run after cloning transformations (trait-default expansion and
+/// compile-time specialization) and before semantic facts are recorded.
+/// Already-unique parser IDs are retained so source-oriented public lookups
+/// remain compatible with the input AST; a repeated ID is never trusted and
+/// receives a deterministic final-tree identity here.
+#[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
 pub fn rekey_syntax(statements: &mut [Stmt]) {
     struct Rekey {
         next: u64,
@@ -1647,7 +1680,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
                     for argument in args {
                         match argument {
                             SubscriptArg::Index(value) | SubscriptArg::Keyword { value, .. } => {
-                                self.expr(value)
+                                self.expr(value);
                             }
                             SubscriptArg::Slice {
                                 lower, upper, step, ..
@@ -1707,7 +1740,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
                     ParamArg::Type(ty) => self.ty(ty),
                     ParamArg::Value(value) => self.expr(value),
                     ParamArg::Named { value, .. } => {
-                        self.param_args(std::slice::from_mut(value.as_mut()))
+                        self.param_args(std::slice::from_mut(value.as_mut()));
                     }
                 }
             }
@@ -2059,7 +2092,7 @@ fn stamp_expr(expr: &mut Expr, source: &str) {
     expr.source = Some(source.to_string());
     match &mut expr.kind {
         ExprKind::Prefix(_, value) | ExprKind::Transfer(value) | ExprKind::Spread(value) => {
-            stamp_expr(value, source)
+            stamp_expr(value, source);
         }
         ExprKind::Infix(_, left, right)
         | ExprKind::Index {
@@ -2177,7 +2210,7 @@ fn stamp_expr(expr: &mut Expr, source: &str) {
             for argument in args {
                 match argument {
                     SubscriptArg::Index(value) | SubscriptArg::Keyword { value, .. } => {
-                        stamp_expr(value, source)
+                        stamp_expr(value, source);
                     }
                     SubscriptArg::Slice {
                         lower, upper, step, ..

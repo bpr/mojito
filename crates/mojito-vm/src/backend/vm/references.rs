@@ -2,9 +2,14 @@
 //! boundary, closure capture arguments, and reference extension.
 //! Extracted from `backend/vm.rs`; see `docs/symbol-map.md`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl VmBackend {
+    #[allow(
+        clippy::unused_self,
+        reason = "TODO: make an associated function or use the receiver"
+    )]
     pub(super) fn reference_to_place(
         &self,
         frame: &Frame,
@@ -419,12 +424,10 @@ impl VmBackend {
                             "Variant holds '{}', not '{}'",
                             alternatives
                                 .get(index)
-                                .map(ToString::to_string)
-                                .unwrap_or_else(|| "<invalid>".to_string()),
+                                .map_or_else(|| "<invalid>".to_string(), ToString::to_string),
                             alternatives
                                 .get(*expected)
-                                .map(ToString::to_string)
-                                .unwrap_or_else(|| "<invalid>".to_string())
+                                .map_or_else(|| "<invalid>".to_string(), ToString::to_string)
                         )));
                     }
                     *value
@@ -465,6 +468,10 @@ impl VmBackend {
     /// Return the first pointer-index boundary in a flattened reference
     /// projection. `suffix` is applied to the selected heap slot after
     /// dereferencing it.
+    #[allow(
+        clippy::unused_self,
+        reason = "TODO: make an associated function or use the receiver"
+    )]
     pub(super) fn reference_pointer_boundary<'a>(
         &self,
         root: &Value,
@@ -554,12 +561,10 @@ impl VmBackend {
                         "Variant holds '{}', not '{}'",
                         alternatives
                             .get(index)
-                            .map(ToString::to_string)
-                            .unwrap_or_else(|| "<invalid>".to_string()),
+                            .map_or_else(|| "<invalid>".to_string(), ToString::to_string),
                         alternatives
                             .get(*expected)
-                            .map(ToString::to_string)
-                            .unwrap_or_else(|| "<invalid>".to_string())
+                            .map_or_else(|| "<invalid>".to_string(), ToString::to_string)
                     )));
                 }
                 // An initialized payload is ordinary frame-local storage to
@@ -607,8 +612,7 @@ impl VmBackend {
         let root_type = crate::runtime::type_name(root);
         *navigate_reference_mut(root, projection).map_err(|error| {
             RuntimeError::TypeError(format!(
-                "{error}; reference root is {} with projection {projection:?}",
-                root_type
+                "{error}; reference root is {root_type} with projection {projection:?}"
             ))
         })? = value;
         Ok(())
@@ -664,6 +668,10 @@ impl VmBackend {
         Ok(())
     }
 
+    #[allow(
+        clippy::unused_self,
+        reason = "TODO: make an associated function or use the receiver"
+    )]
     pub(super) fn extend_reference(
         &self,
         root: &Value,

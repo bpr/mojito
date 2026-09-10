@@ -1,9 +1,10 @@
 //! `Try` region lowering: finally dispatch, exit crossings, staged
 //! returns, and scope-exit cleanups.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     /// A structurally lowered `try`: flatten the region mini-CFGs into this
     /// function's flat block list with explicit edges. The body lowers with a
     /// fresh landing block as its raise-edge target; every body exit (normal
@@ -150,19 +151,16 @@ impl<'a> FnLowering<'a> {
                 let jump = BrOp::new(ctx, handler_entry, vec![]);
                 self.append(ctx, jump.get_operation(), None);
             }
-            None => match finally_idx {
-                // No handler: the raise pends on the finalbody, or
-                // propagates to the enclosing observer.
-                Some(idx) => {
+            None => {
+                if let Some(idx) = finally_idx {
                     let jump = BrOp::new(ctx, self.finally_states[idx].error_entry, vec![]);
                     self.append(ctx, jump.get_operation(), None);
-                }
-                None => {
+                } else {
                     let target = self.raise_edge_target(ctx)?;
                     let jump = BrOp::new(ctx, target, vec![]);
                     self.append(ctx, jump.get_operation(), None);
                 }
-            },
+            }
         }
 
         // Normal completion: cleanup drops, then `orelse` (only here), then
@@ -252,6 +250,10 @@ impl<'a> FnLowering<'a> {
         let kind = kind.get_result(ctx);
 
         // Pending error case (kind 1): restage and re-raise outward.
+        #[allow(
+            clippy::useless_let_if_seq,
+            reason = "the arm emits IR; `next` is only its trailing rebind"
+        )]
         let mut next = self.current.expect("dispatch emission is inside a block");
         if error_possible {
             let error_case = BasicBlock::new(ctx, None, vec![]);
@@ -419,6 +421,10 @@ impl<'a> FnLowering<'a> {
         join.insert_at_back(region, ctx);
 
         // kind 1: free the discarded pending error's message.
+        #[allow(
+            clippy::useless_let_if_seq,
+            reason = "the arm emits IR; `next` is only its trailing rebind"
+        )]
         let mut next = self.current.expect("resolution emission is inside a block");
         if error_possible {
             let error_case = BasicBlock::new(ctx, None, vec![]);
@@ -532,14 +538,13 @@ impl<'a> FnLowering<'a> {
             }
             (Some(LowerTy::Scalar(expected)), Some(reg)) => {
                 let staged = self.reg_value(ctx, reg, expected)?;
-                let slot = match self.pending_ret {
-                    Some(slot) => slot,
-                    None => {
-                        let handle = expected.handle(ctx);
-                        let slot = self.entry_typed_alloca(ctx, handle);
-                        self.pending_ret = Some(slot);
-                        slot
-                    }
+                let slot = if let Some(slot) = self.pending_ret {
+                    slot
+                } else {
+                    let handle = expected.handle(ctx);
+                    let slot = self.entry_typed_alloca(ctx, handle);
+                    self.pending_ret = Some(slot);
+                    slot
                 };
                 let store = StoreOp::new(ctx, staged, slot);
                 self.append(ctx, store.get_operation(), Some(reg));

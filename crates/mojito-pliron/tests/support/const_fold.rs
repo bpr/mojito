@@ -21,7 +21,7 @@ use pliron_llvm::ops::{AddOp, ConstantOp};
 pub struct FoldConstAdd;
 
 impl Pass for FoldConstAdd {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "fold_const_add"
     }
 

@@ -1,8 +1,14 @@
 //! Place construction, overlap, mutability, and origin derivation for checking.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-pub(super) fn parameter_is_writable(convention: Option<ArgConvention>) -> bool {
+#[allow(
+    clippy::ref_option,
+    clippy::trivially_copy_pass_by_ref,
+    reason = "TODO: take Option<&T>; TODO: take by value and update the call sites"
+)]
+pub(super) const fn parameter_is_writable(convention: &Option<ArgConvention>) -> bool {
     matches!(
         convention,
         Some(ArgConvention::Mut | ArgConvention::Out | ArgConvention::Var | ArgConvention::Deinit)

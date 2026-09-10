@@ -30,12 +30,12 @@ pub struct Layout {
 }
 
 impl Layout {
-    pub const fn new(size: u64, align: u64) -> Layout {
-        Layout { size, align }
+    pub const fn new(size: u64, align: u64) -> Self {
+        Self { size, align }
     }
 
     /// The layout of a zero-sized type.
-    pub const ZERO: Layout = Layout::new(0, 1);
+    pub const ZERO: Self = Self::new(0, 1);
 }
 
 /// An aggregate layout with the byte offset of every field, in declaration
@@ -181,7 +181,7 @@ impl LayoutCx<'_> {
         compose(&[self.mj_string()]).layout
     }
 
-    fn pointer(&self) -> Layout {
+    const fn pointer(&self) -> Layout {
         Layout::new(
             self.target.triple.pointer_size(),
             self.target.triple.pointer_align(),
@@ -199,14 +199,14 @@ pub enum LayoutError {
 impl std::fmt::Display for LayoutError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LayoutError::Unsupported(message) => write!(f, "{message}"),
+            Self::Unsupported(message) => write!(f, "{message}"),
         }
     }
 }
 
 /// The storage layout of one SIMD lane — equally, of the width-1 scalar alias
 /// (`Int8`, `UInt32`, `Float32`, …): the lane's natural width and alignment.
-pub fn lane_layout(dtype: Dtype) -> Layout {
+pub const fn lane_layout(dtype: Dtype) -> Layout {
     match dtype {
         Dtype::Int8 | Dtype::UInt8 | Dtype::Bool => Layout::new(1, 1),
         Dtype::Int16 | Dtype::UInt16 => Layout::new(2, 2),

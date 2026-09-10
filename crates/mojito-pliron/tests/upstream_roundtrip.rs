@@ -1,19 +1,11 @@
-//! Stage 0 facility: canonical textual printing and parse -> reprint round
-//! trips of the acceptance module.
-//!
-//! Finding (recorded in docs/notes/pliron-stage0.md): plain `parse -> print`
-//! never reaches a fixpoint in pliron 0.17.0 — the parser stores each parsed
-//! block label as a given name and the printer appends the internal id, so
-//! block labels grow a suffix on every round (`block1v1` ->
-//! `block1v1_block1v1` -> ...). Value names and source locations stabilize
-//! after one round. Canonical byte-stability therefore requires erasing
-//! given names before printing (`canonical_text`), which this test pins.
+//! Upstream contract: canonical textual printing and parse -> reprint round
+//! trips, which `compile` relies on for its canonical Pliron text cache.
+
+mod support;
 
 use expect_test::expect;
 use pliron::{context::Context, op::Op, operation::verify_operation, result::ExpectOk};
-use pliron_stage0_spike::{
-    canonical_text, ir_build::build_main_returns_42, parse_top_level, print_ir,
-};
+use support::{canonical_text, ir_build::build_main_returns_42, parse_top_level, print_ir};
 
 #[test]
 fn constructed_ir_print_snapshot() {
@@ -21,7 +13,7 @@ fn constructed_ir_print_snapshot() {
     let module = build_main_returns_42(ctx).expect_ok(ctx);
     let printed = print_ir(ctx, module.get_operation());
 
-    expect![[r#"
+    expect![[r"
         builtin.module @spike 
         {
           ^block1v1():
@@ -34,7 +26,7 @@ fn constructed_ir_print_snapshot() {
                 v2 = llvm.add v0, v1 <{nsw=false,nuw=false}>: builtin.integer i32;
                 llvm.return v2
             }
-        }"#]]
+        }"]]
     .assert_eq(&printed);
 }
 

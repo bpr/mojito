@@ -1,9 +1,10 @@
 //! Floating/integer arithmetic helpers: pow, division variants,
 //! conversions, comparisons, and trap guards.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     /// `llvm.floor.f64` over one value.
     pub(super) fn float_floor(&mut self, ctx: &mut Context, value: Value, dest: Reg) -> Value {
         self.float_unary(ctx, "llvm.floor.f64", value, dest)
@@ -279,6 +280,14 @@ impl<'a> FnLowering<'a> {
         }
     }
 
+    #[allow(
+        clippy::unused_self,
+        reason = "TODO: make an associated function or use the receiver"
+    )]
+    #[allow(
+        clippy::needless_pass_by_ref_mut,
+        reason = "Op construction mutates the context"
+    )]
     pub(super) fn fcmp(
         &mut self,
         ctx: &mut Context,
@@ -373,6 +382,10 @@ impl<'a> FnLowering<'a> {
     /// (`lhs == i64::MIN && rhs == -1`): LLVM `sdiv`/`srem` are poison there,
     /// while the ABI defines the wrapped results `i64::MIN` and `0` — exactly
     /// what the floor expansions produce for a divisor of `1`.
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "TODO: drop the Result once callers stop using ?"
+    )]
     pub(super) fn sanitized_divisor(
         &mut self,
         ctx: &mut Context,
@@ -400,6 +413,10 @@ impl<'a> FnLowering<'a> {
 
     /// `(srem(lhs, rhs) != 0) & ((srem(lhs, rhs) ^ rhs) < 0)` — true exactly
     /// when truncating division must be floored.
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "TODO: drop the Result once callers stop using ?"
+    )]
     pub(super) fn floor_adjust_flag(
         &mut self,
         ctx: &mut Context,
@@ -437,6 +454,10 @@ impl<'a> FnLowering<'a> {
 
     /// Split the current block on `cond`: branch to the per-category trap
     /// block when true, continue lowering in a fresh block when false.
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "TODO: drop the Result once callers stop using ?"
+    )]
     pub(super) fn emit_trap_guard(
         &mut self,
         ctx: &mut Context,

@@ -1,12 +1,14 @@
-//! Stage 0 facility: programmatic IR construction, verification, LLVM module
+//! Upstream contract: programmatic IR construction, verification, LLVM module
 //! conversion, and in-process host execution (ORC LLJIT) of `main -> i32`.
+
+mod support;
 
 use pliron::{context::Context, result::ExpectOk};
 use pliron_llvm::{
     llvm_sys::{core::LLVMContext, lljit::LLVMLLJIT, target::initialize_native},
     to_llvm_ir,
 };
-use pliron_stage0_spike::ir_build::build_main_returns_42;
+use support::ir_build::build_main_returns_42;
 
 #[test]
 fn builds_verifies_and_jit_executes_main_returning_42() {

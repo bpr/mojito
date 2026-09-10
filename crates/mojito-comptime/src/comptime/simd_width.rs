@@ -1,6 +1,7 @@
 //! Layout-dependent parameter detection: SIMD-width usage scans over
 //! types, statements, and expressions.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 /// Whether a generic `def` uses one of its parameters where checking or

@@ -2,6 +2,7 @@
 //! declaration and mutability, callable-origin registration, and nested-def
 //! capture-access checks. Extracted from `checker.rs`; see `docs/symbol-map.md`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Checker {
@@ -80,7 +81,7 @@ impl Checker {
             .function_bases
             .last()
             .copied()
-            .unwrap_or(self.scopes.len().saturating_sub(1));
+            .unwrap_or_else(|| self.scopes.len().saturating_sub(1));
         if self.scopes[scope_index].contains_key(name) {
             return Err(TypeError::Redeclaration(name.to_string()));
         }
@@ -132,6 +133,10 @@ impl Checker {
     /// default kind (`default_literal`); a value that cannot live in a named
     /// binding is rejected: a closure (`ClosureEscape`, matching `return`/reassign)
     /// or another value outside the source language's first-class surface.
+    #[allow(
+        clippy::unused_self,
+        reason = "TODO: make an associated function or use the receiver"
+    )]
     pub(super) fn inferred_binding_ty(&self, value_ty: &Ty, _name: &str) -> Result<Ty, TypeError> {
         match value_ty {
             Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_) => {

@@ -2,6 +2,7 @@
 //! VM-CTFE program rewrite, and the CTFE-safety analysis.
 //! Extracted from `comptime.rs`; see `docs/symbol-map.md`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 /// The synthesized root of a struct-construction/static-method CTFE run.
@@ -12,7 +13,7 @@ const CTFE_EXPR_ENTRY: &str = "$ctfe$expr$entry";
 const CTFE_PROBE: &str = "$ctfe$probe";
 const CTFE_PROBE_RESULT: &str = "$ctfe$result";
 
-impl<'a> Elab<'a> {
+impl Elab<'_> {
     /// Registry-aware specializability: recognizes struct-typed value
     /// parameters through the collected struct set.
     pub(super) fn is_specializable(&self, statement: &Stmt) -> bool {
@@ -207,9 +208,8 @@ impl<'a> Elab<'a> {
         let mut visiting = HashSet::new();
         let mut needed = HashSet::new();
         if !self.vm_ctfe_safe_struct_entry(struct_name, method, &mut visiting, &mut needed) {
-            let target = method
-                .map(|m| format!("{struct_name}.{m}"))
-                .unwrap_or_else(|| struct_name.to_string());
+            let target =
+                method.map_or_else(|| struct_name.to_string(), |m| format!("{struct_name}.{m}"));
             return Err(ComptimeError::NotComptime(format!(
                 "'{target}' is not safe for VM-backed compile-time execution"
             )));
@@ -829,7 +829,7 @@ impl<'a> Elab<'a> {
                     match argument {
                         mojito_ast::ast::SubscriptArg::Index(value)
                         | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
-                            self.rewrite_vm_ctfe_expr(value, scope)?
+                            self.rewrite_vm_ctfe_expr(value, scope)?;
                         }
                         mojito_ast::ast::SubscriptArg::Slice {
                             lower, upper, step, ..
@@ -869,10 +869,10 @@ impl<'a> Elab<'a> {
                 for clause in clauses {
                     match clause {
                         mojito_ast::ast::ComprehensionClause::For { iter, .. } => {
-                            self.rewrite_vm_ctfe_expr(iter, scope)?
+                            self.rewrite_vm_ctfe_expr(iter, scope)?;
                         }
                         mojito_ast::ast::ComprehensionClause::If(condition) => {
-                            self.rewrite_vm_ctfe_expr(condition, scope)?
+                            self.rewrite_vm_ctfe_expr(condition, scope)?;
                         }
                     }
                 }
@@ -1110,7 +1110,7 @@ impl<'a> Elab<'a> {
                 mojito_ast::ast::TStringPart::Expr(value) => {
                     self.vm_ctfe_safe_expr(value, visiting, needed)
                 }
-                _ => true,
+                mojito_ast::ast::TStringPart::Literal(_) => true,
             }),
             ExprKind::TypeApply { args, .. } => {
                 self.vm_ctfe_safe_param_args(args, visiting, needed)

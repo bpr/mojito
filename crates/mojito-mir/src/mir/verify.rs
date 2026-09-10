@@ -51,13 +51,19 @@ mod regs;
 mod subscripts;
 mod types;
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use calls::*;
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use instr::*;
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use intrinsics::*;
 pub use places::instruction_places;
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use places::*;
 pub use regs::*;
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use subscripts::*;
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use types::*;
 
 #[derive(Clone, Copy)]
@@ -68,7 +74,7 @@ enum ReferencePermission {
 }
 
 impl ReferencePermission {
-    fn from_mutability(mutability: Mutability) -> Self {
+    const fn from_mutability(mutability: Mutability) -> Self {
         match mutability {
             Mutability::Immutable => Self::Immutable,
             Mutability::Mutable => Self::Mutable,
@@ -76,7 +82,7 @@ impl ReferencePermission {
         }
     }
 
-    fn allows_write(self) -> bool {
+    const fn allows_write(self) -> bool {
         !matches!(self, Self::Immutable)
     }
 

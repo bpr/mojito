@@ -1,6 +1,7 @@
 //! Type-level verification rules: compatibility, checked-type
 //! instantiation, and iterator-result adapters.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 /// Compatibility for verification purposes: either direction of the checker's
@@ -10,7 +11,7 @@ use super::*;
 /// mentioning an unsubstituted parameter is not compared — instantiation is
 /// the checker's domain and the verifier never re-derives it.
 pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
-    pub(super) fn callable_environment(
+    pub(super) const fn callable_environment(
         ty: &Ty,
     ) -> Option<&mojito_types::origin::CallableEnvironment> {
         match ty {

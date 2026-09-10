@@ -1,5 +1,6 @@
 //! Block, direct-call, function, and runtime-pack ABI verification.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 pub(super) fn verify_blocks(
@@ -56,11 +57,7 @@ pub(super) fn verify_direct_call(
             ));
         }
         if declaration.ref_params.get(index).copied().unwrap_or(false)
-            && arg_places
-                .get(index)
-                .map(Option::as_ref)
-                .unwrap_or(None)
-                .is_none()
+            && arg_places.get(index).and_then(Option::as_ref).is_none()
         {
             errors.push(format!(
                 "{prefix}: write-back parameter {index} of '{}' has no caller place",
@@ -79,7 +76,7 @@ pub(super) fn subscript_arg_regs(argument: &crate::mir::MirSubscriptArg, out: &m
     }
 }
 
-pub(super) fn simd_element_type(dtype: mojito_ast::ast::Dtype) -> Ty {
+pub(super) const fn simd_element_type(dtype: mojito_ast::ast::Dtype) -> Ty {
     match dtype {
         mojito_ast::ast::Dtype::Int => Ty::Int,
         mojito_ast::ast::Dtype::Float64 => Ty::Float64,
@@ -228,7 +225,7 @@ pub(super) fn validate_dependent_bindings(ty: &Ty) -> Result<(), String> {
                 }
             }
             Ty::ComptimeList(element) | Ty::VariadicPack(element) | Ty::Pointer { element, .. } => {
-                walk(element, bound)?
+                walk(element, bound)?;
             }
             Ty::Tuple(elements)
             | Ty::RuntimePack(elements)

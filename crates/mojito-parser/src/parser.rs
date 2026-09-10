@@ -109,7 +109,7 @@ fn call_name(callee: Expr) -> Result<String, ParseError> {
         ExprKind::Identifier(name) => Ok(name),
         other => Err(ParseError::UnexpectedToken(
             Token::LParen,
-            format!("only named functions can be called, found {:?}", other),
+            format!("only named functions can be called, found {other:?}"),
         )),
     }
 }
@@ -184,11 +184,7 @@ fn param_argument_name(arg: &mojito_ast::ast::ParamArg) -> Result<String, ParseE
 /// `self.p[unsafe_offset=i]`, `f(x)[unsafe_offset=0]`) accepts, as opposed
 /// to a capitalized type name taking a named parameter (`Origin[mut=True]`).
 fn expression_name_starts_lowercase(expression: &Expr) -> bool {
-    let starts_lowercase = |name: &str| {
-        name.chars()
-            .next()
-            .is_some_and(|character| character.is_lowercase())
-    };
+    let starts_lowercase = |name: &str| name.chars().next().is_some_and(char::is_lowercase);
     match &expression.kind {
         ExprKind::Identifier(name) => starts_lowercase(name),
         ExprKind::Member { object, field } => {
@@ -206,7 +202,7 @@ fn expression_name_starts_lowercase(expression: &Expr) -> bool {
 
 /// The infix operator an augmented-assignment token applies (`+=` → `Add`, …),
 /// or `None` if the token is not an augmented-assignment operator.
-fn aug_assign_op(tok: &Token) -> Option<InfixOp> {
+const fn aug_assign_op(tok: &Token) -> Option<InfixOp> {
     Some(match tok {
         Token::PlusEq => InfixOp::Add,
         Token::MinusEq => InfixOp::Sub,
@@ -223,7 +219,7 @@ fn aug_assign_op(tok: &Token) -> Option<InfixOp> {
 }
 
 /// The precedence an infix operator parses its right operand at (left-assoc).
-fn infix_precedence(op: InfixOp) -> Precedence {
+const fn infix_precedence(op: InfixOp) -> Precedence {
     match op {
         InfixOp::Or => Precedence::Or,
         InfixOp::And => Precedence::And,

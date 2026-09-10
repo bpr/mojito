@@ -1,6 +1,7 @@
 //! Instruction operand decoding: places, loans, captures, call and
 //! subscript arguments, registers, and constants.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Decoder {

@@ -1,6 +1,7 @@
 //! Free helpers: thunk/pow bodies, C-ABI types, MIR scans, scalar
 //! predicates, and instruction metadata.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 /// The wrapping square-and-multiply body of `mjrt_pow`. The exponent arrives
@@ -11,7 +12,7 @@ use super::*;
 /// load/take the capture arguments out of the environment record, forward
 /// the out-pointer and every user argument unchanged, call the lifted
 /// target directly, and return its result.
-pub(crate) fn emit_thunk_body(
+pub fn emit_thunk_body(
     ctx: &mut Context,
     func: FuncOp,
     target: &FnSignature,
@@ -87,7 +88,19 @@ pub(crate) fn emit_thunk_body(
     ret.get_operation().insert_at_back(entry, ctx);
 }
 
-pub(crate) fn emit_pow_body(ctx: &mut Context, func: FuncOp) {
+pub fn emit_pow_body(ctx: &mut Context, func: FuncOp) {
+    pub(super) fn constant(
+        ctx: &mut Context,
+        i64_int: TypedHandle<IntegerType>,
+        value: u64,
+        block: Ptr<BasicBlock>,
+    ) -> Value {
+        let attr = IntegerAttr::new(i64_int, APInt::from_u64(value, bw(64)));
+        let op = ConstantOp::new(ctx, Box::new(attr));
+        op.get_operation().insert_at_back(block, ctx);
+        op.get_result(ctx)
+    }
+
     let entry = func.get_or_create_entry_block(ctx);
     let region = func
         .get_operation()
@@ -109,17 +122,6 @@ pub(crate) fn emit_pow_body(ctx: &mut Context, func: FuncOp) {
     done.insert_at_back(region, ctx);
 
     let i64_int = IntegerType::get(ctx, 64, Signedness::Signless);
-    pub(super) fn constant(
-        ctx: &mut Context,
-        i64_int: TypedHandle<IntegerType>,
-        value: u64,
-        block: Ptr<BasicBlock>,
-    ) -> Value {
-        let attr = IntegerAttr::new(i64_int, APInt::from_u64(value, bw(64)));
-        let op = ConstantOp::new(ctx, Box::new(attr));
-        op.get_operation().insert_at_back(block, ctx);
-        op.get_result(ctx)
-    }
 
     // entry: allocas for acc/base/exp, seeded from the arguments.
     let one = constant(ctx, i64_int, 1, entry);
@@ -212,10 +214,7 @@ pub(crate) fn emit_pow_body(ctx: &mut Context, func: FuncOp) {
 
 /// The LLVM-dialect type of one runtime-contract primitive. LLVM integers
 /// are signless, so `U64` and `I64` share `i64`; pointers are opaque.
-pub(crate) fn c_abi_type(
-    ctx: &mut Context,
-    ty: mojito_native::native::rt_abi::CAbiTy,
-) -> TypeHandle {
+pub fn c_abi_type(ctx: &Context, ty: mojito_native::native::rt_abi::CAbiTy) -> TypeHandle {
     use mojito_native::native::rt_abi::CAbiTy;
     match ty {
         CAbiTy::U32 => IntegerType::get(ctx, 32, Signedness::Signless).into(),
@@ -228,7 +227,7 @@ pub(crate) fn c_abi_type(
 /// Collect every `MovePlace` with a projection under `blocks`, recursing
 /// into `try` sub-regions — the pre-scan that decides which variables need
 /// per-leaf presence flags in the entry block.
-pub(crate) fn collect_projected_move_places<'m>(
+pub fn collect_projected_move_places<'m>(
     blocks: &'m [mojito_mir::mir::MirBlock],
     out: &mut Vec<&'m MirPlace>,
 ) {
@@ -265,7 +264,7 @@ pub(crate) fn collect_projected_move_places<'m>(
     }
 }
 
-pub(crate) fn collect_aliased_receiver_regs(
+pub fn collect_aliased_receiver_regs(
     function: &MirFunction,
     declarations: &HashMap<String, MirFunctionDeclaration>,
 ) -> HashSet<u32> {
@@ -379,7 +378,7 @@ pub(crate) fn collect_aliased_receiver_regs(
     output
 }
 
-pub(crate) fn collect_loaded_places(blocks: &[MirBlock]) -> HashMap<u32, MirPlace> {
+pub fn collect_loaded_places(blocks: &[MirBlock]) -> HashMap<u32, MirPlace> {
     pub(super) fn visit(blocks: &[MirBlock], output: &mut HashMap<u32, MirPlace>) {
         for block in blocks {
             for instruction in &block.instrs {
@@ -418,7 +417,7 @@ pub(crate) fn collect_loaded_places(blocks: &[MirBlock]) -> HashMap<u32, MirPlac
 /// The SSA scalar shape of a built-in copyable receiver whose `copy()` is the
 /// value read (the scalar arms of `lower_ty`); references and pointers are
 /// not value copies and aggregates copy through their own lifecycle.
-pub(crate) fn scalar_copy_ty(ty: &Ty) -> Option<ScalarTy> {
+pub const fn scalar_copy_ty(ty: &Ty) -> Option<ScalarTy> {
     match ty {
         Ty::Int | Ty::IntLiteral => Some(ScalarTy::Int),
         Ty::UInt => Some(ScalarTy::UInt),
@@ -429,7 +428,7 @@ pub(crate) fn scalar_copy_ty(ty: &Ty) -> Option<ScalarTy> {
     }
 }
 
-pub(crate) fn is_aggregate_ty(ty: &Ty) -> bool {
+pub const fn is_aggregate_ty(ty: &Ty) -> bool {
     matches!(
         ty,
         Ty::Struct(..) | Ty::Tuple(..) | Ty::RuntimePack(..) | Ty::Variant(..) | Ty::Func { .. }
@@ -437,7 +436,7 @@ pub(crate) fn is_aggregate_ty(ty: &Ty) -> bool {
 }
 
 /// Map a checked type to its scalar lowering, or reject it.
-pub(crate) fn scalar_type(
+pub fn scalar_type(
     function: &str,
     ty: &Ty,
     location: Option<SourceSpan>,
@@ -459,14 +458,14 @@ pub(crate) fn scalar_type(
     }
 }
 
-pub(crate) fn is_comparison(op: InfixOp) -> bool {
+pub const fn is_comparison(op: InfixOp) -> bool {
     matches!(
         op,
         InfixOp::Eq | InfixOp::Ne | InfixOp::Lt | InfixOp::Le | InfixOp::Gt | InfixOp::Ge
     )
 }
 
-pub(crate) fn signed_predicate(op: InfixOp) -> ICmpPredicateAttr {
+pub fn signed_predicate(op: InfixOp) -> ICmpPredicateAttr {
     match op {
         InfixOp::Eq => ICmpPredicateAttr::EQ,
         InfixOp::Ne => ICmpPredicateAttr::NE,
@@ -478,7 +477,7 @@ pub(crate) fn signed_predicate(op: InfixOp) -> ICmpPredicateAttr {
     }
 }
 
-pub(crate) fn unsigned_predicate(op: InfixOp) -> ICmpPredicateAttr {
+pub fn unsigned_predicate(op: InfixOp) -> ICmpPredicateAttr {
     match op {
         InfixOp::Eq => ICmpPredicateAttr::EQ,
         InfixOp::Ne => ICmpPredicateAttr::NE,
@@ -490,7 +489,7 @@ pub(crate) fn unsigned_predicate(op: InfixOp) -> ICmpPredicateAttr {
     }
 }
 
-pub(crate) fn float_predicate(op: InfixOp) -> FCmpPredicateAttr {
+pub fn float_predicate(op: InfixOp) -> FCmpPredicateAttr {
     match op {
         InfixOp::Eq => FCmpPredicateAttr::OEQ,
         // Rust `!=` on f64 is true for NaN operands: unordered-or-unequal.
@@ -503,7 +502,7 @@ pub(crate) fn float_predicate(op: InfixOp) -> FCmpPredicateAttr {
     }
 }
 
-pub(crate) fn no_overflow_flags() -> IntegerOverflowFlagsAttr {
+pub const fn no_overflow_flags() -> IntegerOverflowFlagsAttr {
     IntegerOverflowFlagsAttr {
         nsw: false,
         nuw: false,
@@ -518,7 +517,7 @@ pub(crate) fn no_overflow_flags() -> IntegerOverflowFlagsAttr {
 /// next contiguous ids at the moment its `try` is reached, regions in
 /// body → handler → orelse → finalbody order — mirroring `lower_region`'s
 /// assignment exactly so positions agree.
-pub(crate) fn record_last_uses(
+pub fn record_last_uses(
     last_uses: &mut HashMap<u32, (usize, usize)>,
     blocks: &[MirBlock],
     ids: &[usize],
@@ -566,13 +565,13 @@ pub(crate) fn record_last_uses(
 
 /// One already-lowered subscript actual: an index register (with its checked
 /// place for `mut`/`ref` slots) or an inline-built slice-descriptor pointer.
-pub(crate) enum SubscriptActual<'a> {
+pub enum SubscriptActual<'a> {
     Reg(Reg, Option<&'a MirPlace>),
     Descriptor(Value),
 }
 
 /// The checker-virtual slice-descriptor struct name behind `ty`, if any.
-pub(crate) fn slice_struct_name(ty: &Ty) -> Option<&str> {
+pub fn slice_struct_name(ty: &Ty) -> Option<&str> {
     match ty {
         Ty::Struct(name, _)
             if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice") =>
@@ -584,7 +583,7 @@ pub(crate) fn slice_struct_name(ty: &Ty) -> Option<&str> {
     }
 }
 
-pub(crate) fn operand_regs(instr: &MirInstr) -> Vec<Reg> {
+pub fn operand_regs(instr: &MirInstr) -> Vec<Reg> {
     pub(super) fn place_regs(place: &MirPlace, out: &mut Vec<Reg>) {
         for proj in &place.proj {
             if let Proj::Index(reg) = proj {
@@ -704,7 +703,7 @@ pub(crate) fn operand_regs(instr: &MirInstr) -> Vec<Reg> {
 }
 
 /// Every register a terminator reads.
-pub(crate) fn terminator_regs(term: &MirTerm) -> Vec<Reg> {
+pub fn terminator_regs(term: &MirTerm) -> Vec<Reg> {
     match term {
         MirTerm::Branch { cond, .. } => vec![*cond],
         MirTerm::Return(Some(reg))
@@ -717,7 +716,7 @@ pub(crate) fn terminator_regs(term: &MirTerm) -> Vec<Reg> {
     }
 }
 
-pub(crate) fn instr_name(instr: &MirInstr) -> &'static str {
+pub const fn instr_name(instr: &MirInstr) -> &'static str {
     match instr {
         MirInstr::EstablishLoans { .. } => "EstablishLoans",
         MirInstr::InvalidateInteriors { .. } => "InvalidateInteriors",

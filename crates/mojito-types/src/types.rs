@@ -12,6 +12,7 @@ use crate::ct::{CtExpr, CtValue};
 use mojito_ast::ast::{ArgConvention, Dtype};
 
 /// Descriptor type selected for a slice literal at the checked boundary.
+///
 /// Two-component literals can use the view-oriented contiguous descriptor;
 /// literals with a second colon use the owning strided descriptor. `Slice` is
 /// the general protocol fallback accepted by user-defined collections.
@@ -23,7 +24,7 @@ pub enum SliceKind {
 }
 
 impl SliceKind {
-    pub fn type_name(self) -> &'static str {
+    pub const fn type_name(self) -> &'static str {
         match self {
             Self::Slice => "Slice",
             Self::ContiguousSlice => "ContiguousSlice",
@@ -34,8 +35,10 @@ impl SliceKind {
 
 /// A loan-transfer effect inferred from a callable's body: an accepted store
 /// into an outliving destination (`self` or a parameter) whose loan roots at
-/// another parameter or `self`. Call sites replay the effect against their
-/// actuals, installing the caller-side loan the callee's store implies.
+/// another parameter or `self`.
+///
+/// Call sites replay the effect against their actuals, installing the
+/// caller-side loan the callee's store implies.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransferEffect {
     pub dest: crate::origin::SigOrigin,
@@ -47,13 +50,15 @@ pub struct TransferEffect {
     pub mutable: bool,
 }
 
-/// Inferred transfer effects riding a checked function type, so a call
-/// through a function-typed VALUE replays the effects of the `def` the value
-/// came from. Transparent to type identity: two otherwise-equal function
-/// types never differ by their inferred effects, and acceptance/coercion
-/// must not consult them — a `def(...)` contract cannot spell effects (Mojo
-/// has no such syntax), so soundness comes from call-site replay off the
-/// value's type, never from acceptance filtering.
+/// Inferred transfer effects riding a checked function type, so a call through
+/// a function-typed VALUE replays the effects of the `def` the value came
+/// from.
+///
+/// Transparent to type identity: two otherwise-equal function types never
+/// differ by their inferred effects, and acceptance/coercion must not consult
+/// them — a `def(...)` contract cannot spell effects (Mojo has no such
+/// syntax), so soundness comes from call-site replay off the value's type,
+/// never from acceptance filtering.
 #[derive(Debug, Clone, Default, Eq)]
 pub struct TransferSet(pub Vec<TransferEffect>);
 
@@ -73,9 +78,11 @@ impl PartialEq for TransferSet {
 }
 
 /// A checked type expression whose final member is selected by compile-time
-/// evaluation. Candidate types and the canonical [`CtExpr`] remain structural
-/// semantic data; no phase has to encode or recover this operation from a
-/// synthesized name.
+/// evaluation.
+///
+/// Candidate types and the canonical [`CtExpr`] remain structural semantic
+/// data; no phase has to encode or recover this operation from a synthesized
+/// name.
 ///
 /// The enum leaves room for future dependent projection forms without making
 /// them special cases in the nominal type namespace.
@@ -121,17 +128,17 @@ pub enum Ty {
         /// Checked callable-environment contract. This is semantic type
         /// information even though the VM erases it at execution.
         environment: crate::origin::CallableEnvironment,
-        params: Vec<Ty>,
+        params: Vec<Self>,
         names: Vec<String>,
-        ret: Box<Ty>,
+        ret: Box<Self>,
         required: Vec<bool>,
-        variadic: Option<Box<Ty>>,
+        variadic: Option<Box<Self>>,
         /// Homogeneous element type collected by `**kwargs`, when present.
-        kw_variadic: Option<Box<Ty>>,
+        kw_variadic: Option<Box<Self>>,
         positional_only: Option<usize>,
         keyword_only: Option<usize>,
         raises: bool,
-        error: Option<Box<Ty>>,
+        error: Option<Box<Self>>,
         /// The argument convention of each regular parameter.
         conventions: Vec<Option<ArgConvention>>,
         ref_params: Box<Vec<Option<crate::origin::RefSig>>>,
@@ -144,17 +151,17 @@ pub enum Ty {
     GenericFunc {
         environment: crate::origin::CallableEnvironment,
         decls: Vec<ParamDecl>,
-        params: Vec<Ty>,
+        params: Vec<Self>,
         names: Vec<String>,
-        ret: Box<Ty>,
+        ret: Box<Self>,
         required: Vec<bool>,
-        variadic: Option<Box<Ty>>,
+        variadic: Option<Box<Self>>,
         /// Homogeneous element type collected by `**kwargs`, when present.
-        kw_variadic: Option<Box<Ty>>,
+        kw_variadic: Option<Box<Self>>,
         positional_only: Option<usize>,
         keyword_only: Option<usize>,
         raises: bool,
-        error: Option<Box<Ty>>,
+        error: Option<Box<Self>>,
         conventions: Vec<Option<ArgConvention>>,
         ref_params: Box<Vec<Option<crate::origin::RefSig>>>,
         ref_return: Option<Box<crate::origin::RefSig>>,
@@ -166,7 +173,7 @@ pub enum Ty {
     /// resolves an overload set at each call site. The first implementation
     /// supports distinct call shapes/arity; keeping this as a first-class type
     /// leaves type-ranked overload resolution as a natural extension.
-    Overload(Vec<Ty>),
+    Overload(Vec<Self>),
     /// A type parameter (`T`) inside a generic body, carrying its trait bounds.
     Param {
         name: String,
@@ -175,7 +182,7 @@ pub enum Ty {
         /// `F: def(T) -> T`. Unlike an ordinary trait name, the full checked
         /// signature is needed both to validate specializations and to type
         /// calls through `F` inside the generic body.
-        callable_bound: Option<Box<Ty>>,
+        callable_bound: Option<Box<Self>>,
     },
     /// A symbolic associated type lookup such as `C.Element` where `C` is an
     /// opaque type parameter. It may resolve to a concrete type once `C` is
@@ -184,7 +191,7 @@ pub enum Ty {
     /// bare `C.Element`. The arguments are retained so the projection can be
     /// resolved concretely once the base is a conforming struct.
     Assoc {
-        base: Box<Ty>,
+        base: Box<Self>,
         name: String,
         args: Vec<TyArg>,
     },
@@ -204,28 +211,28 @@ pub enum Ty {
     Error,
     /// Compile-time-only list shape used while materializing `CtValue::List`.
     /// Checked executable List values use `Struct("List", ...)`.
-    ComptimeList(Box<Ty>),
+    ComptimeList(Box<Self>),
     /// Compiler-private `__RuntimeTuple[T1, ..., Tn]` storage. Public
     /// `Tuple[T1, ..., Tn]` values are nominal standard-library structs.
-    Tuple(Vec<Ty>),
+    Tuple(Vec<Self>),
     /// Internal checked ABI type for a compile-time-specialized heterogeneous
     /// runtime parameter pack. Unlike a source `Tuple[...]` used as the element
     /// type of an ordinary homogeneous `*args`, each entry describes one
     /// positional argument and the collector uses private tuple-shaped storage.
     /// This type cannot be written directly in Mojo source.
-    RuntimePack(Vec<Ty>),
+    RuntimePack(Vec<Self>),
     /// Internal checked ABI type for an ordinary homogeneous runtime variadic.
     /// Source `List[T]` is a nominal standard-library struct; a `*args: T`
     /// collector is compiler storage and must therefore not masquerade as that
     /// user-facing collection.
-    VariadicPack(Box<Ty>),
+    VariadicPack(Box<Self>),
     /// The built-in tagged union `Variant[T1, ..., Tn]`.  The ordering is part
     /// of the type: it determines the runtime tag used by typed projection.
-    Variant(Vec<Ty>),
+    Variant(Vec<Self>),
     /// The built-in `UnsafePointer[T, origin]`.  The VM erases the origin, but
     /// the checked and MIR types retain it for lifetime/aggregate validation.
     Pointer {
-        element: Box<Ty>,
+        element: Box<Self>,
         origin: crate::origin::PointerOrigin,
     },
     /// A reference value. Origins and permissions are checked statically; its
@@ -254,9 +261,11 @@ pub const SCALAR_RANGE_FAMILY: [&str; 3] =
 
 /// Decompose a checker-abstract scalar-range type — `Ty::Struct` naming a
 /// [`SCALAR_RANGE_FAMILY`] member (plain or module-qualified) with one
-/// concrete dtype value argument. This form exists only in the discovery
-/// round: the specialization fixpoint rewrites every occurrence into a
-/// registered concrete struct before MIR lowering.
+/// concrete dtype value argument.
+///
+/// This form exists only in the discovery round: the specialization fixpoint
+/// rewrites every occurrence into a registered concrete struct before MIR
+/// lowering.
 pub fn scalar_range_parts(ty: &Ty) -> Option<(&'static str, mojito_ast::ast::Dtype)> {
     let Ty::Struct(name, arguments) = ty else {
         return None;
@@ -273,13 +282,17 @@ pub fn scalar_range_parts(ty: &Ty) -> Option<(&'static str, mojito_ast::ast::Dty
 pub const OPTIONAL_TYPE_NAME: &str = "Optional";
 
 /// Compiler-private inline possibly-uninitialized storage, the field type of
-/// `MaybeUninit`. An unregistered nominal: resolvable only from bundled
-/// standard-library sources, with every capability special-cased explicitly.
+/// `MaybeUninit`.
+///
+/// An unregistered nominal: resolvable only from bundled standard-library
+/// sources, with every capability special-cased explicitly.
 pub const UNINIT_STORAGE_TYPE_NAME: &str = "__UninitStorage";
 
 /// Compiler-private tagged-union storage, the field type of the self-hosted
-/// `Variant`: the intrinsic `Ty::Variant` spelled from bundled
-/// standard-library sources only (`var _storage: __VariantStorage[*Ts]`).
+/// `Variant`.
+///
+/// The intrinsic `Ty::Variant` spelled from bundled standard-library sources
+/// only (`var _storage: __VariantStorage[*Ts]`).
 pub const VARIANT_STORAGE_TYPE_NAME: &str = "__VariantStorage";
 
 /// Construct a nominal standard-library type from ordinary type arguments.
@@ -326,9 +339,10 @@ pub fn array_element(ty: &Ty) -> Option<&Ty> {
 
 /// The payload type of compiler-private inline uninit storage
 /// (`__UninitStorage[T]`), including specialization-mangled and
-/// backend-monomorphized (`…$mono$…`) instantiations — mono renames the
-/// struct while keeping its substituted argument list, so the payload stays
-/// recoverable from the arguments.
+/// backend-monomorphized (`…$mono$…`) instantiations.
+///
+/// Mono renames the struct while keeping its substituted argument list, so the
+/// payload stays recoverable from the arguments.
 pub fn uninit_storage_element(ty: &Ty) -> Option<&Ty> {
     let Ty::Struct(name, arguments) = ty else {
         return None;
@@ -406,10 +420,11 @@ pub fn tuple_type(elements: Vec<Ty>) -> Ty {
     nominal_type(TUPLE_TYPE_NAME, elements)
 }
 
-/// Current Mojo's spelling of a value argument inside a type name: a scalar
-/// spells `value : Type` (`3 : SIMD[DType.int, 1]`, a vector key
-/// `[0, 0, 0, 0] : SIMD[DType.uint64, 4]`), a `Bool` spells bare
-/// `True`/`False`, and a type-valued argument spells as a type name.
+/// Current Mojo's spelling of a value argument inside a type name.
+///
+/// A scalar spells `value : Type` (`3 : SIMD[DType.int, 1]`, a vector key `[0,
+/// 0, 0, 0] : SIMD[DType.uint64, 4]`), a `Bool` spells bare `True`/`False`,
+/// and a type-valued argument spells as a type name.
 pub fn unqualified_value_argument(value: &CtValue) -> String {
     match value {
         CtValue::Bool(value) => (if *value { "True" } else { "False" }).to_string(),
@@ -425,9 +440,12 @@ pub fn unqualified_value_argument(value: &CtValue) -> String {
 }
 
 /// Current Mojo's unqualified type-name spelling (`_unqualified_type_name`)
-/// for the proof subset: the scalar aliases spell through their `SIMD`
-/// identity (`Int` is `SIMD[DType.int, 1]`), nominal structs drop their
-/// module qualification, and applied arguments are spelled recursively.
+/// for the proof subset.
+///
+/// The scalar aliases spell through their `SIMD` identity (`Int` is
+/// `SIMD[DType.int, 1]`), nominal structs drop their module qualification, and
+/// applied arguments are spelled recursively.
+///
 /// A minted value specialization reached here spells its symbol's base name
 /// only; `mojito_symbol::symbol::unqualified_instance_name` is the spelling
 /// that decodes the baked arguments at every nesting level.
@@ -453,8 +471,9 @@ pub fn unqualified_type_name(ty: &Ty) -> String {
             }
             let base = name
                 .strip_prefix("__module$")
-                .map(|rest| rest.rsplit('$').next().unwrap_or(rest))
-                .unwrap_or(name.as_str());
+                .map_or(name.as_str(), |rest| {
+                    rest.rsplit('$').next().unwrap_or(rest)
+                });
             // A specialization suffix (`Name$...`) is never part of the name.
             let base = base.split('$').next().unwrap_or(base);
             if args.is_empty() {
@@ -476,7 +495,7 @@ pub fn unqualified_type_name(ty: &Ty) -> String {
                                 .join(", ")
                         }
                         TyArg::Val(value) => unqualified_value_argument(value),
-                        other => other.to_string(),
+                        other @ TyArg::Origin(_) => other.to_string(),
                     })
                     .collect::<Vec<_>>()
                     .join(", ");
@@ -523,9 +542,11 @@ pub fn tstring_type(elements: Vec<Ty>) -> Ty {
     nominal_type(TSTRING_TYPE_NAME, elements)
 }
 
-/// The interleaved element types of a lazy template string, accepting both the
-/// public `TString` spelling and the concrete symbols emitted for its variadic
-/// specializations (the same acceptance rule as [`tuple_elements`]).
+/// The interleaved element types of a lazy template string.
+///
+/// Both the public `TString` spelling and the concrete symbols emitted for its
+/// variadic specializations are accepted — the same acceptance rule as
+/// [`tuple_elements`].
 pub fn tstring_elements(ty: &Ty) -> Option<Vec<&Ty>> {
     let Ty::Struct(name, arguments) = ty else {
         return None;
@@ -558,8 +579,9 @@ pub fn contains_infer(ty: &Ty) -> bool {
     mentions(ty, &|ty| matches!(ty, Ty::Infer))
 }
 
-/// Whether the compile-time `StringLiteral` occurs anywhere in `ty`. Its
-/// runtime values are the literal representation rather than the nominal
+/// Whether the compile-time `StringLiteral` occurs anywhere in `ty`.
+///
+/// Its runtime values are the literal representation rather than the nominal
 /// `String` struct's, so an instantiation argument that mentions it never
 /// selects a nominal-`String` instance.
 pub fn contains_string_literal(ty: &Ty) -> bool {
@@ -622,9 +644,10 @@ pub fn mentions(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool) -> bool {
 
 /// A declared compile-time parameter of a generic `struct`/`def`, classified
 /// from `[name: X]` by whether `X` is a trait or a type.
-/// Whether a type parameter's bound admits nullary construction (`H()`):
-/// such parameters are reified at runtime as the bound struct's name so an
-/// erased body can construct them.
+///
+/// Whether a type parameter's bound admits nullary construction (`H()`): such
+/// parameters are reified at runtime as the bound struct's name so an erased
+/// body can construct them.
 pub fn constructible_type_parameter(declaration: &ParamDecl) -> bool {
     matches!(
         declaration,
@@ -677,8 +700,8 @@ pub enum CallableDefault {
     Parameter(String),
     If {
         condition: CtExpr,
-        then_value: Box<CallableDefault>,
-        else_value: Box<CallableDefault>,
+        then_value: Box<Self>,
+        else_value: Box<Self>,
     },
 }
 
@@ -692,8 +715,9 @@ pub enum ConstraintOperand {
     PackLength(String),
 }
 
-/// The per-element predicate of a `TypeList` `any`/`all` proposition: a
-/// builtin `IsTrivially*` spelling or a Bool-bodied predicate alias with one
+/// The per-element predicate of a `TypeList` `any`/`all` proposition.
+///
+/// A builtin `IsTrivially*` spelling or a Bool-bodied predicate alias with one
 /// type parameter, applied to each element of the bound pack.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PackPredicateRef {
@@ -702,10 +726,11 @@ pub enum PackPredicateRef {
 }
 
 /// The lifecycle facet queried by the
-/// `IsTrivially{Movable,Copyable,Deinitable}[T]` comptime predicates: the type
-/// conforms to `TrivialRegisterPassable`, or the base capability holds and the
-/// corresponding lifecycle operation is compiler-generated with recursively
-/// trivial fields (a bitwise move/copy or a no-op destructor).
+/// `IsTrivially{Movable,Copyable,Deinitable}[T]` comptime predicates.
+///
+/// The type conforms to `TrivialRegisterPassable`, or the base capability
+/// holds and the corresponding lifecycle operation is compiler-generated with
+/// recursively trivial fields (a bitwise move/copy or a no-op destructor).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrivialLifecycle {
     Movable,
@@ -713,9 +738,11 @@ pub enum TrivialLifecycle {
     Deinitable,
 }
 
-/// Recognize an `IsTrivially*` comptime-predicate name. These are Bool-valued
-/// predicates, not traits: they are valid in `where` clauses, conformance
-/// conditions, and `comptime if`, but not as type-parameter bounds.
+/// Recognize an `IsTrivially*` comptime-predicate name.
+///
+/// These are Bool-valued predicates, not traits: they are valid in `where`
+/// clauses, conformance conditions, and `comptime if`, but not as
+/// type-parameter bounds.
 pub fn trivial_predicate_name(name: &str) -> Option<TrivialLifecycle> {
     match name {
         "IsTriviallyMovable" => Some(TrivialLifecycle::Movable),
@@ -725,10 +752,12 @@ pub fn trivial_predicate_name(name: &str) -> Option<TrivialLifecycle> {
     }
 }
 
-/// The predicate spelling of a [`TrivialLifecycle`] facet — the inverse of
-/// [`trivial_predicate_name`], used to record a `where IsTrivially*[T]` fact
-/// as a body-side assumption and to look it up during capability queries.
-pub fn trivial_predicate_spelling(kind: TrivialLifecycle) -> &'static str {
+/// The predicate spelling of a [`TrivialLifecycle`] facet.
+///
+/// The inverse of [`trivial_predicate_name`], used to record a `where
+/// IsTrivially*[T]` fact as a body-side assumption and to look it up during
+/// capability queries.
+pub const fn trivial_predicate_spelling(kind: TrivialLifecycle) -> &'static str {
     match kind {
         TrivialLifecycle::Movable => "IsTriviallyMovable",
         TrivialLifecycle::Copyable => "IsTriviallyCopyable",
@@ -741,7 +770,7 @@ pub enum GenericConstraint {
     /// A top-level `where (condition, "message")` clause. The message affects
     /// only the failed-specialization diagnostic; semantic operations recurse
     /// through the wrapped condition.
-    WithMessage(Box<GenericConstraint>, String),
+    WithMessage(Box<Self>, String),
     Conforms {
         param: String,
         trait_name: String,
@@ -771,25 +800,25 @@ pub enum GenericConstraint {
     Le(ConstraintOperand, ConstraintOperand),
     Gt(ConstraintOperand, ConstraintOperand),
     Ge(ConstraintOperand, ConstraintOperand),
-    And(Box<GenericConstraint>, Box<GenericConstraint>),
-    Or(Box<GenericConstraint>, Box<GenericConstraint>),
-    Not(Box<GenericConstraint>),
+    And(Box<Self>, Box<Self>),
+    Or(Box<Self>, Box<Self>),
+    Not(Box<Self>),
     Bool(bool),
 }
 
 impl fmt::Display for GenericConstraint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            GenericConstraint::WithMessage(inner, message) => {
+            Self::WithMessage(inner, message) => {
                 write!(f, "({inner}, {message:?})")
             }
-            GenericConstraint::Conforms { param, trait_name } => {
+            Self::Conforms { param, trait_name } => {
                 write!(f, "conforms_to({param}, {trait_name})")
             }
-            GenericConstraint::ConformsPack { param, trait_name } => {
+            Self::ConformsPack { param, trait_name } => {
                 write!(f, "conforms_to({param}.values, {trait_name})")
             }
-            GenericConstraint::PackPredicate {
+            Self::PackPredicate {
                 param,
                 predicate,
                 all,
@@ -801,22 +830,22 @@ impl fmt::Display for GenericConstraint {
                 };
                 write!(f, "TypeList[{param}.values]().{reduction}[{predicate}]()")
             }
-            GenericConstraint::PackContains { param, element } => {
+            Self::PackContains { param, element } => {
                 write!(f, "TypeList[{param}.values]().contains[{element}]()")
             }
-            GenericConstraint::Trivial(kind, operand) => {
+            Self::Trivial(kind, operand) => {
                 write!(f, "{}[{operand}]", trivial_predicate_spelling(*kind))
             }
-            GenericConstraint::Eq(a, b) => write!(f, "{a} == {b}"),
-            GenericConstraint::Ne(a, b) => write!(f, "{a} != {b}"),
-            GenericConstraint::Lt(a, b) => write!(f, "{a} < {b}"),
-            GenericConstraint::Le(a, b) => write!(f, "{a} <= {b}"),
-            GenericConstraint::Gt(a, b) => write!(f, "{a} > {b}"),
-            GenericConstraint::Ge(a, b) => write!(f, "{a} >= {b}"),
-            GenericConstraint::And(a, b) => write!(f, "{a} and {b}"),
-            GenericConstraint::Or(a, b) => write!(f, "{a} or {b}"),
-            GenericConstraint::Not(inner) => write!(f, "not {inner}"),
-            GenericConstraint::Bool(value) => {
+            Self::Eq(a, b) => write!(f, "{a} == {b}"),
+            Self::Ne(a, b) => write!(f, "{a} != {b}"),
+            Self::Lt(a, b) => write!(f, "{a} < {b}"),
+            Self::Le(a, b) => write!(f, "{a} <= {b}"),
+            Self::Gt(a, b) => write!(f, "{a} > {b}"),
+            Self::Ge(a, b) => write!(f, "{a} >= {b}"),
+            Self::And(a, b) => write!(f, "{a} and {b}"),
+            Self::Or(a, b) => write!(f, "{a} or {b}"),
+            Self::Not(inner) => write!(f, "not {inner}"),
+            Self::Bool(value) => {
                 write!(f, "{}", if *value { "True" } else { "False" })
             }
         }
@@ -826,10 +855,10 @@ impl fmt::Display for GenericConstraint {
 impl fmt::Display for ConstraintOperand {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ConstraintOperand::Param(name) => write!(f, "{name}"),
-            ConstraintOperand::Value(value) => write!(f, "{value}"),
-            ConstraintOperand::Type(ty) => write!(f, "{ty}"),
-            ConstraintOperand::PackLength(name) => {
+            Self::Param(name) => write!(f, "{name}"),
+            Self::Value(value) => write!(f, "{value}"),
+            Self::Type(ty) => write!(f, "{ty}"),
+            Self::PackLength(name) => {
                 write!(f, "TypeList[{name}.values]().length")
             }
         }
@@ -839,16 +868,18 @@ impl fmt::Display for ConstraintOperand {
 impl ParamDecl {
     pub fn name(&self) -> &str {
         match self {
-            ParamDecl::Type { name, .. } | ParamDecl::Value { name, .. } => name,
+            Self::Type { name, .. } | Self::Value { name, .. } => name,
         }
     }
 }
 
-/// One argument in a struct type's parameter list: a type, a compile-time value,
-/// or an origin. Part of a struct type's identity, so `FixedBuffer[8] !=
-/// FixedBuffer[9]`. Origins participate in checked identity but erase from the
-/// runtime ABI, exactly like `Ty::Pointer` origins — a parameterized iterator's
-/// `origin` argument distinguishes checked types without changing lowering.
+/// One argument in a struct type's parameter list: a type, a compile-time
+/// value, or an origin.
+///
+/// Part of a struct type's identity, so `FixedBuffer[8] != FixedBuffer[9]`.
+/// Origins participate in checked identity but erase from the runtime ABI,
+/// exactly like `Ty::Pointer` origins — a parameterized iterator's `origin`
+/// argument distinguishes checked types without changing lowering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TyArg {
     Ty(Ty),
@@ -861,9 +892,9 @@ impl TyArg {
     /// scope. Origins erase from runtime state and bind no value.
     pub fn ct_value(&self) -> Option<CtValue> {
         match self {
-            TyArg::Ty(ty) => Some(CtValue::Type(Box::new(ty.clone()))),
-            TyArg::Val(value) => Some(value.clone()),
-            TyArg::Origin(_) => None,
+            Self::Ty(ty) => Some(CtValue::Type(Box::new(ty.clone()))),
+            Self::Val(value) => Some(value.clone()),
+            Self::Origin(_) => None,
         }
     }
 }
@@ -871,9 +902,9 @@ impl TyArg {
 impl fmt::Display for TyArg {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TyArg::Ty(t) => write!(f, "{}", t),
-            TyArg::Val(v) => write!(f, "{}", v),
-            TyArg::Origin(o) => write!(f, "{}", o),
+            Self::Ty(t) => write!(f, "{t}"),
+            Self::Val(v) => write!(f, "{v}"),
+            Self::Origin(o) => write!(f, "{o}"),
         }
     }
 }
@@ -881,23 +912,23 @@ impl fmt::Display for TyArg {
 impl fmt::Display for Ty {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Ty::Int | Ty::IntLiteral => write!(f, "Int"),
-            Ty::UInt => write!(f, "UInt"),
-            Ty::Bool => write!(f, "Bool"),
-            Ty::StringLiteral => write!(f, "StringLiteral"),
-            Ty::Float64 | Ty::FloatLiteral => write!(f, "Float64"),
-            Ty::Infer => write!(f, "_"),
-            Ty::Dtype => write!(f, "DType"),
-            Ty::None => write!(f, "None"),
-            Ty::Never => write!(f, "Never"),
-            Ty::Func {
+            Self::Int | Self::IntLiteral => write!(f, "Int"),
+            Self::UInt => write!(f, "UInt"),
+            Self::Bool => write!(f, "Bool"),
+            Self::StringLiteral => write!(f, "StringLiteral"),
+            Self::Float64 | Self::FloatLiteral => write!(f, "Float64"),
+            Self::Infer => write!(f, "_"),
+            Self::Dtype => write!(f, "DType"),
+            Self::None => write!(f, "None"),
+            Self::Never => write!(f, "Never"),
+            Self::Func {
                 environment,
                 params,
                 ret,
                 raises,
                 ..
             }
-            | Ty::GenericFunc {
+            | Self::GenericFunc {
                 environment,
                 params,
                 ret,
@@ -907,7 +938,7 @@ impl fmt::Display for Ty {
                 // A generic contract renders its binders and trailing `where`
                 // constraints so a constrained-vs-unconstrained mismatch is
                 // visible in diagnostics.
-                if let Ty::GenericFunc { decls, .. } = self {
+                if let Self::GenericFunc { decls, .. } = self {
                     write!(f, "def[")?;
                     for (index, decl) in decls.iter().enumerate() {
                         if index > 0 {
@@ -931,7 +962,7 @@ impl fmt::Display for Ty {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", p)?;
+                    write!(f, "{p}")?;
                 }
                 write!(f, ")")?;
                 match environment {
@@ -942,7 +973,7 @@ impl fmt::Display for Ty {
                         match origins {
                             crate::origin::CaptureOriginSet::Infer => write!(f, "_")?,
                             crate::origin::CaptureOriginSet::Param(id) => {
-                                write!(f, "origin_set#{}", id.0)?
+                                write!(f, "origin_set#{}", id.0)?;
                             }
                             crate::origin::CaptureOriginSet::Concrete(members) => {
                                 for (index, capture) in members.iter().enumerate() {
@@ -954,23 +985,23 @@ impl fmt::Display for Ty {
                                     }
                                     match &capture.origin {
                                         crate::origin::Origin::Param(id) => {
-                                            write!(f, "origin#{}", id.0)?
+                                            write!(f, "origin#{}", id.0)?;
                                         }
                                         crate::origin::Origin::Place(place) => {
-                                            write!(f, "origin@{}", place.root.0)?
+                                            write!(f, "origin@{}", place.root.0)?;
                                         }
                                         crate::origin::Origin::SelfParam => {
-                                            write!(f, "origin_of(self)")?
+                                            write!(f, "origin_of(self)")?;
                                         }
                                         crate::origin::Origin::Static => write!(f, "static")?,
                                         crate::origin::Origin::Untracked { mutable: true } => {
-                                            write!(f, "mut-untracked")?
+                                            write!(f, "mut-untracked")?;
                                         }
                                         crate::origin::Origin::Untracked { mutable: false } => {
-                                            write!(f, "immut-untracked")?
+                                            write!(f, "immut-untracked")?;
                                         }
                                         crate::origin::Origin::Union(_) => {
-                                            write!(f, "origin-union")?
+                                            write!(f, "origin-union")?;
                                         }
                                     }
                                 }
@@ -982,8 +1013,8 @@ impl fmt::Display for Ty {
                 if *raises {
                     write!(f, " raises")?;
                 }
-                write!(f, " -> {}", ret)?;
-                if let Ty::GenericFunc { decls, .. } = self {
+                write!(f, " -> {ret}")?;
+                if let Self::GenericFunc { decls, .. } = self {
                     for decl in decls {
                         let (ParamDecl::Type { constraints, .. }
                         | ParamDecl::Value { constraints, .. }) = decl;
@@ -994,32 +1025,32 @@ impl fmt::Display for Ty {
                 }
                 Ok(())
             }
-            Ty::Overload(candidates) => {
+            Self::Overload(candidates) => {
                 write!(f, "overload(")?;
                 for (i, candidate) in candidates.iter().enumerate() {
                     if i > 0 {
                         write!(f, " | ")?;
                     }
-                    write!(f, "{}", candidate)?;
+                    write!(f, "{candidate}")?;
                 }
                 write!(f, ")")
             }
-            Ty::Param { name, .. } => write!(f, "{}", name),
-            Ty::Assoc { base, name, args } => {
-                write!(f, "{}.{}", base, name)?;
+            Self::Param { name, .. } => write!(f, "{name}"),
+            Self::Assoc { base, name, args } => {
+                write!(f, "{base}.{name}")?;
                 if !args.is_empty() {
                     write!(f, "[")?;
                     for (position, argument) in args.iter().enumerate() {
                         if position > 0 {
                             write!(f, ", ")?;
                         }
-                        write!(f, "{}", argument)?;
+                        write!(f, "{argument}")?;
                     }
                     write!(f, "]")?;
                 }
                 Ok(())
             }
-            Ty::Dependent(DependentType::Indexed { elements, index }) => {
+            Self::Dependent(DependentType::Indexed { elements, index }) => {
                 write!(f, "type_sequence[")?;
                 for (position, element) in elements.iter().enumerate() {
                     if position > 0 {
@@ -1029,54 +1060,54 @@ impl fmt::Display for Ty {
                 }
                 write!(f, "][{index:?}]")
             }
-            Ty::SelfType => write!(f, "Self"),
-            Ty::Simd { dtype, width: 1 } => match dtype.scalar_alias() {
-                Some(alias) => write!(f, "{}", alias),
+            Self::SelfType => write!(f, "Self"),
+            Self::Simd { dtype, width: 1 } => match dtype.scalar_alias() {
+                Some(alias) => write!(f, "{alias}"),
                 None => write!(f, "SIMD[DType.{}, 1]", dtype.name()),
             },
-            Ty::Simd { dtype, width } => write!(f, "SIMD[DType.{}, {}]", dtype.name(), width),
-            Ty::Error => write!(f, "Error"),
-            Ty::Pointer { element, origin } => {
+            Self::Simd { dtype, width } => write!(f, "SIMD[DType.{}, {}]", dtype.name(), width),
+            Self::Error => write!(f, "Error"),
+            Self::Pointer { element, origin } => {
                 write!(f, "Pointer[{element}")?;
                 match origin {
                     crate::origin::PointerOrigin::Place { place, .. } => {
-                        write!(f, ", origin@{}", place.root.0)?
+                        write!(f, ", origin@{}", place.root.0)?;
                     }
                     crate::origin::PointerOrigin::Param { id, .. } => {
-                        write!(f, ", origin#{}", id.0)?
+                        write!(f, ", origin#{}", id.0)?;
                     }
                     crate::origin::PointerOrigin::SelfPlace { .. } => {
-                        write!(f, ", origin_of(self)")?
+                        write!(f, ", origin_of(self)")?;
                     }
                     crate::origin::PointerOrigin::Static => write!(f, ", ImmStaticOrigin")?,
                     crate::origin::PointerOrigin::Untracked { mutable: true } => {
-                        write!(f, ", MutUntrackedOrigin")?
+                        write!(f, ", MutUntrackedOrigin")?;
                     }
                     crate::origin::PointerOrigin::Untracked { mutable: false } => {
-                        write!(f, ", ImmUntrackedOrigin")?
+                        write!(f, ", ImmUntrackedOrigin")?;
                     }
                     crate::origin::PointerOrigin::UnsafeAny { mutable: true } => {
-                        write!(f, ", MutUnsafeAnyOrigin")?
+                        write!(f, ", MutUnsafeAnyOrigin")?;
                     }
                     crate::origin::PointerOrigin::UnsafeAny { mutable: false } => {
-                        write!(f, ", ImmUnsafeAnyOrigin")?
+                        write!(f, ", ImmUnsafeAnyOrigin")?;
                     }
                 }
                 write!(f, "]")
             }
-            Ty::Ref(reference) => write!(f, "ref {}", reference.referent),
-            Ty::ComptimeList(elem) => write!(f, "<comptime-list[{elem}]>"),
-            Ty::Tuple(elems) => {
+            Self::Ref(reference) => write!(f, "ref {}", reference.referent),
+            Self::ComptimeList(elem) => write!(f, "<comptime-list[{elem}]>"),
+            Self::Tuple(elems) => {
                 write!(f, "Tuple[")?;
                 for (i, t) in elems.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", t)?;
+                    write!(f, "{t}")?;
                 }
                 write!(f, "]")
             }
-            Ty::RuntimePack(elems) => {
+            Self::RuntimePack(elems) => {
                 write!(f, "$pack[")?;
                 for (i, t) in elems.iter().enumerate() {
                     if i > 0 {
@@ -1086,31 +1117,31 @@ impl fmt::Display for Ty {
                 }
                 write!(f, "]")
             }
-            Ty::VariadicPack(element) => write!(f, "$variadic[{element}]"),
-            Ty::Variant(alternatives) => {
+            Self::VariadicPack(element) => write!(f, "$variadic[{element}]"),
+            Self::Variant(alternatives) => {
                 write!(f, "Variant[")?;
                 for (i, ty) in alternatives.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", ty)?;
+                    write!(f, "{ty}")?;
                 }
                 write!(f, "]")
             }
-            Ty::Struct(name, args) => {
+            Self::Struct(name, args) => {
                 // The prelude-qualified nominal String prints its public
                 // spelling rather than leaking the module-qualified symbol.
                 if args.is_empty() && is_stdlib_string_struct(name) {
                     return write!(f, "String");
                 }
-                write!(f, "{}", name)?;
+                write!(f, "{name}")?;
                 if !args.is_empty() {
                     write!(f, "[")?;
                     for (i, a) in args.iter().enumerate() {
                         if i > 0 {
                             write!(f, ", ")?;
                         }
-                        write!(f, "{}", a)?;
+                        write!(f, "{a}")?;
                     }
                     write!(f, "]")?;
                 }
@@ -1145,13 +1176,16 @@ pub fn value_coerces(from: &Ty, to: &Ty) -> bool {
     coerces(from, to)
 }
 
-/// The (canonicalized) `Ty` for a SIMD of `dtype`/`width`: a width-1 `int`
-/// is the native `Ty::Int` and a width-1 `float64` the native `Ty::Float64`
-/// (Mojo unifies `Int`/`Float64` with their `SIMD[..., 1]` spellings);
-/// everything else is a `Ty::Simd`. Every phase that names a SIMD leaf type
-/// (checker annotations, the VM's runtime leaf classification, the hasher
-/// clone names) agrees through this one function.
-pub fn canonical_simd_ty(dtype: Dtype, width: i64) -> Ty {
+/// The (canonicalized) `Ty` for a SIMD of `dtype`/`width`.
+///
+/// A width-1 `int` is the native `Ty::Int` and a width-1 `float64` the native
+/// `Ty::Float64` (Mojo unifies `Int`/`Float64` with their `SIMD[..., 1]`
+/// spellings); everything else is a `Ty::Simd`.
+///
+/// Every phase that names a SIMD leaf type (checker annotations, the VM's
+/// runtime leaf classification, the hasher clone names) agrees through this
+/// one function.
+pub const fn canonical_simd_ty(dtype: Dtype, width: i64) -> Ty {
     match (dtype, width) {
         (Dtype::Int, 1) => Ty::Int,
         (Dtype::Float64, 1) => Ty::Float64,
@@ -1161,9 +1195,11 @@ pub fn canonical_simd_ty(dtype: Dtype, width: i64) -> Ty {
 
 /// The `(dtype, width)` shape of a SIMD-valued type — the native numeric
 /// scalars are width-1 vectors of their dtype (`UInt` reports `uint64`, its
-/// bit width) — or `None` for a non-SIMD type. `Bool` is not a SIMD value
-/// (upstream's `Bool` is its own struct; `Scalar[DType.bool]` is the vector).
-pub fn simd_shape(ty: &Ty) -> Option<(Dtype, i64)> {
+/// bit width) — or `None` for a non-SIMD type.
+///
+/// `Bool` is not a SIMD value (upstream's `Bool` is its own struct;
+/// `Scalar[DType.bool]` is the vector).
+pub const fn simd_shape(ty: &Ty) -> Option<(Dtype, i64)> {
     Some(match ty {
         Ty::Int | Ty::IntLiteral => (Dtype::Int, 1),
         Ty::UInt => (Dtype::UInt64, 1),
@@ -1202,9 +1238,15 @@ pub fn default_literal(ty: &Ty) -> Ty {
     }
 }
 
-/// Whether a value of type `from` can be used where `to` is required. Only the
-/// literal types coerce (to the concrete numeric types, or `IntLiteral` up to
-/// `FloatLiteral`); everything else must match exactly.
+/// Whether a value of type `from` can be used where `to` is required.
+///
+/// Only the literal types coerce (to the concrete numeric types, or
+/// `IntLiteral` up to `FloatLiteral`); everything else must match exactly.
+///
+/// # Panics
+///
+/// Panics if the `Tuple` guard above admits a type without element types,
+/// which the type lattice forbids.
 pub fn coerces(from: &Ty, to: &Ty) -> bool {
     if *from == Ty::Never {
         return true;
@@ -1357,8 +1399,10 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
 }
 
 /// Whether a value of type `ty` can be a `dtype` SIMD element (a construction
-/// argument, or the non-SIMD operand of an elementwise operator that splats). A
-/// numeric literal fits any matching-kind lane; a same-dtype width-1 SIMD fits.
+/// argument, or the non-SIMD operand of an elementwise operator that splats).
+///
+/// A numeric literal fits any matching-kind lane; a same-dtype width-1 SIMD
+/// fits.
 pub fn splats_to(ty: &Ty, dtype: Dtype) -> bool {
     match ty {
         Ty::IntLiteral => dtype != Dtype::Bool,
@@ -1372,10 +1416,13 @@ pub fn splats_to(ty: &Ty, dtype: Dtype) -> bool {
     }
 }
 
-/// The value-coercion policy for callable environments: current Mojo rejects
-/// binding a capturing closure to an unqualified `def(...)` value position —
-/// the contract must spell `capturing[...]` — while a thin function value
-/// still binds. Comptime callable *bounds* stay on the permissive
+/// The value-coercion policy for callable environments.
+///
+/// Current Mojo rejects binding a capturing closure to an unqualified
+/// `def(...)` value position — the contract must spell `capturing[...]` —
+/// while a thin function value still binds.
+///
+/// Comptime callable *bounds* stay on the permissive
 /// `callable_environment_coerces` below.
 pub fn callable_environment_value_coerces(
     from: &crate::origin::CallableEnvironment,
@@ -1431,13 +1478,14 @@ pub fn callable_environment_coerces(
 }
 
 /// Whether a *concrete* built-in type has an intrinsic `__hash__` — the scalar
-/// set the VM can hash directly (`Int`/`UInt`/`Bool`/`String`/`Float64`). This
-/// lets a user key struct combine `self.field.__hash__()` values.
-/// Whether `Copyable.copy` on a value of this type has no callee: built-in
-/// scalars, literals, tuples, packs, and variants copy by the ordinary value
-/// read. Nominal, parametric, associated, and reference types resolve their
-/// `copy` through declarations or trait dispatch instead.
-pub fn builtin_copy_is_value_read(ty: &Ty) -> bool {
+/// set the VM can hash directly (`Int`/`UInt`/`Bool`/`String`/`Float64`).
+///
+/// This lets a user key struct combine `self.field.__hash__()` values. Whether
+/// `Copyable.copy` on a value of this type has no callee: built-in scalars,
+/// literals, tuples, packs, and variants copy by the ordinary value read.
+/// Nominal, parametric, associated, and reference types resolve their `copy`
+/// through declarations or trait dispatch instead.
+pub const fn builtin_copy_is_value_read(ty: &Ty) -> bool {
     !matches!(
         ty,
         Ty::Struct(..)
@@ -1466,13 +1514,15 @@ pub fn callable_contract_ty(ty: &Ty) -> Option<&Ty> {
 }
 
 /// Whether a concrete monomorphic callable implementation fulfills an
-/// anonymous `def(...)` trait contract. This is intentionally directional:
-/// non-raising/read-only implementations may fulfill raising/mutable contracts,
-/// but not vice versa. Binder constraints are directional the other way
-/// (upstream 2026-08): every `where` constraint the implementation declares
-/// must be declared by the contract — otherwise calls through the contract
-/// could violate the implementation's precondition — while an unconstrained
-/// implementation may serve a constrained contract.
+/// anonymous `def(...)` trait contract.
+///
+/// This is intentionally directional: non-raising/read-only implementations
+/// may fulfill raising/mutable contracts, but not vice versa. Binder
+/// constraints are directional the other way (upstream 2026-08): every `where`
+/// constraint the implementation declares must be declared by the contract —
+/// otherwise calls through the contract could violate the implementation's
+/// precondition — while an unconstrained implementation may serve a
+/// constrained contract.
 pub fn callable_bound_accepts(actual: &Ty, contract: &Ty) -> bool {
     if matches!(actual, Ty::GenericFunc { .. }) || matches!(contract, Ty::GenericFunc { .. }) {
         let (Some((actual_decls, actual)), Some((contract_decls, contract))) = (
@@ -1485,7 +1535,7 @@ pub fn callable_bound_accepts(actual: &Ty, contract: &Ty) -> bool {
             let mut decl = decl.clone();
             match &mut decl {
                 ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
-                    constraints.clear()
+                    constraints.clear();
                 }
             }
             decl
@@ -1580,7 +1630,7 @@ pub fn callable_bound_accepts(actual: &Ty, contract: &Ty) -> bool {
         && actual_ref_return == contract_ref_return
         && (!*actual_raises || *contract_raises)
         && match (actual_error.as_deref(), contract_error.as_deref()) {
-            (None, _) | (Some(Ty::Never), _) => true,
+            (None | Some(Ty::Never), _) => true,
             (Some(_), None) => false,
             (Some(actual), Some(Ty::Error)) => actual != &Ty::Never,
             (Some(actual), Some(contract)) => actual == contract,
@@ -1588,10 +1638,12 @@ pub fn callable_bound_accepts(actual: &Ty, contract: &Ty) -> bool {
 }
 
 /// Alpha-normalize a generic anonymous callable into its declaration list and
-/// a monomorphic callable shape whose parameter occurrences use canonical
-/// `$N` names.  Generic callable compatibility can then reuse the ordinary
-/// directional callable-contract rules without making source binder spelling
-/// part of the type identity.
+/// a monomorphic callable shape whose parameter occurrences use canonical `$N`
+/// names.
+///
+/// Generic callable compatibility can then reuse the ordinary directional
+/// callable-contract rules without making source binder spelling part of the
+/// type identity.
 pub fn erase_generic_callable_binders(callable: &Ty) -> Option<(Vec<ParamDecl>, Ty)> {
     let Ty::GenericFunc {
         environment,
@@ -1784,6 +1836,7 @@ pub fn canonical_generic_signature(
 
 /// Replace every `Ty::Param` in `ty` with its solution from `subst` (leaving an
 /// unsolved parameter untouched). Recurses into struct type arguments.
+#[allow(clippy::implicit_hasher, reason = "TODO: generalize over BuildHasher")]
 pub fn substitute(ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
     match ty {
         Ty::Param {
@@ -1975,10 +2028,13 @@ pub fn substitute(ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
 }
 
 /// Alpha-rename compile-time value binders referenced by structural dependent
-/// types. Type-parameter substitution and value-parameter renaming are kept
-/// separate: a value binder occurs inside [`CtExpr`], never as `Ty::Param`.
-/// Nested generic callable declarations shadow an outer binder of the same
-/// spelling, so only genuinely free references are renamed while descending.
+/// types.
+///
+/// Type-parameter substitution and value-parameter renaming are kept separate:
+/// a value binder occurs inside [`CtExpr`], never as `Ty::Param`. Nested
+/// generic callable declarations shadow an outer binder of the same spelling,
+/// so only genuinely free references are renamed while descending.
+#[allow(clippy::implicit_hasher, reason = "TODO: generalize over BuildHasher")]
 pub fn rename_dependent_parameters(ty: &Ty, names: &HashMap<String, String>) -> Ty {
     match ty {
         Ty::Param {
@@ -2203,10 +2259,12 @@ pub fn map_tyargs(args: &[TyArg], mut f: impl FnMut(&Ty) -> Ty) -> Vec<TyArg> {
         .collect()
 }
 
-/// Alpha-rename the binder references inside one canonicalized constraint:
+/// Alpha-rename the binder references inside one canonicalized constraint.
+///
 /// `param`-shaped fields rename through `binder_names` (falling back to the
 /// pack-trimmed spelling), and embedded types canonicalize exactly like
 /// signature types.
+#[allow(clippy::implicit_hasher, reason = "TODO: generalize over BuildHasher")]
 pub fn rename_constraint_parameters(
     constraint: &GenericConstraint,
     binder_names: &HashMap<String, String>,
@@ -2308,10 +2366,12 @@ pub fn is_stdlib_string_struct(name: &str) -> bool {
     name == "String" || name == STDLIB_STRING_STRUCT
 }
 
-/// The bundled borrowed string view. Unlike `String`, `StringSpan` is
-/// prelude-bare in MIR (no module-qualified takeover identity), so its bare
-/// name is its checked identity — a user struct spelled `StringSpan` shadows
-/// it, the caveat the other stdlib collection name lists share.
+/// The bundled borrowed string view.
+///
+/// Unlike `String`, `StringSpan` is prelude-bare in MIR (no module-qualified
+/// takeover identity), so its bare name is its checked identity — a user
+/// struct spelled `StringSpan` shadows it, the caveat the other stdlib
+/// collection name lists share.
 pub const STDLIB_STRING_SPAN_STRUCT: &str = "StringSpan";
 
 /// Whether `name` is the bundled `StringSpan` view struct, whose
@@ -2320,16 +2380,18 @@ pub fn is_stdlib_string_span_struct(name: &str) -> bool {
     name == STDLIB_STRING_SPAN_STRUCT
 }
 
-/// Whether `name` is the bundled `FileDescriptor` struct (`std.io`), the
-/// only accepted `file=` argument of `print`. Its checked identity is the
-/// linker's module-qualified spelling of `std/io/file_descriptor.mojo`; the
-/// bare name is the prelude spelling and shares the other stdlib name lists'
-/// shadowing caveat.
+/// Whether `name` is the bundled `FileDescriptor` struct (`std.io`), the only
+/// accepted `file=` argument of `print`.
+///
+/// Its checked identity is the linker's module-qualified spelling of
+/// `std/io/file_descriptor.mojo`; the bare name is the prelude spelling and
+/// shares the other stdlib name lists' shadowing caveat.
 pub fn is_stdlib_file_descriptor_struct(name: &str) -> bool {
     name == "FileDescriptor" || name.ends_with("file$descriptor$FileDescriptor")
 }
 
 /// Identity of one checked declaration, stable across the checked program.
+///
 /// Defined here (below the checked handoff) so symbol mangling can spell
 /// declaration-qualified names without depending on the handoff crate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

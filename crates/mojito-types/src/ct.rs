@@ -31,11 +31,11 @@ pub enum CtLane {
 impl CtLane {
     /// Wrap a compile-time scalar into one lane of `dtype`, or `None` when
     /// the value kind does not fit the lane (a float into an integer lane).
-    pub fn from_value(value: &CtValue, dtype: mojito_ast::ast::Dtype) -> Option<CtLane> {
+    pub fn from_value(value: &CtValue, dtype: mojito_ast::ast::Dtype) -> Option<Self> {
         use mojito_ast::ast::Dtype;
         match dtype {
             Dtype::Bool => match value {
-                CtValue::Bool(value) => Some(CtLane::Bool(*value)),
+                CtValue::Bool(value) => Some(Self::Bool(*value)),
                 _ => None,
             },
             Dtype::Float32 | Dtype::Float64 => {
@@ -52,7 +52,7 @@ impl CtLane {
                 } else {
                     value
                 };
-                Some(CtLane::Float(value.to_bits()))
+                Some(Self::Float(value.to_bits()))
             }
             integer => {
                 let wide: i128 = match value {
@@ -62,7 +62,7 @@ impl CtLane {
                     CtValue::Bool(value) => i128::from(*value),
                     _ => return None,
                 };
-                Some(CtLane::Int(wrap_lane(integer, wide)))
+                Some(Self::Int(wrap_lane(integer, wide)))
             }
         }
     }
@@ -85,10 +85,12 @@ pub fn wrap_lane(dtype: mojito_ast::ast::Dtype, value: i128) -> i128 {
     }
 }
 
-/// A compile-time value. Scalar values drive folding; `Tuple`/`List`
-/// let `comptime for` iterate compile-time collections; `Type` carries a
-/// semantic type for associated comptime members; `Param` is a symbolic value
-/// parameter while a generic body is being checked.
+/// A compile-time value.
+///
+/// Scalar values drive folding; `Tuple`/`List` let `comptime for` iterate
+/// compile-time collections; `Type` carries a semantic type for associated
+/// comptime members; `Param` is a symbolic value parameter while a generic
+/// body is being checked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CtValue {
     /// An already-materialized machine `Int` compile-time value. Compiler
@@ -104,8 +106,8 @@ pub enum CtValue {
     FloatLiteral(FloatLiteral),
     Bool(bool),
     Str(String),
-    Tuple(Vec<CtValue>),
-    List(Vec<CtValue>),
+    Tuple(Vec<Self>),
+    List(Vec<Self>),
     /// A compile-time dictionary display (`comptime M = {"a": 1}`):
     /// insertion-ordered entries deduplicated by structural key equality (a
     /// later duplicate key replaces the value in place, as `Dict.__setitem__`
@@ -116,12 +118,12 @@ pub enum CtValue {
     /// which the checker types with the default hasher.
     Dict {
         spelling: Option<Box<Ty>>,
-        entries: Vec<(CtValue, CtValue)>,
+        entries: Vec<(Self, Self)>,
     },
     /// A compile-time set display (`comptime S = {1, 2, 3}`); see `Dict`.
     Set {
         spelling: Option<Box<Ty>>,
-        elements: Vec<CtValue>,
+        elements: Vec<Self>,
     },
     /// A `DType.<dt>` compile-time value — the binding of a `[dtype: DType]`
     /// value parameter. Materializes as the member spelling, which type
@@ -143,7 +145,7 @@ pub enum CtValue {
     /// construction call.
     Struct {
         name: String,
-        fields: Vec<(String, CtValue)>,
+        fields: Vec<(String, Self)>,
     },
     Type(Box<Ty>),
     /// The zero-sized compile-time handle produced by current Mojo's
@@ -158,13 +160,13 @@ pub enum CtValue {
 pub enum CtExpr {
     Value(CtValue),
     Param(String),
-    Neg(Box<CtExpr>),
-    Add(Box<CtExpr>, Box<CtExpr>),
-    Sub(Box<CtExpr>, Box<CtExpr>),
-    Mul(Box<CtExpr>, Box<CtExpr>),
-    FloorDiv(Box<CtExpr>, Box<CtExpr>),
-    Mod(Box<CtExpr>, Box<CtExpr>),
-    Pow(Box<CtExpr>, Box<CtExpr>),
+    Neg(Box<Self>),
+    Add(Box<Self>, Box<Self>),
+    Sub(Box<Self>, Box<Self>),
+    Mul(Box<Self>, Box<Self>),
+    FloorDiv(Box<Self>, Box<Self>),
+    Mod(Box<Self>, Box<Self>),
+    Pow(Box<Self>, Box<Self>),
 }
 
 impl CtExpr {
@@ -172,7 +174,7 @@ impl CtExpr {
     /// The verifier uses this to reject dependent types whose index escaped its
     /// generic declaration scope.
     pub fn referenced_parameters(&self, output: &mut std::collections::HashSet<String>) {
-        use CtExpr::*;
+        use CtExpr::{Add, FloorDiv, Mod, Mul, Neg, Param, Pow, Sub, Value};
         match self {
             Param(name) => {
                 output.insert(name.clone());
@@ -192,8 +194,9 @@ impl CtExpr {
     }
 
     /// Alpha-rename symbolic binders while preserving the expression tree.
+    #[must_use]
     pub fn rename_parameters(&self, names: &std::collections::HashMap<String, String>) -> Self {
-        use CtExpr::*;
+        use CtExpr::{Add, FloorDiv, Mod, Mul, Neg, Param, Pow, Sub, Value};
         match self {
             Value(value) => Value(value.clone()),
             Param(name) => Param(names.get(name).cloned().unwrap_or_else(|| name.clone())),
@@ -229,7 +232,7 @@ impl CtExpr {
         &self,
         parameters: &std::collections::HashMap<String, CtValue>,
     ) -> Option<CtValue> {
-        use CtExpr::*;
+        use CtExpr::{Add, FloorDiv, Mod, Mul, Neg, Param, Pow, Sub, Value};
         match self {
             Value(value) => Some(value.clone()),
             Param(name) => parameters.get(name).cloned(),
@@ -254,32 +257,24 @@ impl CtExpr {
                 (CtValue::Str(left), CtValue::Str(right)) => Some(CtValue::Str(left + &right)),
                 _ => None,
             },
-            Sub(left, right) => int_binary(
-                left,
-                right,
-                parameters,
-                |a, b| a.checked_sub(b),
-                |a, b| Some(a.sub(b)),
-            ),
-            Mul(left, right) => int_binary(
-                left,
-                right,
-                parameters,
-                |a, b| a.checked_mul(b),
-                |a, b| Some(a.mul(b)),
-            ),
+            Sub(left, right) => int_binary(left, right, parameters, i64::checked_sub, |a, b| {
+                Some(a.sub(b))
+            }),
+            Mul(left, right) => int_binary(left, right, parameters, i64::checked_mul, |a, b| {
+                Some(a.mul(b))
+            }),
             FloorDiv(left, right) => int_binary(
                 left,
                 right,
                 parameters,
-                |a, b| a.checked_div_euclid(b),
+                i64::checked_div_euclid,
                 IntLiteral::floor_div,
             ),
             Mod(left, right) => int_binary(
                 left,
                 right,
                 parameters,
-                |a, b| a.checked_rem_euclid(b),
+                i64::checked_rem_euclid,
                 IntLiteral::floor_mod,
             ),
             Pow(left, right) => int_binary(
@@ -318,8 +313,8 @@ fn int_binary(
 impl CtValue {
     /// A compile-time dictionary from display-ordered entries: a repeated key
     /// keeps its first position and takes the last value.
-    pub fn dict(spelling: Option<Ty>, entries: Vec<(CtValue, CtValue)>) -> Self {
-        let mut deduplicated: Vec<(CtValue, CtValue)> = Vec::with_capacity(entries.len());
+    pub fn dict(spelling: Option<Ty>, entries: Vec<(Self, Self)>) -> Self {
+        let mut deduplicated: Vec<(Self, Self)> = Vec::with_capacity(entries.len());
         for (key, value) in entries {
             match deduplicated
                 .iter_mut()
@@ -329,21 +324,21 @@ impl CtValue {
                 None => deduplicated.push((key, value)),
             }
         }
-        CtValue::Dict {
+        Self::Dict {
             spelling: spelling.map(Box::new),
             entries: deduplicated,
         }
     }
 
     /// A compile-time set from display-ordered elements, first occurrence kept.
-    pub fn set(spelling: Option<Ty>, elements: Vec<CtValue>) -> Self {
-        let mut deduplicated: Vec<CtValue> = Vec::with_capacity(elements.len());
+    pub fn set(spelling: Option<Ty>, elements: Vec<Self>) -> Self {
+        let mut deduplicated: Vec<Self> = Vec::with_capacity(elements.len());
         for element in elements {
             if !deduplicated.contains(&element) {
                 deduplicated.push(element);
             }
         }
-        CtValue::Set {
+        Self::Set {
             spelling: spelling.map(Box::new),
             elements: deduplicated,
         }
@@ -352,11 +347,8 @@ impl CtValue {
     /// Whether this value is a collection that is not implicitly copyable at
     /// runtime (`Array`/`List`, `Dict`, `Set`): it never crosses to runtime
     /// implicitly and needs an explicit `materialize[...]()`.
-    pub fn is_runtime_collection(&self) -> bool {
-        matches!(
-            self,
-            CtValue::List(_) | CtValue::Dict { .. } | CtValue::Set { .. }
-        )
+    pub const fn is_runtime_collection(&self) -> bool {
+        matches!(self, Self::List(_) | Self::Dict { .. } | Self::Set { .. })
     }
 
     /// The spelling of the runtime type an un-annotated binding of this value
@@ -364,32 +356,33 @@ impl CtValue {
     /// `Array[T, Int(n)]`), or `None` for a compile-time-only value.
     pub fn runtime_type_text(&self) -> Option<String> {
         Some(match self {
-            CtValue::Int(_) | CtValue::IntLiteral(_) => "Int".to_string(),
-            CtValue::UInt(_) => "UInt".to_string(),
-            CtValue::Float(_) | CtValue::FloatLiteral(_) => "Float64".to_string(),
-            CtValue::Bool(_) => "Bool".to_string(),
-            CtValue::Str(_) => "String".to_string(),
-            CtValue::Dtype(_) => "DType".to_string(),
-            CtValue::Simd { dtype, lanes } => {
+            Self::Int(_) | Self::IntLiteral(_) => "Int".to_string(),
+            Self::UInt(_) => "UInt".to_string(),
+            Self::Float(_) | Self::FloatLiteral(_) => "Float64".to_string(),
+            Self::Bool(_) => "Bool".to_string(),
+            Self::Str(_) => "String".to_string(),
+            Self::Dtype(_) => "DType".to_string(),
+            Self::Simd { dtype, lanes } => {
                 format!("SIMD[DType.{}, {}]", dtype.name(), lanes.len())
             }
-            CtValue::Struct { name, .. } => name.clone(),
-            CtValue::Tuple(values) => format!(
+            Self::Struct { name, .. } => name.clone(),
+            Self::Tuple(values) => format!(
                 "Tuple[{}]",
                 values
                     .iter()
-                    .map(CtValue::runtime_type_text)
+                    .map(Self::runtime_type_text)
                     .collect::<Option<Vec<_>>>()?
                     .join(", ")
             ),
-            CtValue::List(values) => format!(
+            Self::List(values) => format!(
                 "Array[{}, Int({})]",
                 values.first()?.runtime_type_text()?,
                 values.len()
             ),
-            CtValue::Dict { spelling, entries } => match spelling {
-                Some(ty) => ty.to_string(),
-                None => {
+            Self::Dict { spelling, entries } => {
+                if let Some(ty) = spelling {
+                    ty.to_string()
+                } else {
                     let (key, value) = entries.first()?;
                     format!(
                         "Dict[{}, {}]",
@@ -397,12 +390,12 @@ impl CtValue {
                         value.runtime_type_text()?
                     )
                 }
-            },
-            CtValue::Set { spelling, elements } => match spelling {
+            }
+            Self::Set { spelling, elements } => match spelling {
                 Some(ty) => ty.to_string(),
                 None => format!("Set[{}]", elements.first()?.runtime_type_text()?),
             },
-            CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Param(_) => return None,
+            Self::Type(_) | Self::Reflected(_) | Self::Param(_) => return None,
         })
     }
 
@@ -410,63 +403,66 @@ impl CtValue {
     /// declared scalar type. Values which are already materialized are kept as
     /// is. This is the checked boundary used by value parameters and defaults;
     /// it deliberately leaves uncontextualized literal values exact.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the `List` guard above admits a target without an element
+    /// type, which the type lattice forbids.
     pub fn materialize_as(self, ty: &Ty) -> Option<Self> {
         match (self, ty) {
-            (value @ CtValue::Int(_), Ty::Int)
-            | (value @ CtValue::UInt(_), Ty::UInt)
-            | (value @ CtValue::Float(_), Ty::Float64)
-            | (value @ CtValue::IntLiteral(_), Ty::IntLiteral)
-            | (value @ CtValue::FloatLiteral(_), Ty::FloatLiteral)
-            | (value @ CtValue::Bool(_), Ty::Bool)
-            | (value @ CtValue::Str(_), Ty::StringLiteral) => Some(value),
+            (value @ Self::Int(_), Ty::Int)
+            | (value @ Self::UInt(_), Ty::UInt)
+            | (value @ Self::Float(_), Ty::Float64)
+            | (value @ Self::IntLiteral(_), Ty::IntLiteral)
+            | (value @ Self::FloatLiteral(_), Ty::FloatLiteral)
+            | (value @ Self::Bool(_), Ty::Bool)
+            | (value @ Self::Str(_), Ty::StringLiteral) => Some(value),
             // A string literal is the nominal `String`'s compile-time form
             // (`comptime E: Dict[String, Int] = {"a": 1}`).
-            (value @ CtValue::Str(_), Ty::Struct(name, args))
+            (value @ Self::Str(_), Ty::Struct(name, args))
                 if args.is_empty() && crate::types::is_stdlib_string_struct(name) =>
             {
                 Some(value)
             }
-            (value @ CtValue::Dtype(_), Ty::Dtype) => Some(value),
+            (value @ Self::Dtype(_), Ty::Dtype) => Some(value),
             (
-                value @ CtValue::Simd { .. },
+                value @ Self::Simd { .. },
                 Ty::Simd {
                     dtype: target,
                     width,
                 },
             ) => {
-                let CtValue::Simd { dtype, lanes } = &value else {
+                let Self::Simd { dtype, lanes } = &value else {
                     unreachable!("guard established a SIMD value");
                 };
                 (dtype == target && lanes.len() as i64 == *width).then_some(value)
             }
-            (value @ CtValue::Struct { .. }, Ty::Struct(target, _)) => {
-                let CtValue::Struct { name, .. } = &value else {
+            (value @ Self::Struct { .. }, Ty::Struct(target, _)) => {
+                let Self::Struct { name, .. } = &value else {
                     unreachable!("guard established a struct value");
                 };
                 (name == target).then_some(value)
             }
-            (CtValue::IntLiteral(value), Ty::Int) => value.wrapping_signed(64).map(CtValue::Int),
-            (CtValue::IntLiteral(value), Ty::UInt) => {
-                value.wrapping_unsigned(64).map(CtValue::UInt)
+            (Self::IntLiteral(value), Ty::Int) => value.wrapping_signed(64).map(CtValue::Int),
+            (Self::IntLiteral(value), Ty::UInt) => value.wrapping_unsigned(64).map(CtValue::UInt),
+            (Self::IntLiteral(value), Ty::Float64) => {
+                value.to_f64().map(|value| Self::Float(value.to_bits()))
             }
-            (CtValue::IntLiteral(value), Ty::Float64) => {
-                value.to_f64().map(|value| CtValue::Float(value.to_bits()))
+            (Self::FloatLiteral(value), Ty::Float64) => {
+                value.to_f64().map(|value| Self::Float(value.to_bits()))
             }
-            (CtValue::FloatLiteral(value), Ty::Float64) => {
-                value.to_f64().map(|value| CtValue::Float(value.to_bits()))
-            }
-            (CtValue::Tuple(values), Ty::Tuple(types)) if values.len() == types.len() => values
+            (Self::Tuple(values), Ty::Tuple(types)) if values.len() == types.len() => values
                 .into_iter()
                 .zip(types)
                 .map(|(value, ty)| value.materialize_as(ty))
                 .collect::<Option<Vec<_>>>()
                 .map(CtValue::Tuple),
-            (CtValue::List(values), Ty::ComptimeList(element)) => values
+            (Self::List(values), Ty::ComptimeList(element)) => values
                 .into_iter()
                 .map(|value| value.materialize_as(element))
                 .collect::<Option<Vec<_>>>()
                 .map(CtValue::List),
-            (CtValue::List(values), target) if list_element(target).is_some() => {
+            (Self::List(values), target) if list_element(target).is_some() => {
                 let element = list_element(target).expect("guard established List element");
                 values
                     .into_iter()
@@ -474,7 +470,7 @@ impl CtValue {
                     .collect::<Option<Vec<_>>>()
                     .map(CtValue::List)
             }
-            (CtValue::Dict { entries, .. }, target) if dict_elements(target).is_some() => {
+            (Self::Dict { entries, .. }, target) if dict_elements(target).is_some() => {
                 let (key_ty, value_ty) =
                     dict_elements(target).expect("guard established Dict elements");
                 let entries = entries
@@ -483,17 +479,17 @@ impl CtValue {
                         Some((key.materialize_as(key_ty)?, value.materialize_as(value_ty)?))
                     })
                     .collect::<Option<Vec<_>>>()?;
-                Some(CtValue::dict(Some(target.clone()), entries))
+                Some(Self::dict(Some(target.clone()), entries))
             }
-            (CtValue::Set { elements, .. }, target) if set_element(target).is_some() => {
+            (Self::Set { elements, .. }, target) if set_element(target).is_some() => {
                 let element_ty = set_element(target).expect("guard established Set element");
                 let elements = elements
                     .into_iter()
                     .map(|element| element.materialize_as(element_ty))
                     .collect::<Option<Vec<_>>>()?;
-                Some(CtValue::set(Some(target.clone()), elements))
+                Some(Self::set(Some(target.clone()), elements))
             }
-            (CtValue::Tuple(values), target)
+            (Self::Tuple(values), target)
                 if tuple_elements(target).is_some_and(|types| types.len() == values.len()) =>
             {
                 values
@@ -511,19 +507,19 @@ impl CtValue {
     /// runtime form (a symbolic `Param`, or a collection containing one).
     pub fn materialize(&self, span: Span) -> Option<Expr> {
         let kind = match self {
-            CtValue::Int(n) => ExprKind::Int(IntLiteral::from(*n)),
-            CtValue::UInt(n) => ExprKind::Int(IntLiteral::from(*n)),
-            CtValue::Float(bits) => ExprKind::Float(FloatLiteral::from_f64(f64::from_bits(*bits))?),
-            CtValue::IntLiteral(value) => ExprKind::Int(value.clone()),
-            CtValue::FloatLiteral(value) => ExprKind::Float(value.clone()),
-            CtValue::Bool(b) => ExprKind::Bool(*b),
-            CtValue::Str(s) => ExprKind::Str(s.clone()),
-            CtValue::Tuple(vs) => ExprKind::TupleLit(materialize_all(vs, span)?),
-            CtValue::List(vs) => ExprKind::ListLit(materialize_all(vs, span)?),
+            Self::Int(n) => ExprKind::Int(IntLiteral::from(*n)),
+            Self::UInt(n) => ExprKind::Int(IntLiteral::from(*n)),
+            Self::Float(bits) => ExprKind::Float(FloatLiteral::from_f64(f64::from_bits(*bits))?),
+            Self::IntLiteral(value) => ExprKind::Int(value.clone()),
+            Self::FloatLiteral(value) => ExprKind::Float(value.clone()),
+            Self::Bool(b) => ExprKind::Bool(*b),
+            Self::Str(s) => ExprKind::Str(s.clone()),
+            Self::Tuple(vs) => ExprKind::TupleLit(materialize_all(vs, span)?),
+            Self::List(vs) => ExprKind::ListLit(materialize_all(vs, span)?),
             // The bare display, or the explicit literal constructor
             // `Dict[K, V, H](keys, values, None)` when the value was spelled
             // with one (an empty explicit dict is `Dict[K, V]()`).
-            CtValue::Dict { spelling, entries } => match spelling {
+            Self::Dict { spelling, entries } => match spelling {
                 None => ExprKind::BraceLit(
                     entries
                         .iter()
@@ -548,9 +544,8 @@ impl CtValue {
                         else {
                             return None;
                         };
-                        let keys: Vec<&CtValue> = entries.iter().map(|(key, _)| key).collect();
-                        let values: Vec<&CtValue> =
-                            entries.iter().map(|(_, value)| value).collect();
+                        let keys: Vec<&Self> = entries.iter().map(|(key, _)| key).collect();
+                        let values: Vec<&Self> = entries.iter().map(|(_, value)| value).collect();
                         vec![
                             list_construction(key_ty.clone(), materialize_refs(&keys, span)?, span),
                             list_construction(
@@ -569,7 +564,7 @@ impl CtValue {
                     }
                 }
             },
-            CtValue::Set { spelling, elements } => match spelling {
+            Self::Set { spelling, elements } => match spelling {
                 None => ExprKind::BraceLit(
                     elements
                         .iter()
@@ -596,7 +591,7 @@ impl CtValue {
                     }
                 }
             },
-            CtValue::Dtype(dtype) => ExprKind::Member {
+            Self::Dtype(dtype) => ExprKind::Member {
                 object: Box::new(Expr {
                     kind: ExprKind::Identifier("DType".to_string()),
                     span,
@@ -606,19 +601,19 @@ impl CtValue {
                 field: dtype.name().to_string(),
             },
             // The explicit construction `SIMD[DType.d, w](l0, l1, ...)`.
-            CtValue::Simd { dtype, lanes } => ExprKind::Call {
+            Self::Simd { dtype, lanes } => ExprKind::Call {
                 name: "SIMD".to_string(),
                 param_args: vec![
-                    ParamArg::Value(CtValue::Dtype(*dtype).materialize(span)?),
-                    ParamArg::Value(CtValue::Int(lanes.len() as i64).materialize(span)?),
+                    ParamArg::Value(Self::Dtype(*dtype).materialize(span)?),
+                    ParamArg::Value(Self::Int(lanes.len() as i64).materialize(span)?),
                 ],
                 args: lanes
                     .iter()
                     .map(|lane| {
                         match lane {
-                            CtLane::Int(value) => CtValue::IntLiteral(lane_literal(*value)),
-                            CtLane::Float(bits) => CtValue::Float(*bits),
-                            CtLane::Bool(value) => CtValue::Bool(*value),
+                            CtLane::Int(value) => Self::IntLiteral(lane_literal(*value)),
+                            CtLane::Float(bits) => Self::Float(*bits),
+                            CtLane::Bool(value) => Self::Bool(*value),
                         }
                         .materialize(span)
                     })
@@ -627,7 +622,7 @@ impl CtValue {
             },
             // The fieldwise construction call; freezing guaranteed a matching
             // constructor exists.
-            CtValue::Struct { name, fields } => ExprKind::Call {
+            Self::Struct { name, fields } => ExprKind::Call {
                 name: name.clone(),
                 param_args: Vec::new(),
                 args: fields
@@ -636,8 +631,8 @@ impl CtValue {
                     .collect::<Option<Vec<_>>>()?,
                 kwargs: Vec::new(),
             },
-            CtValue::Type(_) | CtValue::Reflected(_) => return None,
-            CtValue::Param(_) => return None,
+            Self::Type(_) | Self::Reflected(_) => return None,
+            Self::Param(_) => return None,
         };
         Some(Expr {
             kind,
@@ -726,16 +721,16 @@ fn source_type(ty: &Ty, span: Span) -> Option<Type> {
 impl fmt::Display for CtValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CtValue::Int(n) => write!(f, "{n}"),
-            CtValue::UInt(n) => write!(f, "{n}u"),
-            CtValue::Float(bits) => write!(f, "{:?}", f64::from_bits(*bits)),
-            CtValue::IntLiteral(value) => write!(f, "{value}"),
-            CtValue::FloatLiteral(value) => write!(f, "{value}"),
-            CtValue::Bool(b) => write!(f, "{b}"),
-            CtValue::Str(s) => write!(f, "{s:?}"),
-            CtValue::Dtype(dtype) => write!(f, "DType.{}", dtype.name()),
+            Self::Int(n) => write!(f, "{n}"),
+            Self::UInt(n) => write!(f, "{n}u"),
+            Self::Float(bits) => write!(f, "{:?}", f64::from_bits(*bits)),
+            Self::IntLiteral(value) => write!(f, "{value}"),
+            Self::FloatLiteral(value) => write!(f, "{value}"),
+            Self::Bool(b) => write!(f, "{b}"),
+            Self::Str(s) => write!(f, "{s:?}"),
+            Self::Dtype(dtype) => write!(f, "DType.{}", dtype.name()),
             // Upstream's rendering of a SIMD parameter value.
-            CtValue::Simd { dtype, lanes } => {
+            Self::Simd { dtype, lanes } => {
                 write!(f, "[")?;
                 for (index, lane) in lanes.iter().enumerate() {
                     if index > 0 {
@@ -745,13 +740,13 @@ impl fmt::Display for CtValue {
                         CtLane::Int(value) => write!(f, "{value}")?,
                         CtLane::Float(bits) => write!(f, "{:?}", f64::from_bits(*bits))?,
                         CtLane::Bool(value) => {
-                            write!(f, "{}", if *value { "True" } else { "False" })?
+                            write!(f, "{}", if *value { "True" } else { "False" })?;
                         }
                     }
                 }
                 write!(f, "] : SIMD[DType.{}, {}]", dtype.name(), lanes.len())
             }
-            CtValue::Struct { name, fields } => {
+            Self::Struct { name, fields } => {
                 write!(f, "{name}(")?;
                 for (index, (_, value)) in fields.iter().enumerate() {
                     if index > 0 {
@@ -761,10 +756,10 @@ impl fmt::Display for CtValue {
                 }
                 write!(f, ")")
             }
-            CtValue::Type(ty) => write!(f, "{ty}"),
-            CtValue::Reflected(ty) => write!(f, "reflect[{ty}]"),
-            CtValue::Param(name) => write!(f, "{name}"),
-            CtValue::Dict { entries, .. } => {
+            Self::Type(ty) => write!(f, "{ty}"),
+            Self::Reflected(ty) => write!(f, "reflect[{ty}]"),
+            Self::Param(name) => write!(f, "{name}"),
+            Self::Dict { entries, .. } => {
                 write!(f, "{{")?;
                 for (index, (key, value)) in entries.iter().enumerate() {
                     if index > 0 {
@@ -774,7 +769,7 @@ impl fmt::Display for CtValue {
                 }
                 write!(f, "}}")
             }
-            CtValue::Set { elements, .. } => {
+            Self::Set { elements, .. } => {
                 write!(f, "{{")?;
                 for (index, element) in elements.iter().enumerate() {
                     if index > 0 {
@@ -784,9 +779,9 @@ impl fmt::Display for CtValue {
                 }
                 write!(f, "}}")
             }
-            CtValue::Tuple(vs) | CtValue::List(vs) => {
+            Self::Tuple(vs) | Self::List(vs) => {
                 let (open, close) = match self {
-                    CtValue::Tuple(_) => ('(', ')'),
+                    Self::Tuple(_) => ('(', ')'),
                     _ => ('[', ']'),
                 };
                 write!(f, "{open}")?;

@@ -1,0 +1,23 @@
+# Minimum Supported Rust Version (MSRV)
+# Prevents Clippy from suggesting fixes that require newer Rust features
+msrv = "1.96.1"
+
+# Code Complexity and Sizes
+cognitive-complexity-threshold = 45       # Max cognitive complexity score before warning
+too-many-arguments-threshold = 7          # Max number of function arguments
+too-many-lines-threshold = 300            # Max lines in a function
+array-size-threshold = 16384              # Max array size (in bytes) before warning to use a Vec
+stack-size-threshold = 512000             # Max stack size (in bytes) for functions
+
+# Types and Structs
+max-fn-params-bools = 3                   # Max number of boolean parameters in a function
+max-struct-bools = 3                      # Max number of boolean fields in a struct
+max-trait-bounds = 3                      # Max number of trait bounds in a generic clause
+
+# Naming Conventions
+enum-variant-name-threshold = 3           # Min common prefix/suffix modules to flag variant names
+struct-field-name-threshold = 3           # Min common prefix/suffix modules to flag field names
+single-char-binding-names-threshold = 4   # Max single-char variable names allowed in a scope
+
+# API Stability
+# avoid-breaking-exported-api = true        # Don't suggest changes that break public API surfaces

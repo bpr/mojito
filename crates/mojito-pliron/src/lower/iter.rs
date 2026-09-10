@@ -1,9 +1,10 @@
 //! Iterator lowering: `GetIter`, pack iteration, `HasNext`/`Next` and
 //! their raising/reference variants.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     /// `GetIter`: normalize the iterable variable through its checker-selected
     /// (and mono-retargeted) `__iter__` chain into the iterator variable.
     /// Receiver conventions mirror the VM: a borrowed (`ref`/`mut`) step
@@ -54,8 +55,7 @@ impl<'a> FnLowering<'a> {
                     self.func
                         .var_names
                         .get(source as usize)
-                        .map(String::as_str)
-                        .unwrap_or("?")
+                        .map_or("?", String::as_str)
                 ),
                 None,
             )
@@ -489,7 +489,7 @@ impl<'a> FnLowering<'a> {
             let mangled = signature.mangled.clone();
             let func_ty = signature.func_ty;
             return self.lower_try_next_reference(
-                ctx, dest, yielded, iter, call, &outcome, mangled, func_ty,
+                ctx, dest, yielded, iter, call, &outcome, &mangled, func_ty,
             );
         }
         let callee: Identifier = signature
@@ -586,7 +586,7 @@ impl<'a> FnLowering<'a> {
         iter: u32,
         call: &mojito_checked::checked::CheckedIteratorCall,
         outcome: &OutcomeAbi,
-        mangled: String,
+        mangled: &str,
         func_ty: TypedHandle<FuncType>,
     ) -> Result<(), PlironError> {
         let element = lower_ty(
@@ -595,16 +595,16 @@ impl<'a> FnLowering<'a> {
             &self.layout,
             self.reg_span(dest),
         )?;
-        let mut element_layout = self.layout.layout_of(&call.result_ty).map_err(|error| {
-            self.unsupported_reg(format!("iterator element layout ({error})"), dest)
-        })?;
         // A `for ref x` contract's temp slot holds the handle, not the
         // element (see `yields_reference` below).
-        if call.reference_result.is_some() && call.result_adapter.is_none() {
-            element_layout = Layout::new(8, 8);
-        }
+        let element_layout = if call.reference_result.is_some() && call.result_adapter.is_none() {
+            Layout::new(8, 8)
+        } else {
+            self.layout.layout_of(&call.result_ty).map_err(|error| {
+                self.unsupported_reg(format!("iterator element layout ({error})"), dest)
+            })?
+        };
         let callee: Identifier = mangled
-            .as_str()
             .try_into()
             .expect("mangled names are identifier-safe");
         let storage = self.entry_alloca(ctx, outcome.layout.size, outcome.layout.align);

@@ -3,7 +3,9 @@
 //! dependent/associated type projection, and type-parameter lookup.
 //! Extracted from `checker.rs`; see `docs/symbol-map.md`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TransferSet;
 
 /// Current Mojo treats a bare `def(...)` in a general type position (struct
 /// field, collection element) as a trait, not a storable callable-value type;
@@ -44,6 +46,7 @@ impl Checker {
         self.resolve_ty_from_anno(ty)
     }
 
+    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn resolve_ty_from_anno(&self, ty: &SourceType) -> Result<Ty, TypeError> {
         Ok(match ty {
             SourceType::Int => Ty::Int,
@@ -156,7 +159,7 @@ impl Checker {
                         self.lower_callable_ref_param_sigs(type_params, &regular)?,
                     ),
                     ref_return,
-                    transfers: Default::default(),
+                    transfers: TransferSet::default(),
                 }
             }
             SourceType::MaterializedCallable(key) => {
@@ -1055,8 +1058,7 @@ impl Checker {
             SourceType::Named(binding, arguments) if arguments.is_empty() => self
                 .lookup(binding)
                 .cloned()
-                .map(Ok)
-                .unwrap_or_else(|| self.ty_from_anno(base))?,
+                .map_or_else(|| self.ty_from_anno(base), Ok)?,
             _ => self.ty_from_anno(base)?,
         };
 
@@ -1085,14 +1087,11 @@ impl Checker {
                 object_type: base_ty.to_string(),
                 member: name.clone(),
             })?;
-        let values = match value {
-            CtValue::Tuple(values) | CtValue::List(values) => values,
-            _ => {
-                return Err(TypeError::NoSuchAssociatedType {
-                    object_type: base_ty.to_string(),
-                    member: name.clone(),
-                });
-            }
+        let (CtValue::Tuple(values) | CtValue::List(values)) = value else {
+            return Err(TypeError::NoSuchAssociatedType {
+                object_type: base_ty.to_string(),
+                member: name.clone(),
+            });
         };
         let substitution = struct_subst(&info.decls, arguments);
         values
@@ -1100,8 +1099,7 @@ impl Checker {
             .map(|value| match value {
                 CtValue::Type(ty) => Ok(self.resolve_assoc_ty(&substitute(ty, &substitution))),
                 _ => Err(TypeError::NotComptime(format!(
-                    "{}.{} contains a non-type value",
-                    base_ty, name
+                    "{base_ty}.{name} contains a non-type value"
                 ))),
             })
             .collect()
@@ -1110,6 +1108,10 @@ impl Checker {
     /// Collapse an indexed dependent type when its compile-time environment is
     /// concrete; otherwise retain the structural expression in generic
     /// metadata for later specialization.
+    #[allow(
+        clippy::unused_self,
+        reason = "TODO: make an associated function or use the receiver"
+    )]
     pub(super) fn resolve_dependent_index(
         &self,
         elements: Vec<Ty>,
@@ -1728,7 +1730,7 @@ impl Checker {
                         return Err(TypeError::TypeMismatch {
                             expected: "a type".to_string(),
                             found: "a value".to_string(),
-                            context: format!("type parameter '{}'", name),
+                            context: format!("type parameter '{name}'"),
                         });
                     }
                     ParamArg::Named { value, .. } => {
@@ -1760,7 +1762,7 @@ impl Checker {
                             return Err(TypeError::TypeMismatch {
                                 expected: ty.to_string(),
                                 found: actual.to_string(),
-                                context: format!("callable-value parameter '{}'", name),
+                                context: format!("callable-value parameter '{name}'"),
                             });
                         }
                         return Ok(TyArg::Val(CtValue::Param(name.clone())));
@@ -1771,13 +1773,13 @@ impl Checker {
                             .ok_or_else(|| TypeError::TypeMismatch {
                                 expected: ty.to_string(),
                                 found: "a non-materializable compile-time value".to_string(),
-                                context: format!("value parameter '{}'", name),
+                                context: format!("value parameter '{name}'"),
                             })?;
                     if !coerces(&actual, ty) {
                         return Err(TypeError::TypeMismatch {
                             expected: ty.to_string(),
                             found: actual.to_string(),
-                            context: format!("value parameter '{}'", name),
+                            context: format!("value parameter '{name}'"),
                         });
                     }
                     self.record_literal_materializations(expr, &actual, ty)?;
@@ -1787,13 +1789,14 @@ impl Checker {
                         return Ok(TyArg::Val(value));
                     }
                     let rendered = value.to_string();
-                    let value = value.clone().materialize_as(ty).ok_or_else(|| {
-                        TypeError::TypeMismatch {
-                            expected: ty.to_string(),
-                            found: rendered,
-                            context: format!("value parameter '{}'", name),
-                        }
-                    })?;
+                    let value =
+                        value
+                            .materialize_as(ty)
+                            .ok_or_else(|| TypeError::TypeMismatch {
+                                expected: ty.to_string(),
+                                found: rendered,
+                                context: format!("value parameter '{name}'"),
+                            })?;
                     Ok(TyArg::Val(value))
                 }
                 // `Self.n` names the enclosing struct's own value parameter:
@@ -1823,7 +1826,7 @@ impl Checker {
                 ParamArg::Type(_) => Err(TypeError::TypeMismatch {
                     expected: "a value".to_string(),
                     found: "a type".to_string(),
-                    context: format!("value parameter '{}'", name),
+                    context: format!("value parameter '{name}'"),
                 }),
                 ParamArg::Named { value, .. } => self.resolve_param_arg(decl, value),
             },

@@ -1,9 +1,10 @@
 //! Call-site inference: subscript/iterator rewrites and structural
 //! binding inference for direct and receiver calls.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> Specializer<'a> {
+impl Specializer<'_> {
     /// Retarget one checker-selected subscript invocation (the
     /// `__getitem__`/`__setitem__` family) to its concrete instance. The
     /// receiver binds the owner's parameters and the destination's checked

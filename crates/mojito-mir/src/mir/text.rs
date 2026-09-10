@@ -238,11 +238,12 @@ pub const TERMINATOR_MNEMONICS: &[&str] = &[
     "escape",
 ];
 
-/// Canonical type-constructor spellings in `Ty` declaration order — the
-/// closed type vocabulary of the format. [`type_spelling`] is the
-/// authoritative per-constructor mapping (its exhaustive match forces a
-/// spelling decision for every new constructor); this inventory mirrors it
-/// for schema tests and generated capability tables.
+/// Canonical type-constructor spellings in `Ty` declaration order — the closed
+/// type vocabulary of the format.
+///
+/// [`type_spelling`] is the authoritative per-constructor mapping (its
+/// exhaustive match forces a spelling decision for every new constructor);
+/// this inventory mirrors it for schema tests and generated capability tables.
 pub const TYPE_SPELLINGS: &[&str] = &[
     "Int",
     "UInt",
@@ -301,7 +302,7 @@ pub fn version_header() -> String {
     format!("{MAGIC} {VERSION_MAJOR}.{VERSION_MINOR}")
 }
 
-pub fn instruction_mnemonic(instruction: &MirInstr) -> &'static str {
+pub const fn instruction_mnemonic(instruction: &MirInstr) -> &'static str {
     match instruction {
         MirInstr::EstablishLoans { .. } => "loans.establish",
         MirInstr::InvalidateInteriors { .. } => "interiors.invalidate",
@@ -364,7 +365,7 @@ pub fn instruction_mnemonic(instruction: &MirInstr) -> &'static str {
     }
 }
 
-pub fn terminator_mnemonic(terminator: &MirTerm) -> &'static str {
+pub const fn terminator_mnemonic(terminator: &MirTerm) -> &'static str {
     match terminator {
         MirTerm::Jump(_) => "jump",
         MirTerm::Branch { .. } => "branch",
@@ -375,7 +376,7 @@ pub fn terminator_mnemonic(terminator: &MirTerm) -> &'static str {
     }
 }
 
-pub fn use_mode_spelling(mode: UseMode) -> &'static str {
+pub const fn use_mode_spelling(mode: UseMode) -> &'static str {
     match mode {
         UseMode::Copy => "copy",
         UseMode::Move => "move",
@@ -384,7 +385,7 @@ pub fn use_mode_spelling(mode: UseMode) -> &'static str {
     }
 }
 
-pub fn projection_spelling(projection: &Proj) -> &'static str {
+pub const fn projection_spelling(projection: &Proj) -> &'static str {
     match projection {
         Proj::Field(_) => "field",
         Proj::Index(_) => "index",
@@ -394,7 +395,7 @@ pub fn projection_spelling(projection: &Proj) -> &'static str {
     }
 }
 
-pub fn intrinsic_subscript_spelling(intrinsic: MirIntrinsicSubscript) -> &'static str {
+pub const fn intrinsic_subscript_spelling(intrinsic: MirIntrinsicSubscript) -> &'static str {
     match intrinsic {
         MirIntrinsicSubscript::TupleStorage => "tuple_storage",
         MirIntrinsicSubscript::VariadicStorage => "variadic_storage",
@@ -404,7 +405,7 @@ pub fn intrinsic_subscript_spelling(intrinsic: MirIntrinsicSubscript) -> &'stati
     }
 }
 
-pub fn constant_spelling(constant: &Const) -> &'static str {
+pub const fn constant_spelling(constant: &Const) -> &'static str {
     match constant {
         Const::Int(_) => "int",
         Const::Float(_) => "float",
@@ -417,7 +418,7 @@ pub fn constant_spelling(constant: &Const) -> &'static str {
     }
 }
 
-pub fn type_spelling(ty: &Ty) -> &'static str {
+pub const fn type_spelling(ty: &Ty) -> &'static str {
     match ty {
         Ty::Int => "Int",
         Ty::UInt => "UInt",

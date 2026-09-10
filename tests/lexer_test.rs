@@ -112,7 +112,7 @@ fn lexes_keywords_and_string_literal() {
 fn lex_str(source: &str) -> String {
     match &lex_all(source)[0] {
         Token::StringLiteral(s) => s.clone(),
-        other => panic!("expected a string literal, got {:?}", other),
+        other => panic!("expected a string literal, got {other:?}"),
     }
 }
 
@@ -477,7 +477,7 @@ fn lexes_single_and_triple_quoted_strings() {
 #[test]
 fn lexes_raw_and_case_insensitive_string_prefixes() {
     assert_eq!(lex_literal(r#"r"\n""#), Token::StringLiteral("\\n".into()));
-    assert_eq!(lex_literal(r#"R'\t'"#), Token::StringLiteral("\\t".into()));
+    assert_eq!(lex_literal(r"R'\t'"), Token::StringLiteral("\\t".into()));
     assert_eq!(
         lex_literal(r#"Tr"value={x}""#),
         Token::TString {
@@ -529,14 +529,14 @@ fn lexes_tstring_chunks() {
 #[test]
 fn tstring_interpolation_respects_nested_lexical_structure() {
     assert_eq!(
-        lex_literal(r###"t"{choose("}", {1: 2})}""###),
+        lex_literal(r#"t"{choose("}", {1: 2})}""#),
         Token::TString {
             chunks: vec![TStringChunk::Interp("choose(\"}\", {1: 2})".into())],
             raw: false,
         }
     );
     assert_eq!(
-        lex_literal(r###"t"outer={t"inner={value}"}""###),
+        lex_literal(r#"t"outer={t"inner={value}"}""#),
         Token::TString {
             chunks: vec![
                 TStringChunk::Text("outer=".into()),

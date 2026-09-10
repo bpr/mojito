@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Gate for the LLVM lane: the feature-gated Pliron backend inside mojito plus
-# the Stage 0 spike. Deliberately kept out of scripts/check — the default VM
+# Gate for the LLVM lane: the feature-gated Pliron backend inside mojito,
+# including the `upstream_*` contract tests in crates/mojito-pliron/tests.
+# Deliberately kept out of scripts/check — the default VM
 # lane must never require LLVM. Requires LLVM 23.1; pins and CI
 # recipe: docs/notes/pliron-stage0.md and docs/notes/pliron-stage1.md.
 set -euo pipefail
@@ -37,7 +38,7 @@ echo "==> cargo nextest run --features backend-pliron (pliron tests)"
 # catches every pliron integration target as slices add them.
 cargo nextest run --no-fail-fast --features backend-pliron -E 'binary(pliron_*) + test(pliron)'
 
-echo "==> cargo nextest run -p mojito-pliron (crate unit tests)"
+echo "==> cargo nextest run -p mojito-pliron (crate unit + upstream-contract tests)"
 cargo nextest run -p mojito-pliron --no-fail-fast
 
 echo "==> bench smoke (machinery validation only; no performance claims)"
@@ -49,6 +50,3 @@ cargo build --quiet --features backend-pliron
 tools/bench/target/debug/mojito-bench \
     --mojito target/debug/mojito --root benchmarks/native --smoke \
     --summary /dev/null
-
-echo "==> pliron stage-0 spike gate"
-scripts/check-pliron-spike

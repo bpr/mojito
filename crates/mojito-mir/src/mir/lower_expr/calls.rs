@@ -1,6 +1,7 @@
 //! Indirect/element invocations, nested closures, keep-alives, and
 //! register materialization.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Flatten<'_> {
@@ -182,7 +183,7 @@ impl Flatten<'_> {
         }
         let (callee, callee_place) = match reference_result {
             Some(reference) => {
-                let place = self.materialize_call_reference_place(e, element, reference);
+                let place = self.materialize_call_reference_place(e, element, &reference);
                 let value = self.fresh_typed(
                     e.source_span(),
                     Some(place.root),
@@ -372,7 +373,7 @@ impl Flatten<'_> {
             let callable_capture = NestedCapture {
                 name: info.source_name.clone(),
                 binding: info.binding,
-                ty: info.callable_ty.clone().unwrap_or(Ty::Param {
+                ty: info.callable_ty.clone().unwrap_or_else(|| Ty::Param {
                     name: "$capture".to_string(),
                     bounds: Vec::new(),
                     callable_bound: None,

@@ -17,3 +17,6 @@ mojito-types = { path = "../mojito-types" }
 
 [dev-dependencies]
 mojito = { path = "../.." }
+
+[lints]
+workspace = true

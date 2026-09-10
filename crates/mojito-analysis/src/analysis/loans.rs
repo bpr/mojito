@@ -1,6 +1,7 @@
 //! Place-loan analysis: reaching loans, overlap checks, and
 //! load/store access validation against active loans.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 #[derive(Clone)]
@@ -284,7 +285,7 @@ pub(super) fn analyze_loans(
             for (used, _) in var_uses(&instrs[index]) {
                 live.insert(used);
             }
-            live_before[index] = live.clone();
+            live_before[index].clone_from(&live);
         }
 
         for (index, instr) in instrs.iter().enumerate() {
@@ -308,17 +309,15 @@ pub(super) fn analyze_loans(
                                     .iter()
                                     .any(|source| !source.mutable)
                             {
-                                let span = f
-                                    .spans
-                                    .0
-                                    .get(&marker.0)
-                                    .map(|(span, _)| span.clone())
-                                    .unwrap_or_else(|| {
+                                let span = f.spans.0.get(&marker.0).map_or_else(
+                                    || {
                                         mojito_common::token::SourceSpan::new(
                                             None,
                                             mojito_common::token::DUMMY_SPAN,
                                         )
-                                    });
+                                    },
+                                    |(span, _)| span.clone(),
+                                );
                                 return Err(loan_error(f, &loan.place, *other, span));
                             }
                             continue;
@@ -327,17 +326,15 @@ pub(super) fn analyze_loans(
                             .iter()
                             .any(|existing| loans_exclusive(loan, existing))
                         {
-                            let span = f
-                                .spans
-                                .0
-                                .get(&marker.0)
-                                .map(|(span, _)| span.clone())
-                                .unwrap_or_else(|| {
+                            let span = f.spans.0.get(&marker.0).map_or_else(
+                                || {
                                     mojito_common::token::SourceSpan::new(
                                         None,
                                         mojito_common::token::DUMMY_SPAN,
                                     )
-                                });
+                                },
+                                |(span, _)| span.clone(),
+                            );
                             return Err(loan_error(f, &loan.place, *other, span));
                         }
                     }
@@ -410,6 +407,7 @@ pub(super) fn mir_places_overlap(left: &MirPlace, right: &MirPlace) -> bool {
         })
 }
 
+#[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
 pub(super) fn loan_accesses(
     f: &MirFunction,
     instr: &MirInstr,
@@ -428,8 +426,7 @@ pub(super) fn loan_accesses(
         f.spans
             .0
             .get(&reg.0)
-            .map(|(span, _)| span.clone())
-            .unwrap_or_else(|| fallback.clone())
+            .map_or_else(|| fallback.clone(), |(span, _)| span.clone())
     };
     let captured = |access: &mojito_mir::mir::MirCaptureAccess, marker: Reg| {
         let mut place = MirPlace::root(access.root, None);

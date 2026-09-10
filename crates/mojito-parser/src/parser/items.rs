@@ -1,5 +1,6 @@
 //! Item parsing: parameter lists, structs, traits, and methods.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
@@ -170,7 +171,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 break;
             }
         }
-        self.expect(Token::RBracket, "Expected ']' after the origin specifier")?;
+        self.expect(&Token::RBracket, "Expected ']' after the origin specifier")?;
         Ok(Some(origins))
     }
 
@@ -182,7 +183,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         convention: Option<ArgConvention>,
         origin: Option<mojito_ast::ast::OriginSpec>,
     ) -> Result<FnParam, ParseError> {
-        self.expect(Token::Colon, "Parameters require a type annotation")?;
+        self.expect(&Token::Colon, "Parameters require a type annotation")?;
         let ty = self.parse_type()?;
         let default = if matches!(self.peek_token()?, Some(Token::Assign)) {
             self.next_token()?; // consume '='
@@ -210,18 +211,18 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             .iter()
             .any(|d| d.path.len() == 1 && d.path[0] == "fieldwise_init");
 
-        self.expect(Token::Struct, "Expected 'struct'")?;
+        self.expect(&Token::Struct, "Expected 'struct'")?;
         let name = self.expect_identifier("Expected a struct name after 'struct'")?;
         let type_params = self.parse_type_params()?;
         let (conforms, conformance_conditions, callable_conformance) =
             self.parse_struct_conformance()?;
         let where_clauses = self.parse_where_clauses()?;
-        self.expect(Token::Colon, "Expected ':' after the struct name")?;
+        self.expect(&Token::Colon, "Expected ':' after the struct name")?;
         self.expect_stmt_end()?;
 
         // Body: an indented block of `var` fields, `comptime` associated facts,
         // and `def` methods.
-        self.expect(Token::Indent, "Expected an indented struct body")?;
+        self.expect(&Token::Indent, "Expected an indented struct body")?;
         let mut fields = Vec::new();
         let mut associated = Vec::new();
         let mut methods = Vec::new();
@@ -239,9 +240,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     self.expect_stmt_end()?;
                 }
                 Token::Var => {
-                    self.expect(Token::Var, "Expected 'var'")?;
+                    self.expect(&Token::Var, "Expected 'var'")?;
                     let fname = self.expect_identifier("Expected a field name")?;
-                    self.expect(Token::Colon, "Fields require a type annotation")?;
+                    self.expect(&Token::Colon, "Fields require a type annotation")?;
                     let ty = self.parse_type()?;
                     if matches!(self.peek_token()?, Some(Token::Assign)) {
                         self.next_token()?;
@@ -296,7 +297,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     pub(super) fn parse_struct_comptime(
         &mut self,
     ) -> Result<mojito_ast::ast::StructComptime, ParseError> {
-        self.expect(Token::Comptime, "Expected 'comptime'")?;
+        self.expect(&Token::Comptime, "Expected 'comptime'")?;
         let name = self.expect_identifier("Expected a name after 'comptime'")?;
         // A parameterized associated type: `comptime IteratorType[params] = ...`.
         let params = if matches!(self.peek_token()?, Some(Token::LBracket)) {
@@ -311,7 +312,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             None
         };
         let where_clauses = self.parse_where_clauses()?;
-        self.expect(Token::Assign, "Expected '=' after the comptime member name")?;
+        self.expect(
+            &Token::Assign,
+            "Expected '=' after the comptime member name",
+        )?;
         let value = self.parse_expression(Precedence::Lowest)?;
         self.expect_stmt_end()?;
         Ok(mojito_ast::ast::StructComptime {
@@ -345,7 +349,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 break;
             }
         }
-        self.expect(Token::RParen, "Expected ')' after the conformance list")?;
+        self.expect(&Token::RParen, "Expected ')' after the conformance list")?;
         Ok(traits)
     }
 
@@ -398,7 +402,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 break;
             }
         }
-        self.expect(Token::RParen, "Expected ')' after the conformance list")?;
+        self.expect(&Token::RParen, "Expected ')' after the conformance list")?;
         Ok((traits, conditions, callable))
     }
 
@@ -408,13 +412,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// body), and `comptime NAME: Type` member requirements. (Generic traits
     /// `trait T[U]:` are not valid current Mojo, so no `[type_params]` is parsed.)
     pub(super) fn parse_trait(&mut self) -> Result<StmtKind, ParseError> {
-        self.expect(Token::Trait, "Expected 'trait'")?;
+        self.expect(&Token::Trait, "Expected 'trait'")?;
         let name = self.expect_identifier("Expected a trait name after 'trait'")?;
         let refines = self.parse_conformance()?;
-        self.expect(Token::Colon, "Expected ':' after the trait name")?;
+        self.expect(&Token::Colon, "Expected ':' after the trait name")?;
         self.expect_stmt_end()?;
 
-        self.expect(Token::Indent, "Expected an indented trait body")?;
+        self.expect(&Token::Indent, "Expected an indented trait body")?;
         let mut methods = Vec::new();
         let mut comptime_members = Vec::new();
         while let Some(token) = self.peek_token()? {
@@ -452,7 +456,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     pub(super) fn parse_trait_comptime(
         &mut self,
     ) -> Result<mojito_ast::ast::TraitComptime, ParseError> {
-        self.expect(Token::Comptime, "Expected 'comptime'")?;
+        self.expect(&Token::Comptime, "Expected 'comptime'")?;
         let name = self.expect_identifier("Expected a name after 'comptime'")?;
         // A parameterized associated type requirement:
         // `comptime IteratorType[iterable_mut: Bool, //, iterable_origin:
@@ -462,7 +466,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         } else {
             Vec::new()
         };
-        self.expect(Token::Colon, "Expected ':' after the comptime member name")?;
+        self.expect(&Token::Colon, "Expected ':' after the comptime member name")?;
         let first = self.parse_type()?;
         let mut bounds = vec![first];
         while matches!(self.peek_token()?, Some(Token::Amp)) {
@@ -496,14 +500,14 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     pub(super) fn parse_trait_method(
         &mut self,
     ) -> Result<mojito_ast::ast::TraitMethod, ParseError> {
-        self.expect(Token::Def, "Expected 'def'")?;
+        self.expect(&Token::Def, "Expected 'def'")?;
         let name = {
             let spelled = self.expect_identifier("Expected a method name after 'def'")?;
             mojito_ast::ast::canonical_destructor_name(&spelled).to_string()
         };
         let type_params = self.parse_type_params()?;
 
-        self.expect(Token::LParen, "Expected '(' after the method name")?;
+        self.expect(&Token::LParen, "Expected '(' after the method name")?;
         let first = if matches!(self.peek_token()?, Some(Token::Var)) {
             self.next_token()?;
             "var".to_string()
@@ -554,7 +558,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 keyword_only: None,
             }
         };
-        self.expect(Token::RParen, "Expected ')' after the parameters")?;
+        self.expect(&Token::RParen, "Expected ')' after the parameters")?;
 
         let (raises, raises_type) = self.parse_callable_effects()?;
         let ret = if matches!(self.peek_token()?, Some(Token::Arrow)) {
@@ -569,10 +573,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             while !matches!(self.peek_token()?, Some(Token::RBrace) | None) {
                 self.next_token()?;
             }
-            self.expect(Token::RBrace, "Expected '}' after method effects")?;
+            self.expect(&Token::RBrace, "Expected '}' after method effects")?;
         }
         let where_clauses = self.parse_where_clauses()?;
-        self.expect(Token::Colon, "Expected ':' before the method body")?;
+        self.expect(&Token::Colon, "Expected ':' before the method body")?;
         // A body of exactly `...` is a pure requirement; anything else is a
         // default implementation (parsed, flagged unsupported by the checker).
         let default_body = self.parse_trait_method_body()?;
@@ -598,14 +602,14 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         &mut self,
         decorators: Vec<Decorator>,
     ) -> Result<Method, ParseError> {
-        self.expect(Token::Def, "Expected 'def'")?;
+        self.expect(&Token::Def, "Expected 'def'")?;
         let name = {
             let spelled = self.expect_identifier("Expected a method name after 'def'")?;
             mojito_ast::ast::canonical_destructor_name(&spelled).to_string()
         };
         let type_params = self.parse_type_params()?;
 
-        self.expect(Token::LParen, "Expected '(' after the method name")?;
+        self.expect(&Token::LParen, "Expected '(' after the method name")?;
         let is_static = decorators
             .iter()
             .any(|decorator| decorator.path.as_slice() == ["staticmethod"]);
@@ -669,7 +673,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         } else {
             self.parse_params()?
         };
-        self.expect(Token::RParen, "Expected ')' after the parameters")?;
+        self.expect(&Token::RParen, "Expected ')' after the parameters")?;
 
         let (raises, raises_type) = self.parse_callable_effects()?;
         let ret = if matches!(self.peek_token()?, Some(Token::Arrow)) {
@@ -681,7 +685,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
         let where_clauses = self.parse_where_clauses()?;
 
-        self.expect(Token::Colon, "Expected ':' before the method body")?;
+        self.expect(&Token::Colon, "Expected ':' before the method body")?;
         let body = self.parse_suite()?;
 
         Ok(Method {
@@ -717,16 +721,16 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                         while !matches!(self.peek_token()?, Some(Token::RBracket) | None) {
                             self.next_token()?;
                         }
-                        self.expect(Token::RBracket, "Expected ']' after capturing origins")?;
+                        self.expect(&Token::RBracket, "Expected ']' after capturing origins")?;
                     }
                 }
                 "abi" => {
                     self.next_token()?;
-                    self.expect(Token::LParen, "Expected '(' after abi")?;
+                    self.expect(&Token::LParen, "Expected '(' after abi")?;
                     while !matches!(self.peek_token()?, Some(Token::RParen) | None) {
                         self.next_token()?;
                     }
-                    self.expect(Token::RParen, "Expected ')' after abi")?;
+                    self.expect(&Token::RParen, "Expected ')' after abi")?;
                 }
                 _ => break,
             }

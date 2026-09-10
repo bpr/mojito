@@ -50,7 +50,7 @@ fn parse_expr(source: &str) -> Expr {
     assert_eq!(stmts.len(), 1, "expected exactly one statement");
     match stmts.into_iter().next().unwrap().kind {
         StmtKind::Expr(expr) => expr,
-        other => panic!("expected an expression statement, got {:?}", other),
+        other => panic!("expected an expression statement, got {other:?}"),
     }
 }
 
@@ -622,7 +622,7 @@ fn parses_parameterized_type_annotation() {
                 Type::Named("Pair".into(), vec![ParamArg::Type(Type::Int)])
             );
         }
-        other => panic!("expected a var decl, got {:?}", other),
+        other => panic!("expected a var decl, got {other:?}"),
     }
 }
 
@@ -689,7 +689,7 @@ fn parses_single_line_trait_method_requirement() {
             assert_eq!(methods[0].name, "make_sound");
             assert_eq!(methods[0].default_body, None);
         }
-        other => panic!("expected a trait, got {:?}", other),
+        other => panic!("expected a trait, got {other:?}"),
     }
 }
 
@@ -713,7 +713,7 @@ fn parses_single_line_pass_suite() {
         StmtKind::Def { body, .. } => {
             assert_eq!(body, &vec![Stmt::from(StmtKind::Pass)]);
         }
-        other => panic!("expected a def, got {:?}", other),
+        other => panic!("expected a def, got {other:?}"),
     }
 }
 
@@ -730,15 +730,15 @@ fn parses_placeholder_and_semicolon_function_styles() {
     assert_eq!(stmts.len(), 5);
     match &stmts[0].kind {
         StmtKind::Def { body, .. } => assert_eq!(body, &vec![Stmt::from(StmtKind::Pass)]),
-        other => panic!("expected a def, got {:?}", other),
+        other => panic!("expected a def, got {other:?}"),
     }
     match &stmts[2].kind {
         StmtKind::Def { body, .. } => assert_eq!(body.len(), 2),
-        other => panic!("expected a def, got {:?}", other),
+        other => panic!("expected a def, got {other:?}"),
     }
     match &stmts[4].kind {
         StmtKind::Def { body, .. } => assert_eq!(body.len(), 1),
-        other => panic!("expected a def, got {:?}", other),
+        other => panic!("expected a def, got {other:?}"),
     }
 }
 
@@ -754,7 +754,7 @@ fn parses_trait_receiver_conventions() {
             assert_eq!(methods[2].self_convention, Some(ArgConvention::Var));
             assert_eq!(methods[3].self_convention, Some(ArgConvention::Ref));
         }
-        other => panic!("expected a trait, got {:?}", other),
+        other => panic!("expected a trait, got {other:?}"),
     }
 }
 
@@ -768,7 +768,7 @@ fn parses_struct_conformance_list() {
                 &vec!["Copyable".to_string(), "Quackable".to_string()]
             );
         }
-        other => panic!("expected a struct, got {:?}", other),
+        other => panic!("expected a struct, got {other:?}"),
     }
 }
 
@@ -797,7 +797,7 @@ fn parses_bare_self_type_in_trait_method() {
         StmtKind::Trait { methods, .. } => {
             assert_eq!(methods[0].params[0].ty, Type::SelfType);
         }
-        other => panic!("expected a trait, got {:?}", other),
+        other => panic!("expected a trait, got {other:?}"),
     }
 }
 
@@ -814,7 +814,7 @@ fn parses_trait_default_method_body() {
                 ))))])
             );
         }
-        other => panic!("expected a trait, got {:?}", other),
+        other => panic!("expected a trait, got {other:?}"),
     }
 }
 
@@ -828,7 +828,7 @@ fn parses_trait_inheritance_list() {
             assert_eq!(refines, &vec!["Animal".to_string(), "Named".to_string()]);
             assert_eq!(methods[0].default_body, None); // `...` is a pure requirement
         }
-        other => panic!("expected a trait, got {:?}", other),
+        other => panic!("expected a trait, got {other:?}"),
     }
 }
 
@@ -849,7 +849,7 @@ fn parses_trait_comptime_member() {
                 }]
             );
         }
-        other => panic!("expected a trait, got {:?}", other),
+        other => panic!("expected a trait, got {other:?}"),
     }
 }
 
@@ -866,7 +866,7 @@ fn parses_associated_type_annotation() {
                 })
             );
         }
-        other => panic!("expected a def, got {:?}", other),
+        other => panic!("expected a def, got {other:?}"),
     }
 }
 
@@ -921,7 +921,7 @@ fn parses_struct_comptime_associated_member() {
             );
             assert_eq!(fields[0].name, "value");
         }
-        other => panic!("expected a struct, got {:?}", other),
+        other => panic!("expected a struct, got {other:?}"),
     }
 }
 
@@ -1061,7 +1061,7 @@ fn parses_comptime_if_with_else() {
             assert_eq!(branches[0].1, vec![Stmt::from(StmtKind::Pass)]);
             assert_eq!(orelse, &Some(vec![Stmt::from(StmtKind::Pass)]));
         }
-        other => panic!("expected a ComptimeIf, got {:?}", other),
+        other => panic!("expected a ComptimeIf, got {other:?}"),
     }
 }
 
@@ -1102,7 +1102,7 @@ fn parses_value_parameter_header() {
                 }]
             );
         }
-        other => panic!("expected a struct, got {:?}", other),
+        other => panic!("expected a struct, got {other:?}"),
     }
 }
 
@@ -1169,7 +1169,7 @@ fn parses_explicit_value_argument_in_annotation_and_call() {
                 })
             );
         }
-        other => panic!("expected a var decl, got {:?}", other),
+        other => panic!("expected a var decl, got {other:?}"),
     }
 }
 
@@ -1351,7 +1351,7 @@ fn parses_with_multiple_items_and_optional_binding() {
             assert_eq!(items[1].var, None);
             assert_eq!(body, &vec![Stmt::from(StmtKind::Pass)]);
         }
-        other => panic!("expected a With statement, got {:?}", other),
+        other => panic!("expected a With statement, got {other:?}"),
     }
 }
 
@@ -1376,7 +1376,7 @@ fn bare_raises_before_where_clauses_takes_no_error_type() {
             assert_eq!(raises_type, &None);
             assert_eq!(where_clauses.len(), 1);
         }
-        other => panic!("expected a def, got {:?}", other),
+        other => panic!("expected a def, got {other:?}"),
     }
 }
 
@@ -1395,11 +1395,11 @@ fn parses_raises_effect_on_def() {
                 &Some(Type::Named("ValidationError".into(), Vec::new()))
             );
         }
-        other => panic!("expected a def, got {:?}", other),
+        other => panic!("expected a def, got {other:?}"),
     }
     match &parse("def g(x: Int) -> Int:\n    return x\n")[0].kind {
         StmtKind::Def { raises, .. } => assert!(!*raises),
-        other => panic!("expected a def, got {:?}", other),
+        other => panic!("expected a def, got {other:?}"),
     }
 }
 
@@ -1572,10 +1572,10 @@ fn parses_simd_type_and_construction() {
                     assert_eq!(param_args.len(), 2);
                     assert_eq!(args.len(), 4);
                 }
-                other => panic!("expected a SIMD construction, got {:?}", other),
+                other => panic!("expected a SIMD construction, got {other:?}"),
             }
         }
-        other => panic!("expected a var decl, got {:?}", other),
+        other => panic!("expected a var decl, got {other:?}"),
     }
 }
 
@@ -1721,7 +1721,7 @@ fn parses_nested_type_argument() {
                 )
             );
         }
-        other => panic!("expected a var decl, got {:?}", other),
+        other => panic!("expected a var decl, got {other:?}"),
     }
 }
 
@@ -1807,7 +1807,7 @@ fn parses_field_and_nested_place_assignment() {
                 })
             );
         }
-        other => panic!("expected SetPlace, got {:?}", other),
+        other => panic!("expected SetPlace, got {other:?}"),
     }
     // `xs[i].y = e` is also a place.
     assert!(matches!(
@@ -2003,7 +2003,7 @@ fn annotated_var_still_parses_with_some_ty() {
             ty: Some(Type::Int),
             ..
         } => {}
-        other => panic!("expected an annotated var decl, got {:?}", other),
+        other => panic!("expected an annotated var decl, got {other:?}"),
     }
 }
 
@@ -2069,7 +2069,7 @@ fn def_params(src: &str) -> (Vec<FnParam>, Option<usize>, Option<usize>) {
             keyword_only,
             ..
         } => (params, positional_only, keyword_only),
-        other => panic!("expected a def, got {:?}", other),
+        other => panic!("expected a def, got {other:?}"),
     }
 }
 
@@ -2248,7 +2248,7 @@ fn parses_ref_self_receiver() {
             assert_eq!(methods[1].self_convention, Some(ArgConvention::Ref));
             assert_eq!(methods[1].self_origin.as_ref().map(Vec::len), Some(1));
         }
-        other => panic!("expected a struct, got {:?}", other),
+        other => panic!("expected a struct, got {other:?}"),
     }
 }
 
@@ -2264,7 +2264,7 @@ fn parses_ref_return_type() {
                     if **referent == Type::Int && origins.len() == 1
             ));
         }
-        other => panic!("expected a def, got {:?}", other),
+        other => panic!("expected a def, got {other:?}"),
     }
 }
 
@@ -2608,11 +2608,11 @@ fn parses_dunder_method_names() {
 fn var_anno_type(src: &str) -> Type {
     match parse(src).into_iter().next().unwrap().kind {
         StmtKind::VarDecl { ty: Some(ty), .. } => ty,
-        other => panic!("expected an annotated var decl, got {:?}", other),
+        other => panic!("expected an annotated var decl, got {other:?}"),
     }
 }
 
-fn function_type_param(ty: Type) -> FunctionTypeParam {
+const fn function_type_param(ty: Type) -> FunctionTypeParam {
     FunctionTypeParam {
         name: None,
         kind: ParamKind::Regular,

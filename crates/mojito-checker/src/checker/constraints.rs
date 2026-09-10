@@ -3,6 +3,7 @@
 //! and `where`-clause constraint lowering and checking.
 //! Extracted from `checker.rs`; see `docs/symbol-map.md`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Checker {
@@ -425,6 +426,10 @@ impl Checker {
         }
     }
 
+    #[allow(
+        clippy::self_only_used_in_recursion,
+        reason = "TODO: lift out of the impl or use the receiver"
+    )]
     pub(super) fn eval_associated_ct_infix(
         &self,
         op: InfixOp,
@@ -1091,7 +1096,10 @@ impl Checker {
                 }
                 _ => error,
             })?;
-        let declared: HashSet<&str> = decls.iter().map(|decl| decl.name()).collect();
+        let declared: HashSet<&str> = decls
+            .iter()
+            .map(mojito_types::types::ParamDecl::name)
+            .collect();
         validate_predicate_params(&constraint, &declared)?;
         Ok(constraint)
     }
@@ -1172,7 +1180,10 @@ impl Checker {
         constraint: &GenericConstraint,
         bindings: &HashMap<String, ConstraintOperand>,
     ) -> Result<GenericConstraint, TypeError> {
-        use GenericConstraint::*;
+        use GenericConstraint::{
+            And, Bool, Conforms, ConformsPack, Eq, Ge, Gt, Le, Lt, Ne, Not, Or, PackContains,
+            PackPredicate, Trivial, WithMessage,
+        };
         let operand = |operand: &ConstraintOperand| match operand {
             ConstraintOperand::Param(param) => bindings.get(param).cloned().ok_or_else(|| {
                 TypeError::Unsupported(format!(
@@ -1237,9 +1248,10 @@ impl Checker {
         Ok(match argument {
             mojito_ast::ast::ParamArg::Value(expr) => self.constraint_operand(expr)?,
             mojito_ast::ast::ParamArg::Type(SourceType::Named(name, args)) if args.is_empty() => {
-                scalar_type_name(name)
-                    .map(ConstraintOperand::Type)
-                    .unwrap_or_else(|| ConstraintOperand::Param(name.clone()))
+                scalar_type_name(name).map_or_else(
+                    || ConstraintOperand::Param(name.clone()),
+                    ConstraintOperand::Type,
+                )
             }
             mojito_ast::ast::ParamArg::Type(ty) => ConstraintOperand::Type(self.ty_from_anno(ty)?),
             mojito_ast::ast::ParamArg::Named { .. } => {
@@ -1265,9 +1277,10 @@ impl Checker {
             });
         }
         Ok(match &expr.kind {
-            ExprKind::Identifier(name) => scalar_type_name(name)
-                .map(ConstraintOperand::Type)
-                .unwrap_or_else(|| ConstraintOperand::Param(name.clone())),
+            ExprKind::Identifier(name) => scalar_type_name(name).map_or_else(
+                || ConstraintOperand::Param(name.clone()),
+                ConstraintOperand::Type,
+            ),
             ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
                 ConstraintOperand::Param(field.clone())
             }
@@ -1345,7 +1358,10 @@ impl Checker {
         constraint: &GenericConstraint,
         environment: &HashMap<&str, &TyArg>,
     ) -> bool {
-        use GenericConstraint::*;
+        use GenericConstraint::{
+            And, Bool, Conforms, ConformsPack, Eq, Ge, Gt, Le, Lt, Ne, Not, Or, PackContains,
+            PackPredicate, Trivial, WithMessage,
+        };
         match constraint {
             WithMessage(condition, _) => self.eval_generic_constraint(condition, environment),
             Bool(value) => *value,
@@ -1437,6 +1453,10 @@ impl Checker {
         }
     }
 
+    #[allow(
+        clippy::unused_self,
+        reason = "TODO: make an associated function or use the receiver"
+    )]
     pub(super) fn constraint_value<'b>(
         &self,
         operand: &'b ConstraintOperand,
@@ -1473,8 +1493,9 @@ impl Checker {
                     HashMap::from([(only.name().to_string(), ConstraintOperand::Type(ty.clone()))]);
                 let template = template.clone();
                 self.substitute_predicate(&template, &bindings)
-                    .map(|constraint| self.eval_generic_constraint(&constraint, &HashMap::new()))
-                    .unwrap_or(false)
+                    .is_ok_and(|constraint| {
+                        self.eval_generic_constraint(&constraint, &HashMap::new())
+                    })
             }
         }
     }
@@ -1570,7 +1591,10 @@ fn validate_predicate_params(
     constraint: &GenericConstraint,
     declared: &HashSet<&str>,
 ) -> Result<(), TypeError> {
-    use GenericConstraint::*;
+    use GenericConstraint::{
+        And, Bool, Conforms, ConformsPack, Eq, Ge, Gt, Le, Lt, Ne, Not, Or, PackContains,
+        PackPredicate, Trivial, WithMessage,
+    };
     let check_param = |param: &str| {
         if declared.contains(param) {
             Ok(())

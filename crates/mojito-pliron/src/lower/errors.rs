@@ -1,9 +1,10 @@
 //! Error-path plumbing: traces, error slots, raise edges, the propagate
 //! block, and `Raise` lowering.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     /// `mjrt_trace(kind, data, len)` — one ordered lifecycle event (test
     /// lane only; callers guard on `trace_lifecycle`).
     pub(super) fn emit_trace(&mut self, ctx: &mut Context, kind: u32, data: Value, len: Value) {
@@ -73,7 +74,7 @@ impl<'a> FnLowering<'a> {
         Ok(())
     }
 
-    /// The entry-block MjError staging slot for in-flight errors.
+    /// The entry-block `MjError` staging slot for in-flight errors.
     pub(super) fn ensure_err_slot(&mut self, ctx: &mut Context) -> Value {
         if let Some(slot) = self.err_slot {
             return slot;

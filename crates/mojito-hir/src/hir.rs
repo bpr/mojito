@@ -1,7 +1,9 @@
-//! Stage 4: lower the checked AST into a **control-flow graph**
-//! (CFG) of basic blocks, built on `petgraph`. Expressions stay *nested* here (as
-//! embedded AST); Stage 5 flattens them to A-Normal Form. Ownership and liveness
-//! analysis (Stages 6–7) run over the flattened form, not this one.
+//! Stage 4: lower the checked AST into a **control-flow graph** (CFG) of basic
+//! blocks, built on `petgraph`.
+//!
+//! Expressions stay *nested* here (as embedded AST); Stage 5 flattens them to
+//! A-Normal Form. Ownership and liveness analysis (Stages 6–7) run over the
+//! flattened form, not this one.
 //!
 //! A [`Cfg`] is built per function body (or the top-level statement list) via
 //! [`Cfg::build`]. Every block ends in exactly one [`Terminator`]; control flow
@@ -36,7 +38,7 @@ pub struct HirExpr {
     /// Recursively checked children in the same structural order as `syntax`.
     /// Downstream passes use these identities rather than recovering facts by
     /// comparing source spans.
-    pub children: Vec<HirExpr>,
+    pub children: Vec<Self>,
     /// Fully checked place shape when this expression denotes storage. This is
     /// independent of runtime `VarId` assignment and survives name shadowing.
     pub place: Option<HirPlace>,
@@ -284,19 +286,19 @@ pub struct Cfg {
 impl Cfg {
     /// Lower a statement sequence (the top-level block, or a parameterless body)
     /// into a CFG. The final fall-through block is given an implicit `return None`.
-    pub fn build(body: &[Stmt]) -> Cfg {
-        Cfg::build_fn(&[], body)
+    pub fn build(body: &[Stmt]) -> Self {
+        Self::build_fn(&[], body)
     }
 
     /// Lower a function body whose `params` (in declaration order) seed the
     /// variable interner **first**, so `VarId`s `0..params.len()` are the
     /// parameters — the call ABI the MIR/VM rely on to bind arguments. The final
     /// fall-through block gets an implicit `return None`.
-    pub fn build_fn(params: &[String], body: &[Stmt]) -> Cfg {
+    pub fn build_fn(params: &[String], body: &[Stmt]) -> Self {
         Self::build_fn_with_captures(params, HashSet::new(), body)
     }
 
-    pub fn build_checked_fn(checked: &CheckedProgram, params: &[String], body: &[Stmt]) -> Cfg {
+    pub fn build_checked_fn(checked: &CheckedProgram, params: &[String], body: &[Stmt]) -> Self {
         Self::build_fn_with_context(params, HashSet::new(), body, Arc::clone(checked.tables()))
     }
 
@@ -304,7 +306,7 @@ impl Cfg {
         params: &[String],
         shadow_captures: HashSet<String>,
         body: &[Stmt],
-    ) -> Cfg {
+    ) -> Self {
         Self::build_fn_with_context(params, shadow_captures, body, Arc::default())
     }
 
@@ -313,7 +315,7 @@ impl Cfg {
         params: &[String],
         shadow_captures: HashSet<String>,
         body: &[Stmt],
-    ) -> Cfg {
+    ) -> Self {
         Self::build_fn_with_context(params, shadow_captures, body, Arc::clone(checked.tables()))
     }
 
@@ -322,7 +324,7 @@ impl Cfg {
         shadow_captures: HashSet<String>,
         body: &[Stmt],
         checked: Arc<CheckedTables>,
-    ) -> Cfg {
+    ) -> Self {
         let mut g = StableGraph::new();
         let entry = g.add_node(BasicBlock::default());
         let explicit = explicit_local_names(body);
@@ -354,7 +356,7 @@ impl Cfg {
         }
         lower.seal(Terminator::Return(None)); // implicit `return None` off the end
         let var_types = checked_var_types(&lower.vars, &lower.checked.expressions);
-        Cfg {
+        Self {
             g: lower.g,
             entry,
             vars: lower.vars,
@@ -369,8 +371,8 @@ impl Cfg {
     /// `VarId`s — a name already interned keeps its id, new names append). Used to
     /// lower a `try` region as a self-contained mini-CFG that still addresses the
     /// same variable slots. `n_params` is 0 (a region takes no parameters).
-    pub fn build_seeded(seed_vars: Vec<String>, body: &[Stmt]) -> Cfg {
-        Cfg::build_seeded_with_loops(seed_vars, body, &[])
+    pub fn build_seeded(seed_vars: Vec<String>, body: &[Stmt]) -> Self {
+        Self::build_seeded_with_loops(seed_vars, body, &[])
     }
 
     /// Like [`build_seeded`], but the region's loop stack is initialized with the
@@ -382,7 +384,7 @@ impl Cfg {
         seed_vars: Vec<String>,
         body: &[Stmt],
         external_loops: &[(BlockId, BlockId)],
-    ) -> Cfg {
+    ) -> Self {
         let external_loops = external_loops
             .iter()
             .map(|&(header, exit)| (header, exit, Vec::new()))
@@ -398,7 +400,7 @@ impl Cfg {
         body: &[Stmt],
         external_loops: &[(BlockId, BlockId, Vec<VarId>)],
         checked: Arc<CheckedTables>,
-    ) -> Cfg {
+    ) -> Self {
         let mut g = StableGraph::new();
         let entry = g.add_node(BasicBlock::default());
         let loops = external_loops
@@ -425,7 +427,7 @@ impl Cfg {
         }
         lower.seal(Terminator::FallOff); // region completed normally (not a return)
         let var_types = checked_var_types(&lower.vars, &lower.checked.expressions);
-        Cfg {
+        Self {
             g: lower.g,
             entry,
             vars: lower.vars,
@@ -529,7 +531,7 @@ fn collect_named_expr(expression: &Expr, names: &mut HashSet<String>) {
                 match argument {
                     mojito_ast::ast::SubscriptArg::Index(value)
                     | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
-                        collect_named_expr(value, names)
+                        collect_named_expr(value, names);
                     }
                     mojito_ast::ast::SubscriptArg::Slice {
                         lower, upper, step, ..
@@ -580,7 +582,7 @@ fn rename_expr(e: &mut Expr, resolve: &impl Fn(&mojito_common::token::SourceSpan
     match &mut e.kind {
         ExprKind::Identifier(n) => *n = resolve(&span, n),
         ExprKind::Prefix(_, x) | ExprKind::Transfer(x) | ExprKind::Spread(x) => {
-            rename_expr(x, resolve)
+            rename_expr(x, resolve);
         }
         ExprKind::Infix(_, l, r) => {
             rename_expr(l, resolve);
@@ -637,7 +639,7 @@ fn rename_expr(e: &mut Expr, resolve: &impl Fn(&mojito_common::token::SourceSpan
                 match argument {
                     mojito_ast::ast::SubscriptArg::Index(value)
                     | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
-                        rename_expr(value, resolve)
+                        rename_expr(value, resolve);
                     }
                     mojito_ast::ast::SubscriptArg::Slice {
                         lower, upper, step, ..
@@ -678,10 +680,10 @@ fn rename_expr(e: &mut Expr, resolve: &impl Fn(&mojito_common::token::SourceSpan
             for clause in clauses {
                 match clause {
                     mojito_ast::ast::ComprehensionClause::For { iter, .. } => {
-                        rename_expr(iter, resolve)
+                        rename_expr(iter, resolve);
                     }
                     mojito_ast::ast::ComprehensionClause::If(condition) => {
-                        rename_expr(condition, resolve)
+                        rename_expr(condition, resolve);
                     }
                 }
             }
@@ -1084,6 +1086,7 @@ impl Lower {
         }
     }
 
+    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     fn stmt(&mut self, s: &Stmt) {
         match &s.kind {
             StmtKind::If { branches, orelse } => {
@@ -1112,7 +1115,7 @@ impl Lower {
                 let header = self.new_block();
                 let body_b = self.new_block();
                 let exit = self.new_block();
-                let normal_exit = orelse.as_ref().map(|_| self.new_block()).unwrap_or(exit);
+                let normal_exit = orelse.as_ref().map_or(exit, |_| self.new_block());
                 self.seal(Terminator::Jump(header));
                 self.cur = header;
                 self.seal(Terminator::Branch {
@@ -1219,7 +1222,7 @@ impl Lower {
                 let header = self.new_block();
                 let body_b = self.new_block();
                 let exit = self.new_block();
-                let normal_exit = orelse.as_ref().map(|_| self.new_block()).unwrap_or(exit);
+                let normal_exit = orelse.as_ref().map_or(exit, |_| self.new_block());
                 self.scopes.push(HashMap::new());
                 let v = self.declare_var(var);
                 let declaration = self
@@ -1279,7 +1282,7 @@ impl Lower {
                     raw: raw_var,
                     dest: v,
                     iter: iter_var,
-                    plan: binding_plan.clone(),
+                    plan: binding_plan,
                     binding,
                 });
                 let mut cleanup = vec![v];
@@ -1488,7 +1491,6 @@ fn checked_var_types(vars: &[String], nodes: &[CheckedExpr]) -> HashMap<VarId, T
 }
 
 fn explicit_local_names(body: &[Stmt]) -> HashSet<String> {
-    let mut names = HashSet::new();
     fn walk(body: &[Stmt], names: &mut HashSet<String>) {
         for statement in body {
             match &statement.kind {
@@ -1528,6 +1530,8 @@ fn explicit_local_names(body: &[Stmt]) -> HashSet<String> {
             }
         }
     }
+
+    let mut names = HashSet::new();
     walk(body, &mut names);
     names
 }

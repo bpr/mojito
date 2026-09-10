@@ -4,6 +4,7 @@
 //! parameter — bound from the call's arguments and checked against an
 //! explicitly applied origin (`Span[Byte, origin_of(self)](...)`).
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::origin::{Origin, OriginParamId, PointerOrigin};
 
@@ -30,7 +31,7 @@ impl Checker {
     ) -> Result<HashMap<OriginParamId, PointerOrigin>, TypeError> {
         let mut bindings: HashMap<OriginParamId, PointerOrigin> = HashMap::new();
         for ((index, expression, pattern), actual) in bound.iter().zip(arg_tys) {
-            let parameter = sig.names.get(*index).map(String::as_str).unwrap_or("?");
+            let parameter = sig.names.get(*index).map_or("?", String::as_str);
             let context = || format!("argument '{parameter}' to '{struct_name}.{callee}'");
             if let Ty::Pointer {
                 origin:

@@ -1,5 +1,6 @@
 //! Navigation and mutation of projected VM storage and reference handles.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 /// Navigate a [`MirPlace`] to a mutable slot: the root variable followed by field
@@ -42,7 +43,7 @@ pub(super) fn store_place(
                 && let Value::Simd { dtype, lanes } = slot
             {
                 let idx = value_as_index(&regs[ireg.0 as usize])?;
-                return crate::runtime::set_simd_lane(*dtype, lanes, idx, value);
+                return crate::runtime::set_simd_lane(*dtype, lanes, idx, &value);
             }
             // A final payload write initializes-or-overwrites inline uninit
             // storage without running any destructor: `unsafe_write` leaks a
@@ -144,12 +145,10 @@ fn nav_step<'a>(
                         "Variant holds '{}', not '{}'",
                         alternatives
                             .get(*index)
-                            .map(ToString::to_string)
-                            .unwrap_or_else(|| "<invalid>".to_string()),
+                            .map_or_else(|| "<invalid>".to_string(), ToString::to_string),
                         alternatives
                             .get(*expected)
-                            .map(ToString::to_string)
-                            .unwrap_or_else(|| "<invalid>".to_string())
+                            .map_or_else(|| "<invalid>".to_string(), ToString::to_string)
                     )));
                 }
                 Ok(value.as_mut())

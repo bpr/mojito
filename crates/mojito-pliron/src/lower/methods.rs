@@ -1,8 +1,9 @@
 //! Method-call lowering plus `repr`, `abort`, and writer builtins.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     /// A resolved method call: the receiver and aggregate arguments pass by
     /// pointer; a `mut self` (or `deinit self`) receiver's final state copies
     /// back to the caller's receiver place afterwards — the VM's
@@ -145,12 +146,10 @@ impl<'a> FnLowering<'a> {
             }
         }
         let Some(resolved) = resolved else {
-            let receiver = self
-                .func
-                .reg_types
-                .get(&recv.0)
-                .map(|ty| ty.to_string())
-                .unwrap_or_else(|| "an untyped register".to_string());
+            let receiver = self.func.reg_types.get(&recv.0).map_or_else(
+                || "an untyped register".to_string(),
+                std::string::ToString::to_string,
+            );
             return Err(self.unsupported_reg(
                 format!("unresolved method call `{method}` on a receiver of type {receiver}"),
                 dest,
@@ -292,7 +291,7 @@ impl<'a> FnLowering<'a> {
         Ok(())
     }
 
-    /// `repr(value)`: an owned runtime StringLiteral matching the VM's scalar
+    /// `repr(value)`: an owned runtime `StringLiteral` matching the VM's scalar
     /// vocabulary or a nominal value's compiled `write_repr_to`.
     pub(super) fn lower_repr_builtin(
         &mut self,

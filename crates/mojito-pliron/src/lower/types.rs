@@ -1,10 +1,11 @@
 //! Scalar/lowered type classification: [`Locator`] span resolution,
 //! [`ScalarTy`]/[`LowerTy`] helpers, and `lower_ty`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Locator {
-    pub(crate) fn new(ctx: &mut Context, sources: &[(String, String)]) -> Locator {
+    pub(crate) fn new(ctx: &mut Context, sources: &[(String, String)]) -> Self {
         let sources = sources
             .iter()
             .map(|(name, text)| {
@@ -18,7 +19,7 @@ impl Locator {
                 (name.clone(), source, line_starts)
             })
             .collect();
-        Locator { sources }
+        Self { sources }
     }
 
     /// The registered source labels, in registration order — the debug
@@ -51,37 +52,35 @@ impl Locator {
 
 impl ScalarTy {
     /// The scalar lowering of a width-1 SIMD dtype.
-    pub(super) fn of_dtype(dtype: Dtype) -> ScalarTy {
+    pub(super) const fn of_dtype(dtype: Dtype) -> Self {
         match dtype {
-            Dtype::Int => ScalarTy::Int,
-            Dtype::Float64 => ScalarTy::Float64,
-            Dtype::Bool => ScalarTy::Bool,
-            sized => ScalarTy::Sized(sized),
+            Dtype::Int => Self::Int,
+            Dtype::Float64 => Self::Float64,
+            Dtype::Bool => Self::Bool,
+            sized => Self::Sized(sized),
         }
     }
 
     /// An integer scalar's `(bits, signed)` lane shape — `Int`/`UInt` are
     /// 64-bit signed/unsigned, sized integers use the VM's lane table — or
     /// `None` for floats, `Bool`, and `Ptr`.
-    pub(super) fn int_shape(self) -> Option<(u32, bool)> {
+    pub(super) const fn int_shape(self) -> Option<(u32, bool)> {
         match self {
-            ScalarTy::Int => Some((64, true)),
-            ScalarTy::UInt => Some((64, false)),
-            ScalarTy::Sized(dtype) => mojito_vm::runtime::integer_dtype_bits(dtype),
+            Self::Int => Some((64, true)),
+            Self::UInt => Some((64, false)),
+            Self::Sized(dtype) => mojito_vm::runtime::integer_dtype_bits(dtype),
             _ => None,
         }
     }
 
-    pub(super) fn handle(self, ctx: &mut Context) -> TypeHandle {
+    pub(super) fn handle(self, ctx: &Context) -> TypeHandle {
         match self {
-            ScalarTy::Int | ScalarTy::UInt => {
-                IntegerType::get(ctx, 64, Signedness::Signless).into()
-            }
-            ScalarTy::Float64 => FP64Type::get(ctx).into(),
-            ScalarTy::Bool => IntegerType::get(ctx, 1, Signedness::Signless).into(),
-            ScalarTy::Ptr => PointerType::get(ctx, 0).into(),
-            ScalarTy::Sized(Dtype::Float32) => FP32Type::get(ctx).into(),
-            ScalarTy::Sized(dtype) => {
+            Self::Int | Self::UInt => IntegerType::get(ctx, 64, Signedness::Signless).into(),
+            Self::Float64 => FP64Type::get(ctx).into(),
+            Self::Bool => IntegerType::get(ctx, 1, Signedness::Signless).into(),
+            Self::Ptr => PointerType::get(ctx, 0).into(),
+            Self::Sized(Dtype::Float32) => FP32Type::get(ctx).into(),
+            Self::Sized(dtype) => {
                 let (bits, _) = mojito_vm::runtime::integer_dtype_bits(dtype)
                     .expect("of_dtype leaves only sized integers and Float32 in Sized");
                 IntegerType::get(ctx, bits, Signedness::Signless).into()
@@ -89,25 +88,25 @@ impl ScalarTy {
         }
     }
 
-    pub(super) fn ret_kind(self) -> RetKind {
+    pub(super) const fn ret_kind(self) -> RetKind {
         match self {
-            ScalarTy::Int => RetKind::I64,
-            ScalarTy::UInt => RetKind::U64,
-            ScalarTy::Float64 => RetKind::F64,
-            ScalarTy::Bool => RetKind::Bool,
-            ScalarTy::Ptr => RetKind::Ptr,
-            ScalarTy::Sized(dtype) => RetKind::Sized(dtype),
+            Self::Int => RetKind::I64,
+            Self::UInt => RetKind::U64,
+            Self::Float64 => RetKind::F64,
+            Self::Bool => RetKind::Bool,
+            Self::Ptr => RetKind::Ptr,
+            Self::Sized(dtype) => RetKind::Sized(dtype),
         }
     }
 
     pub(super) fn name(self) -> &'static str {
         match self {
-            ScalarTy::Int => "Int",
-            ScalarTy::UInt => "UInt",
-            ScalarTy::Float64 => "Float64",
-            ScalarTy::Bool => "Bool",
-            ScalarTy::Ptr => "Pointer",
-            ScalarTy::Sized(dtype) => dtype.scalar_alias().unwrap_or_else(|| dtype.name()),
+            Self::Int => "Int",
+            Self::UInt => "UInt",
+            Self::Float64 => "Float64",
+            Self::Bool => "Bool",
+            Self::Ptr => "Pointer",
+            Self::Sized(dtype) => dtype.scalar_alias().unwrap_or_else(|| dtype.name()),
         }
     }
 }
@@ -120,7 +119,7 @@ impl ScalarTy {
 /// SIMD values keep the lane-aligned aggregate as their storage and ABI
 /// form; `lower/simd.rs` computes on them as LLVM fixed vectors between the
 /// loads and stores.
-pub(crate) fn lower_ty(
+pub fn lower_ty(
     function: &str,
     ty: &Ty,
     layout: &LayoutCx<'_>,

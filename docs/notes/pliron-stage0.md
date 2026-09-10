@@ -1,8 +1,13 @@
 # Pliron Stage 0: Feasibility, Exact Pin, and Dependency Isolation
 
 Outcome record for the roadmap section 4 "Pliron Stage 0" task (completed
-2026-08-18). The spike lives in `spikes/pliron-stage0/` as a standalone crate
-outside the production build; its gate is `scripts/check-pliron-spike`.
+2026-08-18). The spike crate itself is gone: the uncertainty it was
+time-boxed to remove is settled, and the backend it cleared has since reached
+Stage 6 and been promoted to supported. The tests that still pin an upstream
+API this crate depends on live in `crates/mojito-pliron/tests/upstream_*.rs`
+and run under `scripts/check-pliron`; the dialect-conversion test went with
+the spike, because the production backend lowers to the LLVM dialect directly
+and never uses that framework.
 
 **Verdict: GO for Stage 1.** All acceptance criteria pass and none of the four
 material-failure conditions triggered:
@@ -11,8 +16,9 @@ material-failure conditions triggered:
   result both 42): `t01_construct_and_jit.rs`, `t06_export_object_exec.rs`.
 - Invalid IR reports a source-associated `Result` diagnostic and never
   panics: `t03_verify_failure.rs`.
-- The default VM lane needs no native toolchain: `spikes/` is not a workspace
-  member, `scripts/check` is unchanged, and
+- The default VM lane needs no native toolchain: the LLVM-linked crate is
+  reached only through the optional `backend-pliron` feature,
+  `scripts/check` is unchanged, and
   `tests/backend_isolation_test.rs` guards the root lockfile.
 - No required API needed any Pliron fork; every gap found is minor and
   locally bridgeable (details below).
@@ -51,7 +57,7 @@ The upgrade rehearsal and promotion decision are recorded in
 | Cargo features | defaults only (`pliron-llvm`'s default `llvm-sys` feature enables the native path) | spike `Cargo.toml` |
 
 The spike's committed `Cargo.lock` (79 packages) is the authoritative pin;
-`.gitignore` was adjusted (`!spikes/*/Cargo.lock`) so it stays tracked.
+`.gitignore` was adjusted so it stays tracked.
 
 - Discovery: `LLVM_SYS_221_PREFIX=/usr/lib/llvm-22` (exported with that
   default by `scripts/check-pliron-spike`); llvm-sys falls back to

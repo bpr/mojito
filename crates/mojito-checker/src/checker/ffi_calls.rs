@@ -3,6 +3,7 @@
 //! `external_call[callee, return_type, num_fixed_args=](*args)` for the
 //! allowlisted callees only.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::ParamArg;
 use mojito_types::ffi;

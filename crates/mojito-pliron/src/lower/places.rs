@@ -1,9 +1,10 @@
 //! Place addressing: `place_address`, field offsets/layout, `GetField`,
 //! slice descriptors, and tuple construction.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     /// Resolve a place to the address and checked type of its designated
     /// storage: the root variable slot plus statically composed field and
     /// tuple-element offsets from the shared layout engine. A pointer

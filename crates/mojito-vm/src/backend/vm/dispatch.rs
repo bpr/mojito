@@ -1,6 +1,7 @@
 //! Named-call dispatch, reference-carry queries, drops, slicing
 //! bounds, and value formatting.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl VmBackend {
@@ -82,7 +83,7 @@ impl VmBackend {
                     // elaborated `ConsumeVar` destroys the residual fields at
                     // their last use. The return value is discarded.
                     let self_val = Value::Struct {
-                        name: name.clone(),
+                        name,
                         fields,
                         value_params: Vec::new(),
                     };
@@ -194,6 +195,7 @@ impl VmBackend {
     /// user function (with default/keyword/`*args` slot-matching). `param_vals`
     /// holds the supplied compile-time value-parameter arguments (`Name[...](...)`),
     /// used to reify a constructed struct's `value_params`.
+    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn call_named(
         &mut self,
         prog: &Prog,
@@ -314,7 +316,7 @@ impl VmBackend {
                     ));
                 };
                 let callee = callee.clone();
-                self.external_call(&callee, args, arg_types)
+                self.external_call(&callee, &args, arg_types)
             }
             // The `std.os.abort` crossing: an uncatchable trap carrying the
             // nominal String message (only `Raised` is catchable).
@@ -455,7 +457,7 @@ impl VmBackend {
                     let sname = sname.clone();
                     return self.call_dunder(prog, &sname, "__round__", vec![value]);
                 }
-                builtin_round(value)
+                builtin_round(&value)
             }
             "input" => {
                 let mut prompt = arg1(name, args)?;
@@ -515,7 +517,7 @@ impl VmBackend {
                     return self.construct_via_init(prog, name, None, args, kwargs, param_vals);
                 }
                 if !kwargs.is_empty() {
-                    self.construct_via_copy(prog, name, args, kwargs, param_vals)
+                    self.construct_via_copy(prog, name, &args, &kwargs, param_vals)
                 } else if prog
                     .index_of(&prog.constructor_name(name, args.len()))
                     .is_some()
@@ -562,7 +564,7 @@ impl VmBackend {
                     // defaults, collect `*args`) when a signature is known; else a
                     // plain positional call.
                     let bound = match prog.sigs.get(name) {
-                        Some(sig) => self.bind_for_call(prog, name, sig, args, kwargs)?.0,
+                        Some(sig) => self.bind_for_call(prog, name, sig, &args, kwargs)?.0,
                         None => args,
                     };
                     // Reify the function's value parameters (`doubled[21]()`): pair
@@ -619,9 +621,7 @@ impl VmBackend {
                 Some(Value::Str(text)) => Ok(text.clone()),
                 other => Err(RuntimeError::TypeError(format!(
                     "{source} did not leave a Writer value, got {}",
-                    other
-                        .map(crate::runtime::type_name)
-                        .unwrap_or_else(|| "missing".to_string())
+                    other.map_or_else(|| "missing".to_string(), crate::runtime::type_name)
                 ))),
             };
         }
@@ -658,7 +658,7 @@ impl VmBackend {
                 let end = cursor + 1 + end_offset;
                 let field: String = chars[cursor + 1..end].iter().collect();
                 let repr = field.contains("!r");
-                let spec = field.split_once(':').map(|(_, spec)| spec).unwrap_or("");
+                let spec = field.split_once(':').map_or("", |(_, spec)| spec);
                 let selector = field.split(['!', ':']).next().unwrap_or_default();
                 let index = if selector.is_empty() {
                     let index = automatic;

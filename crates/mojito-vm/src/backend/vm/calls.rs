@@ -1,5 +1,6 @@
 //! VM call-slot materialization, defaults, variadics, and frame construction.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 /// Const-fold a default-argument expression to a value. Handles the literal forms
@@ -24,8 +25,8 @@ pub(super) fn checked_const_value(value: &CheckedConst) -> Value {
 pub(super) fn bind_args(
     name: &str,
     sig: &FnSig,
-    argv: Vec<Value>,
-    kwargs: Vec<(String, Value)>,
+    argv: &[Value],
+    kwargs: &[(String, Value)],
     mut make_default: impl FnMut(usize) -> Result<Value, RuntimeError>,
 ) -> Result<(Vec<Value>, Vec<ArgSlot>), RuntimeError> {
     let kw_names: Vec<&str> = kwargs.iter().map(|(n, _)| n.as_str()).collect();

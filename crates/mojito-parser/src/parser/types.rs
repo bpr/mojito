@@ -1,5 +1,6 @@
 //! Type expression, parameter-argument, and type-parameter parsing.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
@@ -120,7 +121,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         } else {
             Vec::new()
         };
-        self.expect(Token::LParen, "Expected '(' in a function type")?;
+        self.expect(&Token::LParen, "Expected '(' in a function type")?;
         let mut params = Vec::new();
         if !matches!(self.peek_token()?, Some(Token::RParen)) {
             loop {
@@ -154,7 +155,6 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                         convention_word(&word)
                     }
                     Some(Token::Identifier(word)) if word == "read" => {
-                        let word = word.clone();
                         return Err(removed_convention_error(&word).expect("read is removed"));
                     }
                     _ => None,
@@ -167,7 +167,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 let (name, ty) = if kind == ParamKind::KwVariadic {
                     let name = self.expect_identifier("Expected a name after 'var **'")?;
                     self.expect(
-                        Token::Colon,
+                        &Token::Colon,
                         "Expected ':' after a keyword-variadic function-type parameter",
                     )?;
                     (Some(name), self.parse_type()?)
@@ -207,7 +207,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 }
             }
         }
-        self.expect(Token::RParen, "Expected ')' after function-type parameters")?;
+        self.expect(
+            &Token::RParen,
+            "Expected ')' after function-type parameters",
+        )?;
 
         // Effects: `thin` / `raises` / `abi("…")` in any order, until `->`.
         let mut thin = false;
@@ -250,12 +253,12 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 }
                 Some(Token::Identifier(id)) if id == "abi" => {
                     self.next_token()?; // consume 'abi'
-                    self.expect(Token::LParen, "Expected '(' after 'abi'")?;
+                    self.expect(&Token::LParen, "Expected '(' after 'abi'")?;
                     // Discard the abi specifier's contents.
                     while !matches!(self.peek_token()?, Some(Token::RParen) | None) {
                         self.next_token()?;
                     }
-                    self.expect(Token::RParen, "Expected ')' to close 'abi(...)'")?;
+                    self.expect(&Token::RParen, "Expected ')' to close 'abi(...)'")?;
                 }
                 Some(Token::Identifier(id)) if id == "capturing" => {
                     self.next_token()?;
@@ -295,7 +298,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     pub(super) fn parse_param_args(
         &mut self,
     ) -> Result<Vec<mojito_ast::ast::ParamArg>, ParseError> {
-        self.expect(Token::LBracket, "Expected '[' to begin parameter arguments")?;
+        self.expect(
+            &Token::LBracket,
+            "Expected '[' to begin parameter arguments",
+        )?;
         let mut args = Vec::new();
         loop {
             let mut arg = self.parse_param_arg()?;
@@ -330,7 +336,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 break;
             }
         }
-        self.expect(Token::RBracket, "Expected ']' after parameter arguments")?;
+        self.expect(&Token::RBracket, "Expected ']' after parameter arguments")?;
         Ok(args)
     }
 
@@ -397,11 +403,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 // (`mapping[indexes[i]]`), not a nested parameterized type.
                 // Parsing from the identifier atom preserves the complete
                 // postfix expression and lets the outer bracket choose Index.
-                if id
-                    .chars()
-                    .next()
-                    .is_some_and(|character| character.is_lowercase())
-                {
+                if id.chars().next().is_some_and(char::is_lowercase) {
                     let atom = Expr::new(ExprKind::Identifier(id), id_span);
                     return Ok(ParamArg::Value(
                         self.parse_expression_from(atom, Precedence::Lowest)?,
@@ -411,7 +413,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 if matches!(self.peek_token()?, Some(Token::LParen)) {
                     self.next_token()?;
                     let (call_args, kwargs) = self.parse_call_args()?;
-                    self.expect(Token::RParen, "Expected ')' after arguments")?;
+                    self.expect(&Token::RParen, "Expected ')' after arguments")?;
                     return Ok(ParamArg::Value(Expr::new(
                         ExprKind::Call {
                             name: id,
@@ -492,7 +494,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 name.insert(0, '*');
             }
             self.expect(
-                Token::Colon,
+                &Token::Colon,
                 "A type parameter requires a ': bound' (e.g. 'T: Copyable')",
             )?;
             let (first_bound, callable_bound) = if matches!(self.peek_token()?, Some(Token::Def)) {
@@ -519,9 +521,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                             "expected 'mut' in Origin[mut=...]".into(),
                         ));
                     }
-                    self.expect(Token::Assign, "Expected '=' after 'mut' in Origin")?;
+                    self.expect(&Token::Assign, "Expected '=' after 'mut' in Origin")?;
                     let mutability = self.parse_expression(Precedence::Lowest)?;
-                    self.expect(Token::RBracket, "Expected ']' after Origin mutability")?;
+                    self.expect(&Token::RBracket, "Expected ']' after Origin mutability")?;
                     Some(mutability)
                 } else if matches!(self.peek_token()?, Some(Token::LBracket)) {
                     let args = self.parse_param_args()?;
@@ -568,7 +570,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 break;
             }
         }
-        self.expect(Token::RBracket, "Expected ']' after type parameters")?;
+        self.expect(&Token::RBracket, "Expected ']' after type parameters")?;
         Ok(params)
     }
 

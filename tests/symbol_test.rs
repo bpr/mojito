@@ -191,11 +191,11 @@ fn same_named_nested_defs_in_distinct_blocks_receive_distinct_lifted_symbols() {
          \x20           return value + 1\n\
          \x20       return choose(1)\n",
     );
-    let lifted: Vec<_> = names
+    let lifted = names
         .iter()
         .filter(|name| name.starts_with("outer$choose$decl"))
-        .collect();
-    assert_eq!(lifted.len(), 2, "{names:?}");
+        .count();
+    assert_eq!(lifted, 2, "{names:?}");
 }
 
 #[test]

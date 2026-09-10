@@ -1,9 +1,14 @@
 //! Origin-signature validation plus interior/aggregate origin
 //! recording and invalidation bookkeeping.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Checker {
+    #[allow(
+        clippy::unused_self,
+        reason = "TODO: make an associated function or use the receiver"
+    )]
     pub(in crate::checker) fn validate_origin_signature(
         &self,
         type_params: &[mojito_ast::ast::TypeParam],

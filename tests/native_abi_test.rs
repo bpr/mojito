@@ -68,7 +68,7 @@ macro_rules! assert_sig {
 }
 
 /// Checks one exported `#[repr(C)]` type against its `RT_TYPES` layout on the
-/// x86_64 target (pointer sizes agree because this test only runs on 64-bit
+/// `x86_64` target (pointer sizes agree because this test only runs on 64-bit
 /// hosts).
 macro_rules! assert_type_layout {
     ($name:ident { $($field:ident),+ }) => {{

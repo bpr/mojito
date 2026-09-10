@@ -3,6 +3,7 @@
 //! trait-method/associated-member lookup. Extracted from `checker.rs`;
 //! see `docs/symbol-map.md`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 /// How a consuming position takes its value: an ownership **move** into new
@@ -545,9 +546,11 @@ impl Checker {
         let (associated_values, associated_constraints, parameterized_associated) = self
             .check_struct_associated(declaration.associated, declaration.conformance_conditions)?;
         if let Some(info) = self.structs.get_mut(name) {
-            info.associated = associated_values.clone();
-            info.associated_constraints = associated_constraints.clone();
-            info.parameterized_associated = parameterized_associated.clone();
+            info.associated.clone_from(&associated_values);
+            info.associated_constraints
+                .clone_from(&associated_constraints);
+            info.parameterized_associated
+                .clone_from(&parameterized_associated);
         }
         // Field types resolve with every module struct shell registered, so a
         // field may reference a struct declared later in the module (by-value
@@ -555,7 +558,7 @@ impl Checker {
         // field names are a redeclaration.
         let mut field_tys: Vec<(String, Ty)> = Vec::new();
         let mut field_origin_arguments = HashMap::new();
-        let self_display = self.self_ty.as_ref().map(|ty| ty.to_string());
+        let self_display = self.self_ty.as_ref().map(std::string::ToString::to_string);
         for (field_index, f) in declaration.fields.iter().enumerate() {
             if field_tys.iter().any(|(n, _)| n == &f.name) {
                 return Err(TypeError::Redeclaration(f.name.clone()));
@@ -910,7 +913,7 @@ impl Checker {
             let result = self.check_method(
                 &method_self_ty,
                 m,
-                declaration.module.clone(),
+                declaration.module.clone().as_ref(),
                 name,
                 method_index,
                 overload_index,
@@ -1015,9 +1018,8 @@ impl Checker {
         if BUILTIN_TRAITS.contains(&tr) && !self.traits.contains_key(tr) {
             return self.verify_builtin_conformance(name, tr, self_ty, declared_condition.as_ref());
         }
-        let trait_info = match self.traits.get(tr) {
-            Some(info) => info,
-            None => return Ok(()),
+        let Some(trait_info) = self.traits.get(tr) else {
+            return Ok(());
         };
         let struct_info = self.structs.get(name).ok_or_else(|| {
             TypeError::InvariantViolation(format!(
@@ -1243,7 +1245,7 @@ impl Checker {
         // Availability was proved above. Normalize it to the requirement before
         // comparing the remainder of the callable contract.
         let mut normalized = got.clone();
-        normalized.availability = required.availability.clone();
+        normalized.availability.clone_from(&required.availability);
         if normalized.ref_return != required.ref_return {
             let copyable_reference_refinement = allow_copyable_iterator_reference
                 && normalized.ref_return.is_some()
@@ -1574,7 +1576,7 @@ impl Checker {
         assumption: Option<&GenericConstraint>,
         visiting: &mut HashSet<(String, String)>,
     ) -> bool {
-        use GenericConstraint::*;
+        use GenericConstraint::{And, Conforms, ConformsPack, Not, Or, WithMessage};
         match constraint {
             WithMessage(condition, _) => self.eval_constraint_under_assumption(
                 condition,
@@ -1673,9 +1675,10 @@ impl Checker {
             // A display types like the checker's own inference of it: the
             // first entry's types, every other entry coercing, under the
             // default hasher; an explicit spelling is the type itself.
-            CtValue::Dict { spelling, entries } => match spelling {
-                Some(ty) => Some((**ty).clone()),
-                None => {
+            CtValue::Dict { spelling, entries } => {
+                if let Some(ty) = spelling {
+                    Some((**ty).clone())
+                } else {
                     let (first_key, first_value) = entries.first()?;
                     let key = self.ct_value_ty(first_key, self_ty)?;
                     let value = self.ct_value_ty(first_value, self_ty)?;
@@ -1691,10 +1694,11 @@ impl Checker {
                         })
                         .then(|| self.nominal_dict(key, value))
                 }
-            },
-            CtValue::Set { spelling, elements } => match spelling {
-                Some(ty) => Some((**ty).clone()),
-                None => {
+            }
+            CtValue::Set { spelling, elements } => {
+                if let Some(ty) = spelling {
+                    Some((**ty).clone())
+                } else {
                     let element = self.ct_value_ty(elements.first()?, self_ty)?;
                     elements
                         .iter()
@@ -1705,7 +1709,7 @@ impl Checker {
                         })
                         .then(|| self.nominal_set(element))
                 }
-            },
+            }
             CtValue::Type(_) | CtValue::Reflected(_) => {
                 let _ = self_ty;
                 None
@@ -2074,6 +2078,10 @@ impl Checker {
     /// intentionally evidence-oriented: marker traits name the field that
     /// prevents fieldwise synthesis, while operation traits name the operation
     /// promised by the bound.
+    #[allow(
+        clippy::format_push_string,
+        reason = "TODO: write! into the buffer instead"
+    )]
     pub(super) fn trait_failure_reason(&self, ty: &Ty, tr: &str) -> Option<String> {
         if tr == "$SIMD" {
             return Some(
@@ -2218,7 +2226,7 @@ impl Checker {
     /// Whether a value of this type may be **copied** (implicitly duplicated).
     /// Mojo is move-only by default: scalars and the built-in value types are
     /// Copyable, but a `struct` is Copyable only if it declares Copyable/
-    /// ImplicitlyCopyable conformance **or defines `__copyinit__`**, and a type
+    /// `ImplicitlyCopyable` conformance **or defines `__copyinit__`**, and a type
     /// parameter only if bounded by Copyable/ImplicitlyCopyable.
     pub(super) fn is_copyable(&self, ty: &Ty) -> bool {
         if self.has_assumed_conformance(ty, "Copyable")
@@ -2241,37 +2249,33 @@ impl Checker {
             Ty::Variant(alternatives) => alternatives
                 .iter()
                 .all(|alternative| self.is_copyable(alternative)),
-            Ty::Struct(name, args) => self
-                .structs
-                .get(name)
-                .map(|s| {
-                    // A declared Copyable-family conformance is the contract
-                    // and its condition decides: `Array[T]` declares
-                    // `Copyable where conforms_to(T, Copyable)` beside a
-                    // where-gated copy initializer, so the initializer's
-                    // presence alone proves nothing. Only a struct declaring
-                    // no such conformance answers by its copy initializer.
-                    let mut declared = s
-                        .conforms
-                        .iter()
-                        .filter(|c| {
-                            matches!(
-                                c.as_str(),
-                                "Copyable" | "ImplicitlyCopyable" | "TrivialRegisterPassable"
-                            )
+            Ty::Struct(name, args) => self.structs.get(name).is_none_or(|s| {
+                // A declared Copyable-family conformance is the contract
+                // and its condition decides: `Array[T]` declares
+                // `Copyable where conforms_to(T, Copyable)` beside a
+                // where-gated copy initializer, so the initializer's
+                // presence alone proves nothing. Only a struct declaring
+                // no such conformance answers by its copy initializer.
+                let mut declared = s
+                    .conforms
+                    .iter()
+                    .filter(|c| {
+                        matches!(
+                            c.as_str(),
+                            "Copyable" | "ImplicitlyCopyable" | "TrivialRegisterPassable"
+                        )
+                    })
+                    .peekable();
+                if declared.peek().is_some() {
+                    declared.any(|c| {
+                        s.conformance_conditions.get(c).is_none_or(|condition| {
+                            self.eval_conformance_condition(s, args, condition)
                         })
-                        .peekable();
-                    if declared.peek().is_some() {
-                        declared.any(|c| {
-                            s.conformance_conditions.get(c).is_none_or(|condition| {
-                                self.eval_conformance_condition(s, args, condition)
-                            })
-                        })
-                    } else {
-                        s.methods.contains_key("__copyinit__")
-                    }
-                })
-                .unwrap_or(true),
+                    })
+                } else {
+                    s.methods.contains_key("__copyinit__")
+                }
+            }),
             Ty::Param { bounds, .. } => bounds.iter().any(|bound| {
                 matches!(
                     bound.as_str(),

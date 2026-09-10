@@ -1,9 +1,10 @@
 //! Derived-instance enqueueing: hash leaves, nominal methods,
 //! display, and Intable instances.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> Specializer<'a> {
+impl Specializer<'_> {
     /// The constant a value-parameter member read (`Self.length`) resolves
     /// to, when `field` names a value parameter (not a declared field) of
     /// the receiver's template and the instance type carries its solution.

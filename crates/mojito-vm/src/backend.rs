@@ -30,7 +30,7 @@ impl Backend {
     /// block remains for declarations and explicit legacy snippet tests.
     pub fn run(&mut self, program: &CheckedProgram) -> Result<(), RuntimeError> {
         match self {
-            Backend::Vm(vm) => vm.run(program),
+            Self::Vm(vm) => vm.run(program),
         }
     }
 
@@ -42,14 +42,14 @@ impl Backend {
         program: mojito_mir::mir::MirProgram,
     ) -> Result<(), RuntimeError> {
         match self {
-            Backend::Vm(vm) => vm.run_elaborated(program),
+            Self::Vm(vm) => vm.run_elaborated(program),
         }
     }
 
     /// Captured standard output.
     pub fn output(&self) -> String {
         match self {
-            Backend::Vm(vm) => vm.output(),
+            Self::Vm(vm) => vm.output(),
         }
     }
 
@@ -57,16 +57,18 @@ impl Backend {
     /// no global environment — a debugging nicety, not core semantics.
     pub fn bindings(&self) -> Vec<(String, Value)> {
         match self {
-            Backend::Vm(vm) => vm.bindings(),
+            Self::Vm(vm) => vm.bindings(),
         }
     }
 }
 
-/// Which backend to execute with (`--backend=…`). The register VM is the sole
-/// executor today; the other names are recognized seams for future backends
-/// behind the verified-MIR waist and refuse construction until implemented.
-/// The variants after `Vm` are listed in priority order: LLVM, MLIR, and
-/// Pliron are the prioritized native targets; Cranelift and eBPF follow.
+/// Which backend to execute with (`--backend=…`).
+///
+/// The register VM is the sole executor today; the other names are recognized
+/// seams for future backends behind the verified-MIR waist and refuse
+/// construction until implemented. The variants after `Vm` are listed in
+/// priority order: LLVM, MLIR, and Pliron are the prioritized native targets;
+/// Cranelift and eBPF follow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendKind {
     Vm,
@@ -79,25 +81,25 @@ pub enum BackendKind {
 
 impl BackendKind {
     /// The `--backend=…` spelling of this backend.
-    pub fn name(self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         match self {
-            BackendKind::Vm => "vm",
-            BackendKind::Llvm => "llvm",
-            BackendKind::Mlir => "mlir",
-            BackendKind::Pliron => "pliron",
-            BackendKind::Cranelift => "cranelift",
-            BackendKind::Ebpf => "ebpf",
+            Self::Vm => "vm",
+            Self::Llvm => "llvm",
+            Self::Mlir => "mlir",
+            Self::Pliron => "pliron",
+            Self::Cranelift => "cranelift",
+            Self::Ebpf => "ebpf",
         }
     }
 
-    pub fn parse(s: &str) -> Result<BackendKind, String> {
+    pub fn parse(s: &str) -> Result<Self, String> {
         match s {
-            "vm" => Ok(BackendKind::Vm),
-            "llvm" => Ok(BackendKind::Llvm),
-            "mlir" => Ok(BackendKind::Mlir),
-            "pliron" => Ok(BackendKind::Pliron),
-            "cranelift" => Ok(BackendKind::Cranelift),
-            "ebpf" => Ok(BackendKind::Ebpf),
+            "vm" => Ok(Self::Vm),
+            "llvm" => Ok(Self::Llvm),
+            "mlir" => Ok(Self::Mlir),
+            "pliron" => Ok(Self::Pliron),
+            "cranelift" => Ok(Self::Cranelift),
+            "ebpf" => Ok(Self::Ebpf),
             other => Err(format!(
                 "unknown backend '{other}' (expected: vm, llvm, mlir, pliron, cranelift, ebpf)"
             )),
@@ -114,12 +116,10 @@ impl BackendKind {
     /// refuse here rather than pretending to execute.
     pub fn instantiate(self) -> Result<Backend, String> {
         match self {
-            BackendKind::Vm => Ok(Backend::Vm(VmBackend::new())),
-            BackendKind::Llvm
-            | BackendKind::Mlir
-            | BackendKind::Pliron
-            | BackendKind::Cranelift
-            | BackendKind::Ebpf => Err(format!("backend '{}' is not implemented yet", self.name())),
+            Self::Vm => Ok(Backend::Vm(VmBackend::new())),
+            Self::Llvm | Self::Mlir | Self::Pliron | Self::Cranelift | Self::Ebpf => {
+                Err(format!("backend '{}' is not implemented yet", self.name()))
+            }
         }
     }
 }

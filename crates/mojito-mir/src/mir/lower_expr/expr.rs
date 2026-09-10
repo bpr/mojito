@@ -1,7 +1,13 @@
 //! The `expr_unconverted` expression dispatcher.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
+#[allow(
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    reason = "TODO: split this pass"
+)]
 impl Flatten<'_> {
     pub(in crate::mir) fn expr_unconverted(&mut self, e: &Expr) -> Reg {
         match &e.kind {
@@ -1501,7 +1507,7 @@ impl Flatten<'_> {
                         });
                         let index = self.constant(e, Const::Int(0));
                         let mut place = MirPlace::root(var, pointer_ty);
-                        place.project(Proj::Index(index), element.clone());
+                        place.project(Proj::Index(index), element);
                         self.emit(MirInstr::Store { place, src });
                     }
                     let dest = self.fresh_typed(span(e), None, Ty::None);
@@ -2012,14 +2018,13 @@ impl Flatten<'_> {
                         k: Const::None,
                     });
                     let length = mojito_types::types::array_parts(&target)
-                        .map(|(_, length)| length)
-                        .unwrap_or(elems.len() as i64);
+                        .map_or(elems.len() as i64, |(_, length)| length);
                     let length_reg = self.fresh_typed(span(e), None, Ty::Int);
                     self.emit(MirInstr::Const {
                         dest: length_reg,
                         k: Const::Int(length),
                     });
-                    let d = self.fresh_typed(span(e), None, target.clone());
+                    let d = self.fresh_typed(span(e), None, target);
                     self.emit(MirInstr::Call {
                         dest: d,
                         func: FuncRef::named(&constructor),
@@ -2519,9 +2524,10 @@ impl Flatten<'_> {
             // A lambda expression materializes its hidden definition's
             // closure at the expression's evaluation point — copy/move
             // captures snapshot here, once per evaluation.
-            ExprKind::Lambda { .. } => match self.nested_info(e) {
-                Some(info) => self.emit_nested_closure(&info, span(e), false),
-                None => {
+            ExprKind::Lambda { .. } => {
+                if let Some(info) = self.nested_info(e) {
+                    self.emit_nested_closure(&info, span(e), false)
+                } else {
                     let dest = self.fresh(span(e), None);
                     self.emit(MirInstr::Unsupported(
                         "lambda expression lost its checked nested declaration".to_string(),
@@ -2532,7 +2538,7 @@ impl Flatten<'_> {
                     });
                     dest
                 }
-            },
+            }
             ExprKind::TypeValue(_) | ExprKind::TypeApply { .. } => {
                 let dest = self.fresh(span(e), None);
                 self.emit(MirInstr::Unsupported(format!(

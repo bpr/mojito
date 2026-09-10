@@ -1,7 +1,9 @@
-/// A source byte range `(start, end)` — a half-open `[start, end)` slice of the
-/// original source. This is the single, canonical span type shared by the lexer
-/// (which stamps each token), the parser (which propagates spans onto AST nodes),
-/// and the MIR (whose `SpanTable` maps each temporary back to its origin span).
+/// A source byte range `(start, end)` — a half-open `[start, end)` slice of
+/// the original source.
+///
+/// This is the single, canonical span type shared by the lexer (which stamps
+/// each token), the parser (which propagates spans onto AST nodes), and the
+/// MIR (whose `SpanTable` maps each temporary back to its origin span).
 pub type Span = (usize, usize);
 
 /// Identity of one concrete syntax occurrence in a checked program.
@@ -37,7 +39,7 @@ pub struct SourceSpan {
 }
 
 impl SourceSpan {
-    pub fn new(source: Option<String>, span: Span) -> Self {
+    pub const fn new(source: Option<String>, span: Span) -> Self {
         Self {
             source,
             span,
@@ -45,7 +47,7 @@ impl SourceSpan {
         }
     }
 
-    pub fn syntax(source: Option<String>, span: Span, syntax: SyntaxId) -> Self {
+    pub const fn syntax(source: Option<String>, span: Span, syntax: SyntaxId) -> Self {
         Self {
             source,
             span,
@@ -56,7 +58,8 @@ impl SourceSpan {
     /// Return diagnostic provenance only. Semantic occurrence identity is a
     /// phase-local lookup discriminator and must not leak into displayed spans,
     /// MIR source maps, or source-only comparisons.
-    pub fn without_syntax(mut self) -> Self {
+    #[must_use]
+    pub const fn without_syntax(mut self) -> Self {
         self.syntax = None;
         self
     }
@@ -80,13 +83,13 @@ pub const DUMMY_SPAN: Span = (0, 0);
 /// Python's surface syntax. `Token::keyword` is the single lookup table.
 /// One piece of a lexed t-string: either literal text or the raw source text of
 /// an interpolation `{…}` (which the parser later parses into an `Expr`).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TStringChunk {
     Text(String),
     Interp(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Token {
     // --- Mojo-only keywords ---
     // Not present in Python: `var`, `struct`, `trait`, `comptime` (Mojo's
@@ -209,43 +212,43 @@ impl Token {
     /// The keyword token for `text`, or `None` if it is an ordinary identifier.
     /// The single source of truth for the reserved-word set (the lexer calls this
     /// after scanning a word). `True`/`False` map to `BoolLiteral`s, not keywords.
-    pub fn keyword(text: &str) -> Option<Token> {
+    pub fn keyword(text: &str) -> Option<Self> {
         Some(match text {
             // Mojo-only
-            "var" => Token::Var,
-            "struct" => Token::Struct,
-            "trait" => Token::Trait,
-            "comptime" => Token::Comptime,
-            "raises" => Token::Raises,
+            "var" => Self::Var,
+            "struct" => Self::Struct,
+            "trait" => Self::Trait,
+            "comptime" => Self::Comptime,
+            "raises" => Self::Raises,
             // Shared with Python
-            "def" => Token::Def,
-            "lambda" => Token::Lambda,
-            "return" => Token::Return,
-            "pass" => Token::Pass,
-            "None" => Token::None,
-            "and" => Token::And,
-            "or" => Token::Or,
-            "not" => Token::Not,
-            "if" => Token::If,
-            "elif" => Token::Elif,
-            "else" => Token::Else,
-            "while" => Token::While,
-            "for" => Token::For,
-            "in" => Token::In,
-            "is" => Token::Is,
-            "with" => Token::With,
-            "break" => Token::Break,
-            "continue" => Token::Continue,
-            "raise" => Token::Raise,
-            "try" => Token::Try,
-            "except" => Token::Except,
-            "finally" => Token::Finally,
-            "import" => Token::Import,
-            "from" => Token::From,
-            "as" => Token::As,
+            "def" => Self::Def,
+            "lambda" => Self::Lambda,
+            "return" => Self::Return,
+            "pass" => Self::Pass,
+            "None" => Self::None,
+            "and" => Self::And,
+            "or" => Self::Or,
+            "not" => Self::Not,
+            "if" => Self::If,
+            "elif" => Self::Elif,
+            "else" => Self::Else,
+            "while" => Self::While,
+            "for" => Self::For,
+            "in" => Self::In,
+            "is" => Self::Is,
+            "with" => Self::With,
+            "break" => Self::Break,
+            "continue" => Self::Continue,
+            "raise" => Self::Raise,
+            "try" => Self::Try,
+            "except" => Self::Except,
+            "finally" => Self::Finally,
+            "import" => Self::Import,
+            "from" => Self::From,
+            "as" => Self::As,
             // Boolean literals lex as values, not keywords.
-            "True" => Token::BoolLiteral(true),
-            "False" => Token::BoolLiteral(false),
+            "True" => Self::BoolLiteral(true),
+            "False" => Self::BoolLiteral(false),
             _ => return None,
         })
     }

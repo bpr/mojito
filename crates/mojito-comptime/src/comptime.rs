@@ -63,9 +63,10 @@ pub struct TupleSpecializationRequest {
     transform: Option<TupleTransformRequest>,
 }
 
-/// One value-producing Tuple method selected during checked discovery. These
-/// requests are receiver-specific: emitting every transform whose result type
-/// happens to exist would manufacture reciprocal declaration dependencies
+/// One value-producing Tuple method selected during checked discovery.
+///
+/// These requests are receiver-specific: emitting every transform whose result
+/// type happens to exist would manufacture reciprocal declaration dependencies
 /// (for example `[Int, String].reverse()` and the uncalled reverse direction).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TupleTransformRequest {
@@ -75,7 +76,7 @@ pub enum TupleTransformRequest {
 
 impl TupleSpecializationRequest {
     #[allow(dead_code)] // used by the compiler once checked discovery is wired in
-    pub fn declaration(elements: Vec<Ty>) -> Self {
+    pub const fn declaration(elements: Vec<Ty>) -> Self {
         Self {
             elements,
             bare_call: None,
@@ -84,7 +85,7 @@ impl TupleSpecializationRequest {
     }
 
     #[allow(dead_code)] // used by the compiler once checked discovery is wired in
-    pub fn bare_call(elements: Vec<Ty>, occurrence: SourceSpan) -> Self {
+    pub const fn bare_call(elements: Vec<Ty>, occurrence: SourceSpan) -> Self {
         Self {
             elements,
             bare_call: Some(occurrence),
@@ -92,7 +93,7 @@ impl TupleSpecializationRequest {
         }
     }
 
-    pub fn transform(elements: Vec<Ty>, transform: TupleTransformRequest) -> Self {
+    pub const fn transform(elements: Vec<Ty>, transform: TupleTransformRequest) -> Self {
         Self {
             elements,
             bare_call: None,
@@ -104,20 +105,21 @@ impl TupleSpecializationRequest {
         &self.elements
     }
 
-    pub fn occurrence(&self) -> Option<&SourceSpan> {
+    pub const fn occurrence(&self) -> Option<&SourceSpan> {
         self.bare_call.as_ref()
     }
 
-    pub fn requested_transform(&self) -> Option<&TupleTransformRequest> {
+    pub const fn requested_transform(&self) -> Option<&TupleTransformRequest> {
         self.transform.as_ref()
     }
 }
 
-/// One checker-discovered lazy template-string occurrence: the interleaved
-/// element types of a `t"…"` expression (literal segments as `String`,
-/// interpolation snapshots at their checked types) and the source occurrence
-/// whose AST node monomorphization rewrites into a construction of the
-/// concrete `TString` specialization.
+/// One checker-discovered lazy template-string occurrence.
+///
+/// The interleaved element types of a `t"…"` expression (literal segments as
+/// `String`, interpolation snapshots at their checked types) and the source
+/// occurrence whose AST node monomorphization rewrites into a construction of
+/// the concrete `TString` specialization.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TStringSpecializationRequest {
     elements: Vec<Ty>,
@@ -125,7 +127,7 @@ pub struct TStringSpecializationRequest {
 }
 
 impl TStringSpecializationRequest {
-    pub fn new(elements: Vec<Ty>, occurrence: SourceSpan) -> Self {
+    pub const fn new(elements: Vec<Ty>, occurrence: SourceSpan) -> Self {
         Self {
             elements,
             occurrence: occurrence.without_syntax(),
@@ -136,15 +138,17 @@ impl TStringSpecializationRequest {
         &self.elements
     }
 
-    pub fn occurrence(&self) -> &SourceSpan {
+    pub const fn occurrence(&self) -> &SourceSpan {
         &self.occurrence
     }
 }
 
 /// One checker-discovered inferred application of a bound-generic `def`
-/// template. The pre-check elaborator cannot infer types, so the compiler's
-/// discovery loop replays the checker's resolved instantiation at the exact
-/// call occurrence. A request can only upgrade a call from the abstract
+/// template.
+///
+/// The pre-check elaborator cannot infer types, so the compiler's discovery
+/// loop replays the checker's resolved instantiation at the exact call
+/// occurrence. A request can only upgrade a call from the abstract
 /// erased-dispatch path to a concrete clone; any mismatch, misalignment, or
 /// collision is skipped and the call stays abstract.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,7 +161,7 @@ pub struct DefSpecializationRequest {
 }
 
 impl DefSpecializationRequest {
-    pub fn new(occurrence: SourceSpan, callee: String, arguments: Vec<TyArg>) -> Self {
+    pub const fn new(occurrence: SourceSpan, callee: String, arguments: Vec<TyArg>) -> Self {
         Self {
             occurrence: occurrence.without_syntax(),
             callee,
@@ -165,7 +169,7 @@ impl DefSpecializationRequest {
         }
     }
 
-    pub fn occurrence(&self) -> &SourceSpan {
+    pub const fn occurrence(&self) -> &SourceSpan {
         &self.occurrence
     }
 
@@ -179,12 +183,13 @@ impl DefSpecializationRequest {
 }
 
 /// One checker-discovered application of a generic *method* of a specialized
-/// variadic struct (`bag.find[Int]()`, `v.set(3)` inferring `T`). The
-/// specializer mints one clone per distinct instantiation
-/// (`find$y3:Int`) inside the owner, and the checker retargets the call to
-/// it by exact name on the next discovery round. A request that names no
-/// method, or whose arguments do not align with the method's declaration,
-/// is skipped: the call keeps the template's erased path.
+/// variadic struct (`bag.find[Int]()`, `v.set(3)` inferring `T`).
+///
+/// The specializer mints one clone per distinct instantiation (`find$y3:Int`)
+/// inside the owner, and the checker retargets the call to it by exact name on
+/// the next discovery round. A request that names no method, or whose
+/// arguments do not align with the method's declaration, is skipped: the call
+/// keeps the template's erased path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MethodSpecializationRequest {
     /// The call occurrence, stored without its phase-local syntax id.
@@ -201,7 +206,7 @@ pub struct MethodSpecializationRequest {
 }
 
 impl MethodSpecializationRequest {
-    pub fn new(
+    pub const fn new(
         occurrence: SourceSpan,
         owner: String,
         method: String,
@@ -221,7 +226,7 @@ impl MethodSpecializationRequest {
         &self.parameter_names
     }
 
-    pub fn occurrence(&self) -> &SourceSpan {
+    pub const fn occurrence(&self) -> &SourceSpan {
         &self.occurrence
     }
 
@@ -240,18 +245,19 @@ impl MethodSpecializationRequest {
 
 /// One checker-discovered closed application of an ordinary generic struct
 /// (`Optional[Int]`): the template name and its declaration-order arguments.
-/// The specializer appends one clone per available method to the live
-/// template with the struct's parameters baked (`get$y3:Int`), and the
-/// checker retargets calls on that instance to the clones by exact name on
-/// the next discovery round.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// The specializer appends one clone per available method to the live template
+/// with the struct's parameters baked (`get$y3:Int`), and the checker
+/// retargets calls on that instance to the clones by exact name on the next
+/// discovery round.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructInstanceRequest {
     template: String,
     arguments: Vec<TyArg>,
 }
 
 impl StructInstanceRequest {
-    pub fn new(template: String, arguments: Vec<TyArg>) -> Self {
+    pub const fn new(template: String, arguments: Vec<TyArg>) -> Self {
         Self {
             template,
             arguments,
@@ -268,9 +274,11 @@ impl StructInstanceRequest {
 }
 
 /// Exact callable types which a generated public-Tuple declaration references
-/// through opaque compiler-only AST ids. Source `def(...)` annotations cannot
-/// encode all of this metadata, so the compiler passes this map directly to the
-/// second checker pass instead of round-tripping through syntax.
+/// through opaque compiler-only AST ids.
+///
+/// Source `def(...)` annotations cannot encode all of this metadata, so the
+/// compiler passes this map directly to the second checker pass instead of
+/// round-tripping through syntax.
 pub fn tuple_materialized_callables(
     requests: &[TupleSpecializationRequest],
 ) -> HashMap<String, Ty> {
@@ -325,9 +333,10 @@ pub fn tuple_materialized_callables(
 }
 
 /// Comptime-specific accessors on the shared [`CtValue`], reporting a
-/// [`ComptimeError`] when a value is not of the required kind. An extension
-/// trait: `CtValue` lives in the types layer below this phase, so an
-/// inherent impl cannot.
+/// [`ComptimeError`] when a value is not of the required kind.
+///
+/// An extension trait: `CtValue` lives in the types layer below this phase, so
+/// an inherent impl cannot.
 pub trait CtValueExt {
     fn as_bool(&self, ctx: &str) -> Result<bool, ComptimeError>;
     fn as_int(&self, ctx: &str) -> Result<i64, ComptimeError>;
@@ -338,14 +347,14 @@ pub trait CtValueExt {
 impl CtValueExt for CtValue {
     fn as_bool(&self, ctx: &str) -> Result<bool, ComptimeError> {
         match self {
-            CtValue::Bool(b) => Ok(*b),
+            Self::Bool(b) => Ok(*b),
             _ => Err(ComptimeError::NotBool(ctx.to_string())),
         }
     }
     fn as_int(&self, ctx: &str) -> Result<i64, ComptimeError> {
         match self {
-            CtValue::Int(n) => Ok(*n),
-            CtValue::IntLiteral(n) => n.wrapping_signed(64).ok_or_else(|| {
+            Self::Int(n) => Ok(*n),
+            Self::IntLiteral(n) => n.wrapping_signed(64).ok_or_else(|| {
                 ComptimeError::BadArithmetic(format!(
                     "integer literal cannot materialize as Int in {ctx}"
                 ))
@@ -358,16 +367,12 @@ impl CtValueExt for CtValue {
     /// upstream) yields its element types.
     fn as_sequence(&self, ctx: &str) -> Result<Vec<CtValue>, ComptimeError> {
         match self {
-            CtValue::Tuple(v) | CtValue::List(v) | CtValue::Set { elements: v, .. } => {
-                Ok(v.clone())
-            }
+            Self::Tuple(v) | Self::List(v) | Self::Set { elements: v, .. } => Ok(v.clone()),
             // A dictionary iterates (and counts) its keys, as at runtime.
-            CtValue::Dict { entries, .. } => {
-                Ok(entries.iter().map(|(key, _)| key.clone()).collect())
-            }
+            Self::Dict { entries, .. } => Ok(entries.iter().map(|(key, _)| key.clone()).collect()),
             _ => self
                 .typelist_elements()
-                .map(<[CtValue]>::to_vec)
+                .map(<[Self]>::to_vec)
                 .ok_or_else(|| ComptimeError::BadRange(ctx.to_string())),
         }
     }
@@ -376,17 +381,15 @@ impl CtValueExt for CtValue {
     /// `None` for any other value.
     fn typelist_elements(&self) -> Option<&[CtValue]> {
         match self {
-            CtValue::Struct { name, fields } if name == "TypeList" => match fields.as_slice() {
-                [(field, CtValue::Tuple(values))] if field == "values" => Some(values),
+            Self::Struct { name, fields } if name == "TypeList" => match fields.as_slice() {
+                [(field, Self::Tuple(values))] if field == "values" => Some(values),
                 _ => None,
             },
             // A bound type pack (`*Ts` specialized to concrete types) is
             // upstream's `TypeList` in every compile-time position, so
             // `Ts.length`, `Ts[i]`, `Ts.all_conforms_to[..]()`, and
             // `Ts.contains[T]()` read it directly.
-            CtValue::Tuple(values)
-                if values.iter().all(|value| matches!(value, CtValue::Type(_))) =>
-            {
+            Self::Tuple(values) if values.iter().all(|value| matches!(value, Self::Type(_))) => {
                 Some(values)
             }
             _ => None,
@@ -448,16 +451,16 @@ pub struct GenericBoundError {
 impl std::fmt::Display for ComptimeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ComptimeError::NotComptime(s) => write!(f, "not a compile-time value: {s}"),
-            ComptimeError::Crossing(s) => write!(f, "{s}"),
-            ComptimeError::NotBool(s) => write!(f, "expected a compile-time Bool ({s})"),
-            ComptimeError::NotInt(s) => write!(f, "expected a compile-time Int ({s})"),
-            ComptimeError::BadArithmetic(s) => write!(f, "compile-time arithmetic error: {s}"),
-            ComptimeError::BadRange(s) => {
+            Self::NotComptime(s) => write!(f, "not a compile-time value: {s}"),
+            Self::Crossing(s) => write!(f, "{s}"),
+            Self::NotBool(s) => write!(f, "expected a compile-time Bool ({s})"),
+            Self::NotInt(s) => write!(f, "expected a compile-time Int ({s})"),
+            Self::BadArithmetic(s) => write!(f, "compile-time arithmetic error: {s}"),
+            Self::BadRange(s) => {
                 write!(f, "'comptime for' needs a range(...)/tuple/list: {s}")
             }
-            ComptimeError::Arity(s) => write!(f, "compile-time call arity: {s}"),
-            ComptimeError::PackBound(error) => {
+            Self::Arity(s) => write!(f, "compile-time call arity: {s}"),
+            Self::PackBound(error) => {
                 let PackBoundError {
                     function,
                     pack,
@@ -477,7 +480,7 @@ impl std::fmt::Display for ComptimeError {
                 }
                 Ok(())
             }
-            ComptimeError::GenericBound(error) => {
+            Self::GenericBound(error) => {
                 let GenericBoundError {
                     function,
                     param,
@@ -495,10 +498,10 @@ impl std::fmt::Display for ComptimeError {
                 }
                 Ok(())
             }
-            ComptimeError::Constraint(message) => {
+            Self::Constraint(message) => {
                 write!(f, "compile-time constraint failed: {message}")
             }
-            ComptimeError::QuotaExceeded => {
+            Self::QuotaExceeded => {
                 write!(f, "compile-time execution exceeded the step quota ({FUEL})")
             }
         }
@@ -512,18 +515,22 @@ pub fn elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
 }
 
 /// An elaborated program plus the generic-struct instances the specializer
-/// minted method clones for along the way (closed applications reached from
-/// user code and from other clones), so the driver's discovery loop does not
-/// treat the checker's recordings of those instances as new work.
+/// minted method clones for along the way.
+///
+/// The instances are the closed applications reached from user code and from
+/// other clones, so the driver's discovery loop does not treat the checker's
+/// recordings of those instances as new work.
 pub struct Elaborated {
     pub program: Vec<Stmt>,
     pub instances: Vec<StructInstanceRequest>,
 }
 
 /// The top-level variadic struct template names (`struct S[*Ts: Bound]`) of a
-/// linked program. A specialized instance is named `<template>$t<n>[...]`;
-/// the compiler's discovery loop filters checker-recorded method
-/// instantiations to receivers of that shape.
+/// linked program.
+///
+/// A specialized instance is named `<template>$t<n>[...]`; the compiler's
+/// discovery loop filters checker-recorded method instantiations to receivers
+/// of that shape.
 pub fn variadic_struct_template_names(program: &[Stmt]) -> HashSet<String> {
     program
         .iter()
@@ -549,16 +556,19 @@ pub fn bound_generic_template_names(program: &[Stmt]) -> HashSet<String> {
 }
 
 /// The top-level type-pack template names (`def show[*Ts: Writable](*args:
-/// *Ts)`) of a linked program: a call whose element types are not statically
-/// evident before checking (a local, a generic construction, an origin-bearing
-/// temporary) is minted from the checker-recorded instantiation on the next
-/// discovery round, as inferred bound-generic calls are.
+/// *Ts)`) of a linked program.
+///
+/// A call whose element types are not statically evident before checking (a
+/// local, a generic construction, an origin-bearing temporary) is minted from
+/// the checker-recorded instantiation on the next discovery round, as inferred
+/// bound-generic calls are.
 pub fn pack_generic_template_names(program: &[Stmt]) -> HashSet<String> {
     collect_pack_generic_templates(program)
 }
 
 /// Elaborate a program while materializing checker-discovered public `Tuple`
 /// and `TString` specializations and inferred bound-generic applications.
+///
 /// This is a crate-internal staging seam: ordinary callers use [`elaborate`],
 /// and the compiler's discovery loop supplies requests here.
 pub fn elaborate_with_requests(
@@ -712,10 +722,15 @@ mod simd_width;
 mod synth;
 mod unparse;
 
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use ctfe_calls::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use packs::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use params::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use simd_width::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use synth::*;
 
 fn mk(kind: StmtKind, span: Span) -> Stmt {
@@ -1795,6 +1810,8 @@ fn compare_numeric_values(
     left: &CtValue,
     right: &CtValue,
 ) -> Result<bool, ComptimeError> {
+    use InfixOp::{Eq, Ge, Gt, Le, Lt, Ne};
+
     let exact = |value: &CtValue| match value {
         CtValue::Int(value) => Some(mojito_common::literal::FloatLiteral::from_int(
             &mojito_common::literal::IntLiteral::from(*value),
@@ -1815,7 +1832,6 @@ fn compare_numeric_values(
         ));
     };
     let ordering = left.as_rational().cmp(right.as_rational());
-    use InfixOp::*;
     Ok(match op {
         Eq => ordering.is_eq(),
         Ne => !ordering.is_eq(),
@@ -1857,9 +1873,10 @@ mod rewrite;
 
 mod specialize;
 
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use rewrite::*;
 
-impl<'a> Elab<'a> {
+impl Elab<'_> {
     /// Whether `name` declares an explicit (non-infer-only) `Origin`/
     /// `OriginSet` parameter — a slot the checker erases from `Ty::Struct`,
     /// so a type mentioning the struct cannot be spelled concretely in a

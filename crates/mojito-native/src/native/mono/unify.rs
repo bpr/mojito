@@ -1,6 +1,7 @@
 //! Argument binding: ordering, defaults, and pattern/actual type
 //! unification into `Bindings`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 /// A `Some[Trait]` sugar parameter is infer-only and absent from the
@@ -181,7 +182,7 @@ pub(super) fn bind_ty_args(
         match (decl, arg) {
             (ParamDecl::Type { name, .. }, TyArg::Ty(ty)) => bind_type(name, ty, bindings)?,
             (ParamDecl::Value { name, .. }, TyArg::Val(value)) => {
-                bind_value(name, value, bindings)?
+                bind_value(name, value, bindings)?;
             }
             (_, TyArg::Origin(_)) => {}
             _ => {

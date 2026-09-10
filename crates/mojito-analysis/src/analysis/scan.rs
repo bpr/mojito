@@ -1,6 +1,7 @@
 //! Shared MIR scans: per-instruction variable uses/defs/moves, deep
 //! instruction walks, and droppable-root classification.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 /// The variables a MIR instruction reads, each paired with a nearby result
@@ -273,7 +274,7 @@ pub(super) fn collect_region_defs(
 }
 
 /// The variable a MIR instruction writes (a `DefVar`), if any.
-pub(super) fn var_def(i: &MirInstr) -> Option<VarId> {
+pub(super) const fn var_def(i: &MirInstr) -> Option<VarId> {
     match i {
         MirInstr::DefVar { var, .. } => Some(*var),
         _ => None,
@@ -282,7 +283,7 @@ pub(super) fn var_def(i: &MirInstr) -> Option<VarId> {
 
 /// `EstablishLoans` starts the reference's analytical live range, but it does not
 /// overwrite the runtime handle already stored by `DefVar`.
-pub(super) fn loan_liveness_def(i: &MirInstr) -> Option<VarId> {
+pub(super) const fn loan_liveness_def(i: &MirInstr) -> Option<VarId> {
     match i {
         MirInstr::EstablishLoans { reference, .. } => Some(*reference),
         _ => var_def(i),
@@ -323,7 +324,7 @@ pub(super) fn vars_moved(i: &MirInstr) -> Vec<VarId> {
 /// backstop; raising→silent could let a handler observe a vacated slot, so the
 /// allowlist stays minimal. (Non-`Raised` runtime errors abort the program, so
 /// drops are unobservable on those paths.)
-pub(super) fn may_raise(instr: &MirInstr) -> bool {
+pub(super) const fn may_raise(instr: &MirInstr) -> bool {
     !matches!(
         instr,
         MirInstr::DefVar { .. }

@@ -15,9 +15,10 @@ use num_rational::BigRational;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 
 /// Prevent a short source spelling such as `1e999999999999` or `2 ** huge`
-/// from asking the compiler to allocate an unbounded amount of memory.  This is
-/// a compiler resource limit, not a numeric precision limit: values with up to
-/// one million decimal/binary exponent steps remain exact.
+/// from asking the compiler to allocate an unbounded amount of memory.
+///
+/// This is a compiler resource limit, not a numeric precision limit: values
+/// with up to one million decimal/binary exponent steps remain exact.
 pub const MAX_LITERAL_EXPONENT: u64 = 1_000_000;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -28,7 +29,7 @@ impl IntLiteral {
         BigInt::parse_bytes(digits.as_bytes(), radix).map(Self)
     }
 
-    pub fn as_bigint(&self) -> &BigInt {
+    pub const fn as_bigint(&self) -> &BigInt {
         &self.0
     }
 
@@ -87,18 +88,22 @@ impl IntLiteral {
         self.0.sign() == Sign::Minus
     }
 
+    #[must_use]
     pub fn neg(&self) -> Self {
         Self(-&self.0)
     }
 
+    #[must_use]
     pub fn add(&self, rhs: &Self) -> Self {
         Self(&self.0 + &rhs.0)
     }
 
+    #[must_use]
     pub fn sub(&self, rhs: &Self) -> Self {
         Self(&self.0 - &rhs.0)
     }
 
+    #[must_use]
     pub fn mul(&self, rhs: &Self) -> Self {
         Self(&self.0 * &rhs.0)
     }
@@ -136,14 +141,17 @@ impl IntLiteral {
         Some(Self(&self.0 >> usize::try_from(shift).ok()?))
     }
 
+    #[must_use]
     pub fn bitand(&self, rhs: &Self) -> Self {
         Self(&self.0 & &rhs.0)
     }
 
+    #[must_use]
     pub fn bitor(&self, rhs: &Self) -> Self {
         Self(&self.0 | &rhs.0)
     }
 
+    #[must_use]
     pub fn bitxor(&self, rhs: &Self) -> Self {
         Self(&self.0 ^ &rhs.0)
     }
@@ -279,7 +287,7 @@ impl FloatLiteral {
         }
     }
 
-    pub fn as_rational(&self) -> &BigRational {
+    pub const fn as_rational(&self) -> &BigRational {
         &self.value
     }
 
@@ -287,7 +295,7 @@ impl FloatLiteral {
         self.value.is_zero()
     }
 
-    pub fn is_negative_zero(&self) -> bool {
+    pub const fn is_negative_zero(&self) -> bool {
         self.negative_zero
     }
 
@@ -295,6 +303,7 @@ impl FloatLiteral {
         self.sign_negative()
     }
 
+    #[must_use]
     pub fn abs(&self) -> Self {
         Self {
             value: self.value.abs(),
@@ -302,6 +311,7 @@ impl FloatLiteral {
         }
     }
 
+    #[must_use]
     pub fn neg(&self) -> Self {
         Self {
             value: -&self.value,
@@ -309,6 +319,7 @@ impl FloatLiteral {
         }
     }
 
+    #[must_use]
     pub fn add(&self, rhs: &Self) -> Self {
         let mut result = Self::from_rational(&self.value + &rhs.value);
         // IEEE addition preserves -0 only when both zero operands are -0.
@@ -321,10 +332,12 @@ impl FloatLiteral {
         result
     }
 
+    #[must_use]
     pub fn sub(&self, rhs: &Self) -> Self {
         self.add(&rhs.neg())
     }
 
+    #[must_use]
     pub fn mul(&self, rhs: &Self) -> Self {
         let mut result = Self::from_rational(&self.value * &rhs.value);
         if result.is_zero() {
@@ -400,6 +413,11 @@ impl FloatLiteral {
     /// binary64 can double-round values immediately beside an f32 midpoint, so
     /// choose between the cast's neighboring f32 values using exact rational
     /// distances.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a rational literal holds a non-finite component, which the
+    /// lexer cannot produce.
     pub fn to_f32(&self) -> Option<f32> {
         if self.is_zero() {
             return Some(if self.negative_zero { -0.0 } else { 0.0 });
@@ -448,7 +466,7 @@ impl FloatLiteral {
         Some(if negative { -best } else { best })
     }
 
-    fn from_rational(value: BigRational) -> Self {
+    const fn from_rational(value: BigRational) -> Self {
         Self {
             value,
             negative_zero: false,

@@ -9,10 +9,11 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 /// Positive deletability facts proved by the type checker in the lexical
-/// constraint environment where each binding is introduced. Conditional
-/// conformances cannot be recovered from a nominal type name after checking:
-/// `List[T]` is linear in general, while it is ordinarily droppable under a
-/// proven `T: Deinitable` constraint.
+/// constraint environment where each binding is introduced.
+///
+/// Conditional conformances cannot be recovered from a nominal type name after
+/// checking: `List[T]` is linear in general, while it is ordinarily droppable
+/// under a proven `T: Deinitable` constraint.
 #[derive(Default)]
 pub struct CheckedDeletability {
     pub declarations: HashSet<AnnotationSite>,
@@ -29,6 +30,7 @@ pub struct CheckedDeletability {
 /// non-`Deinitable` type parameter (`ExplicitDestroyInfo` key).
 pub const LINEAR_TYPE_PARAMETER: &str = "$linear";
 
+#[allow(clippy::implicit_hasher, reason = "TODO: generalize over BuildHasher")]
 pub fn check(
     statements: &[Stmt],
     binding_types: &HashMap<SourceSpan, Ty>,
@@ -159,7 +161,7 @@ fn check_expr(
             }
         }
         ExprKind::Prefix(_, value) | ExprKind::Named { value, .. } => {
-            check_expr(value, env, comprehension_bindings, types)?
+            check_expr(value, env, comprehension_bindings, types)?;
         }
         ExprKind::Infix(_, left, right) => {
             check_expr(left, env, comprehension_bindings, types)?;
@@ -238,7 +240,7 @@ fn check_expr(
                 match argument {
                     mojito_ast::ast::SubscriptArg::Index(value)
                     | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
-                        check_expr(value, env, comprehension_bindings, types)?
+                        check_expr(value, env, comprehension_bindings, types)?;
                     }
                     mojito_ast::ast::SubscriptArg::Slice {
                         lower, upper, step, ..
@@ -662,7 +664,7 @@ fn check_stmt(
             if let Some(body) = orelse {
                 if let Some(exit) = check_block(
                     body,
-                    base.clone(),
+                    base,
                     true,
                     binding_types,
                     comprehension_bindings,
@@ -857,7 +859,7 @@ fn check_stmt(
             }
         }
         StmtKind::RefDecl { value, .. } | StmtKind::Comptime { value, .. } => {
-            check_expr(value, &mut env, comprehension_bindings, types)?
+            check_expr(value, &mut env, comprehension_bindings, types)?;
         }
         StmtKind::Break | StmtKind::Continue => {
             env.check_current_scope()?;
@@ -1071,6 +1073,10 @@ fn consume_destructor(
     })
 }
 
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "TODO: drop the Result once callers stop using ?"
+)]
 fn reinitialize_place(
     expr: &Expr,
     env: &mut Env,
@@ -1238,7 +1244,7 @@ fn consumed_roots_in_expr(expr: &Expr, env: &Env, roots: &mut HashSet<usize>) {
             }
         }
         ExprKind::Prefix(_, value) | ExprKind::Named { value, .. } => {
-            consumed_roots_in_expr(value, env, roots)
+            consumed_roots_in_expr(value, env, roots);
         }
         ExprKind::Infix(_, left, right) => {
             consumed_roots_in_expr(left, env, roots);

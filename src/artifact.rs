@@ -13,9 +13,11 @@ use crate::runtime::RuntimeError;
 use std::fmt;
 
 /// Load and execute one textual MIR artifact, capturing its output and final
-/// top-level bindings. The loading gate (parse + canonical verify) is the
-/// artifact's semantic gate; execution runs the program exactly as
-/// serialized — no re-elaboration, re-verification, or ownership re-analysis.
+/// top-level bindings.
+///
+/// The loading gate (parse + canonical verify) is the artifact's semantic
+/// gate; execution runs the program exactly as serialized — no
+/// re-elaboration, re-verification, or ownership re-analysis.
 pub fn run_artifact(
     input: &[u8],
     source_name: impl Into<String>,
@@ -49,9 +51,9 @@ pub enum ArtifactRunError {
 impl fmt::Display for ArtifactRunError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ArtifactRunError::Load(report) => write!(formatter, "{report}"),
-            ArtifactRunError::Backend(message) => write!(formatter, "{message}"),
-            ArtifactRunError::Runtime(error) => write!(formatter, "{error}"),
+            Self::Load(report) => write!(formatter, "{report}"),
+            Self::Backend(message) => write!(formatter, "{message}"),
+            Self::Runtime(error) => write!(formatter, "{error}"),
         }
     }
 }

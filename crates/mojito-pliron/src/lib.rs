@@ -49,9 +49,15 @@ mod toolchain;
 
 /// Compile the call-graph closure of `options.entries` to an LLVM-dialect
 /// module: verify the constructed IR, run the mem2reg/DCE cleanup pipeline,
-/// verify again, and cache the canonical Pliron text. The supported-subset
-/// contract applies to the reachable set; the first construct outside it
-/// fails compilation with a contextual diagnostic.
+/// verify again, and cache the canonical Pliron text.
+///
+/// The supported-subset contract applies to the reachable set; the first
+/// construct outside it fails compilation with a contextual diagnostic.
+///
+/// # Panics
+///
+/// Panics if the verified MIR names a register or declaration absent from the
+/// program it came from, which `mir::verify` rules out.
 pub fn compile(
     program: &MirProgram,
     options: &CompileOptions,
@@ -173,14 +179,20 @@ pub fn compile(
 }
 
 /// Render the textual LLVM declarations of the runtime ABI contract table
-/// (`mojito_native::native::rt_abi`): every exported data symbol and function, in
-/// table order. This is the declaration set generated code links against once
-/// it starts calling the runtime (Stage 3); until then the backend tests pin
-/// it as the mechanical LLVM-side rendering of the contract.
+/// (`mojito_native::native::rt_abi`): every exported data symbol and function,
+/// in table order.
+///
+/// This is the declaration set generated code links against once it starts
+/// calling the runtime (Stage 3); until then the backend tests pin it as the
+/// mechanical LLVM-side rendering of the contract.
 pub fn runtime_declarations() -> String {
     use mojito_native::native::rt_abi::{CAbiTy, RT_DATA_SYMBOLS, RT_SYMBOLS};
 
-    fn llvm_ty(ty: CAbiTy) -> &'static str {
+    #[allow(
+        clippy::format_push_string,
+        reason = "TODO: write! into the buffer instead"
+    )]
+    const fn llvm_ty(ty: CAbiTy) -> &'static str {
         match ty {
             CAbiTy::U32 => "i32",
             // LLVM integers are signless; U64 and I64 share i64.
@@ -190,19 +202,22 @@ pub fn runtime_declarations() -> String {
         }
     }
 
+    use std::fmt::Write;
+
     let mut out = String::new();
     for (symbol, ty) in RT_DATA_SYMBOLS {
-        out.push_str(&format!("@{symbol} = external global {}\n", llvm_ty(*ty)));
+        let _ = writeln!(out, "@{symbol} = external global {}", llvm_ty(*ty));
     }
     for sig in RT_SYMBOLS {
-        let ret = sig.ret.map(llvm_ty).unwrap_or("void");
+        let ret = sig.ret.map_or("void", llvm_ty);
         let params: Vec<&str> = sig.params.iter().map(|(_, ty)| llvm_ty(*ty)).collect();
         let attrs = if sig.noreturn { " noreturn" } else { "" };
-        out.push_str(&format!(
-            "declare {ret} @{}({}){attrs}\n",
+        let _ = writeln!(
+            out,
+            "declare {ret} @{}({}){attrs}",
             sig.symbol,
             params.join(", ")
-        ));
+        );
     }
     out
 }
@@ -233,7 +248,7 @@ impl NativeModule {
 
     /// Textual LLVM IR of the converted module.
     pub fn llvm_ir(&self, opt: OptLevel) -> Result<String, PlironError> {
-        emit::llvm_ir(&self.context, self.module, &self.target, opt)
+        emit::llvm_ir(&self.context, self.module, self.target, opt)
     }
 
     /// Write LLVM bitcode to `path`.
@@ -246,7 +261,7 @@ impl NativeModule {
         emit::write_bitcode(
             &self.context,
             self.module,
-            &self.target,
+            self.target,
             path,
             opt,
             self.debug_policy(debug),
@@ -267,7 +282,7 @@ impl NativeModule {
         emit::write_object(
             &self.context,
             self.module,
-            &self.target,
+            self.target,
             path,
             opt,
             self.debug_policy(debug),
@@ -288,14 +303,14 @@ impl NativeModule {
         emit::write_executable(
             &self.context,
             self.module,
-            &self.target,
+            self.target,
             path,
             opt,
             self.debug_policy(debug),
         )
     }
 
-    /// [`NativeModule::write_executable`] instrumented with AddressSanitizer
+    /// [`NativeModule::write_executable`] instrumented with `AddressSanitizer`
     /// (and its leak checking) — the sanitizer acceptance lane.
     pub fn write_executable_sanitized(
         &mut self,
@@ -307,14 +322,14 @@ impl NativeModule {
         emit::write_executable_sanitized(
             &self.context,
             self.module,
-            &self.target,
+            self.target,
             path,
             opt,
             self.debug_policy(debug),
         )
     }
 
-    fn debug_policy(&self, level: DebugInfo) -> debug::DebugPolicy<'_> {
+    const fn debug_policy(&self, level: DebugInfo) -> debug::DebugPolicy<'_> {
         debug::DebugPolicy {
             level,
             table: &self.debug_table,
@@ -326,7 +341,7 @@ impl NativeModule {
     /// correlation. The corpus test pins this to empty; production emission
     /// degrades identically but silently.
     pub fn debug_degradations(&self) -> Result<Vec<String>, PlironError> {
-        emit::debug_degradations(&self.context, self.module, &self.target, &self.debug_table)
+        emit::debug_degradations(&self.context, self.module, self.target, &self.debug_table)
     }
 
     /// JIT-execute a compiled zero-argument value-returning MIR function and
@@ -375,7 +390,7 @@ impl NativeModule {
         jit::run_value(
             &self.context,
             self.module,
-            &self.target,
+            self.target,
             &meta.mangled,
             meta.ret,
             opt,
@@ -502,9 +517,10 @@ pub enum RetKind {
     Sized(mojito_ast::ast::Dtype),
 }
 
-/// A checked runtime trap the native backend guards explicitly. Trap blocks
-/// call the runtime's `mjrt_trap` with [`TrapCategory::code`]; the runtime
-/// reports on stderr and exits with [`TrapCategory::exit_code`], so a
+/// A checked runtime trap the native backend guards explicitly.
+///
+/// Trap blocks call the runtime's `mjrt_trap` with [`TrapCategory::code`]; the
+/// runtime reports on stderr and exits with [`TrapCategory::exit_code`], so a
 /// trapping native executable's exit status identifies the category. The
 /// scalar categories map onto the VM's `RuntimeError::TypeError` message for
 /// differential comparison; the runtime-service categories have no VM analog.
@@ -537,54 +553,54 @@ pub enum TrapCategory {
 }
 
 impl TrapCategory {
-    const ALL: [TrapCategory; 14] = [
-        TrapCategory::DivModZero,
-        TrapCategory::PowExponent,
-        TrapCategory::AllocFailure,
-        TrapCategory::StdoutFailure,
-        TrapCategory::UnhandledError,
-        TrapCategory::StdinFailure,
-        TrapCategory::Abort,
-        TrapCategory::PointerDangling,
-        TrapCategory::PointerUseAfterFree,
-        TrapCategory::PointerDoubleFree,
-        TrapCategory::UninitRead,
-        TrapCategory::UninitTake,
-        TrapCategory::UninitDestroy,
-        TrapCategory::VariantTagMismatch,
+    const ALL: [Self; 14] = [
+        Self::DivModZero,
+        Self::PowExponent,
+        Self::AllocFailure,
+        Self::StdoutFailure,
+        Self::UnhandledError,
+        Self::StdinFailure,
+        Self::Abort,
+        Self::PointerDangling,
+        Self::PointerUseAfterFree,
+        Self::PointerDoubleFree,
+        Self::UninitRead,
+        Self::UninitTake,
+        Self::UninitDestroy,
+        Self::VariantTagMismatch,
     ];
 
     /// Stable small code of this category (used in exit codes and manifests),
     /// in lockstep with the `rt_abi` trap constants.
-    pub fn code(self) -> u8 {
+    pub const fn code(self) -> u8 {
         use mojito_native::native::rt_abi;
         let code = match self {
-            TrapCategory::DivModZero => rt_abi::TRAP_DIV_MOD_ZERO,
-            TrapCategory::PowExponent => rt_abi::TRAP_POW_EXPONENT,
-            TrapCategory::AllocFailure => rt_abi::TRAP_ALLOC_FAILURE,
-            TrapCategory::StdoutFailure => rt_abi::TRAP_STDOUT_FAILURE,
-            TrapCategory::UnhandledError => rt_abi::TRAP_UNHANDLED_ERROR,
-            TrapCategory::StdinFailure => rt_abi::TRAP_STDIN_FAILURE,
-            TrapCategory::Abort => rt_abi::TRAP_ABORT,
-            TrapCategory::PointerDangling => rt_abi::TRAP_POINTER_DANGLING,
-            TrapCategory::PointerUseAfterFree => rt_abi::TRAP_POINTER_USE_AFTER_FREE,
-            TrapCategory::PointerDoubleFree => rt_abi::TRAP_POINTER_DOUBLE_FREE,
-            TrapCategory::UninitRead => rt_abi::TRAP_UNINIT_READ,
-            TrapCategory::UninitTake => rt_abi::TRAP_UNINIT_TAKE,
-            TrapCategory::UninitDestroy => rt_abi::TRAP_UNINIT_DESTROY,
-            TrapCategory::VariantTagMismatch => rt_abi::TRAP_VARIANT_TAG_MISMATCH,
+            Self::DivModZero => rt_abi::TRAP_DIV_MOD_ZERO,
+            Self::PowExponent => rt_abi::TRAP_POW_EXPONENT,
+            Self::AllocFailure => rt_abi::TRAP_ALLOC_FAILURE,
+            Self::StdoutFailure => rt_abi::TRAP_STDOUT_FAILURE,
+            Self::UnhandledError => rt_abi::TRAP_UNHANDLED_ERROR,
+            Self::StdinFailure => rt_abi::TRAP_STDIN_FAILURE,
+            Self::Abort => rt_abi::TRAP_ABORT,
+            Self::PointerDangling => rt_abi::TRAP_POINTER_DANGLING,
+            Self::PointerUseAfterFree => rt_abi::TRAP_POINTER_USE_AFTER_FREE,
+            Self::PointerDoubleFree => rt_abi::TRAP_POINTER_DOUBLE_FREE,
+            Self::UninitRead => rt_abi::TRAP_UNINIT_READ,
+            Self::UninitTake => rt_abi::TRAP_UNINIT_TAKE,
+            Self::UninitDestroy => rt_abi::TRAP_UNINIT_DESTROY,
+            Self::VariantTagMismatch => rt_abi::TRAP_VARIANT_TAG_MISMATCH,
         };
         code as u8
     }
 
     /// The process exit status a native trap reports: `64 + code`.
-    pub fn exit_code(self) -> u8 {
+    pub const fn exit_code(self) -> u8 {
         64 + self.code()
     }
 
     /// The category a trapping native process reported, if any.
-    pub fn from_exit_code(code: i32) -> Option<TrapCategory> {
-        TrapCategory::ALL
+    pub fn from_exit_code(code: i32) -> Option<Self> {
+        Self::ALL
             .into_iter()
             .find(|category| i32::from(category.exit_code()) == code)
     }
@@ -592,24 +608,22 @@ impl TrapCategory {
     /// The runtime's stderr text for this category (`trap_message` in
     /// `crates/mojito-runtime`; the scalar categories reuse the VM's
     /// runtime-error text so both backends diagnose identically).
-    pub fn runtime_message(self) -> &'static str {
+    pub const fn runtime_message(self) -> &'static str {
         match self {
-            TrapCategory::DivModZero => "integer division or modulo by zero",
-            TrapCategory::PowExponent => {
-                "'**' exponent must be a non-negative Int that fits in 32 bits"
-            }
-            TrapCategory::AllocFailure => "allocation failed",
-            TrapCategory::StdoutFailure => "stdout write failed",
-            TrapCategory::UnhandledError => "unhandled error",
-            TrapCategory::StdinFailure => "stdin read failed",
-            TrapCategory::Abort => "abort",
-            TrapCategory::PointerDangling => "vm: dereference of dangling Pointer",
-            TrapCategory::PointerUseAfterFree => "vm: use after Pointer deallocation",
-            TrapCategory::PointerDoubleFree => "vm: double free of Pointer allocation",
-            TrapCategory::UninitRead => "vm: read of uninitialized MaybeUninit storage",
-            TrapCategory::UninitTake => "vm: take of uninitialized MaybeUninit storage",
-            TrapCategory::UninitDestroy => "vm: destroy of uninitialized MaybeUninit storage",
-            TrapCategory::VariantTagMismatch => "Variant tag mismatch",
+            Self::DivModZero => "integer division or modulo by zero",
+            Self::PowExponent => "'**' exponent must be a non-negative Int that fits in 32 bits",
+            Self::AllocFailure => "allocation failed",
+            Self::StdoutFailure => "stdout write failed",
+            Self::UnhandledError => "unhandled error",
+            Self::StdinFailure => "stdin read failed",
+            Self::Abort => "abort",
+            Self::PointerDangling => "vm: dereference of dangling Pointer",
+            Self::PointerUseAfterFree => "vm: use after Pointer deallocation",
+            Self::PointerDoubleFree => "vm: double free of Pointer allocation",
+            Self::UninitRead => "vm: read of uninitialized MaybeUninit storage",
+            Self::UninitTake => "vm: take of uninitialized MaybeUninit storage",
+            Self::UninitDestroy => "vm: destroy of uninitialized MaybeUninit storage",
+            Self::VariantTagMismatch => "Variant tag mismatch",
         }
     }
 
@@ -618,31 +632,31 @@ impl TrapCategory {
     pub fn vm_message(self) -> Option<&'static str> {
         matches!(
             self,
-            TrapCategory::DivModZero
-                | TrapCategory::PowExponent
-                | TrapCategory::PointerDangling
-                | TrapCategory::PointerUseAfterFree
-                | TrapCategory::PointerDoubleFree
-                | TrapCategory::UninitRead
-                | TrapCategory::UninitTake
-                | TrapCategory::UninitDestroy
-                | TrapCategory::VariantTagMismatch
+            Self::DivModZero
+                | Self::PowExponent
+                | Self::PointerDangling
+                | Self::PointerUseAfterFree
+                | Self::PointerDoubleFree
+                | Self::UninitRead
+                | Self::UninitTake
+                | Self::UninitDestroy
+                | Self::VariantTagMismatch
         )
         .then(|| self.runtime_message())
     }
 
     /// The category whose VM message `message` carries, if any.
-    pub fn from_vm_message(message: &str) -> Option<TrapCategory> {
+    pub fn from_vm_message(message: &str) -> Option<Self> {
         [
-            TrapCategory::DivModZero,
-            TrapCategory::PowExponent,
-            TrapCategory::PointerDangling,
-            TrapCategory::PointerUseAfterFree,
-            TrapCategory::PointerDoubleFree,
-            TrapCategory::UninitRead,
-            TrapCategory::UninitTake,
-            TrapCategory::UninitDestroy,
-            TrapCategory::VariantTagMismatch,
+            Self::DivModZero,
+            Self::PowExponent,
+            Self::PointerDangling,
+            Self::PointerUseAfterFree,
+            Self::PointerDoubleFree,
+            Self::UninitRead,
+            Self::UninitTake,
+            Self::UninitDestroy,
+            Self::VariantTagMismatch,
         ]
         .into_iter()
         .find(|category| {
@@ -653,7 +667,7 @@ impl TrapCategory {
         .or_else(|| {
             message
                 .contains("Variant holds '")
-                .then_some(TrapCategory::VariantTagMismatch)
+                .then_some(Self::VariantTagMismatch)
         })
     }
 }
@@ -693,16 +707,21 @@ impl PlironError {
     fn render_location(&self, sources: &[(String, String)]) -> Option<String> {
         let span = self.location.as_ref()?;
         let name = span.source.as_deref()?;
-        let mut rendered = format!("{name}:{}..{}", span.span.0, span.span.1);
-        if let Some((_, text)) = sources.iter().find(|(n, _)| n == name)
+        let rendered = if let Some((_, text)) = sources.iter().find(|(n, _)| n == name)
             && let Some((line, column)) = line_column(text, span.span.0)
         {
-            rendered = format!("{name}:{line}:{column}");
-        }
+            format!("{name}:{line}:{column}")
+        } else {
+            format!("{name}:{}..{}", span.span.0, span.span.1)
+        };
         Some(rendered)
     }
 
     /// Render with line/column resolution against the compilation's sources.
+    #[allow(
+        clippy::format_push_string,
+        reason = "TODO: write! into the buffer instead"
+    )]
     pub fn display_with_sources(&self, sources: &[(String, String)]) -> String {
         let mut out = String::from("pliron backend: ");
         if let Some(function) = &self.function {
@@ -745,17 +764,17 @@ pub enum PlironErrorKind {
 impl fmt::Display for PlironErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PlironErrorKind::Unsupported { construct } => {
+            Self::Unsupported { construct } => {
                 write!(f, "unsupported {construct}")
             }
-            PlironErrorKind::LiteralOutOfRange { literal, target } => {
+            Self::LiteralOutOfRange { literal, target } => {
                 write!(f, "integer literal {literal} does not fit {target}")
             }
-            PlironErrorKind::InvariantViolations(errors) => {
+            Self::InvariantViolations(errors) => {
                 write!(f, "MIR invariant violations: {}", errors.join("; "))
             }
-            PlironErrorKind::Verify(message) => write!(f, "IR verification failed: {message}"),
-            PlironErrorKind::Emit(message) => write!(f, "emission failed: {message}"),
+            Self::Verify(message) => write!(f, "IR verification failed: {message}"),
+            Self::Emit(message) => write!(f, "emission failed: {message}"),
         }
     }
 }
@@ -865,6 +884,7 @@ fn reachable_set<'p>(
 /// Collect the call edges under `blocks` into the reachability worklist,
 /// recursing into `try` sub-regions (call sites inside a body, handler,
 /// `else`, or `finally` execute like any other).
+#[allow(clippy::cognitive_complexity, reason = "TODO: split this pass")]
 fn visit_call_edges<'p>(
     blocks: &'p [mojito_mir::mir::MirBlock],
     function: &'p MirFunction,
@@ -928,7 +948,7 @@ fn visit_call_edges<'p>(
                     for arg in args {
                         if let Some(Ty::Struct(name, _)) = function.reg_types.get(&arg.0) {
                             let prefix = format!("{name}.write_to");
-                            for (fname, _) in functions.iter() {
+                            for fname in functions.keys() {
                                 if fname.starts_with(prefix.as_str()) {
                                     targets.push(*fname);
                                 }
@@ -942,7 +962,7 @@ fn visit_call_edges<'p>(
                     for arg in args {
                         if let Some(Ty::Struct(name, _)) = function.reg_types.get(&arg.0) {
                             let prefix = format!("{name}.write_repr_to");
-                            for (fname, _) in functions.iter() {
+                            for fname in functions.keys() {
                                 if fname.starts_with(prefix.as_str()) {
                                     targets.push(*fname);
                                 }
@@ -991,7 +1011,7 @@ fn visit_call_edges<'p>(
                         for arg in args {
                             if let Some(Ty::Struct(name, _)) = function.reg_types.get(&arg.0) {
                                 let prefix = format!("{name}.write_to");
-                                for (fname, _) in functions.iter() {
+                                for fname in functions.keys() {
                                     if fname.starts_with(prefix.as_str()) {
                                         targets.push(*fname);
                                     }
@@ -1016,7 +1036,7 @@ fn visit_call_edges<'p>(
                     });
                     if let Some(Ty::Struct(hasher, _)) = hasher {
                         let prefix = format!("{hasher}._update_with_simd");
-                        for (fname, _) in functions.iter() {
+                        for fname in functions.keys() {
                             if fname.starts_with(prefix.as_str()) {
                                 targets.push(*fname);
                             }
@@ -1043,7 +1063,7 @@ fn visit_call_edges<'p>(
                         }
                         if string_leaf {
                             // The nominal String's symbols are module-qualified.
-                            for (fname, _) in functions.iter() {
+                            for fname in functions.keys() {
                                 if fname.rsplit_once(".__hash__").is_some_and(|(owner, rest)| {
                                     owner
                                         .rsplit('$')
@@ -1057,7 +1077,7 @@ fn visit_call_edges<'p>(
                         }
                         for alternative in nominal_alternatives {
                             let prefix = format!("{alternative}.__hash__");
-                            for (fname, _) in functions.iter() {
+                            for fname in functions.keys() {
                                 if fname.starts_with(prefix.as_str()) {
                                     targets.push(*fname);
                                 }
@@ -1082,7 +1102,7 @@ fn visit_call_edges<'p>(
                                 continue;
                             };
                             if mojito_symbol::symbol::is_stdlib_string_struct(name) {
-                                for (fname, _) in functions.iter() {
+                                for fname in functions.keys() {
                                     if fname.rsplit_once(".__eq__").is_some_and(|(owner, rest)| {
                                         owner.rsplit('$').next().is_some_and(
                                             mojito_symbol::symbol::is_stdlib_string_struct,
@@ -1093,7 +1113,7 @@ fn visit_call_edges<'p>(
                                 }
                             } else {
                                 let prefix = format!("{name}.__eq__");
-                                for (fname, _) in functions.iter() {
+                                for fname in functions.keys() {
                                     if fname.starts_with(prefix.as_str()) {
                                         targets.push(*fname);
                                     }
@@ -1361,7 +1381,7 @@ mod tests {
                 ret_ty: Some(mojito_types::types::Ty::None),
                 raises: false,
                 error_ty: None,
-                spans: Default::default(),
+                spans: mojito_mir::mir::SpanTable::default(),
                 reg_types: HashMap::new(),
             }
         }
@@ -1399,7 +1419,7 @@ mod tests {
                 ),
                 (
                     "Point.__copyinit__".to_string(),
-                    test_function(vec![point.clone(), point.clone()], Vec::new()),
+                    test_function(vec![point.clone(), point], Vec::new()),
                 ),
                 (
                     "unrelated".to_string(),
@@ -1410,11 +1430,11 @@ mod tests {
                 structs: vec![MirStructDeclaration {
                     name: "Point".to_string(),
                     fields: vec![("x".to_string(), Ty::Int)],
-                    mut_self_methods: Default::default(),
+                    mut_self_methods: HashSet::default(),
                     fieldwise_init: false,
                     param_decls: Vec::new(),
                     explicit_destroy_message: None,
-                    explicit_destructors: Default::default(),
+                    explicit_destructors: HashMap::default(),
                 }],
                 functions: Vec::new(),
             },
@@ -1444,7 +1464,7 @@ mod tests {
     fn pliron_compile_refuses_invariant_errors() {
         let program = MirProgram {
             functions: Vec::new(),
-            declarations: Default::default(),
+            declarations: mojito_mir::mir::MirDeclarations::default(),
             invariant_errors: vec!["broken".to_string()],
         };
         let options = CompileOptions {

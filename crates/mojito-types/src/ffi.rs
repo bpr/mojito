@@ -16,10 +16,11 @@
 use crate::types::Ty;
 use mojito_ast::ast::Dtype;
 
-/// One C parameter or return kind. Integer kinds name the C type so both
-/// backends widen or narrow Mojo scalars to it; pointer kinds are one opaque
-/// address at the ABI and differ only in what the checker accepts and what
-/// the VM reads or writes through them.
+/// One C parameter or return kind.
+///
+/// Integer kinds name the C type so both backends widen or narrow Mojo scalars
+/// to it; pointer kinds are one opaque address at the ABI and differ only in
+/// what the checker accepts and what the VM reads or writes through them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CType {
     /// `int`.
@@ -49,43 +50,43 @@ pub enum CType {
 
 impl CType {
     /// Whether the kind is passed and returned as a C integer.
-    pub fn is_integer(self) -> bool {
+    pub const fn is_integer(self) -> bool {
         matches!(
             self,
-            CType::Int | CType::UInt | CType::SizeT | CType::SSizeT | CType::OffT
+            Self::Int | Self::UInt | Self::SizeT | Self::SSizeT | Self::OffT
         )
     }
 
     /// Whether the kind is an address.
-    pub fn is_pointer(self) -> bool {
+    pub const fn is_pointer(self) -> bool {
         matches!(
             self,
-            CType::ConstCharPtr | CType::CharPtr | CType::VoidPtr | CType::IntPtr
+            Self::ConstCharPtr | Self::CharPtr | Self::VoidPtr | Self::IntPtr
         )
     }
 
     /// The C ABI width in bits of an integer kind (`int` is 32-bit, the
     /// `size_t` family 64-bit on the LP64 target).
-    pub fn bits(self) -> u32 {
+    pub const fn bits(self) -> u32 {
         match self {
-            CType::Int | CType::UInt => 32,
+            Self::Int | Self::UInt => 32,
             _ => 64,
         }
     }
 
     /// The type vocabulary a diagnostic names for the kind.
-    pub fn describe(self) -> &'static str {
+    pub const fn describe(self) -> &'static str {
         match self {
-            CType::Int => "a C int (Int32 or an integer scalar)",
-            CType::UInt => "a C unsigned int (UInt32 or an integer scalar)",
-            CType::SizeT => "a C size_t (UInt or an integer scalar)",
-            CType::SSizeT => "a C ssize_t (Int or an integer scalar)",
-            CType::OffT => "a C off_t (Int64 or an integer scalar)",
-            CType::ConstCharPtr => "a C string (CStringSlice or Pointer[Int8]/Pointer[UInt8])",
-            CType::CharPtr => "a byte Pointer",
-            CType::VoidPtr => "a Pointer",
-            CType::IntPtr => "Pointer[Int32, _]",
-            CType::Void => "NoneType",
+            Self::Int => "a C int (Int32 or an integer scalar)",
+            Self::UInt => "a C unsigned int (UInt32 or an integer scalar)",
+            Self::SizeT => "a C size_t (UInt or an integer scalar)",
+            Self::SSizeT => "a C ssize_t (Int or an integer scalar)",
+            Self::OffT => "a C off_t (Int64 or an integer scalar)",
+            Self::ConstCharPtr => "a C string (CStringSlice or Pointer[Int8]/Pointer[UInt8])",
+            Self::CharPtr => "a byte Pointer",
+            Self::VoidPtr => "a Pointer",
+            Self::IntPtr => "Pointer[Int32, _]",
+            Self::Void => "NoneType",
         }
     }
 }
@@ -104,7 +105,7 @@ pub struct FfiCallee {
 
 impl FfiCallee {
     /// Whether the C declaration is variadic (`int open(const char *, int, ...)`).
-    pub fn variadic(&self) -> bool {
+    pub const fn variadic(&self) -> bool {
         !self.variadic_extra.is_empty()
     }
 
@@ -118,7 +119,7 @@ impl FfiCallee {
     }
 
     /// The accepted argument-count range.
-    pub fn arity(&self) -> (usize, usize) {
+    pub const fn arity(&self) -> (usize, usize) {
         let fixed = self.params.len();
         (fixed, fixed + self.variadic_extra.len())
     }
@@ -291,10 +292,12 @@ pub fn callee_names() -> String {
 }
 
 /// Whether a checked argument type may be passed at a parameter of kind
-/// `kind`: integer kinds take `Int`, `UInt`, `Bool`, an integer literal, or
-/// any width-1 integer SIMD scalar (the backends resize to the C width);
-/// pointer kinds take any `Pointer` (a byte element for `const char *`) or
-/// the `CStringSlice` view struct.
+/// `kind`.
+///
+/// Integer kinds take `Int`, `UInt`, `Bool`, an integer literal, or any
+/// width-1 integer SIMD scalar (the backends resize to the C width); pointer
+/// kinds take any `Pointer` (a byte element for `const char *`) or the
+/// `CStringSlice` view struct.
 pub fn accepts_arg(kind: CType, ty: &Ty) -> bool {
     match kind {
         CType::Int | CType::UInt | CType::SizeT | CType::SSizeT | CType::OffT => {
@@ -337,16 +340,16 @@ pub fn is_c_string_slice_struct(name: &str) -> bool {
     name == "CStringSlice" || name.ends_with("$CStringSlice")
 }
 
-fn is_integer_scalar(ty: &Ty) -> bool {
+const fn is_integer_scalar(ty: &Ty) -> bool {
     matches!(ty, Ty::Int | Ty::UInt | Ty::Bool | Ty::IntLiteral)
         || matches!(ty, Ty::Simd { width: 1, dtype } if is_integer_dtype(*dtype))
 }
 
-fn is_integer_dtype(dtype: Dtype) -> bool {
+const fn is_integer_dtype(dtype: Dtype) -> bool {
     !dtype.is_float() && !matches!(dtype, Dtype::Bool)
 }
 
-fn is_byte(ty: &Ty) -> bool {
+const fn is_byte(ty: &Ty) -> bool {
     matches!(
         ty,
         Ty::Simd {

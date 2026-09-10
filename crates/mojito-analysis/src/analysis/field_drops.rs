@@ -5,6 +5,7 @@
 //! receiver's `ConsumeVar` teardown stays where the variable pass put it and
 //! destroys only the fields that survive to that point.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_mir::mir::MirStructDeclaration;
 use mojito_mir::mir::verify::{
@@ -127,7 +128,7 @@ fn deinit_root(
 /// Whether destroying a field of this type can do observable work (run a
 /// destructor, release storage). Scalars, pointers, and references die
 /// silently, so they need no instruction.
-fn field_needs_drop(ty: &Ty) -> bool {
+const fn field_needs_drop(ty: &Ty) -> bool {
     may_alias_owned_storage(ty) || matches!(ty, Ty::Func { .. } | Ty::Error)
 }
 
@@ -168,12 +169,12 @@ fn refine_region(
         let mut live_before = vec![FieldSet::new(); n];
         let mut live = live_out;
         for i in (0..n).rev() {
-            live_after[i] = live.clone();
+            live_after[i].clone_from(&live);
             live.extend(uses[b][i].iter().copied());
             if may_raise(&instrs[i]) {
                 live.extend(seeds.raise.iter().copied());
             }
-            live_before[i] = live.clone();
+            live_before[i].clone_from(&live);
         }
 
         let mut rebuilt = Vec::with_capacity(n);
@@ -312,10 +313,8 @@ fn refine_try(try_instr: &mut MirInstr, root: &DeinitRoot, after: &FieldSet, see
         .map(|e| refine_region(e, root, &inner_seeds, None));
     let body_seeds = FieldSeeds {
         fall_off: orelse_live.unwrap_or_else(|| fin_live.clone()),
-        raise: handler_entry
-            .clone()
-            .unwrap_or_else(|| outward_raise.clone()),
-        finally_live: fin_live.clone(),
+        raise: handler_entry.unwrap_or_else(|| outward_raise.clone()),
+        finally_live: fin_live,
         top_live_in: seeds.top_live_in,
     };
     let raise_present = raise_point_liveness(body, root, &body_seeds);
@@ -360,7 +359,7 @@ fn region_field_liveness(
             for (i, instr) in blocks[b].instrs.iter().enumerate().rev() {
                 if let MirInstr::Try { .. } = instr {
                     let entry = try_entry_liveness(instr, root, &live, seeds);
-                    uses[b][i] = entry.clone();
+                    uses[b][i].clone_from(&entry);
                     live = entry;
                 } else {
                     live.extend(uses[b][i].iter().copied());
@@ -682,7 +681,7 @@ fn register_field_provenance(blocks: &[MirBlock], root: &DeinitRoot) -> Vec<Vec<
         .collect()
 }
 
-fn is_drop_instr(instr: &MirInstr) -> bool {
+const fn is_drop_instr(instr: &MirInstr) -> bool {
     matches!(
         instr,
         MirInstr::DropVar { .. } | MirInstr::ConsumeVar { .. } | MirInstr::DropPlace { .. }

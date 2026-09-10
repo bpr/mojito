@@ -1,6 +1,7 @@
 //! Operator, SIMD-construction, and pointer-construction type inference
 //! for the checker. Extracted from `checker.rs`; see `docs/symbol-map.md`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Checker {
@@ -62,6 +63,11 @@ impl Checker {
         })
     }
 
+    #[allow(
+        clippy::cognitive_complexity,
+        clippy::too_many_lines,
+        reason = "TODO: split this pass"
+    )]
     pub(super) fn infer_infix(
         &self,
         span: Option<SourceSpan>,
@@ -69,9 +75,13 @@ impl Checker {
         left: &Expr,
         right: &Expr,
     ) -> Result<Ty, TypeError> {
+        use InfixOp::{
+            Add, And, BitAnd, BitOr, BitXor, Div, Eq, FloorDiv, Ge, Gt, In, Le, Lt, Mod, Mul, Ne,
+            NotIn, Or, Pow, Shl, Shr, Sub,
+        };
+
         let lt = self.infer(left)?;
         let rt = self.infer(right)?;
-        use InfixOp::*;
 
         // Membership `in` / `not in` — the right operand is a container.
         if matches!(op, In | NotIn) {
@@ -173,11 +183,7 @@ impl Checker {
             && let Some(trait_name) = infix_operation_trait(op)
             && param_has_bound(&lt, trait_name)
         {
-            return Ok(if matches!(op, Div) {
-                Ty::Float64
-            } else {
-                lt.clone()
-            });
+            return Ok(if matches!(op, Div) { Ty::Float64 } else { lt });
         }
 
         // `common` is the unified numeric type when both operands are numeric
@@ -365,7 +371,7 @@ impl Checker {
             {
                 return Err(TypeError::BadOperator {
                     op: infix_symbol(op).to_string(),
-                    operands: format!("{} and {}", lt, rt),
+                    operands: format!("{lt} and {rt}"),
                 });
             }
             if matches!(
@@ -466,7 +472,7 @@ impl Checker {
         }
         Err(TypeError::BadOperator {
             op: infix_symbol(op).to_string(),
-            operands: format!("{} and {}", lt, rt),
+            operands: format!("{lt} and {rt}"),
         })
     }
 
@@ -527,18 +533,25 @@ impl Checker {
         }
         Err(TypeError::BadOperator {
             op: infix_symbol(op).to_string(),
-            operands: format!("{} and {}", lt, rt),
+            operands: format!("{lt} and {rt}"),
         })
     }
 
     /// Type an elementwise SIMD operator. Both operands must be the same SIMD
     /// type, except a numeric *literal* splats to the other operand's type.
     /// Arithmetic keeps the operand type; comparisons return a `bool` mask.
+    #[allow(
+        clippy::unused_self,
+        reason = "TODO: make an associated function or use the receiver"
+    )]
     pub(super) fn infer_simd_infix(&self, op: InfixOp, lt: &Ty, rt: &Ty) -> Result<Ty, TypeError> {
-        use InfixOp::*;
+        use InfixOp::{
+            Add, BitAnd, BitOr, BitXor, Div, Eq, FloorDiv, Ge, Gt, Le, Lt, Mod, Mul, Ne, Shl, Shr,
+            Sub,
+        };
         let bad = || TypeError::BadOperator {
             op: infix_symbol(op).to_string(),
-            operands: format!("{} and {}", lt, rt),
+            operands: format!("{lt} and {rt}"),
         };
         // Determine the common SIMD type, allowing a numeric literal on one side.
         let simd = match (lt, rt) {
@@ -825,7 +838,7 @@ impl Checker {
 }
 
 /// A readable symbol for an infix operator, for error messages.
-pub(super) fn infix_symbol(op: InfixOp) -> &'static str {
+pub(super) const fn infix_symbol(op: InfixOp) -> &'static str {
     match op {
         InfixOp::Add => "+",
         InfixOp::Sub => "-",
@@ -856,7 +869,7 @@ pub(super) fn infix_symbol(op: InfixOp) -> &'static str {
 }
 
 /// A readable symbol for a prefix operator, for error messages.
-pub(super) fn prefix_symbol(op: PrefixOp) -> &'static str {
+pub(super) const fn prefix_symbol(op: PrefixOp) -> &'static str {
     match op {
         PrefixOp::Neg => "-",
         PrefixOp::Not => "not",

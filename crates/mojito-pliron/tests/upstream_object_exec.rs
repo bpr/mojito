@@ -1,13 +1,14 @@
-//! Stage 0 facility: LLVM IR text export, bitcode export, object emission and
-//! linking through clang, and execution of the produced host executable
-//! (`main -> i32` exits with 42).
+//! Upstream contract: LLVM IR text export, bitcode export, object emission and
+//! linking through clang, and execution of the produced host executable.
+
+mod support;
 
 use std::process::Command;
 
 use expect_test::expect;
 use pliron::{context::Context, result::ExpectOk};
 use pliron_llvm::{llvm_sys::core::LLVMContext, to_llvm_ir};
-use pliron_stage0_spike::ir_build::build_main_returns_42;
+use support::ir_build::build_main_returns_42;
 
 /// Prefer the version-suffixed clang matching llvm-sys 231; fall back to the
 /// unsuffixed binary supplied by the documented LLVM 23.1 archive.

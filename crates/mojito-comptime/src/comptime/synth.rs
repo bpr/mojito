@@ -2,6 +2,7 @@
 //! `Hashable.__hash__` bodies, plus the `Hasher` protocol's wildcard vector
 //! parameter desugar and its eager per-leaf clone requests.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 /// Materialize the `Copyable` trait's default `copy` method (current Mojo:
@@ -61,9 +62,9 @@ pub(super) fn synthesize_copyable_copy(program: &mut [Stmt]) {
                 span,
             )
         };
-        let (raises, raises_type) = copy_constructor
-            .map(|constructor| (constructor.raises, constructor.raises_type.clone()))
-            .unwrap_or((false, None));
+        let (raises, raises_type) = copy_constructor.map_or((false, None), |constructor| {
+            (constructor.raises, constructor.raises_type.clone())
+        });
         let where_clauses = conformance_conditions
             .iter()
             .find(|(trait_name, _)| trait_name == "Copyable")

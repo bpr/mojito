@@ -15,9 +15,11 @@ pub struct OwnerId(pub u32);
 pub struct OriginParamId(pub u32);
 
 /// Stable identity of an `OriginSet` parameter appearing in a callable
-/// environment contract. Like [`OriginParamId`], this is the declaration-order
-/// identity selected by checking rather than a source spelling, so independently
-/// named but otherwise identical callable contracts remain alpha-equivalent.
+/// environment contract.
+///
+/// Like [`OriginParamId`], this is the declaration-order identity selected by
+/// checking rather than a source spelling, so independently named but
+/// otherwise identical callable contracts remain alpha-equivalent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CaptureSetParamId(pub u32);
 
@@ -61,7 +63,7 @@ pub enum Origin {
     /// the runtime ABI.
     SelfParam,
     Place(OriginPlace),
-    Union(Vec<Origin>),
+    Union(Vec<Self>),
     Static,
     Untracked {
         mutable: bool,
@@ -71,9 +73,9 @@ pub enum Origin {
 impl std::fmt::Display for Origin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Origin::Param(id) => write!(f, "origin#{}", id.0),
-            Origin::SelfParam => write!(f, "origin_of(self)"),
-            Origin::Place(place) => {
+            Self::Param(id) => write!(f, "origin#{}", id.0),
+            Self::SelfParam => write!(f, "origin_of(self)"),
+            Self::Place(place) => {
                 write!(f, "origin_of(#{}", place.root.0)?;
                 for segment in &place.path {
                     match segment {
@@ -85,7 +87,7 @@ impl std::fmt::Display for Origin {
                 }
                 write!(f, ")")
             }
-            Origin::Union(origins) => {
+            Self::Union(origins) => {
                 for (index, origin) in origins.iter().enumerate() {
                     if index > 0 {
                         write!(f, " | ")?;
@@ -94,8 +96,8 @@ impl std::fmt::Display for Origin {
                 }
                 Ok(())
             }
-            Origin::Static => write!(f, "ImmStaticOrigin"),
-            Origin::Untracked { mutable } => {
+            Self::Static => write!(f, "ImmStaticOrigin"),
+            Self::Untracked { mutable } => {
                 write!(
                     f,
                     "{}",
@@ -111,7 +113,8 @@ impl std::fmt::Display for Origin {
 }
 
 /// Access performed through one captured origin when a callable is invoked.
-/// This is deliberately part of the static environment summary: an OriginSet
+///
+/// This is deliberately part of the static environment summary: an `OriginSet`
 /// by itself extends lifetimes but cannot tell persistent-loan analysis whether
 /// an indirect call reads or may mutate captured storage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -128,14 +131,14 @@ pub struct CaptureOrigin {
 }
 
 impl CaptureOrigin {
-    pub fn read(origin: Origin) -> Self {
+    pub const fn read(origin: Origin) -> Self {
         Self {
             origin,
             access: CaptureAccess::Read,
         }
     }
 
-    pub fn write(origin: Origin) -> Self {
+    pub const fn write(origin: Origin) -> Self {
         Self {
             origin,
             access: CaptureAccess::Write,
@@ -170,7 +173,7 @@ impl CaptureOriginSet {
                     members.extend(origins.into_iter().map(|origin| CaptureOrigin {
                         origin,
                         access: capture.access,
-                    }))
+                    }));
                 }
                 origin => members.push(CaptureOrigin {
                     origin,
@@ -194,7 +197,7 @@ impl CaptureOriginSet {
         Self::Concrete(canonical)
     }
 
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self::Concrete(Vec::new())
     }
 }
@@ -222,11 +225,12 @@ pub enum Mutability {
     Param(OriginParamId),
 }
 
-/// Provenance retained by an origin-bearing unsafe pointer type. The
-/// one-argument `Pointer[T]` compatibility spelling resolves to the mutable
-/// untracked origin (`MutUntrackedOrigin`, the origin of heap allocations); all
-/// spellings remain explicit through checked HIR/MIR and are erased only by the
-/// VM value representation.
+/// Provenance retained by an origin-bearing unsafe pointer type.
+///
+/// The one-argument `Pointer[T]` compatibility spelling resolves to the
+/// mutable untracked origin (`MutUntrackedOrigin`, the origin of heap
+/// allocations); all spellings remain explicit through checked HIR/MIR and are
+/// erased only by the VM value representation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PointerOrigin {
     Place {
@@ -277,12 +281,10 @@ impl PointerOrigin {
     /// pointers carry no owner loan.
     pub fn as_origin(&self) -> Option<Origin> {
         match self {
-            PointerOrigin::Place { place, .. } => Some(Origin::Place(place.clone())),
-            PointerOrigin::Param { id, .. } => Some(Origin::Param(*id)),
-            PointerOrigin::SelfPlace { .. } => Some(Origin::SelfParam),
-            PointerOrigin::Static
-            | PointerOrigin::Untracked { .. }
-            | PointerOrigin::UnsafeAny { .. } => None,
+            Self::Place { place, .. } => Some(Origin::Place(place.clone())),
+            Self::Param { id, .. } => Some(Origin::Param(*id)),
+            Self::SelfPlace { .. } => Some(Origin::SelfParam),
+            Self::Static | Self::Untracked { .. } | Self::UnsafeAny { .. } => None,
         }
     }
 
@@ -297,18 +299,16 @@ impl PointerOrigin {
     /// provenances never reach the offset rule.
     pub fn multi_element(&self) -> bool {
         match self {
-            PointerOrigin::Place { place, .. } => {
+            Self::Place { place, .. } => {
                 matches!(place.path.last(), Some(OriginSeg::Interior(_)))
             }
-            PointerOrigin::Param {
+            Self::Param {
                 interior, subtree, ..
             }
-            | PointerOrigin::SelfPlace {
+            | Self::SelfPlace {
                 interior, subtree, ..
             } => !interior.is_empty() && !subtree,
-            PointerOrigin::Static
-            | PointerOrigin::Untracked { .. }
-            | PointerOrigin::UnsafeAny { .. } => false,
+            Self::Static | Self::Untracked { .. } | Self::UnsafeAny { .. } => false,
         }
     }
 
@@ -319,15 +319,11 @@ impl PointerOrigin {
     /// the root.
     pub fn subtree(&self) -> bool {
         match self {
-            PointerOrigin::Place { place, .. } => {
+            Self::Place { place, .. } => {
                 matches!(place.path.last(), Some(OriginSeg::Subtree))
             }
-            PointerOrigin::Param { subtree, .. } | PointerOrigin::SelfPlace { subtree, .. } => {
-                *subtree
-            }
-            PointerOrigin::Static
-            | PointerOrigin::Untracked { .. }
-            | PointerOrigin::UnsafeAny { .. } => false,
+            Self::Param { subtree, .. } | Self::SelfPlace { subtree, .. } => *subtree,
+            Self::Static | Self::Untracked { .. } | Self::UnsafeAny { .. } => false,
         }
     }
 
@@ -335,14 +331,14 @@ impl PointerOrigin {
     /// known. A symbolic parameter mutability returns `None`: storage coercion
     /// rejects an immutable place only for a field whose declared mutability
     /// is explicitly `mut=True`.
-    pub fn statically_mutable(&self) -> Option<bool> {
+    pub const fn statically_mutable(&self) -> Option<bool> {
         match self {
-            PointerOrigin::Place { mutable, .. }
-            | PointerOrigin::Untracked { mutable }
-            | PointerOrigin::UnsafeAny { mutable } => Some(*mutable),
-            PointerOrigin::Static => Some(false),
-            PointerOrigin::Param { mutability, .. }
-            | PointerOrigin::SelfPlace { mutability, .. } => match mutability {
+            Self::Place { mutable, .. }
+            | Self::Untracked { mutable }
+            | Self::UnsafeAny { mutable } => Some(*mutable),
+            Self::Static => Some(false),
+            Self::Param { mutability, .. } | Self::SelfPlace { mutability, .. } => match mutability
+            {
                 Mutability::Mutable => Some(true),
                 Mutability::Immutable => Some(false),
                 Mutability::Param(_) => None,
@@ -357,12 +353,12 @@ impl PointerOrigin {
     /// immutable untracked expectation accepts the mutable untracked
     /// provenance (dropping capability), and every other expectation binds
     /// exactly.
-    pub fn coerces_to(&self, expected: &PointerOrigin) -> bool {
+    pub fn coerces_to(&self, expected: &Self) -> bool {
         match expected {
-            PointerOrigin::UnsafeAny { mutable: false } => true,
-            PointerOrigin::UnsafeAny { mutable: true } => self.statically_mutable() == Some(true),
-            PointerOrigin::Untracked { mutable: false } => {
-                matches!(self, PointerOrigin::Untracked { .. })
+            Self::UnsafeAny { mutable: false } => true,
+            Self::UnsafeAny { mutable: true } => self.statically_mutable() == Some(true),
+            Self::Untracked { mutable: false } => {
+                matches!(self, Self::Untracked { .. })
             }
             _ => self == expected,
         }
@@ -399,8 +395,8 @@ pub enum SigOrigin {
     UnsafeAny {
         mutable: bool,
     },
-    Projected(Box<SigOrigin>, Vec<OriginSeg>),
-    Union(Vec<SigOrigin>),
+    Projected(Box<Self>, Vec<OriginSeg>),
+    Union(Vec<Self>),
     Infer,
 }
 
@@ -427,33 +423,38 @@ pub struct RefSig {
 impl Origin {
     /// Construct a canonical union: flatten nesting, remove duplicates, and
     /// sort members independently of source order.
-    pub fn union(origins: impl IntoIterator<Item = Origin>) -> Origin {
+    ///
+    /// # Panics
+    ///
+    /// Panics if the deduplicated member set is empty after the arity match
+    /// selected the single-member arm.
+    pub fn union(origins: impl IntoIterator<Item = Self>) -> Self {
         let mut members = Vec::new();
         for origin in origins {
             match origin {
-                Origin::Union(inner) => members.extend(inner),
+                Self::Union(inner) => members.extend(inner),
                 other => members.push(other),
             }
         }
         members.sort_by(cmp_origin);
         members.dedup();
         match members.len() {
-            0 => Origin::Union(Vec::new()),
+            0 => Self::Union(Vec::new()),
             1 => members.pop().expect("one union member"),
-            _ => Origin::Union(members),
+            _ => Self::Union(members),
         }
     }
 
     /// Whether two origins may designate overlapping storage.
-    pub fn overlaps(&self, other: &Origin) -> bool {
+    pub fn overlaps(&self, other: &Self) -> bool {
         match (self, other) {
-            (Origin::Union(left), right) => left.iter().any(|item| item.overlaps(right)),
-            (left, Origin::Union(right)) => right.iter().any(|item| left.overlaps(item)),
-            (Origin::Place(left), Origin::Place(right)) => places_overlap(left, right),
-            (Origin::Param(left), Origin::Param(right)) => left == right,
-            (Origin::Static, Origin::Static) => true,
+            (Self::Union(left), right) => left.iter().any(|item| item.overlaps(right)),
+            (left, Self::Union(right)) => right.iter().any(|item| left.overlaps(item)),
+            (Self::Place(left), Self::Place(right)) => places_overlap(left, right),
+            (Self::Param(left), Self::Param(right)) => left == right,
+            (Self::Static, Self::Static) => true,
             // Untracked origins intentionally forfeit disjointness information.
-            (Origin::Untracked { .. }, _) | (_, Origin::Untracked { .. }) => true,
+            (Self::Untracked { .. }, _) | (_, Self::Untracked { .. }) => true,
             _ => false,
         }
     }
@@ -465,20 +466,25 @@ impl SigOrigin {
     /// make otherwise identical contracts differ. Canonicalization recurses
     /// through projected bases because those are the common nontrivial union
     /// members in reference-return signatures.
-    pub fn union(origins: impl IntoIterator<Item = SigOrigin>) -> SigOrigin {
+    ///
+    /// # Panics
+    ///
+    /// Panics if the deduplicated member set is empty after the arity match
+    /// selected the single-member arm.
+    pub fn union(origins: impl IntoIterator<Item = Self>) -> Self {
         let mut members = Vec::new();
         for origin in origins {
             match canonical_sig_origin(origin) {
-                SigOrigin::Union(inner) => members.extend(inner),
+                Self::Union(inner) => members.extend(inner),
                 other => members.push(other),
             }
         }
         members.sort_by(cmp_sig_origin);
         members.dedup();
         match members.len() {
-            0 => SigOrigin::Union(Vec::new()),
+            0 => Self::Union(Vec::new()),
             1 => members.pop().expect("one signature-origin union member"),
-            _ => SigOrigin::Union(members),
+            _ => Self::Union(members),
         }
     }
 }
@@ -496,7 +502,7 @@ pub fn places_overlap(left: &OriginPlace, right: &OriginPlace) -> bool {
 }
 
 fn cmp_origin(left: &Origin, right: &Origin) -> Ordering {
-    fn tag(origin: &Origin) -> u8 {
+    const fn tag(origin: &Origin) -> u8 {
         match origin {
             Origin::Param(_) => 0,
             Origin::Place(_) => 1,
@@ -534,7 +540,7 @@ fn canonical_sig_origin(origin: SigOrigin) -> SigOrigin {
 }
 
 fn cmp_sig_origin(left: &SigOrigin, right: &SigOrigin) -> Ordering {
-    fn tag(origin: &SigOrigin) -> u8 {
+    const fn tag(origin: &SigOrigin) -> u8 {
         match origin {
             SigOrigin::Self_ => 0,
             SigOrigin::Param(_) => 1,

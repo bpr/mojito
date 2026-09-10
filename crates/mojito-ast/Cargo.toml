@@ -7,3 +7,6 @@ publish = false
 
 [dependencies]
 mojito-common = { path = "../mojito-common" }
+
+[lints]
+workspace = true

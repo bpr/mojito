@@ -2,8 +2,10 @@
 //! entry, block scoping, the `check_stmt` statement dispatcher, and parameter
 //! type lowering. Extracted from `checker.rs`; see `docs/symbol-map.md`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_common::timing;
+use mojito_types::types::TransferSet;
 
 impl Checker {
     pub fn check_program(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
@@ -182,8 +184,8 @@ impl Checker {
     /// ordinary binary operator. `__iadd__` returns `None`; a value-returning
     /// method is rejected.
     pub(super) fn select_inplace_operator(
-        &mut self,
-        span: SourceSpan,
+        &self,
+        span: &SourceSpan,
         receiver: &Expr,
         op: InfixOp,
         value: &Expr,
@@ -222,7 +224,7 @@ impl Checker {
         let contract = self
             .selected_calls
             .borrow()
-            .get(&span)
+            .get(span)
             .cloned()
             .ok_or_else(|| {
                 TypeError::InvariantViolation(
@@ -233,9 +235,9 @@ impl Checker {
         // contract solely in the `AugmentedInPlace` record so lowering treats the
         // receiver as a place (write-back through `recv_place`) rather than as a
         // reference-returning call result keyed at this span.
-        self.selected_calls.borrow_mut().remove(&span);
-        self.overload_targets.borrow_mut().remove(&span);
-        self.generic_instantiations.borrow_mut().remove(&span);
+        self.selected_calls.borrow_mut().remove(span);
+        self.overload_targets.borrow_mut().remove(span);
+        self.generic_instantiations.borrow_mut().remove(span);
         Ok(contract)
     }
 
@@ -262,9 +264,9 @@ impl Checker {
                     ExprKind::Identifier("$inplace_elem".to_string()),
                     place.span,
                 );
-                receiver.source = place.source.clone();
+                receiver.source.clone_from(&place.source);
                 self.select_inplace_operator(
-                    receiver.source_span(),
+                    &receiver.source_span(),
                     &receiver,
                     op,
                     value,
@@ -282,6 +284,7 @@ impl Checker {
     /// `ref` destination counts even when the value type carries no loan:
     /// the destination handle itself becomes the loan. An accepted store
     /// records its transfer effect for call-site replay.
+    #[allow(clippy::ref_option, reason = "TODO: take Option<&T>")]
     pub(super) fn check_outward_store(
         &self,
         place: &Expr,
@@ -327,6 +330,11 @@ impl Checker {
         Ok(())
     }
 
+    #[allow(
+        clippy::cognitive_complexity,
+        clippy::too_many_lines,
+        reason = "TODO: split this pass"
+    )]
     pub(super) fn check_stmt(
         &mut self,
         stmt: &Stmt,
@@ -440,13 +448,10 @@ impl Checker {
                 let declared = match ty {
                     // Annotated: the value must coerce to the annotation.
                     Some(anno) => {
-                        let expected =
-                            contextual
-                                .clone()
-                                .unwrap_or(self.resolve_storage_annotation(
-                                    anno,
-                                    super::StorageStrictness::AllowBare,
-                                )?);
+                        let expected = contextual.unwrap_or(self.resolve_storage_annotation(
+                            anno,
+                            super::StorageStrictness::AllowBare,
+                        )?);
                         // Current Mojo does not infer a generic function's
                         // specialization from local-storage context; only an
                         // explicit specialization (`f[...]`) materializes a
@@ -475,7 +480,7 @@ impl Checker {
                                 return Err(TypeError::TypeMismatch {
                                     expected: expected.to_string(),
                                     found: found.to_string(),
-                                    context: format!("variable '{}'", name),
+                                    context: format!("variable '{name}'"),
                                 });
                             }
                             expected
@@ -672,7 +677,7 @@ impl Checker {
                             return Err(TypeError::TypeMismatch {
                                 expected: target.to_string(),
                                 found: found.to_string(),
-                                context: format!("assignment to '{}'", name),
+                                context: format!("assignment to '{name}'"),
                             });
                         }
                         let (aggregate_origins, aggregate_field_origins) =
@@ -809,7 +814,7 @@ impl Checker {
                     && matches!(&target, Ty::Struct(name, _) if self.structs.contains_key(name))
                 {
                     let contract = self.select_inplace_operator(
-                        place.source_span(),
+                        &place.source_span(),
                         place,
                         *op,
                         value,
@@ -857,7 +862,7 @@ impl Checker {
                             self.subscript_descriptors
                                 .borrow_mut()
                                 .entry(site.clone())
-                                .or_insert((vec![None], false));
+                                .or_insert_with(|| (vec![None], false));
                         }
                         self.expression_types
                             .borrow_mut()
@@ -868,7 +873,7 @@ impl Checker {
                                 Box::new(mojito_checked::checked::CheckedAugmentedSubscript {
                                     getter,
                                     setter: None,
-                                    inplace: inplace_contract.clone(),
+                                    inplace: inplace_contract,
                                     operand_ty: target,
                                     result_ty: result,
                                     value_source: None,
@@ -885,7 +890,7 @@ impl Checker {
                     self.remove_call_boundary_invalidations(&site, &getter.boundary);
 
                     let mut computed = Expr::new(ExprKind::None, mojito_common::token::DUMMY_SPAN);
-                    computed.source = place.source.clone();
+                    computed.source.clone_from(&place.source);
                     let value_source = computed.source_span();
                     self.expression_types
                         .borrow_mut()
@@ -1364,16 +1369,13 @@ impl Checker {
                 // `Int`. A richer comptime value (tuple/list/string) the `Int` folder
                 // can't evaluate is still an ordinary binding — the elaborator has
                 // already consumed it for any `comptime for`/`comptime if`.
-                match self.eval_ct(value) {
-                    Ok(v) => {
-                        self.comptimes.insert(name.clone(), v);
-                        self.declare_immutable(name, Ty::IntLiteral)?;
-                    }
-                    Err(_) => {
-                        let ty = self.infer(value)?;
-                        let declared = self.inferred_binding_ty(&ty, name)?;
-                        self.declare_immutable(name, declared)?;
-                    }
+                if let Ok(v) = self.eval_ct(value) {
+                    self.comptimes.insert(name.clone(), v);
+                    self.declare_immutable(name, Ty::IntLiteral)?;
+                } else {
+                    let ty = self.infer(value)?;
+                    let declared = self.inferred_binding_ty(&ty, name)?;
+                    self.declare_immutable(name, declared)?;
                 }
                 self.record_statement_binding(stmt, name);
                 Ok(())
@@ -1396,7 +1398,7 @@ impl Checker {
                 // fallthrough possibilities.
                 let mut fallthrough_reachable = true;
                 for (cond, body) in branches {
-                    *self.uninitialized.borrow_mut() = before.clone();
+                    (*self.uninitialized.borrow_mut()).clone_from(&before);
                     self.register_named_bindings(cond)?;
                     self.expect_bool(cond, "if condition")?;
                     self.check_scoped_block(body, ret, in_loop)?;
@@ -1412,7 +1414,7 @@ impl Checker {
                     }
                 }
                 if let Some(body) = orelse {
-                    *self.uninitialized.borrow_mut() = before.clone();
+                    *self.uninitialized.borrow_mut() = before;
                     self.check_scoped_block(body, ret, in_loop)?;
                     if fallthrough_reachable {
                         exits.push(self.uninitialized.borrow().clone());
@@ -1643,9 +1645,8 @@ impl Checker {
                 if let Some(expression) = expr {
                     self.register_named_bindings(expression)?;
                 }
-                let expected = match ret {
-                    Some(ty) => ty,
-                    None => return Err(TypeError::ReturnOutsideFunction),
+                let Some(expected) = ret else {
+                    return Err(TypeError::ReturnOutsideFunction);
                 };
                 let found = match expr {
                     Some(e) => self.infer_with_expected(e, expected, true)?,
@@ -1783,6 +1784,11 @@ impl Checker {
     /// explicit capture-all convention or a lambda-owned parameter list forces
     /// a capturing environment, and the fixed-`None` omitted return type is
     /// named in the body mismatch diagnostic.
+    #[allow(
+        clippy::cognitive_complexity,
+        clippy::too_many_lines,
+        reason = "TODO: split this pass"
+    )]
     pub(super) fn check_def(&mut self, stmt: &Stmt, lambda: bool) -> Result<(), TypeError> {
         let StmtKind::Def {
             name,
@@ -1810,7 +1816,7 @@ impl Checker {
         }
         // Parameter defaults are inferred without scoped pre-registration, so a
         // lambda there has no declaration point.
-        for param in params.iter() {
+        for param in params {
             if let Some(default) = &param.default {
                 let mut lambdas = Vec::new();
                 mojito_ast::ast::lambdas_in_expr(default, &mut lambdas);
@@ -1903,7 +1909,7 @@ impl Checker {
             if let Some(last) = decls.last_mut() {
                 match last {
                     ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
-                        constraints.push(constraint)
+                        constraints.push(constraint);
                     }
                 }
             } else if type_params.is_empty() {
@@ -2058,7 +2064,7 @@ impl Checker {
                 .map(|(_, ty)| ty.clone())
                 .collect();
             Ty::Func {
-                environment: initial_environment.clone(),
+                environment: initial_environment,
                 params: regular_tys,
                 names: caller_regular.iter().map(|p| p.name.clone()).collect(),
                 ret: Box::new(ret_ty.clone()),
@@ -2070,9 +2076,9 @@ impl Checker {
                 raises: effect_raises,
                 error: declared_error.clone().map(Box::new),
                 conventions: caller_regular.iter().map(|p| p.convention).collect(),
-                ref_params: Box::new(ref_params.clone()),
+                ref_params: Box::new(ref_params),
                 ref_return: ref_return.clone().map(Box::new),
-                transfers: Default::default(),
+                transfers: TransferSet::default(),
             }
         } else {
             let regular_tys: Vec<Ty> = params
@@ -2098,9 +2104,9 @@ impl Checker {
                 raises: effect_raises,
                 error: declared_error.clone().map(Box::new),
                 conventions: caller_regular.iter().map(|p| p.convention).collect(),
-                ref_params: Box::new(ref_params.clone()),
+                ref_params: Box::new(ref_params),
                 ref_return: ref_return.clone().map(Box::new),
-                transfers: Default::default(),
+                transfers: TransferSet::default(),
             }
         };
         self.declaration_types.borrow_mut().insert(
@@ -2386,11 +2392,8 @@ impl Checker {
             self.raise_observation_frames
                 .borrow_mut()
                 .push((self.handled_raise_depth, false));
-            self.return_ref_contracts.push(
-                ref_return
-                    .clone()
-                    .map(|signature| (signature, owners, None)),
-            );
+            self.return_ref_contracts
+                .push(ref_return.map(|signature| (signature, owners, None)));
             self.named_result_context.push(named_result.is_some());
             result = self.check_block(body, Some(&ret_ty), false);
             self.named_result_context.pop();
@@ -2451,7 +2454,7 @@ impl Checker {
             } else {
                 mojito_types::origin::CallableEnvironment::Thin
             };
-            let finalized = with_callable_environment(fn_ty.clone(), environment);
+            let finalized = with_callable_environment(fn_ty, environment);
             let function_scope = *self
                 .function_bases
                 .last()
@@ -2594,7 +2597,7 @@ impl Checker {
             };
             match last {
                 ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
-                    constraints.push(constraint)
+                    constraints.push(constraint);
                 }
             }
         }

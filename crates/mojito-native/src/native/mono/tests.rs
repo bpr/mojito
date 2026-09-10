@@ -1,3 +1,4 @@
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 fn specialized_main(source: &str) -> SpecializedProgram {

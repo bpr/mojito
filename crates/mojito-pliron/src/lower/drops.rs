@@ -1,9 +1,10 @@
 //! Drop elaboration lowering: drop/consume vars, drop flags, pack leaf
 //! flags, and recursive value drops.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     /// `DropVar` — the VM's `drop_value`: nothing for scalars; for aggregates
     /// run the compiled `__deinit__` when defined (its body consumes the
     /// receiver's fields), else destroy the fields in declaration order.
@@ -28,8 +29,7 @@ impl<'a> FnLowering<'a> {
                             self.func
                                 .var_names
                                 .get(var as usize)
-                                .map(String::as_str)
-                                .unwrap_or("?")
+                                .map_or("?", String::as_str)
                         ),
                         None,
                     ));

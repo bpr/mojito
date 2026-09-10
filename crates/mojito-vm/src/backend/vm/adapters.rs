@@ -1,5 +1,6 @@
 //! Checked-result adapters and dunder-backed index loads.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl VmBackend {
@@ -82,6 +83,10 @@ impl VmBackend {
     /// storage (currently `divmod` and `Slice.indices`). The checked destination
     /// type selects the exact concrete Tuple specialization; no runtime element
     /// guessing or source-AST reconstruction is involved.
+    #[allow(
+        clippy::unused_self,
+        reason = "TODO: make an associated function or use the receiver"
+    )]
     pub(super) fn materialize_checked_result(
         &self,
         prog: &Prog,
@@ -166,6 +171,10 @@ impl VmBackend {
     /// Build an uninitialized `self` skeleton for `name` (fields = `None`), carrying
     /// the given reified `value_params`. Shared by `__init__`/`__copyinit__`/
     /// `__moveinit__` construction.
+    #[allow(
+        clippy::unused_self,
+        reason = "TODO: make an associated function or use the receiver"
+    )]
     pub(super) fn struct_skeleton(
         &self,
         prog: &Prog,

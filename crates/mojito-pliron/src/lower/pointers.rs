@@ -1,9 +1,10 @@
 //! Pointer indexing/dereference guards, pointer and uninit storage
 //! take/destroy, and aggregate copy/fork.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     /// `p[i]` over the pointer subscript intrinsic: load the element at
     /// `p + i * sizeof(element)` — the VM's unchecked heap read.
     pub(super) fn lower_pointer_index(
@@ -120,7 +121,7 @@ impl<'a> FnLowering<'a> {
     /// (`mem::replace`): a raw byte move with no `__copyinit__` and no
     /// tombstone. Ownership verification guarantees single-take on the
     /// runnable subset; the uninitialized-misuse traps live in off-gate
-    /// runtime_error fixtures.
+    /// `runtime_error` fixtures.
     pub(super) fn lower_pointer_storage_take(
         &mut self,
         ctx: &mut Context,

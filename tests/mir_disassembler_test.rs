@@ -218,8 +218,8 @@ fn output_uses_lf_and_exactly_one_trailing_newline() {
 fn map_insertion_order_does_not_change_output() {
     let first = identity_program();
     let mut second = identity_program();
-    second.functions[0].1.var_tys = [(0, Ty::Int)].into_iter().collect();
-    second.functions[0].1.reg_types = [(0, Ty::Int)].into_iter().collect();
+    second.functions[0].1.var_tys = std::iter::once((0, Ty::Int)).collect();
+    second.functions[0].1.reg_types = std::iter::once((0, Ty::Int)).collect();
     assert_eq!(
         mir::text::disassemble(&first).unwrap(),
         mir::text::disassemble(&second).unwrap()

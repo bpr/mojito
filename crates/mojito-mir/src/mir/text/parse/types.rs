@@ -1,6 +1,7 @@
 //! Type decoding: `Ty`, callable types, parameter declarations,
 //! constraints, and comptime expressions/values.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Decoder {

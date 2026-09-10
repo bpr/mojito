@@ -1,4 +1,5 @@
 use super::{instruction_mnemonic, quote, terminator_mnemonic, version_header};
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use crate::mir::*;
 use mojito_ast::ast::{ArgConvention, InfixOp, PrefixOp};
 use mojito_checked::checked::{
@@ -453,6 +454,7 @@ fn write_blocks(output: &mut String, blocks: &[MirBlock], indent: usize) {
     }
 }
 
+#[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
 fn instruction_value(instruction: &MirInstr) -> String {
     let tag = instruction_mnemonic(instruction);
     match instruction {
@@ -1251,10 +1253,10 @@ fn place_value(place: &MirPlace) -> String {
 
 fn projection_value(projection: &Proj) -> String {
     match projection {
-        Proj::Field(v) => positional("field", symbol(v)),
-        Proj::Index(v) => positional("index", reg_value(*v)),
-        Proj::ConstIndex(v) => positional("const_index", v.to_string()),
-        Proj::Variant(v) => positional("variant", v.to_string()),
+        Proj::Field(v) => positional("field", &symbol(v)),
+        Proj::Index(v) => positional("index", &reg_value(*v)),
+        Proj::ConstIndex(v) => positional("const_index", &v.to_string()),
+        Proj::Variant(v) => positional("variant", &v.to_string()),
         Proj::UninitPayload => "uninit_payload".into(),
     }
 }
@@ -1302,7 +1304,7 @@ fn param_arg(value: &MirParamArg) -> String {
 }
 fn subscript_arg(value: &MirSubscriptArg) -> String {
     match value {
-        MirSubscriptArg::Index(v) => positional("index", reg_value(*v)),
+        MirSubscriptArg::Index(v) => positional("index", &reg_value(*v)),
         MirSubscriptArg::Slice {
             kind,
             lower,
@@ -1363,9 +1365,9 @@ fn call_argument(value: &CheckedCallArgument) -> String {
                 "source",
                 match value.source {
                     CheckedCallArgumentSource::Positional(v) => {
-                        positional("positional", v.to_string())
+                        positional("positional", &v.to_string())
                     }
-                    CheckedCallArgumentSource::Keyword(v) => positional("keyword", v.to_string()),
+                    CheckedCallArgumentSource::Keyword(v) => positional("keyword", &v.to_string()),
                     CheckedCallArgumentSource::Default => "default".into(),
                 },
             ),
@@ -1485,7 +1487,7 @@ fn ty_value(ty: &Ty) -> String {
             ref_return.as_deref(),
             transfers,
         ),
-        Ty::Overload(values) => positional("overload", list(values.iter().map(ty_value))),
+        Ty::Overload(values) => positional("overload", &list(values.iter().map(ty_value))),
         Ty::Param {
             name,
             bounds,
@@ -1527,11 +1529,11 @@ fn ty_value(ty: &Ty) -> String {
             "simd",
             &[("dtype", dtype.name().into()), ("width", width.to_string())],
         ),
-        Ty::ComptimeList(value) => positional("comptime_list", ty_value(value)),
-        Ty::Tuple(values) => positional("tuple", list(values.iter().map(ty_value))),
-        Ty::RuntimePack(values) => positional("runtime_pack", list(values.iter().map(ty_value))),
-        Ty::VariadicPack(value) => positional("variadic_pack", ty_value(value)),
-        Ty::Variant(values) => positional("variant", list(values.iter().map(ty_value))),
+        Ty::ComptimeList(value) => positional("comptime_list", &ty_value(value)),
+        Ty::Tuple(values) => positional("tuple", &list(values.iter().map(ty_value))),
+        Ty::RuntimePack(values) => positional("runtime_pack", &list(values.iter().map(ty_value))),
+        Ty::VariadicPack(value) => positional("variadic_pack", &ty_value(value)),
+        Ty::Variant(values) => positional("variant", &list(values.iter().map(ty_value))),
         Ty::Pointer { element, origin } => record(
             "pointer",
             &[
@@ -1611,9 +1613,9 @@ fn transfer_set(value: &mojito_checked::checked::TransferSet) -> String {
 
 fn ty_arg(value: &TyArg) -> String {
     match value {
-        TyArg::Ty(v) => positional("type_arg", ty_value(v)),
-        TyArg::Val(v) => positional("value_arg", ct_value(v)),
-        TyArg::Origin(v) => positional("origin_arg", origin(v)),
+        TyArg::Ty(v) => positional("type_arg", &ty_value(v)),
+        TyArg::Val(v) => positional("value_arg", &ct_value(v)),
+        TyArg::Origin(v) => positional("origin_arg", &origin(v)),
     }
 }
 fn param_decl(value: &ParamDecl) -> String {
@@ -1718,8 +1720,8 @@ fn constraint(value: &GenericConstraint) -> String {
         GenericConstraint::Ge(left, right) => comparison("ge", left, right),
         GenericConstraint::And(left, right) => logical("and", left, right),
         GenericConstraint::Or(left, right) => logical("or", left, right),
-        GenericConstraint::Not(value) => positional("not", constraint(value)),
-        GenericConstraint::Bool(value) => positional("constraint_bool", value.to_string()),
+        GenericConstraint::Not(value) => positional("not", &constraint(value)),
+        GenericConstraint::Bool(value) => positional("constraint_bool", &value.to_string()),
     }
 }
 
@@ -1742,23 +1744,21 @@ fn logical(tag: &str, left: &GenericConstraint, right: &GenericConstraint) -> St
 
 fn constraint_operand(value: &ConstraintOperand) -> String {
     match value {
-        ConstraintOperand::Param(value) => positional("operand_param", symbol(value)),
-        ConstraintOperand::Value(value) => positional("operand_value", ct_value(value)),
-        ConstraintOperand::Type(value) => positional("operand_type", ty_value(value)),
-        ConstraintOperand::PackLength(value) => positional("operand_pack_length", symbol(value)),
+        ConstraintOperand::Param(value) => positional("operand_param", &symbol(value)),
+        ConstraintOperand::Value(value) => positional("operand_value", &ct_value(value)),
+        ConstraintOperand::Type(value) => positional("operand_type", &ty_value(value)),
+        ConstraintOperand::PackLength(value) => positional("operand_pack_length", &symbol(value)),
     }
 }
 
 fn pack_predicate(value: &PackPredicateRef) -> String {
     match value {
-        PackPredicateRef::Trivial(value) => {
-            positional("predicate_trivial", lifecycle(*value).into())
-        }
-        PackPredicateRef::Alias(value) => positional("predicate_alias", symbol(value)),
+        PackPredicateRef::Trivial(value) => positional("predicate_trivial", lifecycle(*value)),
+        PackPredicateRef::Alias(value) => positional("predicate_alias", &symbol(value)),
     }
 }
 
-fn lifecycle(value: TrivialLifecycle) -> &'static str {
+const fn lifecycle(value: TrivialLifecycle) -> &'static str {
     match value {
         TrivialLifecycle::Movable => "movable",
         TrivialLifecycle::Copyable => "copyable",
@@ -1768,8 +1768,8 @@ fn lifecycle(value: TrivialLifecycle) -> &'static str {
 
 fn callable_default_value(value: &CallableDefault) -> String {
     match value {
-        CallableDefault::Symbol(v) => positional("default_symbol", symbol(v)),
-        CallableDefault::Parameter(v) => positional("default_parameter", symbol(v)),
+        CallableDefault::Symbol(v) => positional("default_symbol", &symbol(v)),
+        CallableDefault::Parameter(v) => positional("default_parameter", &symbol(v)),
         CallableDefault::If {
             condition,
             then_value,
@@ -1787,22 +1787,22 @@ fn callable_default_value(value: &CallableDefault) -> String {
 
 fn const_value(value: &Const) -> String {
     match value {
-        Const::Int(v) => positional("int", v.to_string()),
-        Const::Float(v) => positional("float", format!("{:016x}", v.to_bits())),
-        Const::IntLiteral(v) => positional("int_literal", v.to_string()),
-        Const::FloatLiteral(v) => positional("float_literal", v.to_string()),
-        Const::Bool(v) => positional("bool", v.to_string()),
-        Const::Str(v) => positional("string", quote(v)),
-        Const::Function(v) => positional("function", symbol(v)),
+        Const::Int(v) => positional("int", &v.to_string()),
+        Const::Float(v) => positional("float", &format!("{:016x}", v.to_bits())),
+        Const::IntLiteral(v) => positional("int_literal", &v.to_string()),
+        Const::FloatLiteral(v) => positional("float_literal", &v.to_string()),
+        Const::Bool(v) => positional("bool", &v.to_string()),
+        Const::Str(v) => positional("string", &quote(v)),
+        Const::Function(v) => positional("function", &symbol(v)),
         Const::None => "none".into(),
     }
 }
 fn checked_const(value: &CheckedConst) -> String {
     match value {
-        CheckedConst::Int(v) => positional("checked_int", v.to_string()),
-        CheckedConst::Float(v) => positional("checked_float", v.to_string()),
-        CheckedConst::Bool(v) => positional("checked_bool", v.to_string()),
-        CheckedConst::String(v) => positional("checked_string", quote(v)),
+        CheckedConst::Int(v) => positional("checked_int", &v.to_string()),
+        CheckedConst::Float(v) => positional("checked_float", &v.to_string()),
+        CheckedConst::Bool(v) => positional("checked_bool", &v.to_string()),
+        CheckedConst::String(v) => positional("checked_string", &quote(v)),
         CheckedConst::None => "checked_none".into(),
         CheckedConst::Construct { target, arg } => record(
             "checked_construct",
@@ -1812,9 +1812,9 @@ fn checked_const(value: &CheckedConst) -> String {
 }
 fn ct_expr(value: &CtExpr) -> String {
     match value {
-        CtExpr::Value(v) => positional("ct_value", ct_value(v)),
-        CtExpr::Param(v) => positional("ct_param", symbol(v)),
-        CtExpr::Neg(v) => positional("ct_neg", ct_expr(v)),
+        CtExpr::Value(v) => positional("ct_value", &ct_value(v)),
+        CtExpr::Param(v) => positional("ct_param", &symbol(v)),
+        CtExpr::Neg(v) => positional("ct_neg", &ct_expr(v)),
         CtExpr::Add(a, b) => binary("ct_add", a, b),
         CtExpr::Sub(a, b) => binary("ct_sub", a, b),
         CtExpr::Mul(a, b) => binary("ct_mul", a, b),
@@ -1828,16 +1828,16 @@ fn binary(tag: &str, left: &CtExpr, right: &CtExpr) -> String {
 }
 fn ct_value(value: &CtValue) -> String {
     match value {
-        CtValue::Int(v) => positional("ct_int", v.to_string()),
-        CtValue::UInt(v) => positional("ct_uint", v.to_string()),
-        CtValue::Float(v) => positional("ct_float_bits", format!("{v:016x}")),
-        CtValue::IntLiteral(v) => positional("ct_int_literal", v.to_string()),
-        CtValue::FloatLiteral(v) => positional("ct_float_literal", v.to_string()),
-        CtValue::Bool(v) => positional("ct_bool", v.to_string()),
-        CtValue::Str(v) => positional("ct_string", quote(v)),
-        CtValue::Tuple(v) => positional("ct_tuple", list(v.iter().map(ct_value))),
-        CtValue::List(v) => positional("ct_list", list(v.iter().map(ct_value))),
-        CtValue::Dtype(v) => positional("ct_dtype", v.name().into()),
+        CtValue::Int(v) => positional("ct_int", &v.to_string()),
+        CtValue::UInt(v) => positional("ct_uint", &v.to_string()),
+        CtValue::Float(v) => positional("ct_float_bits", &format!("{v:016x}")),
+        CtValue::IntLiteral(v) => positional("ct_int_literal", &v.to_string()),
+        CtValue::FloatLiteral(v) => positional("ct_float_literal", &v.to_string()),
+        CtValue::Bool(v) => positional("ct_bool", &v.to_string()),
+        CtValue::Str(v) => positional("ct_string", &quote(v)),
+        CtValue::Tuple(v) => positional("ct_tuple", &list(v.iter().map(ct_value))),
+        CtValue::List(v) => positional("ct_list", &list(v.iter().map(ct_value))),
+        CtValue::Dtype(v) => positional("ct_dtype", v.name()),
         CtValue::Simd { dtype, lanes } => record(
             "ct_simd",
             &[
@@ -1845,11 +1845,13 @@ fn ct_value(value: &CtValue) -> String {
                 (
                     "lanes",
                     list(lanes.iter().map(|lane| match lane {
-                        mojito_types::ct::CtLane::Int(v) => positional("lane_int", v.to_string()),
+                        mojito_types::ct::CtLane::Int(v) => positional("lane_int", &v.to_string()),
                         mojito_types::ct::CtLane::Float(v) => {
-                            positional("lane_float_bits", format!("{v:016x}"))
+                            positional("lane_float_bits", &format!("{v:016x}"))
                         }
-                        mojito_types::ct::CtLane::Bool(v) => positional("lane_bool", v.to_string()),
+                        mojito_types::ct::CtLane::Bool(v) => {
+                            positional("lane_bool", &v.to_string())
+                        }
                     })),
                 ),
             ],
@@ -1893,23 +1895,23 @@ fn ct_value(value: &CtValue) -> String {
             fields.push(("elements", list(elements.iter().map(ct_value))));
             record("ct_set", &fields)
         }
-        CtValue::Type(v) => positional("ct_type", ty_value(v)),
-        CtValue::Reflected(v) => positional("ct_reflected", ty_value(v)),
-        CtValue::Param(v) => positional("ct_param", symbol(v)),
+        CtValue::Type(v) => positional("ct_type", &ty_value(v)),
+        CtValue::Reflected(v) => positional("ct_reflected", &ty_value(v)),
+        CtValue::Param(v) => positional("ct_param", &symbol(v)),
     }
 }
 
 fn origin_seg(value: &OriginSeg) -> String {
     match value {
-        OriginSeg::Field(v) => positional("field", symbol(v)),
+        OriginSeg::Field(v) => positional("field", &symbol(v)),
         OriginSeg::AnyIndex => "any_index".into(),
-        OriginSeg::Interior(v) => positional("interior", symbol(v)),
+        OriginSeg::Interior(v) => positional("interior", &symbol(v)),
         OriginSeg::Subtree => "subtree".into(),
     }
 }
 fn origin(value: &Origin) -> String {
     match value {
-        Origin::Param(v) => positional("origin_param", v.0.to_string()),
+        Origin::Param(v) => positional("origin_param", &v.0.to_string()),
         Origin::SelfParam => "origin_self".into(),
         Origin::Place(v) => record(
             "origin_place",
@@ -1918,7 +1920,7 @@ fn origin(value: &Origin) -> String {
                 ("path", list(v.path.iter().map(origin_seg))),
             ],
         ),
-        Origin::Union(v) => positional("origin_union", list(v.iter().map(origin))),
+        Origin::Union(v) => positional("origin_union", &list(v.iter().map(origin))),
         Origin::Static => "origin_static".into(),
         Origin::Untracked { mutable } => {
             record("origin_untracked", &[("mutable", mutable.to_string())])
@@ -1992,7 +1994,7 @@ fn mutability_value(value: Mutability) -> String {
     match value {
         Mutability::Immutable => "immutable".into(),
         Mutability::Mutable => "mutable".into(),
-        Mutability::Param(v) => positional("mutability_param", v.0.to_string()),
+        Mutability::Param(v) => positional("mutability_param", &v.0.to_string()),
     }
 }
 fn ref_sig(value: &RefSig) -> String {
@@ -2007,8 +2009,8 @@ fn ref_sig(value: &RefSig) -> String {
 fn sig_origin(value: &SigOrigin) -> String {
     match value {
         SigOrigin::Self_ => "sig_self".into(),
-        SigOrigin::Param(v) => positional("sig_param", v.to_string()),
-        SigOrigin::Bound(v) => positional("sig_bound", origin(v)),
+        SigOrigin::Param(v) => positional("sig_param", &v.to_string()),
+        SigOrigin::Bound(v) => positional("sig_bound", &origin(v)),
         SigOrigin::Static => "sig_static".into(),
         SigOrigin::Untracked { mutable } => {
             record("sig_untracked", &[("mutable", mutable.to_string())])
@@ -2023,7 +2025,7 @@ fn sig_origin(value: &SigOrigin) -> String {
                 ("path", list(path.iter().map(origin_seg))),
             ],
         ),
-        SigOrigin::Union(v) => positional("sig_union", list(v.iter().map(sig_origin))),
+        SigOrigin::Union(v) => positional("sig_union", &list(v.iter().map(sig_origin))),
         SigOrigin::Infer => "sig_infer".into(),
     }
 }
@@ -2031,7 +2033,7 @@ fn sig_mutability(value: &SigMutability) -> String {
     match value {
         SigMutability::Immutable => "sig_immutable".into(),
         SigMutability::Mutable => "sig_mutable".into(),
-        SigMutability::BoolParam(v) => positional("sig_bool_param", v.to_string()),
+        SigMutability::BoolParam(v) => positional("sig_bool_param", &v.to_string()),
         SigMutability::Infer => "sig_infer".into(),
     }
 }
@@ -2039,16 +2041,16 @@ fn environment_value(value: &CallableEnvironment) -> String {
     match value {
         CallableEnvironment::Default => "default".into(),
         CallableEnvironment::Thin => "thin".into(),
-        CallableEnvironment::Capturing(v) => positional("capturing", capture_set(v)),
+        CallableEnvironment::Capturing(v) => positional("capturing", &capture_set(v)),
     }
 }
 fn capture_set(value: &CaptureOriginSet) -> String {
     match value {
         CaptureOriginSet::Infer => "capture_set_infer".into(),
-        CaptureOriginSet::Param(v) => positional("capture_set_param", v.0.to_string()),
+        CaptureOriginSet::Param(v) => positional("capture_set_param", &v.0.to_string()),
         CaptureOriginSet::Concrete(v) => positional(
             "capture_set",
-            list(v.iter().map(|capture| {
+            &list(v.iter().map(|capture| {
                 record(
                     "capture_origin",
                     &[
@@ -2060,7 +2062,7 @@ fn capture_set(value: &CaptureOriginSet) -> String {
         ),
     }
 }
-fn capture_access_kind(value: CaptureAccess) -> &'static str {
+const fn capture_access_kind(value: CaptureAccess) -> &'static str {
     match value {
         CaptureAccess::Read => "read",
         CaptureAccess::Write => "write",
@@ -2078,14 +2080,14 @@ fn convention(value: ArgConvention) -> String {
     }
     .into()
 }
-fn prefix(value: PrefixOp) -> &'static str {
+const fn prefix(value: PrefixOp) -> &'static str {
     match value {
         PrefixOp::Neg => "neg",
         PrefixOp::Not => "not",
         PrefixOp::Invert => "invert",
     }
 }
-fn infix(value: InfixOp) -> &'static str {
+const fn infix(value: InfixOp) -> &'static str {
     match value {
         InfixOp::Add => "add",
         InfixOp::Sub => "sub",
@@ -2114,7 +2116,7 @@ fn infix(value: InfixOp) -> &'static str {
         InfixOp::IsNot => "is_not",
     }
 }
-fn slice_kind(value: mojito_types::types::SliceKind) -> &'static str {
+const fn slice_kind(value: mojito_types::types::SliceKind) -> &'static str {
     match value {
         mojito_types::types::SliceKind::Slice => "slice",
         mojito_types::types::SliceKind::ContiguousSlice => "contiguous_slice",
@@ -2152,7 +2154,7 @@ fn places_option(values: &[Option<MirPlace>]) -> String {
 fn option(value: Option<String>) -> String {
     value.map_or_else(|| "absent".into(), |value| format!("present({value})"))
 }
-fn positional(tag: &str, value: String) -> String {
+fn positional(tag: &str, value: &str) -> String {
     format!("{tag}({value})")
 }
 fn record(tag: &str, fields: &[(&str, String)]) -> String {

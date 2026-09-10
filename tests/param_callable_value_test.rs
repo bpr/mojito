@@ -1,7 +1,7 @@
 use mojito::mir::{MirInstr, lower_checked_program};
 use mojito::{BackendKind, Compiler, CompilerError, LinkOptions, OwnershipError, elaborate, parse};
 
-const PARAMETRIC_CAPTURE: &str = r#"
+const PARAMETRIC_CAPTURE: &str = r"
 def invoke[
     origins: OriginSet, //, callback: def(Int) capturing[origins] -> Int
 ](value: Int) -> Int:
@@ -15,9 +15,9 @@ def main():
         return base + value
 
     print(invoke[add](2))
-"#;
+";
 
-const GENERIC_ANONYMOUS_CALLABLE: &str = r#"
+const GENERIC_ANONYMOUS_CALLABLE: &str = r"
 def identity[U: ImplicitlyCopyable & Deinitable](value: U) -> U:
     return value
 
@@ -28,7 +28,7 @@ def invoke[
 
 def main():
     print(invoke[identity](42))
-"#;
+";
 
 const CALLABLE_PARAMETER_DEFAULTS: &str =
     include_str!("../conformance/fixtures/callable_parameter_defaults.mojo");
@@ -133,7 +133,7 @@ fn generic_callable_contract_defaults_override_implementation_defaults() {
 
 #[test]
 fn named_callable_argument_skips_an_earlier_default_without_shifting() {
-    let source = r#"
+    let source = r"
 def increment(value: Int) -> Int:
     return value + 1
 
@@ -148,7 +148,7 @@ def apply[
 
 def main():
     print(apply[callback=decrement](42))
-"#;
+";
     let compiler = Compiler::new(LinkOptions::default(), BackendKind::Vm);
     let compiled = compiler
         .compile_unlinked(source)
@@ -161,7 +161,7 @@ def main():
 
 #[test]
 fn partial_generic_callable_invocation_uses_contract_scalar_defaults() {
-    let source = r#"
+    let source = r"
 def positional_actual[n: Int = 0, m: Int = 3](value: Int) -> Int:
     return value + n + m
 
@@ -181,7 +181,7 @@ def named[
 def main():
     print(positional[positional_actual]())
     print(named[named_actual]())
-"#;
+";
     let compiler = Compiler::new(LinkOptions::default(), BackendKind::Vm);
     let compiled = compiler
         .compile_unlinked(source)
@@ -194,7 +194,7 @@ def main():
 
 #[test]
 fn generic_callable_contract_resolves_callable_default_plans() {
-    let source = r#"
+    let source = r"
 def increment(value: Int) -> Int:
     return value + 1
 
@@ -243,7 +243,7 @@ def main():
     print(symbol_contract[symbol_actual]())
     print(conditional_contract[conditional_actual]())
     print(alias_contract[alias_actual]())
-"#;
+";
     let compiler = Compiler::new(LinkOptions::default(), BackendKind::Vm);
     let compiled = compiler
         .compile_unlinked(source)
@@ -256,7 +256,7 @@ def main():
 
 #[test]
 fn callable_value_capture_effect_conflicts_with_a_live_owner_loan() {
-    let source = r#"
+    let source = r"
 def invoke[
     origins: OriginSet, //, callback: def() capturing[origins]
 ]():
@@ -272,7 +272,7 @@ def main():
 
     invoke[replace]()
     print(alias)
-"#;
+";
     let compiler = Compiler::new(LinkOptions::default(), BackendKind::Vm);
     assert!(matches!(
         compiler.compile_unlinked(source),
@@ -283,7 +283,7 @@ def main():
 
 #[test]
 fn generic_callable_expression_capture_effect_conflicts_with_a_live_owner_loan() {
-    let source = r#"
+    let source = r"
 def invoke[
     origins: OriginSet, //, callback: def() capturing[origins] -> None
 ]():
@@ -300,7 +300,7 @@ def main():
     var functions = (invoke,)
     functions[0][replace]()
     print(alias)
-"#;
+";
     let compiler = Compiler::new(LinkOptions::default(), BackendKind::Vm);
     let result = compiler.compile_unlinked(source);
     assert!(
@@ -315,7 +315,7 @@ def main():
 
 #[test]
 fn generic_callable_tuple_preserves_its_checked_parameter_contract() {
-    let source = r#"
+    let source = r"
 def identity[T: ImplicitlyCopyable & Deinitable](value: T) -> T:
     return value
 
@@ -326,7 +326,7 @@ def main():
     var functions = (identity, offset)
     print(functions[0][Int](42))
     print(functions[1][2](40))
-"#;
+";
     let compiler = Compiler::new(LinkOptions::default(), BackendKind::Vm);
     let compiled = compiler
         .compile_unlinked(source)

@@ -1,5 +1,6 @@
 //! Checker adaptation of the phase-neutral call-slot matcher.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 /// The per-slot **required** mask for regular parameters. Defaults must be

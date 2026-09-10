@@ -2,6 +2,7 @@
 //! including the `lower_stmt`/`lower_instr` dispatchers.
 //! Extracted from `mir.rs`; see `docs/symbol-map.md`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Flatten<'_> {
@@ -243,8 +244,7 @@ impl Flatten<'_> {
                     SourceSpan::new(None, DUMMY_SPAN),
                     Some(*iter),
                     call.as_ref()
-                        .map(|call| call.result_ty.clone())
-                        .unwrap_or_else(|| element_ty.clone()),
+                        .map_or_else(|| element_ty.clone(), |call| call.result_ty.clone()),
                 );
                 self.emit(MirInstr::Next {
                     dest: r,
@@ -327,7 +327,7 @@ impl Flatten<'_> {
             // end. Both simply move the freshly yielded value into `dest`; the
             // binding's declared mutability enforces the difference.
             IterationBindingAction::MoveValue | IterationBindingAction::BorrowValue => {
-                let value = self.fresh_typed(span.clone(), Some(raw), plan.binding_ty.clone());
+                let value = self.fresh_typed(span, Some(raw), plan.binding_ty.clone());
                 self.emit(MirInstr::UseVar {
                     dest: value,
                     var: raw,
@@ -355,7 +355,7 @@ impl Flatten<'_> {
                     dest: read,
                     reference: handle,
                 });
-                let owned = self.fresh_typed(span.clone(), None, plan.binding_ty.clone());
+                let owned = self.fresh_typed(span, None, plan.binding_ty.clone());
                 self.emit(MirInstr::CopyValue {
                     dest: owned,
                     value: read,
@@ -371,7 +371,7 @@ impl Flatten<'_> {
             // handle as the binding so body accesses read/write through it.
             // `MakeRef` forwards `raw`'s handle unchanged.
             IterationBindingAction::BorrowReference => {
-                let handle = self.fresh_typed(span.clone(), Some(raw), plan.binding_ty.clone());
+                let handle = self.fresh_typed(span, Some(raw), plan.binding_ty.clone());
                 self.emit(MirInstr::MakeRef {
                     dest: handle,
                     place: MirPlace::root(raw, Some(plan.yielded_ty.clone())),
@@ -646,7 +646,7 @@ impl Flatten<'_> {
             var: tmp,
             mode: UseMode::BorrowMut,
         });
-        self.emit_checked_call_boundary(contract, span.clone());
+        self.emit_checked_call_boundary(contract, &span);
         let dest = self.fresh(span.clone(), None);
         self.emit(MirInstr::MethodCall {
             dest,
@@ -700,7 +700,7 @@ impl Flatten<'_> {
             self.lower_call_arguments(std::slice::from_ref(rhs_expression), false);
         let dest = self.fresh(place.source_span(), None);
         self.emit_interior_invalidations(place, None);
-        self.emit_checked_call_boundary(&contract, place.source_span());
+        self.emit_checked_call_boundary(&contract, &place.source_span());
         let method = op
             .inplace_dunder()
             .expect("augmented in-place operator has an in-place dunder")
@@ -756,7 +756,7 @@ impl Flatten<'_> {
             plan.getter.clone(),
             &[(index.source_span(), getter_index)],
         );
-        self.emit_checked_call_boundary(&plan.getter, target.source_span());
+        self.emit_checked_call_boundary(&plan.getter, &target.source_span());
         let handle = self.fresh_typed(target.source_span(), None, plan.getter.result_ty.clone());
         self.emit(MirInstr::Index {
             dest: handle,
@@ -767,7 +767,7 @@ impl Flatten<'_> {
             call: Some(getter_call),
             intrinsic: None,
         });
-        let handle = self.peel_reference_handle_to(handle, &plan.operand_ty, target.source_span());
+        let handle = self.peel_reference_handle_to(handle, &plan.operand_ty, &target.source_span());
         let rhs = self.expr(rhs_expression);
         self.emit_interior_invalidations(target, None);
         self.emit(MirInstr::WriteRef {
@@ -777,6 +777,7 @@ impl Flatten<'_> {
         true
     }
 
+    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn lower_augmented_subscript(
         &mut self,
         target: &Expr,
@@ -823,7 +824,7 @@ impl Flatten<'_> {
                         plan.getter.clone(),
                         &[(index.source_span(), getter_index)],
                     );
-                    self.emit_checked_call_boundary(&plan.getter, target.source_span());
+                    self.emit_checked_call_boundary(&plan.getter, &target.source_span());
                     let handle =
                         self.fresh_typed(target.source_span(), None, plan.getter.result_ty.clone());
                     self.emit(MirInstr::Index {
@@ -842,7 +843,7 @@ impl Flatten<'_> {
                     let handle = self.peel_reference_handle_to(
                         handle,
                         &plan.operand_ty,
-                        target.source_span(),
+                        &target.source_span(),
                     );
                     let rhs = self.expr(rhs_expression);
                     let current =
@@ -892,7 +893,7 @@ impl Flatten<'_> {
                     plan.getter.clone(),
                     &[(index.source_span(), getter_index)],
                 );
-                self.emit_checked_call_boundary(&plan.getter, target.source_span());
+                self.emit_checked_call_boundary(&plan.getter, &target.source_span());
                 let current =
                     self.fresh_typed(target.source_span(), None, plan.getter.result_ty.clone());
                 self.emit(MirInstr::Index {
@@ -981,7 +982,7 @@ impl Flatten<'_> {
                     ),
                 ];
                 let setter_call = self.mir_subscript_call_contract(setter.clone(), &setter_sources);
-                self.emit_checked_call_boundary(setter, target.source_span());
+                self.emit_checked_call_boundary(setter, &target.source_span());
                 self.emit(MirInstr::MultiSet {
                     receiver: setter_receiver,
                     receiver_place,
@@ -1016,7 +1017,7 @@ impl Flatten<'_> {
                 let step_reg = step.as_ref().map(|bound| self.expr(bound));
                 let getter_call = self.mir_subscript_call_contract(plan.getter.clone(), &[]);
                 if plan.setter.is_none() {
-                    self.emit_checked_call_boundary(&plan.getter, target.source_span());
+                    self.emit_checked_call_boundary(&plan.getter, &target.source_span());
                     let handle =
                         self.fresh_typed(target.source_span(), None, plan.getter.result_ty.clone());
                     self.emit(MirInstr::Slice {
@@ -1034,7 +1035,7 @@ impl Flatten<'_> {
                     let handle = self.peel_reference_handle_to(
                         handle,
                         &plan.operand_ty,
-                        target.source_span(),
+                        &target.source_span(),
                     );
                     let rhs = self.expr(rhs_expression);
                     let current =
@@ -1072,7 +1073,7 @@ impl Flatten<'_> {
                 }
 
                 let rhs = self.expr(rhs_expression);
-                self.emit_checked_call_boundary(&plan.getter, target.source_span());
+                self.emit_checked_call_boundary(&plan.getter, &target.source_span());
                 let current =
                     self.fresh_typed(target.source_span(), None, plan.getter.result_ty.clone());
                 self.emit(MirInstr::Slice {
@@ -1146,7 +1147,7 @@ impl Flatten<'_> {
                         value,
                     )],
                 );
-                self.emit_checked_call_boundary(setter, target.source_span());
+                self.emit_checked_call_boundary(setter, &target.source_span());
                 self.emit(MirInstr::MultiSet {
                     receiver: setter_receiver,
                     receiver_place,
@@ -1232,7 +1233,7 @@ impl Flatten<'_> {
                                     .unwrap_or_else(|| target.source_span()),
                             ),
                         ),
-                        slice => slice.clone(),
+                        slice @ MirSubscriptArg::Slice { .. } => slice.clone(),
                     })
                     .collect::<Vec<_>>();
                 let getter_sources = getter_args
@@ -1262,7 +1263,7 @@ impl Flatten<'_> {
                     self.mir_subscript_call_contract(plan.getter.clone(), &getter_sources);
 
                 if plan.setter.is_none() {
-                    self.emit_checked_call_boundary(&plan.getter, target.source_span());
+                    self.emit_checked_call_boundary(&plan.getter, &target.source_span());
                     let handle =
                         self.fresh_typed(target.source_span(), None, plan.getter.result_ty.clone());
                     self.emit(MirInstr::MultiIndex {
@@ -1278,7 +1279,7 @@ impl Flatten<'_> {
                     let handle = self.peel_reference_handle_to(
                         handle,
                         &plan.operand_ty,
-                        target.source_span(),
+                        &target.source_span(),
                     );
                     let rhs = self.expr(rhs_expression);
                     let current =
@@ -1316,7 +1317,7 @@ impl Flatten<'_> {
                 }
 
                 let rhs = value_rhs.expect("value-returning augmented getter has an RHS");
-                self.emit_checked_call_boundary(&plan.getter, target.source_span());
+                self.emit_checked_call_boundary(&plan.getter, &target.source_span());
                 let current =
                     self.fresh_typed(target.source_span(), None, plan.getter.result_ty.clone());
                 self.emit(MirInstr::MultiIndex {
@@ -1394,7 +1395,7 @@ impl Flatten<'_> {
                                 ),
                             )
                         }
-                        slice => slice.clone(),
+                        slice @ MirSubscriptArg::Slice { .. } => slice.clone(),
                     })
                     .collect::<Vec<_>>();
                 let setter_places = source_places
@@ -1440,7 +1441,7 @@ impl Flatten<'_> {
                     value,
                 ));
                 let setter_call = self.mir_subscript_call_contract(setter.clone(), &setter_sources);
-                self.emit_checked_call_boundary(setter, target.source_span());
+                self.emit_checked_call_boundary(setter, &target.source_span());
                 self.emit(MirInstr::MultiSet {
                     receiver: setter_receiver,
                     receiver_place,
@@ -1710,9 +1711,9 @@ impl Flatten<'_> {
                 fl.f.blocks[fl.cur].term = mterm;
             }
             self.next_reg = fl.next_reg;
-            self.vars = fl.vars.clone();
-            self.var_types = fl.var_types.clone();
-            self.owner_vars = fl.owner_vars.clone();
+            self.vars.clone_from(&fl.vars);
+            self.var_types.clone_from(&fl.var_types);
+            self.owner_vars.clone_from(&fl.owner_vars);
         }
         self.f.spans = std::mem::take(&mut region.spans);
         self.f.reg_types = std::mem::take(&mut region.reg_types);
@@ -1723,6 +1724,10 @@ impl Flatten<'_> {
     /// the enclosing function loops (HIR block ids) a `break`/`continue` may escape
     /// to; `outer_map` resolves them to MIR blocks. Shared by the primary
     /// (`HirInstr::Try`) and fallback (`lower_stmt`) paths.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "borrow bundle: its own fields are `&mut`"
+    )]
     pub(super) fn emit_try(
         &mut self,
         regions: TryRegions<'_>,
@@ -1739,10 +1744,9 @@ impl Flatten<'_> {
         let body_blocks = self.lower_region(body, ext_loops, outer_map);
         let handler = match except {
             Some((name, ex_body)) => {
-                let slot = name.as_ref().map(|name| {
-                    handler_binding
-                        .map(|binding| self.declare_binding_var(binding, name))
-                        .unwrap_or_else(|| self.var(name))
+                let slot = name.as_ref().map(|name| match handler_binding {
+                    Some(binding) => self.declare_binding_var(binding, name),
+                    None => self.var(name),
                 });
                 if let Some(slot) = slot {
                     // The checker rejects a try whose body can raise more than
@@ -1881,8 +1885,7 @@ impl Flatten<'_> {
                 // ordinary single-evaluation Index(Reg) path.
                 let projection = match self.checked_ty(object) {
                     Some(Ty::Tuple(_)) => exact_nonnegative_index(index)
-                        .map(Proj::ConstIndex)
-                        .unwrap_or_else(|| Proj::Index(self.expr(index))),
+                        .map_or_else(|| Proj::Index(self.expr(index)), Proj::ConstIndex),
                     _ => Proj::Index(self.expr(index)),
                 };
                 if let Some(ty) = self.checked_place_ty(e).or_else(|| self.checked_ty(e)) {
@@ -1934,6 +1937,7 @@ impl Flatten<'_> {
         }
     }
 
+    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     fn lower_stmt_dispatch(
         &mut self,
         s: &Stmt,
@@ -2054,13 +2058,15 @@ impl Flatten<'_> {
                         let place = candidate_places
                             .iter()
                             .find(|(_, place)| place.root == canonical.root)
-                            .map(|(_, place)| place.clone())
-                            .unwrap_or_else(|| {
-                                MirPlace::root(
-                                    canonical.root,
-                                    self.var_types.get(&canonical.root).cloned(),
-                                )
-                            });
+                            .map_or_else(
+                                || {
+                                    MirPlace::root(
+                                        canonical.root,
+                                        self.var_types.get(&canonical.root).cloned(),
+                                    )
+                                },
+                                |(_, place)| place.clone(),
+                            );
                         let interior = canonical
                             .path
                             .iter()
@@ -2390,9 +2396,10 @@ impl Flatten<'_> {
             // `comptime N = e` is an ordinary `Int` binding at runtime.
             StmtKind::Comptime { name, value, .. } => {
                 let src = self.expr(value);
-                let var = statement_binding
-                    .map(|binding| self.declare_binding_var(binding, name))
-                    .unwrap_or_else(|| self.var(name));
+                let var = match statement_binding {
+                    Some(binding) => self.declare_binding_var(binding, name),
+                    None => self.var(name),
+                };
                 // A comptime statement remains a fallback HIR statement rather
                 // than `HirInstr::Bind`; copy its checked expression type when
                 // present, or the already-typed initializer register for
@@ -2511,8 +2518,7 @@ impl Flatten<'_> {
                     let raw_ty = extraction
                         .reference
                         .clone()
-                        .map(Ty::Ref)
-                        .unwrap_or_else(|| extraction.ty.clone());
+                        .map_or_else(|| extraction.ty.clone(), Ty::Ref);
                     let raw = self.fresh_typed(span(target), None, raw_ty.clone());
                     let call = extraction.accessor.clone().map(|target| MirSubscriptCall {
                         target,
@@ -2556,27 +2562,24 @@ impl Flatten<'_> {
                     } else {
                         raw
                     };
-                    match &target.kind {
-                        ExprKind::Identifier(name) => {
-                            let var = self.expression_var(name, target);
-                            self.emit_interior_invalidations(target, Some(var));
-                            let binding_ty = self
-                                .checked_place_ty(target)
-                                .or_else(|| self.checked_ty(target));
-                            if let Some(ty) = binding_ty.clone() {
-                                self.var_types.insert(var, ty);
-                            }
-                            self.emit(MirInstr::DefVar {
-                                var,
-                                src: elem,
-                                binding_ty,
-                            });
+                    if let ExprKind::Identifier(name) = &target.kind {
+                        let var = self.expression_var(name, target);
+                        self.emit_interior_invalidations(target, Some(var));
+                        let binding_ty = self
+                            .checked_place_ty(target)
+                            .or_else(|| self.checked_ty(target));
+                        if let Some(ty) = binding_ty.clone() {
+                            self.var_types.insert(var, ty);
                         }
-                        _ => {
-                            let place = self.place(target);
-                            self.emit_interior_invalidations(target, Some(place.root));
-                            self.emit(MirInstr::Store { place, src: elem });
-                        }
+                        self.emit(MirInstr::DefVar {
+                            var,
+                            src: elem,
+                            binding_ty,
+                        });
+                    } else {
+                        let place = self.place(target);
+                        self.emit_interior_invalidations(target, Some(place.root));
+                        self.emit(MirInstr::Store { place, src: elem });
                     }
                 }
             }

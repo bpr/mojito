@@ -14,6 +14,14 @@
 //! and VM execution. Backward liveness then builds on this move/init foundation
 //! to insert ASAP drops and control-flow-edge cleanup.
 
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use drops::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use field_drops::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use interior::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use loans::*;
 use mojito_common::error::OwnershipError;
 use mojito_common::timing;
 use mojito_hir::hir::VarId;
@@ -21,6 +29,12 @@ use mojito_mir::mir::{
     MirBlock, MirCaptureMode, MirFunction, MirInstr, MirInteriorOrigin, MirPlace, MirProgram,
     MirTerm, Proj, Reg, SpanTable, UseMode,
 };
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use moves::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use register_loans::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use scan::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 pub fn check_ownership_checked(
@@ -75,15 +89,17 @@ pub fn check_ownership_program(prog: &MirProgram) -> Result<(), OwnershipError> 
 }
 
 /// The program-wide callee contracts the loan analysis classifies retained
-/// call places against. A retained place is an exclusive write only where
-/// the callee's declaration says the parameter writes through it
-/// (`param_writes`: `mut`, or `ref` under a statically mutable origin); a
-/// place lent to any other slot — a read convention, or an immutable,
-/// parametric, or bare `ref` (a borrowing-view constructor, `Named`) — is a
-/// shared read. A callee without a declaration falls back to its function's
-/// `ref_params` mask (receiver at slot zero), and an unknown callee stays
-/// exclusive. `structs` resolves a single-`__init__` construction, which
-/// calls the bare struct name, to its `<name>.__init__` declaration.
+/// call places against.
+///
+/// A retained place is an exclusive write only where the callee's declaration
+/// says the parameter writes through it (`param_writes`: `mut`, or `ref` under
+/// a statically mutable origin); a place lent to any other slot — a read
+/// convention, or an immutable, parametric, or bare `ref` (a borrowing-view
+/// constructor, `Named`) — is a shared read. A callee without a declaration
+/// falls back to its function's `ref_params` mask (receiver at slot zero), and
+/// an unknown callee stays exclusive. `structs` resolves a single-`__init__`
+/// construction, which calls the bare struct name, to its `<name>.__init__`
+/// declaration.
 #[derive(Default)]
 pub struct CalleeRefParams<'a> {
     pub ref_params: HashMap<&'a str, &'a [bool]>,
@@ -123,9 +139,11 @@ impl CalleeRefParams<'_> {
 
 // --- Liveness + ASAP drop elaboration ---------------------------------------
 
-/// Elaborate ASAP destruction across a whole program: after each variable's last
-/// use, splice a `DropVar`. Applied by the VM before execution so a struct's
-/// `__deinit__` fires at the value's last use (not at scope end).
+/// Elaborate ASAP destruction across a whole program: after each variable's
+/// last use, splice a `DropVar`.
+///
+/// Applied by the VM before execution so a struct's `__deinit__` fires at the
+/// value's last use (not at scope end).
 pub fn elaborate_drops_program(prog: MirProgram) -> MirProgram {
     MirProgram {
         functions: prog
@@ -158,14 +176,6 @@ mod loans;
 mod moves;
 mod register_loans;
 mod scan;
-
-use drops::*;
-use field_drops::*;
-use interior::*;
-use loans::*;
-use moves::*;
-use register_loans::*;
-use scan::*;
 
 #[cfg(test)]
 mod constant_tuple_place_tests {

@@ -727,7 +727,7 @@ fn owned_iteration_requires_deinitable_elements() {
     // extension is gone.
     let compiler = Compiler::default();
     let exhaustive = "@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, Deinitable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def close(deinit self):\n        print(\"close\", self.id)\n\ndef main():\n    var conns: List[Conn] = [Conn(1), Conn(2)]\n    for var item in conns^:\n        item^.close()\n";
-    let escaping = format!("{}        break\n", exhaustive);
+    let escaping = format!("{exhaustive}        break\n");
     for source in [exhaustive.to_string(), escaping] {
         let error = compiler
             .compile_unlinked(&source)

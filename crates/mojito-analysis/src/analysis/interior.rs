@@ -1,6 +1,7 @@
 //! Interior-origin analysis: generation states for interior references
 //! and their invalidation on mutation, including try regions.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 /// One `EstablishLoans` generation that contains at least one reference into
@@ -43,7 +44,7 @@ impl Default for InteriorState {
 }
 
 impl InteriorState {
-    pub(super) fn unreachable() -> Self {
+    pub(super) const fn unreachable() -> Self {
         Self {
             reachable: false,
             active: BTreeMap::new(),
@@ -64,7 +65,7 @@ pub(super) struct InteriorFlow {
 }
 
 impl InteriorFlow {
-    pub(super) fn unreachable() -> Self {
+    pub(super) const fn unreachable() -> Self {
         Self {
             normal: InteriorState::unreachable(),
             raises: InteriorState::unreachable(),
@@ -83,7 +84,7 @@ pub(super) fn analyze_interior_origins(f: &MirFunction) -> Result<(), OwnershipE
     if generations.is_empty() {
         return Ok(());
     }
-    check_interior_region_uses(InteriorState::default(), &f.blocks, &generations, f).map(|_| ())
+    check_interior_region_uses(&InteriorState::default(), &f.blocks, &generations, f).map(|_| ())
 }
 
 pub(super) fn collect_interior_generations(
@@ -429,7 +430,7 @@ pub(super) fn summarize_interior_region(
 /// nested `try` region. Effects occur after uses: borrowing through a stale
 /// reference is rejected before an establishment can replace its generation.
 pub(super) fn check_interior_region_uses(
-    entry: InteriorState,
+    entry: &InteriorState,
     blocks: &[MirBlock],
     generations: &BTreeMap<u32, InteriorGeneration>,
     f: &MirFunction,
@@ -438,7 +439,7 @@ pub(super) fn check_interior_region_uses(
     if blocks.is_empty() {
         return Ok(summary);
     }
-    let (incoming, _) = interior_region_states(&entry, blocks, generations, f);
+    let (incoming, _) = interior_region_states(entry, blocks, generations, f);
     for (block, body) in blocks.iter().enumerate() {
         let Some(mut state) = incoming[block].clone() else {
             continue;
@@ -485,7 +486,7 @@ pub(super) fn check_interior_instruction_uses(
     Ok(())
 }
 
-pub(super) fn interior_instruction_directly_raises(instr: &MirInstr) -> bool {
+pub(super) const fn interior_instruction_directly_raises(instr: &MirInstr) -> bool {
     matches!(
         instr,
         MirInstr::Raise { .. }
@@ -609,13 +610,13 @@ pub(super) fn check_interior_try_uses(
         });
     };
 
-    let body_flow = check_interior_region_uses(entry, body, generations, f)?;
+    let body_flow = check_interior_region_uses(&entry, body, generations, f)?;
     let mut normal = InteriorState::unreachable();
     let mut raises = InteriorState::unreachable();
     let mut exits = body_flow.exits.clone();
 
     if let Some(orelse) = orelse {
-        let else_flow = check_interior_region_uses(body_flow.normal, orelse, generations, f)?;
+        let else_flow = check_interior_region_uses(&body_flow.normal, orelse, generations, f)?;
         add_interior_state(&mut normal, &else_flow.normal);
         add_interior_state(&mut raises, &else_flow.raises);
         add_interior_state(&mut exits, &else_flow.exits);
@@ -624,7 +625,7 @@ pub(super) fn check_interior_try_uses(
     }
 
     if let Some((_, handler)) = handler {
-        let handler_flow = check_interior_region_uses(body_flow.raises, handler, generations, f)?;
+        let handler_flow = check_interior_region_uses(&body_flow.raises, handler, generations, f)?;
         add_interior_state(&mut normal, &handler_flow.normal);
         add_interior_state(&mut raises, &handler_flow.raises);
         add_interior_state(&mut exits, &handler_flow.exits);
@@ -642,7 +643,7 @@ pub(super) fn check_interior_try_uses(
         // checking it from their joined input catches a stale use on any one of
         // those paths. Only its normal-channel input can reach after the `try`.
         let all_inputs = joined_interior_flow_inputs(&flow);
-        let _ = check_interior_region_uses(all_inputs, finalbody, generations, f)?;
+        let _ = check_interior_region_uses(&all_inputs, finalbody, generations, f)?;
     }
     Ok(apply_interior_finally(
         flow,
@@ -915,13 +916,10 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
 }
 
 pub(super) fn span_for_reg(f: &MirFunction, reg: Reg) -> mojito_common::token::SourceSpan {
-    f.spans
-        .0
-        .get(&reg.0)
-        .map(|(span, _)| span.clone())
-        .unwrap_or_else(|| {
-            mojito_common::token::SourceSpan::new(None, mojito_common::token::DUMMY_SPAN)
-        })
+    f.spans.0.get(&reg.0).map_or_else(
+        || mojito_common::token::SourceSpan::new(None, mojito_common::token::DUMMY_SPAN),
+        |(span, _)| span.clone(),
+    )
 }
 
 pub(super) fn var_name(f: &MirFunction, var: VarId) -> String {

@@ -1,6 +1,7 @@
 //! Expression-lowering entry points: HIR wrappers, place lowering,
 //! and adjustment application.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Flatten<'_> {

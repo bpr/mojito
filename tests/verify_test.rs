@@ -19,6 +19,7 @@ use mojito::mir::{
     SpanTable,
 };
 use mojito::types::DependentType;
+use mojito::types::TransferSet;
 use mojito::{CtValue, ParamDecl, Ty, TyArg};
 use std::collections::HashMap;
 
@@ -51,7 +52,7 @@ fn program(f: MirFunction) -> MirProgram {
     }
 }
 
-fn block(instrs: Vec<MirInstr>, term: MirTerm) -> MirBlock {
+const fn block(instrs: Vec<MirInstr>, term: MirTerm) -> MirBlock {
     MirBlock { instrs, term }
 }
 
@@ -511,7 +512,7 @@ fn generic_callable(decls: Vec<ParamDecl>) -> Ty {
         conventions: Vec::new(),
         ref_params: Box::new(Vec::new()),
         ref_return: None,
-        transfers: Default::default(),
+        transfers: TransferSet::default(),
     }
 }
 
@@ -535,7 +536,7 @@ fn dependent_generic_callable(index: &str) -> Ty {
         conventions: vec![None],
         ref_params: Box::new(vec![None]),
         ref_return: None,
-        transfers: Default::default(),
+        transfers: TransferSet::default(),
     }
 }
 
@@ -555,7 +556,7 @@ fn concrete_callable(parameter: Ty) -> Ty {
         conventions: vec![None],
         ref_params: Box::new(vec![None]),
         ref_return: None,
-        transfers: Default::default(),
+        transfers: TransferSet::default(),
     }
 }
 
@@ -816,9 +817,8 @@ fn verifier_rejects_cross_receiver_and_fabricated_reference_subscript_contracts(
         .as_mut()
         .expect("reference-returning contract");
     reference.mutability = match reference.mutability {
-        mojito::Mutability::Immutable => mojito::Mutability::Mutable,
+        mojito::Mutability::Immutable | mojito::Mutability::Param(_) => mojito::Mutability::Mutable,
         mojito::Mutability::Mutable => mojito::Mutability::Immutable,
-        mojito::Mutability::Param(_) => mojito::Mutability::Mutable,
     };
     expect_finding(
         &wrong_reference_permission,
@@ -1437,7 +1437,7 @@ fn verifier_rejects_corrupt_indirect_effect_and_reference_result_metadata() {
             origin: mojito::origin::SigOrigin::Static,
             mutability: mojito::origin::SigMutability::Mutable,
         })),
-        transfers: Default::default(),
+        transfers: TransferSet::default(),
     };
     let result = Ty::Ref(mojito::RefTy {
         referent: Box::new(Ty::Int),

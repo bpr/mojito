@@ -2,11 +2,12 @@
 //! ([`ModuleShared`] helpers), [`declare_function`], the synthesized `main`
 //! exe wrapper, and the intercepted-call filter.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl ModuleShared {
-    pub(crate) fn new(module: ModuleOp) -> ModuleShared {
-        ModuleShared {
+    pub(crate) fn new(module: ModuleOp) -> Self {
+        Self {
             module,
             rt_types: HashMap::new(),
             extern_types: HashMap::new(),
@@ -108,7 +109,7 @@ impl ModuleShared {
 
     /// Emit the wrapping square-and-multiply `mjrt_pow(base, exp) -> i64`
     /// once and return its call type. Callers guard the exponent range first;
-    /// wrapping i64 multiplication is bit-identical for Int and UInt, so one
+    /// wrapping i64 multiplication is bit-identical for Int and `UInt`, so one
     /// helper serves both.
     pub(super) fn ensure_pow(&mut self, ctx: &mut Context) -> TypedHandle<FuncType> {
         if let Some(ty) = self.pow_ty {
@@ -183,7 +184,7 @@ impl ModuleShared {
 /// Convert a function's checked signature and append an empty `llvm.func`
 /// shell to `module`. Scalars pass and return by value; aggregates pass by
 /// pointer and return through a prepended sret out-pointer.
-pub(crate) fn declare_function(
+pub fn declare_function(
     ctx: &mut Context,
     module: ModuleOp,
     name: &str,
@@ -336,7 +337,11 @@ pub(crate) fn declare_function(
 /// `mjrt_abi_version` data symbol in every produced binary), call each
 /// (void, zero-arg) callee in order, then return `0: i32`. Callees are
 /// already-mangled native symbols.
-pub(crate) fn synthesize_exe_wrapper(
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "TODO: drop the Result once callers stop using ?"
+)]
+pub fn synthesize_exe_wrapper(
     ctx: &mut Context,
     module: ModuleOp,
     callees: &[(String, Option<(Layout, u64)>)],
@@ -495,7 +500,7 @@ pub(crate) fn synthesize_exe_wrapper(
 /// through element-erased builtins (the VM's slot arena) whose element sizes
 /// only exist at the specialized call sites the backend intercepts.
 /// `reachable_set` skips these edges so the erased bodies are never declared.
-pub(crate) fn intercepted_call(name: &str) -> bool {
+pub fn intercepted_call(name: &str) -> bool {
     name == "__module$std$memory$alloc$unsafe_alloc"
         || name.starts_with("__module$std$memory$alloc$unsafe_alloc$")
 }

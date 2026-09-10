@@ -86,7 +86,7 @@ impl TempDir {
         let id = N.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("mojito_ovl_{}_{}", std::process::id(), id));
         std::fs::create_dir_all(&dir).expect("create temp dir");
-        TempDir(dir)
+        Self(dir)
     }
     fn write(&self, rel: &str, contents: &str) -> PathBuf {
         let path = self.0.join(rel);
@@ -469,7 +469,7 @@ fn reports_substitution_induced_method_ambiguity_as_ambiguous() {
         "@fieldwise_init\nstruct Pair[T: Copyable & Movable & Deinitable]:\n    var a: Self.T\n    def m(self, x: Self.T) -> Int:\n        return 0\n    def m(self, x: StringLiteral) -> Int:\n        return 1\n\nvar p: Pair[StringLiteral] = Pair(\"hi\")\nvar r: Int = p.m(\"x\")\n",
     ) {
         TypeError::BadCall { reason, .. } => {
-            assert!(reason.contains("ambiguous"), "got: {reason}")
+            assert!(reason.contains("ambiguous"), "got: {reason}");
         }
         other => panic!("expected an ambiguous method BadCall, got: {other:?}"),
     }
@@ -481,7 +481,7 @@ fn reports_no_match_method_call_as_bad_call() {
         "@fieldwise_init\nstruct Box:\n    var n: Int\n    def m(self, x: Int) -> Int:\n        return x\n    def m(self, s: StringLiteral) -> Int:\n        return 1\n\nvar b: Box = Box(1)\nvar r: Int = b.m(1, 2)\n",
     ) {
         TypeError::BadCall { reason, .. } => {
-            assert!(reason.contains("no overload"), "got: {reason}")
+            assert!(reason.contains("no overload"), "got: {reason}");
         }
         other => panic!("expected a no-overload method BadCall, got: {other:?}"),
     }

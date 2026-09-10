@@ -1,14 +1,11 @@
-//! Pliron Stage 0 feasibility spike (roadmap: native backend, Stage 0).
+//! Upstream-contract helpers shared by the `upstream_*` integration tests.
 //!
-//! Validates the pinned Pliron revision against LLVM 23.1 outside the
-//! production compiler: IR construction, textual round-trips, verification
-//! failure with located diagnostics, passes, a toy-dialect lowering through
-//! the dialect-conversion framework, LLVM export, and host execution.
-//! Nothing here is reachable from `mojito`.
+//! These tests pin the Pliron/`pliron-llvm` API surface this crate depends on,
+//! so a revision bump that changes upstream behaviour fails here — against a
+//! small hand-built module — rather than deep inside MIR lowering.
 
 pub mod const_fold;
 pub mod ir_build;
-pub mod spike_dialect;
 
 use pliron::{
     context::{Context, Ptr},
@@ -31,10 +28,10 @@ pub fn print_ir(ctx: &Context, op: Ptr<Operation>) -> String {
 
 /// Erase user-given SSA/block names, then print.
 ///
-/// Plain `parse -> print` is not a fixpoint in pliron 0.17.0: the parser
-/// stores each parsed block label as a given name and the printer re-suffixes
-/// it with the internal id, so block labels grow on every round trip.
-/// Erasing given names first makes the printed text byte-stable.
+/// Plain `parse -> print` is not a fixpoint: the parser stores each parsed
+/// block label as a given name and the printer re-suffixes it with the
+/// internal id, so block labels grow on every round trip. Erasing given names
+/// first makes the printed text byte-stable.
 pub fn canonical_text(ctx: &mut Context, op: Ptr<Operation>) -> String {
     pliron::builtin::given_names::erase_given_names(ctx, op);
     op.disp(ctx).to_string()

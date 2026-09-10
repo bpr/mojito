@@ -2,6 +2,7 @@
 //! (`exec_try`/`run_cleanup`/`run_region`).
 //! Extracted from `backend/vm.rs`; see `docs/symbol-map.md`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl VmBackend {
@@ -9,6 +10,11 @@ impl VmBackend {
     /// Returns the control-flow outcome — `Normal`, or `Return` when a `return`
     /// inside a nested `try` region crosses out (all other instructions are
     /// `Normal`).
+    #[allow(
+        clippy::cognitive_complexity,
+        clippy::too_many_lines,
+        reason = "TODO: split this pass"
+    )]
     pub(super) fn exec_instr(
         &mut self,
         prog: &Prog,
@@ -343,11 +349,8 @@ impl VmBackend {
                             .get(&func.0)
                             .map(|signature| signature.param_decls.as_slice())
                     });
-                let pvals = declarations
-                    .map(|declarations| {
-                        self.runtime_parameter_arguments(prog, caller, declarations, param_arg_regs)
-                    })
-                    .unwrap_or_else(|| {
+                let pvals = declarations.map_or_else(
+                    || {
                         param_arg_regs
                             .iter()
                             .map(|argument| {
@@ -356,7 +359,11 @@ impl VmBackend {
                                     .map(|register| regs[register.0 as usize].clone())
                             })
                             .collect()
-                    });
+                    },
+                    |declarations| {
+                        self.runtime_parameter_arguments(prog, caller, declarations, param_arg_regs)
+                    },
+                );
                 // A handwritten constructor receives reference arguments as
                 // caller-frame handles, just like an ordinary ref-parameter call.
                 // Its synthetic `self` occupies parameter slot zero.
@@ -447,8 +454,8 @@ impl VmBackend {
                     .get(&func.0)
                     .map(|signature| reify_value_parameters(&signature.param_decls, &pvals))
                     .unwrap_or_default();
-                let result = match writeback {
-                    Some(idx) => self.call_with_writeback(
+                let result = if let Some(idx) = writeback {
+                    self.call_with_writeback(
                         prog,
                         WritebackCall {
                             function_name: &func.0,
@@ -465,30 +472,29 @@ impl VmBackend {
                             registers: regs,
                             variables: vars,
                         },
-                    )?,
-                    None => {
-                        // Reaching the instruction interpreter means this call
-                        // is executing synchronously (for example inside a
-                        // structured try region); the continuation path handles
-                        // ordinary direct calls earlier. Keep the caller's real
-                        // frame identity reachable even without direct ref
-                        // parameters because by-value arguments may contain
-                        // nested reference handles.
-                        let stack_base = self.push_caller_mirror(frame_id, regs, vars);
-                        let arg_types: Vec<Option<mojito_types::types::Ty>> = args
-                            .iter()
-                            .map(|reg| {
-                                prog.mir.functions[function]
-                                    .1
-                                    .reg_types
-                                    .get(&reg.0)
-                                    .cloned()
-                            })
-                            .collect();
-                        let outcome = self.call_named(prog, &func.0, argv, kw, &pvals, &arg_types);
-                        self.restore_caller_mirror(stack_base, vars)?;
-                        outcome?
-                    }
+                    )?
+                } else {
+                    // Reaching the instruction interpreter means this call
+                    // is executing synchronously (for example inside a
+                    // structured try region); the continuation path handles
+                    // ordinary direct calls earlier. Keep the caller's real
+                    // frame identity reachable even without direct ref
+                    // parameters because by-value arguments may contain
+                    // nested reference handles.
+                    let stack_base = self.push_caller_mirror(frame_id, regs, vars);
+                    let arg_types: Vec<Option<mojito_types::types::Ty>> = args
+                        .iter()
+                        .map(|reg| {
+                            prog.mir.functions[function]
+                                .1
+                                .reg_types
+                                .get(&reg.0)
+                                .cloned()
+                        })
+                        .collect();
+                    let outcome = self.call_named(prog, &func.0, argv, kw, &pvals, &arg_types);
+                    self.restore_caller_mirror(stack_base, vars)?;
+                    outcome?
                 };
                 let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
                 regs[dest.0 as usize] = self.materialize_checked_result(prog, result, target)?;
@@ -553,7 +559,7 @@ impl VmBackend {
                     .ok_or_else(|| RuntimeError::NotCallable(function.clone()))?;
                 let (mut bound, slots) = match prog.sigs.get(&function) {
                     Some(signature) => {
-                        self.bind_for_call(prog, &function, signature, positional, keywords)?
+                        self.bind_for_call(prog, &function, signature, &positional, keywords)?
                     }
                     None => (
                         positional,
@@ -1247,8 +1253,7 @@ impl VmBackend {
                 if active != index {
                     let found = alternatives
                         .get(*active)
-                        .map(ToString::to_string)
-                        .unwrap_or_else(|| "<invalid>".to_string());
+                        .map_or_else(|| "<invalid>".to_string(), ToString::to_string);
                     return Err(RuntimeError::TypeError(format!(
                         "Variant holds '{found}', not '{expected}'"
                     )));
@@ -1278,8 +1283,7 @@ impl VmBackend {
                 if *checked && active != index {
                     let found = alternatives
                         .get(*active)
-                        .map(ToString::to_string)
-                        .unwrap_or_else(|| "<invalid>".to_string());
+                        .map_or_else(|| "<invalid>".to_string(), ToString::to_string);
                     return Err(RuntimeError::TypeError(format!(
                         "Variant holds '{found}', not '{expected}'"
                     )));
@@ -1307,7 +1311,7 @@ impl VmBackend {
                 let factory = regs[factory.0 as usize].clone();
                 let produced = self.invoke_callable_value(
                     prog,
-                    factory,
+                    &factory,
                     Vec::new(),
                     (frame_id, function, vars),
                 )?;
@@ -1346,7 +1350,7 @@ impl VmBackend {
                 let handler = regs[handler.0 as usize].clone();
                 self.invoke_callable_value(
                     prog,
-                    handler,
+                    &handler,
                     vec![payload],
                     (frame_id, function, vars),
                 )?;
@@ -1410,8 +1414,7 @@ impl VmBackend {
                 if *checked && active != *output_index {
                     let found = alternatives
                         .get(active)
-                        .map(ToString::to_string)
-                        .unwrap_or_else(|| "<invalid>".to_string());
+                        .map_or_else(|| "<invalid>".to_string(), ToString::to_string);
                     return Err(RuntimeError::TypeError(format!(
                         "Variant holds '{found}', not '{output}'"
                     )));
@@ -1487,7 +1490,7 @@ impl VmBackend {
                     self.canonicalize_value_references(frame_id, vars, &mut v);
                     self.write_reference(&target, frame_id, vars, v)?;
                 } else if matches!(place.ty, Some(Ty::Ref(_))) {
-                    let reference = load_place(vars, regs, place)?.clone();
+                    let reference = load_place(vars, regs, place)?;
                     self.canonicalize_value_references(frame_id, vars, &mut v);
                     self.write_reference(&reference, frame_id, vars, v)?;
                 } else {
@@ -1522,48 +1525,44 @@ impl VmBackend {
                     } else {
                         value
                     }
+                } else if let Some(v) = self.load_index_dunder(prog, place, regs, vars, frame_id)? {
+                    v
                 } else {
-                    match self.load_index_dunder(prog, place, regs, vars, frame_id)? {
-                        Some(v) => v,
-                        None => {
-                            // A projection crossing an INTERMEDIATE ref-typed
-                            // segment (`self.value.items` through a `ref`
-                            // field) cannot walk raw storage — route it
-                            // through the reference walk, which chases stored
-                            // handles mid-projection.
-                            // A single-pointee pointer field mid-projection
-                            // (`self.src[]` on `Pointer[List[T], o]` storage)
-                            // stores a handle the same way.
-                            let crosses_reference =
-                                place.projection_tys.iter().rev().skip(1).any(|ty| {
-                                    matches!(ty, Ty::Ref(_))
-                                        || super::references::single_pointee_pointer(Some(ty))
-                                });
-                            if crosses_reference {
-                                let composed = Value::Ref {
-                                    frame: frame_id.0,
-                                    slot: place.root as usize,
-                                    projection: Vec::new(),
-                                };
-                                let composed = self
-                                    .extend_reference(&composed, place, regs)?
-                                    .expect("a composed root handle extends");
-                                let value = self.read_reference(&composed, frame_id, vars)?;
-                                if matches!(value, Value::Ref { .. })
-                                    && matches!(place.ty, Some(Ty::Ref(_)))
-                                {
-                                    self.read_reference(&value, frame_id, vars)?
-                                } else {
-                                    value
-                                }
-                            } else {
-                                let value = load_place(vars, regs, place)?;
-                                if matches!(place.ty, Some(Ty::Ref(_))) {
-                                    self.read_reference(&value, frame_id, vars)?
-                                } else {
-                                    value.clone()
-                                }
-                            }
+                    // A projection crossing an INTERMEDIATE ref-typed
+                    // segment (`self.value.items` through a `ref`
+                    // field) cannot walk raw storage — route it
+                    // through the reference walk, which chases stored
+                    // handles mid-projection.
+                    // A single-pointee pointer field mid-projection
+                    // (`self.src[]` on `Pointer[List[T], o]` storage)
+                    // stores a handle the same way.
+                    let crosses_reference = place.projection_tys.iter().rev().skip(1).any(|ty| {
+                        matches!(ty, Ty::Ref(_))
+                            || super::references::single_pointee_pointer(Some(ty))
+                    });
+                    if crosses_reference {
+                        let composed = Value::Ref {
+                            frame: frame_id.0,
+                            slot: place.root as usize,
+                            projection: Vec::new(),
+                        };
+                        let composed = self
+                            .extend_reference(&composed, place, regs)?
+                            .expect("a composed root handle extends");
+                        let value = self.read_reference(&composed, frame_id, vars)?;
+                        if matches!(value, Value::Ref { .. })
+                            && matches!(place.ty, Some(Ty::Ref(_)))
+                        {
+                            self.read_reference(&value, frame_id, vars)?
+                        } else {
+                            value
+                        }
+                    } else {
+                        let value = load_place(vars, regs, place)?;
+                        if matches!(place.ty, Some(Ty::Ref(_))) {
+                            self.read_reference(&value, frame_id, vars)?
+                        } else {
+                            value
                         }
                     }
                 };
@@ -1979,7 +1978,7 @@ impl VmBackend {
                     prog,
                     function,
                     frame_id,
-                    TryRegions {
+                    &TryRegions {
                         body,
                         handler,
                         orelse,
@@ -2012,7 +2011,7 @@ impl VmBackend {
         prog: &Prog,
         function: usize,
         frame_id: FrameId,
-        regions: TryRegions<'_>,
+        regions: &TryRegions<'_>,
         frame: CallerFrame<'_>,
     ) -> Result<Flow, RuntimeError> {
         let TryRegions {
@@ -2040,7 +2039,7 @@ impl VmBackend {
                             self.record_lifecycle(format!("catch {message}"));
                         }
                         if let Some(slot) = err_slot {
-                            vars[*slot as usize] = error.clone();
+                            vars[*slot as usize] = error;
                         }
                         self.run_region(prog, function, frame_id, hblocks, regs, vars)
                     }
@@ -2164,8 +2163,7 @@ impl VmBackend {
                 MirTerm::Return(r) => {
                     let v = r
                         .as_ref()
-                        .map(|r| regs[r.0 as usize].clone())
-                        .unwrap_or(Value::None);
+                        .map_or(Value::None, |r| regs[r.0 as usize].clone());
                     return Ok(Flow::Return {
                         value: v,
                         cleanup: Vec::new(),
@@ -2174,8 +2172,7 @@ impl VmBackend {
                 MirTerm::ReturnWithCleanup { value, cleanup } => {
                     let value = value
                         .as_ref()
-                        .map(|register| regs[register.0 as usize].clone())
-                        .unwrap_or(Value::None);
+                        .map_or(Value::None, |register| regs[register.0 as usize].clone());
                     return Ok(Flow::Return {
                         value,
                         cleanup: cleanup.clone(),
@@ -2242,6 +2239,10 @@ impl VmBackend {
     /// root (a `mut`/`ref self` receiver, as in the self-hosted `Variant`'s
     /// `self._storage`) reaches its referent through the handle; a plain
     /// root reads raw storage.
+    #[allow(
+        clippy::needless_pass_by_ref_mut,
+        reason = "reborrowed as `&mut` by `read_reference`"
+    )]
     fn load_place_through_reference(
         &mut self,
         place: &MirPlace,

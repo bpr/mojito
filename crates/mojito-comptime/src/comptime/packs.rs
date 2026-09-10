@@ -2,6 +2,7 @@
 //! detection, tuple storage/transform helpers, and whole-pack ABI
 //! selection.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 pub(super) fn infer_pack_argument_type(expr: &Expr) -> Result<Ty, ComptimeError> {

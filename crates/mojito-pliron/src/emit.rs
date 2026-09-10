@@ -35,10 +35,10 @@ use super::{DebugInfo, OptLevel, PlironError, PlironErrorKind};
 /// Stamping goes through print → prepend → reparse: pliron-llvm 0.17 keeps
 /// its raw `LLVMModuleRef` private, so `LLVMSetTarget`/`LLVMSetDataLayout`
 /// are unreachable in-process. The reparsed module re-verifies before use.
-pub(super) fn to_llvm(
+pub fn to_llvm(
     ctx: &Context,
     module: ModuleOp,
-    target: &NativeTarget,
+    target: NativeTarget,
 ) -> Result<(LLVMContext, LLVMModule), PlironError> {
     let stamped_text = to_stamped_ir(ctx, module, target)?;
     let stamped_ctx = LLVMContext::default();
@@ -60,7 +60,7 @@ pub(super) fn to_llvm(
 fn to_stamped_ir(
     ctx: &Context,
     module: ModuleOp,
-    target: &NativeTarget,
+    target: NativeTarget,
 ) -> Result<String, PlironError> {
     timing("llvm-convert", || {
         let llvm_ctx = LLVMContext::default();
@@ -86,10 +86,10 @@ fn to_stamped_ir(
 /// Convert and, when the profile has an LLVM pipeline, round-trip the module
 /// through `opt` bitcode optimization. The optimized module lives in a fresh
 /// context that the caller must keep alive with it, exactly like [`to_llvm`].
-pub(super) fn to_llvm_optimized(
+pub fn to_llvm_optimized(
     ctx: &Context,
     module: ModuleOp,
-    target: &NativeTarget,
+    target: NativeTarget,
     opt: OptLevel,
 ) -> Result<(LLVMContext, LLVMModule), PlironError> {
     let (llvm_ctx, llvm_module) = to_llvm(ctx, module, target)?;
@@ -122,10 +122,10 @@ pub(super) fn to_llvm_optimized(
 }
 
 /// Textual LLVM IR of the converted module.
-pub(super) fn llvm_ir(
+pub fn llvm_ir(
     ctx: &Context,
     module: ModuleOp,
-    target: &NativeTarget,
+    target: NativeTarget,
     opt: OptLevel,
 ) -> Result<String, PlironError> {
     let (_llvm_ctx, llvm_module) = to_llvm_optimized(ctx, module, target, opt)?;
@@ -133,10 +133,10 @@ pub(super) fn llvm_ir(
 }
 
 /// Write LLVM bitcode to `path`, failure-atomically.
-pub(super) fn write_bitcode(
+pub fn write_bitcode(
     ctx: &Context,
     module: ModuleOp,
-    target: &NativeTarget,
+    target: NativeTarget,
     path: &Path,
     opt: OptLevel,
     debug: DebugPolicy<'_>,
@@ -158,10 +158,10 @@ pub(super) fn write_bitcode(
 /// Report which functions would degrade to subprogram-only debug
 /// correlation — the corpus test's channel; the artifact goes to a scratch
 /// path and is discarded.
-pub(super) fn debug_degradations(
+pub fn debug_degradations(
     ctx: &Context,
     module: ModuleOp,
-    target: &NativeTarget,
+    target: NativeTarget,
     table: &DebugTable,
 ) -> Result<Vec<String>, PlironError> {
     let stamped_text = to_stamped_ir(ctx, module, target)?;
@@ -173,10 +173,10 @@ pub(super) fn debug_degradations(
 
 /// Write a relocatable object to `path` (bitcode + `clang -c`),
 /// failure-atomically.
-pub(super) fn write_object(
+pub fn write_object(
     ctx: &Context,
     module: ModuleOp,
-    target: &NativeTarget,
+    target: NativeTarget,
     path: &Path,
     opt: OptLevel,
     debug: DebugPolicy<'_>,
@@ -193,10 +193,18 @@ pub(super) fn write_object(
     write_link_manifest(target, path, &toolchain)
 }
 
-/// Link a saved object into an executable through its sidecar manifest:
-/// validate schema, target, ABI version, object digest, runtime digest,
-/// and toolchain major, then issue the same deterministic clang link line
-/// `write_executable` uses. The CLI's `link` verb.
+/// Link a saved object into an executable through its sidecar manifest.
+///
+/// Validate schema, target, ABI version, object digest, runtime digest, and
+/// toolchain major, then issue the same deterministic clang link line
+/// `write_executable` uses.
+///
+/// The CLI's `link` verb.
+///
+/// # Panics
+///
+/// Panics if the sidecar's recorded target triple is not one the ABI table
+/// knows, which `write_executable` rules out when it writes the sidecar.
 pub fn link_object(object_path: &Path, output: &Path) -> Result<(), PlironError> {
     use mojito_native::native::rt_abi;
     use mojito_native::native::target::Triple;
@@ -244,7 +252,7 @@ pub fn link_object(object_path: &Path, output: &Path) -> Result<(), PlironError>
     expect("object-sha256", &object_sha)?;
 
     let toolchain = ResolvedToolchain::resolve(
-        &target,
+        target,
         OptLevel::O0,
         ToolchainNeeds {
             clang: true,
@@ -268,7 +276,7 @@ pub fn link_object(object_path: &Path, output: &Path) -> Result<(), PlironError>
     }
     let link_inputs = vec![runtime.path.clone()];
     write_atomic(output, |temp| {
-        let args = clang_args(&target, EXE_LINK_ARGS, object_path, &link_inputs, temp);
+        let args = clang_args(target, EXE_LINK_ARGS, object_path, &link_inputs, temp);
         let run = Command::new(&clang.path)
             .args(&args)
             .env("LC_ALL", "C")
@@ -291,7 +299,7 @@ pub fn link_object(object_path: &Path, output: &Path) -> Result<(), PlironError>
 /// when an archive is discoverable at emission time and validated at link
 /// time when present.
 fn write_link_manifest(
-    target: &NativeTarget,
+    target: NativeTarget,
     object_path: &Path,
     toolchain: &ResolvedToolchain,
 ) -> Result<(), PlironError> {
@@ -343,22 +351,25 @@ fn link_manifest_path(object_path: &Path) -> PathBuf {
 /// The hex sha256 of a file's bytes.
 fn sha256_file(path: &Path) -> Result<String, PlironError> {
     use sha2::{Digest, Sha256};
+    use std::fmt::Write;
     let data = std::fs::read(path)
         .map_err(|error| emit_error(format!("cannot read {}: {error}", path.display())))?;
     Ok(Sha256::digest(&data)
         .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect())
+        .fold(String::new(), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        }))
 }
 
 /// Link an executable at `path` (bitcode + `clang`), linking the versioned
 /// `mojito-runtime` static archive, failure-atomically. The module must
 /// already contain the synthesized `main` wrapper (which references the
 /// runtime's version symbol).
-pub(super) fn write_executable(
+pub fn write_executable(
     ctx: &Context,
     module: ModuleOp,
-    target: &NativeTarget,
+    target: NativeTarget,
     path: &Path,
     opt: OptLevel,
     debug: DebugPolicy<'_>,
@@ -375,13 +386,13 @@ pub(super) fn write_executable(
     clang_from_bitcode(ctx, module, target, path, EXE_LINK_ARGS, &toolchain, debug)
 }
 
-/// [`write_executable`] instrumented with AddressSanitizer (whose interposed
-/// allocator also gives LeakSanitizer coverage of the runtime's `std::alloc`
+/// [`write_executable`] instrumented with `AddressSanitizer` (whose interposed
+/// allocator also gives `LeakSanitizer` coverage of the runtime's `std::alloc`
 /// allocations) — the sanitizer acceptance lane's link mode.
-pub(super) fn write_executable_sanitized(
+pub fn write_executable_sanitized(
     ctx: &Context,
     module: ModuleOp,
-    target: &NativeTarget,
+    target: NativeTarget,
     path: &Path,
     opt: OptLevel,
     debug: DebugPolicy<'_>,
@@ -415,7 +426,7 @@ const SANITIZED_LINK_ARGS: &[&str] = &["-fsanitize=address", "-g", "-lm", "-Wl,-
 fn clang_from_bitcode(
     ctx: &Context,
     module: ModuleOp,
-    target: &NativeTarget,
+    target: NativeTarget,
     path: &Path,
     extra_args: &[&str],
     toolchain: &ResolvedToolchain,
@@ -460,7 +471,7 @@ fn clang_from_bitcode(
 /// inputs and outputs in fixed positions. Argument-order changes are policy
 /// changes; the snapshot test below pins the rendering.
 fn clang_args(
-    target: &NativeTarget,
+    target: NativeTarget,
     extra_args: &[&str],
     bitcode: &Path,
     link_inputs: &[PathBuf],
@@ -514,7 +525,7 @@ fn optimize_bitcode(path: &Path, toolchain: &ResolvedToolchain) -> Result<(), Pl
 fn emit_bitcode(
     ctx: &Context,
     module: ModuleOp,
-    target: &NativeTarget,
+    target: NativeTarget,
     path: &Path,
     debug: DebugPolicy<'_>,
 ) -> Result<(), PlironError> {
@@ -559,7 +570,7 @@ fn scratch_bitcode_path() -> PathBuf {
     ))
 }
 
-fn emit_error(message: String) -> PlironError {
+const fn emit_error(message: String) -> PlironError {
     PlironError {
         function: None,
         kind: PlironErrorKind::Emit(message),
@@ -576,7 +587,7 @@ mod tests {
     fn pliron_clang_args_render_deterministically() {
         let target = NativeTarget::new(Triple::X86_64UnknownLinuxGnu);
         let args = clang_args(
-            &target,
+            target,
             EXE_LINK_ARGS,
             Path::new("/tmp/in.bc"),
             &[PathBuf::from("/rt/libmojito_runtime.a")],

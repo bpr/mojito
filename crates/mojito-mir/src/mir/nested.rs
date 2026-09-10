@@ -1,5 +1,6 @@
 //! Recursive nested-function capture discovery and MIR lifting.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 // --- Nested `def` (closure) lifting -----------------------------------------
@@ -58,8 +59,8 @@ pub(super) fn lower_fn_nested(
         body,
         overloads,
     } = request;
-    let mut children = analyze_root_children(checked, name, param_names, body);
-    let registry = scope_registry(body, &mut children, &HashMap::new());
+    let children = analyze_root_children(checked, name, param_names, body);
+    let registry = scope_registry(body, &children, &HashMap::new());
 
     let mut cfg = Cfg::build_checked_fn(checked, param_names, body);
     // Parameter slot types come from the checked declaration, not from
@@ -178,7 +179,7 @@ struct NestedNode<'a> {
     mangled: String,
     captures: Vec<NestedCapture>,
     callable_ty: Option<Ty>,
-    children: Vec<NestedNode<'a>>,
+    children: Vec<Self>,
 }
 
 fn analyze_node<'a>(
@@ -249,14 +250,14 @@ fn analyze_node<'a>(
 /// same-spelled bindings coexist without shadow-removal heuristics.
 fn scope_registry(
     _body: &[Stmt],
-    children: &mut [NestedNode<'_>],
+    children: &[NestedNode<'_>],
     inherited: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
 ) -> HashMap<mojito_types::origin::OwnerId, NestedInfo> {
     let mut registry = inherited.clone();
     for info in registry.values_mut() {
         info.materialized_here = false;
     }
-    for child in children.iter() {
+    for child in children {
         registry.insert(
             child.binding,
             NestedInfo {
@@ -275,7 +276,7 @@ fn scope_registry(
 
 fn lower_nested_node(
     checked: &mojito_checked::checked::CheckedProgram,
-    mut node: NestedNode<'_>,
+    node: NestedNode<'_>,
     inherited_registry: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
     overloads: &mojito_symbol::symbol::OverloadSets,
     out: &mut Vec<(String, MirFunction)>,
@@ -290,7 +291,7 @@ fn lower_nested_node(
         ..
     } = &ds.kind
     {
-        let registry = scope_registry(dbody, &mut node.children, inherited_registry);
+        let registry = scope_registry(dbody, &node.children, inherited_registry);
         let captures = &node.captures;
         let mangled = &node.mangled;
         let capture_types: Vec<Ty> = captures
@@ -555,7 +556,7 @@ fn lower_nested_node(
         nf.ret_ty = checked.checked_type_at(&return_site).cloned();
         if let Some(effect) = checked.declaration_effect_at(&return_site) {
             nf.raises = effect.raises;
-            nf.error_ty = effect.error.clone();
+            nf.error_ty.clone_from(&effect.error);
         }
         if let Some(result) = named_result {
             materialize_named_result_return(&mut nf, &result.name);

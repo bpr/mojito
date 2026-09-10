@@ -1,5 +1,6 @@
 //! Declaration collection, signature construction, and body-checking support.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 pub(super) fn definitely_returns(body: &[Stmt]) -> bool {
@@ -699,7 +700,7 @@ impl Checker {
                 .expect("non-empty: clauses with empty decls rejected above")
             {
                 ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
-                    constraints.push(constraint)
+                    constraints.push(constraint);
                 }
             }
         }
@@ -849,8 +850,7 @@ impl Checker {
                 name: name.to_string(),
                 ty: self
                     .lookup(name)
-                    .map(ToString::to_string)
-                    .unwrap_or_else(|| "undefined".to_string()),
+                    .map_or_else(|| "undefined".to_string(), ToString::to_string),
             })?;
         if !self.value_coerces(&actual, expected) {
             return Err(TypeError::TypeMismatch {
@@ -893,7 +893,7 @@ impl Checker {
         &mut self,
         self_ty: &Ty,
         m: &Method,
-        module: Option<String>,
+        module: Option<&String>,
         declaration: &str,
         method_index: usize,
         overload_index: usize,
@@ -911,7 +911,7 @@ impl Checker {
                 let result = (|| {
                     for param in 0..m.params.len() {
                         let site = mojito_checked::checked::AnnotationSite::MethodParam {
-                            module: module.clone(),
+                            module: module.cloned(),
                             declaration: declaration.to_string(),
                             method: method_index,
                             param,
@@ -1487,9 +1487,10 @@ impl Checker {
         }
     }
 
+    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn infer_construction(
         &self,
-        span: SourceSpan,
+        span: &SourceSpan,
         name: &str,
         param_args: &[mojito_ast::ast::ParamArg],
         args: &[Expr],
@@ -1525,7 +1526,7 @@ impl Checker {
                     _ => Err(TypeError::TypeMismatch {
                         expected: name.to_string(),
                         found: arg_ty.to_string(),
-                        context: format!("argument 'copy' to '{}.__init__'", name),
+                        context: format!("argument 'copy' to '{name}.__init__'"),
                     }),
                 };
             }
@@ -1558,7 +1559,7 @@ impl Checker {
                 return Err(TypeError::TypeMismatch {
                     expected: expected.to_string(),
                     found: arg_ty.to_string(),
-                    context: format!("argument 'copy' to '{}.__init__'", name),
+                    context: format!("argument 'copy' to '{name}.__init__'"),
                 });
             }
             return Ok(self.struct_instance_type(name, tyargs));
@@ -1692,7 +1693,7 @@ impl Checker {
                     kwargs,
                 )?;
                 self.record_constructor_reference_borrows(
-                    &span,
+                    span,
                     &selected.ref_params,
                     &selected.slots,
                 );
@@ -1748,7 +1749,7 @@ impl Checker {
                     &arg_tys,
                     &partitioned.explicit_origins,
                 )?;
-                self.record_constructor_instantiation(&span, name, sig, &subst);
+                self.record_constructor_instantiation(span, name, sig, &subst);
                 self.record_struct_instantiation(name, &tyargs, span.source.as_deref());
                 for (i, (aty, pty)) in arg_tys.iter().zip(&params).enumerate() {
                     let expected = substitute_pointer_origin_params(
@@ -1793,7 +1794,7 @@ impl Checker {
                     args,
                     kwargs,
                 )?;
-                self.record_constructor_reference_borrows(&span, &sig.ref_params, &slots);
+                self.record_constructor_reference_borrows(span, &sig.ref_params, &slots);
                 return Ok(self.struct_instance_type(name, tyargs));
             }
             let decls = info.decls.clone();
@@ -1845,7 +1846,7 @@ impl Checker {
                     bound.push((
                         expression,
                         sig.params[index].clone(),
-                        sig.conventions.get(index).cloned().flatten(),
+                        sig.conventions.get(index).copied().flatten(),
                     ));
                 }
                 if let Some(element) = sig.variadic.as_deref() {
@@ -1980,7 +1981,7 @@ impl Checker {
                             ArgSlot::Keyword(position) => &kwargs[*position].value,
                             ArgSlot::Default => return None,
                         };
-                        Some((expression, sig.conventions.get(index).cloned().flatten()))
+                        Some((expression, sig.conventions.get(index).copied().flatten()))
                     })
                     .collect();
                 for position in &overflow {
@@ -2025,7 +2026,7 @@ impl Checker {
                         .borrow_mut()
                         .insert(span.clone(), target);
                 }
-                self.record_constructor_instantiation(&span, name, &sig, &subst);
+                self.record_constructor_instantiation(span, name, &sig, &subst);
                 self.solve_call_origins(
                     &slots,
                     &sig.conventions,
@@ -2034,7 +2035,7 @@ impl Checker {
                     args,
                     kwargs,
                 )?;
-                self.record_constructor_reference_borrows(&span, &sig.ref_params, &slots);
+                self.record_constructor_reference_borrows(span, &sig.ref_params, &slots);
                 return Ok(self.struct_instance_type(name, tyargs));
             }
             return Err(TypeError::BadCall {
@@ -2054,8 +2055,7 @@ impl Checker {
                     .methods
                     .get("__init__")
                     .and_then(|sigs| sigs.first())
-                    .map(|sig| sig.params.len())
-                    .unwrap_or(0),
+                    .map_or(0, |sig| sig.params.len()),
                 got: args.len(),
             });
         }
@@ -2130,6 +2130,7 @@ impl Checker {
     /// identity. When `param_args` is non-empty the parameters are supplied
     /// explicitly (positionally); otherwise the type parameters are inferred from
     /// `patterns`/`actuals` (a value parameter cannot be inferred).
+    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn resolve_use_params(
         &self,
         name: &str,
@@ -2427,7 +2428,7 @@ impl Checker {
                         tyargs.push(TyArg::Val(value.clone()));
                     } else if let Some(value) = default {
                         let value = value.evaluate(&value_environment).ok_or_else(|| {
-                            TypeError::NotComptime(format!("default for parameter '{}'", pname))
+                            TypeError::NotComptime(format!("default for parameter '{pname}'"))
                         })?;
                         let rendered = value.to_string();
                         let value =
@@ -2436,7 +2437,7 @@ impl Checker {
                                 .ok_or_else(|| TypeError::TypeMismatch {
                                     expected: ty.to_string(),
                                     found: rendered,
-                                    context: format!("default for parameter '{}'", pname),
+                                    context: format!("default for parameter '{pname}'"),
                                 })?;
                         value_environment
                             .insert(pname.trim_start_matches('*').to_string(), value.clone());

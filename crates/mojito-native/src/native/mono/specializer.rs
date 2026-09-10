@@ -1,6 +1,7 @@
 //! The specialization driver: the worklist, instance naming and
 //! materialization, block rewriting, and struct discovery.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl<'a> Specializer<'a> {
@@ -80,7 +81,7 @@ impl<'a> Specializer<'a> {
             }
             let name = self.instance_name(&key).to_string();
             if !self.speculative.contains(&name) {
-                self.materialize(key, bindings)?;
+                self.materialize(&key, &bindings)?;
                 continue;
             }
             // A discovery-only constructor instance that cannot materialize
@@ -88,7 +89,7 @@ impl<'a> Specializer<'a> {
             // re-enqueue and report the failure in its own context).
             let functions = self.output_functions.len();
             let decls = self.output_function_decls.len();
-            if self.materialize(key.clone(), bindings).is_err() {
+            if self.materialize(&key.clone(), &bindings).is_err() {
                 self.output_functions.truncate(functions);
                 self.output_function_decls.truncate(decls);
                 self.instances.retain(|(known, _)| known != &key);
@@ -239,10 +240,10 @@ impl<'a> Specializer<'a> {
 
     pub(super) fn materialize(
         &mut self,
-        key: InstanceKey,
-        bindings: Bindings,
+        key: &InstanceKey,
+        bindings: &Bindings,
     ) -> Result<(), MonoError> {
-        let name = self.instance_name(&key).to_string();
+        let name = self.instance_name(key).to_string();
         let mut function = self
             .functions
             .get(key.template.as_str())
@@ -254,13 +255,13 @@ impl<'a> Specializer<'a> {
                 )
             })?
             .clone();
-        substitute_function(&mut function, &bindings).map_err(|mut e| {
+        substitute_function(&mut function, bindings).map_err(|mut e| {
             e.function.get_or_insert_with(|| key.template.clone());
             e
         })?;
         self.constant_values = function_constant_values(&function);
         self.callable_targets = function_callable_targets(&function);
-        self.enclosing_types = bindings.types.clone();
+        self.enclosing_types.clone_from(&bindings.types);
         self.constant_values.extend(
             self.callable_targets
                 .iter()
@@ -282,8 +283,8 @@ impl<'a> Specializer<'a> {
 
         if let Some(declaration) = self.declarations.get(key.template.as_str()).copied() {
             let mut declaration = declaration.clone();
-            substitute_declaration(&mut declaration, &bindings)?;
-            declaration.lowered_name = name.clone();
+            substitute_declaration(&mut declaration, bindings)?;
+            declaration.lowered_name.clone_from(&name);
             declaration.param_decls.clear();
             self.instantiate_constructed_defaults(&key.template, &mut declaration)?;
             self.output_function_decls.push(declaration);
@@ -332,6 +333,11 @@ impl<'a> Specializer<'a> {
         Ok(())
     }
 
+    #[allow(
+        clippy::cognitive_complexity,
+        clippy::too_many_lines,
+        reason = "TODO: split this pass"
+    )]
     pub(super) fn rewrite_blocks(
         &mut self,
         owner: &str,
@@ -483,7 +489,7 @@ impl<'a> Specializer<'a> {
                                         && concrete != &func.0
                                         && nominal_template(concrete) == func.0.as_str()
                                     {
-                                        func.0 = concrete.clone();
+                                        func.0.clone_from(concrete);
                                     }
                                     // The copied value carries the instance's
                                     // parameters; an explicitly spelled
@@ -539,7 +545,7 @@ impl<'a> Specializer<'a> {
                                     && concrete != &func.0
                                     && nominal_template(concrete) == func.0.as_str()
                                 {
-                                    func.0 = concrete.clone();
+                                    func.0.clone_from(concrete);
                                 }
                                 for param_arg in param_arg_regs.iter_mut() {
                                     param_arg.value = None;
@@ -1008,11 +1014,11 @@ impl<'a> Specializer<'a> {
                             ("step".to_string(), Ty::Int),
                             ("flags".to_string(), Ty::Int),
                         ],
-                        mut_self_methods: Default::default(),
+                        mut_self_methods: HashSet::default(),
                         fieldwise_init: false,
                         param_decls: Vec::new(),
                         explicit_destroy_message: None,
-                        explicit_destructors: Default::default(),
+                        explicit_destructors: HashMap::default(),
                     });
                 }
                 continue;
@@ -1164,6 +1170,10 @@ impl<'a> Specializer<'a> {
         packs.next().is_none().then_some(first)
     }
 
+    #[allow(
+        clippy::unused_self,
+        reason = "TODO: make an associated function or use the receiver"
+    )]
     pub(super) fn error(&self, function: Option<&str>, construct: impl Into<String>) -> MonoError {
         MonoError {
             function: function.map(str::to_string),

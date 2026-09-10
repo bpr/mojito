@@ -9,3 +9,6 @@ publish = false
 mojito-ast = { path = "../mojito-ast" }
 mojito-common = { path = "../mojito-common" }
 mojito-types = { path = "../mojito-types" }
+
+[lints]
+workspace = true

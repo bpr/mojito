@@ -1,8 +1,10 @@
-//! Stage 1 source-module and package linking. Imports load `.mojo` modules or
-//! package `__init__.mojo` files, assign declarations collision-free internal
-//! names, resolve qualified and selective aliases, and erase module objects before
-//! the flat checked-program pipeline. Imports are lexical, dependencies are
-//! deduplicated by canonical path, and source provenance survives rewriting.
+//! Stage 1 source-module and package linking.
+//!
+//! Imports load `.mojo` modules or package `__init__.mojo` files, assign
+//! declarations collision-free internal names, resolve qualified and selective
+//! aliases, and erase module objects before the flat checked-program pipeline.
+//! Imports are lexical, dependencies are deduplicated by canonical path, and
+//! source provenance survives rewriting.
 
 use mojito_ast::ast::{Expr, ExprKind, ImportNames, ParamArg, Stmt, StmtKind, TStringPart, Type};
 use mojito_common::error::ParseError;
@@ -41,31 +43,31 @@ impl Default for LinkOptions {
         if let Some(root) = bundled_path("stdlib") {
             search_roots.push(root);
         }
-        LinkOptions { search_roots }
+        Self { search_roots }
     }
 }
 
 impl std::fmt::Display for ModuleError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ModuleError::Io { module, err } => {
+            Self::Io { module, err } => {
                 write!(f, "cannot load module '{module}': {err}")
             }
-            ModuleError::Parse { module, err } => {
+            Self::Parse { module, err } => {
                 write!(f, "in module '{module}': {err}")
             }
-            ModuleError::NameNotFound { module, name } => {
+            Self::NameNotFound { module, name } => {
                 write!(f, "module '{module}' has no declaration named '{name}'")
             }
-            ModuleError::DuplicateImport { module, name } => write!(
+            Self::DuplicateImport { module, name } => write!(
                 f,
                 "duplicate import of '{name}' from module '{module}': an earlier import already \
                  binds this name; rename one with 'as'"
             ),
-            ModuleError::SelfImport { module } => {
+            Self::SelfImport { module } => {
                 write!(f, "module '{module}' imports itself")
             }
-            ModuleError::EmptyModulePath => {
+            Self::EmptyModulePath => {
                 write!(
                     f,
                     "an empty relative module path requires named sibling imports"
@@ -75,8 +77,10 @@ impl std::fmt::Display for ModuleError {
     }
 }
 
-/// Link `entry_path` and its transitively-imported modules into one flat program:
-/// the imported declarations (dependencies first), then the entry file's own
+/// Link `entry_path` and its transitively-imported modules into one flat
+/// program.
+///
+/// The imported declarations (dependencies first), then the entry file's own
 /// statements (with its `from … import …` statements removed).
 pub fn link(entry_path: &Path) -> Result<Vec<Stmt>, ModuleError> {
     link_with_options(entry_path, LinkOptions::default())
@@ -237,7 +241,7 @@ fn rewrite_expr(
             rewrite_args(args, names, namespaces);
         }
         ExprKind::Prefix(_, value) | ExprKind::Transfer(value) => {
-            rewrite_expr(value, names, namespaces)
+            rewrite_expr(value, names, namespaces);
         }
         ExprKind::Infix(_, left, right)
         | ExprKind::Index {
@@ -294,7 +298,7 @@ fn rewrite_expr(
                 match argument {
                     mojito_ast::ast::SubscriptArg::Index(value)
                     | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
-                        rewrite_expr(value, names, namespaces)
+                        rewrite_expr(value, names, namespaces);
                     }
                     mojito_ast::ast::SubscriptArg::Slice {
                         lower, upper, step, ..
@@ -406,7 +410,7 @@ fn rename(name: &mut String, names: &HashMap<String, String>) {
     }
 }
 
-fn collect_bound_names<'a>(body: &'a [Stmt], names: &mut HashMap<&'a str, ()>) {
+fn collect_bound_names<'a>(body: &'a [Stmt], names: &mut HashSet<&'a str>) {
     for statement in body {
         match &statement.kind {
             StmtKind::VarDecl { name, .. }
@@ -415,10 +419,10 @@ fn collect_bound_names<'a>(body: &'a [Stmt], names: &mut HashMap<&'a str, ()>) {
             | StmtKind::Struct { name, .. }
             | StmtKind::Trait { name, .. }
             | StmtKind::Comptime { name, .. } => {
-                names.insert(name, ());
+                names.insert(name);
             }
             StmtKind::For { var, body, .. } | StmtKind::ComptimeFor { var, body, .. } => {
-                names.insert(var, ());
+                names.insert(var);
                 collect_bound_names(body, names);
             }
             StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
@@ -430,7 +434,7 @@ fn collect_bound_names<'a>(body: &'a [Stmt], names: &mut HashMap<&'a str, ()>) {
                 }
             }
             StmtKind::While { body, .. } | StmtKind::With { body, .. } => {
-                collect_bound_names(body, names)
+                collect_bound_names(body, names);
             }
             StmtKind::Try {
                 body,
@@ -441,7 +445,7 @@ fn collect_bound_names<'a>(body: &'a [Stmt], names: &mut HashMap<&'a str, ()>) {
                 collect_bound_names(body, names);
                 if let Some((binding, block)) = except {
                     if let Some(binding) = binding {
-                        names.insert(binding, ());
+                        names.insert(binding);
                     }
                     collect_bound_names(block, names);
                 }
@@ -480,7 +484,7 @@ fn remove_bound_names(body: &[Stmt], names: &mut HashMap<String, String>) {
                 }
             }
             StmtKind::While { body, .. } | StmtKind::With { body, .. } => {
-                remove_bound_names(body, names)
+                remove_bound_names(body, names);
             }
             StmtKind::Try {
                 body,
@@ -644,7 +648,7 @@ impl Linker {
         {
             options.search_roots.push(root);
         }
-        Linker {
+        Self {
             options,
             loaded: HashSet::new(),
             exports: HashMap::new(),
@@ -752,8 +756,7 @@ impl Linker {
                     continue;
                 }
                 let linked_name = implicit_public_identity(module_name, name)
-                    .map(str::to_string)
-                    .unwrap_or_else(|| qualified(module_name, name));
+                    .map_or_else(|| qualified(module_name, name), str::to_string);
                 local.insert(name.to_string(), linked_name);
             }
         }
@@ -907,6 +910,10 @@ impl Linker {
         }
     }
 
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "borrow bundle: its own fields are `&mut`"
+    )]
     fn bind_from_imports(
         &self,
         path: &Path,
@@ -1083,7 +1090,7 @@ impl Linker {
                     importer,
                     &local_bindings,
                     &local_namespaces,
-                )?
+                )?;
             }
             StmtKind::Struct { methods, .. } => {
                 for method in methods {
@@ -1125,7 +1132,7 @@ impl Linker {
             | StmtKind::For { body, .. }
             | StmtKind::ComptimeFor { body, .. }
             | StmtKind::With { body, .. } => {
-                self.resolve_scoped_imports(body, dir, importer, bindings, namespaces)?
+                self.resolve_scoped_imports(body, dir, importer, bindings, namespaces)?;
             }
             StmtKind::Try {
                 body,
@@ -1222,7 +1229,7 @@ fn rewrite_args(
             ParamArg::Type(ty) => rewrite_type(ty, names, namespaces),
             ParamArg::Value(expr) => rewrite_expr(expr, names, namespaces),
             ParamArg::Named { value, .. } => {
-                rewrite_args(std::slice::from_mut(value), names, namespaces)
+                rewrite_args(std::slice::from_mut(value), names, namespaces);
             }
         }
     }
@@ -1257,9 +1264,9 @@ fn without_local_namespaces(
     for name in params {
         remove_namespace_binding(&mut visible, &name);
     }
-    let mut bound = HashMap::new();
+    let mut bound = HashSet::new();
     collect_bound_names(body, &mut bound);
-    for name in bound.keys() {
+    for name in &bound {
         remove_namespace_binding(&mut visible, name);
     }
     visible
@@ -1315,9 +1322,12 @@ fn bundled_path(relative: &str) -> Option<PathBuf> {
 }
 
 /// The root holding the compiler's bundled support files (the directory
-/// containing `stdlib/`): the development source tree when it exists, else
-/// the installation bundle's `share/mojito/` next to the running
-/// executable. Resolved once per process.
+/// containing `stdlib/`).
+///
+/// The development source tree when it exists, else the installation bundle's
+/// `share/mojito/` next to the running executable.
+///
+/// Resolved once per process.
 pub fn bundled_root() -> Option<PathBuf> {
     static ROOT: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
     // The prelude is the existence probe: a root without it cannot serve
@@ -1382,6 +1392,7 @@ fn type_path(ty: &Type) -> Option<String> {
     }
 }
 
+#[allow(clippy::cognitive_complexity, reason = "TODO: split this pass")]
 fn rewrite_stmt(
     stmt: &mut Stmt,
     names: &HashMap<String, String>,

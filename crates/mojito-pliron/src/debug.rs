@@ -2,7 +2,7 @@
 //!
 //! pliron-llvm 0.17's converter drops pliron locations entirely, so debug
 //! info is attached after conversion: the stamped LLVM IR text is reparsed
-//! into our own `llvm_sys` context and annotated through the C DIBuilder
+//! into our own `llvm_sys` context and annotated through the C `DIBuilder`
 //! API, then written to bitcode directly — no pliron fork.
 //!
 //! Correlation is call-granular: pliron `CallOp`/`CallIntrinsicOp` are the
@@ -37,7 +37,7 @@ use super::{DebugInfo, PlironError, PlironErrorKind};
 /// The emission-time debug policy: the requested level paired with the
 /// module's harvested facts.
 #[derive(Clone, Copy)]
-pub(super) struct DebugPolicy<'a> {
+pub struct DebugPolicy<'a> {
     pub(super) level: DebugInfo,
     pub(super) table: &'a DebugTable,
 }
@@ -45,7 +45,7 @@ pub(super) struct DebugPolicy<'a> {
 /// Per-function debug facts harvested from the pliron module after the
 /// cleanup pipeline (passes may delete calls and unreachable blocks, so
 /// collection must see the final IR).
-pub(super) struct DebugTable {
+pub struct DebugTable {
     /// Source labels exactly as registered with the [`Locator`]; index is
     /// the file id used by [`FnDebug`].
     files: Vec<String>,
@@ -65,7 +65,7 @@ struct FnDebug {
 impl DebugTable {
     /// Harvest function anchors and per-call locations from the lowered,
     /// cleaned module.
-    pub(super) fn collect(ctx: &Context, module: ModuleOp, locator: &Locator) -> DebugTable {
+    pub(super) fn collect(ctx: &Context, module: ModuleOp, locator: &Locator) -> Self {
         let files: Vec<String> = locator.source_labels().map(str::to_string).collect();
         let source_ids: HashMap<pliron::location::Source, usize> = locator
             .sources()
@@ -119,7 +119,7 @@ impl DebugTable {
                 }
             }
         }
-        DebugTable { files, functions }
+        Self { files, functions }
     }
 }
 
@@ -127,15 +127,28 @@ impl DebugTable {
 /// `table`, verify, and write bitcode to `path`. Returns the names of
 /// functions that degraded to subprogram-only entries (call-count or
 /// cross-file mismatch); the corpus test pins this to empty.
-pub(super) fn write_bitcode_with_debug(
+pub fn write_bitcode_with_debug(
     ir_text: &str,
     table: &DebugTable,
     path: &Path,
 ) -> Result<Vec<String>, PlironError> {
     use llvm_sys::analysis::{LLVMVerifierFailureAction, LLVMVerifyModule};
     use llvm_sys::bit_writer::LLVMWriteBitcodeToFile;
-    use llvm_sys::core::*;
-    use llvm_sys::debuginfo::*;
+    use llvm_sys::core::{
+        LLVMAddModuleFlag, LLVMConstInt, LLVMContextCreate, LLVMContextDispose,
+        LLVMCountBasicBlocks, LLVMCreateMemoryBufferWithMemoryRangeCopy, LLVMDisposeMemoryBuffer,
+        LLVMDisposeMessage, LLVMDisposeModule, LLVMGetFirstBasicBlock, LLVMGetFirstFunction,
+        LLVMGetFirstInstruction, LLVMGetNextBasicBlock, LLVMGetNextFunction,
+        LLVMGetNextInstruction, LLVMGetValueName2, LLVMInt32TypeInContext, LLVMIsACallInst,
+        LLVMValueAsMetadata,
+    };
+    use llvm_sys::debuginfo::{
+        LLVMCreateDIBuilder, LLVMDIBuilderCreateCompileUnit, LLVMDIBuilderCreateDebugLocation,
+        LLVMDIBuilderCreateFile, LLVMDIBuilderCreateFunction, LLVMDIBuilderCreateSubroutineType,
+        LLVMDIBuilderFinalize, LLVMDIFlagArtificial, LLVMDIFlagZero, LLVMDWARFEmissionKind,
+        LLVMDWARFSourceLanguage, LLVMDisposeDIBuilder, LLVMInstructionSetDebugLoc,
+        LLVMSetSubprogram,
+    };
     use llvm_sys::ir_reader::LLVMParseIRInContext2;
     use llvm_sys::prelude::*;
 
@@ -153,7 +166,8 @@ pub(super) fn write_bitcode_with_debug(
         );
         let mut module: LLVMModuleRef = std::ptr::null_mut();
         let mut message: *mut std::ffi::c_char = std::ptr::null_mut();
-        let parse_failed = LLVMParseIRInContext2(llctx, buffer, &mut module, &mut message) != 0;
+        let parse_failed =
+            LLVMParseIRInContext2(llctx, buffer, &raw mut module, &raw mut message) != 0;
         // Unlike its deprecated predecessor, `2` never consumes the buffer.
         LLVMDisposeMemoryBuffer(buffer);
         if parse_failed {
@@ -220,7 +234,7 @@ pub(super) fn write_bitcode_with_debug(
         while !function.is_null() {
             if LLVMCountBasicBlocks(function) > 0 {
                 let mut name_len = 0usize;
-                let name_ptr = LLVMGetValueName2(function, &mut name_len);
+                let name_ptr = LLVMGetValueName2(function, &raw mut name_len);
                 let name = std::str::from_utf8_unchecked(std::slice::from_raw_parts(
                     name_ptr.cast(),
                     name_len,
@@ -348,7 +362,7 @@ pub(super) fn write_bitcode_with_debug(
         let broken = LLVMVerifyModule(
             module,
             LLVMVerifierFailureAction::LLVMReturnStatusAction,
-            &mut verify_message,
+            &raw mut verify_message,
         );
         if broken != 0 {
             let text = CStr::from_ptr(verify_message)
@@ -396,7 +410,7 @@ fn dwarf_file_label(label: &str) -> &str {
         .unwrap_or(label)
 }
 
-fn debug_error(message: String) -> PlironError {
+const fn debug_error(message: String) -> PlironError {
     PlironError {
         function: None,
         kind: PlironErrorKind::Emit(message),

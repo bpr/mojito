@@ -1,9 +1,10 @@
 //! Constructor and `String` constructor/builtin lowering, plus
 //! `MakeRef`/`ReadRef`/`WriteRef`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     /// A constructor call to declared struct `name`: the fieldwise copy form
     /// (`Type(copy=value)`), the compiled `__init__` overload with fresh
     /// storage as its `out self`, or fieldwise per-field stores — the VM's

@@ -12,3 +12,6 @@ mojito-common = { path = "../mojito-common" }
 mojito-hir = { path = "../mojito-hir" }
 mojito-mir = { path = "../mojito-mir" }
 mojito-types = { path = "../mojito-types" }
+
+[lints]
+workspace = true

@@ -1,8 +1,9 @@
 //! The per-function driver: block walk plus the [`MirInstr`] dispatch.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     pub(super) fn run(&mut self, ctx: &mut Context, func_op: FuncOp) -> Result<(), PlironError> {
         let entry = func_op.get_or_create_entry_block(ctx);
         let region = func_op
@@ -89,11 +90,7 @@ impl<'a> FnLowering<'a> {
                             return Err(self.unsupported(
                                 format!(
                                     "zero-sized variable `{}`",
-                                    self.func
-                                        .var_names
-                                        .get(var)
-                                        .map(String::as_str)
-                                        .unwrap_or("?")
+                                    self.func.var_names.get(var).map_or("?", String::as_str)
                                 ),
                                 None,
                             ));
@@ -208,6 +205,7 @@ impl<'a> FnLowering<'a> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn lower_instr(
         &mut self,
         ctx: &mut Context,
@@ -555,7 +553,7 @@ impl<'a> FnLowering<'a> {
                 index,
                 intrinsic: Some(intrinsic),
                 ..
-            } => self.lower_index_intrinsic(ctx, *dest, *base, *index, intrinsic),
+            } => self.lower_index_intrinsic(ctx, *dest, *base, *index, *intrinsic),
             MirInstr::Slice {
                 dest,
                 object,

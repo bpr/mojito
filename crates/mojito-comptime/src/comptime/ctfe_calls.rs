@@ -1,6 +1,7 @@
 //! VM-CTFE call collection over types, expressions, statements, and
 //! blocks.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 /// Collect bare free-function callees from an expression. This is a declaration
@@ -115,7 +116,7 @@ pub(super) fn collect_vm_ctfe_expr_calls(expression: &Expr, calls: &mut HashSet<
 
     match &expression.kind {
         ExprKind::Prefix(_, value) | ExprKind::Transfer(value) | ExprKind::Spread(value) => {
-            collect_vm_ctfe_expr_calls(value, calls)
+            collect_vm_ctfe_expr_calls(value, calls);
         }
         ExprKind::Infix(_, left, right)
         | ExprKind::Index {
@@ -197,10 +198,10 @@ pub(super) fn collect_vm_ctfe_expr_calls(expression: &Expr, calls: &mut HashSet<
             for clause in clauses {
                 match clause {
                     mojito_ast::ast::ComprehensionClause::For { iter, .. } => {
-                        collect_vm_ctfe_expr_calls(iter, calls)
+                        collect_vm_ctfe_expr_calls(iter, calls);
                     }
                     mojito_ast::ast::ComprehensionClause::If(condition) => {
-                        collect_vm_ctfe_expr_calls(condition, calls)
+                        collect_vm_ctfe_expr_calls(condition, calls);
                     }
                 }
             }
@@ -239,7 +240,7 @@ pub(super) fn collect_vm_ctfe_expr_calls(expression: &Expr, calls: &mut HashSet<
                 match argument {
                     mojito_ast::ast::SubscriptArg::Index(value)
                     | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
-                        collect_vm_ctfe_expr_calls(value, calls)
+                        collect_vm_ctfe_expr_calls(value, calls);
                     }
                     mojito_ast::ast::SubscriptArg::Slice {
                         lower, upper, step, ..

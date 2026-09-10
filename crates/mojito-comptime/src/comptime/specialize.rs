@@ -2,6 +2,7 @@
 //! ordering, and `def`/`struct` specialization synthesis.
 //! Extracted from `comptime.rs`; see `docs/symbol-map.md`.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::Method;
 use mojito_types::types::tuple_elements;
@@ -31,7 +32,7 @@ fn folded_constraint_truth(expression: &Expr) -> Result<Option<bool>, ComptimeEr
     }
 }
 
-impl<'a> Elab<'a> {
+impl Elab<'_> {
     /// Specialize every comptime-dependent generic template against the value
     /// arguments at its call sites, replacing each template with its concrete
     /// specializations (which have their `comptime if`/`for` resolved).
@@ -108,15 +109,15 @@ impl<'a> Elab<'a> {
                 mono.queue.push_back(Job {
                     orig: "Tuple".to_string(),
                     vals,
-                    site: request
-                        .occurrence()
-                        .map(|span| match &span.source {
+                    site: request.occurrence().map_or_else(
+                        || "a checked Tuple type".to_string(),
+                        |span| match &span.source {
                             Some(source) => {
                                 format!("{source}:{}..{}", span.span.0, span.span.1)
                             }
                             None => format!("bytes {}..{}", span.span.0, span.span.1),
-                        })
-                        .unwrap_or_else(|| "a checked Tuple type".to_string()),
+                        },
+                    ),
                     output_name,
                     whole_pack_abi: false,
                 });
@@ -248,7 +249,7 @@ impl<'a> Elab<'a> {
                 }
             }
         }
-        for stmt in program.iter_mut() {
+        for stmt in &mut program {
             if let StmtKind::Def { name, .. } | StmtKind::Struct { name, .. } = &stmt.kind
                 && self.specializable.contains_key(name)
                 && !self.bound_generics.contains(name)
@@ -400,7 +401,7 @@ impl<'a> Elab<'a> {
             if job.orig == "TString"
                 && let StmtKind::Struct { name, .. } = &mut spec.kind
             {
-                *name = job.output_name.clone();
+                name.clone_from(&job.output_name);
             }
             // A specialization of a bundled template is walked as bundled
             // code: the instances it reaches keep the erased path.
@@ -434,6 +435,32 @@ impl<'a> Elab<'a> {
         &self,
         specs: Vec<Stmt>,
     ) -> Result<Vec<Stmt>, ComptimeError> {
+        fn visit(
+            name: &str,
+            dependencies: &HashMap<String, Vec<String>>,
+            visiting: &mut HashSet<String>,
+            emitted: &mut HashSet<String>,
+            order: &mut Vec<String>,
+        ) -> Result<(), ComptimeError> {
+            if emitted.contains(name) {
+                return Ok(());
+            }
+            if !visiting.insert(name.to_string()) {
+                return Err(ComptimeError::NotComptime(format!(
+                    "checked Tuple transforms create a cyclic declaration dependency involving '{name}'"
+                )));
+            }
+            if let Some(required) = dependencies.get(name) {
+                for dependency in required {
+                    visit(dependency, dependencies, visiting, emitted, order)?;
+                }
+            }
+            visiting.remove(name);
+            emitted.insert(name.to_string());
+            order.push(name.to_string());
+            Ok(())
+        }
+
         let baseline = specs
             .iter()
             .map(|statement| match &statement.kind {
@@ -473,32 +500,6 @@ impl<'a> Elab<'a> {
                     }
                 }
             }
-        }
-
-        fn visit(
-            name: &str,
-            dependencies: &HashMap<String, Vec<String>>,
-            visiting: &mut HashSet<String>,
-            emitted: &mut HashSet<String>,
-            order: &mut Vec<String>,
-        ) -> Result<(), ComptimeError> {
-            if emitted.contains(name) {
-                return Ok(());
-            }
-            if !visiting.insert(name.to_string()) {
-                return Err(ComptimeError::NotComptime(format!(
-                    "checked Tuple transforms create a cyclic declaration dependency involving '{name}'"
-                )));
-            }
-            if let Some(required) = dependencies.get(name) {
-                for dependency in required {
-                    visit(dependency, dependencies, visiting, emitted, order)?;
-                }
-            }
-            visiting.remove(name);
-            emitted.insert(name.to_string());
-            order.push(name.to_string());
-            Ok(())
         }
 
         let mut order = Vec::with_capacity(baseline.len());
@@ -647,7 +648,8 @@ impl<'a> Elab<'a> {
                 },
             }
         }
-        debug_assert!(values.next().is_none());
+        let leftover = values.next();
+        debug_assert!(leftover.is_none());
         // A variadic type-pack specialization also exposes its sequence of
         // element types through the runtime `*args` parameter during compile-time
         // elaboration. This makes `len(args)` and `args[i]` evaluable while a
@@ -855,7 +857,7 @@ impl<'a> Elab<'a> {
     /// Emit a concrete struct for a template whose compile-time parameters
     /// are scalar/`DType`/struct **values** (no type packs): fold each value
     /// into method bodies, defaults, and field/signature type positions,
-    /// retain Origin/`mut` binders as TypeParams (the specialization stays
+    /// retain Origin/`mut` binders as `TypeParams` (the specialization stays
     /// origin-generic, like `_ListIter`), and name the result by the
     /// specialization mangle.
     pub(super) fn generate_value_struct_spec(
@@ -922,16 +924,17 @@ impl<'a> Elab<'a> {
                 (trait_name.clone(), materialize_expression(condition, &subs))
             })
             .collect();
-        let mut specialized_where: Vec<Expr> = where_clauses
-            .iter()
-            .map(|predicate| materialize_expression(predicate, &subs))
-            .collect();
-        if kept_type_params.is_empty() {
+        let specialized_where: Vec<Expr> = if kept_type_params.is_empty() {
             for predicate in where_clauses {
                 self.validate_specialized_where(predicate, &env, orig)?;
             }
-            specialized_where = Vec::new();
-        }
+            Vec::new()
+        } else {
+            where_clauses
+                .iter()
+                .map(|predicate| materialize_expression(predicate, &subs))
+                .collect()
+        };
         let mut specialized_associated = associated.clone();
         for member in &mut specialized_associated {
             // An associated declaration's own parameters shadow names from the
@@ -1054,6 +1057,11 @@ impl<'a> Elab<'a> {
         Ok(spec)
     }
 
+    #[allow(
+        clippy::cognitive_complexity,
+        clippy::too_many_lines,
+        reason = "TODO: split this pass; TODO: split this pass"
+    )]
     pub(super) fn generate_struct_spec(
         &self,
         orig: &str,
@@ -1512,8 +1520,7 @@ impl<'a> Elab<'a> {
                 for request in self
                     .method_requests
                     .get(&owner)
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[])
+                    .map_or(&[][..], Vec::as_slice)
                     .iter()
                     .filter(|request| {
                         request.method() == method.name
@@ -1555,7 +1562,7 @@ impl<'a> Elab<'a> {
                 }
                 match self.block(&method.body, &mut env, true) {
                     Ok(elaborated) => {
-                        method.body = materialize_block(elaborated, &subs, &self.struct_names)
+                        method.body = materialize_block(elaborated, &subs, &self.struct_names);
                     }
                     Err(_) => method.body = vec![unspecialized_method_stub(orig, &method)],
                 }
@@ -1863,6 +1870,10 @@ impl<'a> Elab<'a> {
     /// erased path relies on. Only a template whose parameters are all plain
     /// type parameters specializes here; value parameters, retained origin
     /// binders, and callable-bounded parameters keep the erased path.
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "TODO: drop the Result once callers stop using ?"
+    )]
     fn generate_instance_clones(
         &self,
         name: &str,
@@ -1968,8 +1979,7 @@ impl<'a> Elab<'a> {
         let per_call_requests = self
             .method_requests
             .get(&instance_key)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
+            .map_or(&[][..], Vec::as_slice);
         let mut clones = Vec::new();
         for method in methods {
             if unavailable.contains(&method.name) {
@@ -2578,8 +2588,7 @@ pub(super) fn pack_template_stub(template: &Stmt) -> Stmt {
     if let StmtKind::Def { name, body, .. } = &mut stub.kind {
         let span = body
             .first()
-            .map(|statement| statement.span)
-            .unwrap_or(mojito_common::token::DUMMY_SPAN);
+            .map_or(mojito_common::token::DUMMY_SPAN, |statement| statement.span);
         *body = vec![mk(
             StmtKind::Expr(Expr::new(
                 ExprKind::Call {
@@ -2603,8 +2612,7 @@ pub(super) fn unspecialized_method_stub(owner: &str, method: &Method) -> Stmt {
     let span = method
         .body
         .first()
-        .map(|statement| statement.span)
-        .unwrap_or(mojito_common::token::DUMMY_SPAN);
+        .map_or(mojito_common::token::DUMMY_SPAN, |statement| statement.span);
     mk(
         StmtKind::Expr(Expr::new(
             ExprKind::Call {

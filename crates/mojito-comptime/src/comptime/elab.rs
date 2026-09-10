@@ -1,8 +1,9 @@
 //! The `Elab` elaboration driver methods.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> Elab<'a> {
+impl Elab<'_> {
     pub(super) fn burn(&self) -> Result<(), ComptimeError> {
         let f = self
             .fuel
@@ -358,7 +359,7 @@ impl<'a> Elab<'a> {
                     for method in &stmt_methods(stmt) {
                         methods.extend(self.per_call_method_clones(
                             method,
-                            requests.map(Vec::as_slice).unwrap_or(&[]),
+                            requests.map_or(&[][..], Vec::as_slice),
                             &[],
                             &[],
                             None,
@@ -389,6 +390,7 @@ impl<'a> Elab<'a> {
         Ok(())
     }
 
+    #[allow(clippy::ref_option, reason = "TODO: take Option<&T>")]
     pub(super) fn opt_block(
         &self,
         block: &Option<Vec<Stmt>>,
@@ -544,8 +546,7 @@ impl<'a> Elab<'a> {
                 match self.associated_value(&base, name)? {
                     CtValue::Type(ty) => Ok(*ty),
                     _ => Err(ComptimeError::NotComptime(format!(
-                        "{}.{name} is not type-valued",
-                        base
+                        "{base}.{name} is not type-valued"
                     ))),
                 }
             }
@@ -561,13 +562,12 @@ impl<'a> Elab<'a> {
                     ));
                 };
                 let base_ty = self.type_from_anno(associated_base, scope)?;
-                let values = match self.associated_value(&base_ty, name)? {
-                    CtValue::Tuple(values) | CtValue::List(values) => values,
-                    _ => {
-                        return Err(ComptimeError::NotComptime(format!(
-                            "{base_ty}.{name} is not a type sequence"
-                        )));
-                    }
+                let (CtValue::Tuple(values) | CtValue::List(values)) =
+                    self.associated_value(&base_ty, name)?
+                else {
+                    return Err(ComptimeError::NotComptime(format!(
+                        "{base_ty}.{name} is not a type sequence"
+                    )));
                 };
                 let index = self.eval(index, scope)?.as_int("dependent type index")?;
                 match usize::try_from(index)

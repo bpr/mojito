@@ -1,6 +1,7 @@
 //! Sig-origin lowering and substitution: projection, instantiation,
 //! binding, and call-through translation.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 pub(in crate::checker) fn lower_sig_origin_expression(
@@ -316,8 +317,10 @@ pub(in crate::checker) fn bind_sig_origin(
         SigOrigin::Param(index) => bindings
             .iter()
             .find(|(slots, _)| slots.contains(index))
-            .map(|(_, origin)| SigOrigin::Bound(origin.clone()))
-            .unwrap_or_else(|| signature.clone()),
+            .map_or_else(
+                || signature.clone(),
+                |(_, origin)| SigOrigin::Bound(origin.clone()),
+            ),
         SigOrigin::Projected(base, path) => {
             SigOrigin::Projected(Box::new(bind_sig_origin(base, bindings)), path.clone())
         }
@@ -491,7 +494,7 @@ pub(in crate::checker) fn substitute_sig_origin_with_self(
 ) -> mojito_types::origin::Origin {
     use mojito_types::origin::{Origin, SigOrigin};
     match signature {
-        SigOrigin::Self_ => self_origin.clone().unwrap_or_else(|| Origin::Union(vec![])),
+        SigOrigin::Self_ => self_origin.unwrap_or_else(|| Origin::Union(vec![])),
         SigOrigin::Union(members) => Origin::union(
             members
                 .iter()
@@ -545,7 +548,7 @@ pub(in crate::checker) fn ref_binding_is_writable(
     type_params: &[mojito_ast::ast::TypeParam],
 ) -> bool {
     if convention != Some(ArgConvention::Ref) {
-        return parameter_is_writable(convention);
+        return parameter_is_writable(&convention);
     }
     let Some(origin_name) = origin.and_then(|expressions| match expressions {
         [expression] => origin_binder_name(expression),
@@ -689,7 +692,7 @@ pub(in crate::checker) fn callable_value_argument(
     let mut positional = param_args
         .iter()
         .filter(|argument| !matches!(argument, ParamArg::Named { .. }));
-    for decl in decls.iter() {
+    for decl in decls {
         let supplied = param_args.iter().find_map(|argument| match argument {
             ParamArg::Named { name, value } if name == decl.name() => Some(value.as_ref()),
             _ => None,

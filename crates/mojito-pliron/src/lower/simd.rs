@@ -11,9 +11,10 @@
 //! forwards a store to a load at the same pointer without comparing their
 //! types — so lane reads extract from the loaded vector instead.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     /// Construct a SIMD value with the VM's per-lane conversions. Width-one
     /// aliases remain SSA scalars; wider values assemble a vector lane by
     /// lane (one element splats).
@@ -231,16 +232,12 @@ impl<'a> FnLowering<'a> {
                 let (to_bits, _) = integer
                     .int_shape()
                     .expect("bool targets are rejected above");
-                match source.int_shape() {
-                    Some(from) => self.resize_int(ctx, lane, from, to_bits, dest),
-                    // Float source: truncate toward zero, saturating at the
-                    // 128-bit intermediate (Rust `as i128`, NaN → 0), then
-                    // wrap to the lane width.
-                    None => {
-                        let wide = self.lane_to_f64(ctx, source, lane, dest)?;
-                        let saturated = self.fptosi_sat_i128(ctx, wide, dest);
-                        self.resize_int(ctx, saturated, (128, true), to_bits, dest)
-                    }
+                if let Some(from) = source.int_shape() {
+                    self.resize_int(ctx, lane, from, to_bits, dest)
+                } else {
+                    let wide = self.lane_to_f64(ctx, source, lane, dest)?;
+                    let saturated = self.fptosi_sat_i128(ctx, wide, dest);
+                    self.resize_int(ctx, saturated, (128, true), to_bits, dest)
                 }
             }
         })
@@ -598,9 +595,17 @@ impl<'a> FnLowering<'a> {
 
     /// The `<width x lane>` compute type of a multi-lane value (`i1` lanes
     /// for Bool).
+    #[allow(
+        clippy::unused_self,
+        reason = "TODO: make an associated function or use the receiver"
+    )]
+    #[allow(
+        clippy::needless_pass_by_ref_mut,
+        reason = "Op construction mutates the context"
+    )]
     pub(super) fn simd_vector_ty(
         &mut self,
-        ctx: &mut Context,
+        ctx: &Context,
         dtype: Dtype,
         width: usize,
     ) -> TypeHandle {
@@ -739,7 +744,15 @@ impl<'a> FnLowering<'a> {
     }
 
     /// The byte-per-lane storage type of a multi-lane value.
-    fn simd_storage_ty(&mut self, ctx: &mut Context, dtype: Dtype, width: usize) -> TypeHandle {
+    #[allow(
+        clippy::unused_self,
+        reason = "TODO: make an associated function or use the receiver"
+    )]
+    #[allow(
+        clippy::needless_pass_by_ref_mut,
+        reason = "Op construction mutates the context"
+    )]
+    fn simd_storage_ty(&mut self, ctx: &Context, dtype: Dtype, width: usize) -> TypeHandle {
         let lane: TypeHandle = if dtype == Dtype::Bool {
             IntegerType::get(ctx, 8, Signedness::Signless).into()
         } else {
@@ -782,26 +795,24 @@ impl<'a> FnLowering<'a> {
                 let (to_bits, _) = integer
                     .int_shape()
                     .expect("bool targets are rejected above");
-                match source_ty.int_shape() {
-                    Some(from) => self.simd_resize_int(ctx, source, from, to_bits, width, dest),
-                    None => {
-                        let wide = self.simd_lanes_to_f64(ctx, source, source_ty, width, dest)?;
-                        let target_vec = self.simd_vector_ty(ctx, dtype, width);
-                        let poison = PoisonOp::new(ctx, target_vec);
-                        self.append(ctx, poison.get_operation(), Some(dest));
-                        let mut out = poison.get_result(ctx);
-                        for lane in 0..width {
-                            let value = self.simd_extract(ctx, wide, lane, dest);
-                            let saturated = self.fptosi_sat_i128(ctx, value, dest);
-                            let narrowed =
-                                self.resize_int(ctx, saturated, (128, true), to_bits, dest);
-                            let position = self.int_constant(ctx, lane as i64);
-                            let insert = InsertElementOp::new(ctx, out, narrowed, position);
-                            self.append(ctx, insert.get_operation(), Some(dest));
-                            out = insert.get_result(ctx);
-                        }
-                        out
+                if let Some(from) = source_ty.int_shape() {
+                    self.simd_resize_int(ctx, source, from, to_bits, width, dest)
+                } else {
+                    let wide = self.simd_lanes_to_f64(ctx, source, source_ty, width, dest)?;
+                    let target_vec = self.simd_vector_ty(ctx, dtype, width);
+                    let poison = PoisonOp::new(ctx, target_vec);
+                    self.append(ctx, poison.get_operation(), Some(dest));
+                    let mut out = poison.get_result(ctx);
+                    for lane in 0..width {
+                        let value = self.simd_extract(ctx, wide, lane, dest);
+                        let saturated = self.fptosi_sat_i128(ctx, value, dest);
+                        let narrowed = self.resize_int(ctx, saturated, (128, true), to_bits, dest);
+                        let position = self.int_constant(ctx, lane as i64);
+                        let insert = InsertElementOp::new(ctx, out, narrowed, position);
+                        self.append(ctx, insert.get_operation(), Some(dest));
+                        out = insert.get_result(ctx);
                     }
+                    out
                 }
             }
         })

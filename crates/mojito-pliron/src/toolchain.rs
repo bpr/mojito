@@ -16,12 +16,18 @@ use super::{OptLevel, PlironError, PlironErrorKind};
 
 /// The LLVM major version every external tool must match — the same pin as
 /// the in-process `llvm-sys = "231"` dependency (LLVM 23.1).
-pub(super) const EXPECTED_LLVM_MAJOR: u32 = 23;
+pub const EXPECTED_LLVM_MAJOR: u32 = 23;
 
 /// A human-readable report of everything `resolve` would use, one stable
-/// `key\tvalue` line per component. Never fails: a missing or incompatible
-/// component reports its error text as the value, so the report is usable
-/// exactly when something is wrong. The CLI's `--print-toolchain` surface.
+/// `key\tvalue` line per component.
+///
+/// Never fails: a missing or incompatible component reports its error text as
+/// the value, so the report is usable exactly when something is wrong. The
+/// CLI's `--print-toolchain` surface.
+#[allow(
+    clippy::format_push_string,
+    reason = "TODO: write! into the buffer instead"
+)]
 pub fn toolchain_report(target: &NativeTarget, profile: OptLevel) -> String {
     let pipeline = Pipeline::for_profile(profile);
     let mut out = String::new();
@@ -64,9 +70,11 @@ pub fn toolchain_report(target: &NativeTarget, profile: OptLevel) -> String {
 }
 
 /// Validate every external component the emit kind will need, before any
-/// frontend or lowering work runs. The CLI's fail-fast front door; emission
-/// re-resolves internally against the process-memoized caches (no repeated
-/// probes or archive hashing), so this adds safety without threading state.
+/// frontend or lowering work runs.
+///
+/// The CLI's fail-fast front door; emission re-resolves internally against the
+/// process-memoized caches (no repeated probes or archive hashing), so this
+/// adds safety without threading state.
 pub fn check_toolchain(
     target: &NativeTarget,
     profile: OptLevel,
@@ -88,7 +96,7 @@ pub fn check_toolchain(
             runtime: true,
         },
     };
-    ResolvedToolchain::resolve(target, profile, needs)
+    ResolvedToolchain::resolve(*target, profile, needs)
         .map(|_| ())
         .map_err(|error| error.to_string())
 }
@@ -96,7 +104,7 @@ pub fn check_toolchain(
 /// Which optional components a build actually needs; the `opt` tool's need
 /// comes from the profile's pipeline, never from a caller flag.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct ToolchainNeeds {
+pub struct ToolchainNeeds {
     /// Object and executable emission compile bitcode through clang.
     pub(super) clang: bool,
     /// Executable links include the runtime archive.
@@ -105,7 +113,7 @@ pub(super) struct ToolchainNeeds {
 
 /// The checked toolchain for one build: absolute tool paths with verified
 /// versions, and the validated runtime archive when linking.
-pub(super) struct ResolvedToolchain {
+pub struct ResolvedToolchain {
     pub(super) profile: OptLevel,
     pub(super) clang: Option<ResolvedTool>,
     pub(super) opt: Option<ResolvedTool>,
@@ -118,10 +126,10 @@ impl ResolvedToolchain {
     /// major versions, a missing archive, and a runtime ABI mismatch all
     /// fail here, before any lowering or emission work.
     pub(super) fn resolve(
-        _target: &NativeTarget,
+        _target: NativeTarget,
         profile: OptLevel,
         needs: ToolchainNeeds,
-    ) -> Result<ResolvedToolchain, PlironError> {
+    ) -> Result<Self, PlironError> {
         let clang = if needs.clang {
             Some(
                 find_tool_cached("clang", CLANG_CANDIDATES, &CLANG_CACHE)
@@ -151,7 +159,7 @@ impl ResolvedToolchain {
         } else {
             None
         };
-        Ok(ResolvedToolchain {
+        Ok(Self {
             profile,
             clang,
             opt,
@@ -174,7 +182,7 @@ impl ResolvedToolchain {
 
 /// One external tool: its absolute path and the version its probe reported.
 #[derive(Clone)]
-pub(super) struct ResolvedTool {
+pub struct ResolvedTool {
     pub(super) path: PathBuf,
     pub(super) version: String,
 }
@@ -182,7 +190,7 @@ pub(super) struct ResolvedTool {
 /// The runtime archive selected for linking, with how it was found, its
 /// digest, and the ABI version read from its `mjrt_abi_version` data symbol.
 #[derive(Clone)]
-pub(super) struct ResolvedRuntime {
+pub struct ResolvedRuntime {
     pub(super) path: PathBuf,
     pub(super) provenance: RuntimeProvenance,
     pub(super) sha256: String,
@@ -191,7 +199,7 @@ pub(super) struct ResolvedRuntime {
 
 /// Where the runtime archive came from, in resolution order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum RuntimeProvenance {
+pub enum RuntimeProvenance {
     /// `--runtime-lib PATH` named it explicitly on the command line.
     CliFlag,
     /// `MOJITO_RUNTIME_LIB` named it explicitly.
@@ -204,12 +212,12 @@ pub(super) enum RuntimeProvenance {
 }
 
 impl RuntimeProvenance {
-    pub(super) fn name(self) -> &'static str {
+    pub(super) const fn name(self) -> &'static str {
         match self {
-            RuntimeProvenance::CliFlag => "--runtime-lib",
-            RuntimeProvenance::EnvVar => "MOJITO_RUNTIME_LIB",
-            RuntimeProvenance::Bundle => "installation bundle",
-            RuntimeProvenance::DevTree => "development target tree",
+            Self::CliFlag => "--runtime-lib",
+            Self::EnvVar => "MOJITO_RUNTIME_LIB",
+            Self::Bundle => "installation bundle",
+            Self::DevTree => "development target tree",
         }
     }
 }
@@ -474,11 +482,16 @@ fn archive_abi_version(archive_data: &[u8]) -> Result<u32, String> {
 
 fn sha256_hex(data: &[u8]) -> String {
     use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(data);
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    use std::fmt::Write;
+    Sha256::digest(data)
+        .iter()
+        .fold(String::new(), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
 }
 
-fn toolchain_error(message: String) -> PlironError {
+const fn toolchain_error(message: String) -> PlironError {
     PlironError {
         function: None,
         kind: PlironErrorKind::Emit(message),

@@ -1,14 +1,16 @@
-//! Stage 0 facility: invalid IR must produce a `Result` diagnostic (never a
+//! Upstream contract: invalid IR must produce a `Result` diagnostic (never a
 //! panic), and diagnostics on parsed IR must carry a source location.
+
+mod support;
 
 use pliron::{
     context::Context, op::verify_op, operation::verify_operation, printable::Printable,
     result::ExpectOk,
 };
-use pliron_stage0_spike::{ir_build::build_invalid_module, parse_top_level};
+use support::{ir_build::build_invalid_module, parse_top_level};
 
 /// Well-formed but semantically invalid: `llvm.add` over i32 + i64.
-const INVALID_ADD_MODULE: &str = r#"
+const INVALID_ADD_MODULE: &str = r"
     builtin.module @m {
     ^entry():
       llvm.func @main: llvm.func <builtin.integer i32 () variadic = false> [] {
@@ -19,7 +21,7 @@ const INVALID_ADD_MODULE: &str = r#"
         llvm.return sum
       }
     }
-"#;
+";
 
 #[test]
 fn constructed_invalid_ir_errors_without_panicking() {

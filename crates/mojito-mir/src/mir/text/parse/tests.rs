@@ -1,3 +1,4 @@
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use crate::mir::text::write;
 
@@ -217,7 +218,7 @@ fn type_families_reprint_byte_identically() {
                 ],
             }),
             TyArg::Val(CtValue::List(vec![
-                CtValue::Float(0x3ff0000000000000),
+                CtValue::Float(0x3ff0_0000_0000_0000),
                 CtValue::IntLiteral(parse_int_literal("-12345678901234567890").unwrap()),
                 CtValue::FloatLiteral(FloatLiteral::parse_exact("157/50").unwrap()),
                 CtValue::Dtype(Dtype::Float32),
@@ -483,6 +484,7 @@ fn sample_iterator_call() -> CheckedIteratorCall {
 }
 
 #[test]
+#[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
 fn instruction_families_reprint_byte_identically() {
     let place = sample_place;
     let interior = |root: u32| MirInteriorOrigin {

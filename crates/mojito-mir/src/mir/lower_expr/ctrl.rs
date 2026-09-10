@@ -1,6 +1,7 @@
 //! Control-flow expressions: short-circuit/ternary/compare chains,
 //! collection plans, and comprehensions.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Flatten<'_> {
@@ -238,9 +239,6 @@ impl Flatten<'_> {
         recv_place: Option<&MirPlace>,
         arg_places: &[Option<MirPlace>],
     ) {
-        let Some(transfers) = self.call_transfers.get(&e.source_span()).cloned() else {
-            return;
-        };
         fn flatten(
             origin: &mojito_types::origin::Origin,
             out: &mut Vec<mojito_types::origin::OriginPlace>,
@@ -255,6 +253,10 @@ impl Flatten<'_> {
                 _ => {}
             }
         }
+
+        let Some(transfers) = self.call_transfers.get(&e.source_span()).cloned() else {
+            return;
+        };
         for transfer in transfers {
             let dest_root = match transfer.dest {
                 mojito_checked::checked::CheckedTransferDest::Receiver => {
@@ -391,6 +393,10 @@ impl Flatten<'_> {
     /// Execute one checked append/add/setitem operation on a synthetic nominal
     /// collection slot.  Borrowing the receiver avoids invoking its copy
     /// constructor; a `mut self` implementation commits through `recv_place`.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "the callee needs the Vec; `&[Reg]` would add an allocation"
+    )]
     pub(in crate::mir) fn insert_nominal_collection(
         &mut self,
         expression: &Expr,
@@ -521,7 +527,6 @@ impl Flatten<'_> {
                 if let Some(origin) = &protocol.borrowed_origin {
                     let place = self.place(iter);
                     let value_ty = iterator_ty
-                        .clone()
                         .or_else(|| place.ty.clone())
                         .expect("checked borrowed comprehension iterable has a type");
                     self.borrow_iteration_source(
@@ -540,7 +545,7 @@ impl Flatten<'_> {
                     self.emit(MirInstr::DefVar {
                         var: iterator,
                         src: iterator_value,
-                        binding_ty: iterator_ty.clone(),
+                        binding_ty: iterator_ty,
                     });
                 }
                 // The same retained-source/iterator-object slot split as the
@@ -579,11 +584,10 @@ impl Flatten<'_> {
                 let binding = bindings
                     .get(binding_index)
                     .expect("checked comprehension binder metadata");
-                let yield_ty = protocol
-                    .next
-                    .as_ref()
-                    .map(|call| call.result_ty.clone())
-                    .unwrap_or_else(|| binding.plan.yielded_ty.clone());
+                let yield_ty = protocol.next.as_ref().map_or_else(
+                    || binding.plan.yielded_ty.clone(),
+                    |call| call.result_ty.clone(),
+                );
                 let element_value =
                     self.fresh_typed(iter.source_span(), Some(iterator_object), yield_ty);
                 self.f.blocks[self.cur].term = MirTerm::Jump(header);

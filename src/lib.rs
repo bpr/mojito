@@ -90,6 +90,7 @@ pub fn parse(source: &str) -> Result<Vec<Stmt>, ParseError> {
 /// Parse for human-facing diagnostics, collecting up to `max_errors`. A report
 /// with errors contains a quarantined partial AST and is not suitable for later
 /// compiler stages.
+#[must_use]
 pub fn parse_diagnostics(source: &str, max_errors: usize) -> ParseReport {
     Parser::new(Lexer::new(source)).parse_program_diagnostic(max_errors.max(1))
 }

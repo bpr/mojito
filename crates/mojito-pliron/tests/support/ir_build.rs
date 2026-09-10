@@ -42,7 +42,7 @@ pub fn build_main_returns_42(ctx: &mut Context) -> Result<ModuleOp> {
     Ok(module)
 }
 
-/// Like [build_main_returns_42], plus one dead `llvm.sub` of the two
+/// Like [`build_main_returns_42`], plus one dead `llvm.sub` of the two
 /// constants. Feed for the pass test: the fold pass eliminates the add, and
 /// built-in DCE eliminates the unused sub.
 pub fn build_main_with_dead_sub(ctx: &mut Context) -> Result<ModuleOp> {

@@ -1,6 +1,7 @@
 //! Comptime-parameter classification, specialization retention,
 //! origin markers, and instance mangling.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 /// Whether a source parameter is semantic metadata/runtime callable input rather
@@ -22,11 +23,13 @@ pub(super) fn retained_specialization_param(tp: &TypeParam, siblings: &[TypePara
     }
     matches!(
         tp.callable_bound.as_ref(),
-        Some(Type::Func { thin: true, .. })
-            | Some(Type::Func {
-                capturing: Some(_),
-                ..
-            })
+        Some(
+            Type::Func { thin: true, .. }
+                | Type::Func {
+                    capturing: Some(_),
+                    ..
+                }
+        )
     )
 }
 

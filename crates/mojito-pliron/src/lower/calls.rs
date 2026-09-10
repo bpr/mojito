@@ -1,8 +1,9 @@
 //! Direct call lowering: slot binding and contract ABI checks.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     /// Lower a direct call: builtin scalar conversions intercept by name
     /// exactly like the VM; everything else binds against the compiled
     /// signature, resolving keywords and constant defaults through the shared
@@ -590,9 +591,13 @@ impl<'a> FnLowering<'a> {
     /// outcome out-pointer, an aggregate return through prepended sret
     /// storage, never both). Contract shapes the thunk cannot bind reject
     /// contextually.
+    #[allow(
+        clippy::needless_pass_by_ref_mut,
+        reason = "Op construction mutates the context"
+    )]
     pub(super) fn contract_abi(
         &mut self,
-        ctx: &mut Context,
+        ctx: &Context,
         contract: &Ty,
         dest: Reg,
     ) -> Result<ContractAbi, PlironError> {

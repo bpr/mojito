@@ -1,9 +1,10 @@
 //! Ownership release machinery: owned-temp tracking, release/free
 //! emission, and string field/alloc helpers.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-impl<'a> FnLowering<'a> {
+impl FnLowering<'_> {
     /// Whether the invisible-release rule can free every heap buffer a value
     /// of `ty` owns without running user code: the nominal String (one
     /// buffer), and byte-copied aggregates over such fields.

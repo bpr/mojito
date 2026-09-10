@@ -1,5 +1,6 @@
 //! Source-annotation conversion into resolved checked types and origins.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 pub use mojito_types::types::splats_to;
 
@@ -19,7 +20,7 @@ pub(super) fn dtype_from_arg(arg: &mojito_ast::ast::ParamArg) -> Result<Dtype, T
             kind: ExprKind::Member { field, .. },
             ..
         }) => {
-            format!("DType.{}", field)
+            format!("DType.{field}")
         }
         _ => "a non-DType argument".to_string(),
     }))
@@ -51,7 +52,7 @@ pub(super) fn converts_to_lane(ty: &Ty, dtype: Dtype) -> bool {
     integer_source
 }
 
-pub(super) fn int_literal_materializes_to_dtype(dtype: Dtype) -> bool {
+pub(super) const fn int_literal_materializes_to_dtype(dtype: Dtype) -> bool {
     match dtype {
         Dtype::Int
         | Dtype::Int8
@@ -72,7 +73,7 @@ pub(super) fn int_literal_materializes_to_dtype(dtype: Dtype) -> bool {
 /// The (canonicalized) `Ty` for a SIMD of `dtype`/`width`: a **width-1 `float64`**
 /// is the native `Ty::Float64` (Mojo unifies `Float64` with `SIMD[DType.float64,
 /// 1]`); everything else is a `Ty::Simd`.
-pub(super) fn simd_ty(dtype: Dtype, width: i64) -> Ty {
+pub(super) const fn simd_ty(dtype: Dtype, width: i64) -> Ty {
     mojito_types::types::canonical_simd_ty(dtype, width)
 }
 

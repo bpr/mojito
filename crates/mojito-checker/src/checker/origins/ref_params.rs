@@ -1,6 +1,7 @@
 //! Reference-parameter handles and loan-carrying type queries,
 //! including capture origins.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Checker {
@@ -224,7 +225,7 @@ impl Checker {
                         path: Vec::new(),
                     }),
                     access: CaptureAccess::Write,
-                })
+                });
             }
             mojito_ast::ast::CaptureKind::Copy | mojito_ast::ast::CaptureKind::Move => {}
         }
@@ -415,12 +416,12 @@ impl Checker {
                     return origins.clone();
                 }
                 let aggregate = self.aggregate_origins(object);
-                if !aggregate.is_empty() {
-                    aggregate
-                } else {
+                if aggregate.is_empty() {
                     self.infer_reference_value(expression)
                         .map(|reference| vec![reference.origin])
                         .unwrap_or_default()
+                } else {
+                    aggregate
                 }
             }
             ExprKind::Transfer(inner) | ExprKind::Named { value: inner, .. } => {

@@ -1,5 +1,6 @@
 //! Per-call origin solving and aggregate-origin escape analysis.
 
+#[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
 impl Checker {
@@ -355,6 +356,10 @@ impl Checker {
     /// demand's verdict, `solve_call_origins_with_bool_bindings`), and an
     /// `origin_of(place)` slot rejects a value borrowing only other roots.
     /// A value borrowing nothing (a literal view) satisfies any demand.
+    #[allow(
+        clippy::unused_self,
+        reason = "TODO: make an associated function or use the receiver"
+    )]
     pub(in crate::checker) fn check_storage_origin_demands(
         &self,
         context: &str,
