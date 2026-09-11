@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A multi-lane SIMD value moves natively as one typed `<N x lane>` load and
+  store instead of `llvm.memcpy`, and its slot is allocated at that vector
+  type (still aligned like one lane, so `LayoutCx` and the ABI are
+  unchanged). A `memcpy` is a non-promotable use, so previously any slot
+  read or written as a whole stayed in memory even when its lane writes
+  vectorized; now mem2reg lifts SIMD locals into vector SSA at `O0`.
 - Direct `ref` struct fields (`var f: ref[o] T`) are kept as a tracked
   Mojito extension: upstream rejects them today but may adopt them. Their
   fixtures move to the new `assets/extensions/<folder>/` class (110 files),

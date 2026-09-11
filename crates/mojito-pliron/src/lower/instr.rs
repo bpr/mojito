@@ -83,9 +83,7 @@ impl FnLowering<'_> {
                             self.append(ctx, alloca.get_operation(), None);
                             alloca.get_result(ctx)
                         }
-                        LowerTy::Aggregate { layout, .. } => {
-                            self.entry_alloca(ctx, layout.size, layout.align)
-                        }
+                        LowerTy::Aggregate { ty, layout } => self.value_storage(ctx, &ty, layout),
                         LowerTy::ZeroSized => {
                             return Err(self.unsupported(
                                 format!(
@@ -284,8 +282,8 @@ impl FnLowering<'_> {
                         self.define(ctx, *dest, load.get_operation(), load.get_result(ctx))
                     }
                     LowerTy::Aggregate { ty, layout } => {
-                        let storage = self.entry_alloca(ctx, layout.size, layout.align);
-                        self.mem_copy(ctx, storage, address, layout.size, *dest);
+                        let storage = self.value_storage(ctx, &ty, layout);
+                        self.copy_value(ctx, storage, address, &ty, layout, *dest);
                         self.reg_values.insert(dest.0, storage);
                         if self.owns_heap(&ty)
                             || self.stdlib_deinit_temp(&ty)

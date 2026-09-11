@@ -169,14 +169,14 @@ impl FnLowering<'_> {
         // checker-guaranteed unreachable fall-off scaffolding.
         let ret_lower = self.return_value_lower()?;
         let lowered = match (value, ret_lower) {
-            (Some(reg), Some(LowerTy::Aggregate { layout, .. })) => {
+            (Some(reg), Some(LowerTy::Aggregate { ty, layout })) => {
                 // Copy the returned aggregate into the sret out-pointer and
                 // return void; the caller owns it.
                 let sret = self
                     .sret_ptr
                     .expect("aggregate-returning functions receive an sret pointer");
                 let ptr = self.reg_ptr(ctx, reg)?;
-                self.mem_copy(ctx, sret, ptr, layout.size, reg);
+                self.copy_value(ctx, sret, ptr, &ty, layout, reg);
                 self.owned_temps.remove(&reg.0);
                 None
             }
@@ -300,11 +300,11 @@ impl FnLowering<'_> {
                 let store = StoreOp::new(ctx, value, address);
                 self.append(ctx, store.get_operation(), Some(reg));
             }
-            (LowerTy::Aggregate { layout, .. }, Some(reg)) => {
-                let size = layout.size;
+            (LowerTy::Aggregate { ty, layout }, Some(reg)) => {
+                let (ty, layout) = (ty.clone(), *layout);
                 let ptr = self.reg_ptr(ctx, reg)?;
                 let address = self.offset_address(ctx, outcome_ptr, outcome.ok_offset);
-                self.mem_copy(ctx, address, ptr, size, reg);
+                self.copy_value(ctx, address, ptr, &ty, layout, reg);
                 // The caller owns the payload now.
                 self.owned_temps.remove(&reg.0);
             }

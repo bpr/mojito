@@ -222,13 +222,19 @@ def prefix(v: SIMD[DType.int32, 8]) -> SIMD[DType.int32, 8]:
         out[i] = out[i] + out[i - 1]
     return out
 
+def carry(v: SIMD[DType.int32, 8], k: Int32) -> Int32:
+    var a = v
+    var b = a
+    a = a + k
+    return (a + b).reduce_add()
+
 def compute() -> Int:
     var v = SIMD[DType.int32, 8](1, 2, 3, 4, 5, 6, 7, 8)
     var acc = 0
     for i in range(3):
         acc += Int(total(scale(v, Int32(i))))
     var p = prefix(v)
-    return acc + Int(mask_sum(v.cast[DType.float32](), 3.5)) + Int(p.reduce_add())
+    return acc + Int(mask_sum(v.cast[DType.float32](), 3.5)) + Int(p.reduce_add()) + Int(carry(v, 2))
 
 def main():
     print(compute())
@@ -244,7 +250,11 @@ def main():
 ///
 /// Lane *writes* are pinned at `O0` instead: `insertelement` is what the
 /// backend emits, and the release pipeline is free to fold an unrolled
-/// insert chain into something else entirely.
+/// insert chain into something else entirely. `O0` is also where promotion
+/// is visible — every access to a multi-lane slot is a typed whole-vector
+/// load or store, so mem2reg lifts the slot into vector SSA (`prefix`'s
+/// lane-written `out` becomes a `phi <8 x i32>`, and `carry`, which only
+/// moves whole vectors, keeps no storage at all).
 #[test]
 fn simd_lowering_emits_vector_code() {
     let mut module = native_compile(SIMD_KERNELS, &["compute", "main"]);
@@ -254,10 +264,20 @@ fn simd_lowering_emits_vector_code() {
         "load <8 x i32>",
         "insertelement <8 x i32>",
         "store <8 x i32>",
+        "phi <8 x i32>",
     ] {
         assert!(
             lane_writer.contains(needle),
             "a lane write lowers to no `{needle}`:\n{lane_writer}"
+        );
+    }
+    // A whole-vector move is a typed load/store pair, not an `llvm.memcpy`
+    // (a non-promotable use that would pin every slot it touches).
+    let mover = llvm_function(&unoptimized, "carry");
+    for needle in ["memcpy", "alloca"] {
+        assert!(
+            !mover.contains(needle),
+            "a whole-vector move still emits `{needle}`:\n{mover}"
         );
     }
     let ir = module.llvm_ir(OptLevel::Release).expect("LLVM conversion");

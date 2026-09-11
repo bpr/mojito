@@ -24,13 +24,24 @@ safe: a value's storage is touched at its base only by whole-vector typed
 loads and stores (mem2reg does not compare access types), so lane reads —
 dynamic subscripts, formatting, the hashing fold — extract from the loaded
 vector, and a lane *write* is that read's mirror: load the whole vector
-from the place's base address, `insertelement`, store it back. No lane is
-addressed by a byte offset, which also keeps a lane-written variable or
-field slot promotable — pliron's `prune_candidates` drops any allocation
-whose pointer has a use that is not a plain load or store, and a
-`getelementptr` is exactly such a use. A whole-value read or write of the
-same slot is still an `llvm.memcpy`, so a slot used both ways stays in
-memory (roadmap §1).
+from the place's base address, `insertelement`, store it back. A
+whole-value read or write is the same shape — `copy_value` in
+`lower/abi.rs` moves a multi-lane value as one typed vector load and store
+rather than the aggregate `llvm.memcpy`. No lane is addressed by a byte
+offset and no `memcpy` touches a SIMD slot, so the slot stays promotable:
+pliron's `prune_candidates` drops any allocation whose pointer has a use
+that is not a plain load or store, and both a `getelementptr` and a
+`memcpy` argument are exactly such a use.
+
+This is why a multi-lane slot is allocated at its storage vector type
+(`value_storage` → `simd_storage_slot`) and never as bytes: mem2reg types
+an inserted block argument at the *allocation's* pointee type, so a byte
+slot carrying vector loads and stores would grow a byte-typed phi fed by
+vector values and fail verification. The two halves must move together;
+`simd_lowering_emits_vector_code` pins both (a `phi <8 x i32>` for the
+lane-written `prefix`, and no `alloca` or `memcpy` at all in the
+whole-vector-moving `carry`). What remains in memory is the call boundary:
+SIMD still passes by pointer and returns through sret (roadmap §1).
 
 Per operation: construction is `poison` plus `insertelement` per lane (one
 element splats via `shufflevector`); a lane write is a bounds-guarded

@@ -379,9 +379,9 @@ impl FnLowering<'_> {
                 let load = LoadOp::new(ctx, address, handle);
                 self.define(ctx, dest, load.get_operation(), load.get_result(ctx))
             }
-            LowerTy::Aggregate { layout, .. } => {
-                let storage = self.entry_alloca(ctx, layout.size, layout.align);
-                self.mem_copy(ctx, storage, address, layout.size, dest);
+            LowerTy::Aggregate { ty, layout } => {
+                let storage = self.value_storage(ctx, &ty, layout);
+                self.copy_value(ctx, storage, address, &ty, layout, dest);
                 self.reg_values.insert(dest.0, storage);
                 Ok(())
             }
@@ -416,7 +416,7 @@ impl FnLowering<'_> {
                 {
                     return self.copy_aggregate(ctx, dest, &ty, layout, address);
                 }
-                let storage = self.entry_alloca(ctx, layout.size, layout.align);
+                let storage = self.value_storage(ctx, &ty, layout);
                 if self.owns_heap(&ty) {
                     self.fork_value_into(ctx, storage, &ty, layout, address, dest)?;
                     self.reg_values.insert(dest.0, storage);
@@ -426,7 +426,7 @@ impl FnLowering<'_> {
                     self.mark_owned_temp(dest, (*ty).clone())?;
                     return Ok(());
                 }
-                self.mem_copy(ctx, storage, address, layout.size, dest);
+                self.copy_value(ctx, storage, address, &ty, layout, dest);
                 self.reg_values.insert(dest.0, storage);
                 Ok(())
             }
@@ -478,7 +478,7 @@ impl FnLowering<'_> {
                 // a borrowed heap-owning source clones instead — its byte
                 // copy would alias buffers both owners release.
                 if self.owned_temps.remove(&src.0).is_some() || !self.owns_heap(&ty) {
-                    self.mem_copy(ctx, address, ptr, layout.size, src);
+                    self.copy_value(ctx, address, ptr, &ty, layout, src);
                     return Ok(());
                 }
                 self.fork_value_into(ctx, address, &ty, layout, ptr, src)
@@ -555,6 +555,38 @@ impl FnLowering<'_> {
         let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
         let index = u32::try_from(offset).expect("aggregate offsets fit u32");
         GetElementPtrOp::new(ctx, base, vec![GepIndex::Constant(index)], i8_ty)
+    }
+
+    /// Fresh storage for a value of checked type `ty`. A multi-lane SIMD
+    /// value gets a slot typed at its storage vector (aligned like one
+    /// lane) rather than bytes: mem2reg types an inserted block argument at
+    /// the allocation's pointee type, so a byte slot carrying vector loads
+    /// and stores would grow a byte-typed phi fed by vectors. Every other
+    /// aggregate gets byte storage.
+    pub(super) fn value_storage(&mut self, ctx: &mut Context, ty: &Ty, layout: Layout) -> Value {
+        if let Some((dtype, width)) = multi_lane_simd(ty) {
+            return self.simd_storage_slot(ctx, dtype, width);
+        }
+        self.entry_alloca(ctx, layout.size, layout.align)
+    }
+
+    /// [`Self::mem_copy`] for a value whose checked type is known: a
+    /// multi-lane SIMD value moves as one typed vector load and store,
+    /// because a `memcpy` is a non-promotable use of both slots.
+    pub(super) fn copy_value(
+        &mut self,
+        ctx: &mut Context,
+        dest: Value,
+        src: Value,
+        ty: &Ty,
+        layout: Layout,
+        anchor: Reg,
+    ) {
+        if let Some((dtype, width)) = multi_lane_simd(ty) {
+            self.simd_copy_storage(ctx, dest, src, dtype, width, anchor);
+            return;
+        }
+        self.mem_copy(ctx, dest, src, layout.size, anchor);
     }
 
     /// `llvm.memcpy.p0.p0.i64(dest, src, len, volatile=false)`.
@@ -649,5 +681,14 @@ impl FnLowering<'_> {
         alloca.get_operation().insert_at_front(entry, ctx);
         count.get_operation().insert_at_front(entry, ctx);
         alloca.get_result(ctx)
+    }
+}
+
+/// The lane type and width of a value that lowers to a whole LLVM vector:
+/// width-one aliases are scalars and never take the vector-storage path.
+const fn multi_lane_simd(ty: &Ty) -> Option<(Dtype, usize)> {
+    match ty {
+        Ty::Simd { dtype, width } if *width > 1 => Some((*dtype, *width as usize)),
+        _ => None,
     }
 }

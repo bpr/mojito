@@ -286,7 +286,7 @@ impl FnLowering<'_> {
             self.mark_owned_temp(dest, ty.clone())?;
             return Ok(());
         }
-        let storage = self.entry_alloca(ctx, layout.size, layout.align);
+        let storage = self.value_storage(ctx, ty, layout);
         if let Ty::Struct(name, _) = ty
             && self
                 .declarations
@@ -340,7 +340,7 @@ impl FnLowering<'_> {
             return Ok(());
         } else {
             // A byte copy of a heap-less value carries everything it needs.
-            self.mem_copy(ctx, storage, src_ptr, layout.size, dest);
+            self.copy_value(ctx, storage, src_ptr, ty, layout, dest);
         }
         self.reg_values.insert(dest.0, storage);
         Ok(())

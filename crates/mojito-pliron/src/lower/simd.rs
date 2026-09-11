@@ -728,11 +728,23 @@ impl FnLowering<'_> {
         width: usize,
         value: Value,
     ) {
-        let storage_ty = self.simd_storage_ty(ctx, dtype, width);
-        let lane = self.simd_lane_layout(dtype);
-        let storage = self.entry_typed_alloca_aligned(ctx, storage_ty, lane.align);
+        let storage = self.simd_storage_slot(ctx, dtype, width);
         self.simd_store_vector_to(ctx, storage, dtype, width, value, dest);
         self.reg_values.insert(dest.0, storage);
+    }
+
+    /// Fresh storage for a multi-lane value: typed at its storage vector so
+    /// whole-value accesses stay promotable, aligned like one lane so the
+    /// slot keeps the `LayoutCx` shape.
+    pub(super) fn simd_storage_slot(
+        &mut self,
+        ctx: &mut Context,
+        dtype: Dtype,
+        width: usize,
+    ) -> Value {
+        let storage_ty = self.simd_storage_ty(ctx, dtype, width);
+        let lane = self.simd_lane_layout(dtype);
+        self.entry_typed_alloca_aligned(ctx, storage_ty, lane.align)
     }
 
     /// Store a compute vector into the lane-aligned storage at `ptr` (Bool
@@ -757,6 +769,30 @@ impl FnLowering<'_> {
         };
         let store = StoreOp::new(ctx, value, ptr);
         store.set_alignment(ctx, lane.align as u32);
+        self.append(ctx, store.get_operation(), Some(anchor));
+    }
+
+    /// Move a whole multi-lane value between two lane-aligned storages as
+    /// one typed vector load and store — `mem_copy`'s promotable
+    /// counterpart, since a `memcpy` is a non-promotable use of both slots.
+    /// Bool lanes copy as bytes: a copy moves storage, so it must not round
+    /// trip through the `<N x i1>` compute mask.
+    pub(super) fn simd_copy_storage(
+        &mut self,
+        ctx: &mut Context,
+        dest: Value,
+        src: Value,
+        dtype: Dtype,
+        width: usize,
+        anchor: Reg,
+    ) {
+        let storage_ty = self.simd_storage_ty(ctx, dtype, width);
+        let align = self.simd_lane_layout(dtype).align as u32;
+        let load = LoadOp::new(ctx, src, storage_ty);
+        load.set_alignment(ctx, align);
+        self.append(ctx, load.get_operation(), Some(anchor));
+        let store = StoreOp::new(ctx, load.get_result(ctx), dest);
+        store.set_alignment(ctx, align);
         self.append(ctx, store.get_operation(), Some(anchor));
     }
 

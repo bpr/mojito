@@ -18,17 +18,20 @@ exempt from the ordering.
 
 ### 1. Native Backend
 
-- [ ] **Native SIMD: whole-vector variables still move by `memcpy`**
+- [ ] **Native SIMD: a vector argument or result never reaches a register**
 
-  Problem: reading or writing a multi-lane SIMD value as a whole goes
-  through `llvm.memcpy` (the aggregate arm of `load_from`/`store_to`), which
-  is a non-promotable use of the slot.
-  - So a slot whose lane writes now vectorize still stays in memory at `O0`
-    whenever the value is also read whole — mem2reg prunes any allocation
-    with a use that is not a plain load or store.
-  - The lever is a typed whole-vector load/store for SIMD aggregates; it
-    reaches the call ABI, which is why the lane-write fix stopped short.
-  - Design record: `docs/notes/native-simd-pliron-assessment.md` §As Built.
+  Problem: a multi-lane SIMD value passes by pointer and returns through
+  the sret out-pointer, so the caller's argument slot and the callee's
+  result slot are addresses and can never promote, however the value moves
+  inside a function.
+  - Local slots do promote now, so the cost is confined to call
+    boundaries: a `SIMD`-taking kernel reloads its parameter from memory.
+  - The fix is to classify multi-lane SIMD as an LLVM vector in the
+    function signature, which is an `MJRT_ABI_VERSION` bump plus a
+    normative `docs/native-abi.md` decision — deliberately not an
+    incidental consequence of a lowering change.
+  - Design record: `docs/notes/native-simd-pliron-assessment.md`
+    §Recommended Representation Boundary.
 
 - [ ] **Native SIMD: float-to-int casts convert one lane at a time**
 

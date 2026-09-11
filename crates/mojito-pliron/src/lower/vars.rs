@@ -89,8 +89,8 @@ impl FnLowering<'_> {
                             dest,
                         ));
                     }
-                    let storage = self.entry_alloca(ctx, layout.size, layout.align);
-                    self.mem_copy(ctx, storage, src, layout.size, dest);
+                    let storage = self.value_storage(ctx, &ty, layout);
+                    self.copy_value(ctx, storage, src, &ty, layout, dest);
                     self.reg_values.insert(dest.0, storage);
                     // The move vacates the slot (the VM tombstones it); a
                     // later cleanup-edge drop must find it empty. The moved
@@ -125,10 +125,10 @@ impl FnLowering<'_> {
                 self.append(ctx, store.get_operation(), None);
                 Ok(())
             }
-            LowerTy::Aggregate { layout, .. } => {
+            LowerTy::Aggregate { ty, layout } => {
                 let ptr = self.reg_ptr(ctx, src)?;
                 let slot = self.var_slots[var as usize];
-                self.mem_copy(ctx, slot, ptr, layout.size, src);
+                self.copy_value(ctx, slot, ptr, &ty, layout, src);
                 // The variable owns the value now; the temporary transfers.
                 self.owned_temps.remove(&src.0);
                 if let Some(condition) = self.conditional_values.get(&src.0).copied() {
