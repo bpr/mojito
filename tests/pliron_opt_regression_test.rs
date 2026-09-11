@@ -65,7 +65,7 @@ fn assert_vm_o0_release_agree(name: &str, src: &str) {
 /// Compile `src`, confirm the VM rejects it at runtime, and confirm both
 /// profiles produce the same nonzero exit code and identical stderr — a
 /// release pipeline must not change which trap fires or how it reports.
-fn assert_trap_parity(name: &str, src: &str) {
+fn assert_trap_parity(name: &str, src: &str) -> i32 {
     let compiler = Compiler::default();
     let compiled = compiler
         .compile_source(src, Path::new(FIXTURE_NAME))
@@ -100,6 +100,7 @@ fn assert_trap_parity(name: &str, src: &str) {
         outcomes[0], outcomes[1],
         "{name}: O0 and release must trap identically"
     );
+    outcomes[0].0
 }
 
 #[test]
@@ -262,6 +263,106 @@ def main():
     print((f + f).reduce_add())
 ",
     );
+}
+
+#[test]
+fn simd_lane_writes_preserve_values_and_aliases() {
+    assert_vm_o0_release_agree(
+        "simd-lane-writes",
+        "\
+@fieldwise_init
+struct Packet:
+    var tag: UInt8
+    var ints: SIMD[DType.int32, 4]
+    var floats: SIMD[DType.float32, 4]
+    var flags: SIMD[DType.bool, 4]
+    var tail: Int
+
+def write_int(mut v: SIMD[DType.int32, 4], i: Int, x: Int32):
+    v[i] = x
+    v[i] += 5
+
+def write_float(mut v: SIMD[DType.float32, 4], i: Int, x: Float32):
+    v[i] = x
+    v[i] *= 2.0
+
+def write_bool(mut v: SIMD[DType.bool, 4], i: Int, x: Bool):
+    v[i] = x
+
+def write_packet(mut p: Packet, i: Int):
+    p.ints[i] = 40
+    p.floats[i] = 6.25
+    p.flags[i] = False
+    ref ints = p.ints
+    ints[i + 1] += 7
+    ref lane = ints[i]
+    lane += 2
+
+def main():
+    var i = 1
+    var v = SIMD[DType.int32, 4](1, 2, 3, 4)
+    var f = SIMD[DType.float32, 4](0.5, 1.5, 2.5, 3.5)
+    var flags = SIMD[DType.bool, 4](True, False, True, False)
+    v[i] = 10
+    f[i] = 4.25
+    flags[i] = True
+    write_int(v, i + 1, 30)
+    write_float(f, i + 1, 8.5)
+    write_bool(flags, i + 1, False)
+    print(v, f, flags)
+    var p = Packet(9, v, f, flags, 12345)
+    write_packet(p, i)
+    write_int(p.ints, i + 2, -10)
+    write_float(p.floats, i + 2, -1.25)
+    write_bool(p.flags, i + 2, True)
+    print(p.tag, p.ints, p.floats, p.flags, p.tail)
+    print(v, f, flags)
+    var ptr = UnsafePointer(to=v)
+    ptr[][i] = 99
+    print(v)
+    var zero = i - 1
+    var one_int = Int32(3)
+    var one_float = Float32(0.5)
+    var one_bool = SIMD[DType.bool, 1](False)
+    one_int[zero] = 40
+    one_int[zero] += 2
+    one_float[zero] = 2.25
+    one_float[zero] *= 2.0
+    one_bool[zero] = True
+    print(one_int, one_float, one_bool)
+",
+    );
+}
+
+#[test]
+fn simd_lane_writes_preserve_bounds_traps() {
+    for (dtype, width, value) in [
+        ("int32", 4, "7"),
+        ("float32", 4, "1.5"),
+        ("bool", 4, "True"),
+        ("int32", 1, "7"),
+    ] {
+        for index in [-1, width] {
+            let name = format!("simd-lane-write-{dtype}-{width}-{index}");
+            let source = format!(
+                "\
+def write(mut v: SIMD[DType.{dtype}, {width}], i: Int):
+    v[i] = {value}
+
+def main():
+    var v = SIMD[DType.{dtype}, {width}]({value})
+    write(v, {index})
+    print(v)
+"
+            );
+            let code = assert_trap_parity(&name, &source);
+            assert_eq!(
+                code,
+                i32::from(native::TrapCategory::UnhandledError.exit_code()),
+                "{name}: SIMD bounds checks must keep their trap category"
+            );
+        }
+    }
 }
 
 /// SIMD lane semantics the vector lowering must keep exact across profiles:

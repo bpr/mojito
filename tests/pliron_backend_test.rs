@@ -314,6 +314,71 @@ fn simd_lowering_emits_vector_code() {
     }
 }
 
+/// Runtime arguments distinguish lane insertion from constructor insertion,
+/// while mutable parameters keep the ABI's lane-aligned memory observable.
+#[test]
+fn simd_lane_writes_use_insertelement_at_o0() {
+    let module = native_compile(
+        "\
+def write_int(mut v: SIMD[DType.int32, 4], i: Int, x: Int32):
+    v[i] = x
+
+def write_float(mut v: SIMD[DType.float32, 4], i: Int, x: Float32):
+    v[i] = x
+
+def write_bool(mut v: SIMD[DType.bool, 4], i: Int, x: Bool):
+    v[i] = x
+",
+        &["write_int", "write_float", "write_bool"],
+    );
+    let ir = module.llvm_ir(OptLevel::O0).expect("LLVM conversion");
+    for (name, lane, storage_lane, alignment) in [
+        ("write_int", "i32", "i32", 4),
+        ("write_float", "float", "float", 4),
+        ("write_bool", "i1", "i8", 1),
+    ] {
+        let symbol = format!("@{}(", module.mangled_name(name).expect("entry symbol"));
+        let body = llvm_function(&ir, &symbol);
+        let insertion = format!("insertelement <4 x {lane}> %");
+        let inserts: Vec<_> = body
+            .lines()
+            .filter(|line| line.contains("insertelement "))
+            .collect();
+        assert_eq!(inserts.len(), 1, "{name}: exactly one lane update:\n{body}");
+        assert!(
+            inserts[0].contains(&insertion)
+                && inserts[0].contains(&format!(", {lane} %"))
+                && inserts[0].contains(", i64 %"),
+            "{name}: vector, value, and index must be runtime operands:\n{body}"
+        );
+        for operation in ["load", "store"] {
+            let needle = format!("{operation} <4 x {storage_lane}>");
+            let accesses: Vec<_> = body.lines().filter(|line| line.contains(&needle)).collect();
+            assert!(!accesses.is_empty(), "{name}: missing {needle}:\n{body}");
+            let align = format!(", align {alignment}");
+            assert!(
+                accesses
+                    .iter()
+                    .all(|line| { line.ends_with(&align) || line.contains(&format!("{align},")) }),
+                "{name}: vector memory must use lane alignment:\n{body}"
+            );
+        }
+        assert!(
+            !body.contains(&format!("store {storage_lane} ")),
+            "{name}: lane writes must store the updated vector:\n{body}"
+        );
+        if lane == "i1" {
+            assert!(
+                body.contains("icmp ne <4 x i8>")
+                    && body.lines().any(|line| {
+                        line.contains("zext <4 x i1>") && line.contains("to <4 x i8>")
+                    }),
+                "Bool masks must cross byte-per-lane storage explicitly:\n{body}"
+            );
+        }
+    }
+}
+
 /// The body of the LLVM function whose name contains `name`, from `define`
 /// to its closing brace.
 fn llvm_function<'a>(ir: &'a str, name: &str) -> &'a str {
