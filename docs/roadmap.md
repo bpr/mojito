@@ -1,12 +1,14 @@
 # Mojito Roadmap
 
-The single task tracker: an ordered checklist of **unfinished** work only.
-Completed work leaves this file — the supported surface lives in
-[`docs/features.md`](features.md), user-visible history in
-[`CHANGELOG.md`](../CHANGELOG.md), and lasting design invariants in
-[`docs/architecture.md`](architecture.md). North star: self-hosting — prefer
-the smallest honest language change that unlocks a real library pattern, with
-positive and negative tests.
+The single task tracker: an ordered checklist of **unfinished** work we
+intend to do. Two kinds of entry leave this file. Completed work goes to the
+supported surface in [`docs/features.md`](features.md), user-visible history
+in [`CHANGELOG.md`](../CHANGELOG.md), and lasting design invariants in
+[`docs/architecture.md`](architecture.md). Work we have decided *not* to do —
+deferred options, capabilities kept on purpose, and limits that match
+upstream — goes to [`docs/non-goals.md`](non-goals.md). North star:
+self-hosting — prefer the smallest honest language change that unlocks a real
+library pattern, with positive and negative tests.
 
 Sections and their checkboxes are in implementation order; the first unchecked
 box is the default next task. *(recurring)* and *(any order)* sections are
@@ -16,22 +18,16 @@ exempt from the ordering.
 
 ### 1. Native Backend
 
-- [ ] **Cranelift alternate backend** *(deferred, not planned)*
+- [ ] **Native SIMD: whole-vector variables still move by `memcpy`**
 
-  Not to be fixed now: Pliron is Mojito's supported route to LLVM and
-  optimized binaries. The verified-MIR waist deliberately permits a
-  Cranelift backend, so this stays open only as an option.
-  - Build it only if portability, build cost, or upstream risk justifies it.
-  - It must implement the same acceptance slices over the shared
-    target/layout/runtime ABI and the differential corpus.
-  - It must not fork language semantics or become a required compiler layer.
-
-- [ ] **Native SIMD: lane writes still go through memory**
-
-  Problem: `v[i] = x` stores one lane through the place address instead of
-  an `insertelement` on the vector.
-  - At release SROA rebuilds the vector, so only `O0` keeps the store.
-  - The read side already extracts from the loaded vector.
+  Problem: reading or writing a multi-lane SIMD value as a whole goes
+  through `llvm.memcpy` (the aggregate arm of `load_from`/`store_to`), which
+  is a non-promotable use of the slot.
+  - So a slot whose lane writes now vectorize still stays in memory at `O0`
+    whenever the value is also read whole — mem2reg prunes any allocation
+    with a use that is not a plain load or store.
+  - The lever is a typed whole-vector load/store for SIMD aggregates; it
+    reaches the call ABI, which is why the lane-write fix stopped short.
   - Design record: `docs/notes/native-simd-pliron-assessment.md` §As Built.
 
 - [ ] **Native SIMD: float-to-int casts convert one lane at a time**
@@ -42,14 +38,6 @@ exempt from the ordering.
     its x86-64 legalization is unverified, so it was not adopted.
   - Probe it with `llc` before switching.
 
-- [ ] **Native SIMD: signed-zero min/max is unspecified**
-
-  Not to be fixed: float `reduce_min`/`reduce_max` fold through
-  `llvm.minnum`/`llvm.maxnum`, which is the VM's `f64::min`/`max`, and
-  neither side specifies the result of `min(-0.0, +0.0)`.
-  - Fixtures avoid mixed-sign zeros in min/max reductions.
-  - Revisit only if upstream pins a rule.
-
 - [ ] **Native SIMD: the lane-index trap has no category of its own**
 
   Problem: an out-of-range lane index exits natively with the
@@ -59,13 +47,6 @@ exempt from the ordering.
   - Until then the parity harness cannot map the VM error, so the trap is
     pinned by `tests/pliron_opt_regression_test.rs` instead of an
     `assets/runtime_error` fixture.
-
-- [ ] **Native SIMD: vectorization evidence is object code, not IR**
-
-  Not a defect, a testing rule: vectors wider than a register legalize by
-  splitting, so legal vector IR proves nothing about the selected code.
-  - `simd_lowering_emits_vector_code` inspects the `llvm-objdump` listing
-    and is the evidence to keep green.
 
 - [ ] **Front end: a bare literal cannot build a multi-lane SIMD field**
 
@@ -81,13 +62,6 @@ exempt from the ordering.
   projection requires checked indexed storage`) for every element type.
   - Copy the element out, mutate it, and write it back (`xs[i] = e`), or
     mutate through a `mut` parameter, which works.
-
-- [ ] **Checker: `Pointer(to=<temporary>)` is unsupported**
-
-  Not planned: `View(Pointer(to=make_list()), 0)` reports `Pointer(to=...)
-  requires a place expression`; a temporary bound to an explicit
-  `ref[Self.o]` constructor parameter covers the same fixture point
-  (`assets/ok/pointer_field_ctor_temporary_explicit_init.mojo`).
 
 - [ ] **Native generic-holder temporaries with heap-owning implicitly
   copyable fields read freed memory**
@@ -118,8 +92,8 @@ exempt from the ordering.
   `mojo-only` rows of `conformance/cases.tsv`).
 - Rule: Mojito matches or subsets Mojo. An extension is admitted only when
   it tracks an announced upstream direction (today: direct `ref` struct
-  fields), is listed here, keeps its fixtures under `assets/extensions/`,
-  and is re-probed at every re-pin.
+  fields), is listed in [`docs/non-goals.md`](non-goals.md), keeps its
+  fixtures under `assets/extensions/`, and is re-probed at every re-pin.
 - The `a79fbdf59f2` pass (2026-08-26, Mojo `1.1.0.dev2026082605`) is
   complete (`docs/mojo-nightly.md`). The next re-pin recreates this
   section's checkbox.
@@ -152,35 +126,8 @@ exempt from the ordering.
     (`assets/ok/indexer_normalization.mojo`), so only the builtin SIMD
     subscript diverges.
 
-  Retained on purpose, re-probed at each re-pin:
-  - `subtree-origin-cast`: a cited bridge to upstream's
-    `#lit.origin.subtree` experiment.
-  - `reference-valued-aggregate`: the `ref` field extension, kept on
-    purpose (next task).
-  - `deinit-body-field-loop-read` (`output-diff`): the pinned Mojo destroys
-    a `deinit self` field that is read only inside a loop body at the
-    destructor's entry and then reads the destroyed value. That is an
-    upstream bug Mojito does not reproduce.
-
-- [ ] **Direct `ref` struct fields stay a Mojito extension** *(kept on
-  purpose)*
-
-  Not to be removed: upstream rejects `var f: ref[o] T` fields (`'ref'
-  patterns are only valid on the left side of an assignment`) and spells
-  reference storage through `Pointer[T, origin]`, but upstream has signalled
-  that `ref` fields may arrive, so Mojito keeps the capability
-  (2026-09-09 decision; the stdlib's six `ref`-field structs stay as they
-  are).
-  - Fixtures that use `ref` fields live under `assets/extensions/<folder>/`;
-    the ordinary `assets/` folders hold only programs the pinned Mojo
-    compiles (`assets/README.md`).
-  - Where a `ref`-field fixture has a Mojo-valid twin, the twin spells the
-    storage through `Pointer[T, origin]` under the same name with
-    "ref_field" replaced by "pointer_field" in the ordinary folder.
-  - `conformance/fixtures/reference_valued_aggregate.mojo` stays a
-    `mojito-only` row until upstream decides.
-  - If upstream lands `ref` fields, re-probe the extension fixtures against
-    the new spelling and promote them back.
+  Three divergences are retained on purpose and re-probed rather than fixed;
+  they are listed in [`docs/non-goals.md`](non-goals.md).
 
 - [ ] **Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
   any order)*
@@ -201,9 +148,8 @@ exempt from the ordering.
     Mojo (`String.write_repr_to`).
   - `mjrt_pow` for integer `**`. Upstream's `Int.__pow__` is Mojo.
 
-  Kept as runtime services because upstream has the same boundary:
-  `_mojito_abort` (`os.abort`), `mjrt_read_line` (`input`), allocation,
-  and traps.
+  Four runtime services are deliberately not on that list; they are in
+  [`docs/non-goals.md`](non-goals.md).
 
 ### 3. Grow The CPU Standard Library *(demand-first)*
 
@@ -237,10 +183,6 @@ exempt from the ordering.
        `head = String(head.rstrip("/"))`) frees the local before the copy
        reads it (`conformance/probes/view_copy_return_use_after_free.mojo`).
        Bind the copy to a local first, as `std/os/path/path.mojo` does.
-     - Not to be fixed: casting a tracked pointer to an untracked origin at
-       its source's last use
-       (`s.unsafe_ptr().unsafe_origin_cast[ImmUntrackedOrigin]()`) frees
-       the source before the pointer is read. Upstream does the same.
 
   2. **Compile-time evaluation residues** — what VM CTFE can bind and
      resolve.
@@ -379,7 +321,7 @@ exempt from the ordering.
   Behind the landed files, streams, paths, and tempfile stage
   (`docs/features.md`).
 
-  1. The deferred tail, each a small port:
+  1. The remaining tail, each a small port:
      - public `stat` / `lstat` / `stat_result`, `realpath`, `symlink` /
        `link` / `chdir`, and `isatty` (`FileDescriptor.isatty` / `fchdir`);
      - `OptionalPointer` (null tests spell `Int(ptr) == 0`);
@@ -498,6 +440,9 @@ completed tasks.
 
 - Unfinished work is an unchecked, outcome-oriented task in **Ordered
   Work**; design detail lives in plans or `docs/notes/`.
+- A task we decide not to do is not left unchecked here. Move it to
+  `docs/non-goals.md` with the reason and the condition that would reopen
+  it.
 - A task is complete only when implementation, focused positive and negative
   coverage, documentation, and `scripts/check` agree. In the same change,
   delete it here and record the outcome in `docs/features.md`,
@@ -509,8 +454,9 @@ completed tasks.
 
 Every entry is written for a human reader who has not seen the code.
 
-- One problem per checkbox. Its first sentence states the issue to fix, or
-  says the item is not to be fixed and why.
+- One problem per checkbox. Its first sentence states the issue to fix. An
+  item we are not going to fix does not belong here at all — it belongs in
+  [`docs/non-goals.md`](non-goals.md).
 - Details follow as short bullet points: the symptom, the workaround, the
   cause or the lever, and the file or test that pins it.
 - No run-on sentences and no semicolon chains. If a thought needs a

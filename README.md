@@ -156,6 +156,7 @@ Rust library API.
 - [`docs/mir-text-format.md`](docs/mir-text-format.md) — textual MIR artifact
   format
 - [`docs/roadmap.md`](docs/roadmap.md) — current direction and pending work
+- [`docs/non-goals.md`](docs/non-goals.md) — deliberate limits and deferred options
 - [`assets/README.md`](assets/README.md) — test fixture rules
 - [`CHANGELOG.md`](CHANGELOG.md) — user-visible history
 

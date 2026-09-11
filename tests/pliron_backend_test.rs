@@ -216,12 +216,19 @@ def mask_sum(v: SIMD[DType.float32, 8], limit: Float32) -> Float32:
     var m = v > limit
     return m.select(v, 0.0).reduce_add()
 
+def prefix(v: SIMD[DType.int32, 8]) -> SIMD[DType.int32, 8]:
+    var out = v
+    for i in range(1, 8):
+        out[i] = out[i] + out[i - 1]
+    return out
+
 def compute() -> Int:
     var v = SIMD[DType.int32, 8](1, 2, 3, 4, 5, 6, 7, 8)
     var acc = 0
     for i in range(3):
         acc += Int(total(scale(v, Int32(i))))
-    return acc + Int(mask_sum(v.cast[DType.float32](), 3.5))
+    var p = prefix(v)
+    return acc + Int(mask_sum(v.cast[DType.float32](), 3.5)) + Int(p.reduce_add())
 
 def main():
     print(compute())
@@ -234,9 +241,25 @@ def main():
 /// instructions for them (checked when the pinned toolchain's
 /// `llvm-objdump` is present; the baseline x86-64 target has no SSE4.1, so
 /// the i32 multiply is `pmuludq` pairs rather than `pmulld`).
+///
+/// Lane *writes* are pinned at `O0` instead: `insertelement` is what the
+/// backend emits, and the release pipeline is free to fold an unrolled
+/// insert chain into something else entirely.
 #[test]
 fn simd_lowering_emits_vector_code() {
     let mut module = native_compile(SIMD_KERNELS, &["compute", "main"]);
+    let unoptimized = module.llvm_ir(OptLevel::O0).expect("LLVM conversion");
+    let lane_writer = llvm_function(&unoptimized, "prefix");
+    for needle in [
+        "load <8 x i32>",
+        "insertelement <8 x i32>",
+        "store <8 x i32>",
+    ] {
+        assert!(
+            lane_writer.contains(needle),
+            "a lane write lowers to no `{needle}`:\n{lane_writer}"
+        );
+    }
     let ir = module.llvm_ir(OptLevel::Release).expect("LLVM conversion");
     for needle in [
         "mul <8 x i32>",
@@ -269,6 +292,25 @@ fn simd_lowering_emits_vector_code() {
             "object code selects no `{mnemonic}`:\n{text}"
         );
     }
+}
+
+/// The body of the LLVM function whose name contains `name`, from `define`
+/// to its closing brace.
+fn llvm_function<'a>(ir: &'a str, name: &str) -> &'a str {
+    let start = ir
+        .match_indices("\ndefine ")
+        .map(|(at, _)| at + 1)
+        .find(|start| {
+            ir[*start..]
+                .lines()
+                .next()
+                .is_some_and(|line| line.contains(name))
+        })
+        .unwrap_or_else(|| panic!("no `define` for `{name}`:\n{ir}"));
+    let end = ir[start..]
+        .find("\n}")
+        .map_or(ir.len(), |at| start + at + 2);
+    &ir[start..end]
 }
 
 /// The pinned toolchain's `llvm-objdump`, if installed: beside the LLVM

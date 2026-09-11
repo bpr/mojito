@@ -20,14 +20,21 @@ computes in vector SSA, and stores the result into a fresh typed vector
 alloca at lane alignment (Bool lanes zero-extend to bytes). No SSA cache
 exists: pliron's mem2reg forwards the whole-vector store to the loads at
 `O0`, and SROA does the rest at release. The invariant that makes mem2reg
-safe: a register's storage is touched at its base only by whole-vector
-typed loads and stores (mem2reg does not compare access types), so lane
-reads — dynamic subscripts, formatting, the hashing fold — extract from the
-loaded vector, and lane *writes* go through the place address into variable
-or field storage, never a register's slot.
+safe: a value's storage is touched at its base only by whole-vector typed
+loads and stores (mem2reg does not compare access types), so lane reads —
+dynamic subscripts, formatting, the hashing fold — extract from the loaded
+vector, and a lane *write* is that read's mirror: load the whole vector
+from the place's base address, `insertelement`, store it back. No lane is
+addressed by a byte offset, which also keeps a lane-written variable or
+field slot promotable — pliron's `prune_candidates` drops any allocation
+whose pointer has a use that is not a plain load or store, and a
+`getelementptr` is exactly such a use. A whole-value read or write of the
+same slot is still an `llvm.memcpy`, so a slot used both ways stays in
+memory (roadmap §1).
 
 Per operation: construction is `poison` plus `insertelement` per lane (one
-element splats via `shufflevector`); `+ - *` carry no `nsw`/`nuw`; shift
+element splats via `shufflevector`); a lane write is a bounds-guarded
+`insertelement` into the loaded vector, stored back at the base; `+ - *` carry no `nsw`/`nuw`; shift
 counts are masked lane-wise (`and` with `bits - 1`) before `shl`/`ashr`/
 `lshr`; `//` and `%` reuse the scalar select chain with splat constants (a
 zero divisor selects a zero lane, `MIN // -1` wraps); float `+ - * /` run at
@@ -44,6 +51,14 @@ form's legalization is unverified); `to_bits` is a vector `bitcast` plus
 `llvm.vector.reduce.{fadd,fmul}` from the exact identity (`-0.0`, `1.0`)
 with no reassociation, while float min/max fold lane by lane through
 `llvm.minnum`/`llvm.maxnum` (Rust's `f64::min`/`max`, the VM's step).
+
+Testing rule: vectorization evidence is object code, not IR. Vectors wider
+than a register legalize by splitting, so legal vector IR proves nothing
+about the instructions actually selected —
+`simd_lowering_emits_vector_code` inspects the `llvm-objdump` listing, and
+that is the assertion to keep green. The same test pins what the backend
+*emits* (a lane write's `insertelement`) at `O0`, where the optimizer has
+not yet rewritten it.
 
 Evidence: 20 `assets/ok/simd_*` fixtures agree VM/`O0`/release
 (`conformance/pliron-parity.tsv`), the release IR of

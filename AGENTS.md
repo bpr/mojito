@@ -28,6 +28,7 @@ Read these documents before changing behavior:
 - `docs/architecture.md` — pipeline invariants and phase design.
 - `docs/grammar.md` and `docs/frontend.md` — accepted syntax and parser design.
 - `docs/roadmap.md` — current direction, pending work, and task lifecycle policy.
+- `docs/non-goals.md` — what we have decided not to do, and what would reopen it.
 - `docs/native-abi.md` — the normative native target/layout/runtime-ABI
   contract; owned in code by `crates/mojito-native-core` (target/layout/
   rt_abi, below the MIR waist) plus `crates/mojito-native` (mono/mangle,
@@ -79,7 +80,7 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
    extensions. Accepted programs use valid Mojo syntax and semantics; Mojito
    may reject valid Mojo but must not invent a different language. An
    extension is admitted only when it tracks an announced upstream direction
-   (today: direct `ref` struct fields), is listed in `docs/roadmap.md` §2,
+   (today: direct `ref` struct fields), is listed in `docs/non-goals.md`,
    and keeps its fixtures under `assets/extensions/` — every fixture in the
    ordinary `assets/` folders must compile with the pinned Mojo.
 2. Unsupported semantics fail explicitly. Prefer an early, contextual checker
@@ -125,6 +126,9 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
   `docs/architecture.md` and `docs/symbol-map.md`.
 - Keep comments about current invariants. Historical comparisons belong in design
   notes or commit history, not production-code commentary.
+- Keep `docs/roadmap.md` to work that is actually next. An item we decide
+  not to do moves to `docs/non-goals.md` with its reason, rather than sitting
+  unchecked forever.
 - Write `docs/roadmap.md` entries for a human reader: one problem per
   checkbox, its first sentence stating the issue (or that it is not to be
   fixed, and why), then short bullets — never a semicolon-chained paragraph.

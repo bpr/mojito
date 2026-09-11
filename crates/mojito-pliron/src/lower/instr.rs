@@ -305,8 +305,10 @@ impl FnLowering<'_> {
                 // The VM overwrites the designated storage without dropping
                 // the old value (drop elaboration emits explicit drops), so a
                 // plain store/copy is exact.
-                let (address, ty) = self.place_address(ctx, place, *src)?;
-                self.store_to(ctx, address, &ty, *src)?;
+                if !self.try_lower_simd_lane_store(ctx, place, *src)? {
+                    let (address, ty) = self.place_address(ctx, place, *src)?;
+                    self.store_to(ctx, address, &ty, *src)?;
+                }
                 if matches!(place.proj.last(), Some(Proj::UninitPayload)) {
                     let mut storage_place = place.clone();
                     storage_place.proj.pop();
