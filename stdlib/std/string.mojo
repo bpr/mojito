@@ -1122,7 +1122,7 @@ struct String(
         return StringSpan(self).count_graphemes()
 
     # Ordinary String iteration yields borrowed grapheme-cluster StringSpan
-    # views (current Mojo); `reversed(s)` walks the clusters back to front.
+    # views (current Mojo); `__reversed__` walks the clusters back to front.
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return _GraphemeIter(StringSpan(self), 0)
 
@@ -2325,7 +2325,7 @@ struct _GraphemeIter[
         return self.src._graphemes_between(self.index, self.src.byte_length())
 
 
-# `graphemes_reversed()` / `reversed(s)`: the clusters back to front. The
+# `graphemes_reversed()` / `__reversed__()`: the clusters back to front. The
 # UAX #29 rules scan forward, so each step forward-scans from a cached safe
 # boundary (`_safe_grapheme_start`) to the cluster ending at `end`.
 @fieldwise_init

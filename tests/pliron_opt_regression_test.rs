@@ -295,8 +295,6 @@ def write_packet(mut p: Packet, i: Int):
     p.flags[i] = False
     ref ints = p.ints
     ints[i + 1] += 7
-    ref lane = ints[i]
-    lane += 2
 
 def main():
     var i = 1

@@ -388,3 +388,6 @@ explicit-destroy-discard	reject	assets/type_error/explicit_destroy_discard.mojo
 view-copy-at-last-use	run	assets/ok/view_copy_at_last_use.mojo
 view-temporary-origins	run	assets/ok/view_temporary_origins.mojo
 imm-origin-cast-view	run	assets/ok/imm_origin_cast_view.mojo
+assign-call-over-viewed-local	reject	assets/ownership_error/assign_call_over_viewed_local.mojo
+assign-named-view-over-source	mojito-only	conformance/fixtures/assign_named_view_over_source.mojo
+assign-plain-view-over-source	mojo-only	conformance/fixtures/assign_plain_view_over_source.mojo

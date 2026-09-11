@@ -79,6 +79,21 @@ exempt from the ordering.
     generic constructor against the owned-temp marking in
     `crates/mojito-pliron/src/lower/calls.rs`.
 
+- [ ] **Native: a view method on a temporary owned receiver reads freed
+  memory**
+
+  Problem: `for g in String("abc").codepoints()` and
+  `len(String("abc").__reversed__())` trap natively with `use after
+  Pointer deallocation`, while the VM and upstream run them.
+  - The temporary receiver must live to the end of the statement, because
+    the returned view borrows it.
+  - A named receiver and direct iteration (`for g in String("abc")`) run
+    natively, and so does a temporary `StringSpan(s)` receiver.
+  - Start at the owned-temp release in
+    `crates/mojito-pliron/src/lower/calls.rs`, which frees the receiver
+    after its last use as an operand.
+  - Pinned by `conformance/probes/native_temporary_receiver_view.mojo`.
+
 - [ ] **Native converting-constructor defaults are rejected**
 
   Problem: a `CheckedConst::Construct` default such as
@@ -136,6 +151,30 @@ exempt from the ordering.
     A user type's own `__getitem__` does take an `Indexer` upstream
     (`assets/ok/indexer_normalization.mojo`), so only the builtin SIMD
     subscript diverges.
+  - `ref-binding-register-value`: a `ref` binding to a register-passable
+    value is rejected upstream (`value of type 'Int32' doesn't have a
+    memory origin in 'ref' binding`) but accepted by Mojito. It covers
+    `ref y = f()` for an `Int`-returning `f`, `ref y = a + 1.0`, and a SIMD
+    lane read `ref lane = v[i]`. The lane binding also writes through to
+    the vector, so `lane += 2` changes `v`. A memory-backed temporary
+    (`ref x = make_list()`) is accepted by both. The lever is the
+    `StmtKind::RefDecl` arm in
+    `crates/mojito-checker/src/checker/statements.rs`, whose
+    `materialized_reference_actual` fallback materializes any value.
+    Pinned by `conformance/probes/ref_binding_register_value.mojo`.
+  - `assign-view-over-source`: assigning a call straight back to a local
+    that one of its view arguments borrows is judged by origin upstream but
+    by temporary lifetime in Mojito. Upstream rejects a view at
+    `origin_of(s)._get_owned_interior["bytes"]` (`s[byte=..]`,
+    `s.rstrip()`) with `aliasing values passed immutably to 'v' argument
+    and constructed as a result in 'takes' call`. It does so even through a
+    named local (`var r = s.rstrip()` then `s = String(r)`), which Mojito
+    accepts. It accepts a plain-origin view (`s = takes(StringSpan(s))`),
+    which Mojito rejects because the temporary's loan is live at the store.
+    The fix is to declare upstream's owned-interior origins on the `String`
+    view methods and check argument origins against the assignment
+    destination in the checker. Pinned by the `assign-*-view-over-source`
+    rows of `conformance/cases.tsv`.
 
   Three divergences are retained on purpose and re-probed rather than fixed;
   they are listed in [`docs/non-goals.md`](non-goals.md).

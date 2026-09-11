@@ -137,7 +137,8 @@ def split[PathLike: stdPathLike, //](path: PathLike) -> Tuple[String, String]:
     var head = String(fspath[byte=:i])
     var tail = String(fspath[byte=i:])
     if Bool(head) and not _all_separators(head):
-        head = String(head.rstrip(sep))
+        var stripped = String(head.rstrip(sep))
+        head = stripped^
     return head, tail
 
 

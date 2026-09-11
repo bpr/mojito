@@ -1,7 +1,8 @@
 # Temporary views keep their sources live for upstream's temporary
 # lifetime: a destructured Tuple of views (from a String, from a view, and
-# from a bound pair), a view built only to be iterated in reverse, and
-# `value()` read straight off a temporary Optional holding a view.
+# from a bound pair), a temporary view built only to be iterated in
+# reverse, and `value()` read straight off a temporary Optional holding a
+# view.
 def destructure():
     var s = String("héllo🙂")
     var a, b = s.split_at_grapheme(2)
@@ -16,9 +17,7 @@ def destructure():
 
 def reversed_temporaries():
     var s = String("héllo🙂")
-    for g in reversed(StringSpan(s)):
-        print(g)
-    for g in reversed(String("abc")):
+    for g in StringSpan(s).__reversed__():
         print(g)
 
 

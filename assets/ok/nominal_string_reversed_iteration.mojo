@@ -1,11 +1,10 @@
-# `reversed(s)` / `graphemes_reversed()` walk the extended grapheme
+# `__reversed__()` / `graphemes_reversed()` walk the extended grapheme
 # clusters back to front (CR LF, ZWJ sequences, regional-indicator pairs,
 # and combining marks stay whole), `codepoint_slices_reversed()` walks the
-# codepoints, `__reversed__` serves views too, and every reversed iterator
-# is Sized.
+# codepoints, both serve views too, and every reversed iterator is Sized.
 def main():
     var s = String("héllo🙂")
-    for g in reversed(s):
+    for g in s.__reversed__():
         print(g)
     var family = String("a\r\n👨‍👩‍👧b🇫🇷🇩🇪é")
     var count = 0
@@ -20,10 +19,10 @@ def main():
     var view = StringSpan(s)
     for g in view.__reversed__():
         print(g)
-    for g in reversed(view):
+    for g in view.graphemes_reversed():
         print(g.byte_length())
     var family_view = StringSpan(family)
-    for g in reversed(family_view):
+    for g in family_view.__reversed__():
         print(g.byte_length())
         break
     var marks = String("éẍ")

@@ -43,11 +43,6 @@ impl Flatten<'_> {
                 if let Some(target) = binding_ty.as_ref() {
                     src = self.materialize_register(src, target, expr.source_span());
                 }
-                // The right-hand side is fully evaluated here, so its argument
-                // temporaries end before the destination is written: an
-                // assignment may overwrite the very source a temporary view
-                // argument borrowed (`head = f(head[byte=1:4])`).
-                self.flush_argument_anchors();
                 let writes_through_reference =
                     self.aliases.contains_key(dest) || self.runtime_aliases.contains(dest);
                 if !writes_through_reference

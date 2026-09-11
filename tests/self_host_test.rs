@@ -700,13 +700,13 @@ fn self_hosted_string_full_unicode_case_mapping() {
 
 #[test]
 fn self_hosted_string_reversed_iteration_and_byte_views() {
-    // `reversed(s)` keeps CR LF, ZWJ sequences, and flag pairs whole while
+    // `__reversed__` keeps CR LF, ZWJ sequences, and flag pairs whole while
     // walking back; `bytes()` and the reversed codepoint views are Sized;
     // `peek_next` does not advance; `split_at_grapheme` splits at a cluster.
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
-        "def main():\n    var s = String(\"a\\r\\n\\U0001f468\\u200d\\U0001f469b\\U0001f1eb\\U0001f1f7\")\n    for g in reversed(s):\n        print(g.byte_length())\n    print(len(s.graphemes_reversed()), len(s.codepoint_slices_reversed()), len(s.bytes()))\n    var it = String(\"héllo\").codepoint_slices()\n    var first = it.peek_next()\n    var again = it.peek_next()\n    print(first.value(), again.value(), len(it))\n    var pair = s.split_at_grapheme(2)\n    print(pair[0].byte_length(), pair[1].byte_length())\n",
+        "def main():\n    var s = String(\"a\\r\\n\\U0001f468\\u200d\\U0001f469b\\U0001f1eb\\U0001f1f7\")\n    for g in s.__reversed__():\n        print(g.byte_length())\n    print(len(s.graphemes_reversed()), len(s.codepoint_slices_reversed()), len(s.bytes()))\n    var it = String(\"héllo\").codepoint_slices()\n    var first = it.peek_next()\n    var again = it.peek_next()\n    print(first.value(), again.value(), len(it))\n    var pair = s.split_at_grapheme(2)\n    print(pair[0].byte_length(), pair[1].byte_length())\n",
     );
     assert_eq!(
         run_compiled(&main).unwrap(),
