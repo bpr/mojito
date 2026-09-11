@@ -14,6 +14,11 @@ Sections and their checkboxes are in implementation order; the first unchecked
 box is the default next task. *(recurring)* and *(any order)* sections are
 exempt from the ordering.
 
+Sections 1 to 3 are ordered by what the Pliron direction in
+[`docs/pliron-future.md`](pliron-future.md) depends on: the existing native and
+parity defects first, then the front-end groundwork a Pliron-centered
+architecture would need.
+
 ## Ordered Work
 
 ### 1. Native Backend
@@ -197,6 +202,17 @@ exempt from the ordering.
     'x' conflicts with live reference 'p'`). Upstream accepts it, because
     `Pointer` is not an exclusive borrow. Pinned by
     `conformance/probes/live_pointer_ref_argument.mojo`.
+  - `comptime-if-dropped-branch`: a type error inside the untaken branch of a
+    `comptime if` is never reported, because elaboration drops the branch
+    before the checker runs. Upstream type-checks every branch symbolically
+    and rejects the program (`var x: Int = "hello"` in the untaken branch, and
+    `x.nonexistent()` on a `T: Copyable` parameter). Section 3's first task is
+    the fix.
+  - `comptime-if-module-level`: a `comptime if` at module level is accepted,
+    while upstream requires one inside a function (`'comptime if' must be
+    contained in a function`). `assets/ok/generic_ctfe_value_param.mojo` and
+    `assets/ok/generic_ctfe_associated_value.mojo` use it as a compile-time
+    assertion.
 
   Three divergences are retained on purpose and re-probed rather than fixed;
   they are listed in [`docs/non-goals.md`](non-goals.md).
@@ -223,7 +239,90 @@ exempt from the ordering.
   Four runtime services are deliberately not on that list; they are in
   [`docs/non-goals.md`](non-goals.md).
 
-### 3. Grow The CPU Standard Library *(demand-first)*
+- [ ] **Eight `assets/ok` fixtures do not compile with the pinned Mojo**
+
+  Problem: the ordinary `assets/` folders may hold only programs the pinned
+  Mojo compiles, and a sweep of the files containing `comptime if` found eight
+  that it rejects. None of the eight is in `conformance/cases.tsv`, so nothing
+  catches them.
+  - `is_same_type[T, U]()` does not resolve upstream at all
+    (`type_predicate_comptime_if.mojo`, also `stdlib/std/algorithms.mojo`).
+  - The `IsTrivially*` predicates need `from std.traits import …` upstream
+    (`bool_alias_predicate_where.mojo`, `maybe_uninit_predicates.mojo`,
+    `typelist_comptime_vocabulary.mojo`).
+  - `from std.collections.tuple import Tuple` does not resolve upstream, and a
+    struct parameter must be spelled `Self.Ts` in a method signature
+    (`variadic_method_type_params.mojo`,
+    `variadic_pack_upstream_spellings.mojo`).
+  - Module-level `comptime if` (`generic_ctfe_value_param.mojo`,
+    `generic_ctfe_associated_value.mojo`).
+  - Decide per fixture: respell it, or move it under `assets/extensions/` with
+    a recorded reason.
+  - The sweep covered only files containing `comptime if`. The rest of
+    `assets/` has not been checked the same way.
+
+### 3. Front-End Groundwork For A Pliron-Centered Architecture
+
+The assessment is [`docs/pliron-future.md`](pliron-future.md): Pliron cannot
+give Mojito Mojo's shape on its own, because Mojo type-checks parametric code
+before instantiating it while Mojito elaborates first and checks the clones.
+These tasks fix that order. Each one pays off by itself, the first closes a
+conformance divergence, and together they are what a later Pliron pivot would
+need. Start them only once sections 1 and 2 are clear.
+
+- [ ] **A type error in an untaken `comptime if` branch is never reported**
+
+  Problem: elaboration drops the untaken branch before the checker runs, so
+  Mojito executes programs the pinned Mojo rejects.
+  - Upstream rejects `var x: Int = "hello"` in the untaken branch with `cannot
+    implicitly convert 'StringLiteral["hello"]' value to 'Int'`.
+  - Upstream also rejects `x.nonexistent()` on a `T: Copyable` parameter in an
+    untaken branch. Mojito runs both programs.
+  - Upstream type-checks a generic body symbolically before instantiating it
+    ("Type check + Generate IR before instantiating", LLVM Dev Meeting 2025).
+  - The fix is to check every branch with its parameters left symbolic and
+    select afterwards. The lever is `comptime::elaborate` running ahead of
+    `checker::check_program`.
+  - `docs/architecture.md` §Stage 2 documents the dropped branch as intended
+    behavior, so it changes with this task.
+  - Land the two probes under `conformance/probes/` first.
+  - Known fallout, from the `comptime if` sweep recorded in
+    [`docs/pliron-future.md`](pliron-future.md): two fixtures put a deliberate
+    type error in the untaken branch as a compile-time assertion
+    (`assets/ok/generic_ctfe_value_param.mojo`,
+    `assets/ok/generic_ctfe_associated_value.mojo`).
+  - Two more sites rely on the guard narrowing a method's `T` to the element
+    type: `assets/ok/variadic_method_type_params.mojo` (`get`,
+    `count_matching`) and `stdlib/std/collections/tuple.mojo`
+    (`__contains__`).
+  - Upstream spells that shape `rebind[Ts[i]](value)`, which Mojito does not
+    implement (`Undefined variable 'rebind'`), so this task needs `rebind` or
+    an equivalent before those two sites can be respelled.
+
+- [ ] **Parameter expressions have no symbolic form**
+
+  Problem: `CtValue` carries concrete values plus an opaque symbolic `Param`,
+  so two parameter expressions can only be compared by making them concrete.
+  - `SIMD[dt, n + 1]` and `SIMD[dt, 1 + n]` cannot be judged equal today.
+  - Symbolic branch checking needs this, and so does any parametric IR.
+  - Upstream stores parameter expressions as uniqued typed attributes and
+    decides equality by canonicalization rather than evaluation.
+  - Shape the representation like a Pliron attribute, uniqued and
+    canonicalized, so a later dialect move is a re-homing and not a redesign.
+
+- [ ] **The Pliron pivot has no falsifiable proof yet**
+
+  Problem: [`docs/pliron-backend-pivot-plan.md`](pliron-backend-pivot-plan.md)
+  stages a migration to a required Pliron IR framework, but its Stage A1 slice
+  has never been built, so the decision rests on paper.
+  - Build the A1 vertical slice from that plan's §Smallest falsifiable proof.
+  - Measure construction time, verification time, peak memory, and text size
+    against the budget the plan names.
+  - Decide from the measurements: continue to A2, or record the rejection in
+    [`docs/non-goals.md`](non-goals.md).
+  - This is the decision point for MIR-as-a-dialect, not a commitment to it.
+
+### 4. Grow The CPU Standard Library *(demand-first)*
 
 - [ ] **Collection API parity**
 
@@ -409,7 +508,7 @@ exempt from the ordering.
   Goal: deterministic testable cores, with host-dependent behavior behind
   runtime services.
 
-### 4. Packaging, Artifacts, And Developer Tooling *(any order unless noted)*
+### 5. Packaging, Artifacts, And Developer Tooling *(any order unless noted)*
 
 - [ ] **Compile-time performance**
 
@@ -452,7 +551,7 @@ exempt from the ordering.
   Goal: the release check rebuilds, tests, documents, and reproduces
   conformance from the crates.io archive alone.
 
-### 5. Code Organization Follow-Ups *(any order — behavior-preserving)*
+### 6. Code Organization Follow-Ups *(any order — behavior-preserving)*
 
 The 2026-09 module split (`docs/symbol-map.md`) removed every file over
 3,000 lines. What remains needs semantic extraction, not line moves.

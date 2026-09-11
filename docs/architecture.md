@@ -125,7 +125,8 @@ The architecture prioritizes:
 - a small compiler that is still recognizable as a systems-language
   implementation
 
-mojito is not trying to reproduce Mojo's production architecture. First-pass
+mojito does not today reproduce Mojo's production architecture, and that
+exclusion is itself under review (`docs/pliron-future.md`). First-pass
 parity targets single-threaded CPU language semantics and excludes GPU,
 concurrency/parallelism, distributed execution, Python interoperability, any
 requirement that MLIR (or any backend IR — Pliron and Cranelift sit below the
@@ -194,10 +195,13 @@ source -> Compiler -> ownership-verified, post-drop verified MIR
                     versioned runtime ABI
 ```
 
-Pliron never replaces Mojito MIR: it is an optional lowering, verification,
-transformation, and optimization framework below the serialized MIR handoff. A
-backend consumes `MirProgram`; it does not import AST, HIR, checker,
-ownership, or call-binding policy. The native interface accepts a
+Pliron does not replace Mojito MIR in the current architecture: it is an
+optional lowering, verification, transformation, and optimization framework
+below the serialized MIR handoff. Making it a required IR framework is an
+open, staged decision (`docs/pliron-future.md`,
+`docs/pliron-backend-pivot-plan.md`), and until a stage lands the contract
+here is the rule. A backend consumes `MirProgram`; it does not import AST,
+HIR, checker, ownership, or call-binding policy. The native interface accepts a
 `&MirProgram`, a target description, and an output kind, and returns textual
 IR, bitcode, an object, or an executable plus structured diagnostics;
 `run --backend pliron` executes only the advertised subset natively and
@@ -233,8 +237,11 @@ Dialect policy: lower directly to Pliron's LLVM dialect, and introduce a
 narrow `mojito` Pliron dialect only for demonstrated needs such as runtime
 calls, checked traps, explicit error propagation, target-independent
 aggregate constants, or lifecycle normalization. Do not reproduce the MIR
-schema as a second operation set. Every custom operation needs textual
-syntax, a verifier, negative coverage, and a total conversion rule; LLVM
+schema as a second operation set. That policy governs the backend as it
+exists. The `mojito.semantic`/`mojito.core`/`mojito.abi` dialects in
+`docs/pliron-backend-pivot-plan.md` would supersede it, and only a landed
+migration stage does so. Every custom operation needs textual syntax, a
+verifier, negative coverage, and a total conversion rule; LLVM
 emission rejects any residual illegal operation. Missing Pliron facilities
 are upstreamed as narrowly scoped patches rather than accumulating an
 untracked local fork.
@@ -410,7 +417,9 @@ The implemented forms are:
 - `comptime if`: evaluates each condition as a compile-time `Bool` and keeps
   only the selected branch. Dropped branches disappear before type checking,
   which lets them contain code that would be invalid for the selected
-  specialization.
+  specialization. Upstream instead type-checks every branch symbolically and
+  rejects such code, so this is a divergence (`docs/roadmap.md` §2
+  `comptime-if-dropped-branch`) rather than a settled design.
 - `comptime for`: evaluates the iterable as either `range(...)` or a
   compile-time tuple/list, substitutes the loop variable with a literal, and
   splices a fresh elaborated copy of the loop body for each element. A

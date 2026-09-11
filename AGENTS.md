@@ -16,10 +16,15 @@ The prioritized native backends are
 framework whose LLVM dialect emits LLVM IR; `docs/roadmap.md` contains the
 staged adoption and fallback plan — and Cranelift, with a C or C++ source backend as a possible
 additional target. Direct LLVM or MLIR lowering and eBPF are no longer
-prioritized. No backend IR is a *required internal* compiler layer: backends sit
-below the MIR waist, MIR remains the serialized backend-independent handoff, and
-the VM remains the executable semantic oracle. See the native-backend section
-of `docs/roadmap.md` for the ordering.
+prioritized. Today no backend IR is a *required internal* compiler layer:
+backends sit below the MIR waist, MIR remains the serialized
+backend-independent handoff, and the VM remains the executable semantic
+oracle. That is a current rule under review rather than a settled one:
+`docs/pliron-future.md` assesses what a Pliron-centered architecture would
+cost above the waist, and `docs/pliron-backend-pivot-plan.md` stages one below
+`CheckedProgram`. It stays the rule the code follows until a migration stage
+actually lands. See the native-backend section of `docs/roadmap.md` for the
+ordering.
 
 Read these documents before changing behavior:
 
@@ -97,7 +102,10 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
    they do not silently re-check or recover unchecked execution.
 5. MIR is the stable waist. Backends consume register-typed MIR that has passed
    `mir::verify` plus ownership analysis, with checked declaration metadata,
-   rather than rediscovering language rules from AST syntax.
+   rather than rediscovering language rules from AST syntax. Moving that waist
+   is a staged decision recorded in `docs/pliron-future.md` and
+   `docs/pliron-backend-pivot-plan.md`, never an incidental consequence of
+   another change.
 6. `crates/mojito-ast/src/call.rs` owns structural call binding and
    `crates/mojito-symbol/src/symbol.rs` owns callable identity. Do not
    duplicate either policy in the checker, MIR, or VM.
