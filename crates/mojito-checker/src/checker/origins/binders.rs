@@ -269,6 +269,11 @@ impl Checker {
                 });
             }
         };
+        // `ImmOrigin(o)` names `o`'s provenance; origin arguments carry no
+        // capability, so the cast erases here.
+        if let Some(inner) = super::immutable_origin_cast(expression) {
+            return self.explicit_origin_argument(&ParamArg::Value(inner?.clone()));
+        }
         match &expression.kind {
             ExprKind::Call {
                 name,
@@ -412,6 +417,12 @@ impl Checker {
                 });
             }
         };
+        // `ImmOrigin(o)`: `o`'s provenance, known immutable, so an
+        // `Origin[mut=True]` slot rejects it.
+        if let Some(inner) = super::immutable_origin_cast(expression) {
+            let (origin, _) = self.resolve_origin_param_arg(&ParamArg::Value(inner?.clone()))?;
+            return Ok((origin, Some(Mutability::Immutable)));
+        }
         let named_param_mutability = |name: &str| match self.enclosing_origin_type_param(name) {
             Some((index, parameter)) => Some(
                 match parameter.origin_mutability.as_ref().map(|e| &e.kind) {

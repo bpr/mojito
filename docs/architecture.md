@@ -465,14 +465,27 @@ name.
 Temporaries borrow for their statement through three anchors. A temporary
 receiver of a `ref[self]`-returning method is materialized like a temporary
 bound to a `ref` parameter (`materialized_reference_actual`; when the
-construction already carries `BorrowRefArguments`, the owner rides on that
-adjustment's `materialized` slot, and `materialized_borrow_owner` is the one
-reader), and `lower_call_receiver` stores it in its `$mat_r` slot so the
-result handle roots at real frame storage. A subscript view temporary
+expression already carries `BorrowRefArguments` or a view result's
+`BorrowViewResult`, the owner rides on that adjustment's `materialized` slot,
+and `materialized_borrow_owner` is the one reader), and `lower_call_receiver`
+stores it in its `$mat_r` slot so the result handle roots at real frame
+storage. The `$mat_r` slot establishes the temporary's own loans
+(`aggregate_borrows_unmaterialized`, the loan funnel without the slot's
+self-loan), so storage a materialized view borrows outlives every borrower of
+the slot (`reversed(StringSpan(s))`). A subscript view temporary
 (`MultiIndex`/`Slice`/`Index` with a `BorrowViewResult`) in any argument
 list anchors in `$arg_loan_r` like a loan-carrying call temporary in a plain
 call — no consumer channel retains it, so the anchor never duplicates a
-loan. A discarded reference result (an expression statement, `_ = e`) is
+loan. The builtin `String(view)` conversion lets its arguments anchor like a
+plain call, because its result is a fresh owned string carrying no loans, and
+a call temporary at a place-retaining argument slot, which has no place to
+retain, anchors through the same `anchor_temporary_argument` decision. A
+binding (`var x = e` and `x = e` alike) flushes its right-hand side's argument
+anchors before the store, so an assignment may overwrite the source a
+temporary view argument borrowed (`head = f(head[byte=1:4])`). A tuple unpack
+gives every loan-carrying element (`CheckedTupleUnpackElement::carries_loans`)
+the unpacked value's loans, as binding the whole value would. A discarded
+reference result (an expression statement, `_ = e`) is
 recorded in `discarded_reference_results` and is not a value read. On the
 VM, `Writer.write` formats its arguments with the caller frame mirrored so a
 nested `write_to` can read a pointer into the caller. The empty-subscript

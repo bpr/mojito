@@ -2179,6 +2179,10 @@ impl Checker {
     ) -> Result<mojito_types::origin::PointerOrigin, TypeError> {
         use mojito_types::origin::{Mutability, Origin, PointerOrigin};
 
+        // `ImmOrigin(o)`: `o`'s provenance, read-only.
+        if let Some(inner) = super::origins::immutable_origin_cast(expression) {
+            return self.pointer_origin_expr(inner?).map(immutable_capability);
+        }
         if let Some((base, tag)) = super::origins::interior_origin_syntax(expression) {
             let origin = self.pointer_origin_expr(base)?;
             return append_interior_tag(origin, tag);
@@ -2641,6 +2645,42 @@ fn subtree_is_terminal_error() -> TypeError {
     TypeError::Unsupported(
         "'_subtree' is a terminal origin projection: nothing can be projected below it".to_string(),
     )
+}
+
+/// The same provenance with its capability pinned read-only: the
+/// resolution of the capability cast `ImmOrigin(o)` in a `Pointer` origin
+/// argument or an `unsafe_origin_cast` target.
+fn immutable_capability(
+    origin: mojito_types::origin::PointerOrigin,
+) -> mojito_types::origin::PointerOrigin {
+    use mojito_types::origin::{Mutability, PointerOrigin};
+    match origin {
+        PointerOrigin::Place { place, .. } => PointerOrigin::Place {
+            place,
+            mutable: false,
+        },
+        PointerOrigin::Param {
+            id,
+            interior,
+            subtree,
+            ..
+        } => PointerOrigin::Param {
+            id,
+            mutability: Mutability::Immutable,
+            interior,
+            subtree,
+        },
+        PointerOrigin::SelfPlace {
+            interior, subtree, ..
+        } => PointerOrigin::SelfPlace {
+            mutability: Mutability::Immutable,
+            interior,
+            subtree,
+        },
+        PointerOrigin::Untracked { .. } => PointerOrigin::Untracked { mutable: false },
+        PointerOrigin::UnsafeAny { .. } => PointerOrigin::UnsafeAny { mutable: false },
+        PointerOrigin::Static => PointerOrigin::Static,
+    }
 }
 
 /// Whether an application argument is upstream's origin placeholder spelling

@@ -102,8 +102,7 @@ def dirname[PathLike: stdPathLike, //](path: PathLike) -> String:
     var i = fspath.rfind(sep) + 1
     var head = String(fspath[byte=:i])
     if Bool(head) and not _all_separators(head):
-        var stripped = String(head.rstrip(sep))
-        return stripped^
+        return String(head.rstrip(sep))
     return head^
 
 
@@ -138,8 +137,7 @@ def split[PathLike: stdPathLike, //](path: PathLike) -> Tuple[String, String]:
     var head = String(fspath[byte=:i])
     var tail = String(fspath[byte=i:])
     if Bool(head) and not _all_separators(head):
-        var stripped = String(head.rstrip(sep))
-        head = stripped^
+        head = String(head.rstrip(sep))
     return head, tail
 
 
@@ -148,8 +146,7 @@ def basename[PathLike: stdPathLike, //](path: PathLike) -> String:
     var i = fspath.rfind(sep) + 1
     var head = String(fspath[byte=i:])
     if Bool(head) and not _all_separators(head):
-        var stripped = String(head.rstrip(sep))
-        return stripped^
+        return String(head.rstrip(sep))
     return head^
 
 

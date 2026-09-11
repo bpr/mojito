@@ -121,7 +121,15 @@ exempt from the ordering.
     judges the binder per instantiation and rejects the write from an
     immutable place (`expression must be mutable in assignment`). Origin
     arguments are erased from checked identity, so no per-instance binding
-    reaches `check_pointer_write`; carrying it there is the fix.
+    reaches `check_pointer_write`; carrying it there is the fix. An
+    `ImmOrigin(o)` origin argument (`Cell[ImmOrigin(o)]`) erases the same
+    way, so a write through that view's pointer field is accepted too.
+  - `unsafe-origin-cast-mutability`: `unsafe_origin_cast` accepts a target
+    whose mutability differs from the pointer's (an `ImmOrigin(o)` or
+    `ImmUntrackedOrigin` target on a mutable pointer), while upstream's
+    `target_origin: Origin[mut=Self.mut]` should reject it. Mojito rejects
+    only the upgrade direction. Pinned by
+    `conformance/probes/unsafe_origin_cast_mutability.mojo`.
   - `simd-subscript-indexer`: Mojito normalizes any `Indexer` through
     `__mlir_index__` at every subscript, so a `SIMD` lane accepts one,
     while upstream's `SIMD.__getitem__` takes a plain `Int` and rejects it.
@@ -166,26 +174,37 @@ exempt from the ordering.
   task closes when its bullets are done, and a residue found inside a task
   moves to the task that owns its fix.
 
-  1. **Temporary views and their origins** — the one cluster where the VM
-     oracle can be unsound.
-     - Destructuring a returned `Tuple` of origin-bearing views
-       (`var a, b = s.split_at_grapheme(n)`) reports `use after Pointer
-       deallocation` on the VM. A bound pair read by index (`pair[0]`,
-       `pair[1]`) and a returned tuple literal of views both run.
-     - `split_at_grapheme` returns the receiver's origin where upstream
-       returns `ImmOrigin` views.
-     - An overloaded free def over a temporary view argument
-       (`reversed(StringSpan(s))`) frees the view before the loop runs.
-       Bind the view first, or call `graphemes_reversed()`.
-     - `value()` on a temporary `Optional` holding a view
-       (`it.peek_next().value()`) is rejected as a reference to a
-       non-place. Bind the Optional first.
-     - A `String` copied from a temporary view of a local at the local's
-       last use inside a `return` expression or a self-assignment
-       (`return String(head.rstrip("/"))`,
-       `head = String(head.rstrip("/"))`) frees the local before the copy
-       reads it (`conformance/probes/view_copy_return_use_after_free.mojo`).
-       Bind the copy to a local first, as `std/os/path/path.mojo` does.
+  1. **Temporary views and their origins** — the origin spelling and
+     capability gaps the temporary-view fixes left open.
+     - `Origin[mut=False].cast_from[o]` does not exist at the pinned head,
+       yet `ref[...]` clauses still accept it and the bundled `dict.mojo`
+       and `set.mojo` use it. Upstream spells the cast `ImmOrigin(o)`,
+       which Mojito now accepts. Migrate the stdlib and tests, then reject
+       `cast_from` with a migration diagnostic as `StaticConstantOrigin`
+       does.
+     - A bare `ImmOrigin` or `MutOrigin` name is not spelled. An origin
+       binder bounded by it (upstream's `Named[T, o: ImmOrigin]`) and
+       `from std.origin import ImmOrigin` both reject. Only the call form
+       `ImmOrigin(o)` resolves.
+     - A mutable-origin `Pointer` does not convert to an `ImmOrigin(o)`
+       one, so `var r: Pointer[Int, ImmOrigin(origin_of(x))] =
+       Pointer(to=x)` rejects. Upstream converts through `Pointer`'s
+       `@implicit` constructor. The diagnostic prints both sides alike
+       (`expected Pointer[Int, origin@N], found Pointer[Int, origin@N]`)
+       because the display omits the capability.
+     - A keyword constructor over an origin-carrying `Pointer` rejects
+       `V[origin_of(x)](unsafe_ptr=Pointer(to=x))` and the inferred
+       `V(unsafe_ptr=...)` with `no constructor overload matches the
+       supplied arguments`. The same constructor runs with a pointer field
+       and an explicit origin (`V[ImmOrigin(Self.origin)](unsafe_ptr=self.p)`).
+     - A struct-binder origin argument in type position
+       (`V[Self.origin](unsafe_ptr=self.p)`) fails MIR verification with
+       `nongeneric call carries a compile-time value argument`.
+       `accept_origin_argument` marks only a value-position argument
+       erased.
+     - A free function's origin binder does not resolve as a `Pointer`
+       origin argument: `def peek[m: Bool, //, o: Origin[mut=m]](p:
+       Pointer[Int, o])` reports `Undefined variable 'o'`.
 
   2. **Compile-time evaluation residues** — what VM CTFE can bind and
      resolve.

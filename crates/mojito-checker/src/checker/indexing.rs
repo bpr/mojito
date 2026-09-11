@@ -940,9 +940,18 @@ impl Checker {
         // its receiver's sources: the result binding inherits the
         // receiver's loans instead of owning fresh storage.
         if self.type_carries_loans(&result) {
-            self.operation_adjustments.borrow_mut().insert(
+            // Re-inference keeps an owner a `ref self` consumer already
+            // minted for this view temporary.
+            let mut adjustments = self.operation_adjustments.borrow_mut();
+            let materialized = match adjustments.get(&span) {
+                Some(mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
+                    materialized,
+                }) => *materialized,
+                _ => None,
+            };
+            adjustments.insert(
                 span.clone(),
-                mojito_checked::checked::SemanticAdjustment::BorrowViewResult,
+                mojito_checked::checked::SemanticAdjustment::BorrowViewResult { materialized },
             );
         }
         self.subscript_descriptors
@@ -1055,9 +1064,18 @@ impl Checker {
         // A view-typed subscript result (a StringSpan keyword slice) stays
         // borrowed from its receiver's sources.
         if self.type_carries_loans(&result) {
-            self.operation_adjustments.borrow_mut().insert(
+            // Re-inference keeps an owner a `ref self` consumer already
+            // minted for this view temporary.
+            let mut adjustments = self.operation_adjustments.borrow_mut();
+            let materialized = match adjustments.get(&span) {
+                Some(mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
+                    materialized,
+                }) => *materialized,
+                _ => None,
+            };
+            adjustments.insert(
                 span.clone(),
-                mojito_checked::checked::SemanticAdjustment::BorrowViewResult,
+                mojito_checked::checked::SemanticAdjustment::BorrowViewResult { materialized },
             );
         }
         self.subscript_descriptors

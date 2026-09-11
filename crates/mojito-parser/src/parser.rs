@@ -119,18 +119,20 @@ fn call_name(callee: Expr) -> Result<String, ParseError> {
 /// cannot be distinguished syntactically from indices; `origin_of(...)` can,
 /// because it is a compiler-known operation that never has a runtime value.
 fn is_explicit_origin_argument(expression: &Expr) -> bool {
-    matches!(
-        &expression.kind,
+    match &expression.kind {
         ExprKind::Call {
             name,
             param_args,
             kwargs,
             args,
-        } if name == "origin_of"
-            && param_args.is_empty()
-            && kwargs.is_empty()
-            && !args.is_empty()
-    )
+        } => match name.as_str() {
+            "origin_of" => param_args.is_empty() && kwargs.is_empty() && !args.is_empty(),
+            // The origin capability casts `ImmOrigin(o)` / `Origin[mut=False](o)`.
+            "ImmOrigin" | "MutOrigin" | "Origin" => kwargs.is_empty() && args.len() == 1,
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 /// The parsed body of an `if`/`elif`/`else` chain: the `(condition, body)`

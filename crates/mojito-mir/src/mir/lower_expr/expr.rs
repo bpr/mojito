@@ -561,18 +561,35 @@ impl Flatten<'_> {
                 // Retain only checker-selected `mut`/`ref` caller places. A
                 // syntactically simple copied argument remains eligible for
                 // ASAP destruction after its value has been evaluated.
+                // The prelude rewrite renames every use of `String`, including
+                // the builtin Writable conversion the checker typed as the
+                // compile-time string; route those back to the VM's
+                // conversion builtin instead of the nominal constructor.
+                // A retargeted `String(x)` stringify carries a
+                // `ResolveCallable("String")` adjustment (production path) or
+                // keeps the compile-time string checked type (the unlinked
+                // seam): both route to the VM's `"String"` conversion builtin
+                // with an explicitly literal-typed result — the surrounding
+                // implicit-conversion wrap materializes the nominal struct.
+                let stringify = mojito_symbol::symbol::is_stdlib_string_struct(name)
+                    && (self.resolved_callable(e).as_deref() == Some("String")
+                        || self.checked_ty(e) == Some(Ty::StringLiteral));
                 // A call's argument list anchors nested loan-carrying
                 // temporaries unless another channel already carries their
                 // loans (see `call_anchors_arguments`). A construction's
                 // aggregate result additionally carries its arguments' loans
                 // forward instead (its binding — or its own anchor one call
-                // level up — installs them).
+                // level up — installs them). The stringify conversion is the
+                // exception: its result is a fresh owned string that carries
+                // no loans, so a view argument anchors as in a plain call.
                 let view_result = self.borrows_view_result(e);
                 let saved_anchor_permission = self.allow_argument_anchors;
-                self.allow_argument_anchors = !matches!(
-                    self.checked_ty(e),
-                    Some(Ty::Struct(constructed, _)) if constructed == *name
-                ) && self.call_anchors_arguments(e);
+                self.allow_argument_anchors = (stringify
+                    || !matches!(
+                        self.checked_ty(e),
+                        Some(Ty::Struct(constructed, _)) if constructed == *name
+                    ))
+                    && self.call_anchors_arguments(e);
                 let (regs, arg_places) = self.lower_call_arguments(args, view_result);
                 self.allow_argument_anchors = saved_anchor_permission;
                 // A copy construction (`Name(copy=place)`) binds its single
@@ -610,19 +627,6 @@ impl Flatten<'_> {
                 } else {
                     self.lower_call_keywords(kwargs, view_result)
                 };
-                // The prelude rewrite renames every use of `String`, including
-                // the builtin Writable conversion the checker typed as the
-                // compile-time string; route those back to the VM's
-                // conversion builtin instead of the nominal constructor.
-                // A retargeted `String(x)` stringify carries a
-                // `ResolveCallable("String")` adjustment (production path) or
-                // keeps the compile-time string checked type (the unlinked
-                // seam): both route to the VM's `"String"` conversion builtin
-                // with an explicitly literal-typed result — the surrounding
-                // implicit-conversion wrap materializes the nominal struct.
-                let stringify = mojito_symbol::symbol::is_stdlib_string_struct(name)
-                    && (self.resolved_callable(e).as_deref() == Some("String")
-                        || self.checked_ty(e) == Some(Ty::StringLiteral));
                 // Builtin string producers wrapped by the nominal-String
                 // conversion keep their own callee but type their register
                 // as the compile-time string the wrap consumes.

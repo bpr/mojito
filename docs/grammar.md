@@ -264,9 +264,14 @@ Ordering is parsed leniently. The **`ref` convention** (parametric-mutability
 reference) may carry an **origin specifier** — `ref[origin] x` — whose contents (an
 arbitrary expression treated as `origin_of(...)`, a named origin, or `_` for an unbound
 origin) are retained in the AST for checked resolution. A member may be wrapped in
-the declaration-level immutable-origin cast `Origin[mut=False].cast_from[origin]`,
-which pins the reference's capability to read-only independent of the inner
-origin parameter's own `mut=` (the upgrade direction is rejected). Named
+the immutable-origin capability cast `ImmOrigin(origin)` (equivalently
+`Origin[mut=False](origin)`, or the older declaration-level
+`Origin[mut=False].cast_from[origin]`), which pins the reference's capability
+to read-only independent of the inner origin parameter's own `mut=` while
+keeping its provenance (the upgrade direction, `MutOrigin(origin)`, is
+rejected). The call form is also an ordinary origin argument (a struct or
+`Pointer` origin slot, an `unsafe_origin_cast` target) and, like
+`origin_of(...)`, keeps a bracket over a type name a parameter application. Named
 `Origin[mut=...]` parameters and the `//` infer-only marker are likewise
 retained; signature-level origin inference and substitution remain deferred.
 Origin positions also recognize two member projections as ordinary member

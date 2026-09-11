@@ -105,6 +105,7 @@ assets/ok/hashlib_explicit_hasher_containers.mojo	main	exe-differential	sanitize
 assets/ok/hashlib_keyed_ahasher.mojo	main	exe-differential	sanitized
 assets/ok/hashlib_values.mojo	main	exe-differential	sanitized
 assets/ok/hello_world.mojo	main	exe-differential	sanitized
+assets/ok/imm_origin_cast_view.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion.mojo	main	exe-differential	sanitized
 assets/ok/indexer_normalization.mojo	main	exe-differential	sanitized
 assets/ok/init_out_self.mojo	main	exe-differential	sanitized
@@ -451,7 +452,9 @@ assets/ok/variant_init_with_constructor.mojo	main	exe-differential	sanitized
 assets/ok/variant_nominal_string_payload.mojo	main	exe-differential	sanitized
 assets/ok/variant_owning_api.mojo	main	exe-differential	sanitized
 assets/ok/variant_unsafe_get_static_supported.mojo	main	exe-differential	sanitized
+assets/ok/view_copy_at_last_use.mojo	main	exe-differential	sanitized
 assets/ok/view_temporaries.mojo	main	exe-differential	sanitized
+assets/ok/view_temporary_origins.mojo	main	exe-differential	sanitized
 assets/ok/vm_backed_ctfe_recursive_call.mojo	main	exe-differential	sanitized
 assets/ok/vm_backed_ctfe_ternary.mojo	main	exe-differential	sanitized
 assets/ok/waypoints.mojo	main	exe-differential	sanitized

@@ -998,6 +998,7 @@ impl Checker {
                         ty,
                         accessor: None,
                         reference: None,
+                        carries_loans: false,
                     })
                     .collect::<Vec<_>>();
                 if let Ty::Struct(name, _) = &vt
@@ -1067,6 +1068,9 @@ impl Checker {
                             });
                         }
                     }
+                }
+                for element in &mut unpack_plan {
+                    element.carries_loans = self.type_carries_loans(&element.ty);
                 }
                 self.tuple_unpack_plans
                     .borrow_mut()

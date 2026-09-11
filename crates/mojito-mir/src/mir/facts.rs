@@ -78,10 +78,6 @@ impl Flatten<'_> {
     /// Every owner loan carried into an aggregate expression.  An aggregate may
     /// contain more than one reference-valued field, so this must remain plural:
     /// keeping only the first borrow makes later fields dangling-capable.
-    #[allow(
-        clippy::needless_collect,
-        reason = "TODO: needs the intermediate to end the &self borrow"
-    )]
     pub(super) fn aggregate_borrows(&mut self, expression: &Expr) -> Vec<MirLoan> {
         // A view-constructor implicit conversion borrows its source place:
         // the conversion result carries the same whole-place loan the
@@ -122,402 +118,7 @@ impl Flatten<'_> {
                 shared: false,
             }];
         }
-        let borrow = self
-            .checked_adjustments(expression)
-            .into_iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::BorrowShared => Some(false),
-                mojito_checked::checked::SemanticAdjustment::BorrowMutable => Some(true),
-                _ => None,
-            });
-        if let Some(mutable) = borrow
-            && let ExprKind::Identifier(name) = &expression.kind
-            && let Some(var) = self.existing_expression_var(name, expression)
-        {
-            if let Some(loans) = self.aggregate_loans.get(&var) {
-                return loans
-                    .iter()
-                    .cloned()
-                    .map(|mut loan| {
-                        loan.mutable = mutable;
-                        loan
-                    })
-                    .collect();
-            }
-            if let Some(mut loan) = self.aliases.get(&var).cloned() {
-                loan.mutable = mutable;
-                return vec![loan];
-            }
-            // An owned variable auto-borrowed into reference storage loans
-            // its own root place — the same loan an explicit `ref` binding
-            // of the place would install.
-            let ty = self.var_types.get(&var).cloned();
-            return vec![MirLoan {
-                place: MirPlace::root(var, ty),
-                mutable,
-                interior: None,
-                shared: false,
-            }];
-        }
-        if let Some(mutable) = borrow
-            && matches!(
-                expression.kind,
-                ExprKind::Member { .. } | ExprKind::Index { .. } | ExprKind::TypeApply { .. }
-            )
-        {
-            let place = self.place(expression);
-            let interiors = self.checked_interior_references(expression);
-            if interiors.is_empty() {
-                return vec![MirLoan {
-                    place,
-                    mutable,
-                    interior: None,
-                    shared: false,
-                }];
-            }
-            return interiors
-                .into_iter()
-                .map(|origin| {
-                    let mut place = place.clone();
-                    let interior = self.direct_borrow_interior(&mut place, &origin);
-                    MirLoan {
-                        place,
-                        mutable,
-                        interior: Some(interior),
-                        shared: false,
-                    }
-                })
-                .collect();
-        }
-        if let ExprKind::Identifier(name) = &expression.kind {
-            if let Some(var) = self.existing_expression_var(name, expression)
-                && let Some(loans) = self.aggregate_loans.get(&var)
-            {
-                return loans.clone();
-            }
-            // A capturing closure flowing into storage loans its REFERENCE
-            // captures' owners: the stored value retains their frame slots,
-            // so the owners must stay alive (and, for `imm`, unmutated)
-            // while the storage lives. Direct nested calls never consult
-            // this path, so the loan-free declaration-to-call capture model
-            // is preserved; owned copy/move captures are self-contained.
-            if let Some(info) = self.nested_info(expression) {
-                let mut loans = Vec::new();
-                let mut seen = std::collections::HashSet::new();
-                for capture in &info.captures {
-                    self.collect_capture_loans(capture, &mut loans, &mut seen);
-                }
-                return loans;
-            }
-        }
-        match &expression.kind {
-            ExprKind::Call { args, kwargs, .. } => {
-                // A view construction borrows the places its `ref [origin]`
-                // parameters bound (the checker recorded the argument
-                // indexes), so the stored aggregate keeps its source alive.
-                if let Some(mojito_checked::checked::SemanticAdjustment::BorrowRefArguments {
-                    arguments,
-                    ..
-                }) = self
-                    .checked_adjustments(expression)
-                    .into_iter()
-                    .find(|adjustment| {
-                        matches!(
-                            adjustment,
-                            mojito_checked::checked::SemanticAdjustment::BorrowRefArguments { .. }
-                        )
-                    })
-                {
-                    let loans = arguments
-                        .into_iter()
-                        .filter_map(|(index, mutable)| {
-                            args.get(index).map(|argument| MirLoan {
-                                place: self.place(argument),
-                                mutable,
-                                interior: None,
-                                shared: false,
-                            })
-                        })
-                        .collect::<Vec<_>>();
-                    if !loans.is_empty() {
-                        return loans;
-                    }
-                }
-                // A checked pointer construction loans exactly its source
-                // place, with the mutability the checker inferred from the
-                // owner binding. A construction through a `ref` binding
-                // carries a subtree origin instead: its loan is the lazy
-                // generation domain rooted at the reference's owner.
-                if let Some(mojito_checked::checked::SemanticAdjustment::PointerToPlace {
-                    mutable,
-                }) = self
-                    .checked_adjustments(expression)
-                    .into_iter()
-                    .find(|adjustment| {
-                        matches!(
-                            adjustment,
-                            mojito_checked::checked::SemanticAdjustment::PointerToPlace { .. }
-                        )
-                    })
-                {
-                    let source = &kwargs
-                        .first()
-                        .expect("checked pointer construction has a 'to=' argument")
-                        .value;
-                    if let Some(Ty::Pointer {
-                        origin: mojito_types::origin::PointerOrigin::Place { place, .. },
-                        ..
-                    }) = self.checked_ty(expression)
-                        && matches!(
-                            place.path.last(),
-                            Some(mojito_types::origin::OriginSeg::Subtree)
-                        )
-                    {
-                        // The pointer reborrows through the `ref` binding it
-                        // was taken from, so its loan keeps that binding's
-                        // place and link instead of competing with the
-                        // binding's own loan.
-                        let source = self.place(source);
-                        return self.pointer_place_loan(&place, mutable, Some(source), true);
-                    }
-                    let place = self.place(source);
-                    return vec![MirLoan {
-                        place,
-                        mutable,
-                        interior: None,
-                        shared: true,
-                    }];
-                }
-                // A free-function call returning a ref-field struct (a
-                // borrowing view) lends its borrowed sources to the result,
-                // mirroring the method-receiver rule below: recurse for
-                // chained temporaries first, else loan each aggregate-typed
-                // place argument the callee could have borrowed.
-                if self
-                    .checked_adjustments(expression)
-                    .iter()
-                    .any(|adjustment| {
-                        matches!(
-                            adjustment,
-                            mojito_checked::checked::SemanticAdjustment::BorrowViewResult
-                        )
-                    })
-                {
-                    let arguments = || args.iter().chain(kwargs.iter().map(|kw| &kw.value));
-                    let loans: Vec<MirLoan> = arguments()
-                        .flat_map(|argument| self.aggregate_borrows(argument))
-                        .collect();
-                    if !loans.is_empty() {
-                        return loans;
-                    }
-
-                    let lending: Vec<_> = arguments()
-                        .filter(|argument| self.view_lends_argument(argument))
-                        .collect();
-                    let loans: Vec<MirLoan> = lending
-                        .into_iter()
-                        .map(|argument| MirLoan {
-                            place: self.place(argument),
-                            mutable: false,
-                            interior: None,
-                            shared: false,
-                        })
-                        .collect();
-                    if !loans.is_empty() {
-                        return loans;
-                    }
-                }
-                args.iter()
-                    .chain(kwargs.iter().map(|argument| &argument.value))
-                    .flat_map(|argument| self.aggregate_borrows(argument))
-                    .collect()
-            }
-            ExprKind::Transfer(inner) => self.aggregate_borrows(inner),
-            ExprKind::ListLit(values) | ExprKind::TupleLit(values) => values
-                .iter()
-                .flat_map(|value| self.aggregate_borrows(value))
-                .collect(),
-            // A view-typed slice result (a Span sub-slice or a StringSpan
-            // keyword slice) inherits its receiver's loans.
-            ExprKind::Slice { object, .. } | ExprKind::MultiIndex { object, .. } => {
-                if self
-                    .checked_adjustments(expression)
-                    .iter()
-                    .any(|adjustment| {
-                        matches!(
-                            adjustment,
-                            mojito_checked::checked::SemanticAdjustment::BorrowViewResult
-                        )
-                    })
-                {
-                    let loans = self.aggregate_borrows(object);
-                    if !loans.is_empty() {
-                        return loans;
-                    }
-                    // A receiver that is itself the owning place lends that
-                    // place to the view.
-                    if matches!(
-                        object.kind,
-                        ExprKind::Identifier(_) | ExprKind::Member { .. }
-                    ) {
-                        return vec![MirLoan {
-                            place: self.place(object),
-                            mutable: false,
-                            interior: None,
-                            shared: false,
-                        }];
-                    }
-                }
-                Vec::new()
-            }
-            // An `unsafe_origin_cast` result loans exactly its rebound target
-            // place; an interior-generation tail becomes the loan's interior
-            // domain so container mutation stales it without ordinary reads
-            // conflicting.
-            ExprKind::Invoke { .. } | ExprKind::MethodCall { .. } => {
-                // A static call binding `ref [Self.o]` arguments (the checker
-                // recorded the argument indexes, as for a view construction)
-                // lends those places to the returned aggregate.
-                if let ExprKind::MethodCall { args, .. } = &expression.kind
-                    && let Some(mojito_checked::checked::SemanticAdjustment::BorrowRefArguments {
-                        arguments,
-                        ..
-                    }) = self
-                        .checked_adjustments(expression)
-                        .into_iter()
-                        .find(|adjustment| {
-                            matches!(
-                                adjustment,
-                                mojito_checked::checked::SemanticAdjustment::BorrowRefArguments { .. }
-                            )
-                        })
-                {
-                    let loans = arguments
-                        .into_iter()
-                        .filter_map(|(index, mutable)| {
-                            args.get(index).map(|argument| MirLoan {
-                                place: self.place(argument),
-                                mutable,
-                                interior: None,
-                                shared: false,
-                            })
-                        })
-                        .collect::<Vec<_>>();
-                    if !loans.is_empty() {
-                        return loans;
-                    }
-                }
-                let cast =
-                    self.checked_adjustments(expression)
-                        .into_iter()
-                        .find_map(|adjustment| match adjustment {
-                            mojito_checked::checked::SemanticAdjustment::PointerOriginCast {
-                                origin,
-                            } => Some(origin),
-                            _ => None,
-                        });
-                if let Some(mojito_types::origin::PointerOrigin::Place { place, mutable }) = cast {
-                    return self.pointer_place_loan(&place, mutable, None, false);
-                }
-                // A method whose selected contract returns an origin-bearing
-                // pointer (`xs.unsafe_ptr()`) loans that rebased place.
-                if let Some(contract) = self.checked_call_contract(expression)
-                    && let Ty::Pointer {
-                        origin: mojito_types::origin::PointerOrigin::Place { place, mutable },
-                        ..
-                    } = &contract.result_ty
-                {
-                    return self.pointer_place_loan(&place.clone(), *mutable, None, false);
-                }
-                // `unsafe_offset` preserves provenance: forward the receiver's
-                // loans onto the offset pointer.
-                if let (true, ExprKind::MethodCall { object, .. }) = (
-                    self.checked_adjustments(expression)
-                        .iter()
-                        .any(|adjustment| {
-                            matches!(
-                                adjustment,
-                                mojito_checked::checked::SemanticAdjustment::PointerOffset
-                            )
-                        }),
-                    &expression.kind,
-                ) {
-                    return self.aggregate_borrows(object);
-                }
-                // A method returning a ref-field struct (a borrowing
-                // view/iterator) lends its receiver to the result, exactly as
-                // a view-typed slice result does: a chained temporary
-                // (`Span(xs).__iter__()`) forwards only what it borrowed, and
-                // a named receiver place is lent itself as well — a view
-                // receiver (`sp.__iter__()`) must outlive the result, not
-                // only the storage the view borrows. Its aggregate-typed
-                // place arguments lend the same way (the free-function rule
-                // above).
-                if let (
-                    true,
-                    ExprKind::MethodCall {
-                        object,
-                        args,
-                        kwargs,
-                        ..
-                    },
-                ) = (
-                    self.checked_adjustments(expression)
-                        .iter()
-                        .any(|adjustment| {
-                            matches!(
-                                adjustment,
-                                mojito_checked::checked::SemanticAdjustment::BorrowViewResult
-                            )
-                        }),
-                    &expression.kind,
-                ) {
-                    let lent = |source: &Expr, this: &mut Self| -> Vec<MirLoan> {
-                        let mut loans = this.aggregate_borrows(source);
-                        if !matches!(
-                            source.kind,
-                            ExprKind::Identifier(_) | ExprKind::Member { .. }
-                        ) {
-                            return loans;
-                        }
-                        let place = this.place(source);
-                        // A `ref` parameter's own slot is not an owner; its
-                        // carried loan already covers the referent.
-                        if this.runtime_aliases.contains(&place.root)
-                            || loans.iter().any(|loan| {
-                                loan.place.root == place.root
-                                    && loan.place.proj.is_empty()
-                                    && place.proj.is_empty()
-                            })
-                        {
-                            return loans;
-                        }
-                        let mutable = this.checked_adjustments(source).iter().any(|adjustment| {
-                            matches!(
-                                adjustment,
-                                mojito_checked::checked::SemanticAdjustment::BorrowMutable
-                            )
-                        });
-                        loans.push(MirLoan {
-                            place,
-                            mutable,
-                            interior: None,
-                            shared: false,
-                        });
-                        loans
-                    };
-                    let mut loans = lent(object, self);
-                    for argument in args.iter().chain(kwargs.iter().map(|kw| &kw.value)) {
-                        if self.view_lends_argument(argument) {
-                            loans.extend(lent(argument, self));
-                        }
-                    }
-                    return loans;
-                }
-                Vec::new()
-            }
-            _ => Vec::new(),
-        }
+        self.aggregate_borrows_unmaterialized(expression)
     }
 
     /// The loan an origin-bearing pointer's concrete place induces: rooted at
@@ -806,5 +407,413 @@ impl Flatten<'_> {
                 mojito_checked::checked::SemanticAdjustment::BorrowMutable => Some(true),
                 _ => None,
             })
+    }
+
+    /// The loans an aggregate expression carries, ignoring a materialized
+    /// borrow-source slot of the expression itself: what that hidden slot
+    /// must loan so the storage the temporary views outlives it. Recursion
+    /// into sub-expressions goes through [`Self::aggregate_borrows`], so a
+    /// materialized sub-temporary still loans its own slot.
+    #[allow(
+        clippy::needless_collect,
+        reason = "TODO: needs the intermediate to end the &self borrow"
+    )]
+    pub(super) fn aggregate_borrows_unmaterialized(&mut self, expression: &Expr) -> Vec<MirLoan> {
+        let borrow = self
+            .checked_adjustments(expression)
+            .into_iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::BorrowShared => Some(false),
+                mojito_checked::checked::SemanticAdjustment::BorrowMutable => Some(true),
+                _ => None,
+            });
+        if let Some(mutable) = borrow
+            && let ExprKind::Identifier(name) = &expression.kind
+            && let Some(var) = self.existing_expression_var(name, expression)
+        {
+            if let Some(loans) = self.aggregate_loans.get(&var) {
+                return loans
+                    .iter()
+                    .cloned()
+                    .map(|mut loan| {
+                        loan.mutable = mutable;
+                        loan
+                    })
+                    .collect();
+            }
+            if let Some(mut loan) = self.aliases.get(&var).cloned() {
+                loan.mutable = mutable;
+                return vec![loan];
+            }
+            // An owned variable auto-borrowed into reference storage loans
+            // its own root place — the same loan an explicit `ref` binding
+            // of the place would install.
+            let ty = self.var_types.get(&var).cloned();
+            return vec![MirLoan {
+                place: MirPlace::root(var, ty),
+                mutable,
+                interior: None,
+                shared: false,
+            }];
+        }
+        if let Some(mutable) = borrow
+            && matches!(
+                expression.kind,
+                ExprKind::Member { .. } | ExprKind::Index { .. } | ExprKind::TypeApply { .. }
+            )
+        {
+            let place = self.place(expression);
+            let interiors = self.checked_interior_references(expression);
+            if interiors.is_empty() {
+                return vec![MirLoan {
+                    place,
+                    mutable,
+                    interior: None,
+                    shared: false,
+                }];
+            }
+            return interiors
+                .into_iter()
+                .map(|origin| {
+                    let mut place = place.clone();
+                    let interior = self.direct_borrow_interior(&mut place, &origin);
+                    MirLoan {
+                        place,
+                        mutable,
+                        interior: Some(interior),
+                        shared: false,
+                    }
+                })
+                .collect();
+        }
+        if let ExprKind::Identifier(name) = &expression.kind {
+            if let Some(var) = self.existing_expression_var(name, expression)
+                && let Some(loans) = self.aggregate_loans.get(&var)
+            {
+                return loans.clone();
+            }
+            // A capturing closure flowing into storage loans its REFERENCE
+            // captures' owners: the stored value retains their frame slots,
+            // so the owners must stay alive (and, for `imm`, unmutated)
+            // while the storage lives. Direct nested calls never consult
+            // this path, so the loan-free declaration-to-call capture model
+            // is preserved; owned copy/move captures are self-contained.
+            if let Some(info) = self.nested_info(expression) {
+                let mut loans = Vec::new();
+                let mut seen = std::collections::HashSet::new();
+                for capture in &info.captures {
+                    self.collect_capture_loans(capture, &mut loans, &mut seen);
+                }
+                return loans;
+            }
+        }
+        match &expression.kind {
+            ExprKind::Call { args, kwargs, .. } => {
+                // A view construction borrows the places its `ref [origin]`
+                // parameters bound (the checker recorded the argument
+                // indexes), so the stored aggregate keeps its source alive.
+                if let Some(mojito_checked::checked::SemanticAdjustment::BorrowRefArguments {
+                    arguments,
+                    ..
+                }) = self
+                    .checked_adjustments(expression)
+                    .into_iter()
+                    .find(|adjustment| {
+                        matches!(
+                            adjustment,
+                            mojito_checked::checked::SemanticAdjustment::BorrowRefArguments { .. }
+                        )
+                    })
+                {
+                    let loans = arguments
+                        .into_iter()
+                        .filter_map(|(index, mutable)| {
+                            args.get(index).map(|argument| MirLoan {
+                                place: self.place(argument),
+                                mutable,
+                                interior: None,
+                                shared: false,
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    if !loans.is_empty() {
+                        return loans;
+                    }
+                }
+                // A checked pointer construction loans exactly its source
+                // place, with the mutability the checker inferred from the
+                // owner binding. A construction through a `ref` binding
+                // carries a subtree origin instead: its loan is the lazy
+                // generation domain rooted at the reference's owner.
+                if let Some(mojito_checked::checked::SemanticAdjustment::PointerToPlace {
+                    mutable,
+                }) = self
+                    .checked_adjustments(expression)
+                    .into_iter()
+                    .find(|adjustment| {
+                        matches!(
+                            adjustment,
+                            mojito_checked::checked::SemanticAdjustment::PointerToPlace { .. }
+                        )
+                    })
+                {
+                    let source = &kwargs
+                        .first()
+                        .expect("checked pointer construction has a 'to=' argument")
+                        .value;
+                    if let Some(Ty::Pointer {
+                        origin: mojito_types::origin::PointerOrigin::Place { place, .. },
+                        ..
+                    }) = self.checked_ty(expression)
+                        && matches!(
+                            place.path.last(),
+                            Some(mojito_types::origin::OriginSeg::Subtree)
+                        )
+                    {
+                        // The pointer reborrows through the `ref` binding it
+                        // was taken from, so its loan keeps that binding's
+                        // place and link instead of competing with the
+                        // binding's own loan.
+                        let source = self.place(source);
+                        return self.pointer_place_loan(&place, mutable, Some(source), true);
+                    }
+                    let place = self.place(source);
+                    return vec![MirLoan {
+                        place,
+                        mutable,
+                        interior: None,
+                        shared: true,
+                    }];
+                }
+                // A free-function call returning a ref-field struct (a
+                // borrowing view) lends its borrowed sources to the result,
+                // mirroring the method-receiver rule below: recurse for
+                // chained temporaries first, else loan each aggregate-typed
+                // place argument the callee could have borrowed.
+                if self
+                    .checked_adjustments(expression)
+                    .iter()
+                    .any(|adjustment| {
+                        matches!(
+                            adjustment,
+                            mojito_checked::checked::SemanticAdjustment::BorrowViewResult { .. }
+                        )
+                    })
+                {
+                    let arguments = || args.iter().chain(kwargs.iter().map(|kw| &kw.value));
+                    let loans: Vec<MirLoan> = arguments()
+                        .flat_map(|argument| self.aggregate_borrows(argument))
+                        .collect();
+                    if !loans.is_empty() {
+                        return loans;
+                    }
+
+                    let lending: Vec<_> = arguments()
+                        .filter(|argument| self.view_lends_argument(argument))
+                        .collect();
+                    let loans: Vec<MirLoan> = lending
+                        .into_iter()
+                        .map(|argument| MirLoan {
+                            place: self.place(argument),
+                            mutable: false,
+                            interior: None,
+                            shared: false,
+                        })
+                        .collect();
+                    if !loans.is_empty() {
+                        return loans;
+                    }
+                }
+                args.iter()
+                    .chain(kwargs.iter().map(|argument| &argument.value))
+                    .flat_map(|argument| self.aggregate_borrows(argument))
+                    .collect()
+            }
+            ExprKind::Transfer(inner) => self.aggregate_borrows(inner),
+            ExprKind::ListLit(values) | ExprKind::TupleLit(values) => values
+                .iter()
+                .flat_map(|value| self.aggregate_borrows(value))
+                .collect(),
+            // A view-typed slice result (a Span sub-slice or a StringSpan
+            // keyword slice) inherits its receiver's loans.
+            ExprKind::Slice { object, .. } | ExprKind::MultiIndex { object, .. } => {
+                if self
+                    .checked_adjustments(expression)
+                    .iter()
+                    .any(|adjustment| {
+                        matches!(
+                            adjustment,
+                            mojito_checked::checked::SemanticAdjustment::BorrowViewResult { .. }
+                        )
+                    })
+                {
+                    let loans = self.aggregate_borrows(object);
+                    if !loans.is_empty() {
+                        return loans;
+                    }
+                    // A receiver that is itself the owning place lends that
+                    // place to the view.
+                    if matches!(
+                        object.kind,
+                        ExprKind::Identifier(_) | ExprKind::Member { .. }
+                    ) {
+                        return vec![MirLoan {
+                            place: self.place(object),
+                            mutable: false,
+                            interior: None,
+                            shared: false,
+                        }];
+                    }
+                }
+                Vec::new()
+            }
+            // An `unsafe_origin_cast` result loans exactly its rebound target
+            // place; an interior-generation tail becomes the loan's interior
+            // domain so container mutation stales it without ordinary reads
+            // conflicting.
+            ExprKind::Invoke { .. } | ExprKind::MethodCall { .. } => {
+                // A static call binding `ref [Self.o]` arguments (the checker
+                // recorded the argument indexes, as for a view construction)
+                // lends those places to the returned aggregate.
+                if let ExprKind::MethodCall { args, .. } = &expression.kind
+                    && let Some(mojito_checked::checked::SemanticAdjustment::BorrowRefArguments {
+                        arguments,
+                        ..
+                    }) = self
+                        .checked_adjustments(expression)
+                        .into_iter()
+                        .find(|adjustment| {
+                            matches!(
+                                adjustment,
+                                mojito_checked::checked::SemanticAdjustment::BorrowRefArguments { .. }
+                            )
+                        })
+                {
+                    let loans = arguments
+                        .into_iter()
+                        .filter_map(|(index, mutable)| {
+                            args.get(index).map(|argument| MirLoan {
+                                place: self.place(argument),
+                                mutable,
+                                interior: None,
+                                shared: false,
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    if !loans.is_empty() {
+                        return loans;
+                    }
+                }
+                let cast =
+                    self.checked_adjustments(expression)
+                        .into_iter()
+                        .find_map(|adjustment| match adjustment {
+                            mojito_checked::checked::SemanticAdjustment::PointerOriginCast {
+                                origin,
+                            } => Some(origin),
+                            _ => None,
+                        });
+                if let Some(mojito_types::origin::PointerOrigin::Place { place, mutable }) = cast {
+                    return self.pointer_place_loan(&place, mutable, None, false);
+                }
+                // A method whose selected contract returns an origin-bearing
+                // pointer (`xs.unsafe_ptr()`) loans that rebased place.
+                if let Some(contract) = self.checked_call_contract(expression)
+                    && let Ty::Pointer {
+                        origin: mojito_types::origin::PointerOrigin::Place { place, mutable },
+                        ..
+                    } = &contract.result_ty
+                {
+                    return self.pointer_place_loan(&place.clone(), *mutable, None, false);
+                }
+                // `unsafe_offset` preserves provenance: forward the receiver's
+                // loans onto the offset pointer.
+                if let (true, ExprKind::MethodCall { object, .. }) = (
+                    self.checked_adjustments(expression)
+                        .iter()
+                        .any(|adjustment| {
+                            matches!(
+                                adjustment,
+                                mojito_checked::checked::SemanticAdjustment::PointerOffset
+                            )
+                        }),
+                    &expression.kind,
+                ) {
+                    return self.aggregate_borrows(object);
+                }
+                // A method returning a ref-field struct (a borrowing
+                // view/iterator) lends its receiver to the result, exactly as
+                // a view-typed slice result does: a chained temporary
+                // (`Span(xs).__iter__()`) forwards only what it borrowed, and
+                // a named receiver place is lent itself as well — a view
+                // receiver (`sp.__iter__()`) must outlive the result, not
+                // only the storage the view borrows. Its aggregate-typed
+                // place arguments lend the same way (the free-function rule
+                // above).
+                if let (
+                    true,
+                    ExprKind::MethodCall {
+                        object,
+                        args,
+                        kwargs,
+                        ..
+                    },
+                ) = (
+                    self.checked_adjustments(expression)
+                        .iter()
+                        .any(|adjustment| {
+                            matches!(
+                                adjustment,
+                                mojito_checked::checked::SemanticAdjustment::BorrowViewResult { .. }
+                            )
+                        }),
+                    &expression.kind,
+                ) {
+                    let lent = |source: &Expr, this: &mut Self| -> Vec<MirLoan> {
+                        let mut loans = this.aggregate_borrows(source);
+                        if !matches!(
+                            source.kind,
+                            ExprKind::Identifier(_) | ExprKind::Member { .. }
+                        ) {
+                            return loans;
+                        }
+                        let place = this.place(source);
+                        // A `ref` parameter's own slot is not an owner; its
+                        // carried loan already covers the referent.
+                        if this.runtime_aliases.contains(&place.root)
+                            || loans.iter().any(|loan| {
+                                loan.place.root == place.root
+                                    && loan.place.proj.is_empty()
+                                    && place.proj.is_empty()
+                            })
+                        {
+                            return loans;
+                        }
+                        let mutable = this.checked_adjustments(source).iter().any(|adjustment| {
+                            matches!(
+                                adjustment,
+                                mojito_checked::checked::SemanticAdjustment::BorrowMutable
+                            )
+                        });
+                        loans.push(MirLoan {
+                            place,
+                            mutable,
+                            interior: None,
+                            shared: false,
+                        });
+                        loans
+                    };
+                    let mut loans = lent(object, self);
+                    for argument in args.iter().chain(kwargs.iter().map(|kw| &kw.value)) {
+                        if self.view_lends_argument(argument) {
+                            loans.extend(lent(argument, self));
+                        }
+                    }
+                    return loans;
+                }
+                Vec::new()
+            }
+            _ => Vec::new(),
+        }
     }
 }

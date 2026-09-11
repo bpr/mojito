@@ -1138,10 +1138,15 @@ struct String(
     def bytes(self) -> _BytesIter[origin_of(self)]:
         return _BytesIter(StringSpan(self), 0)
 
-    # The views before and after the `n`-th grapheme-cluster boundary.
+    # The views before and after the `n`-th grapheme-cluster boundary, as
+    # immutable views that keep this String's provenance (upstream's
+    # `ImmOrigin(origin_of(self))`).
     def split_at_grapheme(
         self, n: Int
-    ) -> Tuple[StringSpan[origin_of(self)], StringSpan[origin_of(self)]]:
+    ) -> Tuple[
+        StringSpan[ImmOrigin(origin_of(self))],
+        StringSpan[ImmOrigin(origin_of(self))],
+    ]:
         return StringSpan(self).split_at_grapheme(n)
 
     # Strict keyword slices (current Mojo bounds): positional String slicing
@@ -1754,10 +1759,12 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         return _BytesIter(self, 0)
 
     # The views before and after the `n`-th grapheme-cluster boundary
-    # (`n == 0` yields `("", self)`, `n` past the end `(self, "")`).
+    # (`n == 0` yields `("", self)`, `n` past the end `(self, "")`): the
+    # immutable versions of this view, keeping its provenance (upstream's
+    # `Self.Immutable`).
     def split_at_grapheme(
         self, n: Int
-    ) -> Tuple[StringSpan[Self.origin], StringSpan[Self.origin]]:
+    ) -> Tuple[StringSpan[ImmOrigin(Self.origin)], StringSpan[ImmOrigin(Self.origin)]]:
         if n < 0:
             _mojito_abort("grapheme split index must be non-negative")
         var at = 0

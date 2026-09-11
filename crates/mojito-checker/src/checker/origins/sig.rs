@@ -44,13 +44,57 @@ pub(in crate::checker) fn reject_subtree_origin_here(context: &str) -> TypeError
     ))
 }
 
-/// The declaration-level immutable-origin cast `Origin[mut=False].cast_from[o]`
-/// — current Mojo's spelling for pinning a reference result's capability to
-/// read-only independent of the origin parameter's own `mut=`. Returns the
-/// inner origin expression; the upgrade direction (`mut=True`) is rejected.
+/// The immutable-origin capability cast: current Mojo's `ImmOrigin(o)` /
+/// `Origin[mut=False](o)` (the `@implicit` `Origin` conversion), and the
+/// older declaration-level `Origin[mut=False].cast_from[o]`. It pins a
+/// capability to read-only while keeping `o`'s provenance. Returns the inner
+/// origin expression; the upgrade direction (`MutOrigin(o)`, `mut=True`) is
+/// rejected.
 pub(in crate::checker) fn immutable_origin_cast(
     expression: &Expr,
 ) -> Option<Result<&Expr, TypeError>> {
+    if let ExprKind::Call {
+        name,
+        args,
+        kwargs,
+        param_args,
+    } = &expression.kind
+    {
+        let [inner] = args.as_slice() else {
+            return None;
+        };
+        if !kwargs.is_empty() {
+            return None;
+        }
+        let mutable = match (name.as_str(), param_args.as_slice()) {
+            ("ImmOrigin", []) => false,
+            ("MutOrigin", []) => true,
+            (
+                "Origin",
+                [
+                    mojito_ast::ast::ParamArg::Named {
+                        name: keyword,
+                        value,
+                    },
+                ],
+            ) if keyword == "mut" => match value.as_ref() {
+                mojito_ast::ast::ParamArg::Value(Expr {
+                    kind: ExprKind::Bool(flag),
+                    ..
+                }) => *flag,
+                _ => return None,
+            },
+            _ => return None,
+        };
+        return Some(if mutable {
+            Err(TypeError::Unsupported(format!(
+                "an origin cast cannot upgrade capability: '{name}(...)' with a mutable \
+                 origin is rejected"
+            )))
+        } else {
+            Ok(inner)
+        });
+    }
     let ExprKind::Index { object, index } = &expression.kind else {
         return None;
     };

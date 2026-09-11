@@ -479,9 +479,16 @@ pub enum SemanticAdjustment {
     BorrowConversionSource {
         mutable: bool,
     },
-    /// A subscript result that is itself a borrowed view (a Span
-    /// sub-slice): the result binding inherits its receiver's loans.
-    BorrowViewResult,
+    /// A call or subscript result that is itself a borrowed view (a Span
+    /// sub-slice, a view-returning method): the result binding inherits its
+    /// receiver's and lending arguments' loans.
+    BorrowViewResult {
+        /// The same result as a temporary receiver of a `ref self` method
+        /// (`it.peek_next().value()`): it is also a materialized borrow
+        /// source (see `MaterializeBorrowSource`), and one span carries one
+        /// adjustment.
+        materialized: Option<mojito_types::origin::OwnerId>,
+    },
     /// A place expression occurs in an ownership-producing context (binding,
     /// assignment, return, or another consuming slot) and was proven Copyable
     /// in the checker's active generic environment. MIR must materialize an
@@ -761,6 +768,10 @@ pub struct CheckedTupleUnpackElement {
     pub ty: Ty,
     pub accessor: Option<String>,
     pub reference: Option<mojito_types::origin::RefTy>,
+    /// The element's storage carries owner loans (a view or other
+    /// origin-bearing value), so its binding inherits the unpacked value's
+    /// loans the way an ordinary binding of the whole value does.
+    pub carries_loans: bool,
 }
 
 /// One expression in the typed semantic arena.
@@ -2244,9 +2255,9 @@ fn build_checked_declarations(
 
 /// The anonymous owner a temporary expression materializes as.
 ///
-/// Either a `MaterializeBorrowSource` or a `BorrowRefArguments` construction
-/// that is also a borrow source; `None` when the expression is not
-/// materialized.
+/// A `MaterializeBorrowSource`, or a `BorrowRefArguments` construction or
+/// `BorrowViewResult` view that is also a borrow source; `None` when the
+/// expression is not materialized.
 pub fn materialized_borrow_owner(
     adjustments: &[SemanticAdjustment],
 ) -> Option<mojito_types::origin::OwnerId> {
@@ -2255,6 +2266,9 @@ pub fn materialized_borrow_owner(
         SemanticAdjustment::BorrowRefArguments {
             materialized: Some(owner),
             ..
+        }
+        | SemanticAdjustment::BorrowViewResult {
+            materialized: Some(owner),
         } => Some(*owner),
         _ => None,
     })

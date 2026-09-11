@@ -204,7 +204,8 @@ impl Checker {
     /// The anonymous owner a temporary expression materializes as when a
     /// borrow needs a place: minted once per source span and recorded as a
     /// `MaterializeBorrowSource` adjustment (or on a view construction's own
-    /// `BorrowRefArguments`, whose owner rides on that adjustment). Idempotent
+    /// `BorrowRefArguments`, or a view result's `BorrowViewResult`, whose
+    /// owner rides on that adjustment). Idempotent
     /// across re-inference. Rejects when another adjustment already owns the
     /// span's lowering contract.
     pub(in crate::checker) fn materialize_borrow_owner(
@@ -216,10 +217,13 @@ impl Checker {
             Some(mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource {
                 owner,
             }) => Ok(*owner),
-            Some(mojito_checked::checked::SemanticAdjustment::BorrowRefArguments {
-                materialized,
-                ..
-            }) => {
+            Some(
+                mojito_checked::checked::SemanticAdjustment::BorrowRefArguments {
+                    materialized,
+                    ..
+                }
+                | mojito_checked::checked::SemanticAdjustment::BorrowViewResult { materialized },
+            ) => {
                 if let Some(owner) = materialized {
                     Ok(*owner)
                 } else {

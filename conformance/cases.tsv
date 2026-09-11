@@ -385,3 +385,6 @@ move-after-last-raise-in-try	run	assets/ok/move_after_last_raise_in_try.mojo
 tuple-consume-elements-print	reject	assets/type_error/tuple_consume_elements_print.mojo
 tuple-consume-elements-discard	reject	assets/type_error/tuple_consume_elements_discard.mojo
 explicit-destroy-discard	reject	assets/type_error/explicit_destroy_discard.mojo
+view-copy-at-last-use	run	assets/ok/view_copy_at_last_use.mojo
+view-temporary-origins	run	assets/ok/view_temporary_origins.mojo
+imm-origin-cast-view	run	assets/ok/imm_origin_cast_view.mojo

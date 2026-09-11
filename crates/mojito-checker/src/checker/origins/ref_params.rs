@@ -554,7 +554,7 @@ impl Checker {
                     self.operation_adjustments
                         .borrow()
                         .get(&expression.source_span()),
-                    Some(mojito_checked::checked::SemanticAdjustment::BorrowViewResult)
+                    Some(mojito_checked::checked::SemanticAdjustment::BorrowViewResult { .. })
                 ) {
                     let carried = self.aggregate_origins(object);
                     if !carried.is_empty() {
@@ -612,7 +612,7 @@ impl Checker {
                 // itself: the result must outlive a view receiver, not only
                 // the storage the view borrows.
                 if let (
-                    Some(mojito_checked::checked::SemanticAdjustment::BorrowViewResult),
+                    Some(mojito_checked::checked::SemanticAdjustment::BorrowViewResult { .. }),
                     ExprKind::MethodCall { object, .. },
                 ) = (
                     self.operation_adjustments

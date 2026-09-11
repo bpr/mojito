@@ -1875,7 +1875,11 @@ impl Checker {
                 self.operation_adjustments
                     .borrow_mut()
                     .entry(span.clone())
-                    .or_insert(mojito_checked::checked::SemanticAdjustment::BorrowViewResult);
+                    .or_insert(
+                        mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
+                            materialized: None,
+                        },
+                    );
             }
             self.selected_calls.borrow_mut().insert(
                 span,

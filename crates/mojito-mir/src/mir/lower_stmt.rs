@@ -43,6 +43,11 @@ impl Flatten<'_> {
                 if let Some(target) = binding_ty.as_ref() {
                     src = self.materialize_register(src, target, expr.source_span());
                 }
+                // The right-hand side is fully evaluated here, so its argument
+                // temporaries end before the destination is written: an
+                // assignment may overwrite the very source a temporary view
+                // argument borrowed (`head = f(head[byte=1:4])`).
+                self.flush_argument_anchors();
                 let writes_through_reference =
                     self.aliases.contains_key(dest) || self.runtime_aliases.contains(dest);
                 if !writes_through_reference
@@ -2509,7 +2514,13 @@ impl Flatten<'_> {
                 );
                 let base_place = self.simple_place(value);
                 let tuple = self.expr(value);
+                // A loan-carrying element (a view into the unpacked value's
+                // source) inherits the value's loans, exactly as binding the
+                // whole value would: otherwise the source dies at the call
+                // that produced the tuple.
+                let loans = self.aggregate_borrows(value);
                 for (i, (target, extraction)) in targets.iter().zip(plan).enumerate() {
+                    let carries_loans = extraction.carries_loans;
                     let idx = self.fresh_typed(span(target), None, Ty::Int);
                     self.emit(MirInstr::Const {
                         dest: idx,
@@ -2576,6 +2587,17 @@ impl Flatten<'_> {
                             src: elem,
                             binding_ty,
                         });
+                        if carries_loans && let Some(first) = loans.first() {
+                            let marker =
+                                self.fresh_typed(span(value), Some(first.place.root), Ty::None);
+                            self.aggregate_loans.insert(var, loans.clone());
+                            self.emit(MirInstr::EstablishLoans {
+                                reference: var,
+                                loans: loans.clone(),
+                                marker,
+                                dest_interior: None,
+                            });
+                        }
                     } else {
                         let place = self.place(target);
                         self.emit_interior_invalidations(target, Some(place.root));

@@ -29,7 +29,7 @@ impl Flatten<'_> {
             .any(|adjustment| {
                 matches!(
                     adjustment,
-                    mojito_checked::checked::SemanticAdjustment::BorrowViewResult
+                    mojito_checked::checked::SemanticAdjustment::BorrowViewResult { .. }
                 )
             })
     }
@@ -109,47 +109,7 @@ impl Flatten<'_> {
                 return (register, None);
             }
             let value = self.expr(expression);
-            // A temporary aggregate argument that borrows caller storage (a
-            // constructor or call result holding references/pointers into live
-            // places) needs the same hidden anchor as a chained view receiver,
-            // or its sources are dropped before the consuming call runs. Bare
-            // reference/pointer handles stay unanchored: a `LoadPlace` read
-            // out of the hidden slot would dereference the handle.
-            // Scope: only a plain `Call` or method-call temporary (a view
-            // result such as `s.strip()`) in a call's argument list anchors
-            // (see `allow_argument_anchors`) — every other consumer carries
-            // the temporary's loans through its own channel, and an extra
-            // anchor is a conflicting duplicate borrow.
-            // A subscript view temporary (`s[byte=a:b]`, a `Span` slice)
-            // borrows its source through the subscript's own borrow fact and
-            // no consumer channel retains it — a plain call, a method call,
-            // and a construction alike would drop the source before the call
-            // runs when the argument is the source's last use — so it anchors
-            // in every argument list: one loan on the source, never a
-            // duplicate of a channel that does not exist.
-            let subscript_view = matches!(
-                expression.kind,
-                ExprKind::Index { .. } | ExprKind::MultiIndex { .. } | ExprKind::Slice { .. }
-            );
-            let call_temporary = self.allow_argument_anchors
-                && matches!(
-                    expression.kind,
-                    ExprKind::Call { .. } | ExprKind::MethodCall { .. }
-                );
-            // A converted temporary's view is already bound to its
-            // `$conv_view_r` slot by the conversion lowering; a second anchor
-            // would duplicate that loan.
-            let anchored_by_conversion = converted
-                && mojito_checked::checked::materialized_borrow_owner(&adjustments).is_some();
-            if (call_temporary || subscript_view)
-                && !anchored_by_conversion
-                && matches!(self.checked_ty(expression), Some(Ty::Struct(..)))
-            {
-                let loans = self.aggregate_borrows(expression);
-                if !loans.is_empty() {
-                    self.anchor_borrowing_argument(expression, value, loans);
-                }
-            }
+            self.anchor_temporary_argument(expression, value, &adjustments, converted);
             return (value, None);
         }
 
@@ -209,10 +169,15 @@ impl Flatten<'_> {
             return (value, Some(place));
         }
 
-        // The checker rejects a non-place actual for a place-requiring
-        // parameter. Keep lowering total so the verifier can diagnose corrupt
-        // checked input without manufacturing a caller place.
-        (self.expr(expression), None)
+        // A temporary at a place-retaining slot (the builtin `String(x)`
+        // conversion retains its argument's place) has no place to retain,
+        // so it anchors like any other temporary argument. The checker
+        // rejects a non-place actual for a place-requiring parameter; lowering
+        // stays total so the verifier can diagnose corrupt checked input
+        // without manufacturing a caller place.
+        let value = self.expr(expression);
+        self.anchor_temporary_argument(expression, value, &adjustments, converted);
+        (value, None)
     }
 
     /// Evaluate an augmented-subscript argument before either accessor call,
@@ -802,6 +767,22 @@ impl Flatten<'_> {
                 binding_ty: ty,
             });
             self.owner_vars.insert(owner, variable);
+            // The slot owns the temporary, and the temporary may itself view
+            // other storage (`StringSpan(s)`, a view-returning call): the
+            // slot carries those loans, so the viewed storage outlives every
+            // borrower of the slot rather than dying at the temporary's call.
+            let loans = self.aggregate_borrows_unmaterialized(expression);
+            if let Some(first) = loans.first() {
+                let marker =
+                    self.fresh_typed(expression.source_span(), Some(first.place.root), Ty::None);
+                self.aggregate_loans.insert(variable, loans.clone());
+                self.emit(MirInstr::EstablishLoans {
+                    reference: variable,
+                    loans,
+                    marker,
+                    dest_interior: None,
+                });
+            }
             variable
         };
         (
@@ -867,6 +848,55 @@ impl Flatten<'_> {
     /// backends), and the statement-end `KeepAlive` flush (the temporary's
     /// upstream lifetime is the full statement) extends the slot's — and so
     /// the loans' — liveness across the call.
+    /// Anchor a temporary argument that borrows caller storage (a
+    /// constructor or call result holding references/pointers into live
+    /// places) in a hidden slot, as a chained view receiver is, or its
+    /// sources are dropped before the consuming call runs. Bare
+    /// reference/pointer handles stay unanchored: a `LoadPlace` read out of
+    /// the hidden slot would dereference the handle.
+    /// Scope: only a plain `Call` or method-call temporary (a view result
+    /// such as `s.strip()`) in a call's argument list anchors (see
+    /// `allow_argument_anchors`) — every other consumer carries the
+    /// temporary's loans through its own channel, and an extra anchor is a
+    /// conflicting duplicate borrow.
+    /// A subscript view temporary (`s[byte=a:b]`, a `Span` slice) borrows its
+    /// source through the subscript's own borrow fact and no consumer channel
+    /// retains it — a plain call, a method call, and a construction alike
+    /// would drop the source before the call runs when the argument is the
+    /// source's last use — so it anchors in every argument list: one loan on
+    /// the source, never a duplicate of a channel that does not exist.
+    fn anchor_temporary_argument(
+        &mut self,
+        expression: &Expr,
+        value: Reg,
+        adjustments: &[mojito_checked::checked::SemanticAdjustment],
+        converted: bool,
+    ) {
+        let subscript_view = matches!(
+            expression.kind,
+            ExprKind::Index { .. } | ExprKind::MultiIndex { .. } | ExprKind::Slice { .. }
+        );
+        let call_temporary = self.allow_argument_anchors
+            && matches!(
+                expression.kind,
+                ExprKind::Call { .. } | ExprKind::MethodCall { .. }
+            );
+        // A converted temporary's view is already bound to its
+        // `$conv_view_r` slot by the conversion lowering; a second anchor
+        // would duplicate that loan.
+        let anchored_by_conversion =
+            converted && mojito_checked::checked::materialized_borrow_owner(adjustments).is_some();
+        if (call_temporary || subscript_view)
+            && !anchored_by_conversion
+            && matches!(self.checked_ty(expression), Some(Ty::Struct(..)))
+        {
+            let loans = self.aggregate_borrows(expression);
+            if !loans.is_empty() {
+                self.anchor_borrowing_argument(expression, value, loans);
+            }
+        }
+    }
+
     fn anchor_borrowing_argument(&mut self, expression: &Expr, value: Reg, loans: Vec<MirLoan>) {
         let view_ty = self
             .f

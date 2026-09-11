@@ -3073,6 +3073,29 @@ fn keyword_subscripts_parse_on_value_bases_and_type_applications_stay() {
 }
 
 #[test]
+fn origin_capability_cast_keeps_a_parameter_application() {
+    // Upstream's capability cast `ImmOrigin(o)` is a compile-time Origin
+    // value like `origin_of(x)`, so a bracket over a type name stays a
+    // parameter application rather than a runtime subscript.
+    let program = mojito::parse("x = V[ImmOrigin(origin_of(y))]\n").expect("parse");
+    let StmtKind::Assign { value, .. } = &program[0].kind else {
+        panic!("assign");
+    };
+    let ExprKind::TypeApply { name, args } = &value.kind else {
+        panic!("expected TypeApply, got {:?}", value.kind);
+    };
+    assert_eq!(name, "V");
+    assert!(
+        matches!(
+            args.as_slice(),
+            [mojito::ast::ParamArg::Value(cast)]
+                if matches!(&cast.kind, ExprKind::Call { name, .. } if name == "ImmOrigin")
+        ),
+        "one ImmOrigin(...) argument: {args:?}"
+    );
+}
+
+#[test]
 fn normalizes_deprecated_lifecycle_spellings_at_parse_time() {
     // `ImplicitlyDeletable` and `__del__` are upstream-deprecated compat
     // spellings of `Deinitable`/`__deinit__`; the parser normalizes them so
