@@ -1,5 +1,5 @@
 # expect: must be mutable
-# `Origin[mut=False].cast_from[Self.o]` pins a yielded reference read-only even
+# `ImmOrigin(Self.o)` pins a yielded reference read-only even
 # over a mutable source, so a `for ref` write through the binding rejects.
 @fieldwise_init
 struct StopIteration:
@@ -9,7 +9,7 @@ struct StopIteration:
 struct NumbersIter[m: Bool, //, o: Origin[mut=m]]:
     var src: ref[o] List[Int]
     var index: Int
-    def __next__(mut self) raises StopIteration -> ref[Origin[mut=False].cast_from[Self.o]] Int:
+    def __next__(mut self) raises StopIteration -> ref[ImmOrigin(Self.o)] Int:
         if self.index >= len(self.src):
             raise StopIteration()
         var r = self.index

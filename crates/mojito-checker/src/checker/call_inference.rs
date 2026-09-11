@@ -1073,6 +1073,10 @@ impl Checker {
             matched.positional_overflow,
             matched.keyword_overflow,
         );
+        // A `Pointer` parameter over the callee's own origin binder binds
+        // that binder from its argument before each argument coerces.
+        let params =
+            self.substitute_callee_pointer_origins(name, &names, params, &slots, args, kwargs)?;
         let mut score = 0;
         for (i, slot) in slots.iter().enumerate() {
             let arg = match slot {
@@ -1583,6 +1587,50 @@ impl Checker {
                 context: format!("forwarded keyword arguments to '{callee}'"),
             }),
         }
+    }
+
+    /// Bind a callee's own origin binders named by its `Pointer[T, o]`
+    /// parameters from the arguments filling those slots, and substitute the
+    /// bound provenance into `params` before each argument coerces.
+    fn substitute_callee_pointer_origins(
+        &self,
+        name: &str,
+        names: &[String],
+        params: Vec<Ty>,
+        slots: &[ArgSlot],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Result<Vec<Ty>, TypeError> {
+        let mut pointer_bound: Vec<(usize, Ty)> = Vec::new();
+        for (index, slot) in slots.iter().enumerate() {
+            if !matches!(
+                params.get(index),
+                Some(Ty::Pointer {
+                    origin: mojito_types::origin::PointerOrigin::Param { .. },
+                    ..
+                })
+            ) {
+                continue;
+            }
+            let argument = match slot {
+                ArgSlot::Positional(position) => &args[*position],
+                ArgSlot::Keyword(position) => &kwargs[*position].value,
+                ArgSlot::Default => continue,
+            };
+            pointer_bound.push((index, self.infer(argument)?));
+        }
+        if pointer_bound.is_empty() {
+            return Ok(params);
+        }
+        let bound: Vec<(usize, &Ty)> = pointer_bound
+            .iter()
+            .map(|(index, ty)| (*index, ty))
+            .collect();
+        let bindings = Self::bind_callable_pointer_origins(name, names, &params, &bound)?;
+        Ok(params
+            .iter()
+            .map(|parameter| substitute_pointer_origin_params(parameter, &bindings))
+            .collect())
     }
 }
 

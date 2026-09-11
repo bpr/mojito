@@ -1788,12 +1788,28 @@ impl Checker {
     /// explicit capture-all convention or a lambda-owned parameter list forces
     /// a capturing environment, and the fixed-`None` omitted return type is
     /// named in the body mismatch diagnostic.
+    ///
+    /// A function's own `Origin` binders resolve in its signature and body
+    /// exactly as a method's do (`enclosing_origin_param`), indexed after any
+    /// enclosing struct and method binders.
+    pub(super) fn check_def(&mut self, stmt: &Stmt, lambda: bool) -> Result<(), TypeError> {
+        let StmtKind::Def { type_params, .. } = &stmt.kind else {
+            return self.check_def_inner(stmt, lambda);
+        };
+        let enclosing = self.enclosing_type_params.len();
+        self.enclosing_type_params
+            .extend(type_params.iter().cloned());
+        let result = self.check_def_inner(stmt, lambda);
+        self.enclosing_type_params.truncate(enclosing);
+        result
+    }
+
     #[allow(
         clippy::cognitive_complexity,
         clippy::too_many_lines,
         reason = "TODO: split this pass"
     )]
-    pub(super) fn check_def(&mut self, stmt: &Stmt, lambda: bool) -> Result<(), TypeError> {
+    fn check_def_inner(&mut self, stmt: &Stmt, lambda: bool) -> Result<(), TypeError> {
         let StmtKind::Def {
             name,
             type_params,

@@ -58,6 +58,7 @@ pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
         &[],
         &HashMap::new(),
         &[],
+        &[],
     )
 }
 
@@ -374,6 +375,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         parameter_types: ptys,
                         value_parameter_locals,
                         receiver_value_parameters: Vec::new(),
+                        enclosing_origin_parameters: origin_binder_names(type_params),
                         owned_parameters: owned,
                         deinit_parameters: deinit,
                         reference_parameters: refp,
@@ -708,6 +710,9 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             parameter_types: ptys,
                             value_parameter_locals,
                             receiver_value_parameters,
+                            enclosing_origin_parameters: origin_binder_names(
+                                type_params.iter().chain(&m.type_params),
+                            ),
                             owned_parameters: owned,
                             deinit_parameters: deinit,
                             reference_parameters: refp,
@@ -743,6 +748,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
             &[],
             &[],
             checked.call_transfers(),
+            &[],
             &[],
         )
     };
@@ -947,6 +953,10 @@ struct Flatten<'a> {
     /// method: `Self.n` in a bracket slot reads the receiver's reified
     /// parameter (`self.n`) instead of reifying a binder spelling.
     receiver_value_parameters: Vec<(String, Ty)>,
+    /// The enclosing declaration's origin binder names: a type-shaped bracket
+    /// argument naming one (`V[Self.o]`) is erased, as the checker's
+    /// `EraseCompileTimeArgument` marks a value-shaped one.
+    enclosing_origin_parameters: Vec<String>,
     /// Names rebound more than once, or captured by a nested `def`. A pointer
     /// variable outside this set keeps one statically known loan place for its
     /// whole live range, so deref sites may substitute the owner place.
@@ -1704,16 +1714,18 @@ impl Flatten<'_> {
     /// for the checker to solve reference and capture contracts, but they have
     /// no slot in `ParamDecl`.  Drop those arguments from the runtime parameter
     /// vector instead of emitting an ambiguous `None` that would shift every
-    /// following callable/scalar value parameter.
+    /// following callable/scalar value parameter. A type-shaped origin
+    /// argument (`V[Self.o]`) has no span for the checker's
+    /// `EraseCompileTimeArgument` adjustment, so it is erased by name.
     fn param_arg_is_erased(&self, argument: &ParamArg) -> bool {
         let expression = match argument {
             ParamArg::Value(expression) => expression,
             ParamArg::Named { value, .. } => match &**value {
                 ParamArg::Value(expression) => expression,
-                ParamArg::Type(_) => return false,
+                ParamArg::Type(ty) => return self.names_enclosing_origin_parameter(ty),
                 ParamArg::Named { .. } => unreachable!(),
             },
-            ParamArg::Type(_) => return false,
+            ParamArg::Type(ty) => return self.names_enclosing_origin_parameter(ty),
         };
         self.checked_adjustments(expression)
             .iter()
@@ -1723,6 +1735,17 @@ impl Flatten<'_> {
                     mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument
                 )
             })
+    }
+
+    /// Whether a type-shaped bracket argument names one of the enclosing
+    /// declaration's origin binders (`Self.o`, or a bare `o`).
+    fn names_enclosing_origin_parameter(&self, ty: &mojito_ast::ast::Type) -> bool {
+        let name = match ty {
+            mojito_ast::ast::Type::SelfParam(name) => name,
+            mojito_ast::ast::Type::Named(name, args) if args.is_empty() => name,
+            _ => return false,
+        };
+        self.enclosing_origin_parameters.contains(name)
     }
 
     /// `Self.n` in a bracket slot, where `n` is the enclosing struct's own
@@ -1863,6 +1886,7 @@ fn lower_cfg_nested(
     capture_bindings: &[mojito_types::origin::OwnerId],
     call_transfers: &HashMap<SourceSpan, Vec<mojito_checked::checked::CheckedCallTransfer>>,
     receiver_value_parameters: &[(String, Ty)],
+    enclosing_origin_parameters: &[String],
 ) -> MirFunction {
     let mut mir = MirFunction {
         blocks: Vec::new(),
@@ -1909,6 +1933,7 @@ fn lower_cfg_nested(
                 .collect(),
             nested: nested.clone(),
             receiver_value_parameters: receiver_value_parameters.to_vec(),
+            enclosing_origin_parameters: enclosing_origin_parameters.to_vec(),
             overloads: overloads.clone(),
             checked: std::sync::Arc::clone(&cfg.checked),
             call_transfers: call_transfers.clone(),
@@ -2714,6 +2739,20 @@ struct ComprehensionPlan<'a> {
     insert: &'a str,
     key: Option<&'a Expr>,
     value: &'a Expr,
+}
+
+/// The names of the `Origin`/`OriginSet` binders among `parameters`, which a
+/// type-shaped bracket argument may name (`V[Self.o]`).
+fn origin_binder_names<'a>(
+    parameters: impl IntoIterator<Item = &'a mojito_ast::ast::TypeParam>,
+) -> Vec<String> {
+    parameters
+        .into_iter()
+        .filter(|parameter| {
+            matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
+        })
+        .map(|parameter| parameter.name.clone())
+        .collect()
 }
 
 mod nested;

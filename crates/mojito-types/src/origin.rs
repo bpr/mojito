@@ -351,8 +351,10 @@ impl PointerOrigin {
     /// placeholder origin of a free function's raw-pointer parameter) accepts
     /// any provenance whose permission is at least the expected one, an
     /// immutable untracked expectation accepts the mutable untracked
-    /// provenance (dropping capability), and every other expectation binds
-    /// exactly.
+    /// provenance (dropping capability), an immutable tracked expectation
+    /// accepts the same provenance at any capability (upstream's `@implicit`
+    /// `Pointer.__init__(other: Pointer) -> Pointer[T, ImmOrigin(other.origin)]`),
+    /// and every other expectation, a mutable one included, binds exactly.
     pub fn coerces_to(&self, expected: &Self) -> bool {
         match expected {
             Self::UnsafeAny { mutable: false } => true,
@@ -360,6 +362,36 @@ impl PointerOrigin {
             Self::Untracked { mutable: false } => {
                 matches!(self, Self::Untracked { .. })
             }
+            Self::Place {
+                place,
+                mutable: false,
+            } => matches!(self, Self::Place { place: actual, .. } if actual == place),
+            Self::Param {
+                id,
+                mutability: Mutability::Immutable,
+                interior,
+                subtree,
+            } => matches!(
+                self,
+                Self::Param {
+                    id: actual,
+                    interior: actual_interior,
+                    subtree: actual_subtree,
+                    ..
+                } if actual == id && actual_interior == interior && actual_subtree == subtree
+            ),
+            Self::SelfPlace {
+                mutability: Mutability::Immutable,
+                interior,
+                subtree,
+            } => matches!(
+                self,
+                Self::SelfPlace {
+                    interior: actual_interior,
+                    subtree: actual_subtree,
+                    ..
+                } if actual_interior == interior && actual_subtree == subtree
+            ),
             _ => self == expected,
         }
     }

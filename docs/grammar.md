@@ -265,15 +265,18 @@ reference) may carry an **origin specifier** — `ref[origin] x` — whose conte
 arbitrary expression treated as `origin_of(...)`, a named origin, or `_` for an unbound
 origin) are retained in the AST for checked resolution. A member may be wrapped in
 the immutable-origin capability cast `ImmOrigin(origin)` (equivalently
-`Origin[mut=False](origin)`, or the older declaration-level
-`Origin[mut=False].cast_from[origin]`), which pins the reference's capability
+`Origin[mut=False](origin)`), which pins the reference's capability
 to read-only independent of the inner origin parameter's own `mut=` while
 keeping its provenance (the upgrade direction, `MutOrigin(origin)`, is
-rejected). The call form is also an ordinary origin argument (a struct or
+rejected). The removed `Origin[mut=...].cast_from[origin]` spelling still
+parses and is rejected by the checker with a migration diagnostic. The call
+form is also an ordinary origin argument (a struct or
 `Pointer` origin slot, an `unsafe_origin_cast` target) and, like
 `origin_of(...)`, keeps a bracket over a type name a parameter application. Named
 `Origin[mut=...]` parameters and the `//` infer-only marker are likewise
-retained; signature-level origin inference and substitution remain deferred.
+retained; upstream's `ImmOrigin` and `MutOrigin` aliases are accepted as the
+bound and record as `Origin[mut=False]` and `Origin[mut=True]`.
+Signature-level origin inference and substitution remain deferred.
 Origin positions also recognize two member projections as ordinary member
 syntax (no dedicated productions): `base._get_owned_interior["tag"]` names a
 collection-owned interior generation, and the terminal `base._subtree` names

@@ -5300,11 +5300,11 @@ fn builtin_origin_values_bind_struct_origin_slots() {
 
 #[test]
 fn immutable_origin_cast_pins_reference_results_read_only() {
-    // `Origin[mut=False].cast_from[Self.o]` in a reference result signature pins
+    // `ImmOrigin(Self.o)` in a reference result signature pins
     // the yielded capability to read-only regardless of the origin
     // parameter's own parametric `mut=` — the loop site never upgrades a
     // declared-immutable yield from the source's mutability.
-    let template = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct NumbersIter[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    var index: Int\n    def __next__(mut self) raises StopIteration -> ref[Origin[mut=False].cast_from[Self.o]] Int:\n        if self.index >= len(self.src):\n            raise StopIteration()\n        var r = self.index\n        self.index += 1\n        return self.src[r]\n\nstruct Numbers:\n    var items: List[Int]\n    def __init__(out self):\n        self.items = [4, 5, 6]\n    def __iter__(ref self) -> NumbersIter[origin_of(self.items)]:\n        ref items = self.items\n        return NumbersIter(items, 0)\n\ndef main():\n    var nums = Numbers()\n";
+    let template = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct NumbersIter[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    var index: Int\n    def __next__(mut self) raises StopIteration -> ref[ImmOrigin(Self.o)] Int:\n        if self.index >= len(self.src):\n            raise StopIteration()\n        var r = self.index\n        self.index += 1\n        return self.src[r]\n\nstruct Numbers:\n    var items: List[Int]\n    def __init__(out self):\n        self.items = [4, 5, 6]\n    def __iter__(ref self) -> NumbersIter[origin_of(self.items)]:\n        ref items = self.items\n        return NumbersIter(items, 0)\n\ndef main():\n    var nums = Numbers()\n";
     let write = format!("{template}    for ref x in nums:\n        x += 10\n");
     assert!(matches!(
         err(&write),
@@ -5316,8 +5316,20 @@ fn immutable_origin_cast_pins_reference_results_read_only() {
 
 #[test]
 fn origin_cast_cannot_upgrade_capability() {
-    let src = "@fieldwise_init\nstruct It[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    def first(self) -> ref[Origin[mut=True].cast_from[Self.o]] Int:\n        return self.src[0]\n\ndef main():\n    print(1)\n";
+    let src = "@fieldwise_init\nstruct It[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    def first(self) -> ref[MutOrigin(Self.o)] Int:\n        return self.src[0]\n\ndef main():\n    print(1)\n";
     assert!(matches!(err(src), TypeError::Unsupported(_)));
+}
+
+#[test]
+fn origin_cast_from_is_rejected_with_a_migration_diagnostic() {
+    let src = "struct Cell[m: Bool, //, o: Origin[mut=m]]:\n    var p: Pointer[Int, Self.o]\n    def __init__(out self, ref [Self.o] x: Int):\n        self.p = Pointer(to=x)\n    def first(self) -> ref[Origin[mut=False].cast_from[Self.o]] Int:\n        return self.p[]\n\ndef main():\n    var x = 4\n    var c = Cell(x)\n    print(c.first())\n";
+    let TypeError::Unsupported(message) = err(src) else {
+        panic!("expected the migration diagnostic");
+    };
+    assert!(
+        message.contains("was removed; use 'ImmOrigin(o)'"),
+        "{message}"
+    );
 }
 
 #[test]

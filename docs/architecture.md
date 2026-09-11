@@ -2098,7 +2098,7 @@ store outward freely, so origin-parameter-bound flows such as
 the lazy within-frame layer (interior origins are invalidation generations,
 not exclusive loans; eager whole-loan exclusivity is not promised). Mapping
 key yields are declaration-level immutable via the `ref` signature's
-immutable-origin cast (`Origin[mut=False].cast_from[...]`), which
+immutable-origin cast (`ImmOrigin(...)`), which
 `lower_ref_sig` unwraps and pins to `SigMutability::Immutable` so the loop
 site's parametric-mutability upgrade never applies; the upgrade direction is
 rejected.

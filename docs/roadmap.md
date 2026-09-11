@@ -18,20 +18,31 @@ exempt from the ordering.
 
 ### 1. Native Backend
 
-- [ ] **Native SIMD: a vector argument or result never reaches a register**
+- [ ] **Native runtime ABI bump: land every change that needs a new
+  `MJRT_ABI_VERSION` together**
 
-  Problem: a multi-lane SIMD value passes by pointer and returns through
-  the sret out-pointer, so the caller's argument slot and the callee's
-  result slot are addresses and can never promote, however the value moves
-  inside a function.
-  - Local slots do promote now, so the cost is confined to call
-    boundaries: a `SIMD`-taking kernel reloads its parameter from memory.
+  Problem: each item below changes the native runtime ABI, so it needs an
+  `MJRT_ABI_VERSION` bump and a normative `docs/native-abi.md` decision.
+  They ship as one bump rather than one each.
+  - Vector arguments and results never reach a register. A multi-lane
+    SIMD value passes by pointer and returns through the sret
+    out-pointer, so the caller's argument slot and the callee's result
+    slot are addresses and never promote.
+  - Local slots do promote, so that cost is confined to call boundaries:
+    a `SIMD`-taking kernel reloads its parameter from memory.
   - The fix is to classify multi-lane SIMD as an LLVM vector in the
-    function signature, which is an `MJRT_ABI_VERSION` bump plus a
-    normative `docs/native-abi.md` decision — deliberately not an
-    incidental consequence of a lowering change.
-  - Design record: `docs/notes/native-simd-pliron-assessment.md`
-    §Recommended Representation Boundary.
+    function signature. Design record:
+    `docs/notes/native-simd-pliron-assessment.md` §Recommended
+    Representation Boundary.
+  - The lane-index trap has no category of its own. An out-of-range lane
+    index exits natively with the `unhandled error` category, while the
+    VM raises `SIMD lane index … out of range`.
+  - The fix is a dedicated trap category in `mojito-runtime`. Until then
+    the parity harness cannot map the VM error, so the trap is pinned by
+    `tests/pliron_opt_regression_test.rs` instead of an
+    `assets/runtime_error` fixture.
+  - A later task that needs an ABI bump joins this entry rather than
+    getting its own.
 
 - [ ] **Native SIMD: float-to-int casts convert one lane at a time**
 
@@ -40,16 +51,6 @@ exempt from the ordering.
   - The vector form (`llvm.fptosi.sat.v{N}i128.v{N}f64`) is legal IR, but
     its x86-64 legalization is unverified, so it was not adopted.
   - Probe it with `llc` before switching.
-
-- [ ] **Native SIMD: the lane-index trap has no category of its own**
-
-  Problem: an out-of-range lane index exits natively with the
-  `unhandled error` category, while the VM raises `SIMD lane index … out
-  of range`.
-  - A dedicated trap category is a `mojito-runtime` ABI bump.
-  - Until then the parity harness cannot map the VM error, so the trap is
-    pinned by `tests/pliron_opt_regression_test.rs` instead of an
-    `assets/runtime_error` fixture.
 
 - [ ] **Front end: a bare literal cannot build a multi-lane SIMD field**
 
@@ -101,6 +102,22 @@ exempt from the ordering.
   (`checked_const_value` errors on `Construct`).
   - Emit the constructor call at default-fill through `lower_call`.
   - The `NoneType` argument is `LowerTy::ZeroSized`.
+
+- [ ] **Native: copying a bound `Pointer` local reads the pointer's own
+  slot**
+
+  Problem: `var t = q` for a `Pointer` local `q` prints `q`'s address
+  natively, while the VM and upstream print the pointee.
+  - The same happens when `q` fills an annotated binding or a call
+    argument, such as a constructor's or free function's `Pointer`
+    parameter.
+  - MIR lowers the copy as a `ref.make` of `q`'s slot, so `t` holds a
+    handle to `q`. The VM resolves the later `through: t` read to the loan
+    place, while pliron dereferences the handle and reads `q`'s bits.
+  - Start at the MIR lowering of a pointer-typed copy, which should load
+    `q`'s value rather than make a handle to its slot.
+  - The origin fixtures pass temporary pointers (`Pointer(to=x)`) until
+    then. Pinned by `conformance/probes/native_bound_pointer_copy.mojo`.
 
 ### 2. Catch Up To Current Mojo *(recurring — reopens at every nightly re-pin)*
 
@@ -175,6 +192,11 @@ exempt from the ordering.
     view methods and check argument origins against the assignment
     destination in the checker. Pinned by the `assign-*-view-over-source`
     rows of `conformance/cases.tsv`.
+  - `live-pointer-ref-argument`: a `ref` argument naming a place is
+    rejected while a `Pointer(to=place)` to it is still live (`access to
+    'x' conflicts with live reference 'p'`). Upstream accepts it, because
+    `Pointer` is not an exclusive borrow. Pinned by
+    `conformance/probes/live_pointer_ref_argument.mojo`.
 
   Three divergences are retained on purpose and re-probed rather than fixed;
   they are listed in [`docs/non-goals.md`](non-goals.md).
@@ -213,39 +235,7 @@ exempt from the ordering.
   task closes when its bullets are done, and a residue found inside a task
   moves to the task that owns its fix.
 
-  1. **Temporary views and their origins** — the origin spelling and
-     capability gaps the temporary-view fixes left open.
-     - `Origin[mut=False].cast_from[o]` does not exist at the pinned head,
-       yet `ref[...]` clauses still accept it and the bundled `dict.mojo`
-       and `set.mojo` use it. Upstream spells the cast `ImmOrigin(o)`,
-       which Mojito now accepts. Migrate the stdlib and tests, then reject
-       `cast_from` with a migration diagnostic as `StaticConstantOrigin`
-       does.
-     - A bare `ImmOrigin` or `MutOrigin` name is not spelled. An origin
-       binder bounded by it (upstream's `Named[T, o: ImmOrigin]`) and
-       `from std.origin import ImmOrigin` both reject. Only the call form
-       `ImmOrigin(o)` resolves.
-     - A mutable-origin `Pointer` does not convert to an `ImmOrigin(o)`
-       one, so `var r: Pointer[Int, ImmOrigin(origin_of(x))] =
-       Pointer(to=x)` rejects. Upstream converts through `Pointer`'s
-       `@implicit` constructor. The diagnostic prints both sides alike
-       (`expected Pointer[Int, origin@N], found Pointer[Int, origin@N]`)
-       because the display omits the capability.
-     - A keyword constructor over an origin-carrying `Pointer` rejects
-       `V[origin_of(x)](unsafe_ptr=Pointer(to=x))` and the inferred
-       `V(unsafe_ptr=...)` with `no constructor overload matches the
-       supplied arguments`. The same constructor runs with a pointer field
-       and an explicit origin (`V[ImmOrigin(Self.origin)](unsafe_ptr=self.p)`).
-     - A struct-binder origin argument in type position
-       (`V[Self.origin](unsafe_ptr=self.p)`) fails MIR verification with
-       `nongeneric call carries a compile-time value argument`.
-       `accept_origin_argument` marks only a value-position argument
-       erased.
-     - A free function's origin binder does not resolve as a `Pointer`
-       origin argument: `def peek[m: Bool, //, o: Origin[mut=m]](p:
-       Pointer[Int, o])` reports `Undefined variable 'o'`.
-
-  2. **Compile-time evaluation residues** — what VM CTFE can bind and
+  1. **Compile-time evaluation residues** — what VM CTFE can bind and
      resolve.
      - A VM-evaluated compile-time expression whose result is
        pointer-backed (`comptime C = M.copy()`, a bare `Optional`, a
@@ -264,7 +254,7 @@ exempt from the ordering.
        substitutes type parameters only; parameterized aliases substitute
        both.
 
-  3. **Monomorphization coverage and cost** — where the erased path still
+  2. **Monomorphization coverage and cost** — where the erased path still
      stands in for an instance clone, and what minting costs.
      - An instantiation whose argument mentions `StringLiteral` (`{"a": 1}`
        is `Dict[StringLiteral, Int]`) keeps the erased path: its values keep
@@ -296,7 +286,7 @@ exempt from the ordering.
        about 5% in debug across the compile benchmarks. Lever:
        reachability-pruned minting.
 
-  4. **Variadic packs and tuples** — what the pack machinery types
+  3. **Variadic packs and tuples** — what the pack machinery types
      syntactically or refuses.
      - Type-pack calls inside a nested `def` and whole-pack-forwarded calls
        keep the syntactic element-typing path (`a heterogeneous pack
@@ -321,7 +311,7 @@ exempt from the ordering.
        (`SIMD construction expects w element(s) or 1 to splat, got 0`).
        Only a Tuple element defaults to zero lanes.
 
-  5. **Everyday spellings that still reject** — checker context and stdlib
+  4. **Everyday spellings that still reject** — checker context and stdlib
      API shapes.
      - A list display as an argument to an explicitly applied constructor
        at runtime (`Dict[String, Int](["a"], [1], None)`) takes no context
@@ -367,7 +357,7 @@ exempt from the ordering.
        copyable values as well as keys, since the key view wraps the entry
        view.
 
-  6. **Naming and Unicode details** — output text only.
+  5. **Naming and Unicode details** — output text only.
      - `_unqualified_type_name` spells nested structs unqualified where
        upstream keeps a non-prelude struct's module path
        (`Optional[std.collections.dict.Dict[...]]`, `List[up.Flag[True]]`).
@@ -526,6 +516,8 @@ Every entry is written for a human reader who has not seen the code.
   (a file, a test, a diagnostic text, an example line).
 - A residue list from a finished task becomes several checkboxes, not one
   paragraph.
+- Exception: every change that needs an `MJRT_ABI_VERSION` bump shares
+  one checkbox, so the native runtime ABI is bumped once for all of them.
 
 ## Working Rule
 

@@ -16,7 +16,7 @@ struct EntryIter[m: Bool, //, o: Origin[mut=m]]:
     var index: Int
 
     def step(mut self, by: Int) raises StopIteration -> ref[
-        Origin[mut=False].cast_from[Self.o._get_owned_interior["element"]]
+        ImmOrigin(Self.o._get_owned_interior["element"])
     ] Pair:
         if self.index >= len(self.src[]):
             raise StopIteration()

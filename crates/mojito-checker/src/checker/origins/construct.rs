@@ -6,7 +6,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::origin::{Origin, OriginParamId, PointerOrigin};
+use mojito_types::origin::{Mutability, Origin, OriginParamId, PointerOrigin};
 
 impl Checker {
     /// Bind the struct origin binders the selected constructor's pointer
@@ -115,6 +115,72 @@ impl Checker {
                         ),
                         found: format!("a reference of origin {:?}", actual.origin),
                         context: context(),
+                    });
+                }
+            }
+        }
+        Ok(bindings)
+    }
+
+    /// Bind a callable's own origin binders named by its pointer-typed
+    /// parameters from the arguments filling those slots
+    /// (`def peek[o: Origin](p: Pointer[Int, o])` called with `Pointer(to=x)`
+    /// binds `o` to `x`'s provenance). A `MutOrigin` binder rejects an
+    /// immutable-origin actual; a projected binder is checked by coercion,
+    /// not bound. `bound` pairs a parameter index with the actual type.
+    pub(in crate::checker) fn bind_callable_pointer_origins(
+        callee: &str,
+        names: &[String],
+        params: &[Ty],
+        bound: &[(usize, &Ty)],
+    ) -> Result<HashMap<OriginParamId, PointerOrigin>, TypeError> {
+        let mut bindings: HashMap<OriginParamId, PointerOrigin> = HashMap::new();
+        for (index, actual) in bound {
+            let (
+                Some(Ty::Pointer {
+                    origin:
+                        PointerOrigin::Param {
+                            id,
+                            mutability,
+                            interior,
+                            subtree,
+                        },
+                    ..
+                }),
+                Ty::Pointer {
+                    origin: actual_origin,
+                    ..
+                },
+            ) = (params.get(*index), actual)
+            else {
+                continue;
+            };
+            let parameter = names.get(*index).map_or("?", String::as_str);
+            if *mutability == Mutability::Mutable
+                && actual_origin.statically_mutable() == Some(false)
+            {
+                return Err(TypeError::TypeMismatch {
+                    expected: format!(
+                        "a mutable-origin pointer for parameter '{parameter}' of '{callee}'"
+                    ),
+                    found: "an immutable-origin pointer".to_string(),
+                    context: format!("argument '{parameter}' to '{callee}'"),
+                });
+            }
+            if !interior.is_empty() || *subtree {
+                continue;
+            }
+            match bindings.get(id) {
+                None => {
+                    bindings.insert(*id, actual_origin.clone());
+                }
+                Some(existing) if existing == actual_origin => {}
+                Some(_) => {
+                    return Err(TypeError::BadCall {
+                        func: callee.to_string(),
+                        reason: format!(
+                            "arguments bind conflicting origins for parameter '{parameter}'"
+                        ),
                     });
                 }
             }

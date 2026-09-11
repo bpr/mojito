@@ -1572,6 +1572,10 @@ impl Checker {
         if let Some(sigs) = info.methods.get("__init__") {
             if info.decls.is_empty() {
                 let mut matches = Vec::new();
+                // The reason the last candidate failed its origin binding, so a
+                // miss caused by an explicit-origin or pointer-permission
+                // mismatch reports that, not a bare miss.
+                let mut origin_failure: Option<TypeError> = None;
                 for sig in sigs {
                     // A constructor with its own compile-time parameters
                     // (`__init__[T: Movable](out self, var value: T)`)
@@ -1591,6 +1595,23 @@ impl Checker {
                         )
                     else {
                         continue;
+                    };
+                    // A `Pointer` parameter over the struct's own origin
+                    // binder binds that binder from its argument before
+                    // scoring.
+                    let params = match self.bind_constructor_pointer_params(
+                        name,
+                        sig,
+                        params,
+                        &partitioned.explicit_origins,
+                        args,
+                        kwargs,
+                    )? {
+                        Ok(params) => params,
+                        Err(failure) => {
+                            origin_failure = failure.or_else(|| origin_failure.take());
+                            continue;
+                        }
                     };
                     let instantiation = method_instantiation_arguments(sig, &method_arguments);
                     if let Ok(scored) = self.score_method_call(
@@ -1646,21 +1667,22 @@ impl Checker {
                 {
                     matches.retain(|m| constructor_is_concrete(&m.param_decls));
                 }
-                let selected =
-                    select_method_overload("__init__", matches, None).map_err(|kind| {
-                        TypeError::BadCall {
-                            func: name.to_string(),
-                            reason: match kind {
-                                OverloadSelect::NoMatch => {
-                                    "no constructor overload matches the supplied arguments"
-                                }
-                                OverloadSelect::Ambiguous => {
-                                    "ambiguous overloaded constructor call"
-                                }
+                let selected = select_method_overload("__init__", matches, None).map_err(
+                    |kind| TypeError::BadCall {
+                        func: name.to_string(),
+                        reason: match (kind, &origin_failure) {
+                            (OverloadSelect::NoMatch, Some(error)) => format!(
+                                "no constructor overload matches the supplied arguments ({error})"
+                            ),
+                            (OverloadSelect::NoMatch, None) => {
+                                "no constructor overload matches the supplied arguments".to_string()
                             }
-                            .to_string(),
-                        }
-                    })?;
+                            (OverloadSelect::Ambiguous, _) => {
+                                "ambiguous overloaded constructor call".to_string()
+                            }
+                        },
+                    },
+                )?;
                 if let Some(target) = &selected.lowered_name {
                     self.overload_targets
                         .borrow_mut()
@@ -2493,5 +2515,87 @@ impl Checker {
         self.validate_callable_parameter_bounds(name, decls, &tyargs)?;
         self.validate_generic_constraints(name, decls, &tyargs)?;
         Ok((subst, tyargs))
+    }
+
+    /// Bind a hand-written constructor's struct origin binders named by its
+    /// `Pointer[T, Self.o]` parameters from the call's arguments, as the
+    /// fieldwise and generic paths do, and substitute the bound provenance
+    /// into `params` before scoring. The inner `Err` skips the candidate:
+    /// `None` when the call's slots do not fit it, `Some` with the origin
+    /// failure to report when no candidate matches.
+    fn bind_constructor_pointer_params(
+        &self,
+        name: &str,
+        sig: &MethodSig,
+        params: Vec<Ty>,
+        explicit: &[super::type_resolution::ExplicitStructOrigin],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Result<Result<Vec<Ty>, Option<TypeError>>, TypeError> {
+        let source_params = self
+            .structs
+            .get(name)
+            .map(|info| info.source_params.as_slice())
+            .unwrap_or_default();
+        let origin_pointer = |parameter: &Ty| {
+            matches!(
+                parameter,
+                Ty::Pointer {
+                    origin: mojito_types::origin::PointerOrigin::Param { .. },
+                    ..
+                }
+            )
+        };
+        if !params.iter().any(origin_pointer) {
+            return Ok(Ok(params));
+        }
+        let keyword_names: Vec<&str> = kwargs.iter().map(|k| k.name.as_str()).collect();
+        let Ok(matched) = mojito_ast::call::match_call_slots(
+            &sig.names,
+            &sig.required,
+            sig.positional_only,
+            sig.keyword_only,
+            args.len(),
+            &keyword_names,
+            mojito_ast::call::CallVariadics {
+                positional: sig.variadic.is_some(),
+                keyword: sig.kw_variadic.is_some(),
+            },
+        ) else {
+            return Ok(Err(None));
+        };
+        let mut bound_slots: Vec<(usize, &Expr, &Ty)> = Vec::new();
+        let mut arg_tys: Vec<Ty> = Vec::new();
+        for (index, slot) in matched.slots.iter().enumerate() {
+            let Some(pattern) = params
+                .get(index)
+                .filter(|parameter| origin_pointer(parameter))
+            else {
+                continue;
+            };
+            let expression = match slot {
+                ArgSlot::Positional(position) => &args[*position],
+                ArgSlot::Keyword(position) => &kwargs[*position].value,
+                ArgSlot::Default => continue,
+            };
+            arg_tys.push(self.infer(expression)?);
+            bound_slots.push((index, expression, pattern));
+        }
+        let pointer_origins = match self.bind_constructor_origins(
+            name,
+            "__init__",
+            source_params,
+            sig,
+            &bound_slots,
+            &arg_tys,
+            explicit,
+        ) {
+            Ok(bindings) => bindings,
+            Err(error) => return Ok(Err(Some(error))),
+        };
+        Ok(Ok(params
+            .iter()
+            .map(|parameter| substitute_pointer_origin_params(parameter, &pointer_origins))
+            .collect()))
     }
 }

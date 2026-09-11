@@ -45,11 +45,11 @@ pub(in crate::checker) fn reject_subtree_origin_here(context: &str) -> TypeError
 }
 
 /// The immutable-origin capability cast: current Mojo's `ImmOrigin(o)` /
-/// `Origin[mut=False](o)` (the `@implicit` `Origin` conversion), and the
-/// older declaration-level `Origin[mut=False].cast_from[o]`. It pins a
+/// `Origin[mut=False](o)` (the `@implicit` `Origin` conversion). It pins a
 /// capability to read-only while keeping `o`'s provenance. Returns the inner
 /// origin expression; the upgrade direction (`MutOrigin(o)`, `mut=True`) is
-/// rejected.
+/// rejected. The removed `Origin[mut=...].cast_from[o]` spelling is rejected
+/// with a migration diagnostic, as `StaticConstantOrigin` is.
 pub(in crate::checker) fn immutable_origin_cast(
     expression: &Expr,
 ) -> Option<Result<&Expr, TypeError>> {
@@ -95,7 +95,7 @@ pub(in crate::checker) fn immutable_origin_cast(
             Ok(inner)
         });
     }
-    let ExprKind::Index { object, index } = &expression.kind else {
+    let ExprKind::Index { object, .. } = &expression.kind else {
         return None;
     };
     let ExprKind::Member {
@@ -108,35 +108,15 @@ pub(in crate::checker) fn immutable_origin_cast(
     if field != "cast_from" {
         return None;
     }
-    let ExprKind::TypeApply { name, args } = &applied.kind else {
+    let ExprKind::TypeApply { name, .. } = &applied.kind else {
         return None;
     };
     if name != "Origin" {
         return None;
     }
-    let [
-        mojito_ast::ast::ParamArg::Named {
-            name: keyword,
-            value,
-        },
-    ] = args.as_slice()
-    else {
-        return None;
-    };
-    if keyword != "mut" {
-        return None;
-    }
-    let mojito_ast::ast::ParamArg::Value(flag) = value.as_ref() else {
-        return None;
-    };
-    match &flag.kind {
-        ExprKind::Bool(false) => Some(Ok(index)),
-        ExprKind::Bool(true) => Some(Err(TypeError::Unsupported(
-            "an origin cast cannot upgrade capability: 'Origin[mut=True].cast_from' is rejected"
-                .to_string(),
-        ))),
-        _ => None,
-    }
+    Some(Err(TypeError::Unsupported(
+        "'Origin[mut=...].cast_from[o]' was removed; use 'ImmOrigin(o)'".to_string(),
+    )))
 }
 
 pub(in crate::checker) fn validate_origin_expr(

@@ -33,7 +33,7 @@ struct _SetIter[
     # writing through an element reference would corrupt the hash and
     # uniqueness invariants.
     def __next__(mut self) raises StopIteration -> ref[
-        Origin[mut=False].cast_from[Self.iterable_origin._get_owned_interior["element"]]
+        ImmOrigin(Self.iterable_origin._get_owned_interior["element"])
     ] Self.T where conforms_to(Self.T, Copyable):
         if self.index >= len(self.src):
             raise StopIteration()

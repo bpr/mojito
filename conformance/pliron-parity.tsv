@@ -82,6 +82,7 @@ assets/ok/external_call_write_stdout.mojo	main	exe-differential	sanitized
 assets/ok/file_descriptor_stdout_order.mojo	main	exe-differential	sanitized
 assets/ok/file_handle_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/forward_struct_reference_iterator.mojo	main	exe-differential	sanitized
+assets/ok/free_function_origin_binders.mojo	main	exe-differential	sanitized
 assets/ok/funarg_call_through_after_last_use.mojo	main	exe-differential	sanitized
 assets/ok/func_styles.mojo	main	exe-differential	sanitized
 assets/ok/function_type_where_bound.mojo	main	exe-differential	sanitized
@@ -105,6 +106,7 @@ assets/ok/hashlib_explicit_hasher_containers.mojo	main	exe-differential	sanitize
 assets/ok/hashlib_keyed_ahasher.mojo	main	exe-differential	sanitized
 assets/ok/hashlib_values.mojo	main	exe-differential	sanitized
 assets/ok/hello_world.mojo	main	exe-differential	sanitized
+assets/ok/imm_origin_binders.mojo	main	exe-differential	sanitized
 assets/ok/imm_origin_cast_view.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion.mojo	main	exe-differential	sanitized
 assets/ok/indexer_normalization.mojo	main	exe-differential	sanitized
@@ -319,6 +321,8 @@ assets/ok/pointer_field_view_read_parameter.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_view_ref_yield.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_view_returned.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_wrapper_iterator_protocol.mojo	main	exe-differential	sanitized
+assets/ok/pointer_immutable_conversion.mojo	main	exe-differential	sanitized
+assets/ok/pointer_origin_constructors.mojo	main	exe-differential	sanitized
 assets/ok/pointer_origin_field_inference.mojo	main	exe-differential	sanitized
 assets/ok/pointer_placeholder_parameter.mojo	main	exe-differential	sanitized
 assets/ok/pointer_temp_argument_loan.mojo	main	exe-differential	sanitized

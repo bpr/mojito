@@ -1070,8 +1070,21 @@ impl fmt::Display for Ty {
             Self::Pointer { element, origin } => {
                 write!(f, "Pointer[{element}")?;
                 match origin {
+                    crate::origin::PointerOrigin::Place {
+                        place,
+                        mutable: false,
+                    } => {
+                        write!(f, ", ImmOrigin(origin@{})", place.root.0)?;
+                    }
                     crate::origin::PointerOrigin::Place { place, .. } => {
                         write!(f, ", origin@{}", place.root.0)?;
+                    }
+                    crate::origin::PointerOrigin::Param {
+                        id,
+                        mutability: crate::origin::Mutability::Immutable,
+                        ..
+                    } => {
+                        write!(f, ", ImmOrigin(origin#{})", id.0)?;
                     }
                     crate::origin::PointerOrigin::Param { id, .. } => {
                         write!(f, ", origin#{}", id.0)?;
