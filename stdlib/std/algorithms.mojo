@@ -6,9 +6,9 @@ trait StaticSized:
     comptime size: Int
 
 def type_tag[T: AnyType]() -> Int:
-    comptime if is_same_type[T, Int]():
+    comptime if T == Int:
         return 1
-    elif is_same_type[T, String]():
+    elif T == String:
         return 2
     else:
         return 0

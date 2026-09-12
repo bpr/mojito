@@ -401,3 +401,12 @@ pointer-immutable-conversion-write	reject	assets/type_error/pointer_immutable_co
 imm-origin-binder-pointer-write	reject	assets/type_error/imm_origin_binder_pointer_write.mojo
 mut-origin-constructor-rejects-immutable-pointer	reject	assets/type_error/mut_origin_constructor_rejects_immutable_pointer.mojo
 mut-origin-binder-rejects-immutable-pointer	reject	assets/type_error/mut_origin_binder_rejects_immutable_pointer.mojo
+pack-element-type-narrowing	mojito-only	conformance/fixtures/pack_element_type_narrowing.mojo
+type-predicate-comptime-if	run	assets/ok/type_predicate_comptime_if.mojo
+bool-alias-predicate-where	run	assets/ok/bool_alias_predicate_where.mojo
+maybe-uninit-predicates	run	assets/ok/maybe_uninit_predicates.mojo
+typelist-comptime-vocabulary	run	assets/ok/typelist_comptime_vocabulary.mojo
+variadic-method-type-params	run	assets/ok/variadic_method_type_params.mojo
+variadic-pack-upstream-spellings	run	assets/ok/variadic_pack_upstream_spellings.mojo
+generic-ctfe-value-param	run	assets/ok/generic_ctfe_value_param.mojo
+generic-ctfe-associated-value	run	assets/ok/generic_ctfe_associated_value.mojo

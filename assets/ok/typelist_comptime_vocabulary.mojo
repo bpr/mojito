@@ -2,6 +2,8 @@
 # `of` constructor (optional Trait= keyword), `length` (Sized `len` too),
 # per-element `any`/`all` predicates (builtin IsTrivially* or a Bool-bodied
 # comptime alias), the `all_conforms_to` trait form, and `contains`.
+from std.traits import IsTriviallyCopyable
+
 comptime IsSmall[T: AnyType] = IsTriviallyCopyable[T]
 
 def main():

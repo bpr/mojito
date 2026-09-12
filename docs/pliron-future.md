@@ -184,17 +184,18 @@ Run 2026-09-11 over every `assets/`, `stdlib/`, and `conformance/` Mojo file
 containing `comptime if` (68 occurrences across 25 files), with the pinned Mojo
 as the oracle. Files without that spelling were not swept.
 
-Four sites break once the check order is fixed:
+Four sites broke once the check order is fixed. Two are gone as of the
+2026-09-12 respelling pass: `assets/ok/generic_ctfe_value_param.mojo` and
+`assets/ok/generic_ctfe_associated_value.mojo` placed a deliberate type error
+(`var wrong: Int = "…"`) in the untaken branch as a compile-time assertion, and
+now fold the assertion into a second `comptime` alias instead. Two remain,
+both the same narrowing rule:
 
-- `assets/ok/generic_ctfe_value_param.mojo` and
-  `assets/ok/generic_ctfe_associated_value.mojo` place a deliberate type error
-  (`var wrong: Int = "…"`) in the untaken branch as a compile-time assertion.
-  Upstream already rejects both, though first for a different reason: it
-  requires `comptime if` inside a function.
-- `assets/ok/variadic_method_type_params.mojo` (`get`, `count_matching`) and
-  `stdlib/std/collections/tuple.mojo` (`__contains__`) rely on the guard
-  narrowing the method's `T` to the element type `Ts[i]`, which upstream does
-  not do.
+- `conformance/fixtures/pack_element_type_narrowing.mojo` (`get`,
+  `count_matching`, moved out of `assets/ok/variadic_method_type_params.mojo`)
+  and `stdlib/std/collections/tuple.mojo` (`__contains__`) rely on the guard
+  narrowing the method's `T` to the element type `Self.Ts[i]`, which upstream
+  does not do.
 
 The narrowing rule was probed directly:
 
@@ -210,9 +211,11 @@ Everything else is safe. The remaining branches return same-typed literals,
 write to a `Writer`, or are the `comptime if …: pass` specialization markers in
 `stdlib/std/utils/variant.mojo`.
 
-The sweep also found eight `assets/ok` fixtures that the pinned Mojo rejects
+The sweep also found eight `assets/ok` fixtures that the pinned Mojo rejected
 for reasons unrelated to branches, none of them listed in
-`conformance/cases.tsv`. They are their own roadmap entry in §2.
+`conformance/cases.tsv`. All eight were respelled on 2026-09-12 and now run on
+both compilers as `cases.tsv` `run` rows; the unswept remainder of `assets/` is
+its own roadmap entry in §2.
 
 ## Recommendation: incremental, and not first
 

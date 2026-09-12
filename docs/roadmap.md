@@ -116,32 +116,23 @@ whatever its model, because it batches every change that needs a new
 The three checkboxes below, and the bullets inside the two standing ones,
 are sorted Opus first (see **Entry Style**).
 
-- [ ] **Eight `assets/ok` fixtures do not compile with the pinned Mojo**
+- [ ] **The rest of `assets/` has never been checked against the pinned Mojo**
 
   Problem: the ordinary `assets/` folders may hold only programs the pinned
-  Mojo compiles, and a sweep of the files containing `comptime if` found eight
-  that it rejects. None of the eight is in `conformance/cases.tsv`, so nothing
-  catches them.
-  - `is_same_type[T, U]()` does not resolve upstream at all
-    (`type_predicate_comptime_if.mojo`, also `stdlib/std/algorithms.mojo`).
-  - The `IsTrivially*` predicates need `from std.traits import …` upstream
-    (`bool_alias_predicate_where.mojo`, `maybe_uninit_predicates.mojo`,
-    `typelist_comptime_vocabulary.mojo`).
-  - `from std.collections.tuple import Tuple` does not resolve upstream, and a
-    struct parameter must be spelled `Self.Ts` in a method signature
-    (`variadic_method_type_params.mojo`,
-    `variadic_pack_upstream_spellings.mojo`).
-  - Module-level `comptime if` (`generic_ctfe_value_param.mojo`,
-    `generic_ctfe_associated_value.mojo`).
-  - Decide per fixture: respell it, or move it under `assets/extensions/` with
-    a recorded reason.
-  - Dependency: that last pair is the same pair the `comptime-if-module-level`
-    divergence below rejects, and the same pair the section 3 `comptime if`
-    task breaks. Decide their spelling once, in whichever task runs first.
-  - The sweep covered only files containing `comptime if`. The rest of
-    `assets/` has not been checked the same way.
-  - Model: Opus, as-is. Oracle-driven respelling, one fixture at a time. Only
-    the module-level `comptime if` pair needs a judgment call.
+  Mojo compiles, but the only sweep so far covered the files containing
+  `comptime if`. It found eight rejected `assets/ok` fixtures, now respelled
+  and listed in `conformance/cases.tsv`; the other ~800 fixtures are
+  unswept (499 of them in the three `_ok` folders).
+  - Run the pinned Mojo over every file in `assets/ok`, `assets/ownership_ok`,
+    and `assets/origin_ok`, and respell or relocate what it rejects.
+  - Fixtures in the error folders are their own question: the pinned Mojo
+    rejects them too, but for its own reason, so a sweep there compares
+    diagnostics rather than exit codes. Sweep the `_ok` folders first.
+  - Each respelling that survives joins `conformance/cases.tsv` as a `run`
+    row, the way the eight did, so nothing silently drifts back.
+  - Model: Opus, plan first. The sweep itself is mechanical, but its size is
+    unknown, and the plan's job is to bound how many fixtures need real
+    respelling before the pass starts.
 
 - [ ] **Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
   any order)*
@@ -224,11 +215,43 @@ are sorted Opus first (see **Entry Style**).
       lowering.
   - `comptime-if-module-level`: a `comptime if` at module level is accepted,
     while upstream requires one inside a function (`'comptime if' must be
-    contained in a function`). `assets/ok/generic_ctfe_value_param.mojo` and
-    `assets/ok/generic_ctfe_associated_value.mojo` use it as a compile-time
-    assertion.
-    - Model: Opus, as-is. A parse or check-time rejection plus the two
-      fixture respellings shared with the fixtures task above.
+    contained in a function`). No fixture spells it any more — the two that
+    did now fold their assertion into a second `comptime` alias — so only
+    the rejection is left to write, with a `parse_error` fixture to pin it.
+    - Model: Opus, as-is. A parse or check-time rejection; the fixture
+      respellings are done.
+  - `is-same-type-builtin`: `is_same_type[T, U]()` is a Mojito-only
+    compile-time predicate; upstream has no such declaration and compares
+    type values with `==`. The stdlib and `assets/ok` now spell `==`; what
+    is left is the builtin itself, still reachable from user code and still
+    spelled by `assets/type_error/type_predicate_runtime_if.mojo` and eight
+    `tests/comptime_test.rs` cases.
+    - Model: Opus, as-is. Delete the intercept in
+      `crates/mojito-comptime/src/comptime/{eval,ctfe,elab}.rs` and respell
+      its remaining callers.
+  - `pack-element-type-narrowing`: inside a folded `comptime if Self.Ts[i]
+    == T` branch Mojito treats the pack element `self.storage[i]` as a `T`,
+    so a `ref[origin_of(self)] T` accessor returns it and an `==` against a
+    `T` argument type-checks. Upstream keeps the element at its dependent
+    pack type and demands `rebind[T](...)`, which Mojito does not
+    implement; it also rejects a reference into `self.storage` returned
+    under `origin_of(self)`. `stdlib/std/collections/tuple.mojo`'s
+    `__contains__` relies on the same narrowing. Pinned by
+    `conformance/fixtures/pack_element_type_narrowing.mojo`
+    (`pack-element-type-narrowing`).
+    - Model: Opus, plan first. Closing it means implementing `rebind` and
+      then requiring it, so the plan decides whether `rebind` lands first
+      or the two land together.
+  - `trivially-movable-stdlib-types`: `IsTriviallyMovable[String]`,
+    `IsTriviallyMovable[List[Int]]`, and the `MaybeUninit` conformances
+    that follow from them are `False` on Mojito and `True` upstream,
+    because six bundled stdlib types (`String`, `List`, `Array`, `Dict`,
+    `Set`, `Optional`) declare an explicit `__init__(out self, *, deinit
+    move: Self)` where upstream relies on the implicit bitwise move. The
+    predicate itself agrees on hand-written structs.
+    - Model: Opus, plan first. Deleting the six move constructors is the
+      fix, but it hands every heap-owning move to the compiler-generated
+      path on both backends, so the plan checks that path first.
   - `ref-binding-register-value`: a `ref` binding to a register-passable
     value is rejected upstream (`value of type 'Int32' doesn't have a
     memory origin in 'ref' binding`) but accepted by Mojito. It covers
@@ -243,6 +266,15 @@ are sorted Opus first (see **Entry Style**).
     - Model: Opus, plan first. The lever is named, but the rejection reaches
       wide fixture fallout, so it wants its own pass with the fallout
       enumerated first.
+  - `bare-pack-parameter-in-method`: a method may name its struct's pack
+    parameter bare (`Ts.length`, `Ts[i]`), while upstream demands `Self.Ts`
+    there (`unqualified access to struct parameter 'Ts'; use 'Self.Ts'
+    instead`) and reserves the bare name for the struct's own conformance
+    clauses, where `Self` is unavailable.
+    `assets/ok/variadic_pack_upstream_spellings.mojo` now spells both the
+    upstream way.
+    - Model: Fable. A leniency to withdraw, whose fallout is every stdlib
+      and fixture method that names a pack.
   - `partial-field-move-parent-used`: moving one field out of a struct
     (`p.a^`) while the parent is used afterwards (`p.b`) is rejected
     upstream (`value 'p.a' cannot be consumed, because 'p' is used later`)

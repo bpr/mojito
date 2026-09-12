@@ -4,6 +4,8 @@
 # conditions, and comptime if — and a predicate alias may expand an earlier
 # one.
 
+from std.traits import IsTriviallyCopyable
+
 comptime IsSmallCopy[T: AnyType] = conforms_to(T, Copyable) and IsTriviallyCopyable[T]
 comptime IsBigOrLinear[T: AnyType] = not IsSmallCopy[T]
 

@@ -100,7 +100,7 @@ struct Tuple[*Ts: Movable](
 
     def __contains__[T: Equatable](self, value: T) -> Bool:
         comptime for i in range(len(Ts)):
-            comptime if is_same_type[T, Ts[i]]():
+            comptime if T == Ts[i]:
                 if self.storage[i] == value:
                     return True
         return False

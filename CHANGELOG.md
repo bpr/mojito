@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The eight `assets/ok` fixtures the pinned Mojo rejected now compile and run
+  on both compilers, and all eight joined `conformance/cases.tsv` as `run`
+  rows so they cannot drift again. The `IsTrivially*` predicates import from
+  `std.traits`, `is_same_type[T, U]()` gives way to the upstream `T == U` type
+  comparison (in `stdlib/std/algorithms.mojo` and
+  `stdlib/std/collections/tuple.mojo` too), the `Tuple` import goes away
+  because both preludes already export it, a variadic struct's pack parameter
+  is spelled `Self.Ts` inside its methods and bare in its own conformance
+  clauses over a `Movable` bound, and the two module-level `comptime if`
+  assertions fold into a second `comptime` alias instead. The two accessors
+  that narrow a pack element to a method's own type parameter — which upstream
+  spells with a `rebind` Mojito does not implement — move to
+  `conformance/fixtures/pack_element_type_narrowing.mojo` as a `mojito-only`
+  case, and four divergences found along the way join the roadmap ledger.
 - A view-returning method called on an owning temporary receiver
   (`for c in String("abc").codepoints()`, `len(String("abc").__reversed__())`)
   no longer reads freed memory natively. The checker now materializes such a
