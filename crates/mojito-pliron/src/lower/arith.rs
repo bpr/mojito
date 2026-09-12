@@ -31,9 +31,12 @@ impl FnLowering<'_> {
         call.get_result(ctx)
     }
 
-    /// `x ** y` on Int/UInt: guard the exponent to `pow_exp`'s accepted range
+    /// `x ** y` on Int/UInt: guard the exponent to the accepted range
     /// (`0 ..= u32::MAX`, one unsigned compare covers negative-as-i64 too),
-    /// then call the wrapping `mjrt_pow` helper.
+    /// then call the bundled `std._intrinsics._pow_int` body — the same Mojo
+    /// square-and-multiply the VM runs, rather than a second hand-written
+    /// helper. Wrapping i64 multiplication is bit-identical for Int and
+    /// `UInt`, so the one body serves both.
     pub(super) fn lower_pow(
         &mut self,
         ctx: &mut Context,
@@ -50,11 +53,22 @@ impl FnLowering<'_> {
             TrapCategory::PowExponent,
             dest,
         )?;
-        let pow_ty = self.shared.ensure_pow(ctx);
+        let symbol = mojito_symbol::symbol::POW_INT_SYMBOL;
+        let Some(signature) = self.signatures.get(symbol) else {
+            return Err(self.unsupported_reg(
+                "`**` on integers without the bundled `_pow_int` body".into(),
+                dest,
+            ));
+        };
+        let callee: Identifier = signature
+            .mangled
+            .as_str()
+            .try_into()
+            .expect("mangled names are identifier-safe");
         let call = CallOp::new(
             ctx,
-            CallOpCallable::Direct("mjrt_pow".try_into().expect("valid identifier")),
-            pow_ty,
+            CallOpCallable::Direct(callee),
+            signature.func_ty,
             vec![lhs, rhs],
         );
         self.define(ctx, dest, call.get_operation(), call.get_result(ctx))

@@ -107,7 +107,7 @@ JIT execution additionally requires `target == host`.
 
 | Checked type | Native type | Rules |
 | --- | --- | --- |
-| `Int` | `i64` (signless) | Signed operator selection (`sdiv`/`srem`/`ashr`, signed predicates). **Overflow is defined two's-complement wrapping** for `+ - *`, unary `-`, and `**`; shifts mask the amount `& 63`. `//`/`%` trap on a zero divisor (exit category 1) and define the single overflowing case `MIN // -1 == MIN`, `MIN % -1 == 0` (native lowering sanitizes the divisor because LLVM `sdiv`/`srem` are poison there). `**` traps unless the exponent is in `0 ..= u32::MAX` (category 2) and computes square-and-multiply over wrapping multiplication (the `mjrt_pow` helper). |
+| `Int` | `i64` (signless) | Signed operator selection (`sdiv`/`srem`/`ashr`, signed predicates). **Overflow is defined two's-complement wrapping** for `+ - *`, unary `-`, and `**`; shifts mask the amount `& 63`. `//`/`%` trap on a zero divisor (exit category 1) and define the single overflowing case `MIN // -1 == MIN`, `MIN % -1 == 0` (native lowering sanitizes the divisor because LLVM `sdiv`/`srem` are poison there). `**` traps unless the exponent is in `0 ..= u32::MAX` (category 2) and computes square-and-multiply over wrapping multiplication (the bundled Mojo `std._intrinsics._pow_int` body, which the VM runs too). |
 | `UInt` | `i64` (signless) | Unsigned operator selection (`udiv`/`urem`/`lshr`, unsigned predicates); **wrapping mod 2^64** for `+ - *` and `**`; same trap rules. |
 | `Bool` | `i1` in SSA | At ABI boundaries (returns read through the JIT, future by-value fields) the storage unit is one byte and producers zero-extend; consumers may rely only on the low bit. Layout is size 1, align 1. |
 | `Float64` | `double` | IEEE 754 binary64, no fast-math flags. `!=` is the **UNE** predicate and every other comparison is ordered — so `NaN != x` is True (`Bool(NaN)` is True via `fcmp une 0.0`) and other NaN comparisons are False. Signed zero follows IEEE (`0.0 == -0.0`; displays keep the sign). `//` and `%` are `floor`-based expansions (`fdiv` + `llvm.floor`, `x - y*floor(x/y)`) with **no zero trap** — infinities and NaN flow through. `**` lowers to `llvm.pow`; cross-libm bit-exactness is an explicit **non-claim** (VM and native may differ in the last ulp on some hosts; fixtures avoid such inputs). |
@@ -281,8 +281,8 @@ escape: prefix `mj_`, then per byte — `[A-Za-z0-9]` passes through, `_`
 becomes `_u`, any other byte becomes `_hh` (two lowercase hex digits).
 
 Reserved namespaces, all outside the `mj_` image: the wrapper `main`, the
-runtime family `mjrt_*` (the `mojito-runtime` exports plus backend-emitted
-helpers like `mjrt_pow`), and the constant-pool family `mjstr_*` (private
+runtime family `mjrt_*` (the `mojito-runtime` exports), and the
+constant-pool family `mjstr_*` (private
 linkage — never exported from produced objects).
 
 The only other foreign symbols generated code references are the libc
@@ -305,10 +305,12 @@ order layout rule above matching glibc's x86-64 `struct stat`.
 
 `mjrt_write_stdout(data, len)` writes exactly the given bytes (interrupt
 retries included) and traps on failure — byte-exact output parity with the VM
-is the differential contract. The formatting family `mjrt_fmt_i64/u64/f64`
-produces the same text as the VM's display (`f64` is Rust's `{:?}` shortest
-round trip — `3.0`, `1e300`, `NaN`, `inf`), so print parity is structural
-rather than re-implemented: `print` lowers to one write per piece — each
+is the differential contract. Integer display text comes from the bundled
+Mojo bodies `std._intrinsics._int_digits`/`_uint_digits`, which the VM runs
+too, so there is one implementation rather than a matched pair;
+`mjrt_fmt_f64` still produces the VM's float text (Rust's `{:?}` shortest
+round trip — `3.0`, `1e300`, `NaN`, `inf`). Print parity is therefore
+structural rather than re-implemented: `print` lowers to one write per piece — each
 argument's display bytes, a single `" "` between arguments, and a trailing
 `"\n"` — composing the VM's `format_value` join byte-for-byte. A program's
 own `write(1, ...)` through `external_call` is an unbuffered syscall and
@@ -340,9 +342,9 @@ failure behavior. Summary (authoritative rows in `native::rt_abi`):
 | `mjrt_pointer_status(ptr) -> u32` | Borrows pointer identity; returns 0 for live/ordinary, 1 for a dangling sentinel, and 2 for an address within a freed allocation. Generated dereferences map those states to categories 8 and 9. |
 | `mjrt_dealloc(ptr, size, align)` | Consumes a live nonzero `mjrt_alloc` allocation, validating `size`/`align` against its header (mismatch traps, category 3); null and zero-size sentinels are no-ops; a repeated deallocation traps (category 10). |
 | `mjrt_write_stdout(data, len)` | Borrows; full write with interrupt retry; traps (category 4) on failure. |
-| `mjrt_fmt_i64/u64(value, out) -> u64` | Borrows `out` (≥ 20 bytes); returns bytes written; no NUL. |
+| `mjrt_fmt_i64/u64(value, out) -> u64` | Borrows `out` (≥ 20 bytes); returns bytes written; no NUL. **Unused by generated code** since integer display moved to the bundled `_int_digits`/`_uint_digits` Mojo bodies; the rows stay until the next `MJRT_ABI_VERSION` bump retires them. |
 | `mjrt_fmt_f64(value, out) -> u64` | Borrows `out` (≥ 32 bytes); VM display text. |
-| `mjrt_repr_string(data, len, out) -> u64` | Borrows `data` and `out` (≥ `2 * len + 2` bytes); returns the VM's single-quoted, escaped string repr; no NUL. |
+| `mjrt_repr_string(data, len, out) -> u64` | Borrows `data` and `out` (≥ `2 * len + 2` bytes); returns the VM's single-quoted, escaped string repr; no NUL. **Unused by generated code** since `repr` of a String moved to the compiled `String.write_repr_to`; the row stays until the next `MJRT_ABI_VERSION` bump retires it. |
 | `mjrt_trap(category) -> !` | Reports on stderr, exits `64 + category` (clamped to 127); runs no destructors. |
 | `mjrt_unhandled_error(data, len) -> !` | Borrows the raised UTF-8 message; reports `unhandled error: <message>` on stderr and exits `64 + 5`; runs no destructors. |
 | `mjrt_abort(data, len) -> !` | Borrows the abort's UTF-8 message; reports `abort: <message>` on stderr and exits `64 + 7`; runs no destructors. |

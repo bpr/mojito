@@ -600,6 +600,16 @@ impl VmBackend {
             value_params,
         } = value
         else {
+            // Integer text is the bundled `std._intrinsics._int_digits`
+            // body — the same digits the native backend calls it for —
+            // wrapped in `repr`'s constructor spelling when asked.
+            if let Some(digits) = self.integer_digits(prog, &value)? {
+                return Ok(match (repr, &value) {
+                    (false, _) => digits,
+                    (true, Value::UInt(_)) => format!("UInt({digits})"),
+                    (true, _) => format!("Int({digits})"),
+                });
+            }
             if repr {
                 return Ok(scalar_repr(&value));
             }
@@ -690,6 +700,40 @@ impl VmBackend {
             cursor += 1;
         }
         Ok(output)
+    }
+
+    /// The decimal text of a runtime integer: the bundled
+    /// `std._intrinsics._int_digits`/`_uint_digits` bodies formatting into a
+    /// reused heap scratch buffer, which is what the native backend calls
+    /// into its own formatting alloca. `None` for a non-integer value, and
+    /// for a program whose bundled stdlib is not linked (the phase-composed
+    /// seam), where the Rust `Display` rendering stands in.
+    fn integer_digits(
+        &mut self,
+        prog: &Prog,
+        value: &Value,
+    ) -> Result<Option<String>, RuntimeError> {
+        let symbol = match value {
+            Value::Int(_) => mojito_symbol::symbol::INT_DIGITS_SYMBOL,
+            Value::UInt(_) => mojito_symbol::symbol::UINT_DIGITS_SYMBOL,
+            _ => return Ok(None),
+        };
+        let Some(index) = prog.index_of(symbol) else {
+            return Ok(None);
+        };
+        let scratch = self.digit_scratch()?;
+        let (length, _) =
+            self.call_frame(prog, index, vec![value.clone(), scratch.clone()], &[])?;
+        let Value::Int(length) = length else {
+            return Err(RuntimeError::TypeError(format!(
+                "`{symbol}` did not return a byte count, got {}",
+                crate::runtime::type_name(&length)
+            )));
+        };
+        let bytes = self.heap_bytes(&scratch, length)?;
+        Ok(Some(
+            std::string::String::from_utf8_lossy(&bytes).into_owned(),
+        ))
     }
 }
 

@@ -935,6 +935,19 @@ fn visit_call_edges<'p>(
                     targets.push(*callee);
                 }
             };
+            // Every scalar display comes out of one of these expansions —
+            // `print`, `String(...)`, `repr`, `os.abort`, and a
+            // `Writer.write` — and each calls the bundled digit bodies
+            // without naming them in an instruction. `format_scalar`
+            // rejects the display when they were not declared, so a
+            // formatting shape missing from this list fails loudly.
+            if matches!(instr, MirInstr::Call { func, .. }
+                if matches!(func.0.as_str(), "print" | "String" | "repr" | "_mojito_abort"))
+                || matches!(instr, MirInstr::MethodCall { method, .. } if method == "write")
+            {
+                push_named(&mut targets, mojito_symbol::symbol::INT_DIGITS_SYMBOL);
+                push_named(&mut targets, mojito_symbol::symbol::UINT_DIGITS_SYMBOL);
+            }
             match instr {
                 // Intercepted allocation entry points lower as runtime
                 // intrinsics; their element-erased stdlib bodies must not
@@ -955,6 +968,17 @@ fn visit_call_edges<'p>(
                             }
                         }
                     }
+                }
+                // `**` on Int/UInt calls the bundled `_pow_int` body, which
+                // no call instruction names.
+                MirInstr::BinOp { op, a, b, .. }
+                    if *op == mojito_ast::ast::InfixOp::Pow
+                        && mojito_symbol::symbol::calls_pow_int(
+                            function.reg_types.get(&a.0),
+                            function.reg_types.get(&b.0),
+                        ) =>
+                {
+                    push_named(&mut targets, mojito_symbol::symbol::POW_INT_SYMBOL);
                 }
                 // `repr` of a nominal struct calls its `write_repr_to`
                 // instance in the lowered expansion.

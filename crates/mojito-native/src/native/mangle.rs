@@ -11,9 +11,8 @@
 //! digits). Injective because every `_` in the output starts an escape and
 //! `u` is not a hex digit; the `mj_` prefix keeps mangled names clear of the
 //! synthesized executable wrapper `main`, the C `exit`, the reserved
-//! `mjrt_*` runtime namespace — the `mojito-runtime` crate's exports and
-//! backend-emitted helpers (e.g. `mjrt_pow`) alike — and the backend's
-//! interned callable thunks (`mjthunk_<n>`, `mjdrop_<n>`).
+//! `mjrt_*` runtime namespace (the `mojito-runtime` crate's exports), and
+//! the backend's interned callable thunks (`mjthunk_<n>`, `mjdrop_<n>`).
 
 /// Mangle a MIR symbol name into a C-safe native symbol.
 #[allow(
@@ -136,14 +135,14 @@ mod tests {
 
     #[test]
     fn runtime_helper_symbols_never_collide() {
-        // `exit` and the `mjrt_*` helpers are declared unmangled by the
-        // lowering. Every mangled name starts with exactly `mj_` (third byte
-        // `_`), so `mjrt_pow` (third byte `r`) and prefix-less `exit` are
-        // outside the mangle image no matter the source name.
-        for source in ["exit", "mjrt_pow", "rt_pow", "t_pow"] {
+        // `exit` and the `mjrt_*` runtime exports are declared unmangled by
+        // the lowering. Every mangled name starts with exactly `mj_` (third
+        // byte `_`), so `mjrt_trap` (third byte `r`) and prefix-less `exit`
+        // are outside the mangle image no matter the source name.
+        for source in ["exit", "mjrt_trap", "rt_trap", "t_trap"] {
             let mangled = mangle(source);
             assert!(mangled.starts_with("mj_"), "{mangled}");
-            assert_ne!(mangled, "mjrt_pow");
+            assert_ne!(mangled, "mjrt_trap");
             assert_ne!(mangled, "exit");
         }
     }

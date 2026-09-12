@@ -93,6 +93,13 @@ whatever its model, because it batches every change that needs a new
     the parity harness cannot map the VM error, so the trap is pinned by
     `tests/pliron_opt_regression_test.rs` instead of an
     `assets/runtime_error` fixture.
+  - Three runtime rows are dead code the bump should delete:
+    `mjrt_fmt_i64`, `mjrt_fmt_u64` (integer display moved to the bundled
+    `_int_digits`/`_uint_digits` Mojo bodies, 2026-09-12) and
+    `mjrt_repr_string` (`repr` of a String moved to the compiled
+    `String.write_repr_to`, same day). Nothing emits calls to them; the
+    rows, the runtime implementations, and their `docs/native-abi.md`
+    entries all go together.
   - A later task that needs an ABI bump joins this entry rather than
     getting its own.
   - Model: Fable. The signature classification changes the native calling
@@ -140,17 +147,6 @@ are sorted Opus first (see **Entry Style**).
   Problem: parts of Mojito's stdlib lean on the Rust runtime where upstream
   is pure Mojo. Each is a candidate port, preferred over any new bridge
   (2026-09-07 direction).
-  - `mjrt_pow` for integer `**`. Upstream's `Int.__pow__` is Mojo.
-    - Model: Opus, as-is. One runtime symbol, one Mojo method.
-  - `mjrt_repr_string` for the native string repr. The VM side is already
-    Mojo (`String.write_repr_to`).
-    - Model: Opus, as-is. The Mojo implementation already exists; this
-      retargets the native path at it.
-  - Integer formatting in Rust: the integer arms of the VM's `Display for
-    Value` and the native `mjrt_fmt_i64` / `mjrt_fmt_u64`. Upstream formats
-    `Int` in Mojo (`_write_int`).
-    - Model: Opus, as-is. The algorithm is digit extraction and every
-      fixture's output pins it.
   - The literal-filled `String.__init__(literal)` and
     `StringSpan.__init__(literal)` constructors, and the
     `String._as_string_literal()` struct-to-literal bridge behind
@@ -168,6 +164,14 @@ are sorted Opus first (see **Entry Style**).
       `AGENTS.md`) into Mojo rather than deriving the algorithm; the plan
       picks the source and pins the shortest-round-trip cases. Only a
       from-scratch derivation would want Fable.
+  - The VM's `Display for Value` still renders `Int`/`UInt` in Rust. The
+    2026-09-12 integer-formatting port moved every program-visible text
+    path — `print`, `String(...)`, `repr`, `Writer.write`, format
+    templates — to the bundled `_int_digits`/`_uint_digits` bodies, but a
+    `fmt::Display` impl has no VM to call them with, so three callers keep
+    the Rust arms: diagnostics, the CLI binding dump, and `SIMD` lanes.
+    - Model: Opus, as-is. Each caller needs a VM-aware renderer, or a
+      reason to stay Rust.
 
   Four runtime services are deliberately not on that list; they are in
   [`docs/non-goals.md`](non-goals.md).

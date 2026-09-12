@@ -46,6 +46,7 @@ map and dependency DAG live in `docs/architecture.md` §Workspace Layout.
 | `print` keywords | `infer_print` (`checker/builtins.rs`) | The VM's `print` arm (`dispatch.rs`; `file=` writes through `host_write_bytes`), pliron's `lower_print` (`lower/print.rs`; a `print_sink` descriptor makes `write_stdout` call libc `write`), `mojito_types::types::is_stdlib_file_descriptor_struct`. |
 | Constructed defaults (`dir: Optional[String] = None`) | `CheckedConst::Construct` in the callee's declaration | The VM's `bind_for_call`; the native monomorphizer's `instantiate_constructed_defaults` (enqueues the constructor instance for the parameter type and respells the default's target), pliron's `reachable_set` (follows the default's target) and `bind_call_slots` (runs the instance over fresh storage). |
 | Host call allowlist (`external_call`) | `mojito_types::ffi::{CType, FfiCallee, CALLEES, callee, accepts_arg, accepts_ret}` | The checker's `infer_external_call` (rejects any other callee, checks arguments and the declared return type), the VM's `backend/vm/libc.rs` table (std-only execution: descriptor table, `errno` slot, environment overlay, glibc `dirent` byte images, `_c_stat` fills by field name), and pliron's `lower/externs.rs` (on-demand `llvm.func` declarations, `open` variadic, real C calls). The callee travels as the call's first parameter argument; the result type is the destination register's checked type. |
+| Compiler-called Mojo bodies | `stdlib/std/_intrinsics.mojo` (`_pow_int`, `_int_digits`, `_uint_digits`), named by `mojito_symbol::symbol::{POW_INT_SYMBOL, INT_DIGITS_SYMBOL, UINT_DIGITS_SYMBOL, DIGITS_BUFFER_BYTES, calls_pow_int}` | The Mojo implementations behind `**` on `Int`/`UInt` and integer display, which the builtin has no struct to hang a method on. `std.prelude` imports the module so every linked program carries them, and they stay out of `PRELUDE_EXPORTS`. Callers: the VM's `apply_binop`/`format_value`, the native monomorphizer's roots, and pliron's `reachable_set` plus `lower_pow`/`format_scalar`. |
 | Generated string tables | `stdlib/std/_string_tables.mojo` (written by `scripts/gen-string-tables` from the pinned upstream `_unicode_lookups.mojo` and `_parsing_numbers/constants.mojo`) | Fixed-width hex records in string literals: the Unicode 16 case-mapping tables behind `StringSpan.upper`/`lower`/`isupper`/`islower` and the Eisel-Lemire power-of-five table behind `atof`; `string.mojo`'s `_hex_at`/`_hex_u64_at`/`_table_find` decode and binary-search them. Regenerate at every re-pin; never edit by hand. |
 | Native compile (`backend-pliron`) | `backend::pliron::{compile, CompileOptions, NativeModule, EmitKind, OptLevel, NativeTarget, JitValue, TrapCategory, PlironError, runtime_declarations}` | CLI `compile`/`run --backend pliron` and the capability-manifest differential harness. |
 | Shared native ABI | `native::target::{Triple, CpuFeatures, NativeTarget, BuildConfig, OptLevel, EmitKind}`, `native::layout::{LayoutCx, StructFieldIndex, compose}`, `native::mangle::mangle`, `native::rt_abi` | Every native backend, the VM's typed `SizeOf` instruction, the CLI, `crates/mojito-runtime` agreement tests, and the LLVM cross checks. |
@@ -291,7 +292,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `crates/mojito-runtime` (workspace member, independently versioned,
   dependency-free) implements that contract as the linked `mjrt_*` C ABI:
   version symbols, `mjrt_alloc`/`mjrt_dealloc`, `mjrt_write_stdout`, the
-  VM-display `mjrt_fmt_*` formatters, and `mjrt_trap`. It must never depend
+  VM-display `mjrt_fmt_f64` formatter, and `mjrt_trap` (`mjrt_fmt_i64`,
+  `mjrt_fmt_u64`, and `mjrt_repr_string` are dead rows awaiting the batched
+  ABI bump: integer display and a String's `repr` are bundled Mojo now). It must never depend
   on the `mojito` crate (the VM `Value` stays out of the ABI);
   `tests/native_abi_test.rs` pins the Rust-side agreement.
 - `backend/pliron.rs` (feature `backend-pliron`) owns the supported native
@@ -305,7 +308,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   submodules —
   scalar operators/conversions with keyword/default call binding via
   `call::match_call_slots`, trap guard blocks, the sanitized `MIN // -1`
-  divisor, the `mjrt_pow` helper, aggregates/strings/allocation, Stage 4's
+  divisor, aggregates/strings/allocation, Stage 4's
   tagged-outcome raising ABI, structural `try`/`finally` flattening with
   per-variable initialization flags and pending-outcome dispatch, references
   as place addresses, Variant tag/payload operations with dynamic payload

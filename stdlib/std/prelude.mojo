@@ -20,3 +20,6 @@ from std.memory.alloc import alloc
 from std.span import Span
 from std.hashlib import hash
 from std.io import FileDescriptor, FileHandle, open
+
+# Linked for its bodies, not for a name: the compiler calls these by symbol.
+from std._intrinsics import _pow_int

@@ -245,6 +245,36 @@ fn checker_recorded_callees_name_real_mir_functions() {
     }
 }
 
+/// The bundled Mojo bodies the compiler calls by symbol reach every linked
+/// program under exactly the spellings `mojito_symbol::symbol` names. Renaming
+/// `stdlib/std/_intrinsics.mojo` or one of its `def`s would otherwise drop
+/// integer display back to the VM's Rust rendering with nothing failing.
+#[test]
+fn compiler_called_intrinsic_bodies_keep_their_lowered_symbols() {
+    let linked = mojito::link_source(
+        "def main():\n    print(1)\n",
+        std::path::Path::new("symbol_test.mojo"),
+    )
+    .expect("link error");
+    let program = mojito::elaborate(linked).expect("comptime error");
+    let names: HashSet<String> = lower_program(&program)
+        .expect("type error")
+        .functions
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    for symbol in [
+        mojito::symbol::POW_INT_SYMBOL,
+        mojito::symbol::INT_DIGITS_SYMBOL,
+        mojito::symbol::UINT_DIGITS_SYMBOL,
+    ] {
+        assert!(
+            names.contains(symbol),
+            "the bundled `{symbol}` body is not linked into every program"
+        );
+    }
+}
+
 #[test]
 fn self_typed_overload_keys_agree_between_declaration_and_call() {
     // A same-arity overload whose parameter is the enclosing struct type keys as

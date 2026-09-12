@@ -87,6 +87,18 @@ impl Elab<'_> {
             })
             .collect();
         let mut pending: VecDeque<String> = needed.iter().cloned().collect();
+        // The bundled bodies behind `**` and integer display are called by
+        // the VM itself, not by any expression the purity walk sees, so the
+        // closure seeds them the way the native backends seed their roots.
+        pending.extend(
+            [
+                mojito_symbol::symbol::POW_INT_SYMBOL,
+                mojito_symbol::symbol::INT_DIGITS_SYMBOL,
+                mojito_symbol::symbol::UINT_DIGITS_SYMBOL,
+            ]
+            .into_iter()
+            .map(str::to_string),
+        );
 
         // The ordinary checker validates retained nominal method/default bodies
         // even when the CTFE entry does not invoke them. Seed their actual free

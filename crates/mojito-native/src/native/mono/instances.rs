@@ -226,7 +226,10 @@ impl Specializer<'_> {
         let Ty::Struct(name, arguments) = &ty else {
             return Ok(());
         };
-        if mojito_symbol::symbol::is_stdlib_string_struct(name) {
+        // The nominal String displays through the backend's own byte copy —
+        // there is nothing for `write_to` to add — but its `repr` is the
+        // stdlib's Mojo escaping loop, compiled like any other body.
+        if mojito_symbol::symbol::is_stdlib_string_struct(name) && method != "write_repr_to" {
             return Ok(());
         }
         let exact = format!("{name}.{method}");

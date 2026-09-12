@@ -785,7 +785,8 @@ fn unknown_entry_is_rejected() {
 
 /// One compact function per Stage 2 surface: float arithmetic and compares,
 /// `UInt` operators, conversions, the div-by-zero and pow-exponent trap blocks,
-/// and the shared `mjrt_pow`/`mjrt_trap` scaffolding all print canonically.
+/// the call into the bundled `_pow_int` body, and the shared `mjrt_trap`
+/// scaffolding all print canonically.
 const STAGE2_SURFACE: &str = "\
 def mix(a: Int, b: UInt, x: Float64) -> Float64:
     var q = a // 3
@@ -810,8 +811,8 @@ fn stage2_surface_prints_canonically() {
     for needle in [
         "llvm.func @mjrt_trap",
         "llvm.call @mjrt_trap",
-        "llvm.func @mjrt_pow",
-        "llvm.call @mjrt_pow",
+        "llvm.func @mj__u_umodule_24std_24_24intrinsics_24_upow_uint",
+        "llvm.call @mj__u_umodule_24std_24_24intrinsics_24_upow_uint",
         "llvm.call_intrinsic",
         "llvm.udiv",
         "llvm.lshr",
@@ -1214,11 +1215,10 @@ mod native_abi_cross_checks {
     }
 
     /// Produced executables expose the inspectable ABI version symbol and no
-    /// runtime symbols outside the contract table (plus the backend-emitted
-    /// `mjrt_pow` helper) — checked over both a scalar executable and a
-    /// Stage 3 executable that prints, allocates, and carries constant-pool
-    /// strings (whose `mjstr_*` globals must stay private). Inspection only —
-    /// the executables never run.
+    /// runtime symbols outside the contract table — checked over both a
+    /// scalar executable and a Stage 3 executable that prints, allocates, and
+    /// carries constant-pool strings (whose `mjstr_*` globals must stay
+    /// private). Inspection only — the executables never run.
     #[test]
     fn pliron_executables_expose_only_specified_runtime_symbols() {
         const STAGE3_MAIN: &str = "\
@@ -1282,7 +1282,6 @@ def main():
                 .iter()
                 .map(|sig| sig.symbol)
                 .chain(rt_abi::RT_DATA_SYMBOLS.iter().map(|(name, _)| *name))
-                .chain(["mjrt_pow"])
                 .collect();
             for symbol in &globals {
                 assert!(

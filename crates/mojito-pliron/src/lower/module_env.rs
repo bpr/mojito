@@ -12,7 +12,6 @@ impl ModuleShared {
             rt_types: HashMap::new(),
             extern_types: HashMap::new(),
             strings: HashMap::new(),
-            pow_ty: None,
             thunks: HashMap::new(),
             drop_thunks: HashMap::new(),
         }
@@ -105,27 +104,6 @@ impl ModuleShared {
         self.module.append_operation(ctx, func.get_operation(), 0);
         self.extern_types.insert(row.name, func_ty);
         func_ty
-    }
-
-    /// Emit the wrapping square-and-multiply `mjrt_pow(base, exp) -> i64`
-    /// once and return its call type. Callers guard the exponent range first;
-    /// wrapping i64 multiplication is bit-identical for Int and `UInt`, so one
-    /// helper serves both.
-    pub(super) fn ensure_pow(&mut self, ctx: &mut Context) -> TypedHandle<FuncType> {
-        if let Some(ty) = self.pow_ty {
-            return ty;
-        }
-        let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
-        let pow_ty = FuncType::get(ctx, i64_ty, vec![i64_ty, i64_ty], false);
-        let func = FuncOp::new(
-            ctx,
-            "mjrt_pow".try_into().expect("valid identifier"),
-            pow_ty,
-        );
-        self.module.append_operation(ctx, func.get_operation(), 0);
-        emit_pow_body(ctx, func);
-        self.pow_ty = Some(pow_ty);
-        pow_ty
     }
 
     /// Intern the `invoke` thunk adapting compiled `target` to the uniform

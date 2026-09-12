@@ -1125,6 +1125,30 @@ fn print_displays_structs_and_simd() {
     assert_eq!(e, "P(1, 2)\n[1, 2, 3, 4]\n");
 }
 
+/// Integer display runs the bundled `_int_digits`/`_uint_digits` Mojo bodies,
+/// so the corners a hand-written digit loop gets wrong are pinned here: zero,
+/// the sign, `Int.MIN` (whose magnitude has no `Int` reading), and `UInt.MAX`.
+#[test]
+fn integer_display_covers_the_digit_loop_corners() {
+    let e = output(concat!(
+        "var least: Int = -9223372036854775807 - 1\n",
+        "var most: UInt = UInt(18446744073709551615)\n",
+        "print(0, 9, -9, 10, -10, 1234567890)\n",
+        "print(least, most)\n",
+        "print(String(least), String(most))\n",
+        "print(repr(least), repr(most))\n",
+    ));
+    assert_eq!(
+        e,
+        concat!(
+            "0 9 -9 10 -10 1234567890\n",
+            "-9223372036854775808 18446744073709551615\n",
+            "-9223372036854775808 18446744073709551615\n",
+            "Int(-9223372036854775808) UInt(18446744073709551615)\n",
+        )
+    );
+}
+
 // --- Builtins: StringLiteral / abs / min / max / round / len ---
 
 #[test]

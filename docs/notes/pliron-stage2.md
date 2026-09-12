@@ -39,7 +39,7 @@ Operator lowering matches `src/runtime.rs` exactly (the VM is the oracle):
 | `/` | `sitofp` both + `fdiv` (Float64 result) | `uitofp` + `fdiv` | `fdiv` |
 | `//` | zero trap, `sdiv` + floor select | zero trap, `udiv` | `fdiv` + `llvm.floor` (no trap) |
 | `%` | zero trap, `srem` + divisor-sign select | zero trap, `urem` | `x - y*floor(x/y)` (NOT `frem`, no trap) |
-| `**` | exponent trap, `mjrt_pow` | same | `llvm.pow.f64` |
+| `**` | exponent trap, bundled `_pow_int` call | same | `llvm.pow.f64` |
 | `<< >>` | mask `&63`; `shl`/`ashr` | mask `&63`; `shl`/`lshr` (logical) | — |
 | `& \| ^` | `and/or/xor` | same | — |
 | compare | signed `icmp` | unsigned `icmp` | `fcmp` OEQ/**UNE**/OLT/OLE/OGT/OGE |
@@ -94,16 +94,18 @@ dialect, a conversion rule, and negative coverage for zero semantic gain.
 
 The `**` exponent guard is one unsigned compare (`icmp ugt exp, u32::MAX`
 covers negative-as-i64 and oversized in one test — `runtime::pow_exp`'s
-accepted range). `mjrt_pow` is a lazily emitted module-private wrapping
-square-and-multiply helper shared by Int and UInt (wrapping i64/u64
-multiplication is bit-identical). Runtime helper names (`exit`, `mjrt_*`,
-wrapper `main`) sit outside the injective `mj_` mangle image.
+accepted range). The wrapping square-and-multiply body itself was a lazily
+emitted module-private `mjrt_pow` helper at Stage 2; it is now the bundled
+Mojo `std._intrinsics._pow_int`, called by both backends and shared by Int
+and UInt (wrapping i64/u64 multiplication is bit-identical). Runtime helper
+names (`exit`, `mjrt_*`, wrapper `main`) sit outside the injective `mj_`
+mangle image.
 
 ## Recorded VM/native divergence policies
 
 - **Int/UInt `+ - *` overflow**: *closed by the shared native ABI milestone*
   (`docs/native-abi.md`) — defined two's-complement wrapping on both
-  backends, including wrapping `**` (VM `wrapping_pow` = native `mjrt_pow`)
+  backends, including wrapping `**` (one bundled `_pow_int` body on both)
   and the defined `i64::MIN // -1 == i64::MIN` / `MIN % -1 == 0` case (the
   native lowering sanitizes the `sdiv`/`srem` poison divisor). Pinned by the
   `assets/ok/pliron_wrap_*` differential fixtures at `O0`/`O1`.

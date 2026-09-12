@@ -625,9 +625,10 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    /// Emit the display bytes of one scalar value: `mjrt_fmt_*` into the
-    /// scratch buffer for the numeric kinds (the runtime formats exactly the
-    /// VM's display text), pooled `True`/`False` selection for Bool.
+    /// Emit the display bytes of one scalar value: the bundled integer-digit
+    /// bodies or `mjrt_fmt_f64` into the scratch buffer for the numeric kinds
+    /// (both produce exactly the VM's display text), pooled `True`/`False`
+    /// selection for Bool.
     pub(super) fn print_scalar(
         &mut self,
         ctx: &mut Context,
@@ -651,8 +652,8 @@ impl FnLowering<'_> {
         dest: Reg,
     ) -> Result<(Value, Value), PlironError> {
         let (symbol, value) = match ty {
-            ScalarTy::Int => ("mjrt_fmt_i64", value),
-            ScalarTy::UInt => ("mjrt_fmt_u64", value),
+            ScalarTy::Int => (mojito_symbol::symbol::INT_DIGITS_SYMBOL, value),
+            ScalarTy::UInt => (mojito_symbol::symbol::UINT_DIGITS_SYMBOL, value),
             ScalarTy::Float64 => ("mjrt_fmt_f64", value),
             // A `Float32` displays as its f64 view (the VM formats the lane's
             // stored f64 with the same shortest-round-trip rules).
@@ -664,9 +665,9 @@ impl FnLowering<'_> {
                 let wide = self.sized_to_i64(ctx, value, dtype, dest);
                 (
                     if signed {
-                        "mjrt_fmt_i64"
+                        mojito_symbol::symbol::INT_DIGITS_SYMBOL
                     } else {
-                        "mjrt_fmt_u64"
+                        mojito_symbol::symbol::UINT_DIGITS_SYMBOL
                     },
                     wide,
                 )
@@ -689,14 +690,26 @@ impl FnLowering<'_> {
             }
         };
         let scratch = self.scratch_buffer(ctx);
-        let fmt_ty = self.shared.ensure_rt(ctx, symbol);
-        let identifier: Identifier = symbol
+        // The integer digits come from the bundled Mojo bodies (compiled into
+        // this module, mangled); only the float text is still a runtime
+        // symbol.
+        let (callee, func_ty) = match self.signatures.get(symbol) {
+            Some(signature) => (signature.mangled.as_str(), signature.func_ty),
+            None if symbol.starts_with("mjrt_") => (symbol, self.shared.ensure_rt(ctx, symbol)),
+            None => {
+                return Err(self.unsupported_reg(
+                    format!("scalar display without the bundled `{symbol}` body"),
+                    dest,
+                ));
+            }
+        };
+        let identifier: Identifier = callee
             .try_into()
-            .expect("runtime symbols are identifier-safe");
+            .expect("runtime and mangled names are identifier-safe");
         let call = CallOp::new(
             ctx,
             CallOpCallable::Direct(identifier),
-            fmt_ty,
+            func_ty,
             vec![value, scratch],
         );
         self.append(ctx, call.get_operation(), Some(dest));
@@ -804,14 +817,15 @@ impl FnLowering<'_> {
         address.get_result(ctx)
     }
 
-    /// The function's 32-byte formatting buffer (`mjrt_fmt_i64`/`u64` need
-    /// at least 20 bytes, `mjrt_fmt_f64` at least 32), created once at the
-    /// top of the entry block so loops reuse one slot.
+    /// The function's formatting buffer, created once at the top of the entry
+    /// block so loops reuse one slot. It is
+    /// [`DIGITS_BUFFER_BYTES`](mojito_symbol::symbol::DIGITS_BUFFER_BYTES)
+    /// wide, which is also what `mjrt_fmt_f64` asks for.
     pub(super) fn scratch_buffer(&mut self, ctx: &mut Context) -> Value {
         if let Some(scratch) = self.scratch {
             return scratch;
         }
-        let value = self.entry_alloca(ctx, 32, 8);
+        let value = self.entry_alloca(ctx, mojito_symbol::symbol::DIGITS_BUFFER_BYTES, 8);
         self.scratch = Some(value);
         value
     }

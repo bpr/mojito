@@ -65,8 +65,8 @@ constructor, and String's `__copyinit__`.
   interns `mjstr_<n>` private globals on actual use only, so fold-only
   literals (literal `+`/`==`/`!=` fold at compile time) never emit a global.
 - Runtime strings are `(data, len)` SSA pairs (`str_runtime`), the in-flight
-  `MjStrDesc`. `String(scalar)` formats through `mjrt_fmt_*` into a dedicated
-  allocation (an *owned* pair); the consuming nominal-String constructor
+  `MjStrDesc`. `String(scalar)` formats through the scalar formatters into a
+  dedicated allocation (an *owned* pair); the consuming nominal-String constructor
   **steals** an owned pair's allocation instead of copying.
 - The nominal String's literal constructor and `__copyinit__` are native
   bridges (see `docs/native-abi.md`); `__deinit__` compiles from real MIR

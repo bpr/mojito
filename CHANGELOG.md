@@ -8,6 +8,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Three implementations Mojito carried in Rust or hand-written LLVM are now
+  bundled Mojo, called by both runtimes: integer `**` (a wrapping
+  square-and-multiply `std._intrinsics._pow_int` replaces the backend-emitted
+  `mjrt_pow` helper and the VM's `i64::wrapping_pow`), integer display
+  (`_int_digits`/`_uint_digits` write the decimal bytes into the caller's
+  buffer — the native backend's formatting alloca or a reused VM heap
+  scratch — replacing `mjrt_fmt_i64`/`mjrt_fmt_u64` and the VM's `Display`
+  rendering wherever a program can see the text), and `repr` of a nominal
+  `String` natively, which now calls the compiled `String.write_repr_to`
+  instead of `mjrt_repr_string`. The new `stdlib/std/_intrinsics.mojo` holds
+  the bodies, `std.prelude` links it into every program without exporting a
+  name, and `mojito_symbol::symbol` owns the symbols and the rule that
+  decides when a `**` calls one. The three runtime symbols keep their ABI
+  rows until the batched `MJRT_ABI_VERSION` bump retires them; the VM's
+  `Display for Value` keeps its Rust integer arms for diagnostics, the CLI
+  binding dump, and `SIMD` lanes.
 - The eight `assets/ok` fixtures the pinned Mojo rejected now compile and run
   on both compilers, and all eight joined `conformance/cases.tsv` as `run`
   rows so they cannot drift again. The `IsTrivially*` predicates import from

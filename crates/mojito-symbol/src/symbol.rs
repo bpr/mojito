@@ -29,6 +29,40 @@ use mojito_ast::ast::{
 use mojito_types::ct::{CtLane, CtValue};
 use mojito_types::types::{ParamDecl, Ty, TyArg, contains_string_literal, default_literal};
 
+/// The lowered symbol of `std._intrinsics._pow_int`.
+///
+/// It is the Mojo body both backends call for `**` on `Int`/`UInt`.
+/// `std.prelude` imports the module, so every linked program carries the
+/// definition; the exponent arrives already guarded to `0 ..= u32::MAX` by
+/// the caller.
+pub const POW_INT_SYMBOL: &str = "__module$std$$intrinsics$_pow_int";
+
+/// The lowered symbols of `std._intrinsics._int_digits`/`_uint_digits`.
+///
+/// They are the Mojo bodies both backends call for an integer's decimal
+/// text. Each writes the digits (with a leading `-` for a negative `Int`)
+/// into a caller-owned buffer of at least 21 bytes and returns how many it
+/// wrote; there is no NUL terminator.
+pub const INT_DIGITS_SYMBOL: &str = "__module$std$$intrinsics$_int_digits";
+pub const UINT_DIGITS_SYMBOL: &str = "__module$std$$intrinsics$_uint_digits";
+
+/// The buffer every `_int_digits`/`_uint_digits` caller must supply: 20
+/// digits of `UInt.MAX` plus a sign, rounded up.
+pub const DIGITS_BUFFER_BYTES: u64 = 32;
+
+/// Whether a `**` on these operand types calls [`POW_INT_SYMBOL`].
+///
+/// Every pair the native lowering routes to its integer arms does, which is
+/// anything without a float or vector operand (an unmaterialized literal
+/// pair lowers as `Int`). Monomorphization enqueues the body and the
+/// backend's reachable set declares it on exactly this rule, so the two
+/// cannot drift.
+pub fn calls_pow_int(left: Option<&Ty>, right: Option<&Ty>) -> bool {
+    let floating =
+        |ty: Option<&Ty>| matches!(ty, Some(Ty::Float64 | Ty::FloatLiteral | Ty::Simd { .. }));
+    !floating(left) && !floating(right)
+}
+
 /// One declaration visible to phase-neutral runtime/backend dispatch.
 #[derive(Debug, Clone, Copy)]
 pub struct CallableCandidate<'a> {

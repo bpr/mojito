@@ -1,5 +1,5 @@
 # Defined wrapping for `**` (square-and-multiply over wrapping multiplication,
-# the shared native ABI contract shared with the runtime's mjrt_pow helper).
+# the shared native ABI contract, run by the bundled `_pow_int` body).
 def compute() -> Int:
     var base = 3
     var big = base ** 41

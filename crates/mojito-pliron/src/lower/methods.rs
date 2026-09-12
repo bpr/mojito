@@ -292,7 +292,8 @@ impl FnLowering<'_> {
     }
 
     /// `repr(value)`: an owned runtime `StringLiteral` matching the VM's scalar
-    /// vocabulary or a nominal value's compiled `write_repr_to`.
+    /// vocabulary or a nominal value's compiled `write_repr_to` — the nominal
+    /// String included, whose single-quoted escaping loop is stdlib Mojo.
     pub(super) fn lower_repr_builtin(
         &mut self,
         ctx: &mut Context,
@@ -417,9 +418,7 @@ impl FnLowering<'_> {
             );
             return self.mark_owned_temp(dest, Ty::StringLiteral);
         }
-        if let Some(Ty::Struct(name, _)) = self.func.reg_types.get(&arg.0).cloned()
-            && !mojito_symbol::symbol::is_stdlib_string_struct(&name)
-        {
+        if let Some(Ty::Struct(name, _)) = self.func.reg_types.get(&arg.0).cloned() {
             let prefix = format!("{name}.write_repr_to");
             let mut candidates: Vec<_> = self
                 .signatures
@@ -461,40 +460,7 @@ impl FnLowering<'_> {
                 dest,
             ));
         }
-        let string = matches!(self.func.reg_types.get(&arg.0), Some(Ty::Struct(name, _))
-            if mojito_symbol::symbol::is_stdlib_string_struct(name));
-        if !string {
-            return Err(self.unsupported_reg("repr over a non-String value".into(), dest));
-        }
-        let source = self.reg_ptr(ctx, arg)?;
-        let (data, len) = self.string_parts(ctx, source, dest);
-        let two = self.uint_constant(ctx, 2);
-        let doubled = MulOp::new_with_overflow_flag(ctx, len, two, no_overflow_flags());
-        self.append(ctx, doubled.get_operation(), Some(dest));
-        let capacity =
-            AddOp::new_with_overflow_flag(ctx, doubled.get_result(ctx), two, no_overflow_flags());
-        self.append(ctx, capacity.get_operation(), Some(dest));
-        let output = self.emit_alloc(ctx, capacity.get_result(ctx), 1, dest);
-        let symbol = "mjrt_repr_string";
-        let func_ty = self.shared.ensure_rt(ctx, symbol);
-        let identifier: Identifier = symbol.try_into().expect("runtime names are identifiers");
-        let call = CallOp::new(
-            ctx,
-            CallOpCallable::Direct(identifier),
-            func_ty,
-            vec![data, len, output],
-        );
-        self.append(ctx, call.get_operation(), Some(dest));
-        let escaped_len = call.get_result(ctx);
-        self.str_runtime.insert(
-            dest.0,
-            RuntimeStr {
-                data: output,
-                len: escaped_len,
-                owned: true,
-            },
-        );
-        self.mark_owned_temp(dest, Ty::StringLiteral)
+        Err(self.unsupported_reg("repr over a non-String value".into(), dest))
     }
 
     fn wrap_repr_scalar(

@@ -143,10 +143,9 @@ pub struct ContractAbi {
 
 /// Module-level lowering state shared by every function: the module itself
 /// plus the lazily declared runtime-contract symbols (trap blocks call
-/// `mjrt_trap`), the emitted `mjrt_pow` helper, and the interned per-target
-/// `invoke` thunks of retained callables (`mjthunk_<n>`). The `mjrt_` and
-/// `mjthunk_` prefixes, like `main`, are outside the injective `mj_` mangle
-/// image (see `mangle`).
+/// `mjrt_trap`) and the interned per-target `invoke` thunks of retained
+/// callables (`mjthunk_<n>`). The `mjrt_` and `mjthunk_` prefixes, like
+/// `main`, are outside the injective `mj_` mangle image (see `mangle`).
 pub struct ModuleShared {
     module: ModuleOp,
     rt_types: HashMap<&'static str, TypedHandle<FuncType>>,
@@ -154,7 +153,6 @@ pub struct ModuleShared {
     /// `externs.rs`); like `rt_types`, declared once per module on demand.
     extern_types: HashMap<&'static str, TypedHandle<FuncType>>,
     strings: HashMap<Vec<u8>, Identifier>,
-    pow_ty: Option<TypedHandle<FuncType>>,
     /// Interned callable thunks, keyed by (mangled target, capture-mode
     /// string — `r`/`c`/`m` per leading capture parameter). One lifted body
     /// gets distinct thunks per mode vector because declaration sites

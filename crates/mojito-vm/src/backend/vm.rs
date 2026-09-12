@@ -66,6 +66,10 @@ pub struct VmBackend {
     /// Host state of the `external_call` libc table: descriptors, directory
     /// streams, `errno`, and the environment overlay (see `libc.rs`).
     host: libc::HostState,
+    /// The byte buffer the bundled `_int_digits`/`_uint_digits` bodies format
+    /// into, allocated on first use and reused — the VM's counterpart to the
+    /// native backend's per-function formatting alloca.
+    digit_scratch: Option<Value>,
 }
 
 impl VmBackend {
@@ -202,6 +206,47 @@ impl VmBackend {
             ));
         }
         Ok((allocation_index, i as usize))
+    }
+
+    /// The reused digit-formatting buffer, allocated on first use.
+    fn digit_scratch(&mut self) -> Result<Value, RuntimeError> {
+        if let Some(scratch) = &self.digit_scratch {
+            return Ok(scratch.clone());
+        }
+        let scratch = self.heap_alloc(
+            i64::try_from(mojito_symbol::symbol::DIGITS_BUFFER_BYTES)
+                .expect("the digit buffer size fits i64"),
+            1,
+        )?;
+        self.digit_scratch = Some(scratch.clone());
+        Ok(scratch)
+    }
+
+    /// The `length` bytes at `pointer`, read out of the heap arena. Every
+    /// byte slot holds a width-1 integer `Simd` value (the representation of
+    /// `Byte`), so anything else is a corrupt buffer.
+    fn heap_bytes(&self, pointer: &Value, length: i64) -> Result<Vec<u8>, RuntimeError> {
+        let Value::Pointer { allocation, offset } = pointer else {
+            return Err(RuntimeError::TypeError(
+                "vm: byte read requires a Pointer".to_string(),
+            ));
+        };
+        let mut bytes = Vec::with_capacity(length.max(0) as usize);
+        for index in 0..length {
+            let (arena, slot) = self.heap_index(*allocation, *offset, index)?;
+            match self.heap[arena].slots.get(slot) {
+                Some(Value::Simd {
+                    lanes: crate::runtime::SimdLanes::Int(lanes),
+                    ..
+                }) if lanes.len() == 1 => bytes.push(lanes[0] as u8),
+                other => {
+                    return Err(RuntimeError::TypeError(format!(
+                        "vm: byte buffer slot is {other:?}, not a byte"
+                    )));
+                }
+            }
+        }
+        Ok(bytes)
     }
 
     fn heap_free(&mut self, allocation: u64, offset: i64) -> Result<(), RuntimeError> {
