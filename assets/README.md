@@ -18,13 +18,20 @@ changes.
 
 ## `extensions/`: Mojito-only language extensions
 
-Every fixture in the folders above must compile with the pinned Mojo.
-A program that uses a Mojito extension — today, direct `ref` struct fields
-(`var f: ref[o] T`), which upstream rejects and may adopt later; in future,
-experiments such as pattern matching or enums — lives under
+Every fixture in the folders above must compile with the pinned Mojo —
+`scripts/sweep-assets-mojo` runs it over them and compares the result against
+`conformance/assets-mojo-rejects.tsv`, the burn-down list of the ones it still
+rejects. A program that uses a Mojito extension — today, direct `ref` struct
+fields (`var f: ref[o] T`), which upstream rejects and may adopt later, and
+`Origin._subtree` casts, which upstream parses but rejects at the use; in
+future, experiments such as pattern matching or enums — lives under
 `assets/extensions/<folder>/` instead, where `<folder>` is the same outcome
 folder it would otherwise use (`extensions/ok`, `extensions/type_error`,
-`extensions/ownership_error`, …). The harnesses run these through the same
+`extensions/ownership_error`, …). The same script with `--extensions` asserts
+the inverse: the pinned Mojo must reject every extension fixture, so one that
+starts compiling is the signal that upstream adopted the extension.
+
+The harnesses run these through the same
 groups (named `assets_extensions_<folder>::…`, `vm_ok::extensions::…`, and
 so on) and the native parity manifest covers `extensions/ok` and
 `extensions/ownership_ok`. When a `ref`-field fixture has a Mojo-valid twin

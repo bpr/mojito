@@ -1,0 +1,251 @@
+#!/usr/bin/env bash
+# Runs the pinned Mojo over the ordinary assets/ fixture folders and compares
+# the result against conformance/assets-mojo-rejects.tsv, the checked-in
+# burn-down list of fixtures upstream still rejects.
+#
+# AGENTS.md invariant 1: every fixture in the ordinary assets/ folders must
+# compile with the pinned Mojo. --extensions inverts that for
+# assets/extensions/, where the pin must reject every fixture instead — an
+# extension the pin starts accepting is the signal that upstream adopted it.
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+parity="$root/conformance/parity.tsv"
+rejects="$root/conformance/assets-mojo-rejects.tsv"
+mojo_pixi_manifest="${MOJO_PIXI_MANIFEST:-}"
+jobs="${JOBS:-8}"
+compare=""
+extensions=""
+declare -a folders=() only=()
+
+usage() {
+    cat <<'EOF'
+usage: scripts/sweep-assets-mojo --mojo-pixi-manifest PATH [options]
+
+Runs every fixture in the ordinary assets/ _ok folders under the pinned Mojo
+and reports which ones it rejects, checking the result against
+conformance/assets-mojo-rejects.tsv.
+
+  --mojo-pixi-manifest PATH  pinned Mojo environment (or MOJO_PIXI_MANIFEST)
+  --folders "A B"            replace the default folder list
+  --only PATH...             sweep just these fixtures; skips the manifest
+                             comparison (the in-session gate)
+  --compare                  also run target/debug/mojito and diff stdout
+  --extensions               sweep assets/extensions/ expecting rejection
+  --jobs N                   parallelism (default 8, or JOBS)
+
+Per-fixture output lands under target/assets-mojo-sweep/<timestamp>/.
+EOF
+}
+
+while (($#)); do
+    case "$1" in
+        --mojo-pixi-manifest)
+            mojo_pixi_manifest="${2:-}"
+            shift 2
+            ;;
+        --folders)
+            read -ra folders <<<"${2:-}"
+            shift 2
+            ;;
+        --only)
+            shift
+            while (($#)) && [[ "$1" != --* ]]; do
+                only+=("$1")
+                shift
+            done
+            ;;
+        --compare)
+            compare=1
+            shift
+            ;;
+        --extensions)
+            extensions=1
+            shift
+            ;;
+        --jobs)
+            jobs="${2:-}"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "unknown argument: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
+
+if [[ -z "$mojo_pixi_manifest" || ! -f "$mojo_pixi_manifest" ]]; then
+    echo "a valid --mojo-pixi-manifest PATH is required" >&2
+    exit 2
+fi
+
+if ((${#folders[@]} == 0)); then
+    if [[ -n "$extensions" ]]; then
+        folders=(assets/extensions/ok assets/extensions/ownership_ok assets/extensions/origin_ok)
+    else
+        folders=(assets/ok assets/ownership_ok assets/origin_ok)
+    fi
+fi
+
+cd "$root"
+expected_mojo_version="$(awk -F $'\t' '$1 == "# reference-version" { print $2 }' "$parity")"
+actual_mojo_version="$(pixi run --manifest-path "$mojo_pixi_manifest" mojo --version)"
+if [[ "$actual_mojo_version" != *"${expected_mojo_version#Mojo }"* ]]; then
+    echo "Mojo version mismatch" >&2
+    echo "  expected: $expected_mojo_version" >&2
+    echo "  actual:   $actual_mojo_version" >&2
+    exit 2
+fi
+echo "Mojo reference: $actual_mojo_version"
+
+out="$root/target/assets-mojo-sweep/$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$out/runs"
+
+if ((${#only[@]})); then
+    printf '%s\n' "${only[@]}" >"$out/fixtures.txt"
+else
+    find "${folders[@]}" -name '*.mojo' | sort >"$out/fixtures.txt"
+fi
+swept="$(wc -l <"$out/fixtures.txt")"
+if ((swept == 0)); then
+    echo "no fixtures to sweep" >&2
+    exit 2
+fi
+
+if [[ -n "$compare" ]]; then
+    env RUSTC_WRAPPER= cargo build --quiet
+fi
+
+# One fixture, in a subshell so xargs can fan it out: run it under the pinned
+# Mojo with no stdin (a fixture that reads stdin must fail deterministically,
+# not drain the caller's), optionally under Mojito too, and print one row.
+sweep_one() {
+    local fixture="$1" id status mojito_status
+    id="${fixture//\//__}"
+    id="${id%.mojo}"
+    status=0
+    timeout 60 pixi run --manifest-path "$mojo_pixi_manifest" mojo run "$root/$fixture" \
+        >"$out/runs/$id.mojo.out" 2>"$out/runs/$id.mojo.err" </dev/null || status=$?
+    if ((status != 0)); then
+        printf 'rejects\t%s\t%s\n' "$fixture" "$(first_error "$out/runs/$id.mojo.err")"
+        return 0
+    fi
+    if [[ -z "$compare" ]]; then
+        printf 'accepts\t%s\t\n' "$fixture"
+        return 0
+    fi
+    mojito_status=0
+    timeout 120 "$root/target/debug/mojito" run "$root/$fixture" \
+        >"$out/runs/$id.mojito.out" 2>"$out/runs/$id.mojito.err" </dev/null || mojito_status=$?
+    if ((mojito_status != 0)); then
+        printf 'mojito-rejects\t%s\t%s\n' "$fixture" "$(first_error "$out/runs/$id.mojito.err")"
+    elif cmp -s "$out/runs/$id.mojo.out" "$out/runs/$id.mojito.out"; then
+        printf 'accepts\t%s\t\n' "$fixture"
+    else
+        printf 'output-diff\t%s\t\n' "$fixture"
+    fi
+}
+
+# The first `error:` line of a diagnostics stream, without its file:line:col
+# prefix and with tabs squeezed out so it survives a TSV column.
+first_error() {
+    sed -n 's/.*[[:space:]]\(error: .*\)/\1/p' "$1" | head -1 | tr '\t' ' '
+}
+
+export -f sweep_one first_error
+export root out compare mojo_pixi_manifest
+
+xargs -P "$jobs" -I{} bash -c 'sweep_one "$@"' _ {} <"$out/fixtures.txt" \
+    | sort -t $'\t' -k2,2 >"$out/results.tsv"
+
+awk -F '\t' '$1 == "rejects" { print $2 "\t" $3 }' "$out/results.tsv" >"$out/rejects.tsv"
+awk -F '\t' '$1 == "output-diff" { print $2 }' "$out/results.tsv" >"$out/output-diffs.tsv"
+awk -F '\t' '$1 == "mojito-rejects" { print $2 "\t" $3 }' "$out/results.tsv" >"$out/mojito-rejects.tsv"
+
+accepted=$(awk -F '\t' '$1 == "accepts"' "$out/results.tsv" | wc -l)
+rejected=$(wc -l <"$out/rejects.tsv")
+diffed=$(wc -l <"$out/output-diffs.tsv")
+mojito_rejected=$(wc -l <"$out/mojito-rejects.tsv")
+
+echo "swept $swept; Mojo accepted $accepted, rejected $rejected"
+if [[ -n "$compare" ]]; then
+    echo "  Mojito rejected $mojito_rejected; stdout differs on $diffed"
+fi
+echo "detail: $out"
+
+status=0
+
+if [[ -n "$extensions" ]]; then
+    # Inverted: the pin must reject every extension fixture.
+    if ((accepted > 0 || diffed > 0)); then
+        echo
+        echo "the pinned Mojo now ACCEPTS extension fixtures — upstream may have"
+        echo "adopted the extension (docs/non-goals.md):"
+        awk -F '\t' '$1 == "accepts" || $1 == "output-diff" { print "  " $2 }' "$out/results.tsv"
+        status=1
+    fi
+    ((status == 0)) && echo "extensions sweep: ok (the pin rejects all $rejected)"
+    exit "$status"
+fi
+
+if ((mojito_rejected > 0)); then
+    echo
+    echo "Mojito rejects fixtures its own _ok folder claims it accepts:"
+    sed 's/^/  /' "$out/mojito-rejects.tsv"
+    status=1
+fi
+
+if ((${#only[@]})); then
+    if ((rejected > 0)); then
+        echo
+        echo "the pinned Mojo rejects:"
+        sed 's/^/  /' "$out/rejects.tsv"
+        status=1
+    fi
+    if ((diffed > 0)); then
+        echo
+        echo "stdout differs from Mojito:"
+        sed 's/^/  /' "$out/output-diffs.tsv"
+        status=1
+    fi
+    exit "$status"
+fi
+
+# Whole-folder run: the rejects must be exactly the checked-in burn-down list.
+expected_swept="$(awk -F '\t' '$1 == "# swept-count" { print $2 }' "$rejects")"
+if [[ "$expected_swept" != "$swept" ]]; then
+    echo
+    echo "swept $swept fixtures, but $rejects records $expected_swept;"
+    echo "update its '# swept-count' header when fixtures are added or removed"
+    status=1
+fi
+
+listed="$(awk -F '\t' '!/^#/ && NF && $1 != "fixture" { print $1 }' "$rejects" | sort)"
+found="$(cut -f1 "$out/rejects.tsv" | sort)"
+
+unlisted="$(comm -13 <(printf '%s\n' "$listed") <(printf '%s\n' "$found"))"
+if [[ -n "$unlisted" ]]; then
+    echo
+    echo "the pinned Mojo rejects fixtures not listed in $rejects:"
+    while IFS= read -r fixture; do
+        echo "  $fixture	$(awk -F '\t' -v f="$fixture" '$1 == f { print $2 }' "$out/rejects.tsv")"
+    done <<<"$unlisted"
+    status=1
+fi
+
+stale="$(comm -23 <(printf '%s\n' "$listed") <(printf '%s\n' "$found"))"
+if [[ -n "$stale" ]]; then
+    echo
+    echo "these are listed as rejected but the pinned Mojo now accepts them;"
+    echo "delete their rows from $rejects and add a cases.tsv run row:"
+    sed 's/^/  /' <<<"$stale"
+    status=1
+fi
+
+((status == 0)) && echo "assets sweep: ok"
+exit "$status"

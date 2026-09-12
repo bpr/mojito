@@ -20,7 +20,7 @@ struct Tagged[e: Extent](Copyable, Movable):
         self.scale = scale
 
     def total(self) -> Int:
-        var frozen = e
+        var frozen = Self.e
         return frozen.size() * self.scale
 
 def main():

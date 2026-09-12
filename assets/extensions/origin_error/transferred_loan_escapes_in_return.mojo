@@ -9,8 +9,8 @@ struct RefBox[origin: Origin[mut=True]]:
 def make() -> List[RefBox[MutUnsafeAnyOrigin]]:
     var sink = List[RefBox]()
     var local: List[Int] = [9]
-    ref alias = local
-    sink.append(RefBox(alias))
+    ref view = local
+    sink.append(RefBox(view))
     return sink^
 
 def main():

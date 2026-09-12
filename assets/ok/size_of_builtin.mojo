@@ -1,4 +1,6 @@
 # `size_of[T]()` uses the shared native ABI layout, including aggregate padding.
+from std.sys import size_of
+
 @fieldwise_init
 struct Padded:
     var flag: Bool

@@ -17,8 +17,8 @@ def make(mut keep: List[Int]) -> Sink[origin_of(keep)]:
     ref whole = keep
     var sink = Sink(RefBox(whole))
     var local: List[Int] = [9]
-    ref alias = local
-    sink.via(RefBox(alias))
+    ref view = local
+    sink.via(RefBox(view))
     return sink^
 
 def main():

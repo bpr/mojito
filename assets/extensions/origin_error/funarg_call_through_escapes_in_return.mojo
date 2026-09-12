@@ -17,8 +17,8 @@ def make(mut source: List[Int]) -> Carrier[origin_of(source)]:
     ref src_alias = source
     var sink = Carrier(RefBox(src_alias))
     var local: List[Int] = [9]
-    ref alias = local
-    feed(stash, sink, RefBox(alias))
+    ref view = local
+    feed(stash, sink, RefBox(view))
     return sink^
 
 def main():

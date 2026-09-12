@@ -18,7 +18,7 @@ def main():
     ref whole = keep
     var sink = Carrier(RefBox(whole))
     var local: List[Int] = [9]
-    ref alias = local
-    stash(sink, RefBox(alias))
+    ref view = local
+    stash(sink, RefBox(view))
     local.append(1)
     print(sink.slot.value[0])

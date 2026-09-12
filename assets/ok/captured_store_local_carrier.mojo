@@ -12,7 +12,7 @@ def main():
     var sink = Carrier(RefBox(Pointer(to=whole)))
     var local: List[Int] = [9]
     def push() {mut sink, mut local}:
-        ref alias = local
-        sink.slot = RefBox(Pointer(to=alias))
+        ref view = local
+        sink.slot = RefBox(Pointer(to=view))
     push()
     print(sink.slot.value[][0])

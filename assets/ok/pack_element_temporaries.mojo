@@ -7,6 +7,7 @@
 # value stays on its abstract path (`next(it)` is VM-only: the generic `next`
 # body has no native reference-result adapter).
 from std.format._utils import Named
+from std.collections import Set
 
 @fieldwise_init
 struct Tag(Writable, Copyable, Movable):

@@ -419,8 +419,6 @@ assets/ok/string_span_methods.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_view_equality.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/stropping.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_value_param_frozen.mojo	-	ineligible	no-scalar-entry-shape
-assets/ok/subtree_pointer_generic_field.mojo	-	ineligible	no-scalar-entry-shape
-assets/ok/subtree_pointer_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/telemetry.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tempfile_mkdtemp.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/temporary_receiver_view.mojo	-	ineligible	no-scalar-entry-shape
@@ -518,6 +516,8 @@ assets/extensions/ok/reference_element_chained_read.mojo	-	ineligible	no-scalar-
 assets/extensions/ok/reference_yielding_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/reference_yielding_iteration_named_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/reference_yielding_iteration_parametric_mut.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/subtree_pointer_generic_field.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/subtree_pointer_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/transferred_carrier_keeps_source_alive.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/allocation_use_after_dealloc.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/div_by_zero.mojo	-	ineligible	no-scalar-entry-shape

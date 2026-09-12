@@ -14,3 +14,12 @@ struct Sparrow(Bird):
         pass
     def fly(self):
         pass
+
+def flock[B: Bird](b: B):
+    b.eat()
+    b.fly()
+
+def main():
+    var s = Sparrow(2)
+    flock(s)
+    print(s.age)

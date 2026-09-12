@@ -8,8 +8,8 @@ struct RefList[origin: Origin[mut=True]]:
     var values: List[ref[origin] Int]
     def swap(mut self):
         var local = 9
-        ref alias = local
-        self.values[0] = alias
+        ref view = local
+        self.values[0] = view
 
 def main():
     print(1)

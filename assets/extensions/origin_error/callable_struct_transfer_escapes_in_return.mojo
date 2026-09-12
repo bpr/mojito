@@ -19,8 +19,8 @@ def make(mut source: List[Int]) -> Carrier[origin_of(source)]:
     var sink = Carrier(RefBox(src_alias))
     var s = Stasher(0)
     var local: List[Int] = [9]
-    ref alias = local
-    s(sink, RefBox(alias))
+    ref view = local
+    s(sink, RefBox(view))
     return sink^
 
 def main():

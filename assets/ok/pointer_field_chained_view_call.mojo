@@ -10,7 +10,7 @@ struct Pane[m: Bool, //, o: Origin[mut=m]]:
         self.items = Pointer(to=items)
         self.start = start
 
-    def shifted(self) -> Pane[o]:
+    def shifted(self) -> Pane[Self.o]:
         return Pane(self.items[], self.start + 1)
 
     def first(self) -> Int:
@@ -20,7 +20,7 @@ struct Pane[m: Bool, //, o: Origin[mut=m]]:
         return self.items[][self.start + i]
 
 struct Board:
-    comptime PaneType[m: Bool, //, o: Origin[mut=m]] = Pane
+    comptime PaneType[m: Bool, //, o: Origin[mut=m]] = Pane[o]
 
     var items: List[Int]
 

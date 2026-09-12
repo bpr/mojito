@@ -1,0 +1,119 @@
+# Fixtures in the ordinary assets/ _ok folders that the pinned Mojo rejects.
+# AGENTS.md invariant 1 says this file should be empty; it is the burn-down
+# list, and scripts/sweep-assets-mojo fails when reality and this file differ.
+#
+# family: alias-keyword (`alias` is still a reserved word at the pin),
+# self-qualification (`Self.X` for a struct parameter), unbound-parameter
+# (an origin/value parameter the pin makes you bind), missing-import,
+# no-main, iterator-protocol (Mojito's `for` predates `__has_next__`),
+# ledgered (an instance of a divergence docs/non-goals.md or the roadmap
+# ledger already records), divergence (unclassified acceptance divergence),
+# skip (the sweep cannot run it — today only the stdin reader). A family
+# with no rows left is one this burn-down has closed.
+#
+# The error is the pin's FIRST complaint, so it can mask a later one: lifting
+# a mask moves a row to another family rather than deleting it.
+# swept-count	496
+fixture	family	first-error
+assets/ok/array_element_assignment.mojo	divergence	error: cannot return reference with incompatible origin: 'origin_of(self.cell)' vs 'origin_of(self)'
+assets/ok/borrowed_iteration_temporary_source_drop.mojo	iterator-protocol	error: 'NumbersIter' does not implement the '__has_next__' method
+assets/ok/builtins_numeric.mojo	divergence	error: function instantiation failed
+assets/ok/callable_struct_transfer_after_last_use.mojo	unbound-parameter	error: 'RefBox[_]' is not concrete, use '[]' to bind missing parameters
+assets/ok/captured_store_local_carrier.mojo	divergence	error: cannot implicitly convert 'RefBox[origin_of(local)]' value to 'RefBox[origin_of(keep)]'
+assets/ok/closures.mojo	divergence	error: recursive references to nested functions are not supported; define 'fact' at file scope
+assets/ok/comprehension_borrowed_named_source.mojo	iterator-protocol	error: unable to locate module 'iterable'
+assets/ok/comprehension_temporary_source_drop.mojo	iterator-protocol	error: 'NumbersIter' does not implement the '__has_next__' method
+assets/ok/comptime_frozen_struct.mojo	divergence	error: cannot materialize comptime value of type 'Grid' to runtime because it is not 'ImplicitlyCopyable'
+assets/ok/comptime_tuple.mojo	iterator-protocol	error: 'Tuple[String, String, String]' does not implement the '__iter__' method
+assets/ok/container_owning_family_apis.mojo	divergence	error: unable to locate module 'string_dict'
+assets/ok/copyable_iterator_reference_aggregate.mojo	unbound-parameter	error: 'RefBox[_]' is not concrete, use '[]' to bind missing parameters
+assets/ok/copyinit_moveinit.mojo	divergence	error: failed to infer parameter 'origin', specify the parameter or use '_' or '...' to unbind the parameter explicitly
+assets/ok/decorators.mojo	divergence	error: use of unknown declaration 'value'
+assets/ok/delegated_ref_return_projection.mojo	iterator-protocol	error: unable to locate module 'iterable'
+assets/ok/dunder_index.mojo	divergence	error: no matching function in call to 'len'
+assets/ok/explicit_destroy_partial_fields.mojo	divergence	error: value of type 'Child' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
+assets/ok/forward_struct_reference_iterator.mojo	iterator-protocol	error: unable to locate module 'iterable'
+assets/ok/funarg_call_through_after_last_use.mojo	divergence	error: cannot transfer out of immutable reference
+assets/ok/generic_borrowed_dispatch_overloaded_iter.mojo	divergence	error: 'C.Iter.Element' value has no attribute 'copy'
+assets/ok/generic_copyable_iterator_refinement.mojo	divergence	error: invalid call to 'print': an element of 'values' with type 'IntRefIter.Element' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
+assets/ok/input.mojo	skip	error: execution exited with a non-zero result: 1
+assets/ok/interior_dest_rebind_releases_loans.mojo	unbound-parameter	error: 'RefBox[_]' is not concrete, use '[]' to bind missing parameters
+assets/ok/iterable_associated_element.mojo	iterator-protocol	error: 'C' does not implement the '__iter__' method
+assets/ok/keyword_slice_subscripts.mojo	divergence	error: use of unknown declaration 'ContiguousSlice'
+assets/ok/lambda_captures.mojo	divergence	error: invalid call to 'call': value passed to 'f' cannot be converted from 'def() -> Int' to 'def() capturing thin -> Int', it depends on an unresolved parameter '__origins__'
+assets/ok/lambda_hof.mojo	divergence	error: invalid call to '__call__': value cannot be converted from type value '$0' to an instance of '$0'; did you mean to instantiate '$0'?
+assets/ok/lifecycle_deprecated_spellings.mojo	divergence	error: use of unknown declaration 'ImplicitlyDeletable'
+assets/ok/loop_binding_consuming_copy.mojo	divergence	error: failed to infer parameter 'origin', specify the parameter or use '_' or '...' to unbind the parameter explicitly
+assets/ok/nested_def_captured_param_store.mojo	divergence	error: cannot implicitly convert 'RefBox[origin_of(source)]' value to 'RefBox[origin]'
+assets/ok/nested_recursive_call.mojo	divergence	error: recursive references to nested functions are not supported; define '_help' at file scope
+assets/ok/nominal_string_codepoint_from_u32.mojo	divergence	error: invalid call to 'or_else': value passed to 'default' cannot be converted from 'StringSpan[origin_of(q["bytes"])]' to 'Codepoint'
+assets/ok/nominal_string_codepoint_type.mojo	divergence	error: cannot implicitly convert 'StringSpan[origin_of(s["bytes"])]' value to 'Codepoint'
+assets/ok/nominal_string_keyword_slices.mojo	ledgered	error: aliasing values passed mutably to 'values' argument and passed mutably to 'values' argument in 'print' call
+assets/ok/nominal_string_writer.mojo	divergence	error: 'Sink' does not implement all requirements for 'Writer'
+assets/ok/numeric_operation_traits.mojo	divergence	error: invalid call to 'to_flt': value passed to 'x' cannot be converted from 'IntLiteral[4]' to 'T', argument type 'IntLiteral[4]' does not conform to trait 'Floatable'
+assets/ok/optional_owning_api.mojo	divergence	error: invalid call to 'map': 'map' parameter 'Mapper' has 'def(var T) -> To' type, but value has type 'AnyStruct[Int]'
+assets/ok/origin_argument_alias_bodies.mojo	self-qualification	error: unqualified access to struct parameter 'o'; use 'Self.o' instead
+assets/ok/origin_argument_direct_applications.mojo	divergence	error: cannot implicitly convert 'View[origin_of(self.items)]' value to 'View[origin_of(self)]'
+assets/ok/origin_delegated_call_arguments_run.mojo	iterator-protocol	error: unable to locate module 'iterable'
+assets/ok/origin_delegated_call_with_arguments.mojo	iterator-protocol	error: unable to locate module 'iterable'
+assets/ok/origin_delegated_multi_binder_alias_field.mojo	self-qualification	error: unqualified access to struct parameter 'o2'; use 'Self.o2' instead
+assets/ok/pack_struct_getitem.mojo	ledgered	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
+assets/ok/parametric_mut_iterator_read.mojo	iterator-protocol	error: unable to locate module 'iterable'
+assets/ok/pliron_callable_struct.mojo	divergence	error: 'Counter' does not implement all requirements for 'def(Int) -> Int'
+assets/ok/pliron_closure_drop_order.mojo	divergence	error: cannot implicitly convert 'def() -> Int' value to 'def() capturing thin -> Int' in 'var' initializer
+assets/ok/pliron_closure_env.mojo	divergence	error: recursive references to nested functions are not supported; define 'descend' at file scope
+assets/ok/pliron_convert_int_float.mojo	divergence	error: function instantiation failed
+assets/ok/pliron_input_echo.mojo	divergence	error: cannot call function that may raise in a context that cannot raise
+assets/ok/pliron_int_truediv.mojo	divergence	error: cannot implicitly convert 'Int' value to 'Float64'
+assets/ok/pliron_iter_borrowed.mojo	iterator-protocol	error: unable to locate module 'iterable'
+assets/ok/pliron_iter_bounded.mojo	iterator-protocol	error: 'CountIter' does not implement the '__has_next__' method
+assets/ok/pliron_iter_drop_order.mojo	iterator-protocol	error: unable to locate module 'iterable'
+assets/ok/pliron_partial_move_drop.mojo	ledgered	error: value 'c.first' cannot be consumed, because 'c' is used later
+assets/ok/pliron_stringliteral_value.mojo	ledgered	error: 'StringLiteral[_]' is not concrete, use '[]' to bind missing parameters
+assets/ok/pliron_subscript_ref.mojo	divergence	error: cannot return reference with incompatible origin: 'origin_of(self.a)' vs 'origin_of(self)'
+assets/ok/pliron_thin_callables.mojo	divergence	error: invalid call to '__call__': value cannot be converted from type value '$0' to an instance of '$0'; did you mean to instantiate '$0'?
+assets/ok/pliron_uint_arith.mojo	divergence	error: function instantiation failed
+assets/ok/pointer_field_chained_view_call.mojo	divergence	error: cannot implicitly convert 'Pane[origin_of(self.items)]' value to 'Pane[origin_of(self)]'
+assets/ok/pointer_field_drain_mut_method.mojo	divergence	error: cannot implicitly convert 'Drain[origin_of(self.items)]' value to 'Drain[origin_of(self)]'
+assets/ok/pointer_field_parametric_mut_subscript_write.mojo	ledgered	error: expression must be mutable for in-place operator destination
+assets/ok/pointer_field_parametric_mut_write_generic_wrapper.mojo	ledgered	error: expression must be mutable for in-place operator destination
+assets/ok/pointer_field_view_for_temporary.mojo	iterator-protocol	error: unable to locate module 'iterable'
+assets/ok/pointer_field_view_method_return.mojo	divergence	error: cannot implicitly convert 'View[origin_of(self.items)]' value to 'View[origin_of(self)]'
+assets/ok/pointer_field_view_ref_yield.mojo	iterator-protocol	error: unable to locate module 'iterable'
+assets/ok/pointer_field_wrapper_iterator_protocol.mojo	iterator-protocol	error: unable to locate module 'iterable'
+assets/ok/pointer_temp_argument_loan_indirect.mojo	divergence	error: invalid call to '__call__': value cannot be converted from type value '$0' to an instance of '$0'; did you mean to instantiate '$0'?
+assets/ok/ref_result_field_value_copy.mojo	iterator-protocol	error: unable to locate module 'iterable'
+assets/ok/reference_carrier_collection.mojo	unbound-parameter	error: 'RefBox[_]' is not concrete, use '[]' to bind missing parameters
+assets/ok/reference_element_chained_read.mojo	unbound-parameter	error: 'RefBox[_]' is not concrete, use '[]' to bind missing parameters
+assets/ok/reference_list_write_through_method.mojo	divergence	error: expected ']' in call argument list
+assets/ok/reference_yielding_iteration.mojo	iterator-protocol	error: unable to locate module 'iterable'
+assets/ok/reference_yielding_iteration_named_source.mojo	iterator-protocol	error: unable to locate module 'iterable'
+assets/ok/reference_yielding_iteration_parametric_mut.mojo	iterator-protocol	error: unable to locate module 'iterable'
+assets/ok/scalar_dtype_construction.mojo	divergence	error: no matching function in initialization
+assets/ok/scalar_runtime_conversions.mojo	divergence	error: no matching function in initialization
+assets/ok/self_hosted_algorithms.mojo	divergence	error: unable to locate module 'algorithms'
+assets/ok/self_hosted_vec.mojo	divergence	error: failed to infer parameter 'origin', specify the parameter or use '_' or '...' to unbind the parameter explicitly
+assets/ok/shadowing_constants.mojo	divergence	error: 'counter' does not name a capturable value
+assets/ok/simd_bool_masks.mojo	divergence	error: 'Bool' value has no attribute 'shuffle'
+assets/ok/simd_compare_all_dtypes.mojo	divergence	error: no matching method in call to '__gt__'
+assets/ok/simd_methods.mojo	divergence	error: 'Bool' value has no attribute 'select'
+assets/ok/simd_shuffle.mojo	divergence	error: 'Bool' value has no attribute 'shuffle'
+assets/ok/simd_to_bits.mojo	divergence	error: function instantiation failed
+assets/ok/simd_wide_widths.mojo	divergence	error: 'Bool' value has no attribute 'reduce_and'
+assets/ok/slice.mojo	divergence	error: cannot implicitly convert 'Span[Int, origin_of(xs["element"])]' value to 'List[Int]'
+assets/ok/span_pointer_construction.mojo	divergence	error: no matching function in initialization
+assets/ok/struct_value_param_frozen.mojo	divergence	error: cannot materialize comptime value of type 'Extent' to runtime because it is not 'ImplicitlyCopyable'
+assets/ok/transferred_carrier_keeps_source_alive.mojo	unbound-parameter	error: 'RefBox[_]' is not concrete, use '[]' to bind missing parameters
+assets/ok/tuple_unpack_call.mojo	ledgered	error: 'StringLiteral[_]' is not concrete, use '[]' to bind missing parameters
+assets/ok/typelist_where_clauses.mojo	divergence	error: invalid call to 'all': 'all' parameter 'predicate' has '__generator_type[Type: Boolable & Comparable & Intable & Defaultable & TrivialRegisterPassable & Writable & Hashable & ConvertibleFromPython] Bool' type, but value has type '__generator_type[T: AnyType] Bool'
+assets/ok/unsafe_pointer.mojo	divergence	error: failed to infer parameter 'origin', specify the parameter or use '_' or '...' to unbind the parameter explicitly
+assets/ok/user_iterator.mojo	iterator-protocol	error: 'RangeIter' does not implement the '__has_next__' method
+assets/origin_ok/returned_method_reference_loan.mojo	divergence	error: cannot return reference with incompatible origin: 'origin_of(o["element"])' vs 'origin_of(o)'
+assets/origin_ok/returned_projected_reference.mojo	divergence	error: cannot return reference with incompatible origin: 'origin_of(o["element"])' vs 'origin_of(o)'
+assets/origin_ok/stored_reference_field_param_source.mojo	divergence	error: cannot implicitly convert 'RefBox[origin_of(source)]' value to 'RefBox[origin]'
+assets/origin_ok/transferred_param_loan_returns.mojo	unbound-parameter	error: 'RefBox[_]' is not concrete, use '[]' to bind missing parameters
+assets/ownership_ok/interior_dest_rebind_releases_user_store.mojo	divergence	error: cannot transfer out of immutable reference
+assets/ownership_ok/interior_view_consume_before_mutation.mojo	divergence	error: no matching function in initialization
+assets/ownership_ok/interior_view_drop_after_mutation.mojo	divergence	error: no matching function in initialization
+assets/ownership_ok/partial_move_sibling.mojo	ledgered	error: value 'p.a' cannot be consumed, because 'p' is used later
+assets/ownership_ok/transferred_loan_after_last_use.mojo	divergence	error: cannot implicitly convert 'RefBox[origin_of(source)]' value to 'RefBox[origin]'

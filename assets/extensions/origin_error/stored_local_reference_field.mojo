@@ -11,8 +11,8 @@ struct Holder[origin: Origin[mut=True]]:
     var slot: RefBox[Self.origin]
     def swap(mut self):
         var local: List[Int] = [9]
-        ref alias = local
-        self.slot = RefBox(alias)
+        ref view = local
+        self.slot = RefBox(view)
 
 def main():
     var keep: List[Int] = [1]

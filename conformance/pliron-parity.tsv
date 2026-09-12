@@ -156,7 +156,7 @@ assets/ok/method_mut_param.mojo	main	exe-differential	sanitized
 assets/ok/method_value_parameter_binding.mojo	main	exe-differential	sanitized
 assets/ok/movable_where_false_explicit_destroy.mojo	main	exe-differential	sanitized
 assets/ok/move_after_last_raise_in_try.mojo	main	exe-differential	sanitized
-assets/ok/mut_owned_params.mojo	-	ineligible	no-main-entry
+assets/ok/mut_owned_params.mojo	main	exe-differential	sanitized
 assets/ok/mut_pointer_parameter_reassign.mojo	main	exe-differential	sanitized
 assets/ok/mut_ref_writeback.mojo	main	exe-differential	sanitized
 assets/ok/named_shared_views.mojo	main	exe-differential	sanitized
@@ -345,7 +345,7 @@ assets/ok/raise_borrowed_string_parameter.mojo	main	exe-differential	sanitized
 assets/ok/range_zero_step_empty.mojo	main	exe-differential	sanitized
 assets/ok/ref_binding_projected_field_offset.mojo	main	exe-differential	sanitized
 assets/ok/ref_binding_temporary_source.mojo	main	exe-differential	sanitized
-assets/ok/ref_param.mojo	-	ineligible	no-main-entry
+assets/ok/ref_param.mojo	main	exe-differential	sanitized
 assets/ok/ref_result_field_value_copy.mojo	main	exe-differential	sanitized
 assets/ok/reference_carrier_collection.mojo	main	exe-differential	sanitized
 assets/ok/reference_element_chained_read.mojo	main	exe-differential	sanitized
@@ -419,14 +419,12 @@ assets/ok/string_span_methods.mojo	main	exe-differential	sanitized
 assets/ok/string_view_equality.mojo	main	exe-differential	sanitized
 assets/ok/stropping.mojo	main	exe-differential	sanitized
 assets/ok/struct_value_param_frozen.mojo	main	exe-differential	sanitized
-assets/ok/subtree_pointer_generic_field.mojo	main	exe-differential	sanitized
-assets/ok/subtree_pointer_read.mojo	main	exe-differential	sanitized
 assets/ok/telemetry.mojo	main	exe-differential	sanitized
 assets/ok/tempfile_mkdtemp.mojo	main	exe-differential	sanitized
 assets/ok/temporary_receiver_view.mojo	main	exe-differential	sanitized
 assets/ok/ternary.mojo	main	exe-differential	sanitized
 assets/ok/trait_default_method.mojo	main	exe-differential	sanitized
-assets/ok/trait_inheritance.mojo	-	ineligible	no-main-entry
+assets/ok/trait_inheritance.mojo	main	exe-differential	sanitized
 assets/ok/traits.mojo	main	exe-differential	sanitized
 assets/ok/transferred_carrier_keeps_source_alive.mojo	main	exe-differential	sanitized
 assets/ok/try_break_continue.mojo	main	exe-differential	sanitized
@@ -488,9 +486,6 @@ assets/ownership_ok/move_without_later_use.mojo	main	exe-differential	sanitized
 assets/ownership_ok/partial_move_reinit.mojo	main	exe-differential	sanitized
 assets/ownership_ok/partial_move_sibling.mojo	main	exe-differential	sanitized
 assets/ownership_ok/shared_iterations_coexist.mojo	main	exe-differential	sanitized
-assets/ownership_ok/subtree_reads_coexist.mojo	main	exe-differential	sanitized
-assets/ownership_ok/subtree_sibling_root_mutation.mojo	main	exe-differential	sanitized
-assets/ownership_ok/subtree_single_write_ok.mojo	main	exe-differential	sanitized
 assets/ownership_ok/transferred_loan_after_last_use.mojo	main	exe-differential	sanitized
 assets/ownership_ok/view_live_across_reading_loop.mojo	main	exe-differential	sanitized
 assets/extensions/ok/callable_struct_transfer_after_last_use.mojo	main	exe-differential	sanitized
@@ -535,8 +530,13 @@ assets/extensions/ok/reference_element_chained_read.mojo	main	exe-differential	s
 assets/extensions/ok/reference_yielding_iteration.mojo	main	exe-differential	sanitized
 assets/extensions/ok/reference_yielding_iteration_named_source.mojo	main	exe-differential	sanitized
 assets/extensions/ok/reference_yielding_iteration_parametric_mut.mojo	main	exe-differential	sanitized
+assets/extensions/ok/subtree_pointer_generic_field.mojo	main	exe-differential	sanitized
+assets/extensions/ok/subtree_pointer_read.mojo	main	exe-differential	sanitized
 assets/extensions/ok/transferred_carrier_keeps_source_alive.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/interior_dest_rebind_releases_user_store.mojo	main	exe-differential	sanitized
+assets/extensions/ownership_ok/subtree_reads_coexist.mojo	main	exe-differential	sanitized
+assets/extensions/ownership_ok/subtree_sibling_root_mutation.mojo	main	exe-differential	sanitized
+assets/extensions/ownership_ok/subtree_single_write_ok.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/transferred_loan_after_last_use.mojo	main	exe-differential	sanitized
 assets/runtime_error/allocation_use_after_dealloc.mojo	main,__toplevel__	error-differential	category=PointerUseAfterFree
 assets/runtime_error/div_by_zero.mojo	-	ineligible	non-conforming-snippet

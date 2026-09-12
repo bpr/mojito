@@ -24,7 +24,7 @@ def main():
     ref whole = keep
     var bag = Bag(RefBox(whole))
     var local: List[Int] = [9]
-    ref alias = local
-    feed(bag, RefBox(alias))
+    ref view = local
+    feed(bag, RefBox(view))
     local.append(1)
     print(bag.slot.value[0])

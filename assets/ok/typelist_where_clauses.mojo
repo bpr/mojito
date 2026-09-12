@@ -3,6 +3,8 @@
 # `TypeList[Ts.values]()` lowers to the same pack constraint forms as the
 # established `conforms_to(Ts.values, Trait)` vocabulary and shares its
 # current variadic-def call limitations; the checker suite pins it.)
+from std.traits import IsTriviallyCopyable
+
 comptime IsSmall[T: AnyType] = IsTriviallyCopyable[T]
 
 def checked_add(a: Int, b: Int) -> Int where TypeList.of[Trait=AnyType, Int, Bool]().contains[Int]():

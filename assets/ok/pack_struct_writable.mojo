@@ -2,14 +2,14 @@
 # write_to: the shape the self-hosted lazy TString relies on.  The pack
 # constructor moves each element into Tuple storage; write_to fans the
 # captured elements out to the writer with a comptime-unrolled loop.
-struct Lazy[*Ts: Movable & Writable](Movable, Writable):
-    var storage: Tuple[*Ts]
+struct Lazy[*Ts: Movable & Writable & Deinitable](Movable, Writable):
+    var storage: Tuple[*Self.Ts]
 
-    def __init__(out self, var *args: *Ts):
+    def __init__(out self, var *args: *Self.Ts):
         self.storage = Tuple(*args^)
 
     def write_to(self, mut writer: Some[Writer]):
-        comptime for i in range(len(Ts)):
+        comptime for i in range(len(Self.Ts)):
             # The unrolled iterations share one scope, so the ref binding
             # needs a nested block; the ref read keeps non-Copyable
             # elements legal where a value read would demand a copy.

@@ -3,7 +3,7 @@
 # conformances, borrowed + owned iteration, linear-capable `map`/`and_then`,
 # handler-consumed `deinit_with`, and the `deinit_assert_empty` named
 # destructor for the empty case.
-from std.optional import Optional
+from std.collections import Optional
 
 struct Res(Movable):
     var id: Int

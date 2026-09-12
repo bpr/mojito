@@ -1,12 +1,12 @@
 # A struct may take a [dtype: DType] value parameter: each application
 # monomorphizes, so Scalar[dt] fields and signatures check concretely.
 struct Cell[dt: DType]:
-    var value: Scalar[dt]
+    var value: Scalar[Self.dt]
 
-    def __init__(out self, value: Scalar[dt]):
+    def __init__(out self, value: Scalar[Self.dt]):
         self.value = value
 
-    def get(self) -> Scalar[dt]:
+    def get(self) -> Scalar[Self.dt]:
         return self.value
 
 def main():

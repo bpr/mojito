@@ -1,10 +1,10 @@
 # Variadic-generic struct with real Mojo's pack constructor: `var *args: *Ts`
 # binds the heterogeneous pack per-position and `Tuple(*args^)` transfers the
 # elements into storage.
-struct Pair[*Ts: Copyable & Movable](Copyable, Movable):
-    var storage: Tuple[*Ts]
+struct Pair[*Ts: Copyable & Movable & Deinitable](Copyable, Movable):
+    var storage: Tuple[*Self.Ts]
 
-    def __init__(out self, var *args: *Ts):
+    def __init__(out self, var *args: *Self.Ts):
         self.storage = Tuple(*args^)
 
     def size(self) -> Int:

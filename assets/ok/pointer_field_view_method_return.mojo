@@ -18,7 +18,7 @@ struct View[
 struct Box:
     comptime ViewType[
         view_mut: Bool, //, view_origin: Origin[mut=view_mut]
-    ] = View
+    ] = View[view_origin]
 
     var items: List[Int]
 

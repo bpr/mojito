@@ -3,9 +3,9 @@
 # expression). Applications still bind the parameter explicitly — bare
 # default application on a comptime-class struct stays a recorded residue.
 struct Box[dtype: DType = DType.int]:
-    var x: Scalar[dtype]
+    var x: Scalar[Self.dtype]
 
-    def __init__(out self, x: Scalar[dtype]):
+    def __init__(out self, x: Scalar[Self.dtype]):
         self.x = x
 
 def main():

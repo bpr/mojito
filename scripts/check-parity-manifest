@@ -5,6 +5,8 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 manifest="$root/conformance/parity.tsv"
 cases="$root/conformance/cases.tsv"
 manual_sections="$root/conformance/manual-sections.tsv"
+assets_rejects="$root/conformance/assets-mojo-rejects.tsv"
+assets_diffs="$root/conformance/assets-mojo-output-diffs.tsv"
 
 awk -F '\t' '
 BEGIN { ok = 1; rows = 0 }
@@ -112,5 +114,61 @@ while IFS=$'\t' read -r id _mode fixture; do
         exit 1
     fi
 done <"$cases"
+
+# The two assets-sweep manifests (scripts/sweep-assets-mojo). Only their schema
+# is checked here; running the pinned Mojo is that script's job.
+awk -F '\t' '
+BEGIN { ok = 1 }
+/^# swept-count\t/ { if ($2 !~ /^[0-9]+$/) { print "invalid swept-count: " $2 > "/dev/stderr"; ok = 0 }; swept = 1; next }
+/^#/ || NF == 0 { next }
+$1 == "fixture" { if ($0 != "fixture\tfamily\tfirst-error") { print "invalid assets reject header" > "/dev/stderr"; ok = 0 }; next }
+{
+    if (NF != 3) { print "assets reject row " NR " has " NF " fields, expected 3" > "/dev/stderr"; ok = 0 }
+    if (seen[$1]++) { print "duplicate assets reject fixture: " $1 > "/dev/stderr"; ok = 0 }
+    if ($2 !~ /^(alias-keyword|self-qualification|unbound-parameter|missing-import|no-main|iterator-protocol|ledgered|divergence|skip)$/) {
+        print "invalid assets reject family for " $1 ": " $2 > "/dev/stderr"; ok = 0
+    }
+    if ($3 == "") { print "assets reject row lacks an error: " $1 > "/dev/stderr"; ok = 0 }
+}
+END { if (!swept) { print "assets reject manifest lacks a # swept-count header" > "/dev/stderr"; ok = 0 }; exit(ok ? 0 : 1) }
+' "$assets_rejects"
+
+awk -F '\t' '
+BEGIN { ok = 1 }
+/^#/ || NF == 0 { next }
+$1 == "fixture" { if ($0 != "fixture\tfamily\tdivergence") { print "invalid assets output-diff header" > "/dev/stderr"; ok = 0 }; next }
+{
+    if (NF != 3) { print "assets output-diff row " NR " has " NF " fields, expected 3" > "/dev/stderr"; ok = 0 }
+    if (seen[$1]++) { print "duplicate assets output-diff fixture: " $1 > "/dev/stderr"; ok = 0 }
+    if ($2 !~ /^(float-format|arithmetic|drop-timing|one-off)$/) { print "invalid assets output-diff family for " $1 ": " $2 > "/dev/stderr"; ok = 0 }
+    if ($3 == "") { print "assets output-diff row lacks a description: " $1 > "/dev/stderr"; ok = 0 }
+}
+' "$assets_diffs"
+
+# A fixture the pinned Mojo rejects cannot also be claimed as a matching run.
+run_fixtures="$(awk -F '\t' '!/^#/ && $2 == "run" { print $3 }' "$cases")"
+while IFS=$'\t' read -r fixture _family _error; do
+    [[ -z "$fixture" || "$fixture" == \#* || "$fixture" == "fixture" ]] && continue
+    if [[ ! -f "$root/$fixture" ]]; then
+        echo "assets reject manifest references missing fixture: $fixture" >&2
+        exit 1
+    fi
+    if grep -Fxq "$fixture" <<<"$run_fixtures"; then
+        echo "fixture is both a cases.tsv run row and a known reject: $fixture" >&2
+        exit 1
+    fi
+done <"$assets_rejects"
+
+while IFS=$'\t' read -r fixture _family _divergence; do
+    [[ -z "$fixture" || "$fixture" == \#* || "$fixture" == "fixture" ]] && continue
+    if [[ ! -f "$root/$fixture" ]]; then
+        echo "assets output-diff manifest references missing fixture: $fixture" >&2
+        exit 1
+    fi
+    if grep -Fxq "$fixture" <<<"$run_fixtures"; then
+        echo "fixture is both a cases.tsv run row and a known output divergence: $fixture" >&2
+        exit 1
+    fi
+done <"$assets_diffs"
 
 echo "parity manifest: ok"

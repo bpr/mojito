@@ -414,3 +414,16 @@ variadic-method-type-params	run	assets/ok/variadic_method_type_params.mojo
 variadic-pack-upstream-spellings	run	assets/ok/variadic_pack_upstream_spellings.mojo
 generic-ctfe-value-param	run	assets/ok/generic_ctfe_value_param.mojo
 generic-ctfe-associated-value	run	assets/ok/generic_ctfe_associated_value.mojo
+boolable-and-divmod	run	assets/ok/boolable_and_divmod.mojo
+dtype-default-param	run	assets/ok/dtype_default_param.mojo
+dtype-struct-param	run	assets/ok/dtype_struct_param.mojo
+explicit-transfer-convention	run	assets/ok/explicit_transfer_convention.mojo
+mut-owned-params	run	assets/ok/mut_owned_params.mojo
+pack-element-temporaries	run	assets/ok/pack_element_temporaries.mojo
+pack-struct-pair	run	assets/ok/pack_struct_pair.mojo
+pack-struct-variadic-init	run	assets/ok/pack_struct_variadic_init.mojo
+pack-struct-writable	run	assets/ok/pack_struct_writable.mojo
+pointer-field-adapter-return-from-field	run	assets/ok/pointer_field_adapter_return_from_field.mojo
+ref-param	run	assets/ok/ref_param.mojo
+size-of-builtin	run	assets/ok/size_of_builtin.mojo
+trait-inheritance	run	assets/ok/trait_inheritance.mojo

@@ -64,6 +64,14 @@ run_step check-pliron env RUSTC_WRAPPER= scripts/check-pliron
 # it also restores a featureless target/debug/mojito after the pliron gate.
 run_step conformance scripts/conformance --mojo-pixi-manifest "${MOJO_PIXI_MANIFEST}"
 
+# The assets sweep rides along behind conformance: same pinned pixi
+# environment, same featureless debug binary, and it is the only thing that
+# keeps conformance/assets-mojo-rejects.tsv honest (AGENTS.md invariant 1).
+run_step assets-mojo-sweep scripts/sweep-assets-mojo \
+    --mojo-pixi-manifest "${MOJO_PIXI_MANIFEST}" --compare
+run_step assets-mojo-extensions scripts/sweep-assets-mojo \
+    --mojo-pixi-manifest "${MOJO_PIXI_MANIFEST}" --extensions
+
 # RESULTS.md: the morning entry point.
 {
     echo "# Overnight gate run — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -88,6 +96,10 @@ run_step conformance scripts/conformance --mojo-pixi-manifest "${MOJO_PIXI_MANIF
     echo "  pliron TSV rows: regenerate with scripts/run-parity-regen.sh,"
     echo "  review the diff, then rerun scripts/check-pliron."
     echo "- Never edit conformance/cases.tsv while the conformance step runs."
+    echo "- An assets-mojo-sweep failure names the fixtures that moved; its"
+    echo "  per-fixture diagnostics are under target/assets-mojo-sweep/."
+    echo "- assets-mojo-extensions failing means the pinned Mojo now ACCEPTS an"
+    echo "  extension fixture: upstream may have adopted it (docs/non-goals.md)."
     echo "- The corpus sweeps behind conformance/pliron-parity.tsv and"
     echo "  conformance/pliron-scalar.tsv are not in this run: they are"
     echo "  memory-heavy and live in scripts/check-pliron-heavy."

@@ -2,8 +2,8 @@
 # storage. Compile-time elaboration specializes each instantiation into a
 # concrete struct; `p.storage[i]` has the exact per-index element type.
 @fieldwise_init
-struct Pair[*Ts: Copyable & Movable](Copyable, Movable):
-    var storage: Tuple[*Ts]
+struct Pair[*Ts: Copyable & Movable & Deinitable](Copyable, Movable):
+    var storage: Tuple[*Self.Ts]
 
     def size(self) -> Int:
         return len(self.storage)

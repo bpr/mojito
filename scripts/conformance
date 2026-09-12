@@ -67,13 +67,15 @@ while IFS=$'\t' read -r id mode fixture; do
         continue
     fi
 
-    if "$mojito" run "$source" >"$tmp/$id.mojito.out" 2>"$tmp/$id.mojito.err"; then
+    # </dev/null on both: a fixture that reads stdin must fail the same way on
+    # both compilers rather than draining the cases.tsv this loop reads.
+    if "$mojito" run "$source" >"$tmp/$id.mojito.out" 2>"$tmp/$id.mojito.err" </dev/null; then
         mojito_status=0
     else
         mojito_status=$?
     fi
     if pixi run --manifest-path "$mojo_pixi_manifest" mojo run "$source" \
-        >"$tmp/$id.mojo.out" 2>"$tmp/$id.mojo.err"; then
+        >"$tmp/$id.mojo.out" 2>"$tmp/$id.mojo.err" </dev/null; then
         mojo_status=0
     else
         mojo_status=$?

@@ -513,8 +513,9 @@ fn remove_bound_names(body: &[Stmt], names: &mut HashMap<String, String>) {
 
 /// Builtin names exported by the canonical `std.traits`/`std.origin` module
 /// homes. These traits and origin spellings are compiler builtins with no
-/// source declaration, so the docstring-only module files export them through
-/// this table (mirroring the audited upstream export surface). Matched by
+/// source declaration, so the module files export them through this table
+/// (mirroring the audited upstream export surface). The table is additive, so
+/// a module with real declarations — `std.math` — keeps them. Matched by
 /// canonical-path suffix so a replaced `--stdlib` root keeps the contract.
 fn builtin_module_exports(canon: &Path) -> Option<&'static [&'static str]> {
     const TRAITS: &[&str] = &[
@@ -544,6 +545,8 @@ fn builtin_module_exports(canon: &Path) -> Option<&'static [&'static str]> {
     const SLICE: &[&str] = &["Slice", "ContiguousSlice", "StridedSlice", "slice"];
     const REFLECTION: &[&str] = &["_unqualified_type_name"];
     const FFI: &[&str] = &["external_call"];
+    const SYS: &[&str] = &["size_of"];
+    const MATH: &[&str] = &["DivModable"];
     let normalized = canon.to_string_lossy().replace('\\', "/");
     if normalized.ends_with("std/traits.mojo") {
         Some(TRAITS)
@@ -559,6 +562,10 @@ fn builtin_module_exports(canon: &Path) -> Option<&'static [&'static str]> {
         Some(REFLECTION)
     } else if normalized.ends_with("std/ffi/__init__.mojo") {
         Some(FFI)
+    } else if normalized.ends_with("std/sys/__init__.mojo") {
+        Some(SYS)
+    } else if normalized.ends_with("std/math.mojo") {
+        Some(MATH)
     } else {
         None
     }

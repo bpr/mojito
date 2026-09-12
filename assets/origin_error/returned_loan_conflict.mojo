@@ -3,6 +3,6 @@ def borrow(ref value: Int) -> ref[value] Int:
 
 def main():
     var value = 1
-    ref alias = borrow(value)
+    ref view = borrow(value)
     value = 2
-    print(alias)
+    print(view)

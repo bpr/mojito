@@ -123,23 +123,75 @@ whatever its model, because it batches every change that needs a new
 The three checkboxes below, and the bullets inside the two standing ones,
 are sorted Opus first (see **Entry Style**).
 
-- [ ] **The rest of `assets/` has never been checked against the pinned Mojo**
+- [ ] **The pinned Mojo rejects 102 fixtures in the ordinary `assets/` `_ok`
+  folders**
 
-  Problem: the ordinary `assets/` folders may hold only programs the pinned
-  Mojo compiles, but the only sweep so far covered the files containing
-  `comptime if`. It found eight rejected `assets/ok` fixtures, now respelled
-  and listed in `conformance/cases.tsv`; the other ~800 fixtures are
-  unswept (499 of them in the three `_ok` folders).
-  - Run the pinned Mojo over every file in `assets/ok`, `assets/ownership_ok`,
-    and `assets/origin_ok`, and respell or relocate what it rejects.
-  - Fixtures in the error folders are their own question: the pinned Mojo
-    rejects them too, but for its own reason, so a sweep there compares
-    diagnostics rather than exit codes. Sweep the `_ok` folders first.
-  - Each respelling that survives joins `conformance/cases.tsv` as a `run`
-    row, the way the eight did, so nothing silently drifts back.
-  - Model: Opus, plan first. The sweep itself is mechanical, but its size is
-    unknown, and the plan's job is to bound how many fixtures need real
-    respelling before the pass starts.
+  Problem: `AGENTS.md` invariant 1 says it should reject none. The 2026-09-12
+  sweep ran the pin over all 501 fixtures and found 120; the mechanical
+  families are closed and 102 remain, listed fixture by fixture in
+  [`conformance/assets-mojo-rejects.tsv`](../conformance/assets-mojo-rejects.tsv).
+  - Re-measure with `scripts/sweep-assets-mojo --mojo-pixi-manifest PATH`; it
+    fails when reality and that file differ, so the file is the burn-down.
+  - 63 rows are `divergence`, in roughly ten families: origin-of-return
+    compatibility, thin/capturing callable conversion, recursive nested
+    `def`s (upstream rejects them outright), `Bool` versus `SIMD[bool, 1]`
+    methods, scalar/`SIMD` construction, implicit `Int`→`Float64` and
+    `Span`→`List` conversions, comptime materialization of a
+    non-`ImplicitlyCopyable` value, the Mojito-only spellings `@value` /
+    `ContiguousSlice` / `ImplicitlyDeletable`, `String`/`Codepoint`
+    conversions, and the Mojito-only modules `std.algorithms` and
+    `std.collections.string_dict`. Derive the family list from the manifest
+    when the work starts rather than from this sentence.
+  - 8 rows are `ledgered`: the fixture is an instance of a divergence the
+    ledger below already carries, so it needs no new entry.
+  - 7 rows are `unbound-parameter`, and six of them are one divergence:
+    Mojito erases a struct's origin parameter so `List[RefBox]` can hold
+    reference-carrying values, where the pin demands a concrete origin and
+    rejects `RefBox[_]` as a `List` element too.
+  - 2 rows are `self-qualification` and are blocked on Mojito, not on the
+    fixture: the pin demands `Self.o` inside `Self.ViewType[...]`, which
+    Mojito's parser reads as a dependent projection and rejects. Accepting it
+    also needs the checker to resolve a parameterized `comptime` alias
+    applied through `Self.`.
+  - Model: Opus, as-is. Each family is a separate small pass, and the
+    manifest says which fixtures close with it.
+
+- [ ] **Mojito's `for` protocol predates the pin's `__has_next__`**
+
+  Problem: 21 of the rejected `_ok` fixtures are one family. Mojito iterates
+  with `__len__` plus `__next__` and puts `Iterator`/`StopIteration` in
+  `std.iterable`; the pin exports both from its prelude, homes them at
+  `std.iter`, and its `for` wants `__has_next__`, which Mojito has nowhere.
+  The 15 fixtures that import `std.iterable` fail on the import, which masks
+  the protocol error the other six report directly.
+  - Probe before editing: respell one fixture's import to `std.iter`, run it
+    under the pin, and record what upstream says about the raising protocol.
+    Only then is it knowable whether this is 15 respellings or one checker
+    task.
+  - The checker task, if it is one: `__has_next__` in the `for` lowering and
+    in the bundled `Iterator` trait, with fallout across
+    `stdlib/std/iterable.mojo` and its ~51 references.
+  - `assets/ok/iterable_associated_element.mojo` has no `main` because its
+    iterator never compiled upstream; it gets one when this closes.
+  - Model: Opus, plan first. The probe decides the shape of the work, and the
+    answer changes the stdlib's iterator vocabulary.
+
+- [ ] **The `assets/` error folders have never been swept**
+
+  Problem: the 2026-09-12 sweep covered only the three `_ok` folders. The pin
+  rejects the error-folder fixtures too, but for its own reason, so a sweep
+  there compares diagnostics rather than exit codes and needs a rule for what
+  counts as agreement.
+  - 318 fixtures: `type_error` 235, `ownership_error` 31, `runtime_error` 36,
+    `parse_error` 8, `origin_error` 8. `scripts/sweep-assets-mojo --folders`
+    already reaches them; the comparison is what is missing.
+  - `runtime_error` is the exception that works today: both compilers accept
+    those programs, so the existing exit-code comparison applies.
+  - The ten `_subtree` fixtures that were in `ownership_error` and
+    `type_error` moved to `assets/extensions/` with the rest of that
+    extension; check whether anything else there uses an extension spelling.
+  - Model: Opus, plan first. The plan's job is the diagnostic-comparison
+    rule, not the sweep.
 
 - [ ] **Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
   any order)*
@@ -151,14 +203,21 @@ are sorted Opus first (see **Entry Style**).
     `StringSpan.__init__(literal)` constructors, and the
     `String._as_string_literal()` struct-to-literal bridge behind
     `String.write_to`. Upstream: `StringLiteral` is a `StaticString` and
-    `write_to` writes the bytes.
+    `write_to` writes the bytes. The same representation gap is why the pin
+    rejects `assets/ok/pliron_stringliteral_value.mojo` and
+    `assets/ok/tuple_unpack_call.mojo`: they spell `StringLiteral` bare as a
+    type, where upstream's is value-parameterized (`StringLiteral[v]`).
     - Model: Opus, plan first. The port only works once `StringLiteral` and
       `String` agree on a runtime representation, which is also what the
       erased-path residue in section 4 needs, so plan the representation
       before touching the constructors.
   - Float formatting in Rust: the float arm of the VM's `Display for Value`
     and the native `mjrt_fmt_f64`. Upstream formats `Float64` in Mojo
-    (Dragonbox in `format_float`).
+    (Dragonbox in `format_float`). Five corpus fixtures print different text
+    on the two compilers because of it
+    (`conformance/assets-mojo-output-diffs.tsv`, family `float-format`): the
+    pin writes an exponent sign (`1e+23`, Mojito `1e23`) and renders a
+    `Float32` at its own precision (`0.1`, Mojito `0.10000000149011612`).
     - Model: Opus, plan first. Transliterate a permissively licensed Rust
       Dragonbox (MIT or Apache-2.0 — third-party crates are allowed, see
       `AGENTS.md`) into Mojo rather than deriving the algorithm; the plan
@@ -193,7 +252,8 @@ are sorted Opus first (see **Entry Style**).
     under `origin_of(self)`. `stdlib/std/collections/tuple.mojo`'s
     `__contains__` relies on the same narrowing. Pinned by
     `conformance/fixtures/pack_element_type_narrowing.mojo`
-    (`pack-element-type-narrowing`).
+    (`pack-element-type-narrowing`); `assets/ok/pack_struct_getitem.mojo` is
+    the corpus fixture the pin rejects for it.
     - Model: Opus, plan first. Closing it means implementing `rebind` and
       then requiring it, so the plan decides whether `rebind` lands first
       or the two land together.
@@ -235,7 +295,10 @@ are sorted Opus first (see **Entry Style**).
     upstream (`value 'p.a' cannot be consumed, because 'p' is used later`)
     but accepted and tracked field-wise by Mojito. The Mojito behavior is
     pinned by
-    `tests/drops_test.rs::partially_moved_field_is_dropped_once_at_its_new_owner`.
+    `tests/drops_test.rs::partially_moved_field_is_dropped_once_at_its_new_owner`,
+    and `assets/ok/pliron_partial_move_drop.mojo` plus
+    `assets/ownership_ok/partial_move_sibling.mojo` are the two corpus
+    fixtures the pin rejects for it.
     - Model: Fable. Ownership goes from field-wise to whole-parent, which
       changes what the analysis tracks rather than what it spells.
   - `symbolic-origin-pointer-write`: a write through a pointer field whose
@@ -247,6 +310,9 @@ are sorted Opus first (see **Entry Style**).
     reaches `check_pointer_write`; carrying it there is the fix. An
     `ImmOrigin(o)` origin argument (`Cell[ImmOrigin(o)]`) erases the same
     way, so a write through that view's pointer field is accepted too.
+    `assets/ok/pointer_field_parametric_mut_subscript_write.mojo` and
+    `assets/ok/pointer_field_parametric_mut_write_generic_wrapper.mojo` are
+    the corpus fixtures the pin rejects for it.
     - Model: Fable. Origin arguments must survive checked identity, which
       erases them today.
   - `assign-view-over-source`: assigning a call straight back to a local
@@ -261,7 +327,9 @@ are sorted Opus first (see **Entry Style**).
     The fix is to declare upstream's owned-interior origins on the `String`
     view methods and check argument origins against the assignment
     destination in the checker. Pinned by the `assign-*-view-over-source`
-    rows of `conformance/cases.tsv`.
+    rows of `conformance/cases.tsv`, and
+    `assets/ok/nominal_string_keyword_slices.mojo` is the corpus fixture the
+    pin rejects for it.
     - Model: Fable. It introduces owned-interior origins to the stdlib's
       view methods and a new checker rule that reads them.
   - `comptime-if-dropped-branch`: a type error inside the untaken branch of a
@@ -271,6 +339,39 @@ are sorted Opus first (see **Entry Style**).
     `x.nonexistent()` on a `T: Copyable` parameter).
     - Model: Fable, and strictly dependent: section 3's first task is the
       fix, so this row closes there and not here.
+  - `native-arithmetic-edge-cases`: seven corpus fixtures compute different
+    numbers from the pin, found by the 2026-09-12 stdout sweep and listed in
+    [`conformance/assets-mojo-output-diffs.tsv`](../conformance/assets-mojo-output-diffs.tsv)
+    under `arithmetic`. The clearest is a shift past the bit width
+    (`assets/ok/pliron_straightline.mojo`: `a << 65`, where the pin prints 7
+    and Mojito 51102306), and the SIMD shift and floor-division fixtures
+    disagree wholesale. Also here: `round()`'s half-way case (2.0 against
+    3.0), an out-of-range float-to-int cast, and `Float64` `**`.
+    - Model: Opus, plan first. Each case needs the pin's rule established
+      before Mojito's is changed, and `docs/native-abi.md` already defines
+      some of them deliberately (wrapping overflow), so the plan decides
+      which are bugs and which are recorded choices.
+  - `destructor-timing-against-the-pin`: four corpus fixtures run the same
+    destructors in a different order, or not at all
+    (`conformance/assets-mojo-output-diffs.tsv`, family `drop-timing`).
+    `assets/ok/maybe_uninit_roundtrip.mojo` never prints `deinit 6` and
+    `assets/ok/pliron_uninit_roundtrip.mojo` misses three deinits, which is a
+    missing destructor rather than a reordered one;
+    `assets/ok/owned_pointer_api.mojo` and
+    `assets/ok/try_region_drop_timing.mojo` run theirs later than the pin.
+    - Model: Opus, plan first. A missing `deinit` through `MaybeUninit` and a
+      late one in a try region are probably two different defects, and the
+      plan separates them before either is fixed.
+  - `string-subscript-element`: `s[0]` on a `String` yields a character
+    upstream and an `Int` in Mojito
+    (`assets/ok/nominal_string_indexing.mojo`, `h` against `104`). Two
+    smaller text divergences ride along in the same manifest under
+    `one-off`: the raised `DictKeyError` renders differently
+    (`assets/ok/self_hosted_dict.mojo`), and reflection prints
+    `<unprintable>` upstream where Mojito prints the element types
+    (`assets/ok/type_names_applied_elements.mojo`).
+    - Model: Fable. The subscript's element type is a declaration change in
+      the stdlib's `String`, and the other two are texts to match.
 
   Three divergences are retained on purpose and re-probed rather than fixed;
   they are listed in [`docs/non-goals.md`](non-goals.md).

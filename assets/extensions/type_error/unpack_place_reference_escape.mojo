@@ -10,8 +10,8 @@ struct Pair[origin: Origin[mut=True]]:
 
     def fill(mut self):
         var local: List[Int] = [9]
-        ref alias = local
-        var pack = (RefBox(alias), 5)
+        ref view = local
+        var pack = (RefBox(view), 5)
         self.a, self.b = pack^
 
 def main():

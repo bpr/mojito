@@ -10,8 +10,8 @@ struct Holder[origin: Origin[mut=True]]:
     def stash_local(mut self):
         def install() {mut self}:
             var local: List[Int] = [7]
-            ref alias = local
-            self.slot = RefBox(alias)
+            ref view = local
+            self.slot = RefBox(view)
         install()
 
 def main():

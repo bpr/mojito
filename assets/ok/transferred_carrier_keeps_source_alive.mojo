@@ -5,6 +5,6 @@ struct RefBox[origin: Origin[mut=True]]:
 def main():
     var sink = List[RefBox]()
     var local: List[Int] = [9]
-    ref alias = local
-    sink.append(RefBox(Pointer(to=alias)))
+    ref view = local
+    sink.append(RefBox(Pointer(to=view)))
     print(sink[0].value[][0])

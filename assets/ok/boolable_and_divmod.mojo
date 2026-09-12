@@ -2,6 +2,8 @@
 # `DivModable` -> `divmod(a, b)`, both prelude builtins usable on an opaque type
 # parameter and on concrete numerics. `Bool(x)` is truthiness; `divmod` returns
 # the `(a // b, a % b)` pair as a Tuple (Python flooring).
+from std.math import DivModable
+
 def truthy[T: Boolable](x: T) -> Bool:
     return Bool(x)
 

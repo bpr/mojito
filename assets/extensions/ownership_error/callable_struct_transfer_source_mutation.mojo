@@ -14,7 +14,7 @@ def main():
     ref whole = keep
     var s = Keeper(RefBox(whole))
     var local: List[Int] = [9]
-    ref alias = local
-    s(RefBox(alias))
+    ref view = local
+    s(RefBox(view))
     local.append(1)
     print(s.slot.value[0])

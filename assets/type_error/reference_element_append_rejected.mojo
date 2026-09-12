@@ -7,8 +7,8 @@ struct RefList[origin: Origin[mut=True]]:
     var values: List[ref[origin] Int]
     def grow(mut self):
         var local = 9
-        ref alias = local
-        self.values.append(alias)
+        ref view = local
+        self.values.append(view)
 
 def main():
     print(1)

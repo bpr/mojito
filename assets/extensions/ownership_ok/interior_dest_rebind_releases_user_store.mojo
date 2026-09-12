@@ -22,8 +22,8 @@ def main():
     ref whole = keep
     var t = Two(Carrier(RefBox(whole)), [1])
     var local: List[Int] = [9]
-    ref alias = local
-    stash_into_a(t, RefBox(alias))
+    ref view = local
+    stash_into_a(t, RefBox(view))
     var keep2: List[Int] = [2]
     ref again = keep2
     t.a = Carrier(RefBox(again))

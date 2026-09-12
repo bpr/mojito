@@ -11,7 +11,7 @@ struct Drain[
         return self.src[].pop()
 
 struct Box:
-    comptime DrainType[view_origin: Origin[mut=True]] = Drain
+    comptime DrainType[view_origin: Origin[mut=True]] = Drain[view_origin]
 
     var items: List[Int]
 

@@ -38,9 +38,9 @@ def take[I: IteratorContract & Deinitable](
 
 def main():
     var value = 41
-    ref alias = value
+    ref view = value
     try:
-        var iterator = RefIter(RefBox(alias))
+        var iterator = RefIter(RefBox(view))
         var copied = take(iterator^)
         print(copied.value[])
     except error:

@@ -23,8 +23,8 @@ struct RefItemList[origin: Origin[mut=True]]:
 
 def main():
     var value = 40
-    ref alias = value
-    var box = RefBox(alias)
+    ref view = value
+    var box = RefBox(view)
     box.value += 2
     print(value)
 

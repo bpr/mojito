@@ -8,8 +8,8 @@ struct Holder[origin: Origin[mut=True]]:
 
     def stash_param(mut self, mut source: List[Int]):
         def install() {mut self, ref source}:
-            ref alias = source
-            self.slot = RefBox(alias)
+            ref view = source
+            self.slot = RefBox(view)
         install()
 
 def main():

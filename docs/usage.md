@@ -192,6 +192,16 @@ The same path can be supplied through `MOJO_PIXI_MANIFEST`. The ordinary
 `scripts/check` gate does not require Mojo or network access; differential
 conformance is an explicit additional gate.
 
+`scripts/sweep-assets-mojo` takes the same option and runs the pinned Mojo over
+whole fixture folders instead of a case list — `assets/ok`,
+`assets/ownership_ok`, and `assets/origin_ok` by default, which every fixture
+must compile with (`AGENTS.md` invariant 1). It compares what it finds against
+`conformance/assets-mojo-rejects.tsv` and fails on any difference, so that file
+is the burn-down list of fixtures still to respell. `--compare` also runs
+Mojito and diffs stdout, `--only PATH...` narrows it to a few fixtures for an
+in-session check, and `--extensions` inverts the expectation over
+`assets/extensions/`, where the pinned Mojo must reject every fixture.
+
 ## Library API
 
 The frontend stages are also available as library functions:

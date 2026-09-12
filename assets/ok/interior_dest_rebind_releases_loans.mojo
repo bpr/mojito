@@ -11,8 +11,8 @@ def main():
     var a = List[RefBox]()
     var t = Two(a^, [1])
     var local: List[Int] = [9]
-    ref alias = local
-    t.a.append(RefBox(Pointer(to=alias)))
+    ref view = local
+    t.a.append(RefBox(Pointer(to=view)))
     var fresh = List[RefBox]()
     t.a = fresh^
     local.append(1)

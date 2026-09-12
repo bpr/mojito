@@ -3,7 +3,7 @@
 # Tuple[Int, Bool], a struct declaring ImplicitlyCopyable with an explicit
 # copy initializer, TrivialRegisterPassable-bounded parameters) copy
 # implicitly, and operators bind their `var` operands the same way.
-from std.optional import Optional
+from std.collections import Optional
 
 struct Pair(ImplicitlyCopyable):
     var left: Int

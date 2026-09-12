@@ -85,9 +85,12 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
    extensions. Accepted programs use valid Mojo syntax and semantics; Mojito
    may reject valid Mojo but must not invent a different language. An
    extension is admitted only when it tracks an announced upstream direction
-   (today: direct `ref` struct fields), is listed in `docs/non-goals.md`,
-   and keeps its fixtures under `assets/extensions/` — every fixture in the
-   ordinary `assets/` folders must compile with the pinned Mojo.
+   (today: direct `ref` struct fields, and `Origin._subtree` origin casts —
+   upstream's own experimental spelling, which the pinned build parses but
+   rejects at the use), is listed in `docs/non-goals.md`, and keeps its
+   fixtures under `assets/extensions/` — every fixture in the ordinary
+   `assets/` folders must compile with the pinned Mojo, which
+   `scripts/sweep-assets-mojo` checks.
 2. Unsupported semantics fail explicitly. Prefer an early, contextual checker
    error; use `MirInstr::Unsupported` or `RuntimeError::Unsupported` only for a
    genuine later-phase boundary.

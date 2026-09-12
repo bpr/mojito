@@ -17,7 +17,7 @@ struct EntryIter[m: Bool, //, o: Origin[mut=m]]:
 
 @fieldwise_init
 struct KeyIter[m: Bool, //, o: Origin[mut=m]]:
-    var inner: EntryIter[o]
+    var inner: EntryIter[Self.o]
 
     def next_val(mut self) -> Int:
         return self.inner.next_val()

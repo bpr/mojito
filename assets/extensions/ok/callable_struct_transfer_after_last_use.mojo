@@ -13,8 +13,8 @@ def main():
     var s = Stasher(0)
     var sink = List[RefBox]()
     var local: List[Int] = [9]
-    ref alias = local
-    s(sink, RefBox(alias))
+    ref view = local
+    s(sink, RefBox(view))
     print(sink[0].value[0])
     local.append(1)
     print(local[1])

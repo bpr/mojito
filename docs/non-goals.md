@@ -33,7 +33,18 @@ storage through `Pointer[T, origin]`, but upstream has signalled that `ref`
 fields may arrive, so Mojito keeps the capability (2026-09-09 decision; the
 stdlib's six `ref`-field structs stay as they are).
 
-This is the one admitted extension under the match-or-subset rule
+### `Origin._subtree` casts stay under `assets/extensions/`
+
+Not to be removed: `origin_of(self)._subtree` is upstream's own experimental
+conservative origin form, and the pinned build parses it but rejects every use
+("use of a never-initialized interior reference
+'origin_of(self_is_origin).subtree'"). Mojito implements it, so a program that
+casts to a subtree origin is accepted here and rejected there — the
+`subtree-origin-cast` divergence below. The 2026-09-12 assets sweep moved its
+fifteen fixtures to `assets/extensions/<folder>/`, because the ordinary folders
+hold only programs the pinned Mojo compiles.
+
+These are the two admitted extensions under the match-or-subset rule
 (`AGENTS.md` invariant 1).
 
 - Fixtures that use `ref` fields live under `assets/extensions/<folder>/`;
@@ -54,7 +65,7 @@ zero. These three are exempt and are re-probed at every nightly re-pin rather
 than fixed.
 
 - `subtree-origin-cast`: a cited bridge to upstream's `#lit.origin.subtree`
-  experiment.
+  experiment; its fixtures live under `assets/extensions/` (above).
 - `reference-valued-aggregate`: the `ref` field extension above.
 - `deinit-body-field-loop-read` (`output-diff`): the pinned Mojo destroys a
   `deinit self` field that is read only inside a loop body at the

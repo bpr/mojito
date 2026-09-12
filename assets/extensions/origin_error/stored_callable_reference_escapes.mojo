@@ -13,8 +13,8 @@ struct Holder[origin: Origin[mut=True]]:
     var slot: Peek[Self.origin]
     def swap(mut self):
         var local = 9
-        ref alias = local
-        self.slot = Peek(alias)
+        ref view = local
+        self.slot = Peek(view)
 
 def main():
     var keep = 4

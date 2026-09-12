@@ -13,6 +13,6 @@ def stash(mut sink: List[RefBox], var box: RefBox):
 def main():
     var sink = List[RefBox]()
     var local: List[Int] = [9]
-    ref alias = local
-    stash(sink, RefBox(Pointer(to=alias)))
+    ref view = local
+    stash(sink, RefBox(Pointer(to=view)))
     print(len(sink))

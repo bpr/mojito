@@ -6,8 +6,8 @@ struct RefBox[origin: Origin[mut=True]]:
 struct Holder[origin: Origin[mut=True]]:
     var slot: RefBox[Self.origin]
     def rebind_to(mut self, mut source: List[Int]):
-        ref alias = source
-        self.slot = RefBox(Pointer(to=alias))
+        ref view = source
+        self.slot = RefBox(Pointer(to=view))
 
 def main():
     var keep: List[Int] = [1]

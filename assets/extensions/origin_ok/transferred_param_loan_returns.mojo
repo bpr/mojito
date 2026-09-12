@@ -6,8 +6,8 @@ struct RefBox[origin: Origin[mut=True]]:
 
 def fill(mut source: List[Int]) -> List[RefBox[origin_of(source)]]:
     var sink = List[RefBox]()
-    ref alias = source
-    sink.append(RefBox(alias))
+    ref view = source
+    sink.append(RefBox(view))
     return sink^
 
 def main():

@@ -2,3 +2,7 @@
 # is parsed and discarded.
 def peek(ref[_] x: Int) -> Int:
     return x
+
+def main():
+    var x: Int = 7
+    print(peek(x))

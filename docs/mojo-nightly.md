@@ -78,6 +78,23 @@ upstream bug is recorded instead of matched: a `deinit self` field read only
 inside a loop body is destroyed at the destructor's entry and the loop reads
 the destroyed value (`deinit-body-field-loop-read`, `output-diff`).
 
+**Assets sweep (2026-09-12).** The ordinary `assets/` `_ok` folders were run
+through the pinned build for the first time: 501 fixtures, 381 accepted, 120
+rejected, and — comparing stdout on what both compilers ran — 19 that produce
+different text. `scripts/sweep-assets-mojo` reproduces it in about a minute
+and gates the result against
+[`conformance/assets-mojo-rejects.tsv`](../conformance/assets-mojo-rejects.tsv);
+`--extensions` asserts the inverse over `assets/extensions/`, the mechanical
+re-probe `AGENTS.md` invariant 1 asks for. The mechanical families are closed
+(`alias` as a binding name — still a reserved word at the pin; `Self.X` for a
+struct parameter; upstream's import lines for `size_of`, `DivModable`, `Set`,
+`IsTriviallyCopyable`, and `Optional`; a `Deinitable` pack bound; parameter
+bindings in a `comptime` alias body; a `main` for three module-scope
+snippets), leaving 102, each on a row in that file. Thirteen fixtures joined
+`conformance/cases.tsv` as `run` rows; the fifteen `Origin._subtree` fixtures
+moved to `assets/extensions/`, since the pin parses that spelling but rejects
+every use of it.
+
 ## Prioritized Changeset
 
 The order below is the recommended implementation order. Compatibility aliases

@@ -9,10 +9,10 @@ struct Keeper[origin: Origin[mut=True]]:
 
     def add_local(mut self):
         var local: List[Int] = [9]
-        ref alias = local
+        ref view = local
         def push(var box: RefBox) {mut self}:
             self.slot = box^
-        push(RefBox(alias))
+        push(RefBox(view))
 
 def main():
     var keep: List[Int] = [1]

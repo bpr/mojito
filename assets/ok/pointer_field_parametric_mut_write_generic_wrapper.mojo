@@ -11,7 +11,7 @@ struct View[m: Bool, //, o: Origin[mut=m]]:
 
 @fieldwise_init
 struct Wrap[m: Bool, //, o: Origin[mut=m]]:
-    var view: View[o]
+    var view: View[Self.o]
 
     def poke(mut self):
         self.view.bump()
