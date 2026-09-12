@@ -143,7 +143,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     self.next_token()?; // Ignore empty lines at the top level
                 }
                 _ => {
-                    stmts.push(self.parse_statement()?);
+                    let statement = self.parse_statement()?;
+                    reject_comptime_if_outside_function(&statement)?;
+                    stmts.push(statement);
                 }
             }
         }
@@ -175,7 +177,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             match token {
                 Token::Eof => break,
                 Token::Newline | Token::Indent | Token::Dedent => self.discard_one(),
-                _ => match self.parse_statement() {
+                _ => match self
+                    .parse_statement()
+                    .and_then(|stmt| reject_comptime_if_outside_function(&stmt).map(|()| stmt))
+                {
                     Ok(stmt) => program.push(stmt),
                     Err(err) => {
                         errors.push(err);
@@ -193,5 +198,54 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             errors,
             truncated,
         }
+    }
+}
+
+/// Upstream requires a `comptime if` to sit inside a function
+/// (`'comptime if' must be contained in a function`); Mojito used to fold one
+/// at module level too. The walk stops at every `def`, so a function body —
+/// including a nested one — keeps the form. A struct body holds fields,
+/// associated aliases, and methods rather than statements, so the form cannot
+/// reach one.
+fn reject_comptime_if_outside_function(statement: &Stmt) -> Result<(), ParseError> {
+    let block = |block: &[Stmt]| -> Result<(), ParseError> {
+        for statement in block {
+            reject_comptime_if_outside_function(statement)?;
+        }
+        Ok(())
+    };
+    match &statement.kind {
+        StmtKind::ComptimeIf { .. } => Err(ParseError::Message(
+            "'comptime if' must be contained in a function".to_string(),
+        )
+        .at(statement.span)),
+        // A `def`'s body is exactly where the form belongs.
+        StmtKind::Def { .. } => Ok(()),
+        StmtKind::If { branches, orelse } => {
+            for (_, body) in branches {
+                block(body)?;
+            }
+            orelse.as_deref().map_or(Ok(()), block)
+        }
+        StmtKind::While { body, orelse, .. } => {
+            block(body)?;
+            orelse.as_deref().map_or(Ok(()), block)
+        }
+        StmtKind::For { body, .. } | StmtKind::ComptimeFor { body, .. } => block(body),
+        StmtKind::With { body, .. } => block(body),
+        StmtKind::Try {
+            body,
+            except,
+            orelse,
+            finalbody,
+        } => {
+            block(body)?;
+            if let Some((_, handler)) = except {
+                block(handler)?;
+            }
+            orelse.as_deref().map_or(Ok(()), &block)?;
+            finalbody.as_deref().map_or(Ok(()), block)
+        }
+        _ => Ok(()),
     }
 }

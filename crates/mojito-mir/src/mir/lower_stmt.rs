@@ -43,8 +43,8 @@ impl Flatten<'_> {
                 if let Some(target) = binding_ty.as_ref() {
                     src = self.materialize_register(src, target, expr.source_span());
                 }
-                let writes_through_reference =
-                    self.aliases.contains_key(dest) || self.runtime_aliases.contains(dest);
+                let writes_through_reference = self.aliases.contains_key(dest)
+                    || (self.runtime_aliases.contains(dest) && !self.pointer_valued_slot(*dest));
                 if !writes_through_reference
                     && let Some(ty) = self
                         .f
@@ -67,7 +67,7 @@ impl Flatten<'_> {
                     let mut place = loan.place;
                     place.through = Some(*dest);
                     self.emit(MirInstr::Store { place, src });
-                } else if self.runtime_aliases.contains(dest) {
+                } else if self.runtime_aliases.contains(dest) && !self.pointer_valued_slot(*dest) {
                     let handle = self.fresh(expr.source_span(), Some(*dest));
                     self.emit(MirInstr::MakeRef {
                         dest: handle,
@@ -2263,7 +2263,7 @@ impl Flatten<'_> {
                         resolved: None,
                     });
                     self.emit_interior_invalidations(place, None);
-                    if self.runtime_aliases.contains(&var) {
+                    if self.runtime_aliases.contains(&var) && !self.pointer_valued_slot(var) {
                         let handle = self.fresh(place.source_span(), Some(var));
                         self.emit(MirInstr::MakeRef {
                             dest: handle,

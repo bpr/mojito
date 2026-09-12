@@ -145,6 +145,7 @@ assets/ok/list_methods_growth.mojo	main	exe-differential	sanitized
 assets/ok/list_strided_slice_normalizes.mojo	main	exe-differential	sanitized
 assets/ok/list_unsafe_ptr_multi_element.mojo	main	exe-differential	sanitized
 assets/ok/list_unsafe_uninit_length.mojo	main	exe-differential	sanitized
+assets/ok/live_pointer_ref_argument.mojo	main	exe-differential	sanitized
 assets/ok/loop_binding_consuming_copy.mojo	main	exe-differential	sanitized
 assets/ok/mapping_key_iteration_reads.mojo	main	exe-differential	sanitized
 assets/ok/math_module_rounding.mojo	main	exe-differential	sanitized
@@ -156,6 +157,7 @@ assets/ok/method_value_parameter_binding.mojo	main	exe-differential	sanitized
 assets/ok/movable_where_false_explicit_destroy.mojo	main	exe-differential	sanitized
 assets/ok/move_after_last_raise_in_try.mojo	main	exe-differential	sanitized
 assets/ok/mut_owned_params.mojo	-	ineligible	no-main-entry
+assets/ok/mut_pointer_parameter_reassign.mojo	main	exe-differential	sanitized
 assets/ok/mut_ref_writeback.mojo	main	exe-differential	sanitized
 assets/ok/named_shared_views.mojo	main	exe-differential	sanitized
 assets/ok/nested.mojo	main	exe-differential	sanitized

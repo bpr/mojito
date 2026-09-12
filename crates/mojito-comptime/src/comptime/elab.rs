@@ -466,25 +466,6 @@ impl Elab<'_> {
             .map(|ty| CtValue::Type(Box::new(ty)))
     }
 
-    /// The built-in type predicate `is_same_type[T, U]()` (roadmap milestone 7): resolve both
-    /// type parameters and compare them for equality, yielding a compile-time
-    /// `Bool`. Takes exactly two type parameters and no value arguments.
-    pub(super) fn eval_is_same_type(
-        &self,
-        param_args: &[ParamArg],
-        args: &[Expr],
-        scope: &HashMap<String, CtValue>,
-    ) -> Result<CtValue, ComptimeError> {
-        if param_args.len() != 2 || !args.is_empty() {
-            return Err(ComptimeError::Arity(
-                "is_same_type[T, U]() takes two type parameters and no arguments".to_string(),
-            ));
-        }
-        let a = self.param_arg_type(&param_args[0], scope)?;
-        let b = self.param_arg_type(&param_args[1], scope)?;
-        Ok(CtValue::Bool(a == b))
-    }
-
     /// Resolve a `[...]` argument that is expected to be a **type** (a type
     /// annotation, a bare type name, or a parameterized type) to a `Ty`.
     pub(super) fn param_arg_type(

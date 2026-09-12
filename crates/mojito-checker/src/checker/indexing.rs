@@ -285,13 +285,7 @@ impl Checker {
                     _ => return Err(TypeError::NotIndexable(obj_ty.to_string())),
                 };
                 let idx_ty = self.infer(index)?;
-                if !self.is_index_type(&idx_ty) {
-                    return Err(TypeError::TypeMismatch {
-                        expected: "Indexer".to_string(),
-                        found: idx_ty.to_string(),
-                        context: "index".to_string(),
-                    });
-                }
+                self.check_subscript_index(&obj_ty, &idx_ty, "index")?;
                 Ok(match elem {
                     Ty::Ref(reference) => *reference.referent,
                     other => other,
@@ -1645,13 +1639,7 @@ impl Checker {
             _ => return Err(TypeError::NotIndexable(obj_ty.to_string())),
         };
         let idx_ty = self.infer(index)?;
-        if !self.is_index_type(&idx_ty) {
-            return Err(TypeError::TypeMismatch {
-                expected: "Indexer".to_string(),
-                found: idx_ty.to_string(),
-                context: "index".to_string(),
-            });
-        }
+        self.check_subscript_index(&obj_ty, &idx_ty, "index")?;
         Ok(match result {
             Ty::Ref(reference) => *reference.referent,
             other => other,
@@ -1730,6 +1718,34 @@ impl Checker {
         Ok(())
     }
 
+    /// Check a primitive subscript's index type. Every receiver but one
+    /// normalizes an `Indexer` through `__mlir_index__`
+    /// (`assets/ok/indexer_normalization.mojo`); a `SIMD` lane index is the
+    /// exception, because upstream's builtin `SIMD.__getitem__`/`__setitem__`
+    /// take a plain `Int` and reject a conformer
+    /// (`assets/type_error/simd_subscript_indexer.mojo`).
+    pub(super) fn check_subscript_index(
+        &self,
+        receiver: &Ty,
+        idx_ty: &Ty,
+        context: &str,
+    ) -> Result<(), TypeError> {
+        let lane = matches!(receiver, Ty::Simd { .. });
+        let accepted = if lane {
+            coerces(idx_ty, &Ty::Int)
+        } else {
+            self.is_index_type(idx_ty)
+        };
+        if accepted {
+            return Ok(());
+        }
+        Err(TypeError::TypeMismatch {
+            expected: if lane { "Int" } else { "Indexer" }.to_string(),
+            found: idx_ty.to_string(),
+            context: context.to_string(),
+        })
+    }
+
     /// Whether a value can be normalized to the VM's index representation.
     /// Numeric literals/Int use the identity path; an opaque `Indexer` or a
     /// concrete conformer supplies `__mlir_index__() -> __mlir_type.index`
@@ -1800,9 +1816,11 @@ impl Checker {
     /// normalizes an Indexer only when no `__getitem__` or `__setitem__`
     /// candidate accepts its source type at this argument position and an Int
     /// candidate exists there, preserving direct user overloads. Positions in a
-    /// `*indices` tail use the variadic element contract. Primitive pointer/SIMD
-    /// and homogeneous private-pack indexing has a fixed Int contract and
-    /// therefore always records the checked normalization fallback.
+    /// `*indices` tail use the variadic element contract. Primitive pointer and
+    /// homogeneous private-pack indexing has a fixed Int contract and therefore
+    /// always records the checked normalization fallback; a SIMD lane index
+    /// does not, because upstream's `SIMD.__getitem__` takes a plain `Int`
+    /// (see [`Self::check_subscript_index`]).
     pub(super) fn prepare_index_argument(
         &self,
         receiver: &Ty,
@@ -1818,10 +1836,7 @@ impl Checker {
             return Ok(());
         };
         let Ty::Struct(name, arguments) = receiver else {
-            if matches!(
-                receiver,
-                Ty::Pointer { .. } | Ty::Simd { .. } | Ty::VariadicPack(_)
-            ) {
+            if matches!(receiver, Ty::Pointer { .. } | Ty::VariadicPack(_)) {
                 self.implicit_conversions
                     .borrow_mut()
                     .insert(expression.source_span(), target);

@@ -54,16 +54,27 @@ impl Checker {
                     });
                 }
                 let target = self.pointer_origin_arg(target)?;
-                // A parametric target mutability is not an upgrade: it
-                // resolves from the receiver at each concrete site.
-                if origin.statically_mutable() == Some(false)
-                    && target.statically_mutable() == Some(true)
-                {
-                    return Err(TypeError::Unsupported(
-                        "an origin cast cannot upgrade capability: the source Pointer \
-                         origin is immutable"
-                            .to_string(),
-                    ));
+                // Upstream's `target_origin: Origin[mut=Self.mut]` demands the
+                // target match the receiver's mutability, so a statically
+                // known mismatch is an error in either direction. A parametric
+                // mutability on either side is not one: it resolves from the
+                // receiver at each concrete site.
+                match (origin.statically_mutable(), target.statically_mutable()) {
+                    (Some(false), Some(true)) => {
+                        return Err(TypeError::Unsupported(
+                            "an origin cast cannot upgrade capability: the source Pointer \
+                             origin is immutable"
+                                .to_string(),
+                        ));
+                    }
+                    (Some(true), Some(false)) => {
+                        return Err(TypeError::Unsupported(
+                            "an origin cast keeps the Pointer's capability: the source \
+                             Pointer origin is mutable, so the target origin must be too"
+                                .to_string(),
+                        ));
+                    }
+                    _ => {}
                 }
                 self.operation_adjustments.borrow_mut().insert(
                     span.clone(),

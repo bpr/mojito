@@ -377,14 +377,6 @@ impl Elab<'_> {
                     self.conformance.require(ty, trait_name).is_ok()
                 })))
             }
-            // A built-in compile-time **type predicate** (roadmap milestone 7): `is_same_type[T,
-            // U]()` is `Bool` type equality, usable in a `comptime if`.
-            ExprKind::Call {
-                name,
-                param_args,
-                args,
-                ..
-            } if name == "is_same_type" => self.eval_is_same_type(param_args, args, scope),
             ExprKind::Call {
                 name,
                 param_args,

@@ -747,27 +747,6 @@ impl Elab<'_> {
         scope: &HashMap<String, CtValue>,
     ) -> Result<(), ComptimeError> {
         match &mut expr.kind {
-            ExprKind::Call {
-                name,
-                param_args,
-                args,
-                kwargs,
-            } if name == "is_same_type" => {
-                for arg in param_args.iter_mut() {
-                    if let ParamArg::Value(e) = arg {
-                        self.rewrite_vm_ctfe_expr(e, scope)?;
-                    }
-                }
-                for arg in args.iter_mut() {
-                    self.rewrite_vm_ctfe_expr(arg, scope)?;
-                }
-                for kw in kwargs.iter_mut() {
-                    self.rewrite_vm_ctfe_expr(&mut kw.value, scope)?;
-                }
-                let value = self.eval_is_same_type(param_args, args, scope)?;
-                *expr = lit_result(&value, expr.span)?;
-                Ok(())
-            }
             ExprKind::Member { object, .. } => {
                 self.rewrite_vm_ctfe_expr(object, scope)?;
                 if let Ok(value) = self.eval(expr, scope)

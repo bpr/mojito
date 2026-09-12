@@ -184,55 +184,6 @@ are sorted Opus first (see **Entry Style**).
   an `assets/ok` fixture.
 
   Open today:
-  - `unsafe-origin-cast-mutability`: `unsafe_origin_cast` accepts a target
-    whose mutability differs from the pointer's (an `ImmOrigin(o)` or
-    `ImmUntrackedOrigin` target on a mutable pointer), while upstream's
-    `target_origin: Origin[mut=Self.mut]` should reject it. Mojito rejects
-    only the upgrade direction. Pinned by
-    `conformance/probes/unsafe_origin_cast_mutability.mojo`.
-    - Model: Opus, as-is. One missing half of a comparison Mojito already
-      makes.
-  - `simd-subscript-indexer`: Mojito normalizes any `Indexer` through
-    `__mlir_index__` at every subscript, so a `SIMD` lane accepts one,
-    while upstream's `SIMD.__getitem__` takes a plain `Int` and rejects it.
-    A user type's own `__getitem__` does take an `Indexer` upstream
-    (`assets/ok/indexer_normalization.mojo`), so only the builtin SIMD
-    subscript diverges.
-    - Model: Opus, as-is. Exempt the builtin SIMD subscript from the
-      normalization the rest of the subscripts keep.
-  - `live-pointer-ref-argument`: a `ref` argument naming a place is
-    rejected while a `Pointer(to=place)` to it is still live (`access to
-    'x' conflicts with live reference 'p'`). Upstream accepts it, because
-    `Pointer` is not an exclusive borrow. Pinned by
-    `conformance/probes/live_pointer_ref_argument.mojo`.
-    - Model: Opus, as-is. A `Pointer` loan is already shared
-      (`MirLoan::shared`); the conflict rule has to read that.
-  - `mut-pointer-parameter-reassignment`: assigning to a `mut` parameter of
-    `Pointer` type inside the callee (`mut p: Pointer[Int, o]`, then
-    `p = p`) is rejected by MIR verification (`WriteRef value type
-    Pointer[Int, origin#0] is incompatible with referent Int`), while
-    upstream accepts it. The store lowers as a `WriteRef` through the
-    parameter's slot handle, which is typed as the pointer itself, so the
-    verifier expects a pointee-typed value. Copying the parameter works.
-    Pinned by `conformance/probes/mut_pointer_parameter_reassign.mojo`.
-    - Model: Opus, as-is. The mistyped handle is diagnosed and sits in MIR
-      lowering.
-  - `comptime-if-module-level`: a `comptime if` at module level is accepted,
-    while upstream requires one inside a function (`'comptime if' must be
-    contained in a function`). No fixture spells it any more — the two that
-    did now fold their assertion into a second `comptime` alias — so only
-    the rejection is left to write, with a `parse_error` fixture to pin it.
-    - Model: Opus, as-is. A parse or check-time rejection; the fixture
-      respellings are done.
-  - `is-same-type-builtin`: `is_same_type[T, U]()` is a Mojito-only
-    compile-time predicate; upstream has no such declaration and compares
-    type values with `==`. The stdlib and `assets/ok` now spell `==`; what
-    is left is the builtin itself, still reachable from user code and still
-    spelled by `assets/type_error/type_predicate_runtime_if.mojo` and eight
-    `tests/comptime_test.rs` cases.
-    - Model: Opus, as-is. Delete the intercept in
-      `crates/mojito-comptime/src/comptime/{eval,ctfe,elab}.rs` and respell
-      its remaining callers.
   - `pack-element-type-narrowing`: inside a folded `comptime if Self.Ts[i]
     == T` branch Mojito treats the pack element `self.storage[i]` as a `T`,
     so a `ref[origin_of(self)] T` accessor returns it and an `==` against a

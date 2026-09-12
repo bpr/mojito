@@ -368,7 +368,7 @@ pub(super) fn analyze_loans(
                         loan.interior.is_none()
                             && !(loan.shared && through_shared)
                             && mir_places_overlap(&place, &loan.place)
-                            && (access == LoanAccess::Write || loan.mutable)
+                            && (access == LoanAccess::Write || excludes_reads(*loan))
                     }) {
                         return Err(loan_error(f, &place, *reference, span));
                     }
@@ -384,13 +384,50 @@ pub(super) fn analyze_loans(
 /// overlapping places, at most one interior-generation domain (two interior
 /// loans are generation-tracked, never exclusive), at most one shared
 /// pointer alias (two `Pointer(to=place)` loans coexist), and either side
-/// mutable.
+/// excluding the other's reads.
 fn loans_exclusive(new: &mojito_mir::mir::MirLoan, existing: &Loan) -> bool {
     let generation_tracked = new.interior.is_some() && existing.interior.is_some();
     let shared_aliases = new.shared && existing.shared;
     !(generation_tracked || shared_aliases)
-        && (new.mutable || existing.mutable)
+        && (excludes_reads(new) || excludes_reads(existing))
         && mir_places_overlap(&new.place, &existing.place)
+}
+
+/// Whether a live loan excludes another borrow's *reads* of the same storage.
+/// Only an exclusive mutable borrow does. A `Pointer(to=place)` loan is
+/// shared: upstream's `Pointer` is provenance, not an exclusive borrow, so a
+/// second reader — another `Pointer`, or a `ref` argument naming the place —
+/// coexists with it. Writes to the owner still conflict with either kind
+/// (`assets/ownership_error/pointer_to_owner_twice_then_mutation.mojo`).
+fn excludes_reads(loan: &impl LoanCapability) -> bool {
+    loan.mutable() && !loan.shared()
+}
+
+/// The mutability/sharing pair `excludes_reads` reads, so the established
+/// (`MirLoan`) and reaching (`Loan`) forms answer it the same way.
+trait LoanCapability {
+    fn mutable(&self) -> bool;
+    fn shared(&self) -> bool;
+}
+
+impl LoanCapability for mojito_mir::mir::MirLoan {
+    fn mutable(&self) -> bool {
+        self.mutable
+    }
+
+    fn shared(&self) -> bool {
+        self.shared
+    }
+}
+
+impl LoanCapability for Loan {
+    fn mutable(&self) -> bool {
+        self.mutable
+    }
+
+    fn shared(&self) -> bool {
+        self.shared
+    }
 }
 
 pub(super) fn mir_places_overlap(left: &MirPlace, right: &MirPlace) -> bool {

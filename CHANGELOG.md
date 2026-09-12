@@ -8,6 +8,26 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Six behavioral divergences from the pinned Mojo are closed. `unsafe_origin_cast`
+  now requires the target origin's mutability to equal the pointer's in both
+  directions, matching upstream's `target_origin: Origin[mut=Self.mut]`
+  (`assets/type_error/pointer_origin_cast_no_downgrade.mojo`); a builtin `SIMD`
+  lane index takes a plain `Int` and no longer normalizes an `Indexer` the way
+  every other subscript still does
+  (`assets/type_error/simd_subscript_indexer.mojo`); a `Pointer` loan is
+  provenance rather than an exclusive borrow, so a second reader — another
+  `Pointer`, or a `ref` argument naming the place — coexists with it while
+  writes to the owner still conflict
+  (`assets/ok/live_pointer_ref_argument.mojo`); assigning to a `mut p:
+  Pointer[...]` parameter verifies and runs, because a pointer-typed slot
+  stores its handle as the pointer value and the assignment replaces the slot
+  instead of writing through it
+  (`assets/ok/mut_pointer_parameter_reassign.mojo`); a `comptime if` outside a
+  function is rejected with upstream's sentence
+  (`assets/parse_error/comptime_if_module_level.mojo`), which withdraws
+  module-level conditional declaration generation; and the Mojito-only
+  `is_same_type[T, U]()` predicate is gone in favour of upstream's `T == U`
+  type comparison (`assets/type_error/is_same_type_removed.mojo`).
 - Three implementations Mojito carried in Rust or hand-written LLVM are now
   bundled Mojo, called by both runtimes: integer `**` (a wrapping
   square-and-multiply `std._intrinsics._pow_int` replaces the backend-emitted

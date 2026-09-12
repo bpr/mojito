@@ -599,7 +599,7 @@ fn linked_vm_ctfe_keeps_nominal_helpers_without_unrelated_templates() {
     let d = TempDir::new();
     d.write(
         "library.mojo",
-        "def _increment(value: Int) -> Int:\n    return value + 1\n\ndef _trait_default() -> Int:\n    return 7\n\n@fieldwise_init\nstruct Box:\n    var value: Int\n    def incremented(self) -> Int:\n        return _increment(self.value)\n\ntrait HasDefault:\n    def default_value(self) -> Int:\n        return _trait_default()\n\ndef compile_answer() -> Int:\n    return 6 * 7\n\ndef uninstantiated[T: AnyType]() -> Int:\n    comptime if is_same_type[T, Int]():\n        return 1\n    else:\n        return \"this template must not cross the CTFE boundary\"\n",
+        "def _increment(value: Int) -> Int:\n    return value + 1\n\ndef _trait_default() -> Int:\n    return 7\n\n@fieldwise_init\nstruct Box:\n    var value: Int\n    def incremented(self) -> Int:\n        return _increment(self.value)\n\ntrait HasDefault:\n    def default_value(self) -> Int:\n        return _trait_default()\n\ndef compile_answer() -> Int:\n    return 6 * 7\n\ndef uninstantiated[T: AnyType]() -> Int:\n    comptime if T == Int:\n        return 1\n    else:\n        return \"this template must not cross the CTFE boundary\"\n",
     );
     let main = d.write(
         "main.mojo",

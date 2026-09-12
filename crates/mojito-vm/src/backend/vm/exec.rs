@@ -284,13 +284,22 @@ impl VmBackend {
                     // An untyped DefVar is assignment to an established
                     // binding. Reference bindings therefore write through;
                     // ordinary bindings retain their existing runtime shape.
-                    let current = if let Value::Ref { .. } = &vars[slot] {
+                    // A pointer-typed slot stores its handle *as* the pointer
+                    // value (`UseVar` reads it intact), so assigning to it —
+                    // `p = q` on a local or on a `mut p: Pointer[...]`
+                    // parameter — replaces the slot instead.
+                    let writes_through = matches!(&vars[slot], Value::Ref { .. })
+                        && !matches!(
+                            prog.mir.functions[function].1.var_tys.get(var),
+                            Some(Ty::Pointer { .. })
+                        );
+                    let current = if writes_through {
                         self.read_reference(&vars[slot], frame_id, vars)?
                     } else {
                         vars[slot].clone()
                     };
                     let assigned = crate::runtime::coerce_like(v, &current);
-                    if let Value::Ref { .. } = &vars[slot] {
+                    if writes_through {
                         let handle = vars[slot].clone();
                         self.write_reference(&handle, frame_id, vars, assigned)?;
                     } else {

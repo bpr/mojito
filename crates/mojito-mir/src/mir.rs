@@ -1077,6 +1077,16 @@ impl Flatten<'_> {
         )
     }
 
+    /// Whether a variable's slot stores a pointer *as* its value. Both
+    /// backends read such a slot as the pointer it holds (`UseVar` keys on the
+    /// declared type), so an assignment to the variable replaces the slot
+    /// rather than writing through the handle it stores — including for a
+    /// `mut p: Pointer[...]` parameter, whose slot is bound with the caller's
+    /// pointer rather than aliasing the caller's variable.
+    fn pointer_valued_slot(&self, var: VarId) -> bool {
+        matches!(self.var_types.get(&var), Some(Ty::Pointer { .. }))
+    }
+
     /// The pointer subscript a place expression spells — positional `p[i]` on
     /// a pointer-typed object, or current Mojo's keyword `p[unsafe_offset=i]`
     /// — as its pointer object and offset expression.

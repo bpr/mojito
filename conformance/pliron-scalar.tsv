@@ -145,6 +145,7 @@ assets/ok/list_methods_growth.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_strided_slice_normalizes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_unsafe_ptr_multi_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_unsafe_uninit_length.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/live_pointer_ref_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/loop_binding_consuming_copy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mapping_key_iteration_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/math_module_rounding.mojo	-	ineligible	no-scalar-entry-shape
@@ -156,6 +157,7 @@ assets/ok/method_value_parameter_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/movable_where_false_explicit_destroy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/move_after_last_raise_in_try.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mut_owned_params.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/mut_pointer_parameter_reassign.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mut_ref_writeback.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/named_shared_views.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested.mojo	-	ineligible	no-scalar-entry-shape

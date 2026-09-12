@@ -555,7 +555,7 @@ fn specialization_evaluates_dependent_parameter_defaults() {
 
 #[test]
 fn unified_reflection_handle_exposes_struct_field_facts() {
-    let src = "@fieldwise_init\nstruct Point:\n    var x: Int\n    var label: String\n\ndef main():\n    comptime r = reflect[Point]\n    comptime count = r.field_count()\n    comptime names = r.field_names()\n    comptime types = r.field_types()\n    print(count, names[0], names[1])\n    comptime if is_same_type[types[0], Int]():\n        print(\"int\")\n";
+    let src = "@fieldwise_init\nstruct Point:\n    var x: Int\n    var label: String\n\ndef main():\n    comptime r = reflect[Point]\n    comptime count = r.field_count()\n    comptime names = r.field_names()\n    comptime types = r.field_types()\n    print(count, names[0], names[1])\n    comptime if types[0] == Int:\n        print(\"int\")\n";
     assert_eq!(run(src).unwrap(), "2 x label\nint\n");
 }
 
@@ -599,9 +599,17 @@ fn reflection_rejects_invalid_named_and_indexed_field_selection() {
 }
 
 #[test]
-fn reflection_can_conditionally_generate_a_declaration() {
+fn module_level_comptime_if_is_rejected() {
+    // Upstream requires a `comptime if` inside a function, so conditionally
+    // generating a declaration at module level — reflection-driven or not — is
+    // not a form Mojito accepts either
+    // (`assets/parse_error/comptime_if_module_level.mojo`).
     let src = "struct Unit:\n    var value: Int\n\ncomptime reflected = reflect[Unit]\ncomptime if reflected.field_count() == 1:\n    def generated() -> String:\n        return \"generated\"\nelse:\n    def generated() -> String:\n        return \"wrong\"\n\ndef main():\n    print(generated())\n";
-    assert_eq!(run(src).unwrap(), "generated\n");
+    assert!(
+        run(src)
+            .unwrap_err()
+            .contains("'comptime if' must be contained in a function")
+    );
 }
 
 #[test]
@@ -678,7 +686,7 @@ fn heterogeneous_pack_bound_oracle_uses_nominal_user_conformance() {
 
 #[test]
 fn heterogeneous_pack_indexes_expose_concrete_element_types() {
-    let src = "def first_plus_one[*Types: Copyable](*args: *Types) -> Int:\n    comptime if is_same_type[Types[0], Int]():\n        return args[0] + 1\n    else:\n        return 0\n\ndef main():\n    print(first_plus_one(4, \"tail\"))\n    print(first_plus_one(\"head\", 4))\n";
+    let src = "def first_plus_one[*Types: Copyable](*args: *Types) -> Int:\n    comptime if Types[0] == Int:\n        return args[0] + 1\n    else:\n        return 0\n\ndef main():\n    print(first_plus_one(4, \"tail\"))\n    print(first_plus_one(\"head\", 4))\n";
     assert_eq!(run(src).unwrap(), "5\n0\n");
 }
 
@@ -690,26 +698,27 @@ fn variadic_value_pack_specializes_and_unrolls() {
 
 #[test]
 fn type_predicate_selects_comptime_branch() {
-    // Phase 7 (docs/notes/comptime.md): the built-in `is_same_type[T, U]()` type predicate lets
-    // a `comptime if` branch on a type parameter — `name[Int]` takes the `int`
-    // branch, `name[String]` the `other` branch (each a distinct specialization).
-    let src = "def name[T: AnyType]() -> String:\n    comptime if is_same_type[T, Int]():\n        return \"int\"\n    else:\n        return \"other\"\n\ndef main():\n    print(name[Int]())\n    print(name[String]())\n";
+    // Upstream's type comparison (`T == Int`) lets a `comptime if` branch on a
+    // type parameter — `name[Int]` takes the `int` branch, `name[String]` the
+    // `other` branch (each a distinct specialization).
+    let src = "def name[T: AnyType]() -> String:\n    comptime if T == Int:\n        return \"int\"\n    else:\n        return \"other\"\n\ndef main():\n    print(name[Int]())\n    print(name[String]())\n";
     assert_eq!(run(src).unwrap(), "int\nother\n");
 }
 
 #[test]
 fn type_predicate_in_runtime_if_is_rejected() {
-    // A type predicate has no runtime `Bool` form — used in a runtime `if` (not a
-    // `comptime if`) it is not a resolvable value, so the program is rejected.
-    let src = "def name[T: AnyType]() -> String:\n    if is_same_type[T, Int]():\n        return \"int\"\n    else:\n        return \"other\"\n\ndef main():\n    print(name[Int]())\n";
+    // A type comparison has no runtime `Bool` form — used in a runtime `if` (not
+    // a `comptime if`) it is not a resolvable value, so the program is rejected.
+    let src = "def name[T: AnyType]() -> String:\n    if T == Int:\n        return \"int\"\n    else:\n        return \"other\"\n\ndef main():\n    print(name[Int]())\n";
     assert!(run(src).is_err());
 }
 
 #[test]
 fn type_and_value_predicates_compose() {
-    // A mixed type+value generic: the type predicate picks the outer branch and the
-    // value-parameter predicate the inner one, each resolved per instantiation.
-    let src = "def tag[T: AnyType, n: Int]() -> String:\n    comptime if is_same_type[T, Int]():\n        comptime if n == 0:\n            return \"int-zero\"\n        else:\n            return \"int-n\"\n    else:\n        return \"other\"\n\ndef main():\n    print(tag[Int, 0]())\n    print(tag[Int, 5]())\n    print(tag[String, 0]())\n";
+    // A mixed type+value generic: the type comparison picks the outer branch and
+    // the value-parameter predicate the inner one, each resolved per
+    // instantiation.
+    let src = "def tag[T: AnyType, n: Int]() -> String:\n    comptime if T == Int:\n        comptime if n == 0:\n            return \"int-zero\"\n        else:\n            return \"int-n\"\n    else:\n        return \"other\"\n\ndef main():\n    print(tag[Int, 0]())\n    print(tag[Int, 5]())\n    print(tag[String, 0]())\n";
     assert_eq!(run(src).unwrap(), "int-zero\nint-n\nother\n");
 }
 
@@ -996,7 +1005,7 @@ fn explicit_type_argument_naming_a_non_generic_struct_specializes() {
     // Regression: the retained `[Plain]` argument on the rewritten call used to
     // be misresolved by the checker as an undefined value. A concrete type
     // argument is now baked into the clone and dropped from the call.
-    let src = "@fieldwise_init\nstruct Plain(Copyable, Movable):\n    var n: Int\n\ndef pick[T: Movable](x: T) -> Int:\n    comptime if is_same_type[T, Plain]():\n        return 1\n    else:\n        return 0\n\ndef main():\n    print(pick[Plain](Plain(3)))\n    print(pick[Int](4))\n";
+    let src = "@fieldwise_init\nstruct Plain(Copyable, Movable):\n    var n: Int\n\ndef pick[T: Movable](x: T) -> Int:\n    comptime if T == Plain:\n        return 1\n    else:\n        return 0\n\ndef main():\n    print(pick[Plain](Plain(3)))\n    print(pick[Int](4))\n";
     assert_eq!(run(src).unwrap(), "1\n0\n");
 }
 
@@ -1005,7 +1014,7 @@ fn explicit_type_argument_bound_violation_is_reported_at_the_call() {
     // A dropped type argument is never re-validated by the checker against the
     // residual signature, so the elaborator enforces the parameter's trait
     // bounds when the instantiation is requested.
-    let src = "struct Pinned:\n    var n: Int\n    def __init__(out self, n: Int):\n        self.n = n\n\ndef pick[T: Copyable](x: T) -> Int:\n    comptime if is_same_type[T, Int]():\n        return 1\n    else:\n        return 0\n\ndef main():\n    print(pick[Pinned](Pinned(3)))\n";
+    let src = "struct Pinned:\n    var n: Int\n    def __init__(out self, n: Int):\n        self.n = n\n\ndef pick[T: Copyable](x: T) -> Int:\n    comptime if T == Int:\n        return 1\n    else:\n        return 0\n\ndef main():\n    print(pick[Pinned](Pinned(3)))\n";
     let error = run(src).unwrap_err();
     assert!(
         error.contains("generic bound failed at 'pick' instantiation"),

@@ -160,7 +160,7 @@ hidden-unsafe-any-origin	reject	conformance/fixtures/hidden_unsafe_any_origin.mo
 reference-valued-aggregate	mojito-only	conformance/fixtures/reference_valued_aggregate.mojo
 partial-field-move-parent-used	mojito-only	conformance/fixtures/partial_field_move_parent_used.mojo
 symbolic-origin-pointer-write	mojito-only	conformance/fixtures/symbolic_origin_pointer_write.mojo
-simd-subscript-indexer	mojito-only	conformance/fixtures/simd_subscript_indexer.mojo
+simd-subscript-indexer	reject	assets/type_error/simd_subscript_indexer.mojo
 reborrows	run	conformance/fixtures/reborrows.mojo
 pointer-provenance	run	conformance/fixtures/pointer_provenance.mojo
 current-pointer-allocation	run	conformance/fixtures/current_pointer_allocation.mojo
@@ -395,6 +395,10 @@ imm-origin-binders	run	assets/ok/imm_origin_binders.mojo
 pointer-immutable-conversion	run	assets/ok/pointer_immutable_conversion.mojo
 pointer-origin-constructors	run	assets/ok/pointer_origin_constructors.mojo
 pointer-bound-copy	run	assets/ok/pointer_bound_copy.mojo
+mut-pointer-parameter-reassign	run	assets/ok/mut_pointer_parameter_reassign.mojo
+live-pointer-ref-argument	run	assets/ok/live_pointer_ref_argument.mojo
+comptime-if-module-level	reject	assets/parse_error/comptime_if_module_level.mojo
+is-same-type-removed	reject	assets/type_error/is_same_type_removed.mojo
 free-function-origin-binders	run	assets/ok/free_function_origin_binders.mojo
 origin-cast-from-removed	reject	assets/type_error/origin_cast_from_removed.mojo
 pointer-immutable-conversion-write	reject	assets/type_error/pointer_immutable_conversion_write.mojo

@@ -429,8 +429,8 @@ The implemented forms are:
 - CTFE calls: a compile-time expression may call a pure top-level `def`,
   including value-parameterized helpers and helpers whose type parameters are
   used only for compile-time facts. The elaborator clones the needed helper call
-  graph, folds compile-time-only operations such as `is_same_type[T, U]()` and
-  `T.size` out of the cloned bodies, and executes the resulting helper through
+  graph, folds compile-time-only operations such as a type comparison
+  (`T == U`) and `T.size` out of the cloned bodies, and executes the resulting helper through
   HIR, MIR, and the register VM in compile-time mode.
 - Materialization: module-level `comptime` constants are inlined as runtime
   literals into later code, so a function can use a constant computed at module
@@ -679,8 +679,8 @@ may become:
 return 8
 ```
 
-for an instantiation such as `capacity[Buffer[8]]()`. Similarly,
-`is_same_type[T, Int]()` is replaced with a `Bool` literal. After this rewrite,
+for an instantiation such as `capacity[Buffer[8]]()`. Similarly, a type
+comparison `T == Int` is replaced with a `Bool` literal. After this rewrite,
 the cloned helper program is ordinary AST and can be lowered through the same
 HIR/MIR/VM machinery as runtime code.
 
