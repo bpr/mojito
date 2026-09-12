@@ -1,7 +1,8 @@
 # A hand-written constructor whose parameter is a `Pointer` over the
 # struct's own origin binder binds that binder from the argument: with an
-# explicit `origin_of(x)`, inferred, positionally, and from a method that
-# respells its own binder in type position (`V[Self.o]`).
+# explicit `origin_of(x)`, inferred, from a bound pointer, positionally,
+# and from a method that respells its own binder in type position
+# (`V[Self.o]`).
 struct V[mut: Bool, //, o: Origin[mut=mut]]:
     var p: Pointer[Int, Self.o]
 
@@ -32,9 +33,12 @@ def main():
     var x = 3
     var a = V[origin_of(x)](unsafe_ptr=Pointer(to=x))
     print(a.get())
-    var b = V(unsafe_ptr=Pointer(to=x))
+    var p = Pointer(to=x)
+    var b = V(unsafe_ptr=p)
     print(b.get())
+    var c = V[origin_of(x)](unsafe_ptr=p)
+    print(c.get())
+    var e = Plain[origin_of(x)](p)
+    print(e.get())
     var d = V(x)
     print(d.twin().get())
-    var e = Plain[origin_of(x)](Pointer(to=x))
-    print(e.get())

@@ -1077,22 +1077,6 @@ impl Flatten<'_> {
         )
     }
 
-    /// A pointer whose provenance is a symbolic origin parameter (a
-    /// `Pointer[T, Self.origin]` constructor parameter): each call binds it
-    /// to a heap pointer or a place handle, so its value IS the pointer —
-    /// read as a value (`UseVar`), never borrowed as a slot (`MakeRef`),
-    /// which natively would take the slot's address.
-    fn is_parametric_origin_pointer(&self, expression: &Expr) -> bool {
-        matches!(
-            self.checked_ty(expression),
-            Some(Ty::Pointer {
-                origin: mojito_types::origin::PointerOrigin::Param { .. }
-                    | mojito_types::origin::PointerOrigin::SelfPlace { .. },
-                ..
-            })
-        )
-    }
-
     /// The pointer subscript a place expression spells — positional `p[i]` on
     /// a pointer-typed object, or current Mojo's keyword `p[unsafe_offset=i]`
     /// — as its pointer object and offset expression.

@@ -298,6 +298,7 @@ assets/ok/pliron_uninit_roundtrip.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_wrap_int_arith.mojo	compute	differential	ret=Int
 assets/ok/pliron_wrap_pow.mojo	compute	differential	ret=Int
 assets/ok/pliron_wrap_uint_arith.mojo	compute	differential	ret=UInt
+assets/ok/pointer_bound_copy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_empty_deref.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_adapter_from_deref_rebinding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_adapter_from_reborrow.mojo	-	ineligible	no-scalar-entry-shape

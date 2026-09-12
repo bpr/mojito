@@ -53,14 +53,17 @@ impl Flatten<'_> {
                 }
                 let var = self.expression_var(name, e);
                 let d = self.fresh(span(e), Some(var));
-                if self.is_origin_bearing_pointer(e) && !self.is_parametric_origin_pointer(e) {
-                    // Reading a pointer variable produces its handle value;
-                    // `UseVar` would read through the stored `Value::Ref` the
-                    // way a `ref` binding does. `MakeRef` on the root forwards
-                    // the existing handle unchanged.
-                    self.emit(MirInstr::MakeRef {
+                if self.is_origin_bearing_pointer(e) {
+                    // A pointer variable's read is its pointer value: both
+                    // backends read a pointer-typed slot as the handle it
+                    // stores (the VM keys `UseVar` on the variable's pointer
+                    // type), so a copy into another local, a binding, or a
+                    // call argument carries the pointee's address rather than
+                    // a handle to this slot.
+                    self.emit(MirInstr::UseVar {
                         dest: d,
-                        place: MirPlace::root(var, self.var_types.get(&var).cloned()),
+                        var,
+                        mode: UseMode::Copy,
                     });
                     return d;
                 }

@@ -48,6 +48,9 @@ architecture would need.
     `assets/runtime_error` fixture.
   - A later task that needs an ABI bump joins this entry rather than
     getting its own.
+  - Model: Fable. The signature classification changes the native calling
+    convention itself, and the ABI version, `docs/native-abi.md`, the
+    runtime, and the parity harness all move together.
 
 - [ ] **Native SIMD: float-to-int casts convert one lane at a time**
 
@@ -56,6 +59,8 @@ architecture would need.
   - The vector form (`llvm.fptosi.sat.v{N}i128.v{N}f64`) is legal IR, but
     its x86-64 legalization is unverified, so it was not adopted.
   - Probe it with `llc` before switching.
+  - Model: Opus. One lowering site behind an `llc` probe, no contract
+    change.
 
 - [ ] **Front end: a bare literal cannot build a multi-lane SIMD field**
 
@@ -64,6 +69,8 @@ architecture would need.
   - Upstream accepts it through the implicit `SIMD(IntLiteral)`
     initializer.
   - Spell `P(SIMD[DType.int32, 4](1))` until then.
+  - Model: Opus. A coercion rule at field initialization, with overload
+    resolution the only thing downstream to watch.
 
 - [ ] **Front end: no field writes through a `List` subscript**
 
@@ -71,6 +78,9 @@ architecture would need.
   projection requires checked indexed storage`) for every element type.
   - Copy the element out, mutate it, and write it back (`xs[i] = e`), or
     mutate through a `mut` parameter, which works.
+  - Model: Fable. A dynamic element projection that is written through
+    crosses the checker, MIR places, the verifier, ownership and drop
+    elaboration, and both backends.
 
 - [ ] **Native generic-holder temporaries with heap-owning implicitly
   copyable fields read freed memory**
@@ -84,6 +94,9 @@ architecture would need.
   - Bisect the `var` field-move of the copy-lifecycle value inside the
     generic constructor against the owned-temp marking in
     `crates/mojito-pliron/src/lower/calls.rs`.
+  - Model: Fable. The lever is a guess rather than a known site, and the
+    bug sits where monomorphized constructors, copy lifecycle, and native
+    temporary ownership meet.
 
 - [ ] **Native: a view method on a temporary owned receiver reads freed
   memory**
@@ -99,6 +112,8 @@ architecture would need.
     `crates/mojito-pliron/src/lower/calls.rs`, which frees the receiver
     after its last use as an operand.
   - Pinned by `conformance/probes/native_temporary_receiver_view.mojo`.
+  - Model: Opus. The rule is stated and the site is named: hold an owned
+    temporary to the end of its statement in one pliron crate.
 
 - [ ] **Native converting-constructor defaults are rejected**
 
@@ -107,22 +122,7 @@ architecture would need.
   (`checked_const_value` errors on `Construct`).
   - Emit the constructor call at default-fill through `lower_call`.
   - The `NoneType` argument is `LowerTy::ZeroSized`.
-
-- [ ] **Native: copying a bound `Pointer` local reads the pointer's own
-  slot**
-
-  Problem: `var t = q` for a `Pointer` local `q` prints `q`'s address
-  natively, while the VM and upstream print the pointee.
-  - The same happens when `q` fills an annotated binding or a call
-    argument, such as a constructor's or free function's `Pointer`
-    parameter.
-  - MIR lowers the copy as a `ref.make` of `q`'s slot, so `t` holds a
-    handle to `q`. The VM resolves the later `through: t` read to the loan
-    place, while pliron dereferences the handle and reads `q`'s bits.
-  - Start at the MIR lowering of a pointer-typed copy, which should load
-    `q`'s value rather than make a handle to its slot.
-  - The origin fixtures pass temporary pointers (`Pointer(to=x)`) until
-    then. Pinned by `conformance/probes/native_bound_pointer_copy.mojo`.
+  - Model: Opus. Two named sites in one crate, no semantic decision.
 
 ### 2. Catch Up To Current Mojo *(recurring — reopens at every nightly re-pin)*
 
@@ -202,6 +202,14 @@ architecture would need.
     'x' conflicts with live reference 'p'`). Upstream accepts it, because
     `Pointer` is not an exclusive borrow. Pinned by
     `conformance/probes/live_pointer_ref_argument.mojo`.
+  - `mut-pointer-parameter-reassignment`: assigning to a `mut` parameter of
+    `Pointer` type inside the callee (`mut p: Pointer[Int, o]`, then
+    `p = p`) is rejected by MIR verification (`WriteRef value type
+    Pointer[Int, origin#0] is incompatible with referent Int`), while
+    upstream accepts it. The store lowers as a `WriteRef` through the
+    parameter's slot handle, which is typed as the pointer itself, so the
+    verifier expects a pointee-typed value. Copying the parameter works.
+    Pinned by `conformance/probes/mut_pointer_parameter_reassign.mojo`.
   - `comptime-if-dropped-branch`: a type error inside the untaken branch of a
     `comptime if` is never reported, because elaboration drops the branch
     before the checker runs. Upstream type-checks every branch symbolically
@@ -216,6 +224,16 @@ architecture would need.
 
   Three divergences are retained on purpose and re-probed rather than fixed;
   they are listed in [`docs/non-goals.md`](non-goals.md).
+
+  Model: Opus per row, except four that change how the checker decides
+  rather than what it spells — `partial-field-move-parent-used` (ownership
+  goes from field-wise to whole-parent), `symbolic-origin-pointer-write`
+  (origin arguments must survive checked identity, which erases them today),
+  `assign-view-over-source` (owned-interior origins on the `String` view
+  methods, checked against the assignment destination), and
+  `comptime-if-dropped-branch` (section 3's first task). Those four are
+  Fable. `ref-binding-register-value` is an Opus change with wide fixture
+  fallout, so it wants its own pass.
 
 - [ ] **Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
   any order)*
@@ -235,6 +253,9 @@ architecture would need.
   - `mjrt_repr_string` for the native string repr. The VM side is already
     Mojo (`String.write_repr_to`).
   - `mjrt_pow` for integer `**`. Upstream's `Int.__pow__` is Mojo.
+
+  Model: Opus per port, except Dragonbox float formatting, which is Fable
+  — a from-scratch algorithm whose output every fixture compares against.
 
   Four runtime services are deliberately not on that list; they are in
   [`docs/non-goals.md`](non-goals.md).
@@ -260,6 +281,8 @@ architecture would need.
     a recorded reason.
   - The sweep covered only files containing `comptime if`. The rest of
     `assets/` has not been checked the same way.
+  - Model: Opus. Oracle-driven respelling, one fixture at a time. Only the
+    module-level `comptime if` pair needs a judgment call.
 
 ### 3. Front-End Groundwork For A Pliron-Centered Architecture
 
@@ -617,6 +640,10 @@ Every entry is written for a human reader who has not seen the code.
   paragraph.
 - Exception: every change that needs an `MJRT_ABI_VERSION` bump shares
   one checkbox, so the native runtime ABI is bumped once for all of them.
+- Sections 1 and 2 end each checkbox with a **Model:** bullet — a quick
+  complexity and blast-radius estimate saying which model should take the
+  task. Fable for work that changes a contract, spans phases, or has no
+  named lever; Opus where the site and the rule are both known.
 
 ## Working Rule
 

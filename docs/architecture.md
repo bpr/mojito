@@ -2629,7 +2629,10 @@ the returned `ref[o]` stays within that parameter, so the return-boundary
 re-rooter (`canonical_reference_parts`) follows the field handle to the single
 pointee and retains the residual offset-0 index, which the runtime projection
 walkers forward as the identity deref of that pointee — an immutable origin reads,
-a mutable origin writes through the caller's storage.
+a mutable origin writes through the caller's storage. A read of the bound pointer
+variable itself — a copy into another local, an annotated binding, or a call
+argument — is a plain `UseVar` value read of the stored handle, which both
+backends interpret as the pointee's address.
 
 ### Loops
 

@@ -240,10 +240,10 @@ impl VmBackend {
                         Some(Ty::Pointer { .. })
                     )
                 {
-                    // A pointer-typed variable holding a place handle
-                    // (`Pointer(to=x)` bound to a placeholder-origin parameter)
-                    // is the handle itself; only reference bindings read
-                    // through their stored handle.
+                    // A pointer-typed variable holding a place handle (a
+                    // `Pointer(to=x)` local or a bound pointer parameter) is
+                    // the handle itself; only reference bindings read through
+                    // their stored handle.
                     self.read_reference(&vars[slot], frame_id, vars)?
                 } else {
                     match mode {
