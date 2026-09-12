@@ -421,6 +421,7 @@ assets/ok/subtree_pointer_generic_field.mojo	main	exe-differential	sanitized
 assets/ok/subtree_pointer_read.mojo	main	exe-differential	sanitized
 assets/ok/telemetry.mojo	main	exe-differential	sanitized
 assets/ok/tempfile_mkdtemp.mojo	main	exe-differential	sanitized
+assets/ok/temporary_receiver_view.mojo	main	exe-differential	sanitized
 assets/ok/ternary.mojo	main	exe-differential	sanitized
 assets/ok/trait_default_method.mojo	main	exe-differential	sanitized
 assets/ok/trait_inheritance.mojo	-	ineligible	no-main-entry

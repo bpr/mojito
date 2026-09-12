@@ -421,6 +421,7 @@ assets/ok/subtree_pointer_generic_field.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/subtree_pointer_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/telemetry.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tempfile_mkdtemp.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/temporary_receiver_view.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ternary.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_default_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_inheritance.mojo	-	ineligible	no-scalar-entry-shape

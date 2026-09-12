@@ -1880,6 +1880,20 @@ impl Checker {
                             materialized: None,
                         },
                     );
+                // An owning temporary receiver (`String("abc").codepoints()`)
+                // has no place to lend, so materialize it as an anonymous
+                // owned binding: the hidden slot gives the loan a real place
+                // and the temporary its borrower's lifetime, exactly as a
+                // temporary bound to a `ref [origin]` parameter gets one. A
+                // borrowing temporary receiver (`StringSpan(s).split(",")`)
+                // already anchors on its own loans. A rejection leaves the
+                // receiver alone: another adjustment owns its lowering
+                // contract.
+                if !crate::checker::places::is_place_expr(object)
+                    && !self.type_carries_loans(&obj_ty)
+                {
+                    let _ = self.materialize_borrow_owner(object);
+                }
             }
             self.selected_calls.borrow_mut().insert(
                 span,

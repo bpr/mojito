@@ -33,23 +33,6 @@ Sorted Opus first (see **Entry Style**). The ABI-bump collector is last
 whatever its model, because it batches every change that needs a new
 `MJRT_ABI_VERSION`.
 
-- [ ] **Native: a view method on a temporary owned receiver reads freed
-  memory**
-
-  Problem: `for g in String("abc").codepoints()` and
-  `len(String("abc").__reversed__())` trap natively with `use after
-  Pointer deallocation`, while the VM and upstream run them.
-  - The temporary receiver must live to the end of the statement, because
-    the returned view borrows it.
-  - A named receiver and direct iteration (`for g in String("abc")`) run
-    natively, and so does a temporary `StringSpan(s)` receiver.
-  - Start at the owned-temp release in
-    `crates/mojito-pliron/src/lower/calls.rs`, which frees the receiver
-    after its last use as an operand.
-  - Pinned by `conformance/probes/native_temporary_receiver_view.mojo`.
-  - Model: Opus, as-is. The rule is stated and the site is named: hold an
-    owned temporary to the end of its statement in one pliron crate.
-
 - [ ] **Front end: a bare literal cannot build a multi-lane SIMD field**
 
   Problem: `P(1)` for a struct whose field is `SIMD[DType.int32, 4]` is

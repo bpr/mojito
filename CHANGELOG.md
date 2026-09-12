@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A view-returning method called on an owning temporary receiver
+  (`for c in String("abc").codepoints()`, `len(String("abc").__reversed__())`)
+  no longer reads freed memory natively. The checker now materializes such a
+  receiver into an anonymous owned binding, the same hidden slot a temporary
+  bound to a `ref [origin]` parameter already gets, so the view's loan has a
+  real place and the temporary lives as long as the view that borrows it.
+  Previously only a named receiver worked: the temporary had no place to
+  lend, so no loan was established and the native owned-temp release freed it
+  after its last use as an operand.
 - An omitted argument whose default runs a converting constructor now lowers
   natively instead of rejecting. Previously only a `None` default over a
   generic struct instance (`arg: Optional[T] = None`) worked; now any folded
