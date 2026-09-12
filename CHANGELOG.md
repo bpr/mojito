@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An omitted argument whose default runs a converting constructor now lowers
+  natively instead of rejecting. Previously only a `None` default over a
+  generic struct instance (`arg: Optional[T] = None`) worked; now any folded
+  literal the checker wrapped in an `@implicit` conversion does, including
+  `x: Optional[Int] = 5` and a hand-written `@implicit` constructor recorded
+  under its bare struct name (`m: Meters = 3`). Backend monomorphization
+  resolves that bare name through the shared callable-symbol policy and
+  enqueues the constructor, which a default may be the only thing to reach,
+  and a subscript's omitted argument fills from the same path as a call's, so
+  an aggregate default works there too.
 - A multi-lane SIMD value moves natively as one typed `<N x lane>` load and
   store instead of `llvm.memcpy`, and its slot is allocated at that vector
   type (still aligned like one lane, so `LayoutCx` and the ABI are

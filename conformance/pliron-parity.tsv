@@ -53,6 +53,7 @@ assets/ok/copyable_iterator_reference_aggregate.mojo	main	exe-differential	sanit
 assets/ok/copyinit_moveinit.mojo	main	exe-differential	sanitized
 assets/ok/decorators.mojo	main	exe-differential	sanitized
 assets/ok/default_args.mojo	main	exe-differential	sanitized
+assets/ok/default_converting_constructor.mojo	main	exe-differential	sanitized
 assets/ok/defines_main.mojo	main	exe-differential	sanitized
 assets/ok/deinit_body_field_last_use.mojo	main	exe-differential	sanitized
 assets/ok/deinit_param_destruction_timing.mojo	main	exe-differential	sanitized

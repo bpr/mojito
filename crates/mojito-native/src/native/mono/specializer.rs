@@ -295,10 +295,11 @@ impl<'a> Specializer<'a> {
     }
 
     /// A parameter defaulting to a recorded constructor over a generic
-    /// struct instance (`dir: Optional[String] = None` records
-    /// `Optional.__init__` overload keyed on `None`): the omitted-argument path runs the
-    /// constructor's instance for the concrete parameter type, so enqueue it
-    /// and respell the default's target to that instance.
+    /// struct instance (`dir: Optional[String] = None`, `x: Optional[Int] = 5`):
+    /// the omitted-argument path runs the constructor's instance for the
+    /// concrete parameter type, so enqueue it and respell the default's target
+    /// to that instance. The instance is keyed on the parameter's type, so the
+    /// wrapped literal plays no part in selecting it.
     fn instantiate_constructed_defaults(
         &mut self,
         owner: &str,
@@ -308,21 +309,36 @@ impl<'a> Specializer<'a> {
             let Some(CheckedConst::Construct { target, arg }) = default else {
                 continue;
             };
-            if !matches!(**arg, CheckedConst::None) || !self.functions.contains_key(target.as_str())
-            {
+            if matches!(**arg, CheckedConst::Construct { .. }) {
                 continue;
             }
+            let Some(resolved) = self.constructed_default_target(target) else {
+                continue;
+            };
+            *target = resolved;
             let Some(param_ty @ Ty::Struct(struct_name, arguments)) =
                 declaration.param_types.get(index)
             else {
                 continue;
             };
+            if is_symbolic(param_ty) {
+                continue;
+            }
+            // A non-generic constructor needs no instance, but this default may
+            // be the only thing that reaches it, so it is enqueued like any
+            // other concrete callee.
             if arguments.is_empty()
                 || !self
                     .generic_templates
                     .contains(nominal_template(struct_name))
-                || is_symbolic(param_ty)
             {
+                let Some(body) = self.functions.get(target.as_str()).copied() else {
+                    continue;
+                };
+                if function_types(body).any(is_symbolic) {
+                    continue;
+                }
+                *target = self.enqueue(target, self.base_bindings(), Vec::new())?;
                 continue;
             }
             let (bindings, arguments, _) =
@@ -331,6 +347,31 @@ impl<'a> Specializer<'a> {
             *target = instance;
         }
         Ok(())
+    }
+
+    /// The compiled constructor a default's conversion target names. The
+    /// checker records the overload symbol, or — for a hand-written
+    /// `@implicit` constructor — the bare struct name, which resolves through
+    /// the shared callable-symbol policy over the single wrapped literal, as
+    /// the VM's `constructor_name` resolves it.
+    fn constructed_default_target(&self, target: &str) -> Option<String> {
+        if self.functions.contains_key(target) {
+            return Some(target.to_string());
+        }
+        let init = format!("{target}.__init__");
+        let resolved = mojito_symbol::symbol::resolve_callable_symbol(
+            self.functions.iter().map(|(name, function)| {
+                mojito_symbol::symbol::CallableCandidate {
+                    name,
+                    n_params: function.n_params,
+                }
+            }),
+            &init,
+            1,
+        );
+        self.functions
+            .contains_key(resolved.as_str())
+            .then_some(resolved)
     }
 
     #[allow(

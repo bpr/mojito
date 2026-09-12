@@ -491,64 +491,135 @@ impl FnLowering<'_> {
                             dest,
                         ));
                     }
-                    let Some(default) = defaults.get(slot_index).and_then(Option::as_ref) else {
+                    let Some(default) = defaults.get(slot_index).and_then(Option::as_ref).cloned()
+                    else {
                         return Err(self.unsupported_reg(
                             format!("non-constant default argument in call to `{name}`"),
                             dest,
                         ));
                     };
-                    match expected {
-                        LowerTy::Scalar(scalar) => {
-                            self.checked_const_value(ctx, default, scalar, dest)?
-                        }
-                        // A `String` parameter defaulting to a literal (the
-                        // checker records the literal constructor over the
-                        // text): a borrowed slot reads a global-backed
-                        // descriptor (the callee never frees a read
-                        // parameter), an owned slot receives a heap copy it
-                        // frees itself.
-                        LowerTy::Aggregate { ty, .. }
-                            if matches!(&*ty, Ty::Struct(struct_name, _)
-                                if mojito_symbol::symbol::is_stdlib_string_struct(struct_name))
-                                && let Some(text) = string_default_text(default) =>
-                        {
-                            self.string_default_argument(ctx, text, owned, dest)
-                        }
-                        // A `StringSpan` parameter defaulting to a literal
-                        // (`fillchar: StringSpan = " "`): the view over the
-                        // interned text, which lives for the whole program.
-                        LowerTy::Aggregate { ty, .. }
-                            if matches!(&*ty, Ty::Struct(struct_name, _)
-                                if mojito_symbol::symbol::is_stdlib_string_span_struct(struct_name))
-                                && let Some(text) = string_default_text(default) =>
-                        {
-                            self.string_span_default_argument(ctx, text, dest)
-                        }
-                        // An `Optional[T]` parameter defaulting to `None`: the
-                        // checker records the `NoneType` constructor, whose
-                        // zero-sized argument has no operand; it runs over
-                        // fresh storage the callee receives.
-                        LowerTy::Aggregate { layout, .. }
-                            if let CheckedConst::Construct { target, arg } = default
-                                && matches!(**arg, CheckedConst::None)
-                                && self.signatures.contains_key(target.as_str()) =>
-                        {
-                            let storage = self.entry_alloca(ctx, layout.size, layout.align);
-                            self.emit_bound_call(ctx, dest, target, vec![storage])?;
-                            storage
-                        }
-                        _ => {
-                            return Err(self.unsupported_reg(
-                                format!("non-scalar default argument in call to `{name}`"),
-                                dest,
-                            ));
-                        }
-                    }
+                    self.default_argument_value(ctx, &default, &expected, owned, name, dest)?
                 }
             };
             lowered.push(value);
         }
         Ok(lowered)
+    }
+
+    /// The omitted-argument value of one parameter: the folded literal at the
+    /// parameter's type, or the converting constructor the checker recorded
+    /// over that literal, run the way the VM's `bind_for_call` runs it.
+    pub(super) fn default_argument_value(
+        &mut self,
+        ctx: &mut Context,
+        default: &CheckedConst,
+        expected: &LowerTy,
+        owned: bool,
+        callee: &str,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        // A literal-filled `String`/`StringSpan` default carries its own
+        // constructor, and reads as text rather than as a construction, so it
+        // is matched before the general converting-constructor form.
+        if let LowerTy::Aggregate { ty, .. } = expected
+            && let Ty::Struct(struct_name, _) = &**ty
+            && let Some(text) = string_default_text(default)
+        {
+            if mojito_symbol::symbol::is_stdlib_string_struct(struct_name) {
+                return Ok(self.string_default_argument(ctx, text, owned, dest));
+            }
+            if mojito_symbol::symbol::is_stdlib_string_span_struct(struct_name) {
+                return Ok(self.string_span_default_argument(ctx, text, dest));
+            }
+        }
+        match default {
+            CheckedConst::Construct { target, arg } => {
+                let LowerTy::Aggregate { layout, .. } = expected else {
+                    return Err(self.unsupported_reg(
+                        format!(
+                            "converting-constructor default argument of `{callee}` at a non-aggregate parameter"
+                        ),
+                        dest,
+                    ));
+                };
+                self.constructed_default_value(ctx, target, arg, *layout, callee, dest)
+            }
+            CheckedConst::Int(_)
+            | CheckedConst::Float(_)
+            | CheckedConst::Bool(_)
+            | CheckedConst::String(_)
+            | CheckedConst::None => match expected {
+                LowerTy::Scalar(scalar) => self.checked_const_value(ctx, default, *scalar, dest),
+                _ => Err(self.unsupported_reg(
+                    format!("non-scalar default argument in call to `{callee}`"),
+                    dest,
+                )),
+            },
+        }
+    }
+
+    /// Run a parameter's recorded converting constructor (`arg: Optional[T] =
+    /// None`, `m: Meters = 3`) over fresh storage the callee receives, filling
+    /// its own argument slot from the folded literal the checker wrapped.
+    fn constructed_default_value(
+        &mut self,
+        ctx: &mut Context,
+        target: &str,
+        arg: &CheckedConst,
+        layout: Layout,
+        callee: &str,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        // The checker wraps a literal at most once, so a nested construction
+        // is not a shape the VM oracle materializes either.
+        if matches!(arg, CheckedConst::Construct { .. }) {
+            return Err(self.unsupported_reg(
+                format!("nested converting-constructor default `{target}` of `{callee}`"),
+                dest,
+            ));
+        }
+        // The checker records the conversion target as the compiled overload
+        // or, for a hand-written `@implicit` constructor, as the bare struct
+        // name — the VM's `call_named` resolves both, and so does this.
+        let Some(resolved) = self
+            .signatures
+            .contains_key(target)
+            .then(|| target.to_string())
+            .or_else(|| self.constructor_init(target, 1))
+        else {
+            return Err(self.unsupported_reg(
+                format!(
+                    "converting-constructor default `{target}` of `{callee}` has no compiled body"
+                ),
+                dest,
+            ));
+        };
+        // Parameter 0 is the `out self` storage; the recorded literal fills the
+        // single remaining slot. A zero-sized one (`NoneType`) has no operand.
+        let signature = &self.signatures[&resolved];
+        let params = signature.params.clone();
+        let owned_params = signature.owned_params.clone();
+        let filled: Vec<usize> = (1..params.len())
+            .filter(|index| !matches!(params[*index], LowerTy::ZeroSized))
+            .collect();
+        if filled.len() > 1 {
+            return Err(self.unsupported_reg(
+                format!(
+                    "converting-constructor default `{resolved}` of `{callee}` takes more than one argument"
+                ),
+                dest,
+            ));
+        }
+        let storage = self.entry_alloca(ctx, layout.size, layout.align);
+        let mut operands = vec![storage];
+        for index in filled {
+            let owned = owned_params.get(index).copied().unwrap_or(false);
+            let value =
+                self.default_argument_value(ctx, arg, &params[index], owned, &resolved, dest)?;
+            operands.push(value);
+        }
+        self.emit_bound_call(ctx, dest, &resolved, operands)?;
+        Ok(storage)
     }
 
     /// The omitted-argument value of a `String` parameter whose default is a

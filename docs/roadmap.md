@@ -14,6 +14,12 @@ Sections and their checkboxes are in implementation order; the first unchecked
 box is the default next task. *(recurring)* and *(any order)* sections are
 exempt from the ordering.
 
+Sections 1 and 2 are ordered differently: every checkbox there, and every
+bullet inside a checkbox that holds more than one independent item, names the
+model that should take it, and they are sorted Opus before Fable. Each Opus
+entry also says whether it can be started as-is or wants a plan first. Where a
+strict dependency forces a different order, the entry says so.
+
 Sections 1 to 3 are ordered by what the Pliron direction in
 [`docs/pliron-future.md`](pliron-future.md) depends on: the existing native and
 parity defects first, then the front-end groundwork a Pliron-centered
@@ -22,6 +28,64 @@ architecture would need.
 ## Ordered Work
 
 ### 1. Native Backend
+
+Sorted Opus first (see **Entry Style**). The ABI-bump collector is last
+whatever its model, because it batches every change that needs a new
+`MJRT_ABI_VERSION`.
+
+- [ ] **Native: a view method on a temporary owned receiver reads freed
+  memory**
+
+  Problem: `for g in String("abc").codepoints()` and
+  `len(String("abc").__reversed__())` trap natively with `use after
+  Pointer deallocation`, while the VM and upstream run them.
+  - The temporary receiver must live to the end of the statement, because
+    the returned view borrows it.
+  - A named receiver and direct iteration (`for g in String("abc")`) run
+    natively, and so does a temporary `StringSpan(s)` receiver.
+  - Start at the owned-temp release in
+    `crates/mojito-pliron/src/lower/calls.rs`, which frees the receiver
+    after its last use as an operand.
+  - Pinned by `conformance/probes/native_temporary_receiver_view.mojo`.
+  - Model: Opus, as-is. The rule is stated and the site is named: hold an
+    owned temporary to the end of its statement in one pliron crate.
+
+- [ ] **Front end: a bare literal cannot build a multi-lane SIMD field**
+
+  Problem: `P(1)` for a struct whose field is `SIMD[DType.int32, 4]` is
+  rejected with a field type mismatch.
+  - Upstream accepts it through the implicit `SIMD(IntLiteral)`
+    initializer.
+  - Spell `P(SIMD[DType.int32, 4](1))` until then.
+  - Model: Opus, plan first. The coercion rule itself is one site, but it
+    fires at every field initialization, so the plan's job is to bound the
+    overload-resolution and fixture fallout before the edit.
+
+- [ ] **Native generic-holder temporaries with heap-owning implicitly
+  copyable fields read freed memory**
+
+  Problem: `GenericHolder[Box](Box(5))`, or Dict's
+  `DictEntry[Optional[Int], V]` appended to a `List`, reads freed memory
+  natively while the VM is correct.
+  - This keeps `Dict[Optional[Int], _]` VM-only:
+    `conformance/fixtures/optional_dict_keys.mojo` stays out of
+    `assets/ok`.
+  - Bisect the `var` field-move of the copy-lifecycle value inside the
+    generic constructor against the owned-temp marking in
+    `crates/mojito-pliron/src/lower/calls.rs`.
+  - Model: Fable. The lever is a guess rather than a known site, and the
+    bug sits where monomorphized constructors, copy lifecycle, and native
+    temporary ownership meet.
+
+- [ ] **Front end: no field writes through a `List` subscript**
+
+  Problem: `xs[i].field = v` fails MIR verification (`dynamic element
+  projection requires checked indexed storage`) for every element type.
+  - Copy the element out, mutate it, and write it back (`xs[i] = e`), or
+    mutate through a `mut` parameter, which works.
+  - Model: Fable. A dynamic element projection that is written through
+    crosses the checker, MIR places, the verifier, ownership and drop
+    elaboration, and both backends.
 
 - [ ] **Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
@@ -52,68 +116,6 @@ architecture would need.
     convention itself, and the ABI version, `docs/native-abi.md`, the
     runtime, and the parity harness all move together.
 
-- [ ] **Front end: a bare literal cannot build a multi-lane SIMD field**
-
-  Problem: `P(1)` for a struct whose field is `SIMD[DType.int32, 4]` is
-  rejected with a field type mismatch.
-  - Upstream accepts it through the implicit `SIMD(IntLiteral)`
-    initializer.
-  - Spell `P(SIMD[DType.int32, 4](1))` until then.
-  - Model: Opus. A coercion rule at field initialization, with overload
-    resolution the only thing downstream to watch.
-
-- [ ] **Front end: no field writes through a `List` subscript**
-
-  Problem: `xs[i].field = v` fails MIR verification (`dynamic element
-  projection requires checked indexed storage`) for every element type.
-  - Copy the element out, mutate it, and write it back (`xs[i] = e`), or
-    mutate through a `mut` parameter, which works.
-  - Model: Fable. A dynamic element projection that is written through
-    crosses the checker, MIR places, the verifier, ownership and drop
-    elaboration, and both backends.
-
-- [ ] **Native generic-holder temporaries with heap-owning implicitly
-  copyable fields read freed memory**
-
-  Problem: `GenericHolder[Box](Box(5))`, or Dict's
-  `DictEntry[Optional[Int], V]` appended to a `List`, reads freed memory
-  natively while the VM is correct.
-  - This keeps `Dict[Optional[Int], _]` VM-only:
-    `conformance/fixtures/optional_dict_keys.mojo` stays out of
-    `assets/ok`.
-  - Bisect the `var` field-move of the copy-lifecycle value inside the
-    generic constructor against the owned-temp marking in
-    `crates/mojito-pliron/src/lower/calls.rs`.
-  - Model: Fable. The lever is a guess rather than a known site, and the
-    bug sits where monomorphized constructors, copy lifecycle, and native
-    temporary ownership meet.
-
-- [ ] **Native: a view method on a temporary owned receiver reads freed
-  memory**
-
-  Problem: `for g in String("abc").codepoints()` and
-  `len(String("abc").__reversed__())` trap natively with `use after
-  Pointer deallocation`, while the VM and upstream run them.
-  - The temporary receiver must live to the end of the statement, because
-    the returned view borrows it.
-  - A named receiver and direct iteration (`for g in String("abc")`) run
-    natively, and so does a temporary `StringSpan(s)` receiver.
-  - Start at the owned-temp release in
-    `crates/mojito-pliron/src/lower/calls.rs`, which frees the receiver
-    after its last use as an operand.
-  - Pinned by `conformance/probes/native_temporary_receiver_view.mojo`.
-  - Model: Opus. The rule is stated and the site is named: hold an owned
-    temporary to the end of its statement in one pliron crate.
-
-- [ ] **Native converting-constructor defaults are rejected**
-
-  Problem: a `CheckedConst::Construct` default such as
-  `arg: Optional[T] = None` is rejected at the native default-fill sites
-  (`checked_const_value` errors on `Construct`).
-  - Emit the constructor call at default-fill through `lower_call`.
-  - The `NoneType` argument is `LowerTy::ZeroSized`.
-  - Model: Opus. Two named sites in one crate, no semantic decision.
-
 ### 2. Catch Up To Current Mojo *(recurring — reopens at every nightly re-pin)*
 
 - When the pinned nightly moves: re-pin [`docs/mojo-nightly.md`](mojo-nightly.md),
@@ -128,127 +130,8 @@ architecture would need.
   complete (`docs/mojo-nightly.md`). The next re-pin recreates this
   section's checkbox.
 
-- [ ] **Behavioral divergences from the pinned Mojo — burn to zero**
-  *(standing)*
-
-  Every new divergence lands here with a probe or a `cases.tsv`
-  `mojito-only` / `output-diff` row, and leaves when its probe promotes to
-  an `assets/ok` fixture.
-
-  Open today:
-  - `partial-field-move-parent-used`: moving one field out of a struct
-    (`p.a^`) while the parent is used afterwards (`p.b`) is rejected
-    upstream (`value 'p.a' cannot be consumed, because 'p' is used later`)
-    but accepted and tracked field-wise by Mojito. The Mojito behavior is
-    pinned by
-    `tests/drops_test.rs::partially_moved_field_is_dropped_once_at_its_new_owner`.
-  - `symbolic-origin-pointer-write`: a write through a pointer field whose
-    origin binder has symbolic mutability (`Origin[mut=m]`, or a bare
-    `Origin`) is accepted however the binder was bound, while upstream
-    judges the binder per instantiation and rejects the write from an
-    immutable place (`expression must be mutable in assignment`). Origin
-    arguments are erased from checked identity, so no per-instance binding
-    reaches `check_pointer_write`; carrying it there is the fix. An
-    `ImmOrigin(o)` origin argument (`Cell[ImmOrigin(o)]`) erases the same
-    way, so a write through that view's pointer field is accepted too.
-  - `unsafe-origin-cast-mutability`: `unsafe_origin_cast` accepts a target
-    whose mutability differs from the pointer's (an `ImmOrigin(o)` or
-    `ImmUntrackedOrigin` target on a mutable pointer), while upstream's
-    `target_origin: Origin[mut=Self.mut]` should reject it. Mojito rejects
-    only the upgrade direction. Pinned by
-    `conformance/probes/unsafe_origin_cast_mutability.mojo`.
-  - `simd-subscript-indexer`: Mojito normalizes any `Indexer` through
-    `__mlir_index__` at every subscript, so a `SIMD` lane accepts one,
-    while upstream's `SIMD.__getitem__` takes a plain `Int` and rejects it.
-    A user type's own `__getitem__` does take an `Indexer` upstream
-    (`assets/ok/indexer_normalization.mojo`), so only the builtin SIMD
-    subscript diverges.
-  - `ref-binding-register-value`: a `ref` binding to a register-passable
-    value is rejected upstream (`value of type 'Int32' doesn't have a
-    memory origin in 'ref' binding`) but accepted by Mojito. It covers
-    `ref y = f()` for an `Int`-returning `f`, `ref y = a + 1.0`, and a SIMD
-    lane read `ref lane = v[i]`. The lane binding also writes through to
-    the vector, so `lane += 2` changes `v`. A memory-backed temporary
-    (`ref x = make_list()`) is accepted by both. The lever is the
-    `StmtKind::RefDecl` arm in
-    `crates/mojito-checker/src/checker/statements.rs`, whose
-    `materialized_reference_actual` fallback materializes any value.
-    Pinned by `conformance/probes/ref_binding_register_value.mojo`.
-  - `assign-view-over-source`: assigning a call straight back to a local
-    that one of its view arguments borrows is judged by origin upstream but
-    by temporary lifetime in Mojito. Upstream rejects a view at
-    `origin_of(s)._get_owned_interior["bytes"]` (`s[byte=..]`,
-    `s.rstrip()`) with `aliasing values passed immutably to 'v' argument
-    and constructed as a result in 'takes' call`. It does so even through a
-    named local (`var r = s.rstrip()` then `s = String(r)`), which Mojito
-    accepts. It accepts a plain-origin view (`s = takes(StringSpan(s))`),
-    which Mojito rejects because the temporary's loan is live at the store.
-    The fix is to declare upstream's owned-interior origins on the `String`
-    view methods and check argument origins against the assignment
-    destination in the checker. Pinned by the `assign-*-view-over-source`
-    rows of `conformance/cases.tsv`.
-  - `live-pointer-ref-argument`: a `ref` argument naming a place is
-    rejected while a `Pointer(to=place)` to it is still live (`access to
-    'x' conflicts with live reference 'p'`). Upstream accepts it, because
-    `Pointer` is not an exclusive borrow. Pinned by
-    `conformance/probes/live_pointer_ref_argument.mojo`.
-  - `mut-pointer-parameter-reassignment`: assigning to a `mut` parameter of
-    `Pointer` type inside the callee (`mut p: Pointer[Int, o]`, then
-    `p = p`) is rejected by MIR verification (`WriteRef value type
-    Pointer[Int, origin#0] is incompatible with referent Int`), while
-    upstream accepts it. The store lowers as a `WriteRef` through the
-    parameter's slot handle, which is typed as the pointer itself, so the
-    verifier expects a pointee-typed value. Copying the parameter works.
-    Pinned by `conformance/probes/mut_pointer_parameter_reassign.mojo`.
-  - `comptime-if-dropped-branch`: a type error inside the untaken branch of a
-    `comptime if` is never reported, because elaboration drops the branch
-    before the checker runs. Upstream type-checks every branch symbolically
-    and rejects the program (`var x: Int = "hello"` in the untaken branch, and
-    `x.nonexistent()` on a `T: Copyable` parameter). Section 3's first task is
-    the fix.
-  - `comptime-if-module-level`: a `comptime if` at module level is accepted,
-    while upstream requires one inside a function (`'comptime if' must be
-    contained in a function`). `assets/ok/generic_ctfe_value_param.mojo` and
-    `assets/ok/generic_ctfe_associated_value.mojo` use it as a compile-time
-    assertion.
-
-  Three divergences are retained on purpose and re-probed rather than fixed;
-  they are listed in [`docs/non-goals.md`](non-goals.md).
-
-  Model: Opus per row, except four that change how the checker decides
-  rather than what it spells — `partial-field-move-parent-used` (ownership
-  goes from field-wise to whole-parent), `symbolic-origin-pointer-write`
-  (origin arguments must survive checked identity, which erases them today),
-  `assign-view-over-source` (owned-interior origins on the `String` view
-  methods, checked against the assignment destination), and
-  `comptime-if-dropped-branch` (section 3's first task). Those four are
-  Fable. `ref-binding-register-value` is an Opus change with wide fixture
-  fallout, so it wants its own pass.
-
-- [ ] **Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
-  any order)*
-
-  Problem: parts of Mojito's stdlib lean on the Rust runtime where upstream
-  is pure Mojo. Each is a candidate port, preferred over any new bridge
-  (2026-09-07 direction).
-  - The literal-filled `String.__init__(literal)` and
-    `StringSpan.__init__(literal)` constructors, and the
-    `String._as_string_literal()` struct-to-literal bridge behind
-    `String.write_to`. Upstream: `StringLiteral` is a `StaticString` and
-    `write_to` writes the bytes.
-  - Number formatting in Rust: the VM's `Display for Value` and the native
-    `mjrt_fmt_i64` / `mjrt_fmt_u64` / `mjrt_fmt_f64`. Upstream formats
-    `Int` and `Float64` in Mojo (`_write_int`, Dragonbox in
-    `format_float`).
-  - `mjrt_repr_string` for the native string repr. The VM side is already
-    Mojo (`String.write_repr_to`).
-  - `mjrt_pow` for integer `**`. Upstream's `Int.__pow__` is Mojo.
-
-  Model: Opus per port, except Dragonbox float formatting, which is Fable
-  — a from-scratch algorithm whose output every fixture compares against.
-
-  Four runtime services are deliberately not on that list; they are in
-  [`docs/non-goals.md`](non-goals.md).
+The three checkboxes below, and the bullets inside the two standing ones,
+are sorted Opus first (see **Entry Style**).
 
 - [ ] **Eight `assets/ok` fixtures do not compile with the pinned Mojo**
 
@@ -269,10 +152,158 @@ architecture would need.
     `generic_ctfe_associated_value.mojo`).
   - Decide per fixture: respell it, or move it under `assets/extensions/` with
     a recorded reason.
+  - Dependency: that last pair is the same pair the `comptime-if-module-level`
+    divergence below rejects, and the same pair the section 3 `comptime if`
+    task breaks. Decide their spelling once, in whichever task runs first.
   - The sweep covered only files containing `comptime if`. The rest of
     `assets/` has not been checked the same way.
-  - Model: Opus. Oracle-driven respelling, one fixture at a time. Only the
-    module-level `comptime if` pair needs a judgment call.
+  - Model: Opus, as-is. Oracle-driven respelling, one fixture at a time. Only
+    the module-level `comptime if` pair needs a judgment call.
+
+- [ ] **Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
+  any order)*
+
+  Problem: parts of Mojito's stdlib lean on the Rust runtime where upstream
+  is pure Mojo. Each is a candidate port, preferred over any new bridge
+  (2026-09-07 direction).
+  - `mjrt_pow` for integer `**`. Upstream's `Int.__pow__` is Mojo.
+    - Model: Opus, as-is. One runtime symbol, one Mojo method.
+  - `mjrt_repr_string` for the native string repr. The VM side is already
+    Mojo (`String.write_repr_to`).
+    - Model: Opus, as-is. The Mojo implementation already exists; this
+      retargets the native path at it.
+  - Integer formatting in Rust: the integer arms of the VM's `Display for
+    Value` and the native `mjrt_fmt_i64` / `mjrt_fmt_u64`. Upstream formats
+    `Int` in Mojo (`_write_int`).
+    - Model: Opus, as-is. The algorithm is digit extraction and every
+      fixture's output pins it.
+  - The literal-filled `String.__init__(literal)` and
+    `StringSpan.__init__(literal)` constructors, and the
+    `String._as_string_literal()` struct-to-literal bridge behind
+    `String.write_to`. Upstream: `StringLiteral` is a `StaticString` and
+    `write_to` writes the bytes.
+    - Model: Opus, plan first. The port only works once `StringLiteral` and
+      `String` agree on a runtime representation, which is also what the
+      erased-path residue in section 4 needs, so plan the representation
+      before touching the constructors.
+  - Float formatting in Rust: the float arm of the VM's `Display for Value`
+    and the native `mjrt_fmt_f64`. Upstream formats `Float64` in Mojo
+    (Dragonbox in `format_float`).
+    - Model: Opus, plan first. Transliterate a permissively licensed Rust
+      Dragonbox (MIT or Apache-2.0 — third-party crates are allowed, see
+      `AGENTS.md`) into Mojo rather than deriving the algorithm; the plan
+      picks the source and pins the shortest-round-trip cases. Only a
+      from-scratch derivation would want Fable.
+
+  Four runtime services are deliberately not on that list; they are in
+  [`docs/non-goals.md`](non-goals.md).
+
+- [ ] **Behavioral divergences from the pinned Mojo — burn to zero**
+  *(standing)*
+
+  Every new divergence lands here with a probe or a `cases.tsv`
+  `mojito-only` / `output-diff` row, and leaves when its probe promotes to
+  an `assets/ok` fixture.
+
+  Open today:
+  - `unsafe-origin-cast-mutability`: `unsafe_origin_cast` accepts a target
+    whose mutability differs from the pointer's (an `ImmOrigin(o)` or
+    `ImmUntrackedOrigin` target on a mutable pointer), while upstream's
+    `target_origin: Origin[mut=Self.mut]` should reject it. Mojito rejects
+    only the upgrade direction. Pinned by
+    `conformance/probes/unsafe_origin_cast_mutability.mojo`.
+    - Model: Opus, as-is. One missing half of a comparison Mojito already
+      makes.
+  - `simd-subscript-indexer`: Mojito normalizes any `Indexer` through
+    `__mlir_index__` at every subscript, so a `SIMD` lane accepts one,
+    while upstream's `SIMD.__getitem__` takes a plain `Int` and rejects it.
+    A user type's own `__getitem__` does take an `Indexer` upstream
+    (`assets/ok/indexer_normalization.mojo`), so only the builtin SIMD
+    subscript diverges.
+    - Model: Opus, as-is. Exempt the builtin SIMD subscript from the
+      normalization the rest of the subscripts keep.
+  - `live-pointer-ref-argument`: a `ref` argument naming a place is
+    rejected while a `Pointer(to=place)` to it is still live (`access to
+    'x' conflicts with live reference 'p'`). Upstream accepts it, because
+    `Pointer` is not an exclusive borrow. Pinned by
+    `conformance/probes/live_pointer_ref_argument.mojo`.
+    - Model: Opus, as-is. A `Pointer` loan is already shared
+      (`MirLoan::shared`); the conflict rule has to read that.
+  - `mut-pointer-parameter-reassignment`: assigning to a `mut` parameter of
+    `Pointer` type inside the callee (`mut p: Pointer[Int, o]`, then
+    `p = p`) is rejected by MIR verification (`WriteRef value type
+    Pointer[Int, origin#0] is incompatible with referent Int`), while
+    upstream accepts it. The store lowers as a `WriteRef` through the
+    parameter's slot handle, which is typed as the pointer itself, so the
+    verifier expects a pointee-typed value. Copying the parameter works.
+    Pinned by `conformance/probes/mut_pointer_parameter_reassign.mojo`.
+    - Model: Opus, as-is. The mistyped handle is diagnosed and sits in MIR
+      lowering.
+  - `comptime-if-module-level`: a `comptime if` at module level is accepted,
+    while upstream requires one inside a function (`'comptime if' must be
+    contained in a function`). `assets/ok/generic_ctfe_value_param.mojo` and
+    `assets/ok/generic_ctfe_associated_value.mojo` use it as a compile-time
+    assertion.
+    - Model: Opus, as-is. A parse or check-time rejection plus the two
+      fixture respellings shared with the fixtures task above.
+  - `ref-binding-register-value`: a `ref` binding to a register-passable
+    value is rejected upstream (`value of type 'Int32' doesn't have a
+    memory origin in 'ref' binding`) but accepted by Mojito. It covers
+    `ref y = f()` for an `Int`-returning `f`, `ref y = a + 1.0`, and a SIMD
+    lane read `ref lane = v[i]`. The lane binding also writes through to
+    the vector, so `lane += 2` changes `v`. A memory-backed temporary
+    (`ref x = make_list()`) is accepted by both. The lever is the
+    `StmtKind::RefDecl` arm in
+    `crates/mojito-checker/src/checker/statements.rs`, whose
+    `materialized_reference_actual` fallback materializes any value.
+    Pinned by `conformance/probes/ref_binding_register_value.mojo`.
+    - Model: Opus, plan first. The lever is named, but the rejection reaches
+      wide fixture fallout, so it wants its own pass with the fallout
+      enumerated first.
+  - `partial-field-move-parent-used`: moving one field out of a struct
+    (`p.a^`) while the parent is used afterwards (`p.b`) is rejected
+    upstream (`value 'p.a' cannot be consumed, because 'p' is used later`)
+    but accepted and tracked field-wise by Mojito. The Mojito behavior is
+    pinned by
+    `tests/drops_test.rs::partially_moved_field_is_dropped_once_at_its_new_owner`.
+    - Model: Fable. Ownership goes from field-wise to whole-parent, which
+      changes what the analysis tracks rather than what it spells.
+  - `symbolic-origin-pointer-write`: a write through a pointer field whose
+    origin binder has symbolic mutability (`Origin[mut=m]`, or a bare
+    `Origin`) is accepted however the binder was bound, while upstream
+    judges the binder per instantiation and rejects the write from an
+    immutable place (`expression must be mutable in assignment`). Origin
+    arguments are erased from checked identity, so no per-instance binding
+    reaches `check_pointer_write`; carrying it there is the fix. An
+    `ImmOrigin(o)` origin argument (`Cell[ImmOrigin(o)]`) erases the same
+    way, so a write through that view's pointer field is accepted too.
+    - Model: Fable. Origin arguments must survive checked identity, which
+      erases them today.
+  - `assign-view-over-source`: assigning a call straight back to a local
+    that one of its view arguments borrows is judged by origin upstream but
+    by temporary lifetime in Mojito. Upstream rejects a view at
+    `origin_of(s)._get_owned_interior["bytes"]` (`s[byte=..]`,
+    `s.rstrip()`) with `aliasing values passed immutably to 'v' argument
+    and constructed as a result in 'takes' call`. It does so even through a
+    named local (`var r = s.rstrip()` then `s = String(r)`), which Mojito
+    accepts. It accepts a plain-origin view (`s = takes(StringSpan(s))`),
+    which Mojito rejects because the temporary's loan is live at the store.
+    The fix is to declare upstream's owned-interior origins on the `String`
+    view methods and check argument origins against the assignment
+    destination in the checker. Pinned by the `assign-*-view-over-source`
+    rows of `conformance/cases.tsv`.
+    - Model: Fable. It introduces owned-interior origins to the stdlib's
+      view methods and a new checker rule that reads them.
+  - `comptime-if-dropped-branch`: a type error inside the untaken branch of a
+    `comptime if` is never reported, because elaboration drops the branch
+    before the checker runs. Upstream type-checks every branch symbolically
+    and rejects the program (`var x: Int = "hello"` in the untaken branch, and
+    `x.nonexistent()` on a `T: Copyable` parameter).
+    - Model: Fable, and strictly dependent: section 3's first task is the
+      fix, so this row closes there and not here.
+
+  Three divergences are retained on purpose and re-probed rather than fixed;
+  they are listed in [`docs/non-goals.md`](non-goals.md).
 
 ### 3. Front-End Groundwork For A Pliron-Centered Architecture
 
@@ -644,10 +675,16 @@ Every entry is written for a human reader who has not seen the code.
   paragraph.
 - Exception: every change that needs an `MJRT_ABI_VERSION` bump shares
   one checkbox, so the native runtime ABI is bumped once for all of them.
-- Sections 1 and 2 end each checkbox with a **Model:** bullet — a quick
-  complexity and blast-radius estimate saying which model should take the
-  task. Fable for work that changes a contract, spans phases, or has no
-  named lever; Opus where the site and the rule are both known.
+- Sections 1 and 2 carry a **Model:** bullet on every checkbox, and on every
+  bullet inside a standing checkbox that holds more than one independent
+  item. It is a quick complexity and blast-radius estimate. Fable is for work
+  that changes a contract, spans phases, or has no named lever; Opus is for
+  work whose site and rule are both known.
+- An Opus entry adds "as-is" or "plan first". "Plan first" means the lever is
+  known but the fallout is not enumerated yet.
+- Those two sections are sorted by that estimate, Opus before Fable, at both
+  the checkbox and the bullet level. A strict dependency that forces another
+  order is stated in the entry that carries it.
 
 ## Working Rule
 

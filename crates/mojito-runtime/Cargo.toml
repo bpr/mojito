@@ -8,10 +8,11 @@ license = "MIT"
 repository = "https://github.com/bpr/mojito"
 publish = false
 
-# The runtime is independently versioned and must stay dependency-free: it can
-# never depend on the `mojito` crate (which owns the VM `Value` representation)
-# or on any native toolchain. Its exported contract is specified by
-# `mojito::native::rt_abi` and docs/native-abi.md.
+# The runtime is independently versioned. It can never depend on the `mojito`
+# crate (which owns the VM `Value` representation) or on any native toolchain.
+# Third-party crates under a compatible license (MIT or Apache-2.0) are
+# allowed. Its exported contract is specified by `mojito::native::rt_abi` and
+# docs/native-abi.md.
 
 [lib]
 crate-type = ["rlib", "staticlib"]

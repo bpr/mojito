@@ -147,14 +147,8 @@ impl FnLowering<'_> {
                             anchor,
                         ));
                     };
-                    let LowerTy::Scalar(scalar) = expected else {
-                        return Err(self.unsupported_reg(
-                            format!("non-scalar default argument in call to `{resolved}`"),
-                            anchor,
-                        ));
-                    };
                     let default = default.clone();
-                    self.checked_const_value(ctx, &default, scalar, anchor)?
+                    self.default_argument_value(ctx, &default, &expected, owned, &resolved, anchor)?
                 }
             };
             operands.push(value);

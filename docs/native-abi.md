@@ -323,7 +323,9 @@ changes for it.
 ## The runtime library
 
 `crates/mojito-runtime` — a small, independently versioned Rust library,
-`crate-type = ["rlib", "staticlib"]`, zero dependencies, linked into every
+`crate-type = ["rlib", "staticlib"]`, no dependency on the `mojito` crate or on
+a native toolchain (third-party crates under a compatible license — MIT or
+Apache-2.0 — are allowed), linked into every
 produced executable (discovery: `MOJITO_RUNTIME_LIB`, then the compiler
 executable's directory and ancestors). Its complete export surface is the
 `rt_abi` contract table; per symbol the table records the C signature,

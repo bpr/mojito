@@ -126,6 +126,13 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
   helper is the lower it sinks.
 - Prefer ripgrep (`rg`) for repository searches, and make focused, reviewable
   edits.
+- Third-party crates are welcome. Any crate under a compatible license (MIT or
+  Apache-2.0) may be added, and for a hard, well-studied algorithm — float
+  formatting, Unicode tables — a maintained crate is preferred over a
+  from-scratch implementation. The constraints that remain are the crate DAG
+  above, the rule that only `mojito-pliron` may pull in LLVM, and
+  `crates/mojito-runtime`'s ban on depending on the `mojito` crate or a native
+  toolchain.
 - Add positive and negative tests at the phase that owns the rule.
 - Parser support is not semantic support. Keep those states distinct in code,
   diagnostics, and `docs/features.md`.

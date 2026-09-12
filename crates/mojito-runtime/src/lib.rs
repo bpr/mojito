@@ -10,9 +10,11 @@
 //! layouts against that table; keep the three in lockstep and bump
 //! [`ABI_VERSION`] on any exported-contract change.
 //!
-//! This crate must stay dependency-free. In particular it must never depend on
-//! the `mojito` crate: the VM's internal `Value` representation is not part of
-//! any native ABI.
+//! This crate may depend on third-party crates under a compatible license
+//! (MIT or Apache-2.0); prefer a maintained crate over a from-scratch
+//! implementation of a hard algorithm. It must never depend on the `mojito`
+//! crate — the VM's internal `Value` representation is not part of any native
+//! ABI — nor on a native toolchain.
 
 use std::alloc::Layout;
 use std::io::Write;
