@@ -2,8 +2,9 @@
 //! DWARF line tables name the right files and lines, backtraces resolve
 //! them at `O0` and keep useful call-site locations at `release`, non-ASCII
 //! sources survive, no build-tree or temp paths leak into the metadata,
-//! debug info stays byte-deterministic, and call-granular correlation holds
-//! with zero degradations across the whole runnable corpus.
+//! and debug info stays byte-deterministic. The corpus-wide
+//! zero-degradation premise is a memory-heavy sweep and lives in
+//! `tests/heavy/main.rs`.
 
 #![cfg(feature = "backend-pliron")]
 
@@ -236,78 +237,5 @@ fn pliron_debug_info_is_deterministic() {
         std::fs::read(&exe_a).expect("first exe"),
         std::fs::read(&exe_b).expect("second exe"),
         "two clean debug builds must be byte-identical"
-    );
-}
-
-/// The call-granular correlation premise holds corpus-wide: every runnable
-/// fixture attaches with zero degraded functions. An upstream converter
-/// change that breaks the premise fails here loudly instead of emitting
-/// wrong line numbers.
-#[test]
-fn pliron_debug_zero_degradations_across_the_corpus() {
-    let mut fixtures = Vec::new();
-    for outcome in ["ok", "ownership_ok", "runtime_error"] {
-        let dir = Path::new("assets").join(outcome);
-        for entry in std::fs::read_dir(&dir).expect("assets dir") {
-            let path = entry.expect("entry").path();
-            if path.extension().is_some_and(|ext| ext == "mojo") {
-                fixtures.push(path);
-            }
-        }
-    }
-    fixtures.sort();
-    assert!(fixtures.len() > 100, "corpus present");
-
-    let report: Vec<String> = std::thread::scope(|scope| {
-        let chunk = fixtures.len().div_ceil(8);
-        #[allow(
-            clippy::needless_collect,
-            reason = "collecting spawns every worker before the first join; \
-                      lazily joining would serialize the chunks"
-        )]
-        let handles: Vec<_> = fixtures
-            .chunks(chunk)
-            .map(|chunk| {
-                scope.spawn(move || {
-                    let mut degraded_report = Vec::new();
-                    for path in chunk {
-                        let src = std::fs::read_to_string(path).expect("fixture reads");
-                        let compiler = Compiler::default();
-                        let Ok(compiled) = compiler.compile_source(&src, path) else {
-                            continue;
-                        };
-                        let label = path.to_string_lossy().into_owned();
-                        let options = CompileOptions {
-                            entries: vec!["main".to_string()],
-                            sources: vec![(label.clone(), src)],
-                            target: host_target(),
-                            trace_lifecycle: false,
-                        };
-                        let Ok(module) = native::compile(compiled.elaborated_mir(), &options)
-                        else {
-                            // Ineligible for native compilation (no main);
-                            // the parity manifest pins which ones.
-                            continue;
-                        };
-                        let degraded = module
-                            .debug_degradations()
-                            .unwrap_or_else(|error| panic!("{label}: debug attach: {error}"));
-                        if !degraded.is_empty() {
-                            degraded_report.push(format!("{label}: {degraded:?}"));
-                        }
-                    }
-                    degraded_report
-                })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .flat_map(|handle| handle.join().expect("worker"))
-            .collect()
-    });
-    assert!(
-        report.is_empty(),
-        "degraded debug correlation:\n{}",
-        report.join("\n")
     );
 }

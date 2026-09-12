@@ -54,9 +54,9 @@ the VM's f64 computation rounded once); comparisons produce `<N x i1>`
 directly; `select` blends over the mask; `shuffle` is one `shufflevector`
 (a one-lane mask extracts the scalar); casts are vector `trunc`/`sext`/
 `zext`/`sitofp`/`uitofp`/`fpext`/`fptrunc` (a `Float32` target rounds
-through f64, as the VM does) except float→int, which extracts each lane
-through `llvm.fptosi.sat.i128.f64` and re-inserts (the `v{N}i128` vector
-form's legalization is unverified); `to_bits` is a vector `bitcast` plus
+through f64, as the VM does); float→int is a range guard over two arms —
+inside the exactly-convertible range one whole-vector `fptosi`, outside it
+the per-lane `llvm.fptosi.sat.i128.f64` loop (see §Casts); `to_bits` is a vector `bitcast` plus
 `zext`; reductions call `llvm.vector.reduce.{add,mul,smin,smax,umin,umax}`,
 `llvm.vector.reduce.{and,or}.v{N}i1`, and the *ordered*
 `llvm.vector.reduce.{fadd,fmul}` from the exact identity (`-0.0`, `1.0`)
@@ -262,10 +262,32 @@ nontrivial requirements:
   intermediate, and then wraps to the requested lane width.
 
 Plain LLVM `fptosi`/`fptoui` is not a substitute for the latter because
-out-of-range conversion may produce poison. Use the appropriate saturating
-LLVM intrinsic through `CallIntrinsicOp`, vectorized at the correct
-intermediate width, then perform the existing rewrap. Keep NaN-to-zero and
-signed/unsigned behavior aligned with the VM tests.
+out-of-range conversion may produce poison — but a guard removes that
+objection, and the vectorized saturating intrinsic turned out not to be an
+alternative at all.
+
+**Probed, LLVM 23.1, `x86_64-unknown-linux-gnu`:**
+`llvm.fptosi.sat.v{N}i128.v{N}f64` is legal IR, but it legalizes into one
+`__fixdfti` libcall per lane — exactly what the scalar form already emits.
+There is no whole-vector saturating conversion at the i128 intermediate to
+adopt, at any `N`. `llvm.fptosi.sat.v{N}i64` *is* libcall-free, but its
+result differs from the VM's i128-then-wrap contract for any lane past
+2^63, so it cannot stand in either.
+
+**What shipped instead** is a range guard. When every lane satisfies
+`|x| < 2^(k-1)` the saturation is unreachable and the wrap is a plain
+truncation, so one *non*-saturating vector `fptosi` at `k` bits is the whole
+contract; an unsigned target needs no separate argument, because the wrap is
+bit-level. `k` is 32 for any narrower target — the only width x86 converts
+packed, since LLVM scalarizes even `fptosi.sat.v{N}i32` for its NaN
+handling — and 64 for a 64-bit target, where it covers the whole
+representable range. A lane at or past the threshold, an infinity, or a NaN
+(the guard's `fcmp` is unordered, so NaN fails it) sends the whole vector to
+the unchanged per-lane loop. For a 4-lane f64→int32 cast this is ~8
+instructions and two `cvttpd2dq` against 70 instructions and four
+`__fixdfti` calls. The fast path is deliberately not exhaustive: an unsigned
+target gets no `fptoui` variant of its own, and a narrow target gets no
+second tier for `[2^31, 2^63)`.
 
 ### Reductions
 

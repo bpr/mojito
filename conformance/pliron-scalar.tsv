@@ -369,6 +369,7 @@ assets/ok/shadowing_constants.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_abi_crossings.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_bool_masks.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_cast.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_cast_float_thresholds.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_cast_matrix.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_compare_all_dtypes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_dtypes_int_lanes.mojo	-	ineligible	no-scalar-entry-shape

@@ -41,10 +41,10 @@ use pliron_llvm::op_interfaces::{
 use pliron_llvm::ops::{
     AShrOp, AddOp, AddressOfOp, AllocaOp, AndOp, BitcastOp, BrOp, CallIntrinsicOp, CallOp,
     CondBrOp, ConstantOp, ExtractElementOp, FAddOp, FCmpOp, FDivOp, FMulOp, FNegOp, FPExtOp,
-    FPTruncOp, FSubOp, FuncOp, GepIndex, GetElementPtrOp, GlobalOp, ICmpOp, InsertElementOp,
-    LShrOp, LoadOp, MulOp, OrOp, PoisonOp, PtrToIntOp, ReturnOp, SDivOp, SExtOp, SIToFPOp, SRemOp,
-    SelectOp, ShlOp, ShuffleVectorOp, StoreOp, SubOp, TruncOp, UDivOp, UIToFPOp, URemOp,
-    UnreachableOp, XorOp, ZExtOp, ZeroOp,
+    FPToSIOp, FPTruncOp, FSubOp, FuncOp, GepIndex, GetElementPtrOp, GlobalOp, ICmpOp,
+    InsertElementOp, LShrOp, LoadOp, MulOp, OrOp, PoisonOp, PtrToIntOp, ReturnOp, SDivOp, SExtOp,
+    SIToFPOp, SRemOp, SelectOp, ShlOp, ShuffleVectorOp, StoreOp, SubOp, TruncOp, UDivOp, UIToFPOp,
+    URemOp, UnreachableOp, XorOp, ZExtOp, ZeroOp,
 };
 use pliron_llvm::types::{ArrayType, FuncType, PointerType, VectorType, VectorTypeKind, VoidType};
 

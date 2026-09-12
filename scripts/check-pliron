@@ -35,8 +35,12 @@ cargo build --quiet --features backend-pliron
 
 echo "==> cargo nextest run --features backend-pliron (pliron tests)"
 # --no-fail-fast: report every failure in one gate run. binary(pliron_*)
-# catches every pliron integration target as slices add them.
-cargo nextest run --no-fail-fast --features backend-pliron -E 'binary(pliron_*) + test(pliron)'
+# catches every pliron integration target as slices add them. binary(heavy)
+# is subtracted: those corpus sweeps each peak around 5 GB, and running them
+# beside each other and the rest of this suite is what the OOM killer ended
+# on the 2026-09-12 gate run. scripts/check-pliron-heavy runs them alone.
+cargo nextest run --no-fail-fast --features backend-pliron \
+    -E '(binary(pliron_*) + test(pliron)) - binary(heavy)'
 
 echo "==> cargo nextest run -p mojito-pliron (crate unit + upstream-contract tests)"
 cargo nextest run -p mojito-pliron --no-fail-fast

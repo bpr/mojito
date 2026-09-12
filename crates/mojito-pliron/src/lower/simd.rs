@@ -886,8 +886,8 @@ impl FnLowering<'_> {
 
     /// `simd_cast_lane` over a whole vector: integer resizes and int↔float
     /// conversions are vector casts (`Float32` targets round through f64,
-    /// as the VM does); float→int saturates lane by lane at i128 — the
-    /// only per-lane step — and re-assembles.
+    /// as the VM does); float→int splits into a guarded vector conversion
+    /// and an exact per-lane fallback (`simd_cast_float_to_int_vector`).
     fn simd_cast_vector(
         &mut self,
         ctx: &mut Context,
@@ -915,24 +915,158 @@ impl FnLowering<'_> {
                 if let Some(from) = source_ty.int_shape() {
                     self.simd_resize_int(ctx, source, from, to_bits, width, dest)
                 } else {
-                    let wide = self.simd_lanes_to_f64(ctx, source, source_ty, width, dest)?;
-                    let target_vec = self.simd_vector_ty(ctx, dtype, width);
-                    let poison = PoisonOp::new(ctx, target_vec);
-                    self.append(ctx, poison.get_operation(), Some(dest));
-                    let mut out = poison.get_result(ctx);
-                    for lane in 0..width {
-                        let value = self.simd_extract(ctx, wide, lane, dest);
-                        let saturated = self.fptosi_sat_i128(ctx, value, dest);
-                        let narrowed = self.resize_int(ctx, saturated, (128, true), to_bits, dest);
-                        let position = self.int_constant(ctx, lane as i64);
-                        let insert = InsertElementOp::new(ctx, out, narrowed, position);
-                        self.append(ctx, insert.get_operation(), Some(dest));
-                        out = insert.get_result(ctx);
-                    }
-                    out
+                    self.simd_cast_float_to_int_vector(
+                        ctx, source, source_ty, dtype, to_bits, width, dest,
+                    )?
                 }
             }
         })
+    }
+
+    /// Float lanes to integer lanes. The VM truncates toward zero,
+    /// saturates at i128, and only then wraps to the target width, so the
+    /// whole-vector form has to reproduce that i128 wrap.
+    ///
+    /// A guard splits the cases. When every lane satisfies `|x| < 2^(k-1)`
+    /// the i128 saturation is unreachable and the wrap is a plain
+    /// truncation, so one vector `fptosi` at `k` bits followed by
+    /// `simd_resize_int` *is* the contract — an unsigned target needs no
+    /// separate argument, because the wrap is bit-level. `k` is 32 for any
+    /// narrower target, the only width x86 converts packed
+    /// (`cvttps2dq`/`cvttpd2dq`), and 64 for a 64-bit target, where it
+    /// covers the whole representable range. Every other vector — a lane
+    /// at or past the threshold, an infinity, a NaN — takes the exact
+    /// per-lane `llvm.fptosi.sat.i128.f64` loop.
+    ///
+    /// The vector saturating intrinsic is not the alternative: LLVM
+    /// legalizes `llvm.fptosi.sat.v{N}i128.v{N}f64` into one `__fixdfti`
+    /// libcall per lane, which is what the scalar form already emits.
+    ///
+    /// The fast path is deliberately not exhaustive: an unsigned target
+    /// gets no `fptoui` variant of its own, and a narrow target gets no
+    /// second tier for `[2^31, 2^63)`. Both land on the slow path, which is
+    /// correct for every input.
+    #[allow(clippy::too_many_arguments)]
+    fn simd_cast_float_to_int_vector(
+        &mut self,
+        ctx: &mut Context,
+        source: Value,
+        source_ty: ScalarTy,
+        dtype: Dtype,
+        to_bits: u32,
+        width: usize,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        let source_dtype = match source_ty {
+            ScalarTy::Float64 => Dtype::Float64,
+            ScalarTy::Sized(Dtype::Float32) => Dtype::Float32,
+            other => {
+                return Err(
+                    self.unsupported_reg(format!("{} as a float SIMD element", other.name()), dest)
+                );
+            }
+        };
+        let region = self.region.expect("a SIMD cast is inside a function");
+        let target_vec = self.simd_vector_ty(ctx, dtype, width);
+        let (exact_bits, threshold, threshold_f32) = if to_bits <= 32 {
+            (32u32, 2_147_483_648.0_f64, 2_147_483_648.0_f32)
+        } else {
+            (
+                64u32,
+                9_223_372_036_854_775_808.0_f64,
+                9_223_372_036_854_775_808.0_f32,
+            )
+        };
+
+        // The guard runs at the source's own float width, so an f32 source
+        // never widens just to be narrowed again. Both thresholds are
+        // powers of two well inside f32's exponent range, so the splat is
+        // exact at either width. `UGE` is unordered, so a NaN lane joins
+        // the out-of-range lanes instead of reaching the fast path.
+        let magnitude = self.simd_fabs(ctx, source, source_dtype, width, dest);
+        let limit_lane = if source_dtype == Dtype::Float32 {
+            self.f32_constant(ctx, threshold_f32)
+        } else {
+            self.float_constant(ctx, threshold)
+        };
+        let limit = self.simd_splat_value(ctx, limit_lane, width, dest);
+        let outside = self.fcmp(ctx, FCmpPredicateAttr::UGE, magnitude, limit);
+        self.append(ctx, outside.get_operation(), Some(dest));
+        let any_outside = self.simd_mask_any(ctx, outside.get_result(ctx), width, dest);
+
+        let fast = BasicBlock::new(ctx, None, vec![]);
+        fast.insert_at_back(region, ctx);
+        let slow = BasicBlock::new(ctx, None, vec![]);
+        slow.insert_at_back(region, ctx);
+        let join = BasicBlock::new(ctx, None, vec![target_vec]);
+        join.insert_at_back(region, ctx);
+        let branch = CondBrOp::new(ctx, any_outside, slow, vec![], fast, vec![]);
+        self.append(ctx, branch.get_operation(), Some(dest));
+
+        self.current = Some(fast);
+        let exact_lane: TypeHandle = IntegerType::get(ctx, exact_bits, Signedness::Signless).into();
+        let exact_vec: TypeHandle =
+            VectorType::get(ctx, exact_lane, width as u32, VectorTypeKind::Fixed).into();
+        let exact = FPToSIOp::new(ctx, source, exact_vec);
+        self.append(ctx, exact.get_operation(), Some(dest));
+        let converted = self.simd_resize_int(
+            ctx,
+            exact.get_result(ctx),
+            (exact_bits, true),
+            to_bits,
+            width,
+            dest,
+        );
+        let jump = BrOp::new(ctx, join, vec![converted]);
+        self.append(ctx, jump.get_operation(), Some(dest));
+
+        self.current = Some(slow);
+        let wide = self.simd_lanes_to_f64(ctx, source, source_ty, width, dest)?;
+        let poison = PoisonOp::new(ctx, target_vec);
+        self.append(ctx, poison.get_operation(), Some(dest));
+        let mut out = poison.get_result(ctx);
+        for lane in 0..width {
+            let value = self.simd_extract(ctx, wide, lane, dest);
+            let saturated = self.fptosi_sat_i128(ctx, value, dest);
+            let narrowed = self.resize_int(ctx, saturated, (128, true), to_bits, dest);
+            let position = self.int_constant(ctx, lane as i64);
+            let insert = InsertElementOp::new(ctx, out, narrowed, position);
+            self.append(ctx, insert.get_operation(), Some(dest));
+            out = insert.get_result(ctx);
+        }
+        let jump = BrOp::new(ctx, join, vec![out]);
+        self.append(ctx, jump.get_operation(), Some(dest));
+
+        self.current = Some(join);
+        Ok(join.deref(ctx).get_argument(0))
+    }
+
+    /// `llvm.fabs` over a whole float vector.
+    fn simd_fabs(
+        &mut self,
+        ctx: &mut Context,
+        value: Value,
+        dtype: Dtype,
+        width: usize,
+        dest: Reg,
+    ) -> Value {
+        let vector_ty = self.simd_vector_ty(ctx, dtype, width);
+        let fn_ty = FuncType::get(ctx, vector_ty, vec![vector_ty], false);
+        let name = format!("llvm.fabs.{}", simd_mangle(dtype, width));
+        let call = CallIntrinsicOp::new(ctx, StringAttr::new(name), fn_ty, vec![value]);
+        self.append(ctx, call.get_operation(), Some(dest));
+        call.get_result(ctx)
+    }
+
+    /// Whether any lane of an `<N x i1>` mask is set.
+    fn simd_mask_any(&mut self, ctx: &mut Context, mask: Value, width: usize, dest: Reg) -> Value {
+        let mask_ty = self.simd_vector_ty(ctx, Dtype::Bool, width);
+        let bit: TypeHandle = IntegerType::get(ctx, 1, Signedness::Signless).into();
+        let fn_ty = FuncType::get(ctx, bit, vec![mask_ty], false);
+        let name = format!("llvm.vector.reduce.or.{}", simd_mangle(Dtype::Bool, width));
+        let call = CallIntrinsicOp::new(ctx, StringAttr::new(name), fn_ty, vec![mask]);
+        self.append(ctx, call.get_operation(), Some(dest));
+        call.get_result(ctx)
     }
 
     /// `lane_to_f64` over a whole vector.

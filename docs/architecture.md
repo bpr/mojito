@@ -149,7 +149,8 @@ optional `backend-pliron` feature — a compile path
 (`mojito compile --backend pliron`, plus `run --backend pliron` for the
 advertised subset) consuming the cached post-drop `elaborated_mir` artifact,
 with its own gate (`scripts/check-pliron`, which also chains the Stage 0
-spike gate). Production execution stays on the register VM. The current pin
+spike gate) and a separate memory-heavy corpus lane
+(`scripts/check-pliron-heavy`, `tests/heavy/`). Production execution stays on the register VM. The current pin
 and promotion rationale live in `docs/notes/pliron-promotion.md`; the per-stage designs and recorded
 VM/native divergence policies in `docs/notes/pliron-stage1.md` through
 `docs/notes/pliron-stage4.md`.

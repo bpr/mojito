@@ -166,6 +166,13 @@ harness = false
 name = "pliron_backend_test"
 required-features = ["backend-pliron"]
 
+# The memory-heavy corpus sweeps (tests/heavy/main.rs). Deliberately outside
+# scripts/check-pliron and the overnight gate: scripts/check-pliron-heavy runs
+# them on their own.
+[[test]]
+name = "heavy"
+required-features = ["backend-pliron"]
+
 [[test]]
 name = "pliron_toolchain_test"
 required-features = ["backend-pliron"]

@@ -16,5 +16,7 @@
 # run ./scripts/check-pliron to verify the manifest and the rest of the Pliron
 # gate without UPDATE_EXPECT.
 
+# The test lives in the memory-heavy target (tests/heavy/); run this when the
+# machine is otherwise idle, as scripts/check-pliron-heavy expects.
 cd "$(dirname "$0")/.."
 UPDATE_EXPECT=1 CARGO_WORKSPACE_DIR=$PWD cargo nextest run --features backend-pliron parity_exe_manifest

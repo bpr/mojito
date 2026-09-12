@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# The memory-heavy Pliron corpus sweeps (tests/heavy/main.rs), run on their
+# own: the two generated manifests with their coverage ratchets, the
+# negative-ownership corpus check, and the corpus-wide debug-correlation
+# premise.
+#
+# Deliberately NOT part of scripts/check-pliron or the overnight gate. Each
+# sweep compiles several hundred fixtures through the front end and the
+# native backend with a worker pool whose every thread holds a checked
+# standard library and an LLVM module, so one peaks around 5 GB. Run as
+# sibling nextest processes beside the rest of the Pliron suite they
+# exhausted a 31 GB machine and the OOM killer took the parity harness
+# (gate run 2026-09-12).
+#
+# Two guards keep that from recurring, and both are here on purpose:
+#   --test-threads 1  one sweep at a time, never several at once.
+#   MOJITO_TEST_COMPILE_JOBS  the per-sweep fan-out. Unset, the sweep sizes
+#     itself against /proc/meminfo MemAvailable, at ~400 MB per worker and
+#     1 GB of headroom; set it to pin the fan-out on a machine whose free
+#     memory is about to change under the sweep.
+#
+# Expect 30-60 minutes. Requires LLVM 23.1, like scripts/check-pliron.
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+export LLVM_SYS_231_PREFIX="${LLVM_SYS_231_PREFIX:-/opt/llvm-23}"
+export PATH="${LLVM_SYS_231_PREFIX}/bin:${PATH}"
+
+echo "==> cargo build -p mojito-runtime (native runtime archive)"
+cargo build -p mojito-runtime
+export MOJITO_RUNTIME_LIB="${MOJITO_RUNTIME_LIB:-$PWD/target/debug/libmojito_runtime.a}"
+
+# The sweeps spawn the CLI through CARGO_BIN_EXE_mojito; cargo does not
+# re-uplift a featured bin over a newer default-lane build of the same path.
+echo "==> cargo build --features backend-pliron (CLI for the spawning tests)"
+touch src/main.rs
+cargo build --quiet --features backend-pliron
+
+echo "==> cargo nextest run --features backend-pliron -E 'binary(heavy)'"
+cargo nextest run --no-fail-fast --features backend-pliron \
+    --test-threads 1 -E 'binary(heavy)'

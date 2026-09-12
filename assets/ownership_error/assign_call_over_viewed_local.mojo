@@ -1,4 +1,5 @@
 # expect: conflicts with live reference
+# requires: stdlib
 # Assigning a call straight back to the local its temporary view argument
 # borrows: the view's loan lives for the statement, so the store conflicts
 # with it. The pinned Mojo rejects the same program ("aliasing values passed

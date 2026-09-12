@@ -369,6 +369,7 @@ assets/ok/shadowing_constants.mojo	main	exe-differential	sanitized
 assets/ok/simd_abi_crossings.mojo	main	exe-differential	sanitized
 assets/ok/simd_bool_masks.mojo	main	exe-differential	sanitized
 assets/ok/simd_cast.mojo	main	exe-differential	sanitized
+assets/ok/simd_cast_float_thresholds.mojo	main	exe-differential	sanitized
 assets/ok/simd_cast_matrix.mojo	main	exe-differential	sanitized
 assets/ok/simd_compare_all_dtypes.mojo	main	exe-differential	sanitized
 assets/ok/simd_dtypes_int_lanes.mojo	main	exe-differential	sanitized

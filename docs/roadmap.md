@@ -52,16 +52,6 @@ architecture would need.
     convention itself, and the ABI version, `docs/native-abi.md`, the
     runtime, and the parity harness all move together.
 
-- [ ] **Native SIMD: float-to-int casts convert one lane at a time**
-
-  Problem: a vector float-to-int cast extracts each lane, saturates it
-  through `llvm.fptosi.sat.i128.f64`, and re-inserts it.
-  - The vector form (`llvm.fptosi.sat.v{N}i128.v{N}f64`) is legal IR, but
-    its x86-64 legalization is unverified, so it was not adopted.
-  - Probe it with `llc` before switching.
-  - Model: Opus. One lowering site behind an `llc` probe, no contract
-    change.
-
 - [ ] **Front end: a bare literal cannot build a multi-lane SIMD field**
 
   Problem: `P(1)` for a struct whose field is `SIMD[DType.int32, 4]` is
@@ -568,6 +558,20 @@ need. Start them only once sections 1 and 2 are clear.
 
   Goal: Mojito-native assertions, expected-error tests, and
   differential-harness integration.
+
+- [ ] **The corpus sweeps no longer run in the overnight gate**
+
+  Problem: the two generated pliron manifests and their coverage ratchets
+  now only move when someone runs `scripts/check-pliron-heavy` by hand, so a
+  regression in them can sit unnoticed for days.
+  - They moved out of the gate on 2026-09-12, after the OOM killer took the
+    parity harness: the sweeps in `tests/heavy/` peak at several gigabytes
+    each and nextest ran them beside each other.
+  - `support::compile_jobs` now sizes each sweep's fan-out against
+    `MemAvailable` rather than the core count, so one sweep alone is safe.
+  - What is missing is scheduling, not safety: a way to run the heavy lane
+    unattended when the machine is otherwise idle, and to surface its result
+    where the morning triage already looks.
 
 - [ ] **Distribution reproducibility gate** *(last)*
 

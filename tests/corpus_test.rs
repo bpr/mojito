@@ -26,9 +26,10 @@
 //!   error fixture must pin its message with `# expect:`.
 //!
 //! A fixture may pin the reported message with a top `# expect: <substring>`
-//! comment (valid Mojo — the lexer skips it). Corpus non-emptiness invariants
-//! are synthetic `*::guard_*` trials so a violation reads as an ordinary test
-//! failure.
+//! comment, and declare what its semantics need with `# requires: discovery`
+//! or `# requires: stdlib` (both valid Mojo — the lexer skips them). Corpus
+//! non-emptiness invariants are synthetic `*::guard_*` trials so a violation
+//! reads as an ordinary test failure.
 
 use libtest_mimic::{Arguments, Failed, Trial};
 use mojito::analysis::elaborate_drops_program;
@@ -130,12 +131,25 @@ fn expected_substring(source: &str) -> Option<String> {
 /// handoff (AGENTS.md), so such fixtures pin lowering and verification
 /// through the authoritative `vm_ok`/`assets_ok` Compiler trials instead.
 fn requires_discovery(path: &Path) -> bool {
+    requires(path, "discovery")
+}
+
+/// The `# requires: stdlib` directive marks a fixture that names bundled
+/// standard-library types (`StringSpan`, …). The ownership groups enter at
+/// raw `parse`, which resolves no module, so such a fixture enters at `link`
+/// instead; every other stage of the seam is unchanged.
+fn requires_stdlib(path: &Path) -> bool {
+    requires(path, "stdlib")
+}
+
+/// Whether the fixture carries a `# requires: <value>` directive.
+fn requires(path: &Path, value: &str) -> bool {
     fs::read_to_string(path).is_ok_and(|source| {
         source.lines().any(|line| {
             line.trim_start()
                 .strip_prefix('#')
                 .and_then(|rest| rest.trim_start().strip_prefix("requires:"))
-                .is_some_and(|value| value.trim() == "discovery")
+                .is_some_and(|found| found.trim() == value)
         })
     })
 }
@@ -433,11 +447,17 @@ fn origin_trials(trials: &mut Vec<Trial>) {
     }
 }
 
-/// Elaborate and type-check `src` (the production stage order), then run the
-/// ownership analysis. (Mirrors the helper `tests/ownership_test.rs` keeps for
-/// its targeted tests.)
-fn own(src: &str) -> Result<(), OwnershipError> {
-    let program = parse(src).expect("parse error");
+/// Elaborate and type-check a fixture (the production stage order), then run
+/// the ownership analysis. (Mirrors the helper `tests/ownership_test.rs` keeps
+/// for its targeted tests.) A `# requires: stdlib` fixture enters at `link` so
+/// its standard-library types resolve.
+fn own(path: &Path) -> Result<(), OwnershipError> {
+    let program = if requires_stdlib(path) {
+        link(path).expect("link error")
+    } else {
+        let src = fs::read_to_string(path).expect("read fixture");
+        parse(&src).expect("parse error")
+    };
     let program = elaborate(program).expect("comptime error");
     check(&program).expect("type error");
     check_ownership(&program)
@@ -465,7 +485,7 @@ fn ownership_trials(trials: &mut Vec<Trial>) {
             let src = fs::read_to_string(&path).expect("read fixture");
             let expect = expected_substring(&src)
                 .expect("ownership_error fixture must pin a `# expect:` substring");
-            match own(&src) {
+            match own(&path) {
                 Err(error) => {
                     let message = error.to_string();
                     if !message.contains(&expect) {
@@ -484,8 +504,7 @@ fn ownership_trials(trials: &mut Vec<Trial>) {
     for (path, label) in labeled_fixtures("ownership_ok") {
         let name = format!("{label}::{}", stem(&path));
         trials.push(Trial::test(name, move || {
-            let src = fs::read_to_string(&path).expect("read fixture");
-            own(&src).map_err(|error| fail(format!("expected no ownership error, got {error:?}")))
+            own(&path).map_err(|error| fail(format!("expected no ownership error, got {error:?}")))
         }));
     }
 }

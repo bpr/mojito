@@ -55,6 +55,12 @@ phase-composed `verify::*` corpus group is non-authoritative for that
 handoff (see AGENTS.md), so it skips such fixtures; the authoritative
 `vm_ok`/`assets_ok` Compiler trials still compile, verify, and execute them.
 
+An `ownership_ok`/`ownership_error` fixture may carry `# requires: stdlib`
+when it names a bundled standard-library type (`StringSpan`, …). Those
+corpus groups enter the ownership seam at raw `parse`, which resolves no
+module; the directive enters at `link` instead, leaving every later stage of
+the seam unchanged.
+
 ## Note
 
 Production Mojito, like Mojo, rejects executable statements at file scope and

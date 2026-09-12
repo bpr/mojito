@@ -279,7 +279,7 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "simd.cast",
         CapabilityStatus::Partial,
-        "vector int rewrap and f64-mediated float conversion; i128-saturating float-to-int lane by lane; bool casts reject in the checker",
+        "vector int rewrap and f64-mediated float conversion; float-to-int converts the whole vector inside the exactly-convertible range and saturates at i128 lane by lane outside it; bool casts reject in the checker",
     ),
     (
         "simd.bits",

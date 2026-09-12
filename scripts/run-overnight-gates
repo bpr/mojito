@@ -55,6 +55,11 @@ run_step() {
 run_step check-default env RUSTC_WRAPPER= scripts/check
 run_step check-pliron env RUSTC_WRAPPER= scripts/check-pliron
 
+# The memory-heavy Pliron corpus sweeps (tests/heavy/, scripts/check-pliron-heavy)
+# are deliberately NOT a step here: run beside the rest of the suite they
+# exhausted this machine and the OOM killer took the parity harness on
+# 2026-09-12. Run that lane on its own when the machine is otherwise idle.
+
 # Conformance last: it rebuilds the default-features debug binary itself, so
 # it also restores a featureless target/debug/mojito after the pliron gate.
 run_step conformance scripts/conformance --mojo-pixi-manifest "${MOJO_PIXI_MANIFEST}"
@@ -83,6 +88,9 @@ run_step conformance scripts/conformance --mojo-pixi-manifest "${MOJO_PIXI_MANIF
     echo "  pliron TSV rows: regenerate with scripts/run-parity-regen.sh,"
     echo "  review the diff, then rerun scripts/check-pliron."
     echo "- Never edit conformance/cases.tsv while the conformance step runs."
+    echo "- The corpus sweeps behind conformance/pliron-parity.tsv and"
+    echo "  conformance/pliron-scalar.tsv are not in this run: they are"
+    echo "  memory-heavy and live in scripts/check-pliron-heavy."
     exit "${overall}"
 } | tee "${RESULTS}"
 overall=${PIPESTATUS[0]}

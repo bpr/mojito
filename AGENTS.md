@@ -167,6 +167,10 @@ verification happens. In-session verification must take seconds, not hours:
 - Module roots: repeat `--module-path PATH` / `-I PATH`; use `--stdlib PATH`
   to replace the bundled standard-library root.
 
+The memory-heavy corpus sweeps are their own lane
+(`scripts/check-pliron-heavy`, `tests/heavy/`): never run them beside the
+rest of the suite, and never in-session unless the owner asks.
+
 Before reporting a task complete: `cargo fmt --all`, `git diff --check`, and
 a clean `cargo build`; Clippy (`cargo clippy --workspace --exclude
 mojito-pliron --lib -- -D warnings`) only when the change is small enough for
@@ -187,6 +191,16 @@ generated test per fixture in the `tests/corpus_test.rs` binary
 pipeline entry path; the phase-grouped files keep only targeted tests. The
 outcome folders are `ok`, `parse_error`, `type_error`, `runtime_error`,
 `ownership_ok`, and `ownership_error`. See `assets/README.md`.
+
+`tests/heavy/` is a separate test target (`heavy`) holding the
+memory-heavy Pliron corpus sweeps: the two generated manifests
+(`conformance/pliron-scalar.tsv`, `conformance/pliron-parity.tsv`) with
+their coverage ratchets, the negative-ownership corpus check, and the
+corpus-wide debug-correlation premise. Each compiles several hundred
+fixtures through the front end and the native backend and peaks at several
+gigabytes, so it is excluded from `scripts/check-pliron` and from the
+overnight gate; `scripts/check-pliron-heavy` runs it alone, one sweep at a
+time. Put a new whole-corpus sweep there, not in `tests/pliron_*.rs`.
 
 The stage-composed test seam (`link`/`parse` → `elaborate` →
 `check_program` → `backend.run`) enforces the same pre-drop ownership
