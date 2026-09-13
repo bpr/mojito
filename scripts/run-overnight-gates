@@ -71,6 +71,8 @@ run_step assets-mojo-sweep scripts/sweep-assets-mojo \
     --mojo-pixi-manifest "${MOJO_PIXI_MANIFEST}" --compare
 run_step assets-mojo-extensions scripts/sweep-assets-mojo \
     --mojo-pixi-manifest "${MOJO_PIXI_MANIFEST}" --extensions
+run_step assets-mojo-errors scripts/sweep-assets-mojo \
+    --mojo-pixi-manifest "${MOJO_PIXI_MANIFEST}" --errors
 
 # RESULTS.md: the morning entry point.
 {
@@ -100,6 +102,14 @@ run_step assets-mojo-extensions scripts/sweep-assets-mojo \
     echo "  per-fixture diagnostics are under target/assets-mojo-sweep/."
     echo "- assets-mojo-extensions failing means the pinned Mojo now ACCEPTS an"
     echo "  extension fixture: upstream may have adopted it (docs/non-goals.md)."
+    echo "- assets-mojo-errors reports two kinds of drift against"
+    echo "  conformance/assets-mojo-errors.tsv, and they triage apart. A VERDICT"
+    echo "  change is the pin changing its answer about a fixture. A FIRST"
+    echo "  COMPLAINT change is it rewording a diagnostic, or complaining about"
+    echo "  something earlier and masking the defect the fixture pins — check"
+    echo "  whether the row's family still holds before repinning the text."
+    echo "  target/assets-mojo-sweep/<run>/ledger.tsv is paste-ready and keeps"
+    echo "  the old families; only rows marked ? need a decision."
     echo "- The corpus sweeps behind conformance/pliron-parity.tsv and"
     echo "  conformance/pliron-scalar.tsv are not in this run: they are"
     echo "  memory-heavy and live in scripts/check-pliron-heavy."

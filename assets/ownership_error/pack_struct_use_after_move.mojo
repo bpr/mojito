@@ -1,7 +1,7 @@
 # expect: use of uninitialized value
 @fieldwise_init
-struct Pair[*Ts: Copyable & Movable](Copyable, Movable):
-    var storage: Tuple[*Ts]
+struct Pair[*Ts: Copyable & Movable & Deinitable](Copyable, Movable):
+    var storage: Tuple[*Self.Ts]
 
 
 def main():

@@ -95,6 +95,28 @@ snippets), leaving 102, each on a row in that file. Thirteen fixtures joined
 moved to `assets/extensions/`, since the pin parses that spelling but rejects
 every use of it.
 
+**Error-folder sweep (2026-09-12).** The other five `assets/` folders were
+oracled for the first time, and needed a different rule: both compilers reject
+an error fixture, so `scripts/sweep-assets-mojo --errors` compares the *verdict*
+the pin reaches — reject, compile-and-trap, run, or time out — and never the two
+compilers' wording, which for most fixtures differs by design and which Mojito
+reports without a source location outside the parser. All 318 fixtures carry a
+row in
+[`conformance/assets-mojo-errors.tsv`](../conformance/assets-mojo-errors.tsv)
+holding that verdict, the pin's own first complaint (re-checked each run, so a
+re-pin's rewording or an earlier complaint surfaces), and a family. 260 agree.
+25 are `subset`: the pin accepts them and Mojito is deliberately stricter about
+interior references, unsafe memory, and division by zero (`docs/non-goals.md`).
+26 are `divergence` and 7 are still masked by a spelling the fixture did not set
+out to test; both are roadmap entries. Fourteen fixtures were respelled to close
+the mechanical families — `Self.Ts` for pack parameters, a `Deinitable` pack
+bound, `std.sys` for `size_of`, `MutUntrackedOrigin` for `unsafe_dangling`, and
+a `main` for the last four module-scope snippets, which the pin rejects outright.
+The sweep also falsified two fixture comments: `var_less_introduction` claimed
+to match upstream, which only deprecates the form, and
+`nominal_string_justify_fillchar` attributed its one-byte assertion to upstream,
+which has none.
+
 ## Prioritized Changeset
 
 The order below is the recommended implementation order. Compatibility aliases

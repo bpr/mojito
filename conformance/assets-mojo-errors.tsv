@@ -1,0 +1,355 @@
+# The pinned Mojo's verdict on every fixture in the assets/ error folders,
+# the oracle scripts/sweep-assets-mojo --errors gates against.
+#
+# An error fixture is rejected by both compilers, so an exit code proves
+# nothing. Agreement here is the VERDICT: the pin must reject what the four
+# compile-error folders claim it rejects, and must compile-and-trap what
+# runtime_error claims. Mojito's own message is never compared with the pin's —
+# it carries no source location outside the parser, and the two wordings differ
+# for most fixtures by design. tests/corpus_test.rs owns Mojito's side through
+# each fixture's `# expect:` directive; this file owns the pin's side only.
+#
+# verdict:  compile-reject  the pin refused to compile it
+#           trap            the pin compiled it and it failed at run time
+#           runs            the pin compiled it and it exited 0
+#           timeout         the pin did not finish inside 60s
+#
+# family:   agree           the verdict matches the folder, on the same defect
+#           a burn-down name (self-qualification, missing-import,
+#                           iterator-protocol, unbound-parameter, no-main,
+#                           alias-keyword, ledgered) — the pin rejected it, but
+#                           for a spelling the fixture never set out to test, so
+#                           the defect it pins went unexamined. The names are
+#                           the ones conformance/assets-mojo-rejects.tsv uses.
+#           subset          the pin accepts it and Mojito is deliberately
+#                           stricter (docs/non-goals.md)
+#           divergence      the pin accepts it and Mojito should not reject it,
+#                           or not for that reason (docs/roadmap.md)
+#           skip            not comparable under this oracle
+#
+# upstream: for compile-reject and trap, the pin's own first complaint, which
+# the sweep re-checks so a re-pin's rewording or an earlier complaint shows up;
+# for runs, a one-line note on what Mojito rejects instead.
+#
+# Lifting a mask moves a row to another family rather than closing it: the pin
+# reports one complaint at a time.
+# swept-count	318
+fixture	verdict	family	upstream
+assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
+assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/origin_error/pointer_loan_conflict.mojo	runs	subset	the pin runs it; Mojito rejects: conflicts with live reference
+assets/origin_error/pointer_write_immutable.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/origin_error/projected_origin_mismatch.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(self.right)' vs 'origin_of(self.left)'
+assets/origin_error/returned_loan_conflict.mojo	runs	subset	the pin runs it; Mojito rejects a returned loan that conflicts with a live reference
+assets/origin_error/returned_local.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(source)'
+assets/origin_error/returned_pointer_deref_immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/ownership_error/assign_call_over_viewed_local.mojo	compile-reject	agree	error: aliasing values passed immutably to 'v' argument and constructed as a result in 'takes' call
+assets/ownership_error/comprehension_interior_invalidation.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference
+assets/ownership_error/conditional_move.mojo	compile-reject	agree	error: use of uninitialized value 'a'
+assets/ownership_error/deinit_receiver_raising_in_try.mojo	compile-reject	agree	error: use of uninitialized value 'o'
+assets/ownership_error/dict_comprehension_source_mutation.mojo	compile-reject	agree	error: 'Dict' parameter 'K' has 'KeyElement' type, but value has type 'AnyStruct[StringLiteral[_]]'
+assets/ownership_error/dict_setitem_during_iteration.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference
+assets/ownership_error/double_move.mojo	compile-reject	agree	error: use of uninitialized value 'a'
+assets/ownership_error/double_move_in_try.mojo	compile-reject	agree	error: use of uninitialized value 's'
+assets/ownership_error/element_call_after_container_move.mojo	compile-reject	agree	error: use of uninitialized value 'objs'
+assets/ownership_error/interior_pointer_offset_stale.mojo	compile-reject	agree	error: use of a never-initialized interior reference 'self_is_origin["items"]'
+assets/ownership_error/interior_pointer_stale_after_mutation.mojo	compile-reject	agree	error: use of a never-initialized interior reference 'self_is_origin["items"]'
+assets/ownership_error/interior_view_consume_after_mutation.mojo	compile-reject	agree	error: no matching function in initialization
+assets/ownership_error/interior_view_destroy_after_mutation.mojo	compile-reject	agree	error: no matching function in initialization
+assets/ownership_error/list_extend_consumes.mojo	compile-reject	agree	error: use of uninitialized value 'b'
+assets/ownership_error/method_on_moved.mojo	compile-reject	agree	error: use of uninitialized value 'p'
+assets/ownership_error/move_in_loop.mojo	compile-reject	agree	error: use of uninitialized value 'a'
+assets/ownership_error/origin_delegated_parameter_receiver_source_mutation.mojo	runs	subset	the pin runs it; Mojito rejects: conflicts with live reference
+assets/ownership_error/pack_struct_use_after_move.mojo	compile-reject	agree	error: use of uninitialized value 'p'
+assets/ownership_error/partial_move_field_use.mojo	compile-reject	agree	error: use of uninitialized value 'p.a.id'
+assets/ownership_error/pointer_field_iterator_source_mutation.mojo	runs	subset	the pin runs it; Mojito rejects: conflicts with live reference
+assets/ownership_error/pointer_to_owner_twice_then_mutation.mojo	runs	subset	the pin runs it; Mojito rejects: conflicts with live reference
+assets/ownership_error/pointer_to_ref_second_write_rejected.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference
+assets/ownership_error/pointer_to_ref_stale_after_owner_mutation.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference
+assets/ownership_error/reference_loop_element_held_across_append.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference
+assets/ownership_error/reference_row_iteration_invalidated_by_row_append.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference
+assets/ownership_error/use_after_move.mojo	compile-reject	agree	error: use of uninitialized value 'a'
+assets/ownership_error/use_after_move_after_try.mojo	compile-reject	agree	error: use of uninitialized value 's'
+assets/ownership_error/use_after_move_arg.mojo	runs	divergence	the pin runs it; Mojito rejects: use of uninitialized value 'a'
+assets/ownership_error/use_after_move_in_try_else.mojo	compile-reject	agree	error: use of uninitialized value 's'
+assets/ownership_error/use_after_move_in_try_handler.mojo	compile-reject	agree	error: use of uninitialized value 's'
+assets/ownership_error/write_through_moved.mojo	compile-reject	agree	error: value 'p' cannot be consumed, because 'p.x' is used later
+assets/parse_error/bare_kwargs_requires_var.mojo	compile-reject	agree	error: variadic keyword arguments only support the 'var' convention; add 'var' before '**'
+assets/parse_error/comptime_if_module_level.mojo	compile-reject	agree	error: 'comptime if' must be contained in a function
+assets/parse_error/lambda_missing_colon.mojo	compile-reject	agree	error: unknown function effect 'x', expected 'raises', 'capturing', or 'thin'
+assets/parse_error/lambda_unparenthesized_args.mojo	compile-reject	agree	error: unparenthesized lambda arguments are not supported; write them in parentheses, with types, e.g. `lambda (x: Int, y: Int) -> Int: x + y`
+assets/parse_error/missing_colon.mojo	compile-reject	agree	error: expected ':' in function definition
+assets/parse_error/parameter_closure_capture_list.mojo	compile-reject	agree	error: expected ':' in function definition
+assets/parse_error/read_convention_removed.mojo	compile-reject	agree	error: 'read' was removed; use 'imm'
+assets/parse_error/unified_capture_list_removed.mojo	compile-reject	agree	error: unknown function effect 'unified', expected 'raises', 'capturing', or 'thin'
+assets/runtime_error/allocation_use_after_dealloc.mojo	runs	subset	the pin runs it; Mojito rejects: use after Pointer deallocation
+assets/runtime_error/div_by_zero.mojo	runs	subset	the pin runs it; Mojito traps on integer division by zero
+assets/runtime_error/file_open_invalid_mode.mojo	trap	agree	invalid mode: "z". Can only be one of: {"r", "w", "rw", "a"}
+assets/runtime_error/file_open_missing.mojo	trap	agree	Failed to open file 'mojito_missing_dir/nothing.txt': No such file or directory
+assets/runtime_error/file_read_closed_handle.mojo	trap	agree	invalid file handle
+assets/runtime_error/file_read_write_only_handle.mojo	trap	agree	Failed to read from file: Bad file descriptor
+assets/runtime_error/list_contiguous_slice_negative.mojo	trap	agree	error: execution crashed
+assets/runtime_error/list_contiguous_slice_out_of_range.mojo	trap	agree	error: execution crashed
+assets/runtime_error/list_contiguous_slice_reversed.mojo	trap	agree	error: execution crashed
+assets/runtime_error/list_out_of_range.mojo	trap	agree	error: execution crashed
+assets/runtime_error/maybe_uninit_deinit_uninitialized.mojo	runs	subset	the pin runs it; Mojito rejects: destroy of uninitialized MaybeUninit storage
+assets/runtime_error/maybe_uninit_read_uninitialized.mojo	runs	subset	the pin runs it; Mojito rejects: read of uninitialized MaybeUninit storage
+assets/runtime_error/maybe_uninit_take_uninitialized.mojo	runs	subset	the pin runs it; Mojito rejects: take of uninitialized MaybeUninit storage
+assets/runtime_error/nominal_string_byte_slice_boundary.mojo	trap	agree	error: execution crashed
+assets/runtime_error/nominal_string_byte_slice_out_of_range.mojo	trap	agree	error: execution crashed
+assets/runtime_error/nominal_string_codepoint_out_of_range.mojo	trap	agree	error: execution crashed
+assets/runtime_error/nominal_string_grapheme_out_of_range.mojo	trap	agree	error: execution crashed
+assets/runtime_error/nominal_string_justify_fillchar.mojo	runs	divergence	the pin runs it; Mojito rejects: abort: fill char needs to be a one byte literal
+assets/runtime_error/nominal_string_resize_boundary.mojo	trap	agree	error: execution crashed
+assets/runtime_error/optional_deinit_assert_empty_nonempty_aborts.mojo	compile-reject	missing-import	error: unable to locate module 'optional'
+assets/runtime_error/optional_take_empty_aborts.mojo	compile-reject	missing-import	error: unable to locate module 'optional'
+assets/runtime_error/pliron_raise_error_value.mojo	trap	agree	boom from a var
+assets/runtime_error/pliron_raise_iter_body.mojo	trap	agree	boom at 2
+assets/runtime_error/pliron_raise_iter_stop_unhandled.mojo	compile-reject	iterator-protocol	error: unable to locate module 'iterable'
+assets/runtime_error/pliron_raise_unhandled.mojo	trap	agree	negative input
+assets/runtime_error/pliron_trap_div_zero.mojo	runs	subset	the pin runs it; Mojito rejects: integer division or modulo by zero
+assets/runtime_error/pliron_trap_mod_zero.mojo	runs	subset	the pin runs it; Mojito rejects: integer division or modulo by zero
+assets/runtime_error/pliron_trap_pow_negative.mojo	runs	subset	the pin runs it; Mojito rejects: '**' exponent must be a non-negative Int
+assets/runtime_error/pliron_trap_uint_div_zero.mojo	runs	subset	the pin runs it; Mojito rejects: integer division or modulo by zero
+assets/runtime_error/pointer_dangling.mojo	trap	agree	error: execution crashed
+assets/runtime_error/pointer_double_free.mojo	runs	subset	the pin runs it; Mojito rejects: double free
+assets/runtime_error/pointer_use_after_free.mojo	runs	subset	the pin runs it; Mojito rejects: use after
+assets/runtime_error/span_index_out_of_range.mojo	trap	agree	error: execution crashed
+assets/runtime_error/span_slice_out_of_range.mojo	trap	agree	error: execution crashed
+assets/runtime_error/string_span_grapheme_slice_out_of_range.mojo	trap	agree	error: execution crashed
+assets/runtime_error/walrus.mojo	trap	agree	boom
+assets/type_error/absable_no_power.mojo	compile-reject	agree	error: 'T' does not implement the '__pow__' method
+assets/type_error/advanced_origins_untracked_local.mojo	compile-reject	agree	error: invalid call to 'observe_untracked': value passed to 'value' cannot be converted from 'Int' to ref 'Int'
+assets/type_error/allocation_implicit_drop.mojo	compile-reject	agree	error: 'allocation' abandoned without being explicitly destroyed: An `Allocation` owns heap storage and must be consumed before it goes out of scope. Deallocate it with `dealloc(allocation^)`, or call `unsafe_leak()` to take ownership of the underlying pointer.
+assets/type_error/ambiguous_implicit_conversion.mojo	runs	divergence	the pin runs it; Mojito rejects: ambiguous implicit conversion
+assets/type_error/anytype_no_len.mojo	compile-reject	agree	error: no matching function in call to 'len'
+assets/type_error/array_display_length_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/array_display_requires_movable_element.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/array_element_assignment_immutable.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/array_linear_element_needs_explicit_destroy.mojo	compile-reject	agree	error: 'a' abandoned without being explicitly destroyed: Use `deinit_with()` to explicitly destroy an `Array` of non-`Deinitable` elements
+assets/type_error/associated_value_in_type_position.mojo	compile-reject	agree	error: expected a type, not a value
+assets/type_error/bad_operator.mojo	compile-reject	agree	error: no matching method in call to '__add__'
+assets/type_error/bare_move_initializer.mojo	compile-reject	agree	error: 'move' argument must be passed as 'deinit'
+assets/type_error/bare_reference_list_parameter.mojo	compile-reject	agree	error: cannot declare 'Int' without a contextual type from its initializer
+assets/type_error/boolable_required_for_bool.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/captured_origin_specialization_rejected.mojo	compile-reject	agree	error: member method closures are not supported; add '()' to call '__call__'
+assets/type_error/capturing_closure_plain_def_param.mojo	compile-reject	agree	error: invalid call to '__call__': value cannot be converted from type value '$0' to an instance of '$0'; did you mean to instantiate '$0'?
+assets/type_error/capturing_field_rejected.mojo	compile-reject	agree	error: function type missing required origin set parameter
+assets/type_error/closure_capturing_loop_ref_escapes.mojo	compile-reject	agree	error: cannot implicitly convert 'def() -> Int' value to 'Int'
+assets/type_error/comptime_alias_constraint_message.mojo	compile-reject	agree	error: violated constraint
+assets/type_error/comptime_alias_value_body.mojo	runs	divergence	the pin runs it; Mojito rejects: a generic comptime alias must be defined by a type
+assets/type_error/comptime_alias_value_body_non_bool.mojo	runs	divergence	the pin runs it; Mojito rejects: must be defined by a type or a Bool proposition
+assets/type_error/comptime_collection_runtime_use.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Dict[String, Int]' to runtime because it is not 'ImplicitlyCopyable'
+assets/type_error/comptime_constants.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/comptime_dict_raising_subscript.mojo	compile-reject	agree	error: cannot call raising function in comptime initializer
+assets/type_error/comptime_dict_result_not_freezable.mojo	runs	subset	the pin runs it; Mojito rejects: cannot cross back from VM CTFE
+assets/type_error/comptime_if_instantiated_bad_branch.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["bad"]' value to 'Int'
+assets/type_error/comptime_list_runtime_use.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Array[Int, Int(3)]' to runtime because it is not 'ImplicitlyCopyable'
+assets/type_error/comptime_pointer_struct_rejected.mojo	runs	divergence	the pin runs it; Mojito rejects: needs fieldwise construction
+assets/type_error/comptime_struct_missing_field.mojo	compile-reject	agree	error: 'Extent' value has no attribute 'missing'
+assets/type_error/contextual_member_no_context.mojo	compile-reject	agree	error: cannot resolve inferred member without a contextual type
+assets/type_error/contextual_member_nonstruct.mojo	compile-reject	agree	error: 'Int' value has no attribute 'red'
+assets/type_error/contextual_member_unknown.mojo	compile-reject	agree	error: 'Color' value has no attribute 'nope'
+assets/type_error/contiguous_slice_not_equatable.mojo	compile-reject	agree	error: use of unknown declaration 'ContiguousSlice'
+assets/type_error/copy_method_requires_copyable.mojo	compile-reject	agree	error: 'Plain' value has no attribute 'copy'
+assets/type_error/copyable_bound_rejects_move_only.mojo	compile-reject	agree	error: invalid call to 'duplicate': value passed to 'x' cannot be converted from 'Handle' to 'T', argument type 'Handle' does not conform to trait 'Copyable'
+assets/type_error/copyable_field_rejects_move_only.mojo	compile-reject	agree	error: cannot synthesize copy constructor because field 'h' has non-copyable type 'Handle'
+assets/type_error/def_typed_display_rejected.mojo	runs	divergence	the pin runs it; Mojito rejects: collection display element
+assets/type_error/def_typed_element_rejected.mojo	compile-reject	agree	error: 'List' parameter 'T' has 'AnyType' type, but value has type 'AnyTrait[def(Int) -> Int]'
+assets/type_error/def_typed_field_rejected.mojo	compile-reject	agree	error: struct fields do not support trait types; 'def(Int) -> Int' is a trait, use a concrete type or compile-time generic
+assets/type_error/def_typed_local_annotation_rejected.mojo	compile-reject	agree	error: cannot implicitly convert 'def increment(x: Int) thin -> Int' value to 'def(Int) -> Int'
+assets/type_error/dict_requires_hashable_key.mojo	compile-reject	agree	error: 'Dict' parameter 'K' has 'KeyElement' type, but value has type 'AnyStruct[Key]'
+assets/type_error/dict_view_index_rejected.mojo	compile-reject	agree	error: '_DictKeyIter[Int, Int, AHasher[SIMD[.uint64, 4](0)], origin_of(d)]' is not subscriptable, it does not implement the `__getitem__`/`__setitem__` methods
+assets/type_error/dict_view_len_rejected.mojo	compile-reject	agree	error: no matching function in call to 'len'
+assets/type_error/dtype_runtime_value_rejected.mojo	runs	divergence	the pin runs it; Mojito rejects: Undefined variable 'DType'
+assets/type_error/dtype_value_param_type_arg.mojo	compile-reject	agree	error: invalid call to 'convert': 'convert' parameter 'dt' has 'DType' type, but value has type 'AnyStruct[Int]'
+assets/type_error/element_call_non_callable_element.mojo	compile-reject	agree	error: 'Int' does not implement the '__call__' method
+assets/type_error/element_call_type_brackets_reject.mojo	compile-reject	agree	error: no matching method in call to '__getitem__'
+assets/type_error/empty_subscript_non_pointer.mojo	compile-reject	agree	error: no matching method in call to '__getitem__'
+assets/type_error/equatable_no_ordering.mojo	compile-reject	agree	error: 'T' does not implement the '__lt__' method
+assets/type_error/explicit_destroy_conditional.mojo	runs	divergence	the pin runs it; Mojito rejects: was conditionally destroyed
+assets/type_error/explicit_destroy_discard.mojo	compile-reject	agree	error: 'tx' abandoned without being explicitly destroyed: call commit or rollback
+assets/type_error/explicit_destroy_double.mojo	compile-reject	agree	error: use of uninitialized value 'resource'
+assets/type_error/explicit_destroy_not_yet_executable.mojo	compile-reject	agree	error: 'resource' abandoned without being explicitly destroyed: close the resource
+assets/type_error/explicit_destroy_partial_move.mojo	runs	divergence	the pin runs it; Mojito rejects: is incomplete and cannot use a whole-value destructor
+assets/type_error/explicit_destroy_raising.mojo	compile-reject	agree	error: use of uninitialized value 'transaction'
+assets/type_error/external_call_string_argument.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/external_call_unknown_callee.mojo	runs	subset	the pin runs it; Mojito rejects: is not in Mojito's libc allowlist
+assets/type_error/fieldwise_anytype_field.mojo	compile-reject	agree	error: field 'a' has non-'Deinitable' type 'T'
+assets/type_error/function_type.mojo	compile-reject	agree	error: cannot implicitly convert 'def wrong(value: String) thin -> Int' value to 'def(Int) thin -> Int' in 'var' initializer
+assets/type_error/function_type_where_call_violates.mojo	compile-reject	agree	error: violated constraint
+assets/type_error/function_type_where_missing_on_contract.mojo	compile-reject	agree	error: invalid call to 'apply': 'apply' parameter 'F' has 'def[w: Int](Int) thin -> None' type, but value has type 'def kernel[w: Int](x: Int) thin -> None where (w > Int(0))'
+assets/type_error/generic_callable_value_contextual_specialization.mojo	compile-reject	agree	error: cannot implicitly convert 'def identity[T: Copyable](value: T) thin -> T' value to 'def(Int) thin -> Int' in 'var' initializer
+assets/type_error/generic_ctfe_impure.mojo	runs	divergence	the pin runs it; Mojito rejects: not a compile-time value
+assets/type_error/hashable_bound_value_hash.mojo	compile-reject	agree	error: invalid call to '__hash__': missing required argument: 'hasher'
+assets/type_error/hashable_no_equality.mojo	compile-reject	agree	error: 'K' does not implement the '__eq__' method
+assets/type_error/hashable_value_returning_hash.mojo	runs	divergence	the pin runs it; Mojito rejects: does not conform to trait 'Hashable'
+assets/type_error/hasher_missing_finish.mojo	compile-reject	agree	error: 'BrokenHasher' does not implement all requirements for 'Hasher'
+assets/type_error/hasher_uint64_leaf.mojo	compile-reject	agree	error: 'SumHasher' does not implement all requirements for 'Hasher'
+assets/type_error/hasher_wrong_finish_type.mojo	compile-reject	agree	error: 'NarrowHasher' does not implement all requirements for 'Hasher'
+assets/type_error/imm_origin_binder_pointer_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/imm_origin_mut_binder.mojo	compile-reject	agree	error: value passed to 'o' cannot be converted from 'ImmOrigin' to 'MutOrigin'
+assets/type_error/imm_origin_pointer_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/immutable_mutation.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/implicit_copy_append_element.mojo	compile-reject	agree	error: value of type 'List[Int]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
+assets/type_error/implicit_copy_field_store.mojo	compile-reject	agree	error: value of type 'List[Int]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
+assets/type_error/implicit_copy_generic_copyable_param.mojo	compile-reject	agree	error: value of type 'T' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
+assets/type_error/implicit_copy_list_concat.mojo	compile-reject	agree	error: value of type 'List[Int]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
+assets/type_error/implicit_copy_owned_argument.mojo	compile-reject	agree	error: value of type 'List[Int]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
+assets/type_error/implicit_copy_reference_result.mojo	compile-reject	agree	error: value of type 'List[Int]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
+assets/type_error/implicit_copy_return_local.mojo	compile-reject	agree	error: value of type 'List[Int]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
+assets/type_error/implicit_copy_var_init.mojo	compile-reject	agree	error: value of type 'List[Int]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
+assets/type_error/implicit_two_param_ref_rejected.mojo	compile-reject	agree	error: '@implicit' initializers must accept a single positional argument value
+assets/type_error/implicitly_copyable_rejects_explicit_copy.mojo	compile-reject	agree	error: invalid call to 'duplicate_implicit': value passed to 'x' cannot be converted from 'ExplicitBox' to 'T', argument type 'ExplicitBox' does not conform to trait 'ImplicitlyCopyable'
+assets/type_error/indexer_int_return.mojo	compile-reject	agree	error: 'Offset' does not implement all requirements for 'Indexer'
+assets/type_error/indexer_missing_conversion.mojo	compile-reject	agree	error: 'BadIndex' does not implement all requirements for 'Indexer'
+assets/type_error/inplace_bad_arg.mojo	compile-reject	agree	error: invalid call to '__iadd__': value passed to 'amount' cannot be converted from 'StringLiteral["not an int"]' to 'Int'
+assets/type_error/inplace_bitwise_missing.mojo	compile-reject	agree	error: 'OnlyOr' does not implement the '__ior__' method
+assets/type_error/inplace_immutable.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
+assets/type_error/inplace_missing.mojo	compile-reject	agree	error: 'OnlyAdd' does not implement the '__iadd__' method
+assets/type_error/inplace_raises_unhandled.mojo	compile-reject	agree	error: cannot call function that may raise in a context that cannot raise
+assets/type_error/inplace_subscript_bad_arg.mojo	compile-reject	agree	error: invalid call to '__iadd__': value passed to 'amount' cannot be converted from 'StringLiteral["not an int"]' to 'Int'
+assets/type_error/inplace_subscript_missing.mojo	compile-reject	agree	error: 'Only' does not implement the '__iadd__' method
+assets/type_error/inplace_subscript_raises_unhandled.mojo	compile-reject	agree	error: cannot call function that may raise in a context that cannot raise
+assets/type_error/is_operator_missing_dunder.mojo	compile-reject	agree	error: 'Plain' does not implement the '__is__' method
+assets/type_error/is_operator_non_struct.mojo	compile-reject	agree	error: 'Int' does not implement the '__is__' method
+assets/type_error/is_same_type_removed.mojo	compile-reject	agree	error: use of unknown declaration 'is_same_type'
+assets/type_error/keyword_only_by_position.mojo	compile-reject	agree	error: invalid call to 'kw_only': missing required argument: 'b'
+assets/type_error/keyword_slice_assignment_rejected.mojo	compile-reject	agree	error: use of unknown declaration 'ContiguousSlice'
+assets/type_error/keyword_subscript_assignment.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/keyword_subscript_unknown_keyword.mojo	compile-reject	agree	error: invalid call to '__getitem__': missing required argument: 'byte'
+assets/type_error/lambda_capturing_thin_contract.mojo	compile-reject	agree	error: invalid call to '__call__': value cannot be converted from type value '$0' to an instance of '$0'; did you mean to instantiate '$0'?
+assets/type_error/lambda_comptime_initializer.mojo	runs	divergence	the pin runs it; Mojito rejects: not a compile-time value
+assets/type_error/lambda_empty_capture_list.mojo	compile-reject	agree	error: Could not infer capture convention of the captured value z
+assets/type_error/lambda_fixed_none.mojo	compile-reject	agree	error: cannot implicitly convert 'IntLiteral[2]' value to 'None' in return value
+assets/type_error/lambda_mut_immutable_capture.mojo	compile-reject	agree	error: register passible value 'seed' can not be captured by 'mut'. Do you mean 'imm'?
+assets/type_error/lambda_partial_parameter_application.mojo	compile-reject	agree	error: invalid call to 'apply': value passed to 'f' cannot be converted from unknown overload to 'def(x: Int) capturing thin -> Int'
+assets/type_error/legacy_implicitly_deletable.mojo	compile-reject	agree	error: use of unknown declaration 'ImplicitlyDestructible'
+assets/type_error/list_anytype_append_requires_movable.mojo	compile-reject	agree	error: invalid call to 'append': violated constraint
+assets/type_error/list_element_not_hashable.mojo	compile-reject	agree	error: no matching function in call to 'hash'
+assets/type_error/list_explicit_params_with_elements.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/loop_binding_consuming_non_implicit.mojo	compile-reject	agree	error: failed to infer parameter 'origin', specify the parameter or use '_' or '...' to unbind the parameter explicitly
+assets/type_error/loop_immutable_binding_mutation.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
+assets/type_error/mapping_key_ref_write.mojo	runs	divergence	the pin runs it; Mojito rejects: must be mutable
+assets/type_error/maybe_uninit_copy_nontrivial.mojo	compile-reject	agree	error: value of type 'MaybeUninit[String]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
+assets/type_error/maybe_uninit_deinit_requires_deinitable.mojo	compile-reject	agree	error: invalid call to 'unsafe_deinit': violated constraint
+assets/type_error/maybe_uninit_write_nontrivial.mojo	compile-reject	agree	error: invalid call to 'write': violated constraint
+assets/type_error/maybe_uninitialized.mojo	compile-reject	agree	error: use of uninitialized value 'value'
+assets/type_error/mlir_type_unsupported.mojo	compile-reject	agree	error: cannot implicitly convert '__mlir_type.index' value to '__mlir_type.i64' in return value
+assets/type_error/movable_where_false_transfer.mojo	compile-reject	agree	error: cannot transfer value into destination, because 'Pinned' doesn't conform to 'Movable'
+assets/type_error/mut_origin_binder_rejects_immutable_pointer.mojo	compile-reject	agree	error: invalid call to 'bump': value passed to 'p' cannot be converted from 'Pointer[Int, origin_of(x)]' to 'Pointer[Int, o]'
+assets/type_error/mut_origin_constructor_rejects_immutable_pointer.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/mut_untracked_origin_local.mojo	compile-reject	agree	error: invalid call to 'mutate_untracked': value passed to 'value' cannot be converted from 'Int' to ref 'Int'
+assets/type_error/nominal_string_codepoint_arithmetic.mojo	compile-reject	agree	error: invalid call to '__add__': value passed to 'rhs' cannot be converted from 'IntLiteral[1]' to 'StringSpan[rhs.origin]', it depends on an unresolved parameter 'rhs.origin.mut'
+assets/type_error/nominal_string_codepoint_construction.mojo	runs	divergence	the pin runs it; Mojito rejects: no constructor overload matches
+assets/type_error/nominal_string_default_rebind.mojo	compile-reject	agree	error: cannot implicitly convert 'String' value to 'StringLiteral[_]'
+assets/type_error/nominal_string_positional_index.mojo	compile-reject	agree	error: String does not support direct positional indexing like `s[i]` because Mojo strings are UTF-8 encoded, and the same position can mean three different things. Use one of: `s[byte=i]` for a raw UTF-8 byte, `s[codepoint=i]` for a Unicode code point, or `s[grapheme=i]` for a user-visible character (grapheme cluster).
+assets/type_error/nominal_string_positional_slice_removed.mojo	compile-reject	agree	error: String does not support direct positional slicing like `s[a:b]` because Mojo strings are UTF-8 encoded, and the same range can mean different things. Use `s[byte=a:b]` to slice by raw UTF-8 byte positions, or `s[codepoint=a:b]` to slice by Unicode code points.
+assets/type_error/nominal_string_positional_slice_strided_removed.mojo	compile-reject	agree	error: no matching method in call to '__getitem__'
+assets/type_error/non_copyable_copy.mojo	compile-reject	agree	error: value of type 'Handle' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
+assets/type_error/optional_equatable_requires_element.mojo	compile-reject	agree	error: no matching method in call to '__eq__'
+assets/type_error/optional_legacy_two_arg_constructor.mojo	compile-reject	missing-import	error: unable to locate module 'optional'
+assets/type_error/optional_or_else_consumes_receiver.mojo	compile-reject	agree	error: value of type 'Optional[Res]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
+assets/type_error/optional_owned_iteration_linear_element.mojo	compile-reject	missing-import	error: unable to locate module 'optional'
+assets/type_error/origin_annotated_reassignment.mojo	compile-reject	agree	error: cannot implicitly convert 'List[Int]' value to 'Span[Int, origin_of(xs)]'
+assets/type_error/origin_cast_from_removed.mojo	compile-reject	agree	error: 'ImmOrigin' value has no attribute 'cast_from'
+assets/type_error/origin_delegated_value_return.mojo	compile-reject	agree	error: value of type 'Int' doesn't have a memory origin in origin specifier
+assets/type_error/origin_placeholder_field.mojo	compile-reject	agree	error: 'Span[Int, _]' is not concrete, use '[]' to bind missing parameters
+assets/type_error/out_self_init.mojo	compile-reject	agree	error: 'Counter' has an explicitly declared fieldwise initializer
+assets/type_error/overloading_ambiguous_constructor.mojo	compile-reject	agree	error: ambiguous call to '__init__', each candidate requires 1 implicit conversion, disambiguate with an explicit cast
+assets/type_error/overloading_duplicate_signature.mojo	compile-reject	agree	error: redefinition of function 'f', cannot overload on return type
+assets/type_error/overloading_no_match.mojo	compile-reject	agree	error: no matching function in call to 'f'
+assets/type_error/overloading_same_arity.mojo	compile-reject	agree	error: ambiguous call to 'show', each candidate requires 1 implicit conversion, disambiguate with an explicit cast
+assets/type_error/owned_comprehension_linear_element.mojo	compile-reject	agree	error: value of type '_ListIter[Conn, origin_of(conns)].Element' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
+assets/type_error/owned_iteration_linear_element.mojo	compile-reject	agree	error: value of type '_ListIter[Conn, origin_of(conns)].Element' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
+assets/type_error/owned_iteration_linear_user_iterator.mojo	compile-reject	agree	error: constraint for 'Iterator' does not imply constraint for ancestor trait 'Deinitable'; strengthen the derived constraint by adding the ancestor's constraint with 'and'
+assets/type_error/owned_pack_iteration_linear_break.mojo	compile-reject	agree	error: value of type 'Conn' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
+assets/type_error/owned_pointer_linear_pointee_must_be_consumed.mojo	compile-reject	agree	error: 'leaked' abandoned without being explicitly destroyed: Use `into_inner()` (for a `Movable` `T`) or `unsafe_take_allocation()` to consume an `OwnedPointer` whose element type is not `Deinitable`
+assets/type_error/owned_pointer_take_is_renamed.mojo	compile-reject	agree	error: 'OwnedPointer[Int]' value has no attribute 'take'
+assets/type_error/pack_bound_violation.mojo	compile-reject	agree	error: 'Pair' parameter 'Ts' has 'Copyable & Deinitable' type, but value has type 'AnyStruct[NoCopy]'
+assets/type_error/pack_struct_init_arity.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/pack_struct_needs_explicit_args.mojo	runs	divergence	the pin runs it; Mojito rejects: variadic struct 'Pair' requires explicit compile-time type arguments
+assets/type_error/pack_struct_runtime_getitem_index.mojo	compile-reject	self-qualification	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
+assets/type_error/pack_struct_runtime_index.mojo	compile-reject	agree	error: invalid call to '__getitem_param__': cannot use a dynamic value in a parameter list
+assets/type_error/parameter_closure_immutable_capture_write.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
+assets/type_error/parameterized_assoc_arity.mojo	compile-reject	agree	error: failed to infer parameter 'b', specify the parameter or use '_' or '...' to unbind the parameter explicitly
+assets/type_error/parameterized_assoc_conformance_arity.mojo	compile-reject	agree	error: 'Holder' does not implement all requirements for 'HasWrap'
+assets/type_error/parameterized_assoc_self_origin_mismatch.mojo	compile-reject	agree	error: 'Holder' does not implement all requirements for 'HasIter'
+assets/type_error/parametric_static_arity.mojo	compile-reject	agree	error: unexpected parameter
+assets/type_error/pointer_escape.mojo	compile-reject	agree	error: failed to infer parameter 'origin', specify the parameter or use '_' or '...' to unbind the parameter explicitly
+assets/type_error/pointer_field_fieldwise_mut_true_immutable_place.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/pointer_field_store_unbound_origin.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/pointer_immutable_conversion_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/pointer_origin_cast_no_downgrade.mojo	compile-reject	agree	error: invalid call to 'unsafe_origin_cast': value passed to 'target_origin' cannot be converted from 'ImmOrigin' to 'MutOrigin'
+assets/type_error/pointer_origin_cast_no_upgrade.mojo	runs	divergence	the pin runs it; Mojito rejects: cannot upgrade capability
+assets/type_error/pointer_placeholder_immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/pointer_placeholder_mutable_forward.mojo	compile-reject	agree	error: invalid call to 'w': value passed to 'q' cannot be converted from 'Pointer[Int, origin]' to 'Pointer[Int, q.origin]'
+assets/type_error/pointer_placeholder_return.mojo	compile-reject	agree	error: 'Pointer[Int, _]' is not concrete, use '[]' to bind missing parameters
+assets/type_error/pointer_take_requires_untracked.mojo	runs	divergence	the pin runs it; Mojito rejects: mutable untracked origin
+assets/type_error/pointer_to_place_offset_rejected.mojo	runs	divergence	the pin runs it; Mojito rejects: designates a single value
+assets/type_error/pointer_to_ref_param_write_rejected.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/pointer_to_ref_union_origin_rejected.mojo	runs	divergence	the pin runs it; Mojito rejects: through a 'ref' binding requires a place or origin-parameter referent
+assets/type_error/positional_only_by_keyword.mojo	compile-reject	agree	error: invalid call to 'first': missing required argument: 'a'
+assets/type_error/predicate_alias_arity.mojo	compile-reject	agree	error: unexpected parameter
+assets/type_error/predicate_alias_in_type_position.mojo	compile-reject	agree	error: expected a type, not a value
+assets/type_error/print_unknown_keyword.mojo	compile-reject	agree	error: invalid call to 'print': unexpected keyword argument 'foo'
+assets/type_error/raising_implicit_conversion.mojo	runs	divergence	the pin runs it; Mojito rejects: @implicit requires a non-raising
+assets/type_error/reference_element_append_rejected.mojo	compile-reject	agree	error: expected ']' in call argument list
+assets/type_error/reference_element_handle_replacement_rejected.mojo	compile-reject	agree	error: expected ']' in call argument list
+assets/type_error/reserved_word_function_name.mojo	compile-reject	agree	error: 'del' cannot be used as a function name in this context
+assets/type_error/scalar_range_float_needs_step.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/scalar_range_float_strided_unsupported.mojo	runs	divergence	the pin runs it; Mojito rejects: float strided ranges are not supported
+assets/type_error/scalar_range_mixed_dtypes.mojo	compile-reject	agree	error: no matching function in call to 'range'
+assets/type_error/set_clear_with_bad_handler.mojo	compile-reject	agree	error: invalid call to 'clear_with': value passed to 'destroy_func' cannot be converted from 'def `lambda_0(a: Int, b: Int) thin -> None' to 'T'
+assets/type_error/set_element_ref_write.mojo	runs	divergence	the pin runs it; Mojito rejects: must be mutable
+assets/type_error/set_requires_hashable_element.mojo	compile-reject	agree	error: 'Set' parameter 'T' has 'KeyElement' type, but value has type 'AnyStruct[Elem]'
+assets/type_error/setter_overload_competing_pair.mojo	compile-reject	agree	error: 'Sink' has '__setitem__' but no '__getitem__' method
+assets/type_error/simd_generic_width_rejected.mojo	compile-reject	agree	error: SIMD vector length must be a power of two between 1 and 2^15, found '!kgen.simd<3, si32>'
+assets/type_error/simd_size_removed_alias.mojo	compile-reject	agree	error: use of unknown declaration 'SIMDSize'
+assets/type_error/simd_subscript_indexer.mojo	compile-reject	agree	error: invalid call to '__getitem__': value passed to 'idx' cannot be converted from 'Offset' to 'Int'
+assets/type_error/size_of_requires_one_type.mojo	compile-reject	agree	error: no matching function in call to 'size_of'
+assets/type_error/span_implicit_return_escape.mojo	runs	divergence	the pin runs it; Mojito rejects: escapes storage
+assets/type_error/span_strided_slice_rejected.mojo	compile-reject	agree	error: no matching method in call to '__getitem__'
+assets/type_error/static_origin_local.mojo	compile-reject	agree	error: invalid call to 'observe_static': value passed to 'value' cannot be converted from 'Int' to ref 'Int'
+assets/type_error/static_pointer_alloc_removed.mojo	compile-reject	agree	error: 'Pointer[Int, _]' value has no attribute 'alloc'
+assets/type_error/string_grapheme_slice_rejected.mojo	compile-reject	agree	error: no matching method in call to '__getitem__'
+assets/type_error/string_len_ambiguous.mojo	compile-reject	agree	error: `len(String/StringSlice)` is not supported because Mojo strings are UTF-8 encoded, so a single length is ambiguous: it could mean the number of UTF-8 bytes, the number of Unicode code points, or the number of user-visible characters (grapheme clusters). Use `s.byte_length()` or `len(s.bytes())` for the number of UTF-8 bytes, `len(s.codepoints())` for Unicode code points, or `len(s.graphemes())` for grapheme clusters.
+assets/type_error/string_literal_positional_slice_removed.mojo	compile-reject	agree	error: String does not support direct positional slicing like `s[a:b]` because Mojo strings are UTF-8 encoded, and the same range can mean different things. Use `s[byte=a:b]` to slice by raw UTF-8 byte positions, or `s[codepoint=a:b]` to slice by Unicode code points.
+assets/type_error/string_span_len_ambiguous.mojo	compile-reject	agree	error: `len(String/StringSlice)` is not supported because Mojo strings are UTF-8 encoded, so a single length is ambiguous: it could mean the number of UTF-8 bytes, the number of Unicode code points, or the number of user-visible characters (grapheme clusters). Use `s.byte_length()` or `len(s.bytes())` for the number of UTF-8 bytes, `len(s.codepoints())` for Unicode code points, or `len(s.graphemes())` for grapheme clusters.
+assets/type_error/string_span_return_temporary.mojo	compile-reject	agree	error: cannot implicitly convert 'String' value to 'StringSpan[origin_of(self)]'
+assets/type_error/struct_field_in_bracket_slot.mojo	compile-reject	agree	error: cannot access instance field 'index' without an instance of 'Counter[length]'
+assets/type_error/struct_field_non_deinitable_param.mojo	compile-reject	agree	error: field 'value' has non-'Deinitable' type 'T'
+assets/type_error/struct_field_unqualified_param.mojo	compile-reject	agree	error: unqualified access to struct parameter 'T'; use 'Self.T' instead
+assets/type_error/struct_param_bare_bracket_slot.mojo	compile-reject	agree	error: unqualified access to struct parameter 'length'; use 'Self.length' instead
+assets/type_error/struct_value_param_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Tagged[Extent(Int(2), Int(3))]' value to 'Tagged[Extent(Int(3), Int(2))]'
+assets/type_error/trait_comptime_member.mojo	compile-reject	agree	error: 'Box[T]' does not implement all requirements for 'HasElement'
+assets/type_error/tstring.mojo	compile-reject	agree	error: invalid call to '__make_tstring': an element of 'args' with type 'Opaque' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
+assets/type_error/tstring_annotation.mojo	compile-reject	agree	error: cannot implicitly convert 'TString[StringSpan("x{}"), Int]' value to 'String'
+assets/type_error/tstring_concat.mojo	compile-reject	agree	error: 'TString[StringSpan("a")]' does not implement the '__add__' method
+assets/type_error/tuple_consume_elements_discard.mojo	compile-reject	agree	error: 'element' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'AnyType'
+assets/type_error/tuple_consume_elements_len.mojo	compile-reject	agree	error: no matching function in call to 'len'
+assets/type_error/tuple_consume_elements_print.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'Array[Int, Int(3)], Array[Int, Int(3)][SIMDLength(index)]' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
+assets/type_error/tuple_deinit_with_abandoned_element.mojo	compile-reject	agree	error: 'element' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'AnyType'
+assets/type_error/tuple_unhashable_element_key.mojo	compile-reject	agree	error: 'Dict' parameter 'K' has 'KeyElement' type, but value has type 'AnyStruct[Tuple[Int, Opaque]]'
+assets/type_error/type_receiver_instance_mismatch.mojo	compile-reject	agree	error: invalid call to '__len__': value passed to 'self' cannot be converted from 'List[Int]' to 'List[String]'
+assets/type_error/typelist_bad_predicate.mojo	compile-reject	agree	error: invalid call to 'all': 'all' parameter 'predicate' has '__generator_type[Type: AnyStruct[Int]] Bool' type, but value has type '__generator_type[T: Copyable] AnyType'
+assets/type_error/typelist_index_out_of_range.mojo	runs	divergence	the pin runs it; Mojito rejects: out of range
+assets/type_error/typelist_size_removed_alias.mojo	compile-reject	agree	error: 'TypeList[Int, Bool]' value has no attribute 'size'
+assets/type_error/uninit_storage_compiler_private.mojo	compile-reject	agree	error: use of unknown declaration '__UninitStorage'
+assets/type_error/untracked_pointer_field_tracked_argument.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/var_less_introduction.mojo	runs	subset	the pin runs it; Mojito rejects: var count
+assets/type_error/variadic_constructor_element_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/variadic_pack_all_conforms_to_false.mojo	compile-reject	missing-import	error: unable to locate module 'tuple'
+assets/type_error/variant_deinit_with_bad_handler.mojo	compile-reject	agree	error: invalid call to 'deinit_with': value passed to 'deinit_func' cannot be converted from 'def `lambda_0(a: Int) thin -> Int' to 'F'
+assets/type_error/variant_init_with_no_match.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/variant_set_linear_alternative.mojo	compile-reject	agree	error: no matching method in call to 'set'
+assets/type_error/variant_take_renamed.mojo	compile-reject	agree	error: 'Variant[Int, String]' value has no attribute 'take'
+assets/type_error/where_message_violated.mojo	compile-reject	agree	error: invalid call to 'disabled': violated constraint
+assets/type_error/where_repeated_second_fails.mojo	compile-reject	agree	error: invalid call to 'pick': violated constraint
+assets/type_error/where_violated_sole_candidate.mojo	compile-reject	agree	error: invalid call to 'show': violated constraint
+assets/type_error/with_consuming_enter_and_exit.mojo	compile-reject	agree	error: context manager of type 'Both' defines a consuming __enter__ method as well as an __exit__ method; either remove 'var' from its '__enter__' method or remove the '__exit__' method
+assets/type_error/with_error_exit_only.mojo	compile-reject	agree	error: invalid call to '__exit__': missing required argument: 'err'
+assets/type_error/with_no_enter.mojo	compile-reject	agree	error: 'NoEnter' does not implement the '__enter__' method
+assets/type_error/writable_bad_writer_parameter.mojo	runs	divergence	the pin runs it; Mojito rejects: does not conform to trait 'Writable'
+assets/type_error/writer_missing_write.mojo	compile-reject	agree	error: 'BrokenWriter' does not implement all requirements for 'Writer'
+assets/type_error/wrong_return.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["not an int"]' value to 'Int'

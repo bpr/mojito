@@ -1,4 +1,7 @@
 def total() -> Int:
     return "not an int"
 
-var t: Int = total()
+
+def main():
+    var t: Int = total()
+    print(t)

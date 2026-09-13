@@ -12,10 +12,12 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 parity="$root/conformance/parity.tsv"
 rejects="$root/conformance/assets-mojo-rejects.tsv"
+errors_ledger="$root/conformance/assets-mojo-errors.tsv"
 mojo_pixi_manifest="${MOJO_PIXI_MANIFEST:-}"
 jobs="${JOBS:-8}"
 compare=""
 extensions=""
+errors=""
 declare -a folders=() only=()
 
 usage() {
@@ -32,6 +34,8 @@ conformance/assets-mojo-rejects.tsv.
                              comparison (the in-session gate)
   --compare                  also run target/debug/mojito and diff stdout
   --extensions               sweep assets/extensions/ expecting rejection
+  --errors                   sweep the five assets/ error folders, comparing
+                             verdicts against conformance/assets-mojo-errors.tsv
   --jobs N                   parallelism (default 8, or JOBS)
 
 Per-fixture output lands under target/assets-mojo-sweep/<timestamp>/.
@@ -63,6 +67,10 @@ while (($#)); do
             extensions=1
             shift
             ;;
+        --errors)
+            errors=1
+            shift
+            ;;
         --jobs)
             jobs="${2:-}"
             shift 2
@@ -84,9 +92,22 @@ if [[ -z "$mojo_pixi_manifest" || ! -f "$mojo_pixi_manifest" ]]; then
     exit 2
 fi
 
+# --compare diffs the stdout of two programs that are both expected to fail, and
+# --extensions selects its own folder list; neither composes with --errors.
+if [[ -n "$errors" && -n "$compare" ]]; then
+    echo "--errors and --compare are mutually exclusive" >&2
+    exit 2
+fi
+if [[ -n "$errors" && -n "$extensions" ]]; then
+    echo "--errors and --extensions are mutually exclusive" >&2
+    exit 2
+fi
+
 if ((${#folders[@]} == 0)); then
     if [[ -n "$extensions" ]]; then
         folders=(assets/extensions/ok assets/extensions/ownership_ok assets/extensions/origin_ok)
+    elif [[ -n "$errors" ]]; then
+        folders=(assets/parse_error assets/type_error assets/runtime_error assets/ownership_error assets/origin_error)
     else
         folders=(assets/ok assets/ownership_ok assets/origin_ok)
     fi
@@ -131,6 +152,10 @@ sweep_one() {
     status=0
     timeout 60 pixi run --manifest-path "$mojo_pixi_manifest" mojo run "$root/$fixture" \
         >"$out/runs/$id.mojo.out" 2>"$out/runs/$id.mojo.err" </dev/null || status=$?
+    if [[ -n "$errors" ]]; then
+        classify_error "$fixture" "$out/runs/$id.mojo.err" "$status"
+        return 0
+    fi
     if ((status != 0)); then
         printf 'rejects\t%s\t%s\n' "$fixture" "$(first_error "$out/runs/$id.mojo.err")"
         return 0
@@ -157,11 +182,168 @@ first_error() {
     sed -n 's/.*[[:space:]]\(error: .*\)/\1/p' "$1" | head -1 | tr '\t' ' '
 }
 
-export -f sweep_one first_error
-export root out compare mojo_pixi_manifest
+# The driver's own verdict line, `<mojo-binary>: error: <reason>`, told apart
+# from a located diagnostic by the absence of a `:line:col` suffix before the
+# `error:`. It is the last such line, and it is what decides the verdict: the pin
+# says `failed to parse the provided Mojo source module` or `module does not
+# define a `main` function` for a rejection and `execution crashed` or
+# `execution exited with a non-zero result: N` for a runtime trap.
+driver_reason() {
+    awk '
+        match($0, /: error: /) {
+            head = substr($0, 1, RSTART - 1)
+            if (head !~ /:[0-9]+:[0-9]+$/) { reason = substr($0, RSTART + 9) }
+        }
+        END { gsub(/\t/, " ", reason); print reason }
+    ' "$1"
+}
+
+# A raising trap names its exception on a stable line; a crashing one prints only
+# ASLR'd stack frames, which must never reach the ledger.
+trap_text() {
+    sed -n 's/^Unhandled exception caught during execution: \(.*\)/\1/p' "$1" \
+        | head -1 | tr '\t' ' '
+}
+
+# One error-folder fixture's verdict and the pin's text for it.
+classify_error() {
+    local fixture="$1" err="$2" status="$3" reason verdict text
+    reason="$(driver_reason "$err")"
+    if ((status == 124)); then
+        verdict=timeout
+        text="timed out after 60s"
+    elif ((status == 0)); then
+        verdict=runs
+        text=""
+    elif [[ "$reason" == "execution crashed" || "$reason" == "execution exited with a non-zero result:"* ]]; then
+        verdict=trap
+        text="$(trap_text "$err")"
+        [[ -z "$text" ]] && text="error: $reason"
+    else
+        verdict=compile-reject
+        text="$(first_error "$err")"
+        [[ -z "$text" ]] && text="error: ${reason:-rejected without a diagnostic}"
+    fi
+    printf '%s\t%s\t%s\n' "$verdict" "$fixture" "$text"
+}
+
+export -f sweep_one first_error driver_reason trap_text classify_error
+export root out compare errors mojo_pixi_manifest
 
 xargs -P "$jobs" -I{} bash -c 'sweep_one "$@"' _ {} <"$out/fixtures.txt" \
     | sort -t $'\t' -k2,2 >"$out/results.tsv"
+
+# The normalization the ledger's text column is compared under. The location
+# prefix moves whenever a fixture gains a line, stack addresses are ASLR'd, and a
+# printed parameter list churns across a re-pin whenever upstream adds a
+# defaulted parameter. Quoted identifiers are kept: they carry the protocol and
+# type names the burn-down families are named for.
+norm_awk='
+function norm(s,   prev) {
+    sub(/^[^ \t]*:[0-9]+:[0-9]+: /, "", s)
+    gsub(/0x[0-9a-fA-F]+/, "0x", s)
+    do { prev = s; gsub(/\[[^][]*\]/, "[]", s) } while (s != prev)
+    gsub(/[ \t]+/, " ", s)
+    gsub(/^ +| +$/, "", s)
+    return s
+}
+function meta() { return (/^#/ || NF == 0 || $1 == "fixture") }
+'
+
+if [[ -n "$errors" ]]; then
+    awk -F '\t' '{ print $2 "\t" $1 "\t" $3 }' "$out/results.tsv" >"$out/observed.tsv"
+
+    printf 'swept %s;' "$swept"
+    for verdict in compile-reject trap runs timeout; do
+        printf ' %s %s' "$verdict" \
+            "$(awk -F '\t' -v v="$verdict" '$2 == v' "$out/observed.tsv" | wc -l)"
+    done
+    echo
+    echo "detail: $out"
+
+    # A paste-ready ledger. A row whose fixture and normalized text are both
+    # unchanged keeps its committed family, so a re-pin refresh is a copy plus a
+    # review of the rows left marked '?'.
+    ledger_base="$errors_ledger"
+    [[ -f "$ledger_base" ]] || ledger_base=/dev/null
+    {
+        printf '# swept-count\t%s\n' "$swept"
+        printf 'fixture\tverdict\tfamily\tupstream\n'
+        awk -F '\t' -v L="$ledger_base" "$norm_awk"'
+            FILENAME == L { if (meta()) next; fam[$1] = $3; key[$1] = norm($4); note[$1] = $4; next }
+            {
+                text = ($2 == "runs") ? note[$1] : $3
+                family = ($1 in fam && norm(text) == key[$1]) ? fam[$1] : "?"
+                printf "%s\t%s\t%s\t%s\n", $1, $2, family, text
+            }
+        ' "$ledger_base" "$out/observed.tsv"
+    } >"$out/ledger.tsv"
+
+    if [[ ! -f "$errors_ledger" ]]; then
+        echo
+        echo "no verdict ledger at $errors_ledger; $out/ledger.tsv is the"
+        echo "starting point — assign each row's family, then commit it"
+        exit 1
+    fi
+
+    status=0
+    if ((${#only[@]} == 0)); then
+        expected_swept="$(awk -F '\t' '$1 == "# swept-count" { print $2 }' "$errors_ledger")"
+        if [[ "$expected_swept" != "$swept" ]]; then
+            echo
+            echo "swept $swept fixtures, but $errors_ledger records $expected_swept;"
+            echo "update its '# swept-count' header when fixtures are added or removed"
+            status=1
+        fi
+
+        listed="$(awk -F '\t' '!/^#/ && NF && $1 != "fixture" { print $1 }' "$errors_ledger" | sort)"
+        found="$(cut -f1 "$out/observed.tsv" | sort)"
+
+        unlisted="$(comm -13 <(printf '%s\n' "$listed") <(printf '%s\n' "$found"))"
+        if [[ -n "$unlisted" ]]; then
+            echo
+            echo "error-folder fixtures with no row in $errors_ledger:"
+            sed 's/^/  /' <<<"$unlisted"
+            status=1
+        fi
+
+        stale="$(comm -23 <(printf '%s\n' "$listed") <(printf '%s\n' "$found"))"
+        if [[ -n "$stale" ]]; then
+            echo
+            echo "$errors_ledger lists fixtures that are no longer swept;"
+            echo "delete their rows:"
+            sed 's/^/  /' <<<"$stale"
+            status=1
+        fi
+    fi
+
+    # Verdict drift is the pin changing its answer; text drift is the pin
+    # changing its words, or complaining about something earlier and masking the
+    # defect the fixture pins. They are reported apart because they triage apart.
+    awk -F '\t' -v L="$errors_ledger" "$norm_awk"'
+        FILENAME == L { if (meta()) next; want[$1] = $2; text[$1] = $4; next }
+        !($1 in want) { next }
+        $2 != want[$1] { printf "verdict\t%s\t%s\t%s\n", $1, want[$1], $2; next }
+        $2 == "runs" { next }
+        norm($3) != norm(text[$1]) { printf "text\t%s\t%s\t%s\n", $1, text[$1], $3 }
+    ' "$errors_ledger" "$out/observed.tsv" >"$out/drift.tsv"
+
+    if grep -q $'^verdict\t' "$out/drift.tsv"; then
+        echo
+        echo "the pinned Mojo's verdict changed:"
+        awk -F '\t' '$1 == "verdict" { printf "  %s\n    was %s, now %s\n", $2, $3, $4 }' "$out/drift.tsv"
+        status=1
+    fi
+    if grep -q $'^text\t' "$out/drift.tsv"; then
+        echo
+        echo "the pinned Mojo's first complaint changed:"
+        awk -F '\t' '$1 == "text" { printf "  %s\n    was %s\n    now %s\n", $2, $3, $4 }' "$out/drift.tsv"
+        status=1
+    fi
+
+    ((status == 0)) && echo "error-folder sweep: ok"
+    exit "$status"
+fi
 
 awk -F '\t' '$1 == "rejects" { print $2 "\t" $3 }' "$out/results.tsv" >"$out/rejects.tsv"
 awk -F '\t' '$1 == "output-diff" { print $2 }' "$out/results.tsv" >"$out/output-diffs.tsv"

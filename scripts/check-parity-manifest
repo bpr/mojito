@@ -7,6 +7,7 @@ cases="$root/conformance/cases.tsv"
 manual_sections="$root/conformance/manual-sections.tsv"
 assets_rejects="$root/conformance/assets-mojo-rejects.tsv"
 assets_diffs="$root/conformance/assets-mojo-output-diffs.tsv"
+assets_errors="$root/conformance/assets-mojo-errors.tsv"
 
 awk -F '\t' '
 BEGIN { ok = 1; rows = 0 }
@@ -145,6 +146,48 @@ $1 == "fixture" { if ($0 != "fixture\tfamily\tdivergence") { print "invalid asse
 }
 ' "$assets_diffs"
 
+# The error-folder verdict ledger (scripts/sweep-assets-mojo --errors). Agreement
+# is the verdict matching what the fixture's folder claims, so the folder and the
+# family constrain each other.
+awk -F '\t' '
+BEGIN { ok = 1 }
+/^# swept-count\t/ { if ($2 !~ /^[0-9]+$/) { print "invalid error-ledger swept-count: " $2 > "/dev/stderr"; ok = 0 }; swept = 1; next }
+/^#/ || NF == 0 { next }
+$1 == "fixture" { if ($0 != "fixture\tverdict\tfamily\tupstream") { print "invalid error-ledger header" > "/dev/stderr"; ok = 0 }; next }
+{
+    if (NF != 4) { print "error-ledger row " NR " has " NF " fields, expected 4" > "/dev/stderr"; ok = 0 }
+    if (seen[$1]++) { print "duplicate error-ledger fixture: " $1 > "/dev/stderr"; ok = 0 }
+    if ($1 !~ /^assets\/(parse_error|type_error|runtime_error|ownership_error|origin_error)\//) {
+        print "error-ledger fixture is not in an error folder: " $1 > "/dev/stderr"; ok = 0
+    }
+    if ($2 !~ /^(compile-reject|trap|runs|timeout)$/) { print "invalid error-ledger verdict for " $1 ": " $2 > "/dev/stderr"; ok = 0 }
+    if ($3 !~ /^(agree|alias-keyword|self-qualification|unbound-parameter|missing-import|no-main|iterator-protocol|ledgered|subset|divergence|skip)$/) {
+        print "invalid error-ledger family for " $1 ": " $3 > "/dev/stderr"; ok = 0
+    }
+    if ($4 == "") { print "error-ledger row lacks upstream text: " $1 > "/dev/stderr"; ok = 0 }
+
+    # An agreeing row must carry the verdict its folder claims.
+    want = ($1 ~ /^assets\/runtime_error\//) ? "trap" : "compile-reject"
+    if ($3 == "agree" && $2 != want) {
+        print "error-ledger row claims agreement with the wrong verdict: " $1 " (" $2 ", expected " want ")" > "/dev/stderr"; ok = 0
+    }
+    # The pin accepting a program Mojito rejects is never agreement, and a
+    # burn-down family only describes a rejection.
+    if ($2 == "runs" && $3 !~ /^(subset|divergence|skip)$/) {
+        print "error-ledger row the pin runs needs a subset/divergence family: " $1 " (" $3 ")" > "/dev/stderr"; ok = 0
+    }
+    if ($3 ~ /^(alias-keyword|self-qualification|unbound-parameter|missing-import|no-main|iterator-protocol|ledgered)$/ && $2 != "compile-reject") {
+        print "error-ledger masking family needs a compile-reject verdict: " $1 > "/dev/stderr"; ok = 0
+    }
+    # An import that does not resolve, or a missing `main`, is never the defect an
+    # error fixture set out to pin: the pin stopped before reaching it.
+    if ($3 == "agree" && $4 ~ /unable to locate module|global variables are not supported|module does not define a/) {
+        print "error-ledger row claims agreement on a masking complaint: " $1 > "/dev/stderr"; ok = 0
+    }
+}
+END { if (!swept) { print "error ledger lacks a # swept-count header" > "/dev/stderr"; ok = 0 }; exit(ok ? 0 : 1) }
+' "$assets_errors"
+
 # A fixture the pinned Mojo rejects cannot also be claimed as a matching run.
 run_fixtures="$(awk -F '\t' '!/^#/ && $2 == "run" { print $3 }' "$cases")"
 while IFS=$'\t' read -r fixture _family _error; do
@@ -170,5 +213,30 @@ while IFS=$'\t' read -r fixture _family _divergence; do
         exit 1
     fi
 done <"$assets_diffs"
+
+while IFS=$'\t' read -r fixture _verdict _family _upstream; do
+    [[ -z "$fixture" || "$fixture" == \#* || "$fixture" == "fixture" ]] && continue
+    if [[ ! -f "$root/$fixture" ]]; then
+        echo "error ledger references missing fixture: $fixture" >&2
+        exit 1
+    fi
+    if grep -Fxq "$fixture" <<<"$run_fixtures"; then
+        echo "fixture is both a cases.tsv run row and an error-folder fixture: $fixture" >&2
+        exit 1
+    fi
+done <"$assets_errors"
+
+# Every error-folder fixture on disk needs a ledger row; the sweep is the oracle
+# for the verdict, this is the oracle for the file being complete.
+missing="$(comm -23 \
+    <(find "$root/assets/parse_error" "$root/assets/type_error" "$root/assets/runtime_error" \
+        "$root/assets/ownership_error" "$root/assets/origin_error" -name '*.mojo' \
+        | sed "s|^$root/||" | sort) \
+    <(awk -F '\t' '!/^#/ && NF && $1 != "fixture" { print $1 }' "$assets_errors" | sort))"
+if [[ -n "$missing" ]]; then
+    echo "error-folder fixtures with no ledger row:" >&2
+    sed 's/^/  /' <<<"$missing" >&2
+    exit 1
+fi
 
 echo "parity manifest: ok"

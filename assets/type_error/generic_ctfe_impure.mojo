@@ -4,3 +4,7 @@ def bad() -> Int:
     return 1
 
 comptime X = bad()
+
+
+def main():
+    print(X)

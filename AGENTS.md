@@ -89,8 +89,11 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
    upstream's own experimental spelling, which the pinned build parses but
    rejects at the use), is listed in `docs/non-goals.md`, and keeps its
    fixtures under `assets/extensions/` — every fixture in the ordinary
-   `assets/` folders must compile with the pinned Mojo, which
-   `scripts/sweep-assets-mojo` checks.
+   `assets/` `_ok` folders must compile with the pinned Mojo, which
+   `scripts/sweep-assets-mojo` checks. The five error folders are gated the
+   other way round, by `--errors`: the pin must reject what they claim it
+   rejects, and compile-and-trap what `runtime_error` claims, per fixture in
+   `conformance/assets-mojo-errors.tsv`.
 2. Unsupported semantics fail explicitly. Prefer an early, contextual checker
    error; use `MirInstr::Unsupported` or `RuntimeError::Unsupported` only for a
    genuine later-phase boundary.

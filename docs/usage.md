@@ -202,6 +202,23 @@ Mojito and diffs stdout, `--only PATH...` narrows it to a few fixtures for an
 in-session check, and `--extensions` inverts the expectation over
 `assets/extensions/`, where the pinned Mojo must reject every fixture.
 
+`--errors` sweeps the five error folders instead, where an exit code proves
+nothing because both compilers reject the program. It classifies each fixture by
+what the pin's own driver line says — `compile-reject`, `trap` (it compiled and
+failed at run time), `runs`, or `timeout` — and gates that verdict, plus the
+pin's first complaint, against `conformance/assets-mojo-errors.tsv`. Verdict
+drift and text drift are reported separately: the first is the pin changing its
+answer, the second is it changing its words or complaining about something
+earlier and masking the defect the fixture pins. Mojito's own message never
+enters the comparison; `tests/corpus_test.rs` owns that through each fixture's
+`# expect:` directive. `--errors` composes with `--only`, which then checks each
+named fixture against its own ledger row rather than skipping the comparison as
+it does for the `_ok` folders; it does not compose with `--compare` or
+`--extensions`. Each run also writes a paste-ready `ledger.tsv` under
+`target/assets-mojo-sweep/<timestamp>/`, carrying families forward for every row
+whose fixture and normalized text are unchanged, so a re-pin refresh is a copy
+plus a review of the rows left marked `?`.
+
 ## Library API
 
 The frontend stages are also available as library functions:

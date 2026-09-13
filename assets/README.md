@@ -15,13 +15,16 @@ changes.
 | `parse_error/`    | rejected by the lexer or parser (a syntax gap/error)          |
 | `type_error/`     | parses, but the checker rejects it                            |
 | `runtime_error/`  | compiles, but fails during VM execution, including explicit late `Unsupported` boundaries |
+| `ownership_ok/` / `ownership_error/` | accepted or rejected by the ownership analysis |
+| `origin_ok/` / `origin_error/` | accepted or rejected by the origin/escape analysis |
 
 ## `extensions/`: Mojito-only language extensions
 
-Every fixture in the folders above must compile with the pinned Mojo —
+Every fixture in the `_ok` folders above must compile with the pinned Mojo —
 `scripts/sweep-assets-mojo` runs it over them and compares the result against
 `conformance/assets-mojo-rejects.tsv`, the burn-down list of the ones it still
-rejects. A program that uses a Mojito extension — today, direct `ref` struct
+rejects. The five error folders are oracled the other way round by the same
+script's `--errors` mode; see below. A program that uses a Mojito extension — today, direct `ref` struct
 fields (`var f: ref[o] T`), which upstream rejects and may adopt later, and
 `Origin._subtree` casts, which upstream parses but rejects at the use; in
 future, experiments such as pattern matching or enums — lives under
@@ -42,6 +45,30 @@ same file name in the ordinary folder, with a `ref_field_` prefix respelled
 Grab a Mojo file off the net, decide where mojito should currently land on it,
 and drop it in that folder. When mojito gains a feature, a file "graduates" to an
 earlier-passing folder (e.g. `parse_error/ → ok/`) — a nice, greppable diff.
+
+## The error folders' oracle
+
+An error fixture is rejected by both compilers, so an exit code proves nothing
+about agreement. `scripts/sweep-assets-mojo --errors` therefore compares the
+**verdict**: the pinned Mojo must refuse to compile what `parse_error`,
+`type_error`, `ownership_error` and `origin_error` claim it refuses, and must
+compile-and-trap what `runtime_error` claims. Every fixture has a row in
+`conformance/assets-mojo-errors.tsv` recording that verdict, the pin's own first
+complaint, and a family saying whether the two compilers really met on the same
+defect.
+
+Mojito's message is never compared with the pin's. Outside the parser a Mojito
+diagnostic carries no source location, and the two wordings differ for most
+fixtures by design; `# expect:` below stays the only pin on Mojito's side.
+
+Two families are worth knowing when adding a fixture:
+
+- A burn-down name (`missing-import`, `self-qualification`, …) means the pin
+  rejected the fixture for a spelling it never set out to test, so the defect it
+  pins went unexamined. Prefer a spelling the pin accepts.
+- `subset` and `divergence` mean the pin *accepts* the program. `subset` is
+  deliberate strictness (`docs/non-goals.md`); `divergence` is open work
+  (`docs/roadmap.md`).
 
 ## Optional: pin the exact error
 
@@ -71,6 +98,9 @@ the seam unchanged.
 ## Note
 
 Production Mojito, like Mojo, rejects executable statements at file scope and
-calls a zero-argument `main()` as the program entry point. Some historical
-fixtures remain module-scope snippets and run only through the test suite's
-explicit non-conforming snippet mode; new fixtures should be valid Mojo programs.
+calls a zero-argument `main()` as the program entry point. No fixture here is a
+module-scope snippet any more — the 2026-09-12 error-folder sweep gave the last
+four a `main`, because the pinned Mojo rejects file-scope statements outright and
+that rejection masked the defect each one pinned. The suite's non-conforming
+snippet mode (`Compiler::with_snippet_module_scope`) survives for inline
+snippets in `tests/`, not for anything in this tree.

@@ -58,6 +58,35 @@ These are the two admitted extensions under the match-or-subset rule
 - If upstream lands `ref` fields, re-probe the extension fixtures against the
   new spelling and promote them back — that is a roadmap task, not this one.
 
+### Interior-reference and unsafe-memory strictness exceeds the pin
+
+Not to be relaxed: Mojito tracks interior references through `Pointer` and
+through views into a container, and traps on unsafe-memory misuse the pinned
+Mojo leaves undefined. The 2026-09-12 error-folder sweep measured the gap at 25
+fixtures the pin compiles and runs while Mojito rejects or traps
+(`conformance/assets-mojo-errors.tsv`, family `subset`). Invariant 1 permits it:
+Mojito may reject valid Mojo.
+
+- Eleven `ownership_error`/`origin_error` fixtures report `invalidated interior
+  reference` or `conflicts with live reference` where the pin tracks nothing and
+  runs. `assets/ownership_error/reference_row_iteration_invalidated_by_row_append.mojo`
+  is the one to cite: the pin runs it to completion printing dangling addresses,
+  so the strictness is catching real undefined behavior rather than rejecting a
+  sound program.
+- Six `runtime_error` fixtures trap on use-after-free, double-free, and reads of
+  uninitialized `MaybeUninit` storage; the pin runs each one to exit 0.
+- Five more trap on integer division or modulo by zero and on a negative `**`
+  exponent, which the pin leaves to the hardware.
+- `assets/type_error/comptime_dict_result_not_freezable.mojo` and
+  `external_call_unknown_callee.mojo` name Mojito's own mechanisms — a VM-CTFE
+  value that cannot cross back, and the libc allowlist — which have no upstream
+  counterpart to agree with.
+- `assets/type_error/var_less_introduction.mojo` rejects a var-less
+  introduction that the pin only deprecates, with a warning, and runs.
+
+The 26 fixtures in the same sweep where Mojito's rejection is *not* deliberate
+are the opposite case and stay on `docs/roadmap.md` as `divergence` rows.
+
 ### Divergences retained across re-pins
 
 The behavioral-divergences task in `docs/roadmap.md` §2 burns divergences to

@@ -5,3 +5,7 @@ struct BrokenWritable(Writable):
 
     def write_to(self, mut writer: String):
         writer = String(self.value)
+
+
+def main():
+    print(String(BrokenWritable(1)))

@@ -176,22 +176,58 @@ are sorted Opus first (see **Entry Style**).
   - Model: Opus, plan first. The probe decides the shape of the work, and the
     answer changes the stdlib's iterator vocabulary.
 
-- [ ] **The `assets/` error folders have never been swept**
+- [ ] **The pinned Mojo compiles and runs 26 fixtures the `assets/` error
+  folders claim it rejects**
 
-  Problem: the 2026-09-12 sweep covered only the three `_ok` folders. The pin
-  rejects the error-folder fixtures too, but for its own reason, so a sweep
-  there compares diagnostics rather than exit codes and needs a rule for what
-  counts as agreement.
-  - 318 fixtures: `type_error` 235, `ownership_error` 31, `runtime_error` 36,
-    `parse_error` 8, `origin_error` 8. `scripts/sweep-assets-mojo --folders`
-    already reaches them; the comparison is what is missing.
-  - `runtime_error` is the exception that works today: both compilers accept
-    those programs, so the existing exit-code comparison applies.
-  - The ten `_subtree` fixtures that were in `ownership_error` and
-    `type_error` moved to `assets/extensions/` with the rest of that
-    extension; check whether anything else there uses an extension spelling.
-  - Model: Opus, plan first. The plan's job is the diagnostic-comparison
-    rule, not the sweep.
+  Problem: Mojito rejects a program the pin accepts, and the rejection is not a
+  deliberate one. The 2026-09-12 error-folder sweep found them among 318
+  fixtures; they are the `divergence` rows of
+  [`conformance/assets-mojo-errors.tsv`](../conformance/assets-mojo-errors.tsv),
+  which `scripts/sweep-assets-mojo --errors` gates.
+  - Re-measure with `scripts/sweep-assets-mojo --mojo-pixi-manifest PATH
+    --errors`; it fails when reality and that file differ, so the file is the
+    burn-down. Derive the family list from it when the work starts rather than
+    from this sentence.
+  - The `comptime` family is the largest: a generic alias body that is a value
+    rather than a type or a proposition (two rows), an impure CTFE callee, a
+    lambda in a comptime initializer, and a `Pointer` struct the pin builds
+    fieldwise. Mojito's VM-CTFE restrictions are the common cause.
+  - Five rows are `Pointer`/origin construction: an origin cast the pin
+    upgrades, `take` without an untracked origin, an offset place, a union
+    origin behind a `ref` binding, and an implicit `Span` return the pin does
+    not read as an escape.
+  - Four are trait conformance the pin accepts and Mojito does not:
+    `Hashable` from a value-returning `__hash__`, `Writable` from a
+    `mut writer: String`, an `@implicit` raising conversion, and an ambiguous
+    implicit conversion the pin resolves.
+  - The rest are one-offs: `use_after_move_arg` (the pin leaves `a` live after
+    `consume(a^)` into an immutable parameter), `ascii_rjust` with a multi-byte
+    fill character, `explicit_destroy` after a conditional or partial move,
+    runtime `DType`, a typed `def` display element, `Codepoint`-to-`String`
+    construction, variadic-struct argument inference, `TypeList` index bounds,
+    and float strided ranges, which Mojito simply does not implement.
+  - Model: Opus, plan first. Each family is its own pass and several are
+    semantic decisions, not respellings.
+
+- [ ] **Seven error-folder fixtures never reach the defect they pin**
+
+  Problem: the pinned Mojo rejects them for a spelling they did not set out to
+  test, so the sweep cannot compare the two compilers on the defect itself.
+  They are the burn-down-family rows of `conformance/assets-mojo-errors.tsv`.
+  - Five are `missing-import` and share one cause: Mojito homes `Optional` at
+    `std.optional` and `Tuple` at `std.collections.tuple`, where the pin homes
+    them at `std.collections.optional` and `std.builtin.tuple`. Moving the
+    bundled modules to upstream's paths closes all five, and is a stdlib change
+    rather than a fixture respelling.
+  - One is `iterator-protocol`
+    (`runtime_error/pliron_raise_iter_stop_unhandled.mojo`, blocked on
+    `std.iterable` above), and one is `self-qualification`
+    (`type_error/pack_struct_runtime_getitem_index.mojo`): the pin wants
+    `-> Self.Ts[i]` where Mojito answers `dependent type indexing requires a
+    type-valued associated member`, so closing it needs the checker, not the
+    fixture.
+  - Model: Opus, as-is for the module moves; the `Self.Ts[i]` row is a checker
+    task and wants its own plan.
 
 - [ ] **Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
   any order)*

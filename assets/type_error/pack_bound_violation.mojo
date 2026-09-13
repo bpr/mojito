@@ -6,10 +6,10 @@ struct NoCopy(Movable):
         self.x = x
 
 
-struct Pair[*Ts: Copyable & Movable](Copyable, Movable):
-    var storage: Tuple[*Ts]
+struct Pair[*Ts: Copyable & Movable & Deinitable](Copyable, Movable):
+    var storage: Tuple[*Self.Ts]
 
-    def __init__(out self, var *args: *Ts):
+    def __init__(out self, var *args: *Self.Ts):
         self.storage = Tuple(*args^)
 
 
