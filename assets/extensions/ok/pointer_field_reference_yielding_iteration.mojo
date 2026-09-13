@@ -4,7 +4,7 @@
 # `Pointer[List[Int], Self.o]` into the source; the loop invokes `__iter__`/`__next__`
 # with the loop frame reachable, so that borrow resolves. The source temporary is
 # destroyed exactly once after the loop.
-from std.iterable import StopIteration
+from std.iter import StopIteration
 
 
 @fieldwise_init

@@ -1,7 +1,7 @@
 # A heap-backed field projected off a reference-returning call result in value
 # position runs its `__copyinit__`: `k` owns an independent String, so both the
 # binding and the source entry destroy cleanly.
-from std.iterable import Iterator, StopIteration
+from std.iter import Iterator, StopIteration
 
 @fieldwise_init
 struct Pair(Copyable, Movable):

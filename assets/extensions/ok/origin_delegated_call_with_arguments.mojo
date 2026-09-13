@@ -2,7 +2,7 @@
 # clause's origin depends only on the receiver walk, so `self.iter.step(1)`
 # resolves exactly like the zero-argument form; the arguments are checked at
 # each call site as usual.
-from std.iterable import Iterator, StopIteration
+from std.iter import Iterator, StopIteration
 
 @fieldwise_init
 struct Pair(Copyable, Movable):

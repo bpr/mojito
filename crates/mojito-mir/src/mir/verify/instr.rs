@@ -458,55 +458,9 @@ pub(super) fn verify_instruction(
                 }
             }
         }
-        MirInstr::Next { dest, iter, call } => {
+        MirInstr::Next { iter, .. } => {
             if *iter as usize >= function.n_vars {
                 errors.push(format!("{prefix}: Next uses invalid iterator slot {iter}"));
-            }
-            let Some(call) = call else {
-                return;
-            };
-            if reg_ty(dest) != Some(&call.result_ty) {
-                errors.push(format!(
-                    "{prefix}: Next result does not match its checked type {}",
-                    call.result_ty
-                ));
-            }
-            if call.raises.is_some() {
-                errors.push(format!(
-                    "{prefix}: bounded Next carries a raising iterator contract"
-                ));
-            }
-            if verify_iterator_result_adapter(&prefix, call, errors) {
-                return;
-            }
-            match declared(declarations, &call.target) {
-                None => errors.push(format!(
-                    "{prefix}: Next refers to undeclared iterator method '{}'",
-                    call.target
-                )),
-                Some(declaration) => {
-                    if !declaration.param_types.is_empty()
-                        || declaration.receiver_convention
-                            != Some(mojito_ast::ast::ArgConvention::Mut)
-                    {
-                        errors.push(format!(
-                            "{prefix}: Next method '{}' is not a nullary 'mut self' operation",
-                            call.target
-                        ));
-                    }
-                    if declaration.raises {
-                        errors.push(format!(
-                            "{prefix}: bounded Next method '{}' unexpectedly raises",
-                            call.target
-                        ));
-                    }
-                    if !iterator_result_matches_declaration(call, declaration) {
-                        errors.push(format!(
-                            "{prefix}: Next result contract does not match '{}'",
-                            call.target
-                        ));
-                    }
-                }
             }
         }
         MirInstr::TryNext {

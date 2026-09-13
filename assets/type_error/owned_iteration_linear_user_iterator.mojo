@@ -1,8 +1,4 @@
 # expect: non-Deinitable 'Conn' cannot be consumed implicitly
-@fieldwise_init
-struct StopIteration:
-    pass
-
 @explicit_destroy("close Conn")
 struct Conn(Movable, Deinitable where False):
     var id: Int

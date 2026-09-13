@@ -996,28 +996,7 @@ impl<'a> Specializer<'a> {
                     // An untyped iterator slot passes through: it belongs to
                     // a compiler-private pack loop the backend rejects at its
                     // own boundary.
-                    MirInstr::HasNext {
-                        iter,
-                        method: Some(method),
-                        ..
-                    } => {
-                        if let Some(receiver) = function.var_tys.get(iter).cloned() {
-                            let (target, _) = self.resolve_iterator_step(
-                                owner,
-                                &receiver,
-                                "__len__",
-                                Some(method),
-                                None,
-                            )?;
-                            *method = target;
-                        }
-                    }
-                    MirInstr::Next {
-                        iter,
-                        call: Some(call),
-                        ..
-                    }
-                    | MirInstr::TryNext { iter, call, .. } => {
+                    MirInstr::TryNext { iter, call, .. } => {
                         if let Some(receiver) = function.var_tys.get(iter).cloned() {
                             let (target, _) = self.resolve_iterator_step(
                                 owner,

@@ -625,14 +625,10 @@ impl Decoder {
             "iter.has_next" => Some(MirInstr::HasNext {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 iter: self.req(value, fields, "iter", Self::var)?,
-                method: self.req(value, fields, "method", |d, v| Some(d.option_symbol(v)))?,
             }),
             "iter.next" => Some(MirInstr::Next {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 iter: self.req(value, fields, "iter", Self::var)?,
-                call: self.req(value, fields, "call", |d, v| {
-                    Some(d.option_value(Some(v)).and_then(|v| d.iterator_call(v)))
-                })?,
             }),
             "iter.try_next" => Some(MirInstr::TryNext {
                 dest: self.req(value, fields, "dest", Self::reg)?,

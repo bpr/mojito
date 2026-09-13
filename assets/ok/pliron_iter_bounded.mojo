@@ -1,16 +1,14 @@
-# The legacy bounded iterator protocol on a user type: `__len__() > 0`
-# drives `HasNext`, the non-raising `__next__(mut self)` advances the
-# iterator variable's own storage in place, and `continue`/`break` leave the
-# iterator to the loop's cleanup drops.
+# A bounded user iterator: the raising `__next__(mut self)` advances the
+# iterator variable's own storage in place and raises `StopIteration` past its
+# bound, and `continue`/`break` leave the iterator to the loop's cleanup drops.
 @fieldwise_init
 struct CountIter:
     var cur: Int
     var stop: Int
 
-    def __len__(self) -> Int:
-        return self.stop - self.cur
-
-    def __next__(mut self) -> Int:
+    def __next__(mut self) raises StopIteration -> Int:
+        if self.cur >= self.stop:
+            raise StopIteration()
         var value: Int = self.cur
         self.cur = self.cur + 1
         return value

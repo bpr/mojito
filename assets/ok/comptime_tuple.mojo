@@ -1,6 +1,6 @@
-# Richer compile-time values: `comptime for` over a compile-time tuple of strings,
+# Richer compile-time values: `comptime for` over a compile-time list of strings
 # and over a compile-time list of ints (data-driven unrolling).
-comptime states = ("empty", "occupied", "deleted")
+comptime states = ["empty", "occupied", "deleted"]
 comptime sizes = [2, 4, 8]
 
 def main():

@@ -1149,21 +1149,9 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("prepare", list(prepare.iter().map(|v| symbol(v)))),
             ],
         ),
-        MirInstr::HasNext { dest, iter, method } => record(
+        MirInstr::HasNext { dest, iter } | MirInstr::Next { dest, iter } => record(
             tag,
-            &[
-                ("dest", reg_value(*dest)),
-                ("iter", var_value(*iter)),
-                ("method", option(method.as_ref().map(|v| symbol(v)))),
-            ],
-        ),
-        MirInstr::Next { dest, iter, call } => record(
-            tag,
-            &[
-                ("dest", reg_value(*dest)),
-                ("iter", var_value(*iter)),
-                ("call", option(call.as_ref().map(iterator_call))),
-            ],
+            &[("dest", reg_value(*dest)), ("iter", var_value(*iter))],
         ),
         MirInstr::TryNext {
             dest,

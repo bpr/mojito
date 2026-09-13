@@ -224,7 +224,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   elaborator evaluates compile-time TypeList values (`eval_typelist_of`,
   `eval_typelist_method`, the `make_typelist` marker in `comptime/eval.rs`).
 - `checker/operators.rs` and `checker/iteration.rs` own operator/SIMD inference
-  and iterator-protocol selection respectively.
+  and iterator-protocol selection respectively. `iteration.rs` accepts only a
+  `StopIteration`-raising `__next__` (upstream's `__has_next__` rejection for a
+  nonraising one) and records `IterationProtocol::source_retained`, which HIR
+  (`hir.rs` loop lowering) and MIR (`lower_stmt.rs` `GetIter`,
+  `lower_expr/ctrl.rs` comprehensions) read to decide whether a loop keeps its
+  source alive and loaned.
 - `checker/calls.rs` adapts neutral call matching to `TypeError` and validates
   checker-only signature rules.
 - `checker/places.rs` owns call-site place classification and alias rejection

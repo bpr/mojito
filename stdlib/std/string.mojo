@@ -17,7 +17,7 @@ from std.collections.list import List
 from std.collections.optional import Optional
 from std.span import Span
 
-from std.iterable import Iterable, Iterator, StopIteration
+from std.iter import Iterable, Iterator, StopIteration
 from std._string_tables import _lower_table, _pow5_table, _upper_table, _upper2_table, _upper3_table
 
 # Shared strict contiguous-slice bounds checking with the audited head's

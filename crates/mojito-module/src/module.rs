@@ -743,6 +743,14 @@ impl Linker {
                 _ => body.push(stmt),
             }
         }
+        // The entry module's own top-level declarations shadow implicit prelude
+        // names throughout the module, as `load_module` lets an imported
+        // module's locals do; an explicitly imported name stays a redeclaration.
+        for name in body.iter().filter_map(declared_name) {
+            if !explicit_imports.contains(name) {
+                bindings.remove(name);
+            }
+        }
         self.resolve_scoped_imports(&mut body, dir, importer, &bindings, &namespaces)?;
         Ok(body)
     }
@@ -1320,6 +1328,10 @@ const PRELUDE_EXPORTS: &[&str] = &[
     "atol",
     "atof",
     "next",
+    "Iterable",
+    "IterableOwned",
+    "Iterator",
+    "StopIteration",
     "reversed",
     "open",
     "FileHandle",
@@ -1681,7 +1693,7 @@ fn implicit_public_identity(module: &str, declaration: &str) -> Option<&'static 
         ("std.collections.optional", "OptionalReg") => Some("OptionalReg"),
         ("std.format.tstring", "TString") => Some("TString"),
         ("std.range", "range") => Some("range"),
-        ("std.iterable", "next") => Some("next"),
+        ("std.iter", "next") => Some("next"),
         ("std.builtin.reversed", "reversed") => Some("reversed"),
         ("std.collections.string_dict", "StringDict") => Some("StringDict"),
         ("std.memory.alloc", "alloc") => Some("alloc"),

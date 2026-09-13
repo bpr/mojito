@@ -507,16 +507,16 @@ fn deinit_move_source_consumes_residual_field_without_running_its_destructor() {
 // Borrowed iteration source/iterator slot split: a temporary iterable that owns
 // its storage is kept live in its own slot through the loop and destroyed
 // exactly once, after the loop — in-place normalization would overwrite (leak)
-// it. `Numbers` uses the bounded `__len__`/`__next__` protocol; `NumbersIter`
-// borrows nothing observable so only the source has a `__deinit__`.
-const ITERABLE_NUMBERS: &str = "@fieldwise_init\nstruct NumbersIter:\n    var cur: Int\n    var stop: Int\n    def __len__(self) -> Int:\n        return self.stop - self.cur\n    def __next__(mut self) -> Int:\n        var v = self.cur\n        self.cur = self.cur + 1\n        return v\n\nstruct Numbers(Movable):\n    var stop: Int\n    def __init__(out self, stop: Int):\n        self.stop = stop\n    def __init__(out self, *, deinit move: Self):\n        self.stop = move.stop\n    def __deinit__(deinit self):\n        print(\"drop numbers\", self.stop)\n    def __iter__(self) -> NumbersIter:\n        return NumbersIter(0, self.stop)\n\n";
+// it. `NumbersIter` borrows nothing observable so only the source has a
+// `__deinit__`.
+const ITERABLE_NUMBERS: &str = "@fieldwise_init\nstruct NumbersIter:\n    var cur: Int\n    var stop: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        if self.cur >= self.stop:\n            raise StopIteration()\n        var v = self.cur\n        self.cur = self.cur + 1\n        return v\n\nstruct Numbers(Movable):\n    var stop: Int\n    def __init__(out self, stop: Int):\n        self.stop = stop\n    def __init__(out self, *, deinit move: Self):\n        self.stop = move.stop\n    def __deinit__(deinit self):\n        print(\"drop numbers\", self.stop)\n    def __iter__(self) -> NumbersIter:\n        return NumbersIter(0, self.stop)\n\n";
 
 #[test]
-fn borrowed_iteration_over_a_temporary_drops_the_source_after_the_loop() {
+fn borrowed_iteration_over_a_temporary_drops_an_unreferenced_source_asap() {
     let src = format!(
         "{ITERABLE_NUMBERS}def main():\n    for x in Numbers(3):\n        print(\"x\", x)\n    print(\"after\")\n"
     );
-    assert_eq!(vm(&src), "x 0\nx 1\nx 2\ndrop numbers 3\nafter\n");
+    assert_eq!(vm(&src), "drop numbers 3\nx 0\nx 1\nx 2\nafter\n");
 }
 
 #[test]
@@ -525,8 +525,25 @@ fn breaking_out_of_borrowed_temporary_iteration_still_drops_the_source_once() {
         "{ITERABLE_NUMBERS}def main():\n    for x in Numbers(5):\n        print(\"x\", x)\n        if x == 1:\n            break\n    print(\"after\")\n"
     );
     let out = vm(&src);
-    assert_eq!(out, "x 0\nx 1\ndrop numbers 5\nafter\n");
+    assert_eq!(out, "drop numbers 5\nx 0\nx 1\nafter\n");
     assert_eq!(out.matches("drop numbers").count(), 1);
+}
+
+#[test]
+fn a_named_source_its_iterator_cannot_refer_to_dies_after_its_last_use() {
+    let src = format!(
+        "{ITERABLE_NUMBERS}def main():\n    var numbers = Numbers(2)\n    for x in numbers:\n        print(\"x\", x)\n    print(\"after\")\n    var kept = Numbers(1)\n    for y in kept:\n        print(\"y\", y)\n    print(\"kept\", kept.stop)\n"
+    );
+    assert_eq!(
+        vm(&src),
+        "drop numbers 2\nx 0\nx 1\nafter\ny 0\nkept 1\ndrop numbers 1\n"
+    );
+}
+
+#[test]
+fn an_origin_bearing_iterator_keeps_its_temporary_source_through_the_loop() {
+    let src = "struct It[mut: Bool, //, o: Origin[mut=mut]](Iterator):\n    comptime Element = Int\n    var src: Pointer[Tracked, Self.o]\n    var cur: Int\n\n    def __init__(out self, ref[Self.o] src: Tracked):\n        self.src = Pointer(to=src)\n        self.cur = 0\n\n    def __next__(mut self) raises StopIteration -> Int:\n        if self.cur >= self.src[].stop:\n            raise StopIteration()\n        self.cur += 1\n        return self.cur\n\nstruct Tracked(Movable):\n    comptime IteratorType[\n        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]\n    ] = It[iterable_origin]\n    var tag: Int\n    var stop: Int\n\n    def __init__(out self, tag: Int, stop: Int):\n        self.tag = tag\n        self.stop = stop\n\n    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:\n        return It(self)\n\n    def __deinit__(deinit self):\n        print(\"dropped\", self.tag)\n\ndef main():\n    for x in Tracked(1, 2):\n        print(\"saw\", x)\n    print(\"done\")\n";
+    assert_eq!(vm(src), "saw 1\nsaw 2\ndropped 1\ndone\n");
 }
 
 #[test]

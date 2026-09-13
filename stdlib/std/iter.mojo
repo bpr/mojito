@@ -1,4 +1,7 @@
-# Core iteration protocols.
+# Core iteration protocols, homed at `std.iter` as in current Mojo, whose
+# prelude also exports `Iterator`, `Iterable`, `IterableOwned`, and
+# `StopIteration`. A `for` loop advances through `__next__`, which raises
+# `StopIteration` at exhaustion.
 #
 # The owned contract uses current Mojo's monomorphic `IteratorOwnedType`: a
 # consuming iterator owns its storage, so it needs no origin parameter.

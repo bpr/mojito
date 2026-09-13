@@ -14,7 +14,7 @@ from std.collections.dict import Dict
 from std.collections.optional import Optional, OptionalReg
 from std.builtin.tuple import Tuple
 from std.range import range
-from std.iterable import next
+from std.iter import Iterable, IterableOwned, Iterator, StopIteration, next
 from std.builtin.reversed import reversed
 from std.memory.alloc import alloc
 from std.span import Span

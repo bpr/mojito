@@ -2,7 +2,7 @@
 # binds the loop's source slot to a reference handle — the step-0
 # `__iter__(ref self)` receiver aliases the caller's storage — while a
 # temporary source stays live in its own split slot until after the loop.
-from std.iterable import StopIteration
+from std.iter import StopIteration
 
 @fieldwise_init
 struct WindowIter:

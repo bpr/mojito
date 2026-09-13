@@ -1501,9 +1501,10 @@ body:
 exit:
 ```
 
-The compatibility path for a nonraising iterator instead executes
-`has_next(iterator)` through its selected `__len__`, then `next(iterator)` in the
-body. For a concrete borrowed List, Set, or Dict place, the preheader carries its
+A nonraising `__next__` has no loop shape: the checker rejects it with upstream's
+`__has_next__` diagnostic, and only compiler-private carriers (the CTFE
+`ComptimeList` and the runtime pack) test `has_next` before a method-free `next`.
+For a concrete borrowed List, Set, or Dict place, the preheader carries its
 checked interior origin through `BorrowIter`; `for ref` binds the protocol's
 yielded reference handles directly — the former List-only indexed-place
 desugaring is gone.
@@ -1518,7 +1519,8 @@ referent. Compiler-private iterator carriers alone omit the nominal operation
 contract.
 
 Abstract iteration instead retains the value type promised by the trait. Its
-checked `Next`/`TryNext` operation carries the same explicit copy-reference
+checked `TryNext` operation, which catches the `StopIteration` that the bundled
+`Iterator.__next__` requirement declares, carries the same explicit copy-reference
 adapter as an ordinary bounded `iterator.__next__()` call. Runtime retargeting
 leaves a concrete value return unchanged, or materializes and lifecycle-copies a
 concrete reference return before writing the value-typed destination. A
@@ -2660,25 +2662,31 @@ first execute the checker-selected nominal `__iter__` normalization chain. Every
 borrowed source is retained in its own slot — statement loops and comprehension
 clauses share the rule — and `GetIter` writes the normalized iterator into a
 distinct iterator-object slot, so the source stays live in its own slot through
-the loop rather than being overwritten during normalization. A borrowed
-**temporary** — the only owner of its storage — is `Bind`-bound and kept live by
-a `KeepAlive` liveness anchor at the loop exit, then destroyed exactly once
-after the loop. A borrowed **named** source is instead `MakeRef`-bound (a
-genuine reference, no copy) and its dependency is recorded as a loan — a
-whole-place shared loan, or an interior `element` generation for a concrete
-collection place — re-established on the long-lived iterator-object slot: the
-loan keeps the source live through the loop (no `KeepAlive` needed) and rejects
-conflicting mutation of the source during iteration; the reference slot is read
-only by `GetIter` and dropped afterward as a no-op. Owned iteration keeps the
+the loop rather than being overwritten during normalization. Whether the loop
+keeps that source alive is the checked `IterationProtocol::source_retained`
+fact: the normalized iterator may refer to its source only when its declaration
+binds an `Origin`/`OriginSet` parameter, holds a reference or pointer field, or
+its `__next__` returns a reference. When it cannot, nothing extends the
+source's lifetime and ASAP destruction runs its `__deinit__` right after
+`GetIter`, as upstream does. Otherwise a borrowed **temporary** — the only
+owner of its storage — is `Bind`-bound and kept live by a `KeepAlive` liveness
+anchor at the loop exit, then destroyed exactly once after the loop. A borrowed
+**named** source is instead `MakeRef`-bound (a genuine reference, no copy) and
+its dependency is recorded as a loan — a whole-place shared loan, or an
+interior `element` generation for a concrete collection place — re-established
+on the long-lived iterator-object slot: the loan keeps the source live through
+the loop (no `KeepAlive` needed) and rejects conflicting mutation of the source
+during iteration; the reference slot is read only by `GetIter` and dropped
+afterward as a no-op. Owned iteration keeps the
 single slot: `__iter__(var self)` consumes the source into the iterator.
 Bundled borrowed paths cover List, Set, Dict, and Range; the bundled owned path
 is currently List-specific. For a current typed-raising iterator, `TryNext`
 invokes `__next__(mut self)`, writes the mutated iterator back, and branches on
 whether the call returned an element or raised the exact checked
-`StopIteration`. The older `HasNext`/`Next` pair remains for nonraising iterators
-whose selected `__len__` reports exhaustion. Bundled Range/list/set/dict
-iterators and concrete user iterators use those nominal paths. The only
-method-free fallbacks are the CTFE-only `ComptimeList` carrier and the
+`StopIteration`; a generic `Iterable` bound takes the same path through the
+abstract `__iterator_dispatch.__next__`. Bundled Range/list/set/dict iterators
+and concrete user iterators use that nominal path. `HasNext`/`Next` serve only
+the method-free fallbacks: the CTFE-only `ComptimeList` carrier and the
 compiler-private heterogeneous runtime-pack carrier; public `Tuple` values are
 nominal and do not use that fallback.
 

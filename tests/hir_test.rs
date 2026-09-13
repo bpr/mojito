@@ -527,10 +527,7 @@ fn checked_hir_retains_the_abstract_iterator_copy_adapter() {
         .node_weights()
         .flat_map(|block| &block.instrs)
         .find_map(|instruction| match instruction {
-            mojito::hir::HirInstr::Next {
-                call: Some(call), ..
-            }
-            | mojito::hir::HirInstr::TryNext { call, .. } => Some(call.result_adapter),
+            mojito::hir::HirInstr::TryNext { call, .. } => Some(call.result_adapter),
             _ => None,
         })
         .expect("abstract iterator next");

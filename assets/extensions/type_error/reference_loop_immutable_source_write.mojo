@@ -2,7 +2,7 @@
 # A read parameter is an immutable source: the loop site resolves the
 # parametric-mut yielded reference to immutable, so writing through the
 # `for ref` binding is rejected.
-from std.iterable import StopIteration
+from std.iter import StopIteration
 
 
 @fieldwise_init

@@ -8,7 +8,7 @@
 # subset gaps, and `__getitem__` stays unchecked like the wider subset's
 # debug asserts.
 
-from std.iterable import Iterable, Iterator, StopIteration
+from std.iter import Iterable, Iterator, StopIteration
 
 def _range_length(start: Int, stop: Int, step: Int) -> Int:
     if step == 0:

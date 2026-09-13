@@ -135,32 +135,6 @@ whatever its model, because it batches every change that needs a new
 The two checkboxes below, and the bullets inside the two standing ones,
 are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
 
-- [ ] **Mojito's `for` protocol predates the pin's `__has_next__`**
-
-  Problem: 21 fixtures — every row left in
-  [`conformance/assets-mojo-rejects.tsv`](../conformance/assets-mojo-rejects.tsv)
-  after the 2026-09-13 burn-down — are one family. Mojito iterates
-  with `__len__` plus `__next__` and puts `Iterator`/`StopIteration` in
-  `std.iterable`; the pin exports both from its prelude, homes them at
-  `std.iter`, and its `for` wants `__has_next__`, which Mojito has nowhere.
-  The 15 fixtures that import `std.iterable` fail on the import, which masks
-  the protocol error the other six report directly.
-  - Probe before editing: respell one fixture's import to `std.iter`, run it
-    under the pin, and record what upstream says about the raising protocol.
-    Only then is it knowable whether this is 15 respellings or one checker
-    task.
-  - The checker task, if it is one: `__has_next__` in the `for` lowering and
-    in the bundled `Iterator` trait, with fallout across
-    `stdlib/std/iterable.mojo` and its ~51 references.
-  - `assets/ok/iterable_associated_element.mojo` has no `main` because its
-    iterator never compiled upstream; it gets one when this closes.
-  - The same import masks one error-folder fixture,
-    `assets/runtime_error/pliron_raise_iter_stop_unhandled.mojo` (its
-    `iterator-protocol` row in `conformance/assets-mojo-errors.tsv`). Re-sweep
-    it with `--errors --only` when this closes.
-  - Model: Opus, plan first. The probe decides the shape of the work, and the
-    answer changes the stdlib's iterator vocabulary.
-
 - [ ] **The pinned Mojo compiles and runs 26 fixtures the `assets/` error
   folders claim it rejects**
 
@@ -236,6 +210,14 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
   an `assets/ok` fixture.
 
   Open today:
+  - `comptime-for-tuple`: Mojito runs `comptime for` over a compile-time
+    Tuple; the pin rejects it because `Tuple` does not implement `__iter__`.
+    - `assets/extensions/ok/comptime_for_tuple.mojo` pins the extension, and
+      `assets/ok/comptime_tuple.mojo` iterates a compile-time list, which
+      both compilers accept.
+    - Model: Opus, as-is. Rejecting a Tuple `comptime for` in comptime
+      elaboration with upstream's message, and moving the fixture to
+      `assets/type_error/`, is the whole change.
   - `pack-element-type-narrowing`: inside a folded `comptime if Self.Ts[i]
     == T` branch Mojito treats the pack element `self.storage[i]` as a `T`,
     so a `ref[origin_of(self)] T` accessor returns it and an `==` against a
@@ -308,7 +290,11 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     sub-origin (`origin_of(o["element"])`) and wants
     `ref[origin_of(self.src[][i])]`, which Mojito's escape check rejects
     because no `Origin` variant carries a projected `SelfParam`. Two
-    `assets/origin_ok` fixtures moved for it.
+    `assets/origin_ok` fixtures moved for it, and five `Pointer` iteration
+    twins (`assets/extensions/ok/pointer_field_reference_yielding_iteration*`,
+    `pointer_field_comprehension_borrowed_named_source`,
+    `pointer_field_parametric_mut_iterator_read`) joined their `ref`-field
+    originals.
     - Model: Opus, plan first. The fix adds a projected receiver origin to
       `mojito_types::origin::Origin`, which MIR text, verification, and
       substitution all read.
@@ -353,8 +339,11 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     `Element`, so one associated type serves a generic signature and the
     loop; the pin yields the *iterator*'s `Iter.Element` and will not convert
     between the two without an identity clause Mojito does not implement.
-    - Model: Opus, plan first, and after the `__has_next__` task above, which
-      rewrites the same protocol.
+    - `assets/extensions/ok/iterable_associated_element.mojo` has no `main`:
+      its `for` over a trait bound that declares only `Element` never
+      compiled upstream, where even a real `Iterable` bound abandons its
+      `AnyType` iterator temporary.
+    - Model: Opus, plan first.
   - `mojito-only-stdlib-algorithms` / `owning-family-container-apis`: two
     stdlib surfaces upstream does not have — `std.algorithms`,
     `std.collections.string_dict`, and the owning-family container APIs
@@ -434,9 +423,11 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     and its exclusivity rule then refuses to pass such a collection and a
     carrier over the same origin to one call — which is why
     `origin-carrying-callable-struct`, `parametric-callable-argument`, and
-    the four `cross-origin-*` shapes have no upstream spelling at all. Six
+    the four `cross-origin-*` shapes have no upstream spelling at all. Nine
     corpus fixtures moved to `assets/extensions/` for it
-    (`pointer_field_*`), and five more were respelled to bind the origin.
+    (`pointer_field_*`, among them the `View`/`KeyIter` iterators whose
+    `[o]` value will not convert to `[origin_of(self)]`), and five more were
+    respelled to bind the origin.
     - Model: Fable. Origin arguments must survive checked identity (the same
       lever as `symbolic-origin-pointer-write`), and the exclusivity rule is
       a new analysis rather than a spelling.

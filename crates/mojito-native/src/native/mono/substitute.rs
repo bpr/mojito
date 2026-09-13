@@ -290,9 +290,9 @@ pub(super) fn substitute_instruction(
     use MirInstr::{
         Call, CallIndirect, Const, ConstructTypeParam, ConsumePlace, DefVar, DropPlace,
         EstablishLoans, Index, LoadPlace, MakeClosure, MakeRef, MakeTuple, MakeVariant,
-        MaterializeLiteral, MethodCall, MovePlace, MultiIndex, MultiSet, Next,
-        PointerStorageDestroy, PointerStorageTake, SizeOf, Slice, Store, StoreRef, Try, TryNext,
-        UninitStorageDestroy, UninitStorageTake, VariantReplace, VariantSet, VariantSetInitWith,
+        MaterializeLiteral, MethodCall, MovePlace, MultiIndex, MultiSet, PointerStorageDestroy,
+        PointerStorageTake, SizeOf, Slice, Store, StoreRef, Try, TryNext, UninitStorageDestroy,
+        UninitStorageTake, VariantReplace, VariantSet, VariantSetInitWith,
     };
     match instruction {
         EstablishLoans { loans, .. } => {
@@ -326,9 +326,6 @@ pub(super) fn substitute_instruction(
         | UninitStorageDestroy {
             element: target, ..
         } => *target = substitute_ty(target, bindings)?,
-        Next {
-            call: Some(call), ..
-        } => substitute_iterator_call(call, bindings)?,
         TryNext {
             call, exhaustion, ..
         } => {

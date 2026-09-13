@@ -1,6 +1,6 @@
 # P3: parametric-mut origin param on a struct; application without explicit Bool.
 # The source is stored through a `Pointer[T, Self.o]` field.
-from std.iterable import StopIteration
+from std.iter import StopIteration
 
 
 struct PIter[m: Bool, //, o: Origin[mut=m]]:

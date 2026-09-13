@@ -12,7 +12,7 @@ from std.memory.alloc import unsafe_alloc
 
 from std.reflection.type_info import _unqualified_type_name
 from std.hashlib import Hasher
-from std.iterable import Iterable, IterableOwned, Iterator, StopIteration
+from std.iter import Iterable, IterableOwned, Iterator, StopIteration
 
 from std.collections.optional import Optional
 

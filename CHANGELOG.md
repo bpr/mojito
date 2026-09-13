@@ -21,6 +21,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `for` loop now accepts only current Mojo's iterator protocol, a
+  `__next__` that raises `StopIteration`. The bounded protocol, where
+  `__len__()` decides whether a non-raising `__next__` is called, was removed
+  upstream in Mojo 0.26.1. A non-raising `__next__` is now rejected with the
+  pin's words, "'X' does not implement the '__has_next__' method", and a loop
+  over a generic `Iterable` bound advances through the raising contract too.
+  `Iterator`, `Iterable`, `IterableOwned`, and `StopIteration` move to
+  `std.iter` and join the prelude, as upstream homes them, and a program's
+  own top-level declaration of one of those names shadows the prelude's. A
+  loop source that its iterator cannot refer to is destroyed as soon as
+  `__iter__` returns, for a named source, a temporary, and a comprehension
+  alike; one the iterator borrows still lives until the loop exits.
+  `conformance/assets-mojo-rejects.tsv` is empty: its last 21 fixtures were
+  respelled, or moved to `assets/extensions/` where the pin refuses their
+  shape.
 - Five behavioral divergences from the pinned Mojo are closed, and two more
   are retained on purpose. `input()` raises `Error("EOF")` at end of input
   and must be called from a raising context; native `input()` still returns

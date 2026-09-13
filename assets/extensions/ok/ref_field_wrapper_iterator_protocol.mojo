@@ -2,7 +2,7 @@
 # holding an origin-applied ref-field entry iterator (monomorphic comptime
 # alias in field position), full raising-iterator protocol, and a for-loop
 # driving the wrapped chain through `keys()`.
-from std.iterable import Iterator, StopIteration
+from std.iter import Iterator, StopIteration
 
 @fieldwise_init
 struct Pair(Copyable, Movable):

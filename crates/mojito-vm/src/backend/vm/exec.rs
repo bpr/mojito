@@ -1725,127 +1725,37 @@ impl VmBackend {
                 }
                 vars[*dest as usize] = current;
             }
-            MirInstr::HasNext { dest, iter, method } => {
-                let slot = *iter as usize;
-                // A struct iterator reports remaining length via `__len__` (bounded
-                // iteration): more elements iff `len(it) > 0`. Compiler-private
-                // runtime-pack storage remains a method-free tuple; public Tuple
-                // values are nominal structs and cannot reach this fallback.
-                let has = if let Some(selected) = method {
-                    let Value::Struct { name, .. } = &vars[slot] else {
-                        return Err(RuntimeError::TypeError(format!(
-                            "vm: checked iterator length applied to {}",
-                            crate::runtime::type_name(&vars[slot])
+            MirInstr::HasNext { dest, iter } => {
+                // Only compiler-private runtime-pack storage (a method-free
+                // tuple) and a CTFE compile-time list iterate without a nominal
+                // `__next__`; public Tuple values are nominal structs and cannot
+                // reach this fallback.
+                let has = match &vars[*iter as usize] {
+                    Value::ComptimeList(items) if self.ctfe_fuel.is_some() => !items.is_empty(),
+                    Value::Tuple(items) => !items.is_empty(),
+                    other => {
+                        return Err(RuntimeError::Unsupported(format!(
+                            "vm: native iterator fallback reached {}; runtime collections must use nominal __iter__",
+                            crate::runtime::type_name(other)
                         )));
-                    };
-                    let sname = name.clone();
-                    let target =
-                        prog.runtime_method_name(&sname, "__len__", Some(selected.as_str()), 0);
-                    let fidx = prog.index_of(&target).ok_or_else(|| {
-                        RuntimeError::Unsupported(format!(
-                            "vm: checked iterator method '{target}' is missing from MIR"
-                        ))
-                    })?;
-                    match self
-                        .call_frame_caller_reachable(
-                            prog,
-                            fidx,
-                            vec![vars[slot].clone()],
-                            frame_id,
-                            function,
-                            vars,
-                        )?
-                        .0
-                    {
-                        Value::Int(n) => n > 0,
-                        other => {
-                            return Err(RuntimeError::TypeError(format!(
-                                "vm: iterator __len__ must return Int, got {}",
-                                crate::runtime::type_name(&other)
-                            )));
-                        }
-                    }
-                } else {
-                    match &vars[slot] {
-                        Value::ComptimeList(items) if self.ctfe_fuel.is_some() => !items.is_empty(),
-                        Value::Tuple(items) => !items.is_empty(),
-                        other => {
-                            return Err(RuntimeError::Unsupported(format!(
-                                "vm: native iterator fallback reached {}; runtime collections must use nominal __iter__",
-                                crate::runtime::type_name(other)
-                            )));
-                        }
                     }
                 };
                 regs[dest.0 as usize] = Value::Bool(has);
             }
-            MirInstr::Next { dest, iter, call } => {
-                let slot = *iter as usize;
-                // A struct iterator advances via `__next__(mut self)`: the element is
-                // the return value, and the advanced iterator (frame slot 0) is
-                // written back into the iterator variable.
-                if let Some(call) = call {
-                    let Value::Struct { name, .. } = &vars[slot] else {
-                        return Err(RuntimeError::TypeError(format!(
-                            "vm: checked iterator next applied to {}",
-                            crate::runtime::type_name(&vars[slot])
-                        )));
-                    };
-                    let sname = name.clone();
-                    let target =
-                        prog.runtime_method_name(&sname, "__next__", Some(call.target.as_str()), 0);
-                    let fidx = prog.index_of(&target).ok_or_else(|| {
-                        RuntimeError::Unsupported(format!(
-                            "vm: checked iterator method '{target}' is missing from MIR"
-                        ))
-                    })?;
-                    let concrete_returns_reference = prog.mir.functions[fidx].1.returns_reference;
-                    let (ret, mut frame_vars, returned_frame_id) = self
-                        .call_frame_caller_reachable(
-                            prog,
-                            fidx,
-                            vec![vars[slot].clone()],
-                            frame_id,
-                            function,
-                            vars,
-                        )?;
-                    let adapted = self.apply_checked_result_adapter(
-                        prog,
-                        ret,
-                        call.result_adapter,
-                        concrete_returns_reference,
-                        ResultAdapterFrames {
-                            current: frame_id,
-                            current_variables: vars,
-                            returned: Some((returned_frame_id, &mut frame_vars)),
-                        },
-                    )?;
-                    let adapted = self.rebase_iterator_result(
-                        adapted,
-                        returned_frame_id,
-                        &frame_vars,
-                        frame_id,
-                        *iter,
-                    );
-                    vars[slot] = frame_vars.into_iter().next().unwrap_or(Value::None);
-                    regs[dest.0 as usize] = adapted;
-                } else {
-                    match &mut vars[slot] {
-                        Value::ComptimeList(items) if self.ctfe_fuel.is_some() => {
-                            regs[dest.0 as usize] = items.remove(0);
-                        }
-                        Value::Tuple(items) => {
-                            regs[dest.0 as usize] = items.remove(0);
-                        }
-                        ref other => {
-                            return Err(RuntimeError::Unsupported(format!(
-                                "vm: native iterator fallback reached {}; runtime collections must use nominal __next__",
-                                crate::runtime::type_name(other)
-                            )));
-                        }
-                    }
+            MirInstr::Next { dest, iter } => match &mut vars[*iter as usize] {
+                Value::ComptimeList(items) if self.ctfe_fuel.is_some() => {
+                    regs[dest.0 as usize] = items.remove(0);
                 }
-            }
+                Value::Tuple(items) => {
+                    regs[dest.0 as usize] = items.remove(0);
+                }
+                ref other => {
+                    return Err(RuntimeError::Unsupported(format!(
+                        "vm: native iterator fallback reached {}; runtime collections must use nominal __next__",
+                        crate::runtime::type_name(other)
+                    )));
+                }
+            },
             MirInstr::TryNext {
                 dest,
                 yielded,

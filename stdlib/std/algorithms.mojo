@@ -1,6 +1,6 @@
 # Small self-hosted generic helpers that deliberately exercise comptime facts.
 
-from std.iterable import Iterable
+from std.iter import Iterable
 
 trait StaticSized:
     comptime size: Int

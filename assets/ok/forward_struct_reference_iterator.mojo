@@ -1,6 +1,6 @@
 # P1c: iterator declared before its container, reaching the container only
 # through method calls on the pointer field (the exact list.mojo shape).
-from std.iterable import StopIteration
+from std.iter import StopIteration
 
 
 @fieldwise_init

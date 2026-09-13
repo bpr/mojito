@@ -1,19 +1,16 @@
-# A comprehension over a borrowed temporary keeps the source alive in its own
-# slot and destroys it exactly once, after the comprehension. `Numbers(3)` is
-# the only owner of its storage; its `__iter__(self)` returns a borrowing
-# iterator. Before comprehensions shared the statement loop's retained-source/
-# iterator-object slot split, normalization overwrote the source in place, so
-# its `__deinit__` never ran (a leak). The expected output pins the drop after the
-# comprehension, before execution continues.
+# A comprehension over a temporary whose iterator borrows nothing destroys the
+# source exactly once, as soon as `__iter__` returns. `Numbers(3)` is the only
+# owner of its storage and `NumbersIter` carries no origin, so the comprehension
+# shares the statement loop's ASAP rule; the source still keeps its own slot,
+# apart from the iterator object, so normalization cannot overwrite (leak) it.
 @fieldwise_init
 struct NumbersIter:
     var cur: Int
     var stop: Int
 
-    def __len__(self) -> Int:
-        return self.stop - self.cur
-
-    def __next__(mut self) -> Int:
+    def __next__(mut self) raises StopIteration -> Int:
+        if self.cur >= self.stop:
+            raise StopIteration()
         var v = self.cur
         self.cur = self.cur + 1
         return v

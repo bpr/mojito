@@ -3,7 +3,7 @@
 # resolves exactly like the zero-argument form; the arguments are checked at
 # each call site as usual. The wrapped iterator stores its source through a
 # `Pointer[T, Self.o]` field.
-from std.iterable import Iterator, StopIteration
+from std.iter import Iterator, StopIteration
 
 @fieldwise_init
 struct Pair(Copyable, Movable):
@@ -26,7 +26,7 @@ struct EntryIter[m: Bool, //, o: Origin[mut=m]]:
 
 @fieldwise_init
 struct KeyIter[m: Bool, //, o: Origin[mut=m]]:
-    var iter: EntryIter[o]
+    var iter: EntryIter[Self.o]
 
     def __next__(mut self) raises StopIteration -> ref[
         self.iter.step(1).key

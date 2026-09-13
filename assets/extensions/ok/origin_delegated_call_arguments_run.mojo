@@ -1,7 +1,7 @@
 # An argument-taking delegated-call origin expression drives an iterator
 # adapter end-to-end: `ref[self.iter.step(1).key]` resolves the wrapped
 # iterator's contract, and stepping happens through the delegated call.
-from std.iterable import Iterator, StopIteration
+from std.iter import Iterator, StopIteration
 
 @fieldwise_init
 struct Pair(Copyable, Movable):

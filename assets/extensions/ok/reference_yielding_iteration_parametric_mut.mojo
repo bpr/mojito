@@ -2,7 +2,7 @@
 # mutable named source: the loop site resolves the yielded reference's
 # mutability from the source, so `for ref` writes through into the source,
 # observed after the loop.
-from std.iterable import StopIteration
+from std.iter import StopIteration
 
 
 @fieldwise_init

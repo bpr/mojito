@@ -16,7 +16,7 @@
 #
 # family:   agree           the verdict matches the folder, on the same defect
 #           a burn-down name (self-qualification, missing-import,
-#                           iterator-protocol, unbound-parameter, no-main,
+#                           unbound-parameter, no-main,
 #                           alias-keyword, ledgered) — the pin rejected it, but
 #                           for a spelling the fixture never set out to test, so
 #                           the defect it pins went unexamined. The names are
@@ -105,7 +105,7 @@ assets/runtime_error/optional_deinit_assert_empty_nonempty_aborts.mojo	trap	agre
 assets/runtime_error/optional_take_empty_aborts.mojo	trap	agree	error: execution crashed
 assets/runtime_error/pliron_raise_error_value.mojo	trap	agree	boom from a var
 assets/runtime_error/pliron_raise_iter_body.mojo	trap	agree	boom at 2
-assets/runtime_error/pliron_raise_iter_stop_unhandled.mojo	compile-reject	iterator-protocol	error: unable to locate module 'iterable'
+assets/runtime_error/pliron_raise_iter_stop_unhandled.mojo	compile-reject	skip	error: 'kgen.call' op callee argument #0 expected type '!kgen.pointer<struct<()>>' but operation argument has type '!kgen.pointer<struct<(struct<(pointer<none>, scalar<index>, scalar<index>) memoryOnly>, struct<(struct<(struct<(variant<struct<()>, struct<(pointer<none>) memoryOnly>>) memoryOnly>) memoryOnly>) memoryOnly>) memoryOnly>>'
 assets/runtime_error/pliron_raise_unhandled.mojo	trap	agree	negative input
 assets/runtime_error/pliron_trap_div_zero.mojo	runs	subset	the pin runs it; Mojito rejects: integer division or modulo by zero
 assets/runtime_error/pliron_trap_mod_zero.mojo	runs	subset	the pin runs it; Mojito rejects: integer division or modulo by zero

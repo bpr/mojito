@@ -268,8 +268,8 @@ impl Checker {
                     binding: None,
                     borrowed_origin: None,
                     yield_interior: Vec::new(),
+                    source_retained: true,
                     prepare: Vec::new(),
-                    has_next: None,
                     next: None,
                     exhaustion: None,
                 },
@@ -305,7 +305,9 @@ impl Checker {
             Ty::Param { bounds, .. } => {
                 let owned = mode == IterationMode::Owned;
                 let required = if owned { "IterableOwned" } else { "Iterable" };
-                if !bounds.iter().any(|bound| bound == required)
+                if !bounds
+                    .iter()
+                    .any(|bound| names_iteration_trait(bound, required))
                     && self.lookup_trait_assoc_type(bounds, "Element").is_none()
                 {
                     return Err(TypeError::TypeMismatch {
@@ -314,7 +316,11 @@ impl Checker {
                         context: "for-loop iterable".to_string(),
                     });
                 }
-                if owned && !bounds.iter().any(|bound| bound == "IterableOwned") {
+                if owned
+                    && !bounds
+                        .iter()
+                        .any(|bound| names_iteration_trait(bound, "IterableOwned"))
+                {
                     return Err(TypeError::TraitNotSatisfied {
                         param: "T".to_string(),
                         ty: ty.to_string(),
@@ -329,6 +335,7 @@ impl Checker {
                     name: "Element".to_string(),
                     args: Vec::new(),
                 };
+                let exhaustion = self.generic_iterator_exhaustion(bounds, required)?;
                 Ok((
                     element.clone(),
                     IterationProtocol {
@@ -336,21 +343,21 @@ impl Checker {
                         binding: None,
                         borrowed_origin: None,
                         yield_interior: Vec::new(),
+                        source_retained: true,
                         prepare: vec![mojito_symbol::symbol::iterator_dispatch_symbol(match mode {
                             IterationMode::Borrowed => mojito_ast::ast::ArgConvention::Imm,
                             IterationMode::Owned => mojito_ast::ast::ArgConvention::Var,
                         })],
-                        has_next: Some("__iterator_dispatch.__len__".to_string()),
                         next: Some(Box::new(mojito_checked::checked::CheckedIteratorCall {
                             target: "__iterator_dispatch.__next__".to_string(),
                             result_ty: element,
                             reference_result: None,
-                            raises: None,
+                            raises: Some(exhaustion.clone()),
                             result_adapter: Some(
                                 mojito_checked::checked::CheckedResultAdapter::CopyIteratorReference,
                             ),
                         })),
-                        exhaustion: None,
+                        exhaustion: Some(exhaustion),
                     },
                 ))
             }
@@ -471,10 +478,9 @@ impl Checker {
             ),
             None => format!("{cname}.__iter__"),
         };
-        // The iterator must itself be a struct with `__next__`. Current Mojo
-        // terminates iteration when that method raises the typed
-        // `StopIteration`; the legacy bounded protocol additionally exposes
-        // `__len__` and keeps the old nonraising `__next__` path available.
+        // The iterator must itself be a struct with `__next__`, and current Mojo
+        // terminates iteration only when that method raises the typed
+        // `StopIteration`.
         let bad_iter = || TypeError::TypeMismatch {
             expected: "List or an iterator struct with __next__".to_string(),
             found: it_ty.to_string(),
@@ -513,6 +519,14 @@ impl Checker {
                 found: "read-only self".to_string(),
                 context: "iterator '__next__'".to_string(),
             });
+        }
+        // Current Mojo removed the bounded `__has_next__` protocol, so a
+        // nonraising `__next__` leaves the loop no way to stop.
+        if !next_sig.raises {
+            return Err(TypeError::IteratorProtocol(format!(
+                "'{}' does not implement the '__has_next__' method",
+                mojito_types::types::unqualified_type_name(it_ty)
+            )));
         }
         let next_symbol = if iinfo
             .methods
@@ -555,58 +569,12 @@ impl Checker {
             }
             _ => Vec::new(),
         };
-        if next_sig.raises {
-            let exhaustion = next_error.clone().unwrap_or(Ty::Error);
-            let is_stop_iteration = matches!(
-                &exhaustion,
-                Ty::Struct(name, arguments)
-                    if arguments.is_empty()
-                        && (name == "StopIteration" || name.ends_with("$StopIteration"))
-            );
-            if !is_stop_iteration {
-                return Err(TypeError::TypeMismatch {
-                    expected: "an '__next__' that raises StopIteration".to_string(),
-                    found: format!("raises {exhaustion}"),
-                    context: "iterator '__next__' exhaustion contract".to_string(),
-                });
-            }
-            self.require_owned_iteration_element(mode, element)?;
-            return Ok((
-                element.clone(),
-                mojito_checked::checked::IterationProtocol {
-                    mode,
-                    binding: None,
-                    borrowed_origin: None,
-                    yield_interior,
-                    prepare: vec![prepare_symbol],
-                    has_next: None,
-                    next: Some(Box::new(checked_next)),
-                    exhaustion: Some(exhaustion),
-                },
-            ));
-        }
-
-        // Backward-compatible bounded iteration: `__len__(self) -> Int`
-        // determines whether the nonraising `__next__` may be called.
-        let len_candidates = iinfo
-            .methods
-            .get("__len__")
-            .ok_or_else(|| no_method(it_ty, "__len__"))?;
-        let applicable_len = len_candidates
-            .iter()
-            .filter_map(|sig| {
-                self.instantiate_iteration_method(iname, iinfo, itargs, sig)
-                    .map(|(ret, _, _)| (sig, ret))
-            })
-            .collect::<Vec<_>>();
-        let [(len_sig, len_ret)] = applicable_len.as_slice() else {
-            return Err(no_method(it_ty, "__len__"));
-        };
-        if *len_ret != Ty::Int {
+        let exhaustion = next_error.clone().unwrap_or(Ty::Error);
+        if !names_iteration_decl(&exhaustion, "StopIteration") {
             return Err(TypeError::TypeMismatch {
-                expected: "Int".to_string(),
-                found: len_ret.to_string(),
-                context: "return type of iterator '__len__'".to_string(),
+                expected: "an '__next__' that raises StopIteration".to_string(),
+                found: format!("raises {exhaustion}"),
+                context: "iterator '__next__' exhaustion contract".to_string(),
             });
         }
         self.require_owned_iteration_element(mode, element)?;
@@ -617,25 +585,10 @@ impl Checker {
                 binding: None,
                 borrowed_origin: None,
                 yield_interior,
+                source_retained: reference_result.is_some() || struct_may_refer_elsewhere(iinfo),
                 prepare: vec![prepare_symbol],
-                has_next: Some(
-                    if iinfo
-                        .methods
-                        .get("__len__")
-                        .is_some_and(|methods| methods.len() > 1)
-                    {
-                        method_lowered_name(
-                            iname,
-                            "__len__",
-                            len_sig,
-                            self.self_instance_ty(iname).as_ref(),
-                        )
-                    } else {
-                        format!("{iname}.__len__")
-                    },
-                ),
                 next: Some(Box::new(checked_next)),
-                exhaustion: None,
+                exhaustion: Some(exhaustion),
             },
         ))
     }
@@ -763,6 +716,89 @@ impl Checker {
                 .then(|| signature.error.as_deref().map_or(Ty::Error, instantiate)),
         ))
     }
+
+    /// The typed error a loop over a generic bound catches through the abstract
+    /// `__iterator_dispatch.__next__`: what a `__next__` requirement raises,
+    /// read from the first of the bound's own traits (or a trait they refine)
+    /// that declares one, else from the `Iterator` homed beside the loop's
+    /// `Iterable`/`IterableOwned` bound (a program may declare its own
+    /// protocol), else from the bundled `std.iter`.
+    fn generic_iterator_exhaustion(
+        &self,
+        bounds: &[String],
+        required: &str,
+    ) -> Result<Ty, TypeError> {
+        let next_error = |name: &str| {
+            self.traits
+                .get(name)?
+                .methods
+                .get("__next__")?
+                .first()?
+                .error
+                .as_deref()
+                .cloned()
+        };
+        let mut pending: Vec<&str> = bounds.iter().map(String::as_str).collect();
+        let mut visited: Vec<&str> = Vec::new();
+        while let Some(name) = pending.pop() {
+            if visited.contains(&name) {
+                continue;
+            }
+            visited.push(name);
+            if let Some(error) = next_error(name) {
+                return Ok(error);
+            }
+            if let Some(info) = self.traits.get(name) {
+                pending.extend(info.refines.iter().map(String::as_str));
+            }
+        }
+        let sibling = bounds
+            .iter()
+            .find(|bound| names_iteration_trait(bound, required))
+            .and_then(|bound| bound.strip_suffix(required))
+            .map(|prefix| format!("{prefix}Iterator"));
+        sibling
+            .as_deref()
+            .into_iter()
+            .chain([STD_ITERATOR_TRAIT])
+            .find_map(next_error)
+            .ok_or_else(|| {
+                TypeError::Unsupported(
+                    "generic iteration requires the bundled 'std.iter' Iterator trait".to_string(),
+                )
+            })
+    }
+}
+
+/// The linked identity of the bundled `std.iter.Iterator` trait.
+const STD_ITERATOR_TRAIT: &str = "__module$std$iter$Iterator";
+
+/// Whether a bound names an iteration trait, spelled either as the builtin
+/// name or through its linked `std.iter` identity.
+fn names_iteration_trait(bound: &str, trait_name: &str) -> bool {
+    bound == trait_name
+        || bound
+            .strip_suffix(trait_name)
+            .is_some_and(|prefix| prefix.ends_with('$'))
+}
+
+/// Whether a type is the argument-free nominal declaration `name`, in either
+/// spelling [`names_iteration_trait`] accepts.
+fn names_iteration_decl(ty: &Ty, name: &str) -> bool {
+    matches!(ty, Ty::Struct(declared, arguments)
+        if arguments.is_empty() && names_iteration_trait(declared, name))
+}
+
+/// Whether a value of the declared struct may refer to another place. Origin
+/// arguments are erased from checked identity, so the declaration decides: an
+/// `Origin`/`OriginSet` parameter, or a reference or pointer field.
+fn struct_may_refer_elsewhere(info: &StructInfo) -> bool {
+    info.source_params.iter().any(|parameter| {
+        matches!(parameter.bounds.as_slice(), [bound] if bound == "Origin" || bound == "OriginSet")
+    }) || info
+        .fields
+        .iter()
+        .any(|(_, ty)| matches!(ty, Ty::Ref(_) | Ty::Pointer { .. }))
 }
 
 fn instantiate_iterator_reference(

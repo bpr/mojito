@@ -519,8 +519,8 @@ impl Flatten<'_> {
                         binding: None,
                         borrowed_origin: None,
                         yield_interior: Vec::new(),
+                        source_retained: true,
                         prepare: Vec::new(),
-                        has_next: None,
                         next: None,
                         exhaustion: None,
                     });
@@ -568,7 +568,7 @@ impl Flatten<'_> {
                     mode: protocol.mode,
                     prepare: protocol.prepare.clone(),
                 });
-                if borrowed && split_source {
+                if borrowed && split_source && protocol.source_retained {
                     self.reestablish_source_loans(iterator, iterator_object);
                 }
 
@@ -608,7 +608,6 @@ impl Flatten<'_> {
                     self.emit(MirInstr::HasNext {
                         dest: has_next,
                         iter: iterator_object,
-                        method: protocol.has_next.clone(),
                     });
                 }
                 self.f.blocks[self.cur].term = MirTerm::Branch {
@@ -622,7 +621,6 @@ impl Flatten<'_> {
                     self.emit(MirInstr::Next {
                         dest: element_value,
                         iter: iterator_object,
-                        call: protocol.next.as_deref().cloned(),
                     });
                 }
                 let binding_var = self.var(&format!("$comp{}${}", var, binding.owner.0));
@@ -647,14 +645,15 @@ impl Flatten<'_> {
                 self.comprehension_clauses(clauses, bindings, index + 1, plan);
                 self.f.blocks[self.cur].term = MirTerm::Jump(header);
                 self.cur = exit;
-                if split_source && !borrowed {
+                if split_source && !borrowed && protocol.source_retained {
                     // An owned temporary source is used only by `GetIter` before
-                    // the loop, so a liveness anchor at the exit keeps it live
-                    // through the loop (a borrowing iterator still refers to its
-                    // storage); then it is destroyed exactly once, after the
-                    // loop. A borrowed source is kept live by its loan and owned
-                    // (dropped) by its enclosing scope. Mirrors the statement
-                    // loop's exit anchor.
+                    // the loop, so when the iterator may refer to its storage a
+                    // liveness anchor at the exit keeps it live through the loop;
+                    // then it is destroyed exactly once, after the loop. A source
+                    // the iterator cannot refer to dies right after `GetIter`. A
+                    // borrowed source is kept live by its loan and owned (dropped)
+                    // by its enclosing scope. Mirrors the statement loop's exit
+                    // anchor.
                     self.emit(MirInstr::KeepAlive { var: iterator });
                     self.emit(MirInstr::DropVar { var: iterator });
                 }

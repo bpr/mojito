@@ -2,7 +2,7 @@
 # A direct `__next__` call past exhaustion propagates the nullary
 # StopIteration struct itself; the native message must spell the VM's
 # display of that value byte-for-byte.
-from std.iterable import StopIteration
+from std.iter import StopIteration
 
 def main() raises StopIteration:
     var source = range(2)

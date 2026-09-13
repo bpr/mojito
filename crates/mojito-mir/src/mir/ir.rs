@@ -834,21 +834,20 @@ pub enum MirInstr {
         mode: mojito_checked::checked::IterationMode,
         prepare: Vec<String>,
     },
-    /// Iterator protocol (`for` loops): read whether the iterator variable `iter`
-    /// yields another element into `dest` (a `Bool`) — a pure read.
+    /// Iterator protocol over compiler-private iterator storage (a runtime
+    /// pack or a compile-time list): read whether the iterator variable `iter`
+    /// yields another element into `dest` (a `Bool`) — a pure read. Nominal
+    /// iterators advance through [`MirInstr::TryNext`] instead.
     HasNext {
         dest: Reg,
         iter: VarId,
-        method: Option<String>,
     },
-    /// Iterator protocol: bind the current element into `dest` and advance the
-    /// iterator variable `iter` in place (a mutating read).
+    /// Iterator protocol over compiler-private iterator storage: bind the
+    /// current element into `dest` and advance the iterator variable `iter`
+    /// in place (a mutating read).
     Next {
         dest: Reg,
         iter: VarId,
-        /// Exact checked nominal operation; absent only for compiler-private
-        /// iterator storage.
-        call: Option<mojito_checked::checked::CheckedIteratorCall>,
     },
     /// Invoke a typed-raising iterator `__next__`. `yielded` is true when
     /// `dest` contains an element and false when the call raises exactly the

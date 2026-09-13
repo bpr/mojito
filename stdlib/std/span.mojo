@@ -8,7 +8,7 @@
 
 from std.collections.list import List
 
-from std.iterable import Iterable, Iterator, StopIteration
+from std.iter import Iterable, Iterator, StopIteration
 
 
 

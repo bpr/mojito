@@ -1,18 +1,17 @@
-# Borrowed iteration over a temporary keeps the source alive in its own slot and
-# destroys it exactly once, after the loop. `Numbers(3)` is the only owner of its
-# storage; its `__iter__(self)` returns a borrowing iterator. Before the source
-# and iterator were given distinct slots, normalization overwrote the source in
-# place, so its `__deinit__` never ran (a leak). The expected output pins the drop
-# after the final element, before execution continues.
+# Borrowed iteration over a temporary whose iterator borrows nothing: the source
+# is destroyed exactly once, as soon as `__iter__` returns, before the first
+# element. `Numbers(3)` is the only owner of its storage and `NumbersIter`
+# carries no origin, so nothing keeps the source alive through the loop — the
+# ASAP rule current Mojo applies. The source still keeps its own slot, apart
+# from the iterator object, so normalization cannot overwrite (leak) it.
 @fieldwise_init
 struct NumbersIter:
     var cur: Int
     var stop: Int
 
-    def __len__(self) -> Int:
-        return self.stop - self.cur
-
-    def __next__(mut self) -> Int:
+    def __next__(mut self) raises StopIteration -> Int:
+        if self.cur >= self.stop:
+            raise StopIteration()
         var v = self.cur
         self.cur = self.cur + 1
         return v

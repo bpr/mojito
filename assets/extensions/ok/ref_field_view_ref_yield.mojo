@@ -1,7 +1,7 @@
 # A ref-field view returned from an ordinary method yields references
 # (`__next__` returns `ref [...]`): the receiver loan established at the call
 # keeps the ultimate source alive under reference-yielding iteration.
-from std.iterable import Iterator, StopIteration
+from std.iter import Iterator, StopIteration
 
 @fieldwise_init
 struct View[

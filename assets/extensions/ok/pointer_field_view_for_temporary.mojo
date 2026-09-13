@@ -1,7 +1,7 @@
 # A pointer-field view returned from an ordinary method drives a for-loop
 # both as a temporary iterable and through a stored binding: the receiver
 # loan flows through GetIter onto the loop iterator.
-from std.iterable import Iterator, StopIteration
+from std.iter import Iterator, StopIteration
 
 struct View[
     view_mut: Bool, //,

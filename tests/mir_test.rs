@@ -672,10 +672,7 @@ fn abstract_next_calls_retain_the_copyable_reference_adapter() {
         .iter()
         .flat_map(|block| &block.instrs)
         .find_map(|instruction| match instruction {
-            MirInstr::Next {
-                call: Some(call), ..
-            }
-            | MirInstr::TryNext { call, .. } => Some(call.result_adapter),
+            MirInstr::TryNext { call, .. } => Some(call.result_adapter),
             _ => None,
         })
         .expect("abstract iterator next call");
@@ -1645,7 +1642,9 @@ fn reference_iteration_binding_reestablishes_the_source_loans() {
     // mints no interior loans, so the binding — a reborrow of the iterator
     // object, not a competing borrow — re-establishes nothing of its own
     // (mutably re-establishing the whole-place loan would self-conflict).
-    let source = include_str!("../assets/ok/reference_yielding_iteration_named_source.mojo");
+    let source = include_str!(
+        "../assets/extensions/ok/pointer_field_reference_yielding_iteration_named_source.mojo"
+    );
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
@@ -2090,7 +2089,9 @@ fn borrowed_list_iteration_lowers_a_reference_bind_and_interior_loan() {
 
 #[test]
 fn borrowed_named_user_source_lowers_a_reference_bind_and_whole_place_loan() {
-    let source = include_str!("../assets/ok/reference_yielding_iteration_named_source.mojo");
+    let source = include_str!(
+        "../assets/extensions/ok/pointer_field_reference_yielding_iteration_named_source.mojo"
+    );
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
@@ -2225,7 +2226,9 @@ fn borrowed_comprehension_sources_lower_like_statement_loops() {
 
     // Whole-place granularity: a comprehension over a named user iterable
     // borrows the whole source (`interior: None`) instead of copying it.
-    let source = include_str!("../assets/ok/comprehension_borrowed_named_source.mojo");
+    let source = include_str!(
+        "../assets/extensions/ok/pointer_field_comprehension_borrowed_named_source.mojo"
+    );
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
@@ -3343,7 +3346,7 @@ fn inferred_iteration_clone_uses_no_erased_iterator_dispatch() {
     // so this uses the stdlib `first_or` shape.) This is the Stage-E
     // retirement baseline for inferred applications.
     let mir = compiled_mir(
-        "from std.iterable import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item.copy()\n    return default.copy()\n\ndef main():\n    var xs: List[Int] = [3, 4, 5]\n    print(first(xs, -1))\n",
+        "from std.iter import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item.copy()\n    return default.copy()\n\ndef main():\n    var xs: List[Int] = [3, 4, 5]\n    print(first(xs, -1))\n",
     );
     let names = function_names(&mir);
     let clone = mir
@@ -3414,7 +3417,7 @@ fn conflict_retained_template_keeps_dispatch_and_adapter_under_the_compiler() {
     // over-monomorphizes or abstract checking of retained templates breaks,
     // this pin notices.
     let mir = compiled_mir(
-        "from std.iterable import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item.copy()\n    return default.copy()\n\ndef main():\n    comptime for i in (1, \"s\"):\n        print(first([i, i], i))\n",
+        "from std.iter import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item.copy()\n    return default.copy()\n\ndef main():\n    comptime for i in (1, \"s\"):\n        print(first([i, i], i))\n",
     );
     let names = function_names(&mir);
     assert!(names.contains(&"first"), "{names:?}");

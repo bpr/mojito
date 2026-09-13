@@ -51,16 +51,15 @@ fn function<'a>(program: &'a SpecializedProgram, name: &str) -> &'a MirFunction 
 }
 
 #[test]
-fn bounded_user_iterator_types_the_split_slot_and_retargets_its_operations() {
+fn raising_user_iterator_types_the_split_slot_and_retargets_its_operations() {
     let source = "@fieldwise_init\n\
                   struct RangeIter:\n\
                   \x20   var cur: Int\n\
                   \x20   var stop: Int\n\
                   \n\
-                  \x20   def __len__(self) -> Int:\n\
-                  \x20       return self.stop - self.cur\n\
-                  \n\
-                  \x20   def __next__(mut self) -> Int:\n\
+                  \x20   def __next__(mut self) raises StopIteration -> Int:\n\
+                  \x20       if self.cur >= self.stop:\n\
+                  \x20           raise StopIteration()\n\
                   \x20       var v: Int = self.cur\n\
                   \x20       self.cur = self.cur + 1\n\
                   \x20       return v\n\
@@ -102,33 +101,13 @@ fn bounded_user_iterator_types_the_split_slot_and_retargets_its_operations() {
             "prepare step `{step}` must name a specialized function"
         );
     }
-    let method = instrs
-        .iter()
-        .find_map(|instruction| match instruction {
-            MirInstr::HasNext {
-                method: Some(method),
-                ..
-            } => Some(method),
-            _ => None,
-        })
-        .expect("bounded iteration reads a length method");
-    assert!(
-        specialized
-            .program
-            .functions
-            .iter()
-            .any(|(name, _)| name == method),
-        "`{method}` must name a specialized function"
-    );
     let target = instrs
         .iter()
         .find_map(|instruction| match instruction {
-            MirInstr::Next {
-                call: Some(call), ..
-            } => Some(&call.target),
+            MirInstr::TryNext { call, .. } => Some(&call.target),
             _ => None,
         })
-        .expect("bounded iteration advances through `__next__`");
+        .expect("user iteration advances through a raising `__next__`");
     assert!(
         specialized
             .program

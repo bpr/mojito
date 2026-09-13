@@ -482,12 +482,8 @@ impl FnLowering<'_> {
             }
             // Everything below is outside the supported subset. Every variant
             // is named so that new instructions force a decision here.
-            MirInstr::HasNext { dest, iter, method } => {
-                self.lower_has_next(ctx, *dest, *iter, method.as_deref())
-            }
-            MirInstr::Next { dest, iter, call } => {
-                self.lower_next(ctx, *dest, *iter, call.as_ref())
-            }
+            MirInstr::HasNext { dest, iter } => self.lower_has_next(ctx, *dest, *iter),
+            MirInstr::Next { dest, iter } => self.lower_next(ctx, *dest, *iter),
             MirInstr::TryNext {
                 dest,
                 yielded,

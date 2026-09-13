@@ -1645,10 +1645,7 @@ fn verifier_rejects_missing_or_concrete_iterator_result_adapters() {
         .iter_mut()
         .flat_map(|block| block.instrs.iter_mut())
         .find_map(|instruction| match instruction {
-            MirInstr::Next {
-                call: Some(call), ..
-            }
-            | MirInstr::TryNext { call, .. } => Some(call),
+            MirInstr::TryNext { call, .. } => Some(call),
             _ => None,
         })
         .expect("abstract iterator next");
@@ -1669,10 +1666,7 @@ fn verifier_rejects_missing_or_concrete_iterator_result_adapters() {
         .iter_mut()
         .flat_map(|block| block.instrs.iter_mut())
         .find_map(|instruction| match instruction {
-            MirInstr::Next {
-                call: Some(call), ..
-            }
-            | MirInstr::TryNext { call, .. } => Some(call),
+            MirInstr::TryNext { call, .. } => Some(call),
             _ => None,
         })
         .expect("abstract iterator next");

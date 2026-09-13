@@ -180,9 +180,6 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    /// `HasNext`: the bounded protocol's pure length read — call the
-    /// iterator's `__len__` and compare greater-than-zero. The receiver
-    /// passes as a plain byte copy (the VM clones its value for the call).
     /// The pack element list of `iter`'s split slot, when the monomorphizer
     /// typed it for the compiler-private pack fallback.
     pub(super) fn pack_iter_elements(&self, iter: u32) -> Option<Vec<Ty>> {
@@ -234,88 +231,36 @@ impl FnLowering<'_> {
         Ok(())
     }
 
+    /// `HasNext` over the compiler-private pack fallback: the shadow position
+    /// against the static element count.
     pub(super) fn lower_has_next(
         &mut self,
         ctx: &mut Context,
         dest: Reg,
         iter: u32,
-        method: Option<&str>,
     ) -> Result<(), PlironError> {
-        let Some(method) = method else {
-            // The compiler-private pack fallback: the shadow position
-            // against the static element count.
-            if let Some(elements) = self.pack_iter_elements(iter) {
-                let position_slot = self.pack_position_slot(ctx, iter);
-                let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
-                let position = LoadOp::new(ctx, position_slot, i64_handle);
-                self.append(ctx, position.get_operation(), Some(dest));
-                let count = self.int_constant(ctx, elements.len() as i64);
-                let more =
-                    ICmpOp::new(ctx, ICmpPredicateAttr::SLT, position.get_result(ctx), count);
-                return self.define(ctx, dest, more.get_operation(), more.get_result(ctx));
-            }
+        let Some(elements) = self.pack_iter_elements(iter) else {
             return Err(self.unsupported_reg("method-free iterator length read".into(), dest));
         };
-        let Some(signature) = self.signatures.get(method) else {
-            return Err(
-                self.unsupported_reg(format!("iterator length via uncompiled `{method}`"), dest)
-            );
-        };
-        if signature.outcome.is_some() || signature.sret.is_some() {
-            return Err(
-                self.unsupported_reg(format!("iterator length contract of `{method}`"), dest)
-            );
-        }
-        if signature.ret != RetKind::I64 {
-            return Err(self.unsupported_reg(format!("iterator length result of `{method}`"), dest));
-        }
-        let Some(LowerTy::Aggregate { layout, .. }) = signature.params.first().cloned() else {
-            return Err(
-                self.unsupported_reg(format!("iterator length receiver of `{method}`"), dest)
-            );
-        };
-        let callee: Identifier = signature
-            .mangled
-            .as_str()
-            .try_into()
-            .expect("mangled names are identifier-safe");
-        let func_ty = signature.func_ty;
-        let receiver = self.entry_alloca(ctx, layout.size, layout.align);
-        self.mem_copy(
-            ctx,
-            receiver,
-            self.var_slots[iter as usize],
-            layout.size,
-            dest,
-        );
-        let call = CallOp::new(ctx, CallOpCallable::Direct(callee), func_ty, vec![receiver]);
-        self.append(ctx, call.get_operation(), Some(dest));
-        let zero = self.int_constant(ctx, 0);
-        let has_next = ICmpOp::new(ctx, ICmpPredicateAttr::SGT, call.get_result(ctx), zero);
-        self.define(
-            ctx,
-            dest,
-            has_next.get_operation(),
-            has_next.get_result(ctx),
-        )
+        let position_slot = self.pack_position_slot(ctx, iter);
+        let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+        let position = LoadOp::new(ctx, position_slot, i64_handle);
+        self.append(ctx, position.get_operation(), Some(dest));
+        let count = self.int_constant(ctx, elements.len() as i64);
+        let more = ICmpOp::new(ctx, ICmpPredicateAttr::SLT, position.get_result(ctx), count);
+        self.define(ctx, dest, more.get_operation(), more.get_result(ctx))
     }
 
-    /// `Next`: advance the iterator in place through its non-raising
-    /// `__next__(mut self)`. The receiver operand is the iterator variable's
-    /// own storage, so the mutation is the write-back; a reference result
-    /// binds the returned place pointer, and the `CopyIteratorReference`
-    /// adapter reads through it with the VM's lifecycle copy.
+    /// `Next` over the compiler-private pack fallback: read the element at the
+    /// cursor position and advance (the VM's `remove(0)` pop, with the
+    /// position standing in for the shift).
     pub(super) fn lower_next(
         &mut self,
         ctx: &mut Context,
         dest: Reg,
         iter: u32,
-        call: Option<&mojito_checked::checked::CheckedIteratorCall>,
     ) -> Result<(), PlironError> {
-        let Some(call) = call else {
-            // The compiler-private pack fallback: read the element at the
-            // cursor position and advance (the VM's `remove(0)` pop, with
-            // the position standing in for the shift).
+        {
             if let Some(elements) = self.pack_iter_elements(iter) {
                 let Some(first) = elements.first() else {
                     // An empty pack's advance is dead code (`HasNext` is
@@ -407,58 +352,8 @@ impl FnLowering<'_> {
                     }
                 };
             }
-            return Err(self.unsupported_reg("method-free iterator advance".into(), dest));
-        };
-        let signature = self.iterator_next_signature(&call.target, dest)?;
-        let receiver = self.var_slots[iter as usize];
-        if let Some(outcome) = signature.outcome.clone() {
-            let callee: Identifier = signature
-                .mangled
-                .as_str()
-                .try_into()
-                .expect("mangled names are identifier-safe");
-            return self.emit_bounded_raising_call(
-                ctx,
-                dest,
-                CallOpCallable::Direct(callee),
-                signature.func_ty,
-                outcome,
-                vec![receiver],
-            );
         }
-        if call.result_adapter.is_some() && signature.ret == RetKind::Ptr {
-            // The abstract call promised a value; the concrete target returns
-            // a reference — read through it and lifecycle-copy the element.
-            let callee: Identifier = signature
-                .mangled
-                .as_str()
-                .try_into()
-                .expect("mangled names are identifier-safe");
-            let func_ty = signature.func_ty;
-            let call_op = CallOp::new(ctx, CallOpCallable::Direct(callee), func_ty, vec![receiver]);
-            self.append(ctx, call_op.get_operation(), Some(dest));
-            let element = call_op.get_result(ctx);
-            return match lower_ty(
-                self.name,
-                &call.result_ty,
-                &self.layout,
-                self.reg_span(dest),
-            )? {
-                LowerTy::Scalar(scalar) => {
-                    let handle = scalar.handle(ctx);
-                    let load = LoadOp::new(ctx, element, handle);
-                    self.define(ctx, dest, load.get_operation(), load.get_result(ctx))
-                }
-                LowerTy::Aggregate { ty, layout } => {
-                    self.copy_aggregate(ctx, dest, &ty, layout, element)
-                }
-                LowerTy::ZeroSized => {
-                    self.erased.insert(dest.0);
-                    Ok(())
-                }
-            };
-        }
-        self.emit_bound_call(ctx, dest, &call.target, vec![receiver])
+        Err(self.unsupported_reg("method-free iterator advance".into(), dest))
     }
 
     /// `TryNext`: advance through the raising `__next__` over the tagged

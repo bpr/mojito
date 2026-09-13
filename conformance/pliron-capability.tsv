@@ -61,8 +61,8 @@ instruction	consume.place	partial	no droppable residual fields
 instruction	drop.place	supported	destroys one depth-1 struct field under its leaf flag and clears the flag
 instruction	unsupported	unsupported	explicit lowering marker; rejects by definition
 instruction	iter.init	partial	concrete post-mono `__iter__` chains: aliased `ref`/`mut`, byte-copied `read`, and consuming `var` receivers; raising `__iter__` steps and stepless heap-owning splits reject
-instruction	iter.has_next	partial	bounded nominal `__len__() > 0`; the compiler-private pack fallback rejects
-instruction	iter.next	partial	nominal `__next__(mut self)` aliasing the iterator slot: value results, reference results, and the `CopyIteratorReference` adapter; the pack fallback rejects
+instruction	iter.has_next	partial	compiler-private runtime-pack storage only: a shadow position against the static element count; an untyped iterator slot rejects
+instruction	iter.next	partial	compiler-private runtime-pack storage only: the homogeneous element at the cursor, advancing the shadow position; heterogeneous packs and untyped iterator slots reject
 instruction	iter.try_next	partial	tagged-outcome `__next__(mut self)` with the statically typed StopIteration edge, including reference-yielding raising iterators (copy and `for ref` contracts); elements with user destructors reject
 type	Int	supported	signless i64
 type	UInt	supported	signless i64; unsigned operator selection

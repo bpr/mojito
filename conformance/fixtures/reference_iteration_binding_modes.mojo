@@ -1,4 +1,4 @@
-from std.iterable import StopIteration
+from std.iter import StopIteration
 
 
 @fieldwise_init

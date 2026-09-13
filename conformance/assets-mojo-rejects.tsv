@@ -2,36 +2,15 @@
 # AGENTS.md invariant 1 says this file should be empty; it is the burn-down
 # list, and scripts/sweep-assets-mojo fails when reality and this file differ.
 #
-# family: iterator-protocol (Mojito's `for` predates `__has_next__`). Every
-# other family this file once carried is closed: a fixture that had an
-# upstream spelling was respelled, and one whose *shape* the pin refuses —
-# origin-parameter erasure, cross-origin field stores, parametric-mut pointer
-# writes, partial field moves, capturing-lambda locals, mut-self callable
-# structs, owned-interior generations, the Mojito-only stdlib modules — moved
+# Empty since 2026-09-13. Every family this file once carried is closed: a
+# fixture that had an upstream spelling was respelled, and one whose *shape*
+# the pin refuses — origin-parameter erasure, cross-origin field stores,
+# parametric-mut pointer writes, partial field moves, capturing-lambda locals,
+# mut-self callable structs, owned-interior generations, element sub-origin
+# returns, the Mojito-only stdlib modules, `comptime for` over a Tuple — moved
 # to assets/extensions/, where `--extensions` asserts the rejection instead.
 #
 # The error is the pin's FIRST complaint, so it can mask a later one: lifting
 # a mask moves a row to another family rather than deleting it.
-# swept-count	473
+# swept-count	464
 fixture	family	first-error
-assets/ok/borrowed_iteration_temporary_source_drop.mojo	iterator-protocol	error: 'NumbersIter' does not implement the '__has_next__' method
-assets/ok/comprehension_borrowed_named_source.mojo	iterator-protocol	error: unable to locate module 'iterable'
-assets/ok/comprehension_temporary_source_drop.mojo	iterator-protocol	error: 'NumbersIter' does not implement the '__has_next__' method
-assets/ok/comptime_tuple.mojo	iterator-protocol	error: 'Tuple[String, String, String]' does not implement the '__iter__' method
-assets/ok/delegated_ref_return_projection.mojo	iterator-protocol	error: unable to locate module 'iterable'
-assets/ok/forward_struct_reference_iterator.mojo	iterator-protocol	error: unable to locate module 'iterable'
-assets/ok/iterable_associated_element.mojo	iterator-protocol	error: 'C' does not implement the '__iter__' method
-assets/ok/origin_delegated_call_arguments_run.mojo	iterator-protocol	error: unable to locate module 'iterable'
-assets/ok/origin_delegated_call_with_arguments.mojo	iterator-protocol	error: unable to locate module 'iterable'
-assets/ok/parametric_mut_iterator_read.mojo	iterator-protocol	error: unable to locate module 'iterable'
-assets/ok/pliron_iter_borrowed.mojo	iterator-protocol	error: unable to locate module 'iterable'
-assets/ok/pliron_iter_bounded.mojo	iterator-protocol	error: 'CountIter' does not implement the '__has_next__' method
-assets/ok/pliron_iter_drop_order.mojo	iterator-protocol	error: unable to locate module 'iterable'
-assets/ok/pointer_field_view_for_temporary.mojo	iterator-protocol	error: unable to locate module 'iterable'
-assets/ok/pointer_field_view_ref_yield.mojo	iterator-protocol	error: unable to locate module 'iterable'
-assets/ok/pointer_field_wrapper_iterator_protocol.mojo	iterator-protocol	error: unable to locate module 'iterable'
-assets/ok/ref_result_field_value_copy.mojo	iterator-protocol	error: unable to locate module 'iterable'
-assets/ok/reference_yielding_iteration.mojo	iterator-protocol	error: unable to locate module 'iterable'
-assets/ok/reference_yielding_iteration_named_source.mojo	iterator-protocol	error: unable to locate module 'iterable'
-assets/ok/reference_yielding_iteration_parametric_mut.mojo	iterator-protocol	error: unable to locate module 'iterable'
-assets/ok/user_iterator.mojo	iterator-protocol	error: 'RangeIter' does not implement the '__has_next__' method

@@ -339,12 +339,12 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "iter.has_next",
         CapabilityStatus::Partial,
-        "bounded nominal `__len__() > 0`; the compiler-private pack fallback rejects",
+        "compiler-private runtime-pack storage only: a shadow position against the static element count; an untyped iterator slot rejects",
     ),
     (
         "iter.next",
         CapabilityStatus::Partial,
-        "nominal `__next__(mut self)` aliasing the iterator slot: value results, reference results, and the `CopyIteratorReference` adapter; the pack fallback rejects",
+        "compiler-private runtime-pack storage only: the homogeneous element at the cursor, advancing the shadow position; heterogeneous packs and untyped iterator slots reject",
     ),
     (
         "iter.try_next",

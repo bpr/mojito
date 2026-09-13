@@ -2,7 +2,7 @@
 # adapter end-to-end: `ref[self.iter.step(1).key]` resolves the wrapped
 # iterator's contract, and stepping happens through the delegated call. The
 # wrapped iterator stores its source through a `Pointer[T, Self.o]` field.
-from std.iterable import Iterator, StopIteration
+from std.iter import Iterator, StopIteration
 
 @fieldwise_init
 struct Pair(Copyable, Movable):

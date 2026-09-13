@@ -1154,14 +1154,7 @@ fn visit_call_edges<'p>(
                         push_named(&mut targets, step);
                     }
                 }
-                MirInstr::HasNext {
-                    method: Some(method),
-                    ..
-                } => push_named(&mut targets, method),
-                MirInstr::Next {
-                    call: Some(call), ..
-                }
-                | MirInstr::TryNext { call, .. } => push_named(&mut targets, &call.target),
+                MirInstr::TryNext { call, .. } => push_named(&mut targets, &call.target),
                 // Subscript instructions carry their checker-selected (and
                 // mono-retargeted) targets on the instruction.
                 MirInstr::Index {

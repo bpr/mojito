@@ -214,19 +214,21 @@ impl Flatten<'_> {
                     prepare: protocol.prepare.clone(),
                 });
                 // A borrowed source is normalized into its own iterator slot
-                // (`source != dest`); re-establish its source loans on the
-                // long-lived iterator variable so they stay live through the
-                // whole loop, rejecting mutation of the source during iteration.
-                if protocol.borrowed_origin.is_some() && source != dest {
+                // (`source != dest`); when the iterator may refer to it,
+                // re-establish its source loans on the long-lived iterator
+                // variable so they stay live through the whole loop, rejecting
+                // mutation of the source during iteration. An iterator that
+                // cannot refer to its source leaves it free to die ASAP.
+                if protocol.borrowed_origin.is_some() && protocol.source_retained && source != dest
+                {
                     self.reestablish_source_loans(*source, *dest);
                 }
             }
-            HirInstr::HasNext { iter, dest, method } => {
+            HirInstr::HasNext { iter, dest } => {
                 let r = self.fresh(SourceSpan::new(None, DUMMY_SPAN), None);
                 self.emit(MirInstr::HasNext {
                     dest: r,
                     iter: *iter,
-                    method: method.clone(),
                 });
                 self.emit(MirInstr::DefVar {
                     var: *dest,
@@ -237,23 +239,20 @@ impl Flatten<'_> {
             HirInstr::Next {
                 iter,
                 raw,
-                call,
                 element_ty,
             } => {
                 let r = self.fresh_typed(
                     SourceSpan::new(None, DUMMY_SPAN),
                     Some(*iter),
-                    call.as_ref()
-                        .map_or_else(|| element_ty.clone(), |call| call.result_ty.clone()),
+                    element_ty.clone(),
                 );
                 self.emit(MirInstr::Next {
                     dest: r,
                     iter: *iter,
-                    call: call.clone(),
                 });
-                // The raw `__next__` result is retained untouched in a
-                // compiler-owned slot; `BindIteration` adapts it to the loop
-                // target only on the yielded edge.
+                // The raw element is retained untouched in a compiler-owned
+                // slot; `BindIteration` adapts it to the loop target only on the
+                // yielded edge.
                 self.emit(MirInstr::DefVar {
                     var: *raw,
                     src: r,

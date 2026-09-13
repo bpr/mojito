@@ -3,7 +3,7 @@
 # owned storage, so the element must be `ImplicitlyCopyable`. `Token` is only
 # movable, so the copying `var` binding is rejected; `for item`/`for ref item`
 # (which borrow the referent) remain available.
-from std.iterable import StopIteration
+from std.iter import StopIteration
 
 
 struct Token(Deinitable, Movable):

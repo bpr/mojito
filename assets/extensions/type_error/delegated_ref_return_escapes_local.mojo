@@ -1,7 +1,7 @@
 # expect: returned reference escapes storage outside its declared origin
 # The delegated-call origin licenses only the delegated region: a body that
 # returns a reference rooted in a frame-local still escapes.
-from std.iterable import Iterator, StopIteration
+from std.iter import Iterator, StopIteration
 
 @fieldwise_init
 struct Pair(Copyable, Movable):

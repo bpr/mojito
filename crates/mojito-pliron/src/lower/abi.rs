@@ -311,57 +311,6 @@ impl FnLowering<'_> {
         }
     }
 
-    /// Call a raising `__next__` immediately after its checker-selected
-    /// bounded `HasNext`. Exhaustion is unreachable under that protocol; keep
-    /// the native failure explicit if a malformed iterator violates it, while
-    /// allowing the enclosing helper to remain nonraising.
-    pub(super) fn emit_bounded_raising_call(
-        &mut self,
-        ctx: &mut Context,
-        dest: Reg,
-        callable: CallOpCallable,
-        func_ty: TypedHandle<FuncType>,
-        outcome: OutcomeAbi,
-        mut operands: Vec<Value>,
-    ) -> Result<(), PlironError> {
-        let storage = self.entry_alloca(ctx, outcome.layout.size, outcome.layout.align);
-        operands.insert(0, storage);
-        let call = CallOp::new(ctx, callable, func_ty, operands);
-        self.append(ctx, call.get_operation(), Some(dest));
-        let i32_handle: TypeHandle = IntegerType::get(ctx, 32, Signedness::Signless).into();
-        let tag = LoadOp::new(ctx, storage, i32_handle);
-        self.append(ctx, tag.get_operation(), Some(dest));
-        let err_tag = self.tag_constant(ctx, mojito_native::native::rt_abi::MJ_TAG_ERR);
-        let is_err = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, tag.get_result(ctx), err_tag);
-        self.append(ctx, is_err.get_operation(), Some(dest));
-        self.emit_trap_guard(
-            ctx,
-            is_err.get_result(ctx),
-            TrapCategory::UnhandledError,
-            dest,
-        )?;
-        match outcome.ok {
-            LowerTy::Scalar(scalar) => {
-                let address = self.offset_address(ctx, storage, outcome.ok_offset);
-                let handle = scalar.handle(ctx);
-                let load = LoadOp::new(ctx, address, handle);
-                self.define(ctx, dest, load.get_operation(), load.get_result(ctx))
-            }
-            LowerTy::Aggregate { ty, .. } => {
-                let address = self.offset_address(ctx, storage, outcome.ok_offset);
-                self.reg_values.insert(dest.0, address);
-                if (self.owns_heap(&ty) && self.releasable(&ty)) || self.stdlib_deinit_temp(&ty) {
-                    self.mark_owned_temp(dest, *ty)?;
-                }
-                Ok(())
-            }
-            LowerTy::ZeroSized => {
-                self.erased.insert(dest.0);
-                Ok(())
-            }
-        }
-    }
-
     /// Relocate the value at `address` into `dest` without invoking copy
     /// lifecycle. Storage-take instructions tombstone or abandon the source;
     /// cloning here would leak the original buffer when the old arena is

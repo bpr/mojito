@@ -2,7 +2,7 @@
 # a `for` statement: the source is bound by reference (not copied/moved), stays
 # usable after the comprehension, and its `__deinit__` runs exactly once at its
 # ASAP last use — not the two drops a copy emits.
-from std.iterable import StopIteration
+from std.iter import StopIteration
 
 
 @fieldwise_init

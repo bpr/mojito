@@ -98,6 +98,9 @@ pub enum TypeError {
     /// A `with` statement's manager does not satisfy the context-manager
     /// protocol; the text is upstream's diagnostic verbatim.
     ContextManager(String),
+    /// A `for` loop's iterator does not satisfy the raising `__next__`
+    /// protocol; the text is upstream's diagnostic verbatim.
+    IteratorProtocol(String),
     RaiseTypeMismatch {
         expected: String,
         found: String,
@@ -468,7 +471,7 @@ impl fmt::Display for TypeError {
                 f,
                 "{operation} requires a surrounding 'try' block or enclosing function to declare 'raises'"
             ),
-            Self::ContextManager(message) => f.write_str(message),
+            Self::ContextManager(message) | Self::IteratorProtocol(message) => f.write_str(message),
             Self::RaiseTypeMismatch { expected, found } => write!(
                 f,
                 "raising operation produces '{found}', but this context propagates '{expected}'"

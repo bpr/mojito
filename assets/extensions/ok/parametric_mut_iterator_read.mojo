@@ -1,5 +1,5 @@
 # P3: parametric-mut origin param on a struct; application without explicit Bool.
-from std.iterable import StopIteration
+from std.iter import StopIteration
 
 
 @fieldwise_init

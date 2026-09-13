@@ -875,17 +875,10 @@ fn instruction_families_reprint_byte_identically() {
         MirInstr::HasNext {
             dest: Reg(38),
             iter: 1,
-            method: Some("__has_next__".into()),
-        },
-        MirInstr::Next {
-            dest: Reg(39),
-            iter: 1,
-            call: Some(sample_iterator_call()),
         },
         MirInstr::Next {
             dest: Reg(40),
             iter: 1,
-            call: None,
         },
         MirInstr::TryNext {
             dest: Reg(41),

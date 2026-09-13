@@ -9,7 +9,7 @@
 # vocabulary over that storage, as in List and Array.
 
 from std.reflection.type_info import _unqualified_type_name
-from std.iterable import Iterable, IterableOwned, Iterator, StopIteration
+from std.iter import Iterable, IterableOwned, Iterator, StopIteration
 
 from std.memory.alloc import unsafe_alloc
 

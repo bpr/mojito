@@ -1,7 +1,7 @@
 # Upstream's expression-origin ref return: a wrapper iterator's `__next__`
 # yields a projection of the delegated call result, with the origin spelled
 # as the delegated expression itself (`ref [self.iter.__next__().key]`).
-from std.iterable import Iterator, StopIteration
+from std.iter import Iterator, StopIteration
 
 @fieldwise_init
 struct Pair(Copyable, Movable):

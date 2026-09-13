@@ -2558,39 +2558,23 @@ fn close_register_types(
                         }),
                     )),
                     MirInstr::HasNext { dest, .. } => Some((dest, Some(Ty::Bool))),
-                    MirInstr::Next { dest, iter, call } => {
-                        // Nominal iteration carries its checked executable
-                        // result directly. Only compiler-private storage has no
-                        // call contract and needs the binding/slot fallback.
-                        let result = call
-                            .as_ref()
-                            .map(|call| call.result_ty.clone())
-                            .or_else(|| {
-                                blocks
-                                    .iter()
-                                    .flat_map(|candidate| candidate.instrs.iter())
-                                    .find_map(|candidate| match candidate {
-                                        MirInstr::DefVar {
-                                            src,
-                                            binding_ty: Some(ty),
-                                            ..
-                                        } if src == dest => Some(ty.clone()),
-                                        MirInstr::DefVar { src, var, .. } if src == dest => {
-                                            var_tys.get(var).cloned()
-                                        }
-                                        MirInstr::Store { place, src } if src == dest => {
-                                            place.ty.clone()
-                                        }
-                                        _ => None,
-                                    })
-                            })
-                            .or_else(|| {
-                                var_tys.get(iter).and_then(|ty| match ty {
-                                    Ty::Struct(name, _) => {
-                                        declared_return(declarations, &format!("{name}.__next__"))
-                                    }
-                                    _ => None,
-                                })
+                    MirInstr::Next { dest, .. } => {
+                        // Compiler-private storage has no call contract, so the
+                        // element type comes from the slot the element binds.
+                        let result = blocks
+                            .iter()
+                            .flat_map(|candidate| candidate.instrs.iter())
+                            .find_map(|candidate| match candidate {
+                                MirInstr::DefVar {
+                                    src,
+                                    binding_ty: Some(ty),
+                                    ..
+                                } if src == dest => Some(ty.clone()),
+                                MirInstr::DefVar { src, var, .. } if src == dest => {
+                                    var_tys.get(var).cloned()
+                                }
+                                MirInstr::Store { place, src } if src == dest => place.ty.clone(),
+                                _ => None,
                             });
                         Some((dest, result))
                     }

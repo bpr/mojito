@@ -3,7 +3,7 @@
 # the final element and before execution continues; a `break` leaves the
 # iterator to the loop's cleanup drops without touching the source's single
 # destruction.
-from std.iterable import StopIteration
+from std.iter import StopIteration
 
 @fieldwise_init
 struct TraceIter:

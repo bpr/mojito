@@ -164,30 +164,22 @@ pub enum HirInstr {
         dest: VarId,
         protocol: mojito_checked::checked::IterationProtocol,
     },
-    /// Iterator protocol (`for` loops): `dest = whether `iter` yields another
-    /// element` (a `Bool`), a pure read of the iterator's state. `iter`/`dest` are
+    /// Iterator protocol over compiler-private iterator storage (a runtime pack
+    /// or a compile-time list): `dest = whether `iter` yields another element`
+    /// (a `Bool`), a pure read of the iterator's state. `iter`/`dest` are
     /// variable slots so both IRs and the backend address them uniformly.
-    HasNext {
-        iter: VarId,
-        dest: VarId,
-        method: Option<String>,
-    },
-    /// Iterator protocol: `raw = iter.next()` — retain the unchecked operation's
-    /// exact result in a compiler-owned slot and advance `iter` in place. The
-    /// successful body adapts `raw` to the source loop target with
-    /// [`HirInstr::BindIteration`].
+    HasNext { iter: VarId, dest: VarId },
+    /// Iterator protocol over compiler-private iterator storage: `raw =
+    /// iter.next()` — retain the element in a compiler-owned slot and advance
+    /// `iter` in place. The successful body adapts `raw` to the source loop
+    /// target with [`HirInstr::BindIteration`].
     Next {
         iter: VarId,
         raw: VarId,
-        /// Exact checker-selected `__next__` operation. `None` is reserved for
-        /// compiler-private iterator storage; nominal iterators always retain
-        /// their selected target and executable result convention here.
-        call: Option<mojito_checked::checked::CheckedIteratorCall>,
-        /// Exact checker-resolved result type of `__next__`. Keeping it on HIR
-        /// makes legacy bounded iteration as typed as the raising path.
+        /// Exact checker-resolved element type.
         element_ty: Ty,
     },
-    /// Current iterator protocol: call a typed-raising `__next__` exactly once,
+    /// Nominal iterator protocol: call a typed-raising `__next__` exactly once,
     /// storing its exact result in `raw` and whether it yielded in `yielded`.
     /// Raising the checked exhaustion type sets `yielded = False`; every other
     /// runtime error propagates normally.
@@ -1182,13 +1174,14 @@ impl Lower {
                 // iterator, so both keep the single slot (retaining and dropping
                 // a consumed source again would double-free).
                 // A `BorrowIter`'d source (borrowed origin present) is a loan of
-                // storage owned elsewhere; only a `Bind`'d owned temporary is kept
-                // alive and dropped by the loop.
+                // storage owned elsewhere; only a `Bind`'d owned temporary that
+                // the iterator may refer to is kept alive and dropped by the loop.
                 let borrowed = protocol.borrowed_origin.is_some();
                 let split_source = matches!(
                     protocol.mode,
                     mojito_checked::checked::IterationMode::Borrowed
                 ) && (borrowed || !protocol.prepare.is_empty());
+                let loop_owns_source = split_source && !borrowed && protocol.source_retained;
                 if let Some(origin) = protocol.borrowed_origin.clone() {
                     self.push(HirInstr::BorrowIter {
                         dest: it_var,
@@ -1236,9 +1229,9 @@ impl Lower {
                 let raw_var = self.var(&format!("$yield{}", self.vars.len()));
                 self.seal(Terminator::Jump(header));
 
-                // A current typed-raising iterator calls `__next__` in the
-                // header and branches on whether it returned an element. The
-                // legacy bounded path retains `has_next` followed by `next`.
+                // A nominal typed-raising iterator calls `__next__` in the header
+                // and branches on whether it returned an element; compiler-private
+                // storage tests `HasNext` and advances with `Next` in the body.
                 self.cur = header;
                 let hn_name = format!("$hasnext{}", self.vars.len());
                 let hn_var = self.var(&hn_name);
@@ -1258,7 +1251,6 @@ impl Lower {
                     self.push(HirInstr::HasNext {
                         iter: iter_var,
                         dest: hn_var,
-                        method: protocol.has_next.clone(),
                     });
                 }
                 self.seal(Terminator::Branch {
@@ -1267,14 +1259,13 @@ impl Lower {
                     else_b: normal_exit,
                 });
 
-                // body: the raising path already bound x; the bounded path now
-                // advances and binds it. Then execute the source body.
+                // body: the raising path already retained the element; private
+                // storage advances now. Then bind x and execute the source body.
                 self.cur = body_b;
                 if protocol.exhaustion.is_none() {
                     self.push(HirInstr::Next {
                         iter: iter_var,
                         raw: raw_var,
-                        call: protocol.next.as_deref().cloned(),
                         element_ty: binding_plan.yielded_ty.clone(),
                     });
                 }
@@ -1288,7 +1279,7 @@ impl Lower {
                 let mut cleanup = vec![v];
                 cleanup.push(raw_var);
                 cleanup.push(iter_var);
-                if split_source && !borrowed {
+                if loop_owns_source {
                     cleanup.push(it_var);
                 }
                 self.loops.push(LoopFrame {
@@ -1314,19 +1305,19 @@ impl Lower {
                 // Make the structured lifetime boundary explicit at the common
                 // exit so every path (including `break`) destroys residual owned
                 // iterator storage before execution continues after the loop. When
-                // the source was split into its own slot, its explicit exit drop
-                // also extends its liveness through the loop (no loan records the
-                // borrowing iterator's dependency yet), so it is not destroyed
-                // early and its `__deinit__` runs exactly once, after the loop.
+                // a split source may be referred to by its iterator, its explicit
+                // exit drop also extends its liveness through the loop (no loan
+                // records that dependency), so its `__deinit__` runs exactly once,
+                // after the loop.
                 self.push(HirInstr::Drop(iter_var));
-                if split_source && !borrowed {
+                if loop_owns_source {
                     // An owned temporary source is used only by `GetIter` before
                     // the loop, so a liveness anchor at the exit keeps it live
-                    // through the loop body (a borrowing iterator still refers to
-                    // its storage); then it is destroyed exactly once, after the
-                    // loop. A borrowed named source is owned by the enclosing scope
-                    // (dropped there) and kept live by its loan, so the loop neither
-                    // anchors nor drops it.
+                    // through the loop body; then it is destroyed exactly once,
+                    // after the loop. A source the iterator cannot refer to dies
+                    // right after `GetIter`, and a borrowed named source is owned
+                    // by the enclosing scope (dropped there), so the loop neither
+                    // anchors nor drops either.
                     self.push(HirInstr::KeepAlive(it_var));
                     self.push(HirInstr::Drop(it_var));
                 }

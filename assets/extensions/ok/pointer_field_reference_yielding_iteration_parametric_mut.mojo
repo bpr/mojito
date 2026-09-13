@@ -3,7 +3,7 @@
 # mutability from the source, so `for ref` writes through into the source,
 # observed after the loop. The source is stored through a `Pointer[T, Self.o]`
 # field.
-from std.iterable import StopIteration
+from std.iter import StopIteration
 
 
 struct NumbersIter[m: Bool, //, o: Origin[mut=m]]:

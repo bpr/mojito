@@ -141,8 +141,8 @@ accessed; the compact notation omits this analysis-only field.
 |---|---|---|
 | `iter.init` | `GetIter` | Normalize a value into an iterator |
 | `iter.try_next` | `TryNext` | Advance a typed-raising iterator, treating checked `StopIteration` as exhaustion |
-| `iter.has_next` | `HasNext` | Test a legacy nonraising iterator for another element |
-| `iter.next` | `Next` | Advance a legacy nonraising iterator |
+| `iter.has_next` | `HasNext` | Test compiler-private iterator storage for another element |
+| `iter.next` | `Next` | Advance compiler-private iterator storage |
 
 ### Exceptions and structured regions
 
@@ -722,34 +722,26 @@ declaration's ABI and, when it returns `ref T`, reads and lifecycle-copies the
 `Copyable` referent before writing `%dest`. Exhaustion is never interpreted as an
 adapter failure.
 
-### `iter.has_next` — Test A Legacy Iterator
+### `iter.has_next` — Test Compiler-Private Iterator Storage
 
 ```text
 iter.has_next %dest, $iterator
 ```
 
-For the compatibility nonraising protocol, writes whether `$iterator` can
-produce another element by calling the checker-selected `__len__()` and testing
-whether its `Int` result is positive. Method-free fallbacks are restricted to
+Writes whether `$iterator` holds another element. The operand is restricted to
 `Value::ComptimeList` while the VM is running in CTFE mode and private
-`Value::Tuple` runtime-pack storage. A public Tuple is a nominal struct and
-cannot reach either path.
+`Value::Tuple` runtime-pack storage; every nominal iterator, generic or
+concrete, advances through `iter.try_next` instead. A public Tuple is a nominal
+struct and cannot reach either path.
 
-### `iter.next` — Advance A Legacy Iterator
+### `iter.next` — Advance Compiler-Private Iterator Storage
 
 ```text
 iter.next %dest, $iterator
 ```
 
-On the compatibility nonraising path, calls the checker-selected
-`__next__(mut self)`, writes the produced element to `%dest`, and writes the
-final nominal receiver back into the iterator slot. The CTFE-only
-`Value::ComptimeList` and private runtime-pack `Value::Tuple` fallbacks instead
-remove their first element.
-
-Abstract value-result calls use the same verified `CopyIteratorReference`
-adapter described for `iter.try_next`; concrete calls retain their exact value
-or reference result and never carry an adapter.
+Removes the first element of the CTFE-only `Value::ComptimeList` or private
+runtime-pack `Value::Tuple` in `$iterator` and writes it to `%dest`.
 
 Calling this instruction when no element remains is invalid; the generated loop
 tests `iter.has_next` first.

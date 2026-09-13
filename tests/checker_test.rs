@@ -4413,10 +4413,19 @@ fn subscript_contract_rejects_overlapping_mutable_receiver_and_argument() {
 
 #[test]
 fn user_iterator_protocol_typing() {
-    // A struct with a valid `__iter__` → iterator (`__next__`/`__len__`) is iterable.
+    // A struct with a valid `__iter__` → iterator (a raising `__next__`) is iterable.
     ok(
-        "@fieldwise_init\nstruct I:\n    var c: Int\n    var s: Int\n    def __len__(self) -> Int:\n        return self.s - self.c\n    def __next__(mut self) -> Int:\n        var v: Int = self.c\n        self.c = self.c + 1\n        return v\n\n@fieldwise_init\nstruct C:\n    var n: Int\n    def __iter__(self) -> I:\n        return I(0, self.n)\n\ndef main():\n    for x in C(3):\n        print(x)\n",
+        "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct I:\n    var c: Int\n    var s: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        if self.c >= self.s:\n            raise StopIteration()\n        var v: Int = self.c\n        self.c = self.c + 1\n        return v\n\n@fieldwise_init\nstruct C:\n    var n: Int\n    def __iter__(self) -> I:\n        return I(0, self.n)\n\ndef main():\n    for x in C(3):\n        print(x)\n",
     );
+    // A nonraising `__next__` is upstream's removed bounded protocol, even
+    // beside a `__len__`.
+    assert!(matches!(
+        err(
+            "@fieldwise_init\nstruct I:\n    var c: Int\n    var s: Int\n    def __len__(self) -> Int:\n        return self.s - self.c\n    def __next__(mut self) -> Int:\n        var v: Int = self.c\n        self.c = self.c + 1\n        return v\n\n@fieldwise_init\nstruct C:\n    var n: Int\n    def __iter__(self) -> I:\n        return I(0, self.n)\n\ndef main():\n    for x in C(3):\n        print(x)\n"
+        ),
+        TypeError::IteratorProtocol(ref message)
+            if message == "'I' does not implement the '__has_next__' method"
+    ));
     // No `__iter__` → not iterable.
     assert!(matches!(
         err(
@@ -4427,7 +4436,7 @@ fn user_iterator_protocol_typing() {
     // The iterator's `__next__` must be `mut self` (it advances).
     assert!(matches!(
         err(
-            "@fieldwise_init\nstruct I:\n    var c: Int\n    def __len__(self) -> Int:\n        return 0\n    def __next__(self) -> Int:\n        return 0\n@fieldwise_init\nstruct C:\n    var n: Int\n    def __iter__(self) -> I:\n        return I(0)\n\ndef main():\n    for x in C(1):\n        print(x)\n"
+            "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct I:\n    var c: Int\n    def __next__(self) raises StopIteration -> Int:\n        raise StopIteration()\n        return 0\n@fieldwise_init\nstruct C:\n    var n: Int\n    def __iter__(self) -> I:\n        return I(0)\n\ndef main():\n    for x in C(1):\n        print(x)\n"
         ),
         TypeError::TypeMismatch { .. }
     ));
@@ -4473,12 +4482,12 @@ fn raising_reference_iterator_preserves_the_reference_loop_binding_type() {
 
 #[test]
 fn iterator_protocol_respects_conditional_method_availability() {
-    let prelude = "@fieldwise_init\nstruct Token(Movable):\n    var value: Int\n\n";
+    let prelude = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct Token(Movable):\n    var value: Int\n\n";
 
     // Merely finding `__iter__` by name is insufficient: its receiver
     // specialization must satisfy the method's `where` clause.
     let unavailable_iter = format!(
-        "{prelude}@fieldwise_init\nstruct I:\n    var index: Int\n    def __len__(self) -> Int:\n        return 0\n    def __next__(mut self) -> Int:\n        return 0\n\n@fieldwise_init\nstruct C[T: Movable]:\n    var marker: Int\n    def __iter__(self) -> I where conforms_to(Self.T, Copyable):\n        return I(0)\n\ndef main():\n    var values = C[Token](0)\n    for value in values:\n        print(value)\n"
+        "{prelude}@fieldwise_init\nstruct I:\n    var index: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        raise StopIteration()\n        return 0\n\n@fieldwise_init\nstruct C[T: Movable]:\n    var marker: Int\n    def __iter__(self) -> I where conforms_to(Self.T, Copyable):\n        return I(0)\n\ndef main():\n    var values = C[Token](0)\n    for value in values:\n        print(value)\n"
     );
     assert!(matches!(
         err(&unavailable_iter),
@@ -4486,28 +4495,30 @@ fn iterator_protocol_respects_conditional_method_availability() {
             if context == "for-loop iterator selection"
     ));
 
-    // The same specialization rule applies after normalization, both to the
-    // advancing operation and to the legacy bounded protocol's length query.
+    // The same specialization rule applies after normalization to the
+    // advancing operation.
     let unavailable_next = format!(
-        "{prelude}@fieldwise_init\nstruct I[T: Movable]:\n    var index: Int\n    def __len__(self) -> Int:\n        return 0\n    def __next__(mut self) -> Int where conforms_to(Self.T, Copyable):\n        return 0\n\n@fieldwise_init\nstruct C[T: Movable]:\n    var marker: Int\n    def __iter__(self) -> I[Self.T]:\n        return I[Self.T](0)\n\ndef main():\n    var values = C[Token](0)\n    for value in values:\n        print(value)\n"
+        "{prelude}@fieldwise_init\nstruct I[T: Movable]:\n    var index: Int\n    def __next__(mut self) raises StopIteration -> Int where conforms_to(Self.T, Copyable):\n        raise StopIteration()\n        return 0\n\n@fieldwise_init\nstruct C[T: Movable]:\n    var marker: Int\n    def __iter__(self) -> I[Self.T]:\n        return I[Self.T](0)\n\ndef main():\n    var values = C[Token](0)\n    for value in values:\n        print(value)\n"
     );
     assert!(matches!(
         err(&unavailable_next),
         TypeError::NoSuchMethod { ref method, .. } if method == "__next__"
     ));
 
-    let unavailable_len = format!(
-        "{prelude}@fieldwise_init\nstruct I[T: Movable]:\n    var index: Int\n    def __len__(self) -> Int where conforms_to(Self.T, Copyable):\n        return 0\n    def __next__(mut self) -> Int:\n        return 0\n\n@fieldwise_init\nstruct C[T: Movable]:\n    var marker: Int\n    def __iter__(self) -> I[Self.T]:\n        return I[Self.T](0)\n\ndef main():\n    var values = C[Token](0)\n    for value in values:\n        print(value)\n"
+    // An available `__len__` does not rescue a nonraising `__next__`.
+    let nonraising_next = format!(
+        "{prelude}@fieldwise_init\nstruct I[T: Movable]:\n    var index: Int\n    def __len__(self) -> Int:\n        return 0\n    def __next__(mut self) -> Int:\n        return 0\n\n@fieldwise_init\nstruct C[T: Movable]:\n    var marker: Int\n    def __iter__(self) -> I[Self.T]:\n        return I[Self.T](0)\n\ndef main():\n    var values = C[Token](0)\n    for value in values:\n        print(value)\n"
     );
     assert!(matches!(
-        err(&unavailable_len),
-        TypeError::NoSuchMethod { ref method, .. } if method == "__len__"
+        err(&nonraising_next),
+        TypeError::IteratorProtocol(ref message)
+            if message.ends_with("does not implement the '__has_next__' method")
     ));
 }
 
 #[test]
 fn raising_iter_normalization_obeys_the_enclosing_effect_context() {
-    let declarations = "@fieldwise_init\nstruct IterError:\n    var code: Int\n\n@fieldwise_init\nstruct I:\n    var index: Int\n    def __len__(self) -> Int:\n        return 0\n    def __next__(mut self) -> Int:\n        return 0\n\n@fieldwise_init\nstruct C:\n    var marker: Int\n    def __iter__(self) raises IterError -> I:\n        raise IterError(self.marker)\n        return I(0)\n\n";
+    let declarations = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct IterError:\n    var code: Int\n\n@fieldwise_init\nstruct I:\n    var index: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        raise StopIteration()\n        return 0\n\n@fieldwise_init\nstruct C:\n    var marker: Int\n    def __iter__(self) raises IterError -> I:\n        raise IterError(self.marker)\n        return I(0)\n\n";
 
     assert!(matches!(
         err(&format!(

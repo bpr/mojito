@@ -1,15 +1,14 @@
 # A user type is iterable via the Mojo iterator protocol: `for x in c` calls
-# `c.__iter__()` to get an iterator, then loops while `len(iter) > 0`, binding
-# `x = iter.__next__()` (which advances the iterator in place, `mut self`).
+# `c.__iter__()` to get an iterator, then binds `x = iter.__next__()` (which
+# advances the iterator in place, `mut self`) until it raises `StopIteration`.
 @fieldwise_init
 struct RangeIter:
     var cur: Int
     var stop: Int
 
-    def __len__(self) -> Int:
-        return self.stop - self.cur
-
-    def __next__(mut self) -> Int:
+    def __next__(mut self) raises StopIteration -> Int:
+        if self.cur >= self.stop:
+            raise StopIteration()
         var v: Int = self.cur
         self.cur = self.cur + 1
         return v

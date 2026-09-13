@@ -44,8 +44,8 @@ only from their authoritative `std` modules.
   (`__iter__(ref self)` → a borrowing
   `_ListIter[iterable_mut: Bool, //, T, iterable_origin: Origin[mut=iterable_mut]]`
   holding `ref[iterable_origin] List[T]`, whose typed-raising `__next__` yields
-  `ref[iterable_origin] T` element references; `__len__` remains a
-  compatibility/optimization hint). Exhaustion raises `StopIteration`. Growth
+  `ref[iterable_origin] T` element references; the iterator's `__len__`
+  serves `len()` and never drives a loop). Exhaustion raises `StopIteration`. Growth
   reallocs the buffer. `_get_copy(index)` is a library-private, non-overloaded
   value accessor used by nested collection implementations until a
   reference-returning subscript can retain its full selected-call contract as a
@@ -67,7 +67,7 @@ only from their authoritative `std` modules.
   public Tuple is nominal and is not a method-free runtime iterable.
 - `std/collections/optional.mojo` — a generic `Optional[T]` using zero-or-one value storage,
   including an empty constructor for generic absent values.
-- `std/iterable.mojo` — minimal self-hosted `Iterator`, `Iterable`, and
+- `std/iter.mojo` — minimal self-hosted `Iterator`, `Iterable`, and
   `IterableOwned` proof traits. They expose associated compile-time `Element`
   facts. `IterableOwned` uses current Mojo's monomorphic `IteratorOwnedType` (a
   consuming iterator owns its storage, so it needs no origin). Borrowed

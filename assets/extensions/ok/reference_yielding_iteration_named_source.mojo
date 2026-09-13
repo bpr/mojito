@@ -3,7 +3,7 @@
 # borrowed (not copied/moved): its yielded references flow through the loop as
 # handles, `nums` remains usable after the loop, and its `__deinit__` runs exactly
 # once at enclosing-scope end (after the loop and the post-loop use).
-from std.iterable import StopIteration
+from std.iter import StopIteration
 
 
 @fieldwise_init

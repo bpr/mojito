@@ -985,9 +985,10 @@ fn hand_written_init_constructs_and_coerces() {
 
 #[test]
 fn user_iterator_protocol() {
-    // `for x in c` on a user type dispatches `c.__iter__()` → loop while
-    // `len(iter) > 0` binding `x = iter.__next__()`; break/continue compose.
-    let src = "@fieldwise_init\nstruct It:\n    var cur: Int\n    var stop: Int\n    def __len__(self) -> Int:\n        return self.stop - self.cur\n    def __next__(mut self) -> Int:\n        var v: Int = self.cur\n        self.cur = self.cur + 1\n        return v\n\n@fieldwise_init\nstruct Nums:\n    var n: Int\n    def __iter__(self) -> It:\n        return It(0, self.n)\n\ndef main():\n    for x in Nums(6):\n        if x == 4:\n            break\n        if x == 1:\n            continue\n        print(x)\n";
+    // `for x in c` on a user type dispatches `c.__iter__()` → bind
+    // `x = iter.__next__()` until it raises `StopIteration`; break/continue
+    // compose.
+    let src = "@fieldwise_init\nstruct It:\n    var cur: Int\n    var stop: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        if self.cur >= self.stop:\n            raise StopIteration()\n        var v: Int = self.cur\n        self.cur = self.cur + 1\n        return v\n\n@fieldwise_init\nstruct Nums:\n    var n: Int\n    def __iter__(self) -> It:\n        return It(0, self.n)\n\ndef main():\n    for x in Nums(6):\n        if x == 4:\n            break\n        if x == 1:\n            continue\n        print(x)\n";
     assert_eq!(parity(src), "0\n2\n3\n");
 }
 
@@ -1012,7 +1013,9 @@ fn reference_yielding_iteration_borrows_a_named_source() {
     // source (a live shared loan), not a copy: reads flow through the yielded
     // references, `nums` stays usable after the loop, and its `__deinit__` (`-1`)
     // runs exactly once at its ASAP last use — not the two drops a copy emits.
-    let source = include_str!("../assets/ok/reference_yielding_iteration_named_source.mojo");
+    let source = include_str!(
+        "../assets/extensions/ok/pointer_field_reference_yielding_iteration_named_source.mojo"
+    );
     assert_eq!(
         run_compiled(source).expect("named-source reference iteration compiles"),
         "-2\n0\n10\n20\n-1\n3\n-3\n"
@@ -1025,7 +1028,9 @@ fn comprehension_borrows_a_named_user_source() {
     // source rules as a `for` statement: the source is bound by reference (one
     // `__deinit__`, at its ASAP last use), stays usable after the comprehension,
     // and the yielded references feed the comprehension element expression.
-    let source = include_str!("../assets/ok/comprehension_borrowed_named_source.mojo");
+    let source = include_str!(
+        "../assets/extensions/ok/pointer_field_comprehension_borrowed_named_source.mojo"
+    );
     assert_eq!(
         run_compiled(source).expect("named-source comprehension compiles"),
         "-2\n0\n20\n40\n-1\n3\n-3\n"
@@ -1172,7 +1177,7 @@ fn abstract_next_adapts_a_reference_into_a_read_self_frame() {
 
 #[test]
 fn raising_iter_normalization_propagates_to_the_enclosing_try() {
-    let src = "@fieldwise_init\nstruct IterError:\n    var code: Int\n\n@fieldwise_init\nstruct I:\n    var index: Int\n    def __len__(self) -> Int:\n        return 0\n    def __next__(mut self) -> Int:\n        return 0\n\n@fieldwise_init\nstruct C:\n    var marker: Int\n    def __iter__(self) raises IterError -> I:\n        raise IterError(self.marker)\n        return I(0)\n\ndef main():\n    try:\n        for value in C(7):\n            print(value)\n    except error:\n        print(error.code)\n";
+    let src = "@fieldwise_init\nstruct IterError:\n    var code: Int\n\n@fieldwise_init\nstruct I:\n    var index: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        raise StopIteration()\n        return 0\n\n@fieldwise_init\nstruct C:\n    var marker: Int\n    def __iter__(self) raises IterError -> I:\n        raise IterError(self.marker)\n        return I(0)\n\ndef main():\n    try:\n        for value in C(7):\n            print(value)\n    except error:\n        print(error.code)\n";
     assert_eq!(run_compiled(src).expect("compiler pipeline failed"), "7\n");
 }
 
@@ -1851,7 +1856,7 @@ fn retained_template_executes_erased_dispatch_under_the_compiler() {
     // The runtime half of the erased-dispatch residue witness: the retained
     // abstract template's `__iterator_dispatch` protocol and copy adapter
     // execute end to end through the authoritative pipeline.
-    let src = "from std.iterable import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item.copy()\n    return default.copy()\n\ndef main():\n    comptime for i in (1, \"s\"):\n        print(first([i.copy(), i.copy()], i))\n";
+    let src = "from std.iter import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item.copy()\n    return default.copy()\n\ndef main():\n    comptime for i in (1, \"s\"):\n        print(first([i.copy(), i.copy()], i))\n";
     assert_eq!(run_compiled(src).expect("erased path runs"), "1\ns\n");
 }
 

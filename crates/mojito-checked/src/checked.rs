@@ -320,8 +320,8 @@ pub struct StructInstantiation {
 /// iterable; builtin ranges/collections leave it empty.  User iterators carry
 /// exact iterator-operation symbols so the VM never performs name/arity
 /// overload reconstruction. `exhaustion` is the checked typed error caught by
-/// a raising `__next__`; when absent, `has_next` selects the legacy bounded
-/// `__len__` protocol.
+/// a raising `__next__`; it is absent only for compiler-private iterator
+/// storage, which advances without a nominal method.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IterationProtocol {
     pub mode: IterationMode,
@@ -344,8 +344,13 @@ pub struct IterationProtocol {
     /// empty when the iterator declares no projection (whole-place loan) or
     /// the projection already resolved onto a concrete origin.
     pub yield_interior: Vec<mojito_types::origin::OriginSeg>,
+    /// Whether the normalized iterator may refer to its source: its type
+    /// carries an origin or its `__next__` returns a reference. Only then does
+    /// the loop keep a split source live (and loaned) until the loop exits;
+    /// otherwise the source dies as soon as `__iter__` returns, as upstream's
+    /// ASAP destruction does.
+    pub source_retained: bool,
     pub prepare: Vec<String>,
-    pub has_next: Option<String>,
     pub next: Option<Box<CheckedIteratorCall>>,
     pub exhaustion: Option<Ty>,
 }
