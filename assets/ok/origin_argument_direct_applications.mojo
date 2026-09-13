@@ -29,7 +29,7 @@ struct Box:
         self.items = List[Int]()
         self.items.append(11)
 
-    def view(ref self) -> View[origin_of(self)]:
+    def view(ref self) -> View[origin_of(self.items)]:
         ref source = self.items
         return View(source, 0)
 

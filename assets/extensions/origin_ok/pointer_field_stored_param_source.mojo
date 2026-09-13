@@ -1,3 +1,8 @@
+# Storing a loan rooted at a `mut` parameter into `self`: Mojito's escape
+# analysis accepts it, the pin's type rule rejects the origin mismatch, and
+# widening to a union origin only moves the rejection to the call's
+# exclusivity check. The `ref`-field spelling lives at
+# assets/extensions/origin_ok/stored_reference_field_param_source.mojo.
 # A pointer-bearing struct rooted at a caller-owned parameter place may be
 # stored into `self`: the loan's origin outlives the frame, so the store is
 # not an escape.

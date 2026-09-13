@@ -18,21 +18,31 @@ changes.
 | `ownership_ok/` / `ownership_error/` | accepted or rejected by the ownership analysis |
 | `origin_ok/` / `origin_error/` | accepted or rejected by the origin/escape analysis |
 
-## `extensions/`: Mojito-only language extensions
+## `extensions/`: programs the pinned Mojo will not accept
 
 Every fixture in the `_ok` folders above must compile with the pinned Mojo —
 `scripts/sweep-assets-mojo` runs it over them and compares the result against
 `conformance/assets-mojo-rejects.tsv`, the burn-down list of the ones it still
 rejects. The five error folders are oracled the other way round by the same
-script's `--errors` mode; see below. A program that uses a Mojito extension — today, direct `ref` struct
-fields (`var f: ref[o] T`), which upstream rejects and may adopt later, and
-`Origin._subtree` casts, which upstream parses but rejects at the use; in
-future, experiments such as pattern matching or enums — lives under
+script's `--errors` mode; see below. A program the pin refuses lives under
 `assets/extensions/<folder>/` instead, where `<folder>` is the same outcome
 folder it would otherwise use (`extensions/ok`, `extensions/type_error`,
 `extensions/ownership_error`, …). The same script with `--extensions` asserts
 the inverse: the pinned Mojo must reject every extension fixture, so one that
-starts compiling is the signal that upstream adopted the extension.
+starts compiling is the signal that upstream caught up.
+
+Two kinds live there. An extension **kept on purpose** — today, direct `ref`
+struct fields (`var f: ref[o] T`), which upstream rejects and may adopt later,
+and `Origin._subtree` casts, which upstream parses but rejects at the use; in
+future, experiments such as pattern matching or enums — is listed in
+`docs/non-goals.md`. A **ledgered divergence** is one Mojito means to withdraw:
+its program uses an acceptance the pin refuses outright — origin-parameter
+erasure, a cross-origin field store, a parametric-mut pointer write, a partial
+field move, a capturing-lambda local, a `mut self` `__call__`, an owned-interior
+generation, a Mojito-only stdlib module — and it carries a header comment
+naming the divergence, which `docs/roadmap.md`'s divergence ledger tracks. When
+a `ref`-field fixture's `Pointer` twin is itself one of these, it joins it here
+under the `pointer_field_` name rather than staying in the ordinary folder.
 
 The harnesses run these through the same
 groups (named `assets_extensions_<folder>::…`, `vm_ok::extensions::…`, and

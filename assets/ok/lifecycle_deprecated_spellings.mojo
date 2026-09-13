@@ -1,9 +1,10 @@
-# Deprecated-compat pin: upstream still accepts `ImplicitlyDeletable` and
-# `__del__` as deprecated spellings of `Deinitable`/`__deinit__`; Mojito
-# normalizes them at parse time. This fixture stays on the OLD spellings on
-# purpose — remove it when upstream removes the aliases.
+# Deprecated-compat pin: upstream still accepts `__del__` as a deprecated
+# spelling of `__deinit__`; Mojito normalizes it at parse time. This fixture
+# stays on the OLD spelling on purpose — remove it when upstream removes the
+# alias. `ImplicitlyDeletable`, the other alias Mojito normalizes, is already
+# gone from the pin, so it is a `mojito-only` conformance case instead.
 @explicit_destroy("release the handle")
-struct Handle(Movable, ImplicitlyDeletable where False):
+struct Handle(Movable, Deinitable where False):
     var id: Int
 
     def __init__(out self, id: Int):

@@ -1,3 +1,8 @@
+# A nested `def` stores a carrier over one origin into a struct field typed
+# at another. Mojito's origin analysis proves the store safe; the pin's type
+# rule wants the two origins equal, and its exclusivity rule then refuses the
+# capture list as well. The `ref`-field spelling of the same program lives at
+# assets/extensions/ok/captured_store_local_carrier.mojo.
 @fieldwise_init
 struct RefBox[origin: Origin[mut=True]]:
     var value: Pointer[List[Int], Self.origin]

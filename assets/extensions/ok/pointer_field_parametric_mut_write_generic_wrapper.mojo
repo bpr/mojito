@@ -1,3 +1,6 @@
+# The same parametrically-mutable pointer write reached through a generic
+# wrapper. The `ref`-field spelling lives at
+# assets/extensions/ok/ref_field_parametric_mut_write_generic_wrapper.mojo.
 # A write requirement inherited from a wrapped parametric-origin view propagates
 # through the wrapper method and is discharged at its concrete call site.
 struct View[m: Bool, //, o: Origin[mut=m]]:

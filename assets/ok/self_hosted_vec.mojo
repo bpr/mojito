@@ -1,11 +1,11 @@
 # A growable integer vector written in mojito itself, backed by an
-# `UnsafePointer[Int]` — the first proof that the language can express a
+# `UnsafePointer[Int, MutUntrackedOrigin]` — the first proof that the language can express a
 # heap-owning container (the Phase 2 / self-hosting milestone). `push` mutates the
 # shared storage *through* the pointer (which aliases across the value-type copy).
 from std.memory.alloc import unsafe_alloc
 
-struct IntVec:
-    var data: UnsafePointer[Int]
+struct IntVec(Sized):
+    var data: UnsafePointer[Int, MutUntrackedOrigin]
     var size: Int
     var cap: Int
 

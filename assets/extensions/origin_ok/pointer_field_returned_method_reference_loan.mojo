@@ -1,3 +1,10 @@
+# A method returning a reference *into* what a `Pointer[T, Self.o]` field
+# borrows. Mojito names that region with the struct's own origin parameter
+# (`ref[Self.o]`); upstream distinguishes the element sub-origin
+# (`origin_of(o["element"])`) and wants the return spelled
+# `ref[origin_of(self.src[][i])]`, which Mojito's escape check rejects. The
+# `ref`-field spelling lives at
+# assets/extensions/origin_ok/returned_method_reference_loan.mojo.
 # A reference returned from a struct method, whose declared origin is a struct
 # origin parameter, keeps its ultimate source alive when bound to a `ref` local.
 # The struct origin parameter resolves to the origin the receiver's

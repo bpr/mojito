@@ -8,6 +8,30 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The pinned Mojo now rejects only 21 of the ordinary `assets/` `_ok`
+  fixtures, down from 102, and all 21 are the one `__has_next__` iterator
+  family that has its own roadmap task. Thirty-five fixtures were respelled
+  the way the pin demands and are now `conformance/cases.tsv` rows; twenty-two
+  whose *shape* the pin refuses outright — origin-parameter erasure,
+  cross-origin field stores, parametric-mut pointer writes, partial field
+  moves, capturing-lambda locals, a `mut self` `__call__`, owned-interior
+  generations, the Mojito-only `std.algorithms` and
+  `std.collections.string_dict` — moved under `assets/extensions/`, where
+  `scripts/sweep-assets-mojo --extensions` asserts the rejection and the whole
+  pipeline still runs them. `AGENTS.md` invariant 1 and `assets/README.md` now
+  separate an extension *kept on purpose* from a ledgered divergence, and
+  `docs/roadmap.md` carries the twenty-six new divergence entries the pass
+  found.
+- Five compiler changes came out of the respellings. `SIMD` gains upstream's
+  elementwise comparison methods `lt`/`le`/`gt`/`ge`/`eq`/`ne` on both
+  backends (bool lanes order `False` below `True`, as the `i1` unsigned
+  predicates do); `round` is nearest-ties-to-even rather than
+  ties-away-from-zero, matching upstream and `llvm.roundeven.f64`;
+  `origin_of(self.field)` is accepted wherever `origin_of(self)` is in an
+  abstract signature, widening to the whole receiver; `Self.Ts[i]` folds like
+  the bare `Ts[i]` pack index; and a bracketed projection index accepts a
+  qualified struct binder (`Self.InnerType[Self.o]`).
+
 - Six behavioral divergences from the pinned Mojo are closed. `unsafe_origin_cast`
   now requires the target origin's mutability to equal the pointer's in both
   directions, matching upstream's `target_origin: Origin[mut=Self.mut]`

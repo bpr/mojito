@@ -1,8 +1,15 @@
 # Nested `def`s (closures) are lifted to functions whose captured enclosing locals
-# carry explicit immutable or mutable environments, so reads, writes,
-# self-recursion, and calls to top-level functions execute through the VM.
+# carry explicit immutable or mutable environments, so reads, writes, and calls
+# to top-level functions execute through the VM. A nested `def` may not call
+# itself — the pin rejects that, and the `recursive-nested-def` conformance case
+# carries the divergence — so the recursion here lives at file scope.
 def double(x: Int) -> Int:
     return x * 2
+
+def fact(n: Int, base: Int) -> Int:
+    if n <= 1:
+        return base
+    return n * fact(n - 1, base)
 
 def adder(n: Int) -> Int:
     def add_n(x: Int) {imm n} -> Int:
@@ -18,11 +25,9 @@ def counter() -> Int:
     return total
 
 def factorial(base: Int) -> Int:
-    def fact(n: Int) {imm base} -> Int:
-        if n <= 1:
-            return base
-        return n * fact(n - 1)
-    return fact(5)
+    def call(n: Int) {imm base} -> Int:
+        return fact(n, base)
+    return call(5)
 
 def main():
     print(adder(21))

@@ -1,3 +1,6 @@
+# The same element sub-origin divergence, reached through a mutable view.
+# The `ref`-field spelling lives at
+# assets/extensions/origin_ok/returned_projected_reference.mojo.
 # A method may return a reference obtained by *indexing through* a
 # `Pointer[<aggregate>, origin]` field whose origin is a struct origin
 # parameter. The stored handle names the borrowed region, so the element

@@ -820,9 +820,10 @@ pub fn builtin_min_max(is_min: bool, a: Value, b: Value) -> Result<Value, Runtim
     })
 }
 
-/// `round(x)`: nearest `Float64` (ties away from zero, via `f64::round`).
+/// `round(x)`: nearest `Float64`, ties to even, as upstream's `round` and
+/// `llvm.roundeven.f64` do.
 pub fn builtin_round(v: &Value) -> Result<Value, RuntimeError> {
-    Ok(Value::Float64(value_to_float(v)?.round()))
+    Ok(Value::Float64(value_to_float(v)?.round_ties_even()))
 }
 
 /// `input(prompt)`: write the prompt immediately, read one line from standard
@@ -1115,6 +1116,14 @@ pub fn simd_binop(op: InfixOp, l: &Value, r: &Value) -> Result<Value, RuntimeErr
                 .map(|(a, b)| match op {
                     Eq => a == b,
                     Ne => a != b,
+                    // `False` orders below `True`, as the `i1` unsigned
+                    // predicates the native backend uses do. Only the
+                    // `SIMD.lt`/`le`/`gt`/`ge` methods reach these: the
+                    // checker rejects the infix operators on bool lanes.
+                    Lt => !*a && *b,
+                    Le => !*a || *b,
+                    Gt => *a && !*b,
+                    Ge => *a || !*b,
                     BitAnd => *a && *b,
                     BitOr => *a || *b,
                     BitXor => *a ^ *b,
@@ -1781,6 +1790,19 @@ pub fn simd_method(
     args: &[Value],
 ) -> Result<Value, RuntimeError> {
     match method {
+        // The elementwise comparisons, which upstream spells as methods
+        // because its infix `<`/`<=`/`>`/`>=` are `Scalar`-only.
+        "lt" | "le" | "gt" | "ge" | "eq" | "ne" if args.len() == 1 => {
+            let op = match method {
+                "lt" => InfixOp::Lt,
+                "le" => InfixOp::Le,
+                "gt" => InfixOp::Gt,
+                "ge" => InfixOp::Ge,
+                "eq" => InfixOp::Eq,
+                _ => InfixOp::Ne,
+            };
+            simd_binop(op, &simd_value(dtype, lanes.clone()), &args[0])
+        }
         "select" if args.len() == 2 => simd_select(lanes, &args[0], &args[1]),
         "reduce_add" | "reduce_mul" | "reduce_min" | "reduce_max" if args.is_empty() => {
             simd_reduce(dtype, lanes, method)

@@ -13,7 +13,7 @@ def main():
     print(f64.to_bits[DType.uint64]())
     var zero = SIMD[DType.float64, 2](0.0)
     var special = SIMD[DType.float64, 2](1.0, -1.0) / zero
-    print(special.to_bits[DType.uint64](), (zero / zero).to_bits[DType.uint64]() > 0)
+    print(special.to_bits[DType.uint64](), (zero / zero).to_bits[DType.uint64]().gt(0))
     var b = SIMD[DType.bool, 4](True, False, True, True)
     print(b.to_bits[DType.uint8](), b.to_bits[DType.uint64]())
     var i64 = SIMD[DType.int64, 2](-1, -9223372036854775807 - 1)

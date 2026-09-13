@@ -1,3 +1,7 @@
+# Mojito's `Writer` requires `write_string(mut self, chunk: String)` and also
+# accepts the `StringLiteral` payload spelling; upstream's requires
+# `write_string(mut self, string: StringSpan)`, so neither conformer here is
+# a `Writer` there.
 # Writer conformance accepts either payload spelling: a write_string
 # declaring the nominal String receives a materialized struct value,
 # while the StringLiteral spelling keeps the builtin payload.

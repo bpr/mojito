@@ -294,8 +294,13 @@ impl Checker {
                         // symbolically so the application still carries an
                         // argument; it is resolved to the concrete receiver origin
                         // at the conformance/call site and erases at runtime.
-                        if let ExprKind::Identifier(name) = &place.kind
-                            && name == "self"
+                        // A place *under* an unbound `self`
+                        // (`origin_of(self.items)`, upstream's spelling when
+                        // the field is what the view borrows) widens to the
+                        // whole receiver: `Origin::SelfParam` carries no
+                        // projection path, and a wider region only makes the
+                        // resulting loan more conservative.
+                        if let Some(("self", _)) = crate::checker::places::place_path(place)
                             && self.lookup_owner("self").is_none()
                         {
                             return Ok(Origin::SelfParam);

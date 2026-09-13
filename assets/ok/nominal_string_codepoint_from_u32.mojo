@@ -3,8 +3,7 @@
 # through runtime Byte(Int) conversions, across all four sequence widths.
 # Negatives, surrogates, and values beyond U+10FFFF are absent.
 def main() raises:
-    var q: String = "?"
-    var fallback = q[codepoint=0]
+    var fallback = Codepoint.from_u32(0x3F).value()
     var g = Codepoint.from_u32(103).or_else(fallback)
     print(g)
     print(Int(g))

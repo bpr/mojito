@@ -3,13 +3,13 @@ struct StopIteration:
     pass
 
 trait IteratorContract:
-    comptime Element: Movable
+    comptime Element: Movable & Deinitable
 
     def __next__(mut self) raises StopIteration -> Self.Element:
         ...
 
 trait IterableIteratorContract(IteratorContract):
-    comptime Element: ImplicitlyCopyable & Deinitable
+    comptime Element: ImplicitlyCopyable & Deinitable & Writable
 
     def __iter__(ref self) -> Self:
         ...

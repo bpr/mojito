@@ -2,7 +2,7 @@
 # expression evaluates through VM-backed CTFE, freezes, and keys the
 # specialization — the same frozen value at two sites is one type.
 @fieldwise_init
-struct Extent(Copyable, Movable):
+struct Extent(ImplicitlyCopyable, Movable):
     var rows: Int
     var cols: Int
 
@@ -13,7 +13,7 @@ struct Extent(Copyable, Movable):
     def size(self) -> Int:
         return self.rows * self.cols
 
-struct Tagged[e: Extent](Copyable, Movable):
+struct Tagged[e: Extent](ImplicitlyCopyable, Movable):
     var scale: Int
 
     def __init__(out self, scale: Int):

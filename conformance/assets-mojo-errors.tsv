@@ -269,7 +269,7 @@ assets/type_error/owned_pointer_take_is_renamed.mojo	compile-reject	agree	error:
 assets/type_error/pack_bound_violation.mojo	compile-reject	agree	error: 'Pair' parameter 'Ts' has 'Copyable & Deinitable' type, but value has type 'AnyStruct[NoCopy]'
 assets/type_error/pack_struct_init_arity.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/pack_struct_needs_explicit_args.mojo	runs	divergence	the pin runs it; Mojito rejects: variadic struct 'Pair' requires explicit compile-time type arguments
-assets/type_error/pack_struct_runtime_getitem_index.mojo	compile-reject	self-qualification	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
+assets/type_error/pack_struct_runtime_getitem_index.mojo	compile-reject	ledgered	error: invalid call to '__getitem__': unexpected argument
 assets/type_error/pack_struct_runtime_index.mojo	compile-reject	agree	error: invalid call to '__getitem_param__': cannot use a dynamic value in a parameter list
 assets/type_error/parameter_closure_immutable_capture_write.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
 assets/type_error/parameterized_assoc_arity.mojo	compile-reject	agree	error: failed to infer parameter 'b', specify the parameter or use '_' or '...' to unbind the parameter explicitly

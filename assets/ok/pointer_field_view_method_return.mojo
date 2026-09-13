@@ -28,7 +28,7 @@ struct Box:
         self.items.append(2)
         self.items.append(3)
 
-    def view(ref self) -> Self.ViewType[origin_of(self)]:
+    def view(ref self) -> Self.ViewType[origin_of(self.items)]:
         ref source = self.items
         return View(source, 0)
 

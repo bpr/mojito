@@ -1,3 +1,7 @@
+# The owning-family container APIs are a Mojito addition: `deinit_with` and
+# `clear_with` with `var`-convention handlers, displacement-returning
+# `insert`, and the `std.collections.string_dict` module that hosts
+# `StringDict`. Upstream has none of them.
 # The nightly-§6 owning family APIs across the bundled containers:
 # linear-capable `deinit_with` on List/Array/Dict/Set/StringDict/Tuple
 # (`var`-convention handlers, front-to-back drains), `clear_with` on Dict and

@@ -1,3 +1,7 @@
+# Capturing lambdas stored in locals and passed as runtime arguments, with
+# Mojito's explicit `capturing[...]` annotation. The pin types a capturing
+# lambda as a plain `def(...) -> T` that converts to nothing, so none of
+# these bindings or calls type-check there.
 # Lambda capture semantics: an omitted capture list imm-captures free variables
 # (observing later outer updates), `{mut}` writes through, `{var}` snapshots at
 # the lambda's evaluation point, and `{}` captures nothing. Capturing lambdas

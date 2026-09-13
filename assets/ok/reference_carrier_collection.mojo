@@ -1,18 +1,16 @@
-# A bare struct name as an explicit type argument (`List[RefBox]()`) resolves
-# as a type argument even though the parser encodes it as a value expression:
-# the checker marks it erased, so MIR emits no runtime register for it. The
-# origin-erased pointer-carrying element type constructs, moves in, and
-# reports length.
+# A pointer-carrying element type in a collection: the box constructs, moves
+# in, and reports length, and its origin parameter is bound to the borrowed
+# source. Leaving it unbound (`List[RefBox]`) is the Mojito-only spelling the
+# `erased-origin-parameter` conformance case carries, and upstream's
+# exclusivity rules also refuse to pass the collection and a box over the same
+# origin to one call, so the append happens in place.
 @fieldwise_init
 struct RefBox[origin: Origin[mut=True]]:
     var value: Pointer[List[Int], Self.origin]
 
-def stash(mut sink: List[RefBox], var box: RefBox):
-    sink.append(box^)
-
 def main():
-    var sink = List[RefBox]()
     var local: List[Int] = [9]
     ref view = local
-    stash(sink, RefBox(Pointer(to=view)))
+    var sink = List[RefBox[origin_of(view)]]()
+    sink.append(RefBox(Pointer(to=view)))
     print(len(sink))

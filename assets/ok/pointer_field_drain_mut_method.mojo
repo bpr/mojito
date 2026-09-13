@@ -20,7 +20,7 @@ struct Box:
         self.items.append(1)
         self.items.append(2)
 
-    def drain(mut self) -> Self.DrainType[origin_of(self)]:
+    def drain(mut self) -> Self.DrainType[origin_of(self.items)]:
         ref source = self.items
         return Drain(Pointer(to=source))
 

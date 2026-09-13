@@ -284,6 +284,10 @@ syntax (no dedicated productions): `base._get_owned_interior["tag"]` names a
 collection-owned interior generation, and the terminal `base._subtree` names
 the experimental conservative subtree form — accepted in `Pointer` origin
 arguments and `origin_cast` targets, rejected in `ref [...]` clauses.
+A bracketed projection index accepts a qualified struct binder as well as an
+expression, so a parameterized associated type applies over the enclosing
+struct's own origin (`Self.InnerType[Self.o]`, upstream's spelling, alongside
+the bare `Self.InnerType[o]`).
 An optional `params_decl` list (see **Parameterization** below) makes the
 function generic: its type/value parameters are in scope as bare `NAME`s in the
 signature and body (e.g. `def first[T: Copyable & Movable](p: Pair[T]) -> T`, or
@@ -382,7 +386,8 @@ parameter (heterogeneous variadic; see **def_stmt**). On a `struct`, a type pack
 makes the struct **variadic-generic**: compile-time elaboration specializes the
 struct per instantiation, expanding pack-typed member annotations such as
 `Tuple[*Ts]` to the concrete element list; a member may spell the struct's own
-pack `*Self.Ts` (current Mojo's spelling) or `*Ts` — both name the same pack.
+pack `*Self.Ts` (current Mojo's spelling) or `*Ts` — both name the same pack,
+and an indexed element likewise spells `Self.Ts[i]` or `Ts[i]`.
 A variadic struct currently supports exactly one type-parameter pack and no
 other compile-time parameters, and must be instantiated with explicit bracket
 arguments (`Pair[Int, Bool](...)`; the elaborator does not infer struct

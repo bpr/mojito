@@ -1,3 +1,6 @@
+# The cross-origin store followed by a mutation of the borrowed source after
+# the carrier's last use. The `ref`-field spelling lives at
+# assets/extensions/ownership_ok/transferred_loan_after_last_use.mojo.
 @fieldwise_init
 struct RefBox[origin: Origin[mut=True]]:
     var value: Pointer[List[Int], Self.origin]

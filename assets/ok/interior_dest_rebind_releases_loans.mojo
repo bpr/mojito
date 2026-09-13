@@ -8,12 +8,12 @@ struct Two[origin: Origin[mut=True]]:
     var b: List[Int]
 
 def main():
-    var a = List[RefBox]()
-    var t = Two(a^, [1])
     var local: List[Int] = [9]
     ref view = local
+    var a = List[RefBox[origin_of(view)]]()
+    var t = Two(a^, [1])
     t.a.append(RefBox(Pointer(to=view)))
-    var fresh = List[RefBox]()
+    var fresh = List[RefBox[origin_of(view)]]()
     t.a = fresh^
     local.append(1)
     print(t.b[0], local[1])

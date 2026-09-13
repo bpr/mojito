@@ -1,6 +1,6 @@
 # `len(p)` and `p[i]` on a user struct dispatch to `__len__` / `__getitem__`.
 @fieldwise_init
-struct Pair:
+struct Pair(Sized):
     var a: Int
     var b: Int
 

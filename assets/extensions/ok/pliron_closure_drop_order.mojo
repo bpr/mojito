@@ -1,3 +1,8 @@
+# A lambda with owned droppable `{var}` captures bound to a local. Mojito
+# needs the explicit `capturing[_]` annotation to let the closure outlive the
+# expression; the pin rejects that annotation (its capturing lambda has type
+# `def() -> Int`) and rejects the unannotated binding too, because the
+# closure value is not `ImplicitlyCopyable`.
 # Owned droppable closure captures join the drop set through the capture
 # record's teardown thunk: a `{var}` String capture frees its buffer when
 # the closure dies, a `{var}` struct capture runs its user destructor at

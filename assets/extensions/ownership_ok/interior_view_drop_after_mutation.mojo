@@ -1,6 +1,10 @@
-# Consuming a live view is legal: the explicit destructor runs while the
-# interior generation is still current, and the owner mutates freely once
-# the view is gone.
+# The same owned-interior carrier, dropped implicitly after its generation
+# was staled. Rejected by the pin for the same reason as
+# `interior-generation-view-consume`.
+# Implicitly dropping a stale view stays legal: the consume-time interior
+# liveness rule applies to consuming uses (moves, explicit destructors), not
+# to a scope-end drop of an aggregate whose interior generation was staled
+# after its last use.
 @fieldwise_init
 struct Buf:
     var value: Int
@@ -19,12 +23,8 @@ struct Buf:
 struct Wrap[mut: Bool, //, origin: Origin[mut=mut]]:
     var data: Pointer[Int, Self.origin._get_owned_interior["items"]]
 
-    def finish(deinit self):
-        pass
-
 def main():
     var b = Buf(3)
     var w = Wrap(b.view())
-    w^.finish()
     b.grow()
     print(b.value)

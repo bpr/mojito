@@ -1,6 +1,8 @@
 # Phase 7: numeric-operation trait bounds enable the matching builtin/operator on
 # an opaque type parameter. The concrete numeric type's implementation runs after
-# type erasure, so these helpers work for `Int`/`Float64` arguments.
+# type erasure, so these helpers work for `Int`/`Float64` arguments. Only a
+# float reaches `Floatable`: upstream conforms neither `Int` nor an
+# `IntLiteral` to it, which the `int-is-floatable` conformance case records.
 def absolute[T: Absable](x: T) -> T:
     return abs(x)
 
@@ -22,4 +24,4 @@ def main():
     print(rounded(2.7))
     print(powit(2, 10))
     print(to_int(3.9))
-    print(to_flt(4))
+    print(to_flt(4.0))

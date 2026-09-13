@@ -1,3 +1,7 @@
+# Per-leaf presence flags after a conditional partial move. Upstream forbids
+# moving a field out of a struct at all ("destroyed out of the middle of a
+# value"), so only Mojito runs this; see also
+# `partial-field-move-parent-used`.
 # Per-leaf presence flags: moving one field out leaves the rest to drop
 # normally, and any moved leaf suppresses whole-value destructor work — the
 # VM's tombstone rule. The conditional move makes the surviving-leaf set

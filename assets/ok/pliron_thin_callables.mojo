@@ -9,7 +9,7 @@ def twice(x: Int) -> Int:
 def add_one(x: Int) -> Int:
     return x + 1
 
-def apply(f: def(x: Int) -> Int, value: Int) -> Int:
+def apply(f: def(x: Int) thin -> Int, value: Int) -> Int:
     return f(value)
 
 def checked_div(a: Int, b: Int) raises -> Int:
@@ -17,7 +17,7 @@ def checked_div(a: Int, b: Int) raises -> Int:
         raise Error("division by zero")
     return a // b
 
-def risky_apply(f: def(a: Int, b: Int) raises -> Int, a: Int, b: Int) raises -> Int:
+def risky_apply(f: def(a: Int, b: Int) thin raises -> Int, a: Int, b: Int) raises -> Int:
     return f(a, b)
 
 def main():

@@ -1,11 +1,11 @@
 # Lifecycle copy/move: a pointer-owning struct defines unified `__init__`
 # overloads for copy (deep-copy the buffer) and move (relocate). The copy
-# initializer gives the type explicit value semantics: `Buf(copy: a)` deep
+# initializer gives the type explicit value semantics: `Buf(copy=a)` deep
 # copies, while an implicit `var b = a` would need `ImplicitlyCopyable`.
 from std.memory.alloc import unsafe_alloc
 
 struct Buf:
-    var data: UnsafePointer[Int]
+    var data: UnsafePointer[Int, MutUntrackedOrigin]
     var n: Int
 
     def __init__(out self, n: Int):
@@ -40,7 +40,7 @@ struct Buf:
 def main():
     var a: Buf = Buf(2)
     a.set(0, 100)
-    var b: Buf = Buf(copy: a)  # copy initializer → independent buffer
+    var b: Buf = Buf(copy=a)  # copy initializer → independent buffer
     b.set(0, 999)
     print(a.get(0), b.get(0))
     var c: Buf = b^          # move initializer → relocate b into c

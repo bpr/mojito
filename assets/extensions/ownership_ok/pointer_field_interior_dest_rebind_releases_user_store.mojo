@@ -1,3 +1,8 @@
+# Rebinding an interior destination that holds an origin-carrying carrier,
+# then mutating the released source. Mojito erases the origin parameter and
+# lets the replacement carry a different origin; the pin rejects both. The
+# `ref`-field spelling lives at
+# assets/extensions/ownership_ok/interior_dest_rebind_releases_user_store.mojo.
 # Rebinding the exact interior destination releases its transferred-loan
 # generation: after `t.a` is replaced the old alias is gone, so its source
 # mutates freely while sibling storage stays live.

@@ -5,7 +5,7 @@ struct RefBox[origin: Origin[mut=True]]:
     var value: Pointer[List[Int], Self.origin]
 
 def fill(mut source: List[Int]) -> List[RefBox[origin_of(source)]]:
-    var sink = List[RefBox]()
+    var sink = List[RefBox[origin_of(source)]]()
     ref view = source
     sink.append(RefBox(Pointer(to=view)))
     return sink^

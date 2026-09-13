@@ -650,7 +650,7 @@ fn partial_move_field_read_parity() {
 fn utility_builtins_parity() {
     // abs/min/max/round + Int/UInt/Float64 conversions use shared runtime helpers.
     let src = "def main():\n    print(abs(-5))\n    print(abs(-3.5))\n    print(min(3, 7), max(3, 7))\n    print(round(2.5), round(2.4))\n    print(Int(3.9), UInt(42), Float64(7))\n";
-    assert_eq!(parity(src), "5\n3.5\n3 7\n3.0 2.0\n3 42 7.0\n");
+    assert_eq!(parity(src), "5\n3.5\n3 7\n2.0 2.0\n3 42 7.0\n");
 }
 
 #[test]
@@ -1143,7 +1143,8 @@ fn parametric_mut_iterator_reads_through_the_immutable_fallback() {
 
 #[test]
 fn generic_borrowed_dispatch_reaches_an_overloaded_ref_self_iter() {
-    let source = include_str!("../assets/ok/generic_borrowed_dispatch_overloaded_iter.mojo");
+    let source =
+        include_str!("../assets/extensions/ok/generic_borrowed_dispatch_overloaded_iter.mojo");
     assert_eq!(
         run_compiled(source).expect("overloaded ref-self __iter__ dispatches generically"),
         "0\n-1\n"

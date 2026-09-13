@@ -586,6 +586,7 @@ fn self_hosted_math_rounding_helpers() {
 fn self_hosted_algorithms_use_comptime_facts() {
     let main = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("assets")
+        .join("extensions")
         .join("ok")
         .join("self_hosted_algorithms.mojo");
     assert_eq!(

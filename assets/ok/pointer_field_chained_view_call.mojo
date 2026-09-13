@@ -30,7 +30,7 @@ struct Board:
         self.items.append(6)
         self.items.append(7)
 
-    def pane(ref self) -> Self.PaneType[origin_of(self)]:
+    def pane(ref self) -> Self.PaneType[origin_of(self.items)]:
         ref source = self.items
         return Pane(source, 0)
 

@@ -3,8 +3,8 @@
 # Self.o2]`), monomorphic and parameterized alike, so a two-binder delegation
 # resolves to the right enclosing binder instead of the single-binder
 # fallback. The cursors store their source through a `Pointer[T, Self.o]`
-# field taken from the owned local directly. Upstream prints 2 for the same program (pin 2026-09-01). Subset
-# precision limit: construction-time field origins are recorded per top-level
+# field taken from the owned local directly.
+# Subset precision limit: construction-time field origins are recorded per top-level
 # field, so the caller-side loan of a reference delegated through a nested
 # multi-binder carrier covers every source that carrier holds (both `a` and
 # `b` here), not only the resolved one.
@@ -42,7 +42,7 @@ struct WrapApplied[m1: Bool, m2: Bool, //, o1: Origin[mut=m1], o2: Origin[mut=m2
     # (`Self.o2`), while the body names this struct's `o1` directly — the
     # callee's second binder resolves to `o1`, its first to `o2`.
     comptime view_t[a: Bool, //, x: Origin[mut=a]] = TwoView[x, Self.o1]
-    var tv: Self.view_t[o2]
+    var tv: Self.view_t[Self.o2]
 
     def key(self) -> ref[self.tv.key()] Int:
         return self.tv.key()

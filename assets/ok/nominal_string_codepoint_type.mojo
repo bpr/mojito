@@ -1,9 +1,13 @@
+# Codepoint values: conversion to Int, ASCII and UTF-8 width queries,
+# equality and ordering, and display. They come from `Codepoint.from_u32`
+# here, since a `s[codepoint=i]` index is a Codepoint in Mojito and a
+# one-codepoint `StringSpan` upstream (the `string-codepoint-index`
+# conformance case).
 def main():
-    var s = String("gé🙂")
     try:
-        var g: Codepoint = s[codepoint=0]
-        var e = s[codepoint=1]
-        var face = s[codepoint=2]
+        var g: Codepoint = Codepoint.from_u32(0x67).value()
+        var e = Codepoint.from_u32(0xE9).value()
+        var face = Codepoint.from_u32(0x1F642).value()
         print(Int(g), Int(e), Int(face))
         print(g.is_ascii(), e.is_ascii())
         print(g.utf8_byte_length(), e.utf8_byte_length(), face.utf8_byte_length())

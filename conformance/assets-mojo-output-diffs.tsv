@@ -14,7 +14,6 @@ assets/ok/simd_reductions_float.mojo	float-format	Float32 lanes plus exponent-si
 assets/ok/pliron_straightline.mojo	arithmetic	a shift past the bit width: Mojo prints 7, Mojito 51102306
 assets/ok/simd_shifts_masked.mojo	arithmetic	vector shifts disagree wholesale, including shifts past the lane width
 assets/ok/simd_floordiv_mod.mojo	arithmetic	signed floordiv at the type minimum: Mojo 0, Mojito -128
-assets/ok/pliron_builtin_numeric_edges.mojo	arithmetic	round() half-way case: Mojo 2.0/-2.0, Mojito 3.0/-3.0
 assets/ok/pliron_convert_uint.mojo	arithmetic	Mojo prints 29, Mojito 31
 assets/ok/pliron_scalar_casts.mojo	arithmetic	out-of-range float-to-int casts: Mojo 0, Mojito 44
 assets/ok/pliron_float_pow.mojo	arithmetic	Float64 **: Mojo 1026.0000000000005, Mojito 1026.0

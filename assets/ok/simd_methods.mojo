@@ -1,6 +1,7 @@
 # Elementwise negation, mask select, and lane reductions on SIMD values:
 # integer reductions wrap at the element width, DType.int reductions
-# canonicalize to the native Int, and bool masks reduce with and/or.
+# canonicalize to the native Int, and bool masks reduce with and/or. The mask
+# comes from `lt`, since upstream's infix `<` is `Scalar`-only.
 def main():
     var v = SIMD[DType.int32, 4](1, 2, 3, 4)
     print(-v)
@@ -8,7 +9,7 @@ def main():
     print(v.reduce_mul())
     print(v.reduce_min())
     print(v.reduce_max())
-    var m = v < SIMD[DType.int32, 4](3, 3, 3, 3)
+    var m = v.lt(SIMD[DType.int32, 4](3, 3, 3, 3))
     print(m.select(v, -v))
     print(m.select(v, 0))
     print(m.reduce_and())

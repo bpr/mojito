@@ -1,3 +1,6 @@
+# Mojito-only stdlib homes: `std.algorithms` (self-hosted generic helpers
+# over the `std.iterable` protocol) and `std.collections.string_dict`.
+# Upstream has neither module.
 from std.algorithms import StaticSized, type_tag, default_capacity, capacity_blocks, static_size, first_or
 from std.collections.list import List
 from std.collections.set import Set

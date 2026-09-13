@@ -8,7 +8,7 @@ struct Cell:
 @fieldwise_init
 struct Grid:
     var cell: Cell
-    def __getitem__(ref self, i: Int) -> ref[origin_of(self)] Cell:
+    def __getitem__(ref self, i: Int) -> ref[origin_of(self.cell)] Cell:
         return self.cell
 
 def main():

@@ -1,7 +1,13 @@
 # Capturing closure environments through the native capture record:
 # immutable and mutable reference captures with write-back, an owned `{var}`
 # scalar snapshot re-taken per loop iteration, repeated invocation mutating
-# state through the same record, and recursion forwarding the environment.
+# state through the same record, and a nested `def` forwarding its environment
+# into a file-scope recursion (a nested `def` may not call itself).
+def _descend(n: Int, depth: Int) -> Int:
+    if n == 0:
+        return depth + 1
+    return _descend(n - 1, depth + 1)
+
 def main():
     var total = 0
     var step = 3
@@ -20,9 +26,7 @@ def main():
 
     var depth = 0
     def descend(n: Int) {mut depth} -> Int:
-        depth = depth + 1
-        if n == 0:
-            return depth
-        return descend(n - 1)
+        depth = _descend(n, depth)
+        return depth
     print(descend(4))
     print(depth)

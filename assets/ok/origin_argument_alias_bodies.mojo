@@ -28,7 +28,7 @@ struct KeyIter[m: Bool, //, o: Origin[mut=m]]:
 struct ValueIter[m: Bool, //, o: Origin[mut=m]]:
     comptime InnerType[vm: Bool, //, vo: Origin[mut=vm]] = EntryIter[vo]
 
-    var iter: Self.InnerType[o]
+    var iter: Self.InnerType[Self.o]
 
     def next_val(mut self) -> Int:
         return self.iter.next_val()
@@ -53,7 +53,7 @@ struct Box:
         self.items = List[Int]()
         self.items.append(21)
 
-    def pane(ref self) -> Self.PaneType[origin_of(self)]:
+    def pane(ref self) -> Self.PaneType[origin_of(self.items)]:
         ref source = self.items
         return Pane(source, 0)
 

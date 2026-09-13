@@ -227,7 +227,7 @@ impl FnLowering<'_> {
                 ));
             }
         };
-        let result = self.float_unary(ctx, "llvm.round.f64", value, dest);
+        let result = self.float_unary(ctx, "llvm.roundeven.f64", value, dest);
         self.reg_values.insert(dest.0, result);
         Ok(())
     }

@@ -400,6 +400,19 @@ impl FnLowering<'_> {
             "select" if dtype == Dtype::Bool && args.len() == 2 => {
                 self.lower_simd_select(ctx, dest, recv, args[0], args[1], width)
             }
+            // The elementwise comparisons share the infix operator's
+            // lowering; only the spelling differs (`runtime::simd_method`).
+            "lt" | "le" | "gt" | "ge" | "eq" | "ne" if args.len() == 1 => {
+                let op = match method {
+                    "lt" => InfixOp::Lt,
+                    "le" => InfixOp::Le,
+                    "gt" => InfixOp::Gt,
+                    "ge" => InfixOp::Ge,
+                    "eq" => InfixOp::Eq,
+                    _ => InfixOp::Ne,
+                };
+                self.lower_simd_binop(ctx, op, dest, recv, args[0], dtype, width)
+            }
             _ => Err(self.unsupported_reg(format!("SIMD method `{method}`"), dest)),
         }
     }
@@ -1205,8 +1218,20 @@ impl FnLowering<'_> {
         dest: Reg,
     ) -> Result<Value, PlironError> {
         Ok(match lane_ty {
+            // `i1` unsigned predicates order `False` below `True`, which
+            // is what `SIMD.lt`/`le`/`gt`/`ge` on a mask mean; the infix
+            // operators never reach here, the checker rejecting all but
+            // `==`/`!=` on bool lanes.
             ScalarTy::Bool => {
-                if !matches!(op, InfixOp::Eq | InfixOp::Ne) {
+                if !matches!(
+                    op,
+                    InfixOp::Eq
+                        | InfixOp::Ne
+                        | InfixOp::Lt
+                        | InfixOp::Le
+                        | InfixOp::Gt
+                        | InfixOp::Ge
+                ) {
                     return Err(
                         self.unsupported_reg(format!("SIMD bool-lane operator `{op:?}`"), dest)
                     );

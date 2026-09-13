@@ -483,6 +483,24 @@ impl Checker {
                     );
                     Ok(simd_ty(dtype, result_width))
                 }
+                // The elementwise comparisons. Upstream's infix `<`/`<=`/
+                // `>`/`>=` are `Scalar`-only and its `==`/`!=` compare whole
+                // vectors, so a mask comes from these methods.
+                "lt" | "le" | "gt" | "ge" | "eq" | "ne" if args.len() == 1 => {
+                    let other = self.infer(&args[0])?;
+                    let compatible = match &other {
+                        Ty::Simd { dtype: d, width: w } => *d == dtype && *w == width,
+                        other => splats_to(other, dtype),
+                    };
+                    if !compatible {
+                        return Err(TypeError::TypeMismatch {
+                            expected: format!("a width-{width} SIMD of the receiver's dtype"),
+                            found: other.to_string(),
+                            context: format!("SIMD.{method}"),
+                        });
+                    }
+                    Ok(simd_ty(Dtype::Bool, width))
+                }
                 "reduce_add" | "reduce_mul" | "reduce_min" | "reduce_max"
                     if dtype != Dtype::Bool && args.is_empty() =>
                 {

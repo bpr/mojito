@@ -1,3 +1,8 @@
+# An `@explicit_destroy` aggregate whose field is itself linear: the field's
+# named destructor runs from the aggregate's own, a reassignment destroys the
+# field it replaces, and every value reaches an explicit destruction. Moving
+# one field out and abandoning the rest is Mojito-only — see the
+# `partial-field-move-parent-used` conformance case.
 @explicit_destroy("close the child")
 struct Child(Deinitable where False):
     var id: Int
@@ -13,24 +18,24 @@ struct Aggregate(Deinitable where False):
     var child: Child
     var count: Int
 
-    def __init__(out self, child: Child, count: Int):
-        self.child = child
+    def __init__(out self, var child: Child, count: Int):
+        self.child = child^
         self.count = count
 
     def finish(deinit self):
-        pass
+        print("count", self.count)
+        self.child^.close()
 
-def consume(var value: Int):
+def consume(value: Int):
     pass
 
 def main():
     var aggregate = Aggregate(Child(7), 2)
-    aggregate.child^.close()
-    consume(aggregate.count^)
+    consume(aggregate.count)
+    aggregate^.finish()
 
     var rebuilt = Aggregate(Child(8), 3)
     rebuilt.child^.close()
-    consume(rebuilt.count^)
     rebuilt.child = Child(9)
     rebuilt.count = 4
     rebuilt^.finish()

@@ -2484,6 +2484,17 @@ impl Elab<'_> {
                 self.fold_pack_index_annotation(base, binding, elements, env)
             }
             Type::IndexedProjection { base, index } => {
+                // `Self.Ts[i]` is upstream's qualified spelling of the bare
+                // `Ts[i]` pack index; normalize it so one fold handles both.
+                if let Type::SelfParam(name) = base.as_ref()
+                    && name.trim_start_matches('*') == binding
+                {
+                    let mut folded =
+                        Type::Named(name.clone(), vec![ParamArg::Value((**index).clone())]);
+                    self.fold_pack_index_annotation(&mut folded, binding, elements, env)?;
+                    *ty = folded;
+                    return Ok(());
+                }
                 self.fold_pack_index_annotation(base, binding, elements, env)?;
                 **index = materialize_expression(index, env);
                 Ok(())

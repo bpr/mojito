@@ -1,3 +1,6 @@
+# The same cross-origin field store, reached from a nested `def` that
+# captures `self` and a `ref` parameter. The `ref`-field spelling lives at
+# assets/extensions/ok/nested_def_captured_param_store.mojo.
 @fieldwise_init
 struct RefBox[origin: Origin[mut=True]]:
     var value: Pointer[List[Int], Self.origin]

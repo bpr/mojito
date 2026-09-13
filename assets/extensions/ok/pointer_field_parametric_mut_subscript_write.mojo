@@ -1,3 +1,9 @@
+# A write through a pointer field whose origin is parametrically mutable
+# (`Origin[mut=m]`): Mojito accepts it in the generic body and judges it per
+# instantiation, while the pin insists the destination be provably mutable and
+# gives no way to prove `m` — a `where Self.m` clause does not help. The
+# `ref`-field spelling lives at
+# assets/extensions/ok/ref_field_parametric_mut_subscript_write.mojo.
 # Subscript writes through a parametric-mut pointer field (`Origin[mut=m]`)
 # are accepted inside the generic body and judged per instantiation: a receiver
 # whose origin binds a mutable source may write through the view, and the

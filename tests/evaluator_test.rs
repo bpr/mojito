@@ -1185,7 +1185,7 @@ fn round_rounds_to_nearest() {
     );
     assert_eq!(binding(&e, "a"), Value::Float64(4.0));
     assert_eq!(binding(&e, "b"), Value::Float64(2.0));
-    assert_eq!(binding(&e, "c"), Value::Float64(1.0)); // 0.5 rounds half away from zero
+    assert_eq!(binding(&e, "c"), Value::Float64(0.0)); // 0.5 rounds half to even
 }
 
 #[test]

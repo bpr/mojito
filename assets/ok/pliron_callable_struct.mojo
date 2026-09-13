@@ -1,14 +1,16 @@
 # Nominal callable structs devirtualize to direct `__call__` calls during
-# backend monomorphization: a mut-self counter writes back through its
-# receiver place, a raising `__call__` reports through the tagged outcome
-# and is caught, and an owned argument transfers through the invocation.
+# backend monomorphization: a read-`self` `__call__` reads its own fields, a
+# raising `__call__` reports through the tagged outcome and is caught, and an
+# owned argument transfers through the invocation. A `mut self` `__call__`
+# writing back through its receiver place is Mojito-only — upstream's
+# `def(...)` conformance wants a read receiver — see the
+# `mut-self-callable-struct` conformance case.
 @fieldwise_init
 struct Counter(def(Int) -> Int):
     var total: Int
 
-    def __call__(mut self, amount: Int) -> Int:
-        self.total += amount
-        return self.total
+    def __call__(self, amount: Int) -> Int:
+        return self.total + amount
 
 @fieldwise_init
 struct Checked(def(Int) raises -> Int):
@@ -23,9 +25,8 @@ struct Checked(def(Int) raises -> Int):
 struct Keeper(def(mut List[Int], var String)):
     var seen: Int
 
-    def __call__(mut self, mut sink: List[Int], var tag: String):
-        self.seen += tag.byte_length()
-        sink.append(self.seen)
+    def __call__(self, mut sink: List[Int], var tag: String):
+        sink.append(self.seen + tag.byte_length())
 
 def main():
     var count = Counter(10)
@@ -40,7 +41,7 @@ def main():
     except e:
         print("caught")
 
-    var keeper = Keeper(0)
+    var keeper = Keeper(1)
     var sink: List[Int] = List[Int]()
     keeper(sink, String("abc"))
     keeper(sink, String("de"))

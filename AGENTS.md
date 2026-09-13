@@ -84,13 +84,16 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
 1. Mojito is a subset of current Mojo with a short, explicit list of
    extensions. Accepted programs use valid Mojo syntax and semantics; Mojito
    may reject valid Mojo but must not invent a different language. An
-   extension is admitted only when it tracks an announced upstream direction
+   extension is *kept* only when it tracks an announced upstream direction
    (today: direct `ref` struct fields, and `Origin._subtree` origin casts —
    upstream's own experimental spelling, which the pinned build parses but
-   rejects at the use), is listed in `docs/non-goals.md`, and keeps its
-   fixtures under `assets/extensions/` — every fixture in the ordinary
-   `assets/` `_ok` folders must compile with the pinned Mojo, which
-   `scripts/sweep-assets-mojo` checks. The five error folders are gated the
+   rejects at the use) and is listed in `docs/non-goals.md`; every other
+   Mojito-only acceptance is a divergence on `docs/roadmap.md`'s ledger,
+   waiting to be withdrawn. Both kinds keep their fixtures under
+   `assets/extensions/`, where `scripts/sweep-assets-mojo --extensions`
+   asserts the pin rejects each one — every fixture in the ordinary `assets/`
+   `_ok` folders must compile with the pinned Mojo, which the same script
+   checks. The five error folders are gated the
    other way round, by `--errors`: the pin must reject what they claim it
    rejects, and compile-and-trap what `runtime_error` claims, per fixture in
    `conformance/assets-mojo-errors.tsv`.

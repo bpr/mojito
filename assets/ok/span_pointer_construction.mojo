@@ -1,7 +1,7 @@
 # Current Mojo's pointer-backed Span construction: `Span(unsafe_ptr=p,
 # length=n)` takes `Pointer[Self.T, Self.origin]`, so a tracked pointer
 # (`xs.unsafe_ptr()`, a `Pointer(to=x)`) binds the span's origin and the span
-# loans that source; an explicit application (`Span[Int, origin_of(self)]`)
+# loans that source; an explicit application (`Span[Int, origin_of(self.items)]`)
 # is checked against the pointer's provenance; an untracked heap pointer
 # binds the slot untracked (the caller vouches for the storage).
 from std.memory.alloc import unsafe_alloc
@@ -12,8 +12,8 @@ struct Buf:
     def __init__(out self):
         self.items = [10, 20, 30]
 
-    def view(ref self) -> Span[Int, origin_of(self)]:
-        return Span[Int, origin_of(self)](unsafe_ptr=self.items.unsafe_ptr(), length=len(self.items))
+    def view(ref self) -> Span[Int, origin_of(self.items)]:
+        return Span[Int, origin_of(self.items)](unsafe_ptr=self.items.unsafe_ptr(), length=len(self.items))
 
 def total(s: Span[Int, _]) -> Int:
     var acc = 0

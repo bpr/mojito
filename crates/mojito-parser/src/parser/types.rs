@@ -90,13 +90,28 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 continue;
             }
             if matches!(self.peek_token()?, Some(Token::LBracket)) {
+                let start = self.last_span.0;
                 let arguments = self.parse_param_args()?;
-                let [mojito_ast::ast::ParamArg::Value(index)] = arguments.as_slice() else {
-                    return Err(ParseError::UnexpectedToken(
-                        Token::RBracket,
-                        "a dependent type projection requires exactly one compile-time value index"
-                            .to_string(),
-                    ));
+                // A qualified struct binder (`Self.o`) in the index position
+                // parses as a type; it is the same compile-time value the bare
+                // `o` spelling produces.
+                let rematerialized = match arguments.as_slice() {
+                    [mojito_ast::ast::ParamArg::Type(inner @ Type::SelfParam(_))] => {
+                        self.rematerialize_self_param_chain(inner, start)
+                    }
+                    _ => None,
+                };
+                let index = match (&rematerialized, arguments.as_slice()) {
+                    (Some(expression), _) => expression,
+                    (None, [mojito_ast::ast::ParamArg::Value(index)]) => index,
+                    _ => {
+                        return Err(ParseError::UnexpectedToken(
+                            Token::RBracket,
+                            "a dependent type projection requires exactly one compile-time \
+                             value index"
+                                .to_string(),
+                        ));
+                    }
                 };
                 ty = Type::IndexedProjection {
                     base: Box::new(ty),

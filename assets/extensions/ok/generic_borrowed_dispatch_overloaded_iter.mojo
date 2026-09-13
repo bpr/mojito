@@ -1,3 +1,8 @@
+# Generic trait dispatch over an iterable with overloaded `__iter__`
+# receivers. Mojito's `for` yields the *iterable*'s `Element`, so one
+# associated type serves the signature and the loop; upstream yields the
+# *iterator*'s `Iter.Element` and will not convert between the two without
+# an identity clause Mojito does not implement.
 # A conformer with the migrated-List receiver shape: a borrowed
 # `__iter__(ref self)` overloaded with an owned `__iter__(var self)`, reached
 # through generic trait dispatch. The abstract dispatch symbol pins one

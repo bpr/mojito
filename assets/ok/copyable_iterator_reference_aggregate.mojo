@@ -22,11 +22,11 @@ struct RefBox[origin: Origin[mut=False]](
 struct RefIter[origin: Origin[mut=False]](
     Deinitable, IteratorContract
 ):
-    comptime Element = RefBox
+    comptime Element = RefBox[Self.origin]
 
     var box: RefBox[Self.origin]
 
-    def __next__(mut self) -> ref[origin_of(self.box)] RefBox:
+    def __next__(mut self) -> ref[origin_of(self.box)] RefBox[Self.origin]:
         return self.box
 
 

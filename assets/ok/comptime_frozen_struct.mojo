@@ -2,12 +2,12 @@
 # factory call runs through VM-backed CTFE, field reads fold to constants,
 # and the frozen instance materializes back as an ordinary construction.
 @fieldwise_init
-struct Dims(Copyable, Movable):
+struct Dims(ImplicitlyCopyable, Movable):
     var d0: Int
     var d1: Int
 
 @fieldwise_init
-struct Grid(Copyable, Movable):
+struct Grid(ImplicitlyCopyable, Movable):
     var shape: Dims
     var scale: Int
 

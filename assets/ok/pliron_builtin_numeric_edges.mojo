@@ -1,7 +1,7 @@
 # The numeric builtins' native edges, VM-exact: abs wraps on Int
 # (abs(i64::MIN) == i64::MIN), passes UInt through unchanged, and is fabs
-# on Float64; min/max pick left on ties; round is ties-away-from-zero on
-# its (checker-required) Float64 argument.
+# on Float64; min/max pick left on ties; round is ties-to-even on its
+# (checker-required) Float64 argument.
 def main():
     print(abs(-5), abs(5), abs(-3.5), abs(2.5))
     var u: UInt = 7

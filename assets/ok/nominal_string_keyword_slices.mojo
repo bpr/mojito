@@ -2,7 +2,10 @@
 # views: `s[byte=a:b]` (endpoints on UTF-8 boundaries) and
 # `s[codepoint=a:b]` return sub-views of the String's buffer; a StringSpan
 # also slices by grapheme (which String itself does not) and sub-slices by
-# byte. Omitted bounds are preserved.
+# byte. Omitted bounds are preserved. A single-byte *index* (`sp[byte=0]`)
+# reads the byte in Mojito and a one-byte view upstream — the
+# `string-span-byte-index` conformance case — and the pin also refuses to
+# pass two views over one origin to a single `print`.
 def main() raises:
     var s = String("héllo🙂")
     var b = s[byte=0:1]
@@ -20,4 +23,5 @@ def main() raises:
     print(g, g.byte_length())
     var head = sp[codepoint=:2]
     print(head)
-    print(sp[byte=0], g[grapheme=0])
+    print(sp[byte=0:1])
+    print(g[grapheme=0])

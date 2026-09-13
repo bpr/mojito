@@ -3,7 +3,6 @@
 def twice(x: Int) -> Int:
     return x + x
 
-@value
 @fieldwise_init
 struct Point:
     var x: Int

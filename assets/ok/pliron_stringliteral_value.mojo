@@ -1,18 +1,21 @@
-# StringLiteral as a value type: typed variables, parameter and return
-# passing, copies, printing, and conversion into an owned String — all over
-# the borrowed 16-byte descriptor.
-def echo(s: StringLiteral) -> StringLiteral:
-    return s
+# StringLiteral as a value type: typed parameters, copies, printing, and
+# conversion into an owned String — all over the borrowed 16-byte descriptor.
+# A *runtime* StringLiteral value (a variable or return annotated
+# `StringLiteral`, or one picked by a runtime flag) is Mojito-only: upstream
+# parameterizes the type by the literal itself, so only the parameter position
+# infers. See the `unparameterized-string-literal` conformance case.
+def echo(s: StringLiteral) -> String:
+    return String(s)
 
 
-def pick(flag: Bool, a: StringLiteral, b: StringLiteral) -> StringLiteral:
+def pick(flag: Bool, a: StringLiteral, b: StringLiteral) -> String:
     if flag:
-        return a
-    return b
+        return String(a)
+    return String(b)
 
 
 def main():
-    var s: StringLiteral = "typed literal storage"
+    var s = "typed literal storage"
     print(s)
     var t = s
     print(t)

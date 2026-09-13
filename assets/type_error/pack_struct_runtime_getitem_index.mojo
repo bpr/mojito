@@ -5,7 +5,7 @@ struct Pair[*Ts: Copyable & Movable & Deinitable](Copyable, Movable):
     def __init__(out self, var *args: *Self.Ts):
         self.storage = Tuple(*args^)
 
-    def __getitem__[i: Int](self) -> Ts[i]:
+    def __getitem__[i: Int](self) -> Self.Ts[i]:
         return self.storage[i]
 
 

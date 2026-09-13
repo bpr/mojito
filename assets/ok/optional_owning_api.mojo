@@ -49,13 +49,13 @@ def main():
         print("owned", item.id)
 
     var e = Optional[Int](4)
-    var f = e^.map[Int](lambda (var v: Int) -> Int: v * 10)
+    var f = e^.map(lambda (var v: Int) -> Int: v * 10)
     print("mapped", f.value())
 
     def wrap(var v: Int) -> Optional[Int]:
         return Optional[Int](v + 1)
     var g = Optional[Int](6)
-    var h = g^.and_then[Int](wrap)
+    var h = g^.and_then(wrap)
     print("chained", h.value())
 
     var i = Optional[Res](Res(99))
