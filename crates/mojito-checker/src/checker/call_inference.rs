@@ -548,7 +548,14 @@ impl Checker {
                                             ),
                                         );
                                     }
-                                    _ => matches.push((ret, score, target, error)),
+                                    _ => matches.push(CallableOverloadMatch {
+                                        ret,
+                                        score,
+                                        target,
+                                        error,
+                                        owned: owned_parameters(candidate),
+                                        owned_arguments: owned_arguments(candidate, args, kwargs),
+                                    }),
                                 }
                             }
                         }

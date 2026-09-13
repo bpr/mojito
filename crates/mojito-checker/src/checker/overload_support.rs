@@ -73,6 +73,18 @@ pub(super) enum OverloadSelect {
     Ambiguous,
 }
 
+/// One call-compatible member of a free-function overload set.
+pub(super) struct CallableOverloadMatch {
+    pub(super) ret: Ty,
+    pub(super) score: usize,
+    pub(super) target: String,
+    pub(super) error: Option<Ty>,
+    /// [`owned_parameters`] of the candidate.
+    pub(super) owned: Vec<bool>,
+    /// [`owned_arguments`] of the call against the candidate.
+    pub(super) owned_arguments: Vec<bool>,
+}
+
 pub(super) fn ct_integer(value: &CtValue) -> Option<mojito_common::literal::IntLiteral> {
     match value {
         CtValue::Int(value) => Some((*value).into()),
@@ -209,43 +221,46 @@ pub(super) fn symbol_equivalent_params(a: &[Ty], b: &[Ty]) -> bool {
     a == b
 }
 
+/// Current Mojo overloads a free function on a read versus an owned (`var`)
+/// parameter of the same type, so ownership is part of callable identity.
 pub(super) fn same_callable_signature(a: &Ty, b: &Ty) -> bool {
-    match (a, b) {
-        (
-            Ty::Func {
-                params: ap,
-                variadic: av,
-                kw_variadic: akw,
-                ..
-            },
-            Ty::Func {
-                params: bp,
-                variadic: bv,
-                kw_variadic: bkw,
-                ..
-            },
-        ) => symbol_equivalent_params(ap, bp) && av == bv && akw == bkw,
-        (
-            Ty::GenericFunc {
-                decls: ad,
-                params: ap,
-                variadic: av,
-                kw_variadic: akw,
-                ..
-            },
-            Ty::GenericFunc {
-                decls: bd,
-                params: bp,
-                variadic: bv,
-                kw_variadic: bkw,
-                ..
-            },
-        ) => {
-            canonical_generic_parameter_shape(ad, ap, av.as_deref(), akw.as_deref())
-                == canonical_generic_parameter_shape(bd, bp, bv.as_deref(), bkw.as_deref())
+    owned_parameters(a) == owned_parameters(b)
+        && match (a, b) {
+            (
+                Ty::Func {
+                    params: ap,
+                    variadic: av,
+                    kw_variadic: akw,
+                    ..
+                },
+                Ty::Func {
+                    params: bp,
+                    variadic: bv,
+                    kw_variadic: bkw,
+                    ..
+                },
+            ) => symbol_equivalent_params(ap, bp) && av == bv && akw == bkw,
+            (
+                Ty::GenericFunc {
+                    decls: ad,
+                    params: ap,
+                    variadic: av,
+                    kw_variadic: akw,
+                    ..
+                },
+                Ty::GenericFunc {
+                    decls: bd,
+                    params: bp,
+                    variadic: bv,
+                    kw_variadic: bkw,
+                    ..
+                },
+            ) => {
+                canonical_generic_parameter_shape(ad, ap, av.as_deref(), akw.as_deref())
+                    == canonical_generic_parameter_shape(bd, bp, bv.as_deref(), bkw.as_deref())
+            }
+            _ => false,
         }
-        _ => false,
-    }
 }
 
 /// Bundled collection mutators store an argument into `self` through
@@ -307,12 +322,14 @@ pub(super) fn callable_lowered_name(name: &str, ty: &Ty) -> Option<String> {
         params,
         variadic,
         kw_variadic,
+        conventions,
         ..
     }
     | Ty::GenericFunc {
         params,
         variadic,
         kw_variadic,
+        conventions,
         ..
     }) = ty
     else {
@@ -323,7 +340,8 @@ pub(super) fn callable_lowered_name(name: &str, ty: &Ty) -> Option<String> {
         .chain(variadic.iter().map(Box::as_ref))
         .collect();
     let signature = mojito_symbol::symbol::SignatureKey::from_tys(signature_types)
-        .with_kw_variadic(kw_variadic.as_deref());
+        .with_kw_variadic(kw_variadic.as_deref())
+        .with_owned_params(conventions);
     Some(mojito_symbol::symbol::function_symbol(name, &signature))
 }
 
@@ -600,22 +618,91 @@ pub(super) fn conversion_count(actual: &Ty, expected: &Ty) -> usize {
 }
 
 pub(super) fn select_callable_overload(
-    matches: Vec<(Ty, usize, String, Option<Ty>)>,
+    matches: Vec<CallableOverloadMatch>,
 ) -> Result<(Ty, String, Option<Ty>), OverloadSelect> {
     let best = matches
         .iter()
-        .map(|(_, score, _, _)| *score)
+        .map(|candidate| candidate.score)
         .min()
         .ok_or(OverloadSelect::NoMatch)?;
     let mut best_matches = matches
         .into_iter()
-        .filter(|(_, score, _, _)| *score == best)
+        .filter(|candidate| candidate.score == best)
         .collect::<Vec<_>>();
     if best_matches.len() != 1 {
-        return Err(OverloadSelect::Ambiguous);
+        // A read and an owned overload of one parameter type tie on argument
+        // scoring; at every parameter where the tied candidates disagree on
+        // ownership, the argument decides: an owned value (`x^`, an rvalue)
+        // selects `var`, a place selects the read overload.
+        let survivors: Vec<usize> = best_matches
+            .iter()
+            .enumerate()
+            .filter(|(_, candidate)| {
+                candidate.owned.iter().enumerate().all(|(index, owned)| {
+                    best_matches
+                        .iter()
+                        .all(|other| other.owned.get(index) == Some(owned))
+                        || candidate
+                            .owned_arguments
+                            .get(index)
+                            .copied()
+                            .unwrap_or(false)
+                            == *owned
+                })
+            })
+            .map(|(index, _)| index)
+            .collect();
+        let [index] = survivors.as_slice() else {
+            return Err(OverloadSelect::Ambiguous);
+        };
+        best_matches.swap(0, *index);
     }
-    let (ret, _, target, error) = best_matches.remove(0);
+    let CallableOverloadMatch {
+        ret, target, error, ..
+    } = best_matches.swap_remove(0);
     Ok((ret, target, error))
+}
+
+/// Whether each regular parameter of a callable is owned (`var`).
+pub(super) fn owned_parameters(ty: &Ty) -> Vec<bool> {
+    match ty {
+        Ty::Func { conventions, .. } | Ty::GenericFunc { conventions, .. } => conventions
+            .iter()
+            .map(|convention| matches!(convention, Some(ArgConvention::Var)))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Per regular parameter of `callable`, whether the call's argument for it
+/// hands over a value the callee may own: an explicit transfer `x^` or an
+/// rvalue. A place argument is only borrowed or copied, and an unsupplied
+/// parameter supplies nothing.
+pub(super) fn owned_arguments(
+    callable: &Ty,
+    args: &[Expr],
+    kwargs: &[mojito_ast::ast::KwArg],
+) -> Vec<bool> {
+    let (Ty::Func { names, .. } | Ty::GenericFunc { names, .. }) = callable else {
+        return Vec::new();
+    };
+    names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            args.get(index)
+                .or_else(|| {
+                    kwargs
+                        .iter()
+                        .find(|kwarg| &kwarg.name == name)
+                        .map(|kwarg| &kwarg.value)
+                })
+                .is_some_and(|argument| {
+                    matches!(argument.kind, ExprKind::Transfer(_))
+                        || place_root_name(argument).is_none()
+                })
+        })
+        .collect()
 }
 
 pub(super) fn select_method_overload(

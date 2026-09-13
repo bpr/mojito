@@ -331,6 +331,10 @@ pub struct SignatureKey {
     /// suffix stays empty for signatures without keyword-only parameters,
     /// leaving every existing symbol unchanged.
     keywords: Vec<String>,
+    /// Indexes of the regular parameters taken `var` (owned). Current Mojo
+    /// overloads a free function on a read versus an owned parameter of the
+    /// same type, so ownership is part of that callable's identity.
+    owned: Vec<usize>,
 }
 
 impl SignatureKey {
@@ -347,6 +351,7 @@ impl SignatureKey {
                 .find(|parameter| parameter.kind == mojito_ast::ast::ParamKind::KwVariadic)
                 .map(|parameter| TypeKey::from_ast(&parameter.ty)),
             keywords: Vec::new(),
+            owned: Vec::new(),
         }
     }
 
@@ -356,6 +361,7 @@ impl SignatureKey {
             types: tys.into_iter().map(TypeKey::from_ty).collect(),
             kw_variadic: None,
             keywords: Vec::new(),
+            owned: Vec::new(),
         }
     }
 
@@ -378,7 +384,22 @@ impl SignatureKey {
                 .collect(),
             kw_variadic: None,
             keywords: Vec::new(),
+            owned: Vec::new(),
         }
+    }
+
+    /// Attach which regular parameters are owned (`var`) to a free function's
+    /// identity, from the per-parameter conventions in declaration order. The
+    /// suffix stays empty when no parameter is owned.
+    #[must_use]
+    pub fn with_owned_params(mut self, conventions: &[Option<ArgConvention>]) -> Self {
+        self.owned = conventions
+            .iter()
+            .enumerate()
+            .filter(|(_, convention)| matches!(convention, Some(ArgConvention::Var)))
+            .map(|(index, _)| index)
+            .collect();
+        self
     }
 
     /// Attach the homogeneous keyword-variadic collector to callable identity.
@@ -411,6 +432,10 @@ impl SignatureKey {
             suffix.push_str("$kw$");
             suffix.push_str(&self.keywords.join("$"));
         }
+        for index in &self.owned {
+            suffix.push_str("$var");
+            suffix.push_str(&index.to_string());
+        }
         suffix
     }
 
@@ -429,6 +454,7 @@ impl SignatureKey {
             types: parts,
             kw_variadic: self.kw_variadic.clone(),
             keywords: self.keywords.clone(),
+            owned: self.owned.clone(),
         }
     }
 }
@@ -563,6 +589,7 @@ pub fn iterator_dispatch_symbol(convention: ArgConvention) -> String {
             types: Vec::new(),
             kw_variadic: None,
             keywords: Vec::new(),
+            owned: Vec::new(),
         },
     )
 }
@@ -698,7 +725,13 @@ pub fn lowered_def_name(
         function_symbol(
             name,
             // A free function has no enclosing struct, so no `Self` to canonicalize.
-            &signature_from_ast(params, type_params, &sets.comptimes, None),
+            &signature_from_ast(params, type_params, &sets.comptimes, None).with_owned_params(
+                &params
+                    .iter()
+                    .filter(|param| param.kind == mojito_ast::ast::ParamKind::Regular)
+                    .map(|param| param.convention)
+                    .collect::<Vec<_>>(),
+            ),
         )
     } else {
         name.to_string()
@@ -1387,6 +1420,7 @@ fn signature_from_ast(
                 )))
             }),
         keywords: Vec::new(),
+        owned: Vec::new(),
     }
 }
 

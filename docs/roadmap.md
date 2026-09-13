@@ -135,16 +135,6 @@ whatever its model, because it batches every change that needs a new
 The two checkboxes below, and the bullets inside the two standing ones,
 are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
 
-- [ ] **Free functions cannot overload on a read versus an owned parameter**
-
-  Problem: Mojito reports `'f' is already declared` for `def f(t: Thing)`
-  beside `def f(var t: Thing)`, which the pin accepts, selecting the `var`
-  overload for `f(a^)` and the read one for `f(a)`.
-  - Methods already break such ties on the receiver's transfer
-    (`select_method_overload`); free-function overload keys do not include the
-    parameter convention.
-  - Model: Opus, as-is.
-
 - [ ] **A thin function value cannot be bound to a local or iterated out of an
   array**
 

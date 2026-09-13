@@ -216,6 +216,7 @@ assets/ok/os_path_functions.mojo	main	exe-differential	sanitized
 assets/ok/overload_transfer_effect_isolation.mojo	main	exe-differential	sanitized
 assets/ok/overloading_arity.mojo	main	exe-differential	sanitized
 assets/ok/overloading_literal_default.mojo	main	exe-differential	sanitized
+assets/ok/overloading_owned_parameter.mojo	main	exe-differential	sanitized
 assets/ok/overloading_struct_params.mojo	main	exe-differential	sanitized
 assets/ok/overloading_variadic_constructor.mojo	main	exe-differential	sanitized
 assets/ok/owned_iteration_iterator_owned_type.mojo	main	exe-differential	sanitized
