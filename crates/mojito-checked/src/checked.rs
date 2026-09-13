@@ -611,11 +611,14 @@ pub enum SemanticAdjustment {
     SimdLength {
         width: i64,
     },
-    /// `v.shuffle[*mask]()` — lane gather by checker-resolved compile-time
-    /// indices, each within the receiver's width; the result takes the
-    /// mask's (power-of-two) width.
+    /// `v.shuffle[*mask]()`, `v.slice[width, offset=o]()`, and `v.join(w)` —
+    /// lane gathers by checker-resolved compile-time indices; the result
+    /// takes the mask's (power-of-two) width. A shuffle's mask has one index
+    /// per receiver lane. A `joined` gather indexes the receiver's lanes
+    /// followed by the argument's.
     SimdShuffle {
         mask: Vec<usize>,
+        joined: bool,
     },
     /// Construct the selected alternative of a checked `Variant` type.
     ConstructVariant {

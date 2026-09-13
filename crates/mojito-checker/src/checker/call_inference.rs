@@ -205,6 +205,7 @@ impl Checker {
                 return Ok(ty.clone());
             }
         }
+        self.reject_nested_self_reference(name)?;
         let ty = match self.lookup(name) {
             Some(ty) => ty.clone(),
             // Built-ins and struct construction, resolved only when the name
@@ -287,6 +288,11 @@ impl Checker {
                     return self.infer_uninit_storage_construction(span, param_args, args);
                 }
                 "print" => return self.infer_print(args, kwargs),
+                // `SIMD[DType.bool, N](fill=b)`: a mask's splat takes its one
+                // lane by keyword.
+                "SIMD" if !kwargs.is_empty() => {
+                    return self.infer_simd_fill(param_args, args, kwargs);
+                }
                 _ if !kwargs.is_empty() => {
                     return Err(TypeError::BadCall {
                         func: name.to_string(),

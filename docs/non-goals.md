@@ -90,7 +90,7 @@ are the opposite case and stay on `docs/roadmap.md` as `divergence` rows.
 ### Divergences retained across re-pins
 
 The behavioral-divergences task in `docs/roadmap.md` §2 burns divergences to
-zero. These three are exempt and are re-probed at every nightly re-pin rather
+zero. These five are exempt and are re-probed at every nightly re-pin rather
 than fixed.
 
 - `subtree-origin-cast`: a cited bridge to upstream's `#lit.origin.subtree`
@@ -100,6 +100,15 @@ than fixed.
   `deinit self` field that is read only inside a loop body at the
   destructor's entry and then reads the destroyed value. That is an upstream
   bug Mojito does not reproduce.
+- `defined-shift-overflow` (`mojito-only`): Mojito masks a shift amount to
+  the word (`& 63`), so `UInt(1) << UInt(70)` has an answer. The pin's
+  over-wide shift is poison, which it cannot even fold. Mojito's result is a
+  deliberate contract in [`docs/native-abi.md`](native-abi.md) that both
+  backends keep, and any defined value is a valid refinement of poison.
+- `defined-float-to-int-edges` (`output-diff`): `Int(f)` saturates out of
+  range and converts a NaN to zero, the same `docs/native-abi.md` contract.
+  The pin's conversion is poison there, so it folds those branches to
+  arbitrary values.
 
 ### Rust runtime services that stay in Rust
 

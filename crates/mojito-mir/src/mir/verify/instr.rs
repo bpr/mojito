@@ -59,19 +59,29 @@ pub(super) fn verify_instruction(
                 ));
             }
         }
-        MirInstr::SimdShuffle { value, mask, .. } => {
+        MirInstr::SimdShuffle {
+            value, other, mask, ..
+        } => {
             if !valid_simd_width(mask.len()) {
                 errors.push(format!(
                     "{prefix}: SIMD shuffle mask length {} is not a positive power of two",
                     mask.len()
                 ));
             }
-            if let Some(Ty::Simd { width, .. }) = reg_ty(value)
-                && let Some(bad) = mask.iter().find(|lane| **lane as i64 >= *width)
-            {
-                errors.push(format!(
-                    "{prefix}: SIMD shuffle lane {bad} is out of range for width {width}"
-                ));
+            if let Some(source @ Ty::Simd { width, .. }) = reg_ty(value) {
+                let lanes = if other.is_some() { width * 2 } else { *width };
+                if let Some(bad) = mask.iter().find(|lane| **lane as i64 >= lanes) {
+                    errors.push(format!(
+                        "{prefix}: SIMD shuffle lane {bad} is out of range for {lanes} source lanes"
+                    ));
+                }
+                if let Some(joined) = other.as_ref().and_then(&reg_ty)
+                    && joined != source
+                {
+                    errors.push(format!(
+                        "{prefix}: SIMD join operand {joined} does not match {source}"
+                    ));
+                }
             }
         }
         MirInstr::EstablishLoans {

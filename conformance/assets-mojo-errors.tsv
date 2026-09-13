@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	318
+# swept-count	322
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -211,6 +211,7 @@ assets/type_error/inplace_raises_unhandled.mojo	compile-reject	agree	error: cann
 assets/type_error/inplace_subscript_bad_arg.mojo	compile-reject	agree	error: invalid call to '__iadd__': value passed to 'amount' cannot be converted from 'StringLiteral["not an int"]' to 'Int'
 assets/type_error/inplace_subscript_missing.mojo	compile-reject	agree	error: 'Only' does not implement the '__iadd__' method
 assets/type_error/inplace_subscript_raises_unhandled.mojo	compile-reject	agree	error: cannot call function that may raise in a context that cannot raise
+assets/type_error/input_outside_raising_context.mojo	compile-reject	agree	error: cannot call function that may raise in a context that cannot raise
 assets/type_error/is_operator_missing_dunder.mojo	compile-reject	agree	error: 'Plain' does not implement the '__is__' method
 assets/type_error/is_operator_non_struct.mojo	compile-reject	agree	error: 'Int' does not implement the '__is__' method
 assets/type_error/is_same_type_removed.mojo	compile-reject	agree	error: use of unknown declaration 'is_same_type'
@@ -240,6 +241,7 @@ assets/type_error/movable_where_false_transfer.mojo	compile-reject	agree	error: 
 assets/type_error/mut_origin_binder_rejects_immutable_pointer.mojo	compile-reject	agree	error: invalid call to 'bump': value passed to 'p' cannot be converted from 'Pointer[Int, origin_of(x)]' to 'Pointer[Int, o]'
 assets/type_error/mut_origin_constructor_rejects_immutable_pointer.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/mut_untracked_origin_local.mojo	compile-reject	agree	error: invalid call to 'mutate_untracked': value passed to 'value' cannot be converted from 'Int' to ref 'Int'
+assets/type_error/nested_def_recursive_reference.mojo	compile-reject	agree	error: recursive references to nested functions are not supported; define 'walk' at file scope
 assets/type_error/nominal_string_codepoint_arithmetic.mojo	compile-reject	agree	error: invalid call to '__add__': value passed to 'rhs' cannot be converted from 'IntLiteral[1]' to 'StringSpan[rhs.origin]', it depends on an unresolved parameter 'rhs.origin.mut'
 assets/type_error/nominal_string_codepoint_construction.mojo	runs	divergence	the pin runs it; Mojito rejects: no constructor overload matches
 assets/type_error/nominal_string_default_rebind.mojo	compile-reject	agree	error: cannot implicitly convert 'String' value to 'StringLiteral[_]'
@@ -304,7 +306,9 @@ assets/type_error/set_clear_with_bad_handler.mojo	compile-reject	agree	error: in
 assets/type_error/set_element_ref_write.mojo	runs	divergence	the pin runs it; Mojito rejects: must be mutable
 assets/type_error/set_requires_hashable_element.mojo	compile-reject	agree	error: 'Set' parameter 'T' has 'KeyElement' type, but value has type 'AnyStruct[Elem]'
 assets/type_error/setter_overload_competing_pair.mojo	compile-reject	agree	error: 'Sink' has '__setitem__' but no '__getitem__' method
+assets/type_error/simd_bool_positional_splat.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_generic_width_rejected.mojo	compile-reject	agree	error: SIMD vector length must be a power of two between 1 and 2^15, found '!kgen.simd<3, si32>'
+assets/type_error/simd_shuffle_width_mismatch.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_size_removed_alias.mojo	compile-reject	agree	error: use of unknown declaration 'SIMDSize'
 assets/type_error/simd_subscript_indexer.mojo	compile-reject	agree	error: invalid call to '__getitem__': value passed to 'idx' cannot be converted from 'Offset' to 'Int'
 assets/type_error/size_of_requires_one_type.mojo	compile-reject	agree	error: no matching function in call to 'size_of'

@@ -180,7 +180,27 @@ impl Checker {
             .rposition(|scope| scope.contains_key(name))
     }
 
+    /// Reject a nested function naming itself from inside its own body — a
+    /// call, a value read, or either from a function nested deeper still —
+    /// as upstream does: a recursive helper belongs at file scope.
+    pub(super) fn reject_nested_self_reference(&self, name: &str) -> Result<(), TypeError> {
+        let Some(scope) = self.binding_scope(name) else {
+            return Ok(());
+        };
+        let recursive =
+            self.capture_contexts.borrow().iter().any(|policy| {
+                !policy.lambda && policy.function_name == name && scope < policy.base
+            });
+        if recursive {
+            return Err(TypeError::Unsupported(format!(
+                "recursive reference to nested function '{name}'; define '{name}' at file scope"
+            )));
+        }
+        Ok(())
+    }
+
     pub(super) fn check_capture_access(&self, name: &str, writing: bool) -> Result<(), TypeError> {
+        self.reject_nested_self_reference(name)?;
         let contexts = self.capture_contexts.borrow();
         if contexts.is_empty() {
             return Ok(());

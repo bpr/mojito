@@ -543,6 +543,7 @@ impl Decoder {
             "simd.shuffle" => Some(MirInstr::SimdShuffle {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 value: self.req(value, fields, "value", Self::reg)?,
+                other: self.req(value, fields, "other", |d, v| Some(d.option_reg(v)))?,
                 mask: self.req(value, fields, "mask", |d, v| {
                     Some(
                         d.list(v)

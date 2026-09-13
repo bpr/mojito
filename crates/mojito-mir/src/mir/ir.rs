@@ -755,13 +755,16 @@ pub enum MirInstr {
         dtype: Dtype,
         width: usize,
     },
-    /// Lane gather `v.shuffle[*mask]()`: result lane `i` is `value`'s lane
-    /// `mask[i]`. The mask is a checker-resolved compile-time parameter —
-    /// every index is within the receiver's width and the mask length is a
-    /// valid SIMD width.
+    /// Lane gather `v.shuffle[*mask]()`, `v.slice[...]()`, or `v.join(w)`:
+    /// result lane `i` is lane `mask[i]` of `value`'s lanes followed by
+    /// `other`'s, which only a join has (`shufflevector`'s second operand,
+    /// of `value`'s own type). The mask is a checker-resolved compile-time
+    /// parameter — every index is within those lanes and the mask length is
+    /// a valid SIMD width.
     SimdShuffle {
         dest: Reg,
         value: Reg,
+        other: Option<Reg>,
         mask: Vec<usize>,
     },
     /// `raise <src>` — raise an error value. Propagates as an exceptional outcome

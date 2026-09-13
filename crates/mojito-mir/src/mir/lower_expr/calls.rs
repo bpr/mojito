@@ -215,7 +215,12 @@ impl Flatten<'_> {
     /// a scalar alias (`Int32(x)`, `Float32(x)`, …) — resolve its dtype/width and
     /// emit a [`MirInstr::MakeSimd`], returning its result register. Otherwise
     /// `None`, and the caller lowers it as an ordinary call.
-    pub(in crate::mir) fn try_simd_call(&mut self, e: &Expr, args: &[Expr]) -> Option<Reg> {
+    pub(in crate::mir) fn try_simd_call(
+        &mut self,
+        e: &Expr,
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Option<Reg> {
         let (dtype, width) = self
             .checked_adjustments(e)
             .into_iter()
@@ -225,7 +230,11 @@ impl Flatten<'_> {
                 }
                 _ => None,
             })?;
-        let elems = self.args(args);
+        // `SIMD[DType.bool, N](fill=b)` is the one-lane splat, by keyword.
+        let elems = match kwargs {
+            [fill] => vec![self.expr(&fill.value)],
+            _ => self.args(args),
+        };
         let d = self.fresh(span(e), None);
         self.emit(MirInstr::MakeSimd {
             dest: d,

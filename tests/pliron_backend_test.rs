@@ -78,7 +78,7 @@ def compute() -> Int:
     var b = g.cast[DType.int8]().to_bits[DType.uint16]()
     var i = 2
     b[i] = b[i - 1] << 3
-    var flags = SIMD[DType.bool, 8](True)
+    var flags = SIMD[DType.bool, 8](fill=True)
     var total: Int = SIMD[DType.int, 4](b[0].cast[DType.int](), 1, 2, 3).reduce_add()
     if m.reduce_and() and not flags.reduce_or():
         total += 1

@@ -829,8 +829,7 @@ pub fn builtin_round(v: &Value) -> Result<Value, RuntimeError> {
 /// `input(prompt)`: write the prompt immediately, read one line from standard
 /// input, and return it without the trailing line ending.
 ///
-/// EOF returns `""`, which keeps noninteractive asset runs from blocking
-/// forever.
+/// End of input raises `Error("EOF")`, as upstream's raising `input` does.
 pub fn builtin_input(prompt: Value) -> Result<Value, RuntimeError> {
     let Value::Str(prompt) = prompt else {
         return Err(RuntimeError::TypeError(format!(
@@ -845,9 +844,12 @@ pub fn builtin_input(prompt: Value) -> Result<Value, RuntimeError> {
         .map_err(|e| RuntimeError::Unsupported(format!("input(): failed to flush stdout: {e}")))?;
 
     let mut line = String::new();
-    io::stdin()
+    let read = io::stdin()
         .read_line(&mut line)
         .map_err(|e| RuntimeError::Unsupported(format!("input(): failed to read stdin: {e}")))?;
+    if read == 0 {
+        return Err(input_eof());
+    }
     if line.ends_with('\n') {
         line.pop();
         if line.ends_with('\r') {
@@ -855,6 +857,11 @@ pub fn builtin_input(prompt: Value) -> Result<Value, RuntimeError> {
         }
     }
     Ok(Value::Str(line))
+}
+
+/// The error `input()` raises when standard input is exhausted.
+pub fn input_eof() -> RuntimeError {
+    RuntimeError::Raised(Value::Error("EOF".to_string()))
 }
 
 /// `Int(x)` / `UInt(x)` / `Float64(x)` / `Bool(x)`.
@@ -1756,28 +1763,57 @@ pub fn simd_cast(target: Dtype, value: &Value) -> Result<Value, RuntimeError> {
     Ok(simd_value(target, cast))
 }
 
-/// Lane gather (`v.shuffle[*mask]()`): result lane `i` is the source's lane
-/// `mask[i]`. The checker bounded every index by the receiver's width; the
-/// bounds check here is the phase-boundary backstop.
-pub fn simd_shuffle(value: &Value, mask: &[usize]) -> Result<Value, RuntimeError> {
-    let Value::Simd { dtype, lanes } = value else {
-        return Err(RuntimeError::TypeError(format!(
+/// Lane gather for `v.shuffle[*mask]()`, `v.slice[...]()`, and `v.join(w)`.
+///
+/// Result lane `i` is lane `mask[i]` of the source's lanes followed by
+/// `other`'s. The checker bounded every index; the bounds check here is the
+/// phase-boundary backstop.
+pub fn simd_shuffle(
+    value: &Value,
+    other: Option<&Value>,
+    mask: &[usize],
+) -> Result<Value, RuntimeError> {
+    let lanes_of = |value: &Value| match value {
+        Value::Simd { dtype, lanes } => Ok((*dtype, lanes.clone())),
+        _ => Err(RuntimeError::TypeError(format!(
             "cannot shuffle {} as a SIMD value",
             type_name(value)
-        )));
+        ))),
     };
+    let (dtype, mut lanes) = lanes_of(value)?;
+    if let Some(other) = other {
+        lanes = match (lanes, lanes_of(other)?.1) {
+            (SimdLanes::Int(mut head), SimdLanes::Int(tail)) => {
+                head.extend(tail);
+                SimdLanes::Int(head)
+            }
+            (SimdLanes::Float(mut head), SimdLanes::Float(tail)) => {
+                head.extend(tail);
+                SimdLanes::Float(head)
+            }
+            (SimdLanes::Bool(mut head), SimdLanes::Bool(tail)) => {
+                head.extend(tail);
+                SimdLanes::Bool(head)
+            }
+            _ => {
+                return Err(RuntimeError::TypeError(
+                    "cannot join SIMD values of different lane kinds".to_string(),
+                ));
+            }
+        };
+    }
     let width = lanes.width();
     if let Some(bad) = mask.iter().find(|lane| **lane >= width) {
         return Err(RuntimeError::TypeError(format!(
-            "shuffle lane {bad} is out of range for width {width}"
+            "shuffle lane {bad} is out of range for {width} source lanes"
         )));
     }
-    let gathered = match lanes {
+    let gathered = match &lanes {
         SimdLanes::Int(v) => SimdLanes::Int(mask.iter().map(|lane| v[*lane]).collect()),
         SimdLanes::Float(v) => SimdLanes::Float(mask.iter().map(|lane| v[*lane]).collect()),
         SimdLanes::Bool(v) => SimdLanes::Bool(mask.iter().map(|lane| v[*lane]).collect()),
     };
-    Ok(simd_value(*dtype, gathered))
+    Ok(simd_value(dtype, gathered))
 }
 
 /// Dispatch a method call on a SIMD receiver: `select` on bool masks and the
@@ -1790,6 +1826,22 @@ pub fn simd_method(
     args: &[Value],
 ) -> Result<Value, RuntimeError> {
     match method {
+        // `ne` is the ordered predicate upstream answers at run time: a NaN
+        // on either side is unequal to nothing. The infix `!=` stays IEEE.
+        "ne" if args.len() == 1 && dtype.is_float() => {
+            let width = lanes.width();
+            let xs = to_float_lanes(&simd_value(dtype, lanes.clone()), dtype, width)?;
+            let ys = to_float_lanes(&args[0], dtype, width)?;
+            Ok(simd_value(
+                Dtype::Bool,
+                SimdLanes::Bool(
+                    xs.iter()
+                        .zip(&ys)
+                        .map(|(a, b)| a.partial_cmp(b).is_some_and(std::cmp::Ordering::is_ne))
+                        .collect(),
+                ),
+            ))
+        }
         // The elementwise comparisons, which upstream spells as methods
         // because its infix `<`/`<=`/`>`/`>=` are `Scalar`-only.
         "lt" | "le" | "gt" | "ge" | "eq" | "ne" if args.len() == 1 => {

@@ -488,13 +488,15 @@ impl Checker {
     }
 
     /// Type the built-in `input(prompt)`: the prompt is a compile-time or
-    /// nominal `String`, and the line read from standard input materializes
-    /// as the nominal `String`.
+    /// nominal `String`, the line read from standard input materializes as
+    /// the nominal `String`, and the call raises `Error` at end of input.
     pub(super) fn infer_input(&self, span: SourceSpan, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args("input", 1, args)?;
         let nominal_prompt = matches!(&tys[0], Ty::Struct(name, args)
             if args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name));
         if tys[0] == Ty::StringLiteral || nominal_prompt {
+            self.record_call_effect(span.clone(), Ty::Error);
+            self.require_error("call to raising function 'input'", Ty::Error)?;
             self.nominal_string_wrap(span)
         } else {
             Err(TypeError::TypeMismatch {

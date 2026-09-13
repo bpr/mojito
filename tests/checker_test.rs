@@ -1691,7 +1691,7 @@ fn rejects_bool_simd_dtype_casts() {
 #[test]
 fn accepts_simd_shuffle_masks() {
     ok(
-        "def main():\n    var v = SIMD[DType.int32, 4](10, 20, 30, 40)\n    var r: SIMD[DType.int32, 4] = v.shuffle[3, 2, 1, 0]()\n    var pair: SIMD[DType.int32, 2] = v.shuffle[1, 1]()\n    var one: Int32 = v.shuffle[0]()\n",
+        "def main():\n    var v = SIMD[DType.int32, 4](10, 20, 30, 40)\n    var r: SIMD[DType.int32, 4] = v.shuffle[3, 2, 1, 0]()\n    var pair: SIMD[DType.int32, 2] = v.slice[2, offset=1]()\n    var one: Int32 = v.slice[1, offset=3]()\n    var wide: SIMD[DType.int32, 8] = v.join(v)\n",
     );
 }
 
@@ -1704,12 +1704,33 @@ fn rejects_bad_simd_shuffle_masks() {
         ),
         TypeError::TypeMismatch { .. }
     ));
-    // The mask length must itself be a valid SIMD width.
+    // A mask has one index per receiver lane; `slice` and `join` change the
+    // width instead.
     assert!(matches!(
         err(
-            "def main():\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var bad = v.shuffle[0, 1, 2]()\n"
+            "def main():\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var bad = v.shuffle[0, 1]()\n"
+        ),
+        TypeError::TypeMismatch { .. }
+    ));
+    // A slice's width must be a valid SIMD width and fit from its offset.
+    assert!(matches!(
+        err(
+            "def main():\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var bad = v.slice[3]()\n"
         ),
         TypeError::BadSimdWidth(_)
+    ));
+    assert!(matches!(
+        err(
+            "def main():\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var bad = v.slice[2, offset=3]()\n"
+        ),
+        TypeError::TypeMismatch { .. }
+    ));
+    // A join takes a vector of the receiver's own type.
+    assert!(matches!(
+        err(
+            "def main():\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var bad = v.join(SIMD[DType.int32, 2](1, 2))\n"
+        ),
+        TypeError::TypeMismatch { .. }
     ));
     // Lane indices are compile-time values.
     assert!(err(

@@ -554,8 +554,11 @@ pub fn operand_regs(instr: &MirInstr) -> Vec<Reg> {
         | MirInstr::VariantGet { variant: value, .. }
         | MirInstr::VariantTake { variant: value, .. }
         | MirInstr::SimdCast { value, .. }
-        | MirInstr::SimdBitcast { value, .. }
-        | MirInstr::SimdShuffle { value, .. } => out.push(*value),
+        | MirInstr::SimdBitcast { value, .. } => out.push(*value),
+        MirInstr::SimdShuffle { value, other, .. } => {
+            out.push(*value);
+            out.extend(*other);
+        }
         MirInstr::VariantSet { place, value, .. }
         | MirInstr::VariantReplace { place, value, .. } => {
             place_regs(place, &mut out);

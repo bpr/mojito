@@ -10,7 +10,7 @@ move-capture	run	conformance/fixtures/move_capture.mojo
 unified-capture-lists	reject	conformance/fixtures/unified_capture_lists.mojo
 non-escaping-closures	run	conformance/fixtures/non_escaping_closures.mojo
 recursive-nested-callables	run	conformance/fixtures/recursive_nested_callables.mojo
-recursive-nested-def	mojito-only	conformance/fixtures/recursive_nested_def.mojo
+recursive-nested-def	reject	conformance/fixtures/recursive_nested_def.mojo
 local-comptime-capture	mojito-only	conformance/fixtures/local_comptime_capture.mojo
 shadowing-constants	run	assets/ok/shadowing_constants.mojo
 closures	run	assets/ok/closures.mojo
@@ -36,7 +36,7 @@ defined-float-to-int-edges	output-diff	conformance/fixtures/defined_float_to_int
 defined-shift-overflow	mojito-only	conformance/fixtures/defined_shift_overflow.mojo
 float-literal-to-int	mojito-only	conformance/fixtures/float_literal_to_int.mojo
 utility-numeric-builtins	run	assets/ok/builtins_numeric.mojo
-input-eof	mojito-only	conformance/fixtures/input_eof.mojo
+input-eof	reject	conformance/fixtures/input_eof.mojo
 native-input-echo	run	assets/ok/pliron_input_echo.mojo
 native-int-true-division	run	assets/ok/pliron_int_truediv.mojo
 native-uint-arithmetic	run	assets/ok/pliron_uint_arith.mojo
@@ -218,13 +218,13 @@ len-string-units	reject	assets/type_error/string_len_ambiguous.mojo
 subtree-origin-cast	mojito-only	conformance/fixtures/subtree_origin_cast.mojo
 simd-size-removed	reject	assets/type_error/simd_size_removed_alias.mojo
 simd-infix-comparison	mojito-only	conformance/fixtures/simd_infix_comparison.mojo
-simd-shuffle-width-change	mojito-only	conformance/fixtures/simd_shuffle_width_change.mojo
-simd-bool-fill	mojo-only	conformance/fixtures/simd_bool_fill.mojo
+simd-shuffle-width-change	reject	conformance/fixtures/simd_shuffle_width_change.mojo
+simd-bool-fill	run	conformance/fixtures/simd_bool_fill.mojo
 simd-comparison-methods	run	assets/ok/simd_methods.mojo
 simd-shuffle	run	assets/ok/simd_shuffle.mojo
 simd-wide-widths	run	assets/ok/simd_wide_widths.mojo
 simd-bool-masks	run	assets/ok/simd_bool_masks.mojo
-simd-nan-inequality	output-diff	conformance/fixtures/simd_nan_inequality.mojo
+simd-nan-inequality	run	conformance/fixtures/simd_nan_inequality.mojo
 simd-compare-all-dtypes	run	assets/ok/simd_compare_all_dtypes.mojo
 simd-to-bits	run	assets/ok/simd_to_bits.mojo
 typelist-size-removed	reject	assets/type_error/typelist_size_removed_alias.mojo

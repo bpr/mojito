@@ -2510,7 +2510,9 @@ fn close_register_types(
                         }),
                     )),
                     // A shuffle keeps the source dtype at the mask's width.
-                    MirInstr::SimdShuffle { dest, value, mask } => {
+                    MirInstr::SimdShuffle {
+                        dest, value, mask, ..
+                    } => {
                         let dtype = match reg_types.get(&value.0) {
                             Some(Ty::Simd { dtype, .. }) => Some(*dtype),
                             _ => None,

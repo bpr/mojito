@@ -841,7 +841,14 @@ fn instruction_families_reprint_byte_identically() {
         MirInstr::SimdShuffle {
             dest: Reg(37),
             value: Reg(35),
+            other: None,
             mask: vec![3, 1, 2, 0],
+        },
+        MirInstr::SimdShuffle {
+            dest: Reg(38),
+            value: Reg(35),
+            other: Some(Reg(36)),
+            mask: vec![0, 1, 2, 3, 4, 5, 6, 7],
         },
         MirInstr::Raise { src: Reg(1) },
         MirInstr::Drop { reg: Reg(2) },

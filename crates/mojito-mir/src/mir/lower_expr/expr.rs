@@ -442,7 +442,7 @@ impl Flatten<'_> {
                 }
                 // SIMD construction resolves its `[DType.<dt>, width]` parameters
                 // here (the MIR is otherwise untyped about them).
-                if let Some(r) = self.try_simd_call(e, args) {
+                if let Some(r) = self.try_simd_call(e, args, kwargs) {
                     return r;
                 }
                 // `objs[0](3)` / `grid[i, j](x)`: the checker re-dispatched
@@ -737,17 +737,24 @@ impl Flatten<'_> {
                     .checked_adjustments(e)
                     .into_iter()
                     .find_map(|adjustment| match adjustment {
-                        mojito_checked::checked::SemanticAdjustment::SimdShuffle { mask } => {
-                            Some(mask)
-                        }
+                        mojito_checked::checked::SemanticAdjustment::SimdShuffle {
+                            mask,
+                            joined,
+                        } => Some((mask, joined)),
                         _ => None,
                     });
-                if let Some(mask) = simd_shuffle
+                if let Some((mask, joined)) = simd_shuffle
                     && let ExprKind::Member { object, .. } = &callee.kind
                 {
                     let value = self.expr(object);
+                    let other = joined.then(|| self.expr(&args[0]));
                     let dest = self.fresh(span(e), None);
-                    self.emit(MirInstr::SimdShuffle { dest, value, mask });
+                    self.emit(MirInstr::SimdShuffle {
+                        dest,
+                        value,
+                        other,
+                        mask,
+                    });
                     return dest;
                 }
                 if let Some(operation) =
@@ -1083,6 +1090,31 @@ impl Flatten<'_> {
                 } else {
                     (object, args)
                 };
+                // `v.join(w)`: the checker resolved a two-operand lane gather.
+                let simd_join = self
+                    .checked_adjustments(e)
+                    .into_iter()
+                    .find_map(|adjustment| match adjustment {
+                        mojito_checked::checked::SemanticAdjustment::SimdShuffle {
+                            mask,
+                            joined: true,
+                        } => Some(mask),
+                        _ => None,
+                    });
+                if let Some(mask) = simd_join
+                    && let [argument] = args
+                {
+                    let value = self.expr(object);
+                    let other = Some(self.expr(argument));
+                    let dest = self.fresh(span(e), None);
+                    self.emit(MirInstr::SimdShuffle {
+                        dest,
+                        value,
+                        other,
+                        mask,
+                    });
+                    return dest;
+                }
                 if let Some(mojito_checked::checked::SemanticAdjustment::ConstructTypeParam {
                     param,
                 }) = self.checked_adjustments(e).into_iter().find(|adjustment| {

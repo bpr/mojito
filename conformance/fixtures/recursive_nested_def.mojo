@@ -1,6 +1,5 @@
-# Mojito lifts a nested `def` that calls itself, carrying its captured
-# environment through the recursion; the pin rejects a self-reference from a
-# nested function outright and tells you to define it at file scope.
+# A nested `def` may not name itself from its own body: both compilers reject
+# the self-call and ask for the recursive helper at file scope.
 def factorial(base: Int) -> Int:
     def fact(n: Int) {imm base} -> Int:
         if n <= 1:

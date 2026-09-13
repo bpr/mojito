@@ -925,11 +925,12 @@ fn width_one_simd_operand_splats_across_a_vector() {
 #[test]
 fn simd_shuffle_gathers_lanes() {
     let e = run(
-        "var v = SIMD[DType.int32, 4](10, 20, 30, 40)\nvar r = v.shuffle[3, 2, 1, 0]()\nvar pair = v.shuffle[1, 1]()\nvar m = (v < SIMD[DType.int32, 4](25, 25, 25, 25)).shuffle[3, 0]()\n",
+        "var v = SIMD[DType.int32, 4](10, 20, 30, 40)\nvar r = v.shuffle[3, 2, 1, 0]()\nvar pair = v.slice[2, offset=1]()\nvar m = v.lt(SIMD[DType.int32, 4](25, 25, 25, 25)).shuffle[3, 2, 1, 0]()\nvar rejoined = v.slice[2]().join(v.slice[2, offset=2]())\n",
     );
     assert_eq!(binding(&e, "r").to_string(), "[40, 30, 20, 10]");
-    assert_eq!(binding(&e, "pair").to_string(), "[20, 20]");
-    assert_eq!(binding(&e, "m").to_string(), "[False, True]");
+    assert_eq!(binding(&e, "pair").to_string(), "[20, 30]");
+    assert_eq!(binding(&e, "m").to_string(), "[False, False, True, True]");
+    assert_eq!(binding(&e, "rejoined").to_string(), "[10, 20, 30, 40]");
 }
 
 #[test]

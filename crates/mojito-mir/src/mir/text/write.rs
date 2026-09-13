@@ -1070,11 +1070,17 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("width", width.to_string()),
             ],
         ),
-        MirInstr::SimdShuffle { dest, value, mask } => record(
+        MirInstr::SimdShuffle {
+            dest,
+            value,
+            other,
+            mask,
+        } => record(
             tag,
             &[
                 ("dest", reg_value(*dest)),
                 ("value", reg_value(*value)),
+                ("other", option(other.map(reg_value))),
                 ("mask", list(mask.iter().map(usize::to_string))),
             ],
         ),

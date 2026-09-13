@@ -102,6 +102,14 @@ whatever its model, because it batches every change that needs a new
     `String.write_repr_to`, same day). Nothing emits calls to them; the
     rows, the runtime implementations, and their `docs/native-abi.md`
     entries all go together.
+  - Native `input()` never raises `EOF`. `mjrt_read_line` writes an empty
+    `MjString` both for an empty line and at end of input, so the lowering
+    cannot tell them apart. The checker and the VM already raise `EOF`, as
+    upstream does.
+  - The fix is a `mjrt_read_line` result that reports end of input, and a
+    raising `lower_input_builtin` that turns it into `Error("EOF")`.
+    `assets/ok/pliron_input_echo.mojo` catches the error, so its text is the
+    same on both backends in the meantime.
   - A later task that needs an ABI bump joins this entry rather than
     getting its own.
   - Model: Fable. The signature classification changes the native calling
@@ -236,40 +244,6 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
   an `assets/ok` fixture.
 
   Open today:
-  - `simd-shuffle-width-change`: a `shuffle` mask shorter or longer than the
-    receiver narrows or widens in Mojito; the pin requires the receiver's own
-    width and spells narrowing `slice[width, offset=]()` and widening
-    `join`, neither of which Mojito has.
-    - Model: Opus, as-is. Two stdlib-shaped builtins plus the width rule.
-  - `simd-bool-fill` (`mojo-only`): the pin splats a `Bool` across a mask with
-    `SIMD[DType.bool, N](fill=b)`, since `Bool` is not a `Scalar`. Mojito has
-    no `fill` argument and no keyword arguments on SIMD construction at all.
-    - Model: Opus, as-is.
-  - `simd-nan-inequality` (`output-diff`): `SIMD.ne` against a NaN receiver
-    answers IEEE in Mojito (unequal to everything, itself included) and, in
-    the pin, False for a NaN against a number but True for a NaN against
-    itself — neither the ordered nor the unordered predicate. Probably an
-    upstream fold bug; re-probe at the next re-pin before changing anything.
-    - Model: Opus, as-is — the work is the probe, not a fix.
-  - `recursive-nested-def`: Mojito lifts a nested `def` that calls itself,
-    carrying its captured environment through the recursion; the pin rejects
-    a self-reference from a nested function outright. Three corpus fixtures
-    were respelled to hoist the recursion to file scope.
-    - Model: Opus, as-is. A rejection to add in the capture pass.
-  - `input-eof`: Mojito's `input()` returns the empty string at end of input
-    and never raises, so a noninteractive run finishes; upstream's raises
-    `EOF`, which is why it has to be called from a raising context.
-    `assets/ok/input.mojo` and `assets/ok/pliron_input_echo.mojo` now read
-    through a helper that catches it, so both compilers agree on the text.
-    - Model: Opus, as-is. `builtin_input` and `mjrt_read_line` both raise
-      instead, and the two fixtures lose their helper.
-  - `defined-shift-overflow` / `defined-float-to-int-edges`: Mojito masks a
-    shift amount to the word and saturates `Int(f)` (`Int(nan) == 0`), where
-    the pin's are poison — deliberate contracts in
-    [`docs/native-abi.md`](native-abi.md), recorded here only so the
-    `cases.tsv` rows have a home. They belong with the retained divergences
-    if the next re-pin leaves them standing.
-    - Model: Opus, as-is — the work is the decision, not a change.
   - `pack-element-type-narrowing`: inside a folded `comptime if Self.Ts[i]
     == T` branch Mojito treats the pack element `self.storage[i]` as a `T`,
     so a `ref[origin_of(self)] T` accessor returns it and an `==` against a
@@ -536,7 +510,7 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     - Model: Fable. Each is a name or a type to withdraw, with stdlib and
       fixture fallout.
 
-  Three divergences are retained on purpose and re-probed rather than fixed;
+  Five divergences are retained on purpose and re-probed rather than fixed;
   they are listed in [`docs/non-goals.md`](non-goals.md).
 
 ### 3. Front-End Groundwork For A Pliron-Centered Architecture
@@ -786,6 +760,18 @@ need. Start them only once sections 1 and 2 are clear.
   Goal: deterministic testable cores, with host-dependent behavior behind
   runtime services.
 
+- [ ] **Scalars have no comparison methods**
+
+  Problem: `x.ne(y)` on a `Float64` (or any width-1 scalar) is rejected with
+  `type 'Float64' has no method 'ne'`, though the pin accepts it.
+  - Upstream's scalars are width-1 `SIMD`, so `lt`/`le`/`gt`/`ge`/`eq`/`ne`
+    exist on them too. Mojito resolves those methods only on a multi-lane
+    `Ty::Simd` receiver (`crates/mojito-checker/src/checker/method_calls/mc_infer.rs`).
+  - The methods must keep the multi-lane semantics: the pin's scalar
+    `s.ne(s)` is `False` for a NaN (ordered), while infix `s != s` is `True`.
+  - Not a wrong answer, only a missing spelling. Until then, `x < y or x > y`
+    is the ordered `ne`; infix `!=` answers `True` for a NaN.
+
 ### 5. Packaging, Artifacts, And Developer Tooling *(any order unless noted)*
 
 - [ ] **Compile-time performance**
@@ -837,6 +823,29 @@ need. Start them only once sections 1 and 2 are clear.
   - What is missing is scheduling, not safety: a way to run the heavy lane
     unattended when the machine is otherwise idle, and to surface its result
     where the morning triage already looks.
+
+- [ ] **Naming the bundled stdlib with `-I` breaks every program**
+
+  Problem: `mojito run -I stdlib FILE` fails with `static UnsafePointer
+  allocation was removed from Mojo` even for a program that only prints, and
+  so do the legacy flat facades (`from list import List`) that `-I stdlib`
+  exists to serve.
+  - `stdlib/std/memory/alloc.mojo` keeps the one sanctioned
+    `UnsafePointer[T].alloc` crossing, allowed only when
+    `is_bundled_stdlib_source` in
+    `crates/mojito-checker/src/checker/overload_support.rs` says the file is
+    bundled.
+  - That check, and its sibling `is_bundled_collection_source`, compare the
+    source path for byte equality with `bundled_root()`, which is the
+    un-normalized `CARGO_MANIFEST_DIR/../..`.
+  - A relative `-I stdlib` or a canonical absolute path loads the same file
+    under another spelling, so the exemption is lost. Only the literal
+    `crates/mojito-module/../../stdlib` spelling runs.
+  - The fix is to canonicalize both sides once (or key on module identity
+    rather than path). The same comparison gates `--stdlib PATH`, so check a
+    copied root with it.
+  - The default run with no `-I` is unaffected, which is why
+    `tests/flat_stdlib_test.rs` passes.
 
 - [ ] **Distribution reproducibility gate** *(last)*
 

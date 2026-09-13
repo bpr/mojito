@@ -386,9 +386,12 @@ impl VmBackend {
             .as_mut()
             .expect("input_from_override requires an installed override");
         let mut line = String::new();
-        std::io::BufRead::read_line(cursor, &mut line).map_err(|e| {
+        let read = std::io::BufRead::read_line(cursor, &mut line).map_err(|e| {
             RuntimeError::Unsupported(format!("input(): failed to read stdin: {e}"))
         })?;
+        if read == 0 {
+            return Err(crate::runtime::input_eof());
+        }
         if line.ends_with('\n') {
             line.pop();
             if line.ends_with('\r') {

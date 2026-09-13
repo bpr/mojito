@@ -753,9 +753,12 @@ impl FnLowering<'_> {
                 dtype,
                 width,
             } => self.lower_simd_bitcast(ctx, *dest, *value, *dtype, *width),
-            MirInstr::SimdShuffle { dest, value, mask } => {
-                self.lower_simd_shuffle(ctx, *dest, *value, mask)
-            }
+            MirInstr::SimdShuffle {
+                dest,
+                value,
+                other,
+                mask,
+            } => self.lower_simd_shuffle(ctx, *dest, *value, *other, mask),
             MirInstr::Raise { src } => self.lower_raise(ctx, *src),
             MirInstr::Try {
                 body,

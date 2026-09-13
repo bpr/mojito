@@ -1,6 +1,7 @@
-# Mojito's `shuffle` mask may be shorter or longer than the receiver, so one
-# call narrows or widens; upstream requires the mask to have the receiver's
-# own width and spells narrowing as `slice` and widening as `join`.
+# A `shuffle` mask has one index per receiver lane, so it cannot narrow or
+# widen the vector; both compilers reject a two-index mask on four lanes.
+# Narrowing is `slice[width, offset=]()` and widening is `join`
+# (`assets/ok/simd_shuffle.mojo`).
 def main():
     var v = SIMD[DType.int32, 4](10, 20, 30, 40)
-    print(v.shuffle[1, 1](), v.shuffle[0, 1, 2, 3, 3, 2, 1, 0]())
+    print(v.shuffle[1, 1]())

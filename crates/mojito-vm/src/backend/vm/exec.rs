@@ -1470,9 +1470,18 @@ impl VmBackend {
                 regs[dest.0 as usize] =
                     crate::runtime::simd_to_bits(*dtype, &regs[value.0 as usize])?;
             }
-            MirInstr::SimdShuffle { dest, value, mask } => {
-                regs[dest.0 as usize] =
-                    crate::runtime::simd_shuffle(&regs[value.0 as usize], mask)?;
+            MirInstr::SimdShuffle {
+                dest,
+                value,
+                other,
+                mask,
+            } => {
+                let gathered = crate::runtime::simd_shuffle(
+                    &regs[value.0 as usize],
+                    other.map(|other| &regs[other.0 as usize]),
+                    mask,
+                )?;
+                regs[dest.0 as usize] = gathered;
             }
             MirInstr::Store { place, src } => {
                 let mut v = regs[src.0 as usize].clone();

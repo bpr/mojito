@@ -21,6 +21,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Five behavioral divergences from the pinned Mojo are closed, and two more
+  are retained on purpose. `input()` raises `Error("EOF")` at end of input
+  and must be called from a raising context; native `input()` still returns
+  the empty string until the next runtime ABI bump. A nested `def` that names
+  itself from its own body is rejected, as upstream asks for the recursion at
+  file scope. `SIMD.ne` is the ordered predicate, so a NaN lane is unequal to
+  nothing. A `shuffle` mask must have one index per receiver lane, and the new
+  `slice[width, offset=]()` and `join(other)` narrow and widen instead. A bool
+  mask splats with `SIMD[DType.bool, N](fill=b)`, and no longer takes a
+  positional `Bool` splat. The masked shift amount and the saturating
+  `Int(f)` join `docs/non-goals.md` as retained divergences.
+
 - `Optional`/`OptionalReg` now live at `std.collections.optional` and `Tuple`
   at `std.builtin.tuple`, upstream's module homes; `std.optional` and
   `std.collections.tuple` no longer exist. The prelude, `from std.collections

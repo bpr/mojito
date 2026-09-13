@@ -245,23 +245,34 @@ impl FnLowering<'_> {
         })
     }
 
-    /// A compile-time lane gather: a one-lane mask extracts the scalar, a
-    /// wider mask is one `shufflevector` (the checker bounds every index).
+    /// A compile-time lane gather over one vector, or over a joined pair
+    /// (`other`, whose lanes the mask indexes past `value`'s, as
+    /// `shufflevector`'s second operand): a one-lane mask extracts the
+    /// scalar, a wider mask is one `shufflevector` (the checker bounds every
+    /// index).
     pub(super) fn lower_simd_shuffle(
         &mut self,
         ctx: &mut Context,
         dest: Reg,
         value: Reg,
+        other: Option<Reg>,
         mask: &[usize],
     ) -> Result<(), PlironError> {
         let Some(Ty::Simd { dtype, width }) = self.func.reg_types.get(&value.0).cloned() else {
             return Err(self.unsupported_reg("SIMD shuffle source type".into(), dest));
         };
-        if mask.iter().any(|index| *index >= width as usize) {
+        let operands = if other.is_some() { 2 } else { 1 };
+        if mask.iter().any(|index| *index >= operands * width as usize) {
             return Err(self.unsupported_reg("SIMD shuffle index out of range".into(), dest));
         }
-        let source = self.simd_load_vector(ctx, value, dtype, width as usize, dest)?;
-        if mask.len() == 1 {
+        // A width-1 operand of a join is a scalar register, which the operand
+        // path lifts to a one-lane vector.
+        let source = self.simd_operand_vector(ctx, value, dtype, width as usize, dest)?;
+        let second = match other {
+            Some(other) => self.simd_operand_vector(ctx, other, dtype, width as usize, dest)?,
+            None => source,
+        };
+        if mask.len() == 1 && other.is_none() {
             let position = self.int_constant(ctx, mask[0] as i64);
             let extract = ExtractElementOp::new(ctx, source, position);
             return self.define(ctx, dest, extract.get_operation(), extract.get_result(ctx));
@@ -269,7 +280,7 @@ impl FnLowering<'_> {
         let shuffle = ShuffleVectorOp::new(
             ctx,
             source,
-            source,
+            second,
             mask.iter().map(|index| *index as i32).collect(),
         );
         self.append(ctx, shuffle.get_operation(), Some(dest));
@@ -400,7 +411,17 @@ impl FnLowering<'_> {
             "select" if dtype == Dtype::Bool && args.len() == 2 => {
                 self.lower_simd_select(ctx, dest, recv, args[0], args[1], width)
             }
-            // The elementwise comparisons share the infix operator's
+            // `ne` is upstream's ordered predicate (`runtime::simd_method`):
+            // a NaN lane compares unequal to nothing.
+            "ne" if args.len() == 1 && dtype.is_float() => {
+                let lhs = self.simd_operand_vector(ctx, recv, dtype, width, dest)?;
+                let rhs = self.simd_operand_vector(ctx, args[0], dtype, width, dest)?;
+                let cmp = self.fcmp(ctx, FCmpPredicateAttr::ONE, lhs, rhs);
+                self.append(ctx, cmp.get_operation(), Some(dest));
+                self.simd_store_vector(ctx, dest, Dtype::Bool, width, cmp.get_result(ctx));
+                Ok(())
+            }
+            // The other elementwise comparisons share the infix operator's
             // lowering; only the spelling differs (`runtime::simd_method`).
             "lt" | "le" | "gt" | "ge" | "eq" | "ne" if args.len() == 1 => {
                 let op = match method {

@@ -451,8 +451,9 @@ impl Checker {
                     }
                 }
                 "shuffle" if !param_args.is_empty() && args.is_empty() => {
-                    // Compile-time lane indices; the result takes the mask's
-                    // width, which must itself be a valid SIMD width.
+                    // Compile-time lane indices, one per receiver lane:
+                    // upstream spells a narrowing gather `slice` and a
+                    // widening one `join`.
                     let mut mask = Vec::with_capacity(param_args.len());
                     for argument in param_args {
                         let mojito_ast::ast::ParamArg::Value(index) = argument else {
@@ -473,15 +474,106 @@ impl Checker {
                         }
                         mask.push(lane as usize);
                     }
-                    let result_width = mask.len() as i64;
-                    if result_width < 1 || (result_width & (result_width - 1)) != 0 {
-                        return Err(TypeError::BadSimdWidth(result_width.to_string()));
+                    if mask.len() as i64 != width {
+                        return Err(TypeError::TypeMismatch {
+                            expected: format!("{width} lane indices, one per receiver lane"),
+                            found: format!("{} indices", mask.len()),
+                            context: "SIMD.shuffle".to_string(),
+                        });
                     }
                     self.operation_adjustments.borrow_mut().insert(
                         span,
-                        mojito_checked::checked::SemanticAdjustment::SimdShuffle { mask },
+                        mojito_checked::checked::SemanticAdjustment::SimdShuffle {
+                            mask,
+                            joined: false,
+                        },
                     );
-                    Ok(simd_ty(dtype, result_width))
+                    Ok(simd_ty(dtype, width))
+                }
+                // `v.slice[output_width, offset=o]()`: `output_width`
+                // consecutive lanes starting at lane `o` (default 0).
+                "slice" if !param_args.is_empty() && args.is_empty() => {
+                    let bad_argument = || TypeError::TypeMismatch {
+                        expected: "a compile-time output width and an optional 'offset='"
+                            .to_string(),
+                        found: format!("{} parameter arguments", param_args.len()),
+                        context: "SIMD.slice".to_string(),
+                    };
+                    let mut output_width = None;
+                    let mut offset = 0;
+                    for argument in param_args {
+                        match argument {
+                            mojito_ast::ast::ParamArg::Value(expression)
+                                if output_width.is_none() =>
+                            {
+                                output_width = Some(
+                                    self.eval_ct(expression)?
+                                        .to_i64()
+                                        .ok_or_else(bad_argument)?,
+                                );
+                            }
+                            mojito_ast::ast::ParamArg::Named { name, value }
+                                if name == "offset" =>
+                            {
+                                let mojito_ast::ast::ParamArg::Value(expression) = value.as_ref()
+                                else {
+                                    return Err(bad_argument());
+                                };
+                                offset = self
+                                    .eval_ct(expression)?
+                                    .to_i64()
+                                    .ok_or_else(bad_argument)?;
+                            }
+                            _ => return Err(bad_argument()),
+                        }
+                    }
+                    let output_width = output_width.ok_or_else(bad_argument)?;
+                    if output_width < 1 || (output_width & (output_width - 1)) != 0 {
+                        return Err(TypeError::BadSimdWidth(output_width.to_string()));
+                    }
+                    if offset < 0 || offset + output_width > width {
+                        return Err(TypeError::TypeMismatch {
+                            expected: format!(
+                                "an output width and offset within the receiver's {width} lanes"
+                            ),
+                            found: format!("width {output_width} at offset {offset}"),
+                            context: "SIMD.slice".to_string(),
+                        });
+                    }
+                    self.operation_adjustments.borrow_mut().insert(
+                        span,
+                        mojito_checked::checked::SemanticAdjustment::SimdShuffle {
+                            mask: (offset..offset + output_width)
+                                .map(|lane| lane as usize)
+                                .collect(),
+                            joined: false,
+                        },
+                    );
+                    Ok(simd_ty(dtype, output_width))
+                }
+                // `v.join(w)`: the receiver's lanes then `w`'s, at twice the
+                // width; `w` has the receiver's own type.
+                "join" if args.len() == 1 && param_args.is_empty() => {
+                    let other = self.infer(&args[0])?;
+                    if other != obj_ty {
+                        return Err(TypeError::TypeMismatch {
+                            expected: obj_ty.to_string(),
+                            found: other.to_string(),
+                            context: "SIMD.join".to_string(),
+                        });
+                    }
+                    let joined = width * 2;
+                    if joined > 1 << 15 {
+                        return Err(TypeError::BadSimdWidth(joined.to_string()));
+                    }
+                    self.operation_adjustments.borrow_mut().insert(
+                        span,
+                        mojito_checked::checked::SemanticAdjustment::SimdShuffle {
+                            mask: (0..joined as usize).collect(),
+                            joined: true,
+                        },
+                    );
+                    Ok(simd_ty(dtype, joined))
                 }
                 // The elementwise comparisons. Upstream's infix `<`/`<=`/
                 // `>`/`>=` are `Scalar`-only and its `==`/`!=` compare whole
