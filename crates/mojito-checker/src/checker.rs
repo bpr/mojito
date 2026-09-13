@@ -1413,7 +1413,7 @@ impl Checker {
                 .borrow_mut()
                 .insert(span.clone(), mutable);
             if self.origin_place(expression).is_err() {
-                self.materialize_borrow_owner(expression)?;
+                self.materialize_borrow_owner(expression, mutable)?;
             }
         }
         self.implicit_conversion_types

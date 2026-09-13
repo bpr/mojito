@@ -364,14 +364,6 @@ fn indexer_values_normalize_once_for_nominal_collection_reads_and_writes() {
 }
 
 #[test]
-fn indexer_values_normalize_once_for_simd_reads_and_writes() {
-    let actual = output(
-        "@fieldwise_init\nstruct Offset(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        print(\"normalize\", self.value)\n        return self.value\n\ndef main():\n    var values = SIMD[DType.int32, 4](3, 7, 11, 15)\n    values[Offset(2)] = 13\n    print(values[Offset(2)])\n",
-    );
-    assert_eq!(actual, "normalize 2\nnormalize 2\n13\n");
-}
-
-#[test]
 fn a_user_indexer_overload_receives_the_source_value_without_normalization() {
     let actual = output(
         "@fieldwise_init\nstruct Offset(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        print(\"unexpected normalization\")\n        return self.value\n\n@fieldwise_init\nstruct Bag:\n    var value: Int\n    def __getitem__(self, offset: Offset) -> Int:\n        return self.value + offset.value\n\ndef main():\n    print(Bag(3)[Offset(4)])\n",

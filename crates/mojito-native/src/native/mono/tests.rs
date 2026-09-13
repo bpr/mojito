@@ -176,8 +176,9 @@ fn raising_range_iteration_types_the_slot_and_reaches_its_operations() {
 
 #[test]
 fn generic_dispatch_iteration_unrolls_to_a_typed_concrete_chain() {
-    let source =
-        include_str!("../../../../../assets/ok/generic_borrowed_dispatch_overloaded_iter.mojo");
+    let source = include_str!(
+        "../../../../../assets/extensions/ok/generic_borrowed_dispatch_overloaded_iter.mojo"
+    );
     let specialized = specialized_main(source);
     let first_count = specialized
         .program

@@ -482,7 +482,12 @@ stores it in its `$mat_r` slot so the result handle roots at real frame
 storage. The `$mat_r` slot establishes the temporary's own loans
 (`aggregate_borrows_unmaterialized`, the loan funnel without the slot's
 self-loan), so storage a materialized view borrows outlives every borrower of
-the slot (`it.peek_next().value()`). A subscript view temporary
+the slot (`it.peek_next().value()`). The slot is lent with the capability the
+borrow that forced the materialization needs, which
+`MaterializeBorrowSource` records and `materialized_borrow_mutability` reads:
+materializing changes where the storage lives, never what the loan permits,
+so a read receiver's two views coexist exactly as they would over a named
+local. A subscript view temporary
 (`MultiIndex`/`Slice`/`Index` with a `BorrowViewResult`) in any argument
 list anchors in `$arg_loan_r` like a loan-carrying call temporary in a plain
 call — no consumer channel retains it, so the anchor never duplicates a

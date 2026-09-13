@@ -469,6 +469,12 @@ pub enum SemanticAdjustment {
     /// long as its borrower).
     MaterializeBorrowSource {
         owner: mojito_types::origin::OwnerId,
+        /// The capability the borrow that forced the materialization needs.
+        /// Materializing must not change what the loan permits: a read
+        /// receiver (`String("a").codepoints()`) lends the hidden slot
+        /// immutably, so a second view of the same temporary coexists with
+        /// the first exactly as it would over a named local.
+        mutable: bool,
     },
     /// An `@implicit` conversion whose selected constructor borrows its single
     /// argument through a `ref [origin]` parameter (a view construction): the
@@ -2253,6 +2259,29 @@ fn build_checked_declarations(
     declarations
 }
 
+/// The capability a materialized temporary's hidden slot is lent with.
+///
+/// For the adjustments [`materialized_borrow_owner`] accepts: a
+/// `MaterializeBorrowSource` records what its borrow needs; a view
+/// construction lends mutably when any `ref` argument does; a view result
+/// keeps the conservative mutable loan.
+pub fn materialized_borrow_mutability(adjustments: &[SemanticAdjustment]) -> bool {
+    adjustments
+        .iter()
+        .find_map(|adjustment| match adjustment {
+            SemanticAdjustment::MaterializeBorrowSource { mutable, .. } => Some(*mutable),
+            SemanticAdjustment::BorrowRefArguments {
+                arguments,
+                materialized: Some(_),
+            } => Some(arguments.iter().any(|(_, mutable)| *mutable)),
+            SemanticAdjustment::BorrowViewResult {
+                materialized: Some(_),
+            } => Some(true),
+            _ => None,
+        })
+        .unwrap_or(true)
+}
+
 /// The anonymous owner a temporary expression materializes as.
 ///
 /// A `MaterializeBorrowSource`, or a `BorrowRefArguments` construction or
@@ -2262,7 +2291,7 @@ pub fn materialized_borrow_owner(
     adjustments: &[SemanticAdjustment],
 ) -> Option<mojito_types::origin::OwnerId> {
     adjustments.iter().find_map(|adjustment| match adjustment {
-        SemanticAdjustment::MaterializeBorrowSource { owner } => Some(*owner),
+        SemanticAdjustment::MaterializeBorrowSource { owner, .. } => Some(*owner),
         SemanticAdjustment::BorrowRefArguments {
             materialized: Some(owner),
             ..

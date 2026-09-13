@@ -106,14 +106,16 @@ impl Flatten<'_> {
         }
         // A materialized borrow-source temporary loans its hidden owned slot:
         // the consuming aggregate's binding keeps the temporary alive exactly
-        // as long as the borrower, upstream's temporary-lifetime rule.
-        if let Some(owner) = mojito_checked::checked::materialized_borrow_owner(
-            &self.checked_adjustments(expression),
-        ) && let Some(var) = self.owner_vars.get(&owner).copied()
+        // as long as the borrower, upstream's temporary-lifetime rule. The
+        // slot is lent with the capability the checker recorded, so the loan
+        // permits what it would over a named local.
+        let adjustments = self.checked_adjustments(expression);
+        if let Some(owner) = mojito_checked::checked::materialized_borrow_owner(&adjustments)
+            && let Some(var) = self.owner_vars.get(&owner).copied()
         {
             return vec![MirLoan {
                 place: MirPlace::root(var, self.var_types.get(&var).cloned()),
-                mutable: true,
+                mutable: mojito_checked::checked::materialized_borrow_mutability(&adjustments),
                 interior: None,
                 shared: false,
             }];

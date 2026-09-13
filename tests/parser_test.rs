@@ -1050,8 +1050,14 @@ fn parses_docstrings_in_declaration_positions() {
 
 #[test]
 fn parses_comptime_if_with_else() {
-    // `comptime if` mirrors a normal `if` (branches + optional else).
-    match &parse("comptime if N > 4:\n    pass\nelse:\n    pass\n")[0].kind {
+    // `comptime if` mirrors a normal `if` (branches + optional else), and only
+    // a function body may contain one.
+    let stmts = parse("def f():\n    comptime if N > 4:\n        pass\n    else:\n        pass\n");
+    let body = match &stmts[0].kind {
+        StmtKind::Def { body, .. } => body,
+        other => panic!("expected a def, got {other:?}"),
+    };
+    match &body[0].kind {
         StmtKind::ComptimeIf { branches, orelse } => {
             assert_eq!(branches.len(), 1);
             assert_eq!(

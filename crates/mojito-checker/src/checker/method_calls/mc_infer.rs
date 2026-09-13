@@ -1910,7 +1910,7 @@ impl Checker {
                 if !crate::checker::places::is_place_expr(object)
                     && !self.type_carries_loans(&obj_ty)
                 {
-                    let _ = self.materialize_borrow_owner(object);
+                    let _ = self.materialize_borrow_owner(object, resolved.mutates_receiver);
                 }
             }
             self.selected_calls.borrow_mut().insert(

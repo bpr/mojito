@@ -6,6 +6,19 @@ to evolve under the `0.x` compatibility rules.
 
 ## [Unreleased]
 
+### Fixed
+
+- Materializing a temporary receiver no longer changes what its loan permits.
+  The hidden slot a view-returning method's owning temporary is materialized
+  into was lent unconditionally mutably, so a second view derived from the
+  first — `String("abcdef").as_bytes()` sliced, or a peek through a
+  `codepoint_slices()` iterator — was rejected as a conflicting access to the
+  anonymous binding, though the same program over a named local is accepted.
+  The checker now records on `MaterializeBorrowSource` the capability the
+  borrow that forced the materialization needs (a read receiver lends
+  immutably), and MIR lends the slot with it;
+  `assets/ok/temporary_receiver_view.mojo` pins the two-view case.
+
 ### Changed
 
 - The pinned Mojo now rejects only 21 of the ordinary `assets/` `_ok`

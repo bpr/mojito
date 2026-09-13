@@ -187,7 +187,7 @@ impl Checker {
                 if message.contains("reference binding to a non-place expression") =>
             {
                 let referent = self.infer(expr)?;
-                let owner = self.materialize_borrow_owner(expr)?;
+                let owner = self.materialize_borrow_owner(expr, true)?;
                 Ok(RefTy {
                     referent: Box::new(referent),
                     origin: Origin::Place(OriginPlace {
@@ -211,12 +211,20 @@ impl Checker {
     pub(in crate::checker) fn materialize_borrow_owner(
         &self,
         expr: &Expr,
+        mutable: bool,
     ) -> Result<mojito_types::origin::OwnerId, TypeError> {
         let mut adjustments = self.operation_adjustments.borrow_mut();
         match adjustments.get_mut(&expr.source_span()) {
             Some(mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource {
                 owner,
-            }) => Ok(*owner),
+                mutable: established,
+            }) => {
+                // One span, one hidden slot: a second borrow of the same
+                // temporary raises the slot's capability rather than minting
+                // a rival owner.
+                *established = *established || mutable;
+                Ok(*owner)
+            }
             Some(
                 mojito_checked::checked::SemanticAdjustment::BorrowRefArguments {
                     materialized,
@@ -239,7 +247,10 @@ impl Checker {
                 let owner = self.fresh_owner()?;
                 adjustments.insert(
                     expr.source_span(),
-                    mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource { owner },
+                    mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource {
+                        owner,
+                        mutable,
+                    },
                 );
                 Ok(owner)
             }

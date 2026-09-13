@@ -376,6 +376,7 @@ impl Checker {
             // frame-local slot), so the view cannot escape the frame.
             if let Some(mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource {
                 owner,
+                ..
             }) = self
                 .operation_adjustments
                 .borrow()

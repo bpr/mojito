@@ -14,3 +14,9 @@ def main():
     print(String("a,b,c").split(",")[1])
     for g in String("xyz").graphemes():
         print(g)
+    # Materializing the receiver must not change what the loan permits: a read
+    # receiver lends its hidden slot immutably, so a second view derived from
+    # the first coexists with it exactly as it would over a named local.
+    var view = String("abcdef").as_bytes()
+    var sub = view[1:3]
+    print(len(view), len(sub), sub[0])
