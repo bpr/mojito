@@ -16,8 +16,9 @@ exempt from the ordering.
 
 Sections 1 and 2 are ordered differently: every checkbox there, and every
 bullet inside a checkbox that holds more than one independent item, names the
-model that should take it, and they are sorted Opus before Fable. Each Opus
-entry also says whether it can be started as-is or wants a plan first. Where a
+model that should take it. Each Opus entry also says whether it can be started
+as-is or wants a plan first, and they are sorted Opus as-is, then Opus plan
+first, then Fable. Where a
 strict dependency forces a different order, the entry says so.
 
 Sections 1 to 3 are ordered by what the Pliron direction in
@@ -29,7 +30,8 @@ architecture would need.
 
 ### 1. Native Backend
 
-Sorted Opus first (see **Entry Style**). The ABI-bump collector is last
+Sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**). The
+ABI-bump collector is last
 whatever its model, because it batches every change that needs a new
 `MJRT_ABI_VERSION`.
 
@@ -122,8 +124,8 @@ whatever its model, because it batches every change that needs a new
   complete (`docs/mojo-nightly.md`). The next re-pin recreates this
   section's checkbox.
 
-The three checkboxes below, and the bullets inside the two standing ones,
-are sorted Opus first (see **Entry Style**).
+The two checkboxes below, and the bullets inside the two standing ones,
+are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
 
 - [ ] **Mojito's `for` protocol predates the pin's `__has_next__`**
 
@@ -144,6 +146,10 @@ are sorted Opus first (see **Entry Style**).
     `stdlib/std/iterable.mojo` and its ~51 references.
   - `assets/ok/iterable_associated_element.mojo` has no `main` because its
     iterator never compiled upstream; it gets one when this closes.
+  - The same import masks one error-folder fixture,
+    `assets/runtime_error/pliron_raise_iter_stop_unhandled.mojo` (its
+    `iterator-protocol` row in `conformance/assets-mojo-errors.tsv`). Re-sweep
+    it with `--errors --only` when this closes.
   - Model: Opus, plan first. The probe decides the shape of the work, and the
     answer changes the stdlib's iterator vocabulary.
 
@@ -180,32 +186,20 @@ are sorted Opus first (see **Entry Style**).
   - Model: Opus, plan first. Each family is its own pass and several are
     semantic decisions, not respellings.
 
-- [ ] **Seven error-folder fixtures never reach the defect they pin**
-
-  Problem: the pinned Mojo rejects them for a spelling they did not set out to
-  test, so the sweep cannot compare the two compilers on the defect itself.
-  They are the burn-down-family rows of `conformance/assets-mojo-errors.tsv`.
-  - Five are `missing-import` and share one cause: Mojito homes `Optional` at
-    `std.optional` and `Tuple` at `std.collections.tuple`, where the pin homes
-    them at `std.collections.optional` and `std.builtin.tuple`. Moving the
-    bundled modules to upstream's paths closes all five, and is a stdlib change
-    rather than a fixture respelling.
-  - One is `iterator-protocol`
-    (`runtime_error/pliron_raise_iter_stop_unhandled.mojo`, blocked on
-    `std.iterable` above).
-  - One is `ledgered` (`type_error/pack_struct_runtime_getitem_index.mojo`):
-    it spells `-> Self.Ts[i]`, which Mojito accepts since 2026-09-13, and the
-    pin now rejects the `p[i]` subscript sugar instead — the
-    `pack-element-type-narrowing` divergence below, not a spelling.
-  - Model: Opus, as-is for the module moves; the other two close with the
-    tasks they are blocked on.
-
 - [ ] **Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
   any order)*
 
   Problem: parts of Mojito's stdlib lean on the Rust runtime where upstream
   is pure Mojo. Each is a candidate port, preferred over any new bridge
   (2026-09-07 direction).
+  - The VM's `Display for Value` still renders `Int`/`UInt` in Rust. The
+    2026-09-12 integer-formatting port moved every program-visible text
+    path — `print`, `String(...)`, `repr`, `Writer.write`, format
+    templates — to the bundled `_int_digits`/`_uint_digits` bodies, but a
+    `fmt::Display` impl has no VM to call them with, so three callers keep
+    the Rust arms: diagnostics, the CLI binding dump, and `SIMD` lanes.
+    - Model: Opus, as-is. Each caller needs a VM-aware renderer, or a
+      reason to stay Rust.
   - The literal-filled `String.__init__(literal)` and
     `StringSpan.__init__(literal)` constructors, and the
     `String._as_string_literal()` struct-to-literal bridge behind
@@ -230,14 +224,6 @@ are sorted Opus first (see **Entry Style**).
       `AGENTS.md`) into Mojo rather than deriving the algorithm; the plan
       picks the source and pins the shortest-round-trip cases. Only a
       from-scratch derivation would want Fable.
-  - The VM's `Display for Value` still renders `Int`/`UInt` in Rust. The
-    2026-09-12 integer-formatting port moved every program-visible text
-    path — `print`, `String(...)`, `repr`, `Writer.write`, format
-    templates — to the bundled `_int_digits`/`_uint_digits` bodies, but a
-    `fmt::Display` impl has no VM to call them with, so three callers keep
-    the Rust arms: diagnostics, the CLI binding dump, and `SIMD` lanes.
-    - Model: Opus, as-is. Each caller needs a VM-aware renderer, or a
-      reason to stay Rust.
 
   Four runtime services are deliberately not on that list; they are in
   [`docs/non-goals.md`](non-goals.md).
@@ -250,18 +236,55 @@ are sorted Opus first (see **Entry Style**).
   an `assets/ok` fixture.
 
   Open today:
+  - `simd-shuffle-width-change`: a `shuffle` mask shorter or longer than the
+    receiver narrows or widens in Mojito; the pin requires the receiver's own
+    width and spells narrowing `slice[width, offset=]()` and widening
+    `join`, neither of which Mojito has.
+    - Model: Opus, as-is. Two stdlib-shaped builtins plus the width rule.
+  - `simd-bool-fill` (`mojo-only`): the pin splats a `Bool` across a mask with
+    `SIMD[DType.bool, N](fill=b)`, since `Bool` is not a `Scalar`. Mojito has
+    no `fill` argument and no keyword arguments on SIMD construction at all.
+    - Model: Opus, as-is.
+  - `simd-nan-inequality` (`output-diff`): `SIMD.ne` against a NaN receiver
+    answers IEEE in Mojito (unequal to everything, itself included) and, in
+    the pin, False for a NaN against a number but True for a NaN against
+    itself — neither the ordered nor the unordered predicate. Probably an
+    upstream fold bug; re-probe at the next re-pin before changing anything.
+    - Model: Opus, as-is — the work is the probe, not a fix.
+  - `recursive-nested-def`: Mojito lifts a nested `def` that calls itself,
+    carrying its captured environment through the recursion; the pin rejects
+    a self-reference from a nested function outright. Three corpus fixtures
+    were respelled to hoist the recursion to file scope.
+    - Model: Opus, as-is. A rejection to add in the capture pass.
+  - `input-eof`: Mojito's `input()` returns the empty string at end of input
+    and never raises, so a noninteractive run finishes; upstream's raises
+    `EOF`, which is why it has to be called from a raising context.
+    `assets/ok/input.mojo` and `assets/ok/pliron_input_echo.mojo` now read
+    through a helper that catches it, so both compilers agree on the text.
+    - Model: Opus, as-is. `builtin_input` and `mjrt_read_line` both raise
+      instead, and the two fixtures lose their helper.
+  - `defined-shift-overflow` / `defined-float-to-int-edges`: Mojito masks a
+    shift amount to the word and saturates `Int(f)` (`Int(nan) == 0`), where
+    the pin's are poison — deliberate contracts in
+    [`docs/native-abi.md`](native-abi.md), recorded here only so the
+    `cases.tsv` rows have a home. They belong with the retained divergences
+    if the next re-pin leaves them standing.
+    - Model: Opus, as-is — the work is the decision, not a change.
   - `pack-element-type-narrowing`: inside a folded `comptime if Self.Ts[i]
     == T` branch Mojito treats the pack element `self.storage[i]` as a `T`,
     so a `ref[origin_of(self)] T` accessor returns it and an `==` against a
     `T` argument type-checks. Upstream keeps the element at its dependent
     pack type and demands `rebind[T](...)`, which Mojito does not
     implement; it also rejects a reference into `self.storage` returned
-    under `origin_of(self)`. `stdlib/std/collections/tuple.mojo`'s
+    under `origin_of(self)`. `stdlib/std/builtin/tuple.mojo`'s
     `__contains__` relies on the same narrowing. Pinned by
     `conformance/fixtures/pack_element_type_narrowing.mojo`
     (`pack-element-type-narrowing`); `assets/extensions/ok/pack_struct_getitem.mojo`
     is the corpus fixture, which also needs the explicit
-    `p.__getitem__[k]()` spelling Mojito has no method form for.
+    `p.__getitem__[k]()` spelling Mojito has no method form for. The same
+    subscript sugar is the pin's complaint about the error fixture
+    `assets/type_error/pack_struct_runtime_getitem_index.mojo`, its `ledgered`
+    row in `conformance/assets-mojo-errors.tsv`.
     - Model: Opus, plan first. Closing it means implementing `rebind` and
       then requiring it, so the plan decides whether `rebind` lands first
       or the two land together.
@@ -289,6 +312,90 @@ are sorted Opus first (see **Entry Style**).
     - Model: Opus, plan first. The lever is named, but the rejection reaches
       wide fixture fallout, so it wants its own pass with the fallout
       enumerated first.
+  - `native-arithmetic-edge-cases`: seven corpus fixtures compute different
+    numbers from the pin, found by the 2026-09-12 stdout sweep and listed in
+    [`conformance/assets-mojo-output-diffs.tsv`](../conformance/assets-mojo-output-diffs.tsv)
+    under `arithmetic`. The clearest is a shift past the bit width
+    (`assets/ok/pliron_straightline.mojo`: `a << 65`, where the pin prints 7
+    and Mojito 51102306), and the SIMD shift and floor-division fixtures
+    disagree wholesale. Also here: an out-of-range float-to-int cast and `Float64` `**`.
+    `round()`'s half-way case left this list on 2026-09-13 when `round`
+    became ties-to-even on both backends.
+    - Model: Opus, plan first. Each case needs the pin's rule established
+      before Mojito's is changed, and `docs/native-abi.md` already defines
+      some of them deliberately (wrapping overflow), so the plan decides
+      which are bugs and which are recorded choices.
+  - `destructor-timing-against-the-pin`: four corpus fixtures run the same
+    destructors in a different order, or not at all
+    (`conformance/assets-mojo-output-diffs.tsv`, family `drop-timing`).
+    `assets/ok/maybe_uninit_roundtrip.mojo` never prints `deinit 6` and
+    `assets/ok/pliron_uninit_roundtrip.mojo` misses three deinits, which is a
+    missing destructor rather than a reordered one;
+    `assets/ok/owned_pointer_api.mojo` and
+    `assets/ok/try_region_drop_timing.mojo` run theirs later than the pin.
+    - Model: Opus, plan first. A missing `deinit` through `MaybeUninit` and a
+      late one in a try region are probably two different defects, and the
+      plan separates them before either is fixed.
+  - `pointee-element-reference-return`: a method returning a reference into
+    what a `Pointer[T, Self.o]` field borrows names the region with the
+    struct's own origin parameter. The pin distinguishes the element
+    sub-origin (`origin_of(o["element"])`) and wants
+    `ref[origin_of(self.src[][i])]`, which Mojito's escape check rejects
+    because no `Origin` variant carries a projected `SelfParam`. Two
+    `assets/origin_ok` fixtures moved for it.
+    - Model: Opus, plan first. The fix adds a projected receiver origin to
+      `mojito_types::origin::Origin`, which MIR text, verification, and
+      substitution all read.
+  - `local-comptime-capture`: a function-local `comptime` constant read from
+    a nested `def` is an ordinary immutable local in Mojito, so it must be
+    named in the capture list; the pin treats it as a compile-time constant
+    and rejects naming it there. Mojito cannot simply stop requiring the
+    capture: the constant has real storage in the outer frame and the lifted
+    function has no binding for it.
+    - Model: Opus, plan first. The fix makes a folded `comptime` local a
+      constant the lifted body can read, which is a lowering change, not a
+      scope-rule change.
+  - `capturing-lambda-argument` / `capturing-lambda-locals` /
+    `owned-capture-closure-locals` / `mut-self-callable-struct`: four
+    callable-shape leniencies. Mojito passes a capturing lambda as a runtime
+    argument, binds one to a local under an explicit `capturing[...]`
+    annotation, and accepts a `mut self` `__call__` as a `def(...)`
+    conformer. The pin takes a capturing callable only as a compile-time
+    parameter (and refuses a lambda even there), types a capturing lambda as
+    a plain `def(...) -> T` that converts to nothing, and wants a read
+    receiver. Three corpus fixtures moved to `assets/extensions/`; three more
+    were respelled onto `thin` contracts and `@parameter def` arguments.
+    - Model: Opus, plan first. The four share one question — what a capturing
+      callable *value* is — and the plan settles that before any rejection.
+  - `unparameterized-string-literal`: Mojito's `StringLiteral` is one
+    unparameterized value type, so it annotates variables and returns;
+    upstream parameterizes it by the literal's own text. Already tracked as a
+    representation gap in the shortcuts entry above; the `cases.tsv` row is
+    new.
+    - Model: Opus, plan first — with the `String`/`StringLiteral`
+      representation port it depends on.
+  - `interior-generation-view-consume` / `interior-generation-view-drop`:
+    a struct field typed
+    `Pointer[T, Self.origin._get_owned_interior["tag"]]` over a generic
+    origin parameter. The pin parses the projection but calls the interior
+    reference never-initialized, so the carrier struct does not type-check
+    there at all. Two `assets/ownership_ok` fixtures moved for it.
+    - Model: Opus, plan first. Upstream's owned-interior origins are real;
+      what differs is which structs may name one, so the plan probes that
+      rule before Mojito narrows.
+  - `iterable-element-identity`: Mojito's `for` yields the *iterable*'s
+    `Element`, so one associated type serves a generic signature and the
+    loop; the pin yields the *iterator*'s `Iter.Element` and will not convert
+    between the two without an identity clause Mojito does not implement.
+    - Model: Opus, plan first, and after the `__has_next__` task above, which
+      rewrites the same protocol.
+  - `mojito-only-stdlib-algorithms` / `owning-family-container-apis`: two
+    stdlib surfaces upstream does not have — `std.algorithms`,
+    `std.collections.string_dict`, and the owning-family container APIs
+    (`deinit_with`, `clear_with`, displacement-returning `insert`). Two
+    corpus fixtures moved to `assets/extensions/` for them.
+    - Model: Opus, plan first. Whether these leave or stay is a stdlib-shape
+      decision, not a respelling.
   - `bare-pack-parameter-in-method`: a method may name its struct's pack
     parameter bare (`Ts.length`, `Ts[i]`), while upstream demands `Self.Ts`
     there (`unqualified access to struct parameter 'Ts'; use 'Self.Ts'
@@ -345,37 +452,6 @@ are sorted Opus first (see **Entry Style**).
     `assets/ok/pliron_subscript_ref.mojo` a split call each.
     - Model: Fable. It introduces owned-interior origins to the stdlib's
       view methods and a new checker rule that reads them.
-  - `comptime-if-dropped-branch`: a type error inside the untaken branch of a
-    `comptime if` is never reported, because elaboration drops the branch
-    before the checker runs. Upstream type-checks every branch symbolically
-    and rejects the program (`var x: Int = "hello"` in the untaken branch, and
-    `x.nonexistent()` on a `T: Copyable` parameter).
-    - Model: Fable, and strictly dependent: section 3's first task is the
-      fix, so this row closes there and not here.
-  - `native-arithmetic-edge-cases`: seven corpus fixtures compute different
-    numbers from the pin, found by the 2026-09-12 stdout sweep and listed in
-    [`conformance/assets-mojo-output-diffs.tsv`](../conformance/assets-mojo-output-diffs.tsv)
-    under `arithmetic`. The clearest is a shift past the bit width
-    (`assets/ok/pliron_straightline.mojo`: `a << 65`, where the pin prints 7
-    and Mojito 51102306), and the SIMD shift and floor-division fixtures
-    disagree wholesale. Also here: an out-of-range float-to-int cast and `Float64` `**`.
-    `round()`'s half-way case left this list on 2026-09-13 when `round`
-    became ties-to-even on both backends.
-    - Model: Opus, plan first. Each case needs the pin's rule established
-      before Mojito's is changed, and `docs/native-abi.md` already defines
-      some of them deliberately (wrapping overflow), so the plan decides
-      which are bugs and which are recorded choices.
-  - `destructor-timing-against-the-pin`: four corpus fixtures run the same
-    destructors in a different order, or not at all
-    (`conformance/assets-mojo-output-diffs.tsv`, family `drop-timing`).
-    `assets/ok/maybe_uninit_roundtrip.mojo` never prints `deinit 6` and
-    `assets/ok/pliron_uninit_roundtrip.mojo` misses three deinits, which is a
-    missing destructor rather than a reordered one;
-    `assets/ok/owned_pointer_api.mojo` and
-    `assets/ok/try_region_drop_timing.mojo` run theirs later than the pin.
-    - Model: Opus, plan first. A missing `deinit` through `MaybeUninit` and a
-      late one in a try region are probably two different defects, and the
-      plan separates them before either is fixed.
   - `string-subscript-element`: `s[0]` on a `String` yields a character
     upstream and an `Int` in Mojito
     (`assets/ok/nominal_string_indexing.mojo`, `h` against `104`). Two
@@ -386,10 +462,6 @@ are sorted Opus first (see **Entry Style**).
     (`assets/ok/type_names_applied_elements.mojo`).
     - Model: Fable. The subscript's element type is a declaration change in
       the stdlib's `String`, and the other two are texts to match.
-
-  Found by the 2026-09-13 `assets/` burn-down, each pinned by a
-  `conformance/cases.tsv` row and, where a whole corpus fixture depends on
-  it, by that fixture under `assets/extensions/`:
   - `erased-origin-parameter`: `List[RefBox]` leaves a struct's origin
     parameter unbound, so one collection holds carriers over any origin. The
     pin demands a concrete origin and rejects `RefBox[_]` as an element too,
@@ -402,16 +474,6 @@ are sorted Opus first (see **Entry Style**).
     - Model: Fable. Origin arguments must survive checked identity (the same
       lever as `symbolic-origin-pointer-write`), and the exclusivity rule is
       a new analysis rather than a spelling.
-  - `pointee-element-reference-return`: a method returning a reference into
-    what a `Pointer[T, Self.o]` field borrows names the region with the
-    struct's own origin parameter. The pin distinguishes the element
-    sub-origin (`origin_of(o["element"])`) and wants
-    `ref[origin_of(self.src[][i])]`, which Mojito's escape check rejects
-    because no `Origin` variant carries a projected `SelfParam`. Two
-    `assets/origin_ok` fixtures moved for it.
-    - Model: Opus, plan first. The fix adds a projected receiver origin to
-      `mojito_types::origin::Origin`, which MIR text, verification, and
-      substitution all read.
   - `int-true-division`: `Int / Int` is true division into `Float64` in
     Mojito; the pin truncates back to `Int` and divides only an `IntLiteral`
     pair into a float. An `output-diff` row, not a rejection, so it is not on
@@ -426,15 +488,6 @@ are sorted Opus first (see **Entry Style**).
     onto the methods.
     - Model: Fable. Withdrawing the infix spelling is a leniency to remove,
       with fallout across the stdlib's SIMD bodies.
-  - `simd-shuffle-width-change`: a `shuffle` mask shorter or longer than the
-    receiver narrows or widens in Mojito; the pin requires the receiver's own
-    width and spells narrowing `slice[width, offset=]()` and widening
-    `join`, neither of which Mojito has.
-    - Model: Opus, as-is. Two stdlib-shaped builtins plus the width rule.
-  - `simd-bool-fill` (`mojo-only`): the pin splats a `Bool` across a mask with
-    `SIMD[DType.bool, N](fill=b)`, since `Bool` is not a `Scalar`. Mojito has
-    no `fill` argument and no keyword arguments on SIMD construction at all.
-    - Model: Opus, as-is.
   - `simd-element-narrowing` / `simd-inferred-width` / `float-literal-to-int`:
     three small constructor leniencies. Mojito narrows a SIMD element
     argument to the lane type (wrapping an out-of-range literal and a wider
@@ -442,12 +495,6 @@ are sorted Opus first (see **Entry Style**).
     truncates a `FloatLiteral` straight to `Int`; the pin wants the lane's
     own scalar, a written-out width, and the `Float64` it truncates from.
     - Model: Fable. Three leniencies to withdraw in one pass.
-  - `simd-nan-inequality` (`output-diff`): `SIMD.ne` against a NaN receiver
-    answers IEEE in Mojito (unequal to everything, itself included) and, in
-    the pin, False for a NaN against a number but True for a NaN against
-    itself — neither the ordered nor the unordered predicate. Probably an
-    upstream fold bug; re-probe at the next re-pin before changing anything.
-    - Model: Opus, as-is — the work is the probe, not a fix.
   - `float32-reduce-ordering`: `reduce_mul` over `Float32` lanes folds left
     at lane precision in Mojito and pairwise in the pin
     (`319256416.0` against `319256448.0` on sixteen lanes;
@@ -479,54 +526,6 @@ are sorted Opus first (see **Entry Style**).
     `assets/ok/dunder_index.mojo` and `assets/ok/self_hosted_vec.mojo` now
     declare it.
     - Model: Fable. Two conformance leniencies to withdraw.
-  - `recursive-nested-def`: Mojito lifts a nested `def` that calls itself,
-    carrying its captured environment through the recursion; the pin rejects
-    a self-reference from a nested function outright. Three corpus fixtures
-    were respelled to hoist the recursion to file scope.
-    - Model: Opus, as-is. A rejection to add in the capture pass.
-  - `local-comptime-capture`: a function-local `comptime` constant read from
-    a nested `def` is an ordinary immutable local in Mojito, so it must be
-    named in the capture list; the pin treats it as a compile-time constant
-    and rejects naming it there. Mojito cannot simply stop requiring the
-    capture: the constant has real storage in the outer frame and the lifted
-    function has no binding for it.
-    - Model: Opus, plan first. The fix makes a folded `comptime` local a
-      constant the lifted body can read, which is a lowering change, not a
-      scope-rule change.
-  - `capturing-lambda-argument` / `capturing-lambda-locals` /
-    `owned-capture-closure-locals` / `mut-self-callable-struct`: four
-    callable-shape leniencies. Mojito passes a capturing lambda as a runtime
-    argument, binds one to a local under an explicit `capturing[...]`
-    annotation, and accepts a `mut self` `__call__` as a `def(...)`
-    conformer. The pin takes a capturing callable only as a compile-time
-    parameter (and refuses a lambda even there), types a capturing lambda as
-    a plain `def(...) -> T` that converts to nothing, and wants a read
-    receiver. Three corpus fixtures moved to `assets/extensions/`; three more
-    were respelled onto `thin` contracts and `@parameter def` arguments.
-    - Model: Opus, plan first. The four share one question — what a capturing
-      callable *value* is — and the plan settles that before any rejection.
-  - `unparameterized-string-literal`: Mojito's `StringLiteral` is one
-    unparameterized value type, so it annotates variables and returns;
-    upstream parameterizes it by the literal's own text. Already tracked as a
-    representation gap in the shortcuts entry above; the `cases.tsv` row is
-    new.
-    - Model: Opus, plan first — with the `String`/`StringLiteral`
-      representation port it depends on.
-  - `interior-generation-view-consume` / `interior-generation-view-drop`:
-    a struct field typed
-    `Pointer[T, Self.origin._get_owned_interior["tag"]]` over a generic
-    origin parameter. The pin parses the projection but calls the interior
-    reference never-initialized, so the carrier struct does not type-check
-    there at all. Two `assets/ownership_ok` fixtures moved for it.
-    - Model: Opus, plan first. Upstream's owned-interior origins are real;
-      what differs is which structs may name one, so the plan probes that
-      rule before Mojito narrows.
-  - `iterable-element-identity`: Mojito's `for` yields the *iterable*'s
-    `Element`, so one associated type serves a generic signature and the
-    loop; the pin yields the *iterator*'s `Iter.Element` and will not convert
-    between the two without an identity clause Mojito does not implement.
-    - Model: Opus, plan first, and after the `__has_next__` task above, which
-      rewrites the same protocol.
   - `slice-descriptor-kinds` / `unmodeled-struct-decorator` /
     `implicitly-deletable-alias`: three spellings the pin has dropped or
     never had. Mojito splits upstream's single `Slice` into
@@ -536,27 +535,6 @@ are sorted Opus first (see **Entry Style**).
     `ImplicitlyDeletable` to `Deinitable`, which the pin has removed.
     - Model: Fable. Each is a name or a type to withdraw, with stdlib and
       fixture fallout.
-  - `mojito-only-stdlib-algorithms` / `owning-family-container-apis`: two
-    stdlib surfaces upstream does not have — `std.algorithms`,
-    `std.collections.string_dict`, and the owning-family container APIs
-    (`deinit_with`, `clear_with`, displacement-returning `insert`). Two
-    corpus fixtures moved to `assets/extensions/` for them.
-    - Model: Opus, plan first. Whether these leave or stay is a stdlib-shape
-      decision, not a respelling.
-  - `input-eof`: Mojito's `input()` returns the empty string at end of input
-    and never raises, so a noninteractive run finishes; upstream's raises
-    `EOF`, which is why it has to be called from a raising context.
-    `assets/ok/input.mojo` and `assets/ok/pliron_input_echo.mojo` now read
-    through a helper that catches it, so both compilers agree on the text.
-    - Model: Opus, as-is. `builtin_input` and `mjrt_read_line` both raise
-      instead, and the two fixtures lose their helper.
-  - `defined-shift-overflow` / `defined-float-to-int-edges`: Mojito masks a
-    shift amount to the word and saturates `Int(f)` (`Int(nan) == 0`), where
-    the pin's are poison — deliberate contracts in
-    [`docs/native-abi.md`](native-abi.md), recorded here only so the
-    `cases.tsv` rows have a home. They belong with the retained divergences
-    if the next re-pin leaves them standing.
-    - Model: Opus, as-is — the work is the decision, not a change.
 
   Three divergences are retained on purpose and re-probed rather than fixed;
   they are listed in [`docs/non-goals.md`](non-goals.md).
@@ -593,7 +571,7 @@ need. Start them only once sections 1 and 2 are clear.
     `assets/ok/generic_ctfe_associated_value.mojo`).
   - Two more sites rely on the guard narrowing a method's `T` to the element
     type: `assets/ok/variadic_method_type_params.mojo` (`get`,
-    `count_matching`) and `stdlib/std/collections/tuple.mojo`
+    `count_matching`) and `stdlib/std/builtin/tuple.mojo`
     (`__contains__`).
   - Upstream spells that shape `rebind[Ts[i]](value)`, which Mojito does not
     implement (`Undefined variable 'rebind'`), so this task needs `rebind` or
@@ -938,8 +916,8 @@ Every entry is written for a human reader who has not seen the code.
   work whose site and rule are both known.
 - An Opus entry adds "as-is" or "plan first". "Plan first" means the lever is
   known but the fallout is not enumerated yet.
-- Those two sections are sorted by that estimate, Opus before Fable, at both
-  the checkbox and the bullet level. A strict dependency that forces another
+- Those two sections are sorted by that estimate — Opus as-is, then Opus plan
+  first, then Fable — at both the checkbox and the bullet level. A strict dependency that forces another
   order is stated in the entry that carries it.
 
 ## Working Rule

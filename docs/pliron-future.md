@@ -193,7 +193,7 @@ both the same narrowing rule:
 
 - `conformance/fixtures/pack_element_type_narrowing.mojo` (`get`,
   `count_matching`, moved out of `assets/ok/variadic_method_type_params.mojo`)
-  and `stdlib/std/collections/tuple.mojo` (`__contains__`) rely on the guard
+  and `stdlib/std/builtin/tuple.mojo` (`__contains__`) rely on the guard
   narrowing the method's `T` to the element type `Self.Ts[i]`, which upstream
   does not do.
 

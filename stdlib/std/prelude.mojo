@@ -11,8 +11,8 @@ from std.format.tstring import TString
 from std.string import Codepoint, String, StringSpan, atof, atol
 from std.collections.set import Set
 from std.collections.dict import Dict
-from std.optional import Optional, OptionalReg
-from std.collections.tuple import Tuple
+from std.collections.optional import Optional, OptionalReg
+from std.builtin.tuple import Tuple
 from std.range import range
 from std.iterable import next
 from std.builtin.reversed import reversed

@@ -14,7 +14,7 @@ The preferred import shape follows Mojo's `std` package layout:
 from std.collections.list import List
 from std.collections.set import Set
 from std.collections.dict import Dict
-from std.optional import Optional
+from std.collections.optional import Optional
 from std.math import floor, ceil
 ```
 
@@ -60,12 +60,12 @@ only from their authoritative `std` modules.
   specialization. Length and Int indexing run; containment, formatting,
   `reversed()`, `bounds()`, and float strided ranges are recorded subset
   gaps.
-- `std/collections/tuple.mojo` — the public heterogeneous `Tuple[*Ts]`, with
+- `std/builtin/tuple.mojo` — the public heterogeneous `Tuple[*Ts]`, with
   current `__getitem_param__` indexing and element-conditional lifecycle,
   comparison, formatting, concatenation, reversal, and consuming APIs. Its
   `__RuntimeTuple[*Ts]` field is compiler-private heterogeneous pack storage;
   public Tuple is nominal and is not a method-free runtime iterable.
-- `std/optional.mojo` — a generic `Optional[T]` using zero-or-one value storage,
+- `std/collections/optional.mojo` — a generic `Optional[T]` using zero-or-one value storage,
   including an empty constructor for generic absent values.
 - `std/iterable.mojo` — minimal self-hosted `Iterator`, `Iterable`, and
   `IterableOwned` proof traits. They expose associated compile-time `Element`

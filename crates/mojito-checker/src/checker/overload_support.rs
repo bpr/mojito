@@ -390,7 +390,7 @@ pub(super) fn is_bundled_collection_source(source: Option<&str>) -> bool {
         || source == stdlib.join("std/collections/dict.mojo")
         || source == stdlib.join("dict.mojo")
         || source == stdlib.join("std/collections/array.mojo")
-        || source == stdlib.join("std/optional.mojo")
+        || source == stdlib.join("std/collections/optional.mojo")
         || source == stdlib.join("optional.mojo")
         || source == stdlib.join("std/memory/alloc.mojo")
         || source == stdlib.join("std/memory/maybe_uninit.mojo")

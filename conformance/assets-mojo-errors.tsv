@@ -101,8 +101,8 @@ assets/runtime_error/nominal_string_codepoint_out_of_range.mojo	trap	agree	error
 assets/runtime_error/nominal_string_grapheme_out_of_range.mojo	trap	agree	error: execution crashed
 assets/runtime_error/nominal_string_justify_fillchar.mojo	runs	divergence	the pin runs it; Mojito rejects: abort: fill char needs to be a one byte literal
 assets/runtime_error/nominal_string_resize_boundary.mojo	trap	agree	error: execution crashed
-assets/runtime_error/optional_deinit_assert_empty_nonempty_aborts.mojo	compile-reject	missing-import	error: unable to locate module 'optional'
-assets/runtime_error/optional_take_empty_aborts.mojo	compile-reject	missing-import	error: unable to locate module 'optional'
+assets/runtime_error/optional_deinit_assert_empty_nonempty_aborts.mojo	trap	agree	error: execution crashed
+assets/runtime_error/optional_take_empty_aborts.mojo	trap	agree	error: execution crashed
 assets/runtime_error/pliron_raise_error_value.mojo	trap	agree	boom from a var
 assets/runtime_error/pliron_raise_iter_body.mojo	trap	agree	boom at 2
 assets/runtime_error/pliron_raise_iter_stop_unhandled.mojo	compile-reject	iterator-protocol	error: unable to locate module 'iterable'
@@ -248,9 +248,9 @@ assets/type_error/nominal_string_positional_slice_removed.mojo	compile-reject	ag
 assets/type_error/nominal_string_positional_slice_strided_removed.mojo	compile-reject	agree	error: no matching method in call to '__getitem__'
 assets/type_error/non_copyable_copy.mojo	compile-reject	agree	error: value of type 'Handle' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/optional_equatable_requires_element.mojo	compile-reject	agree	error: no matching method in call to '__eq__'
-assets/type_error/optional_legacy_two_arg_constructor.mojo	compile-reject	missing-import	error: unable to locate module 'optional'
+assets/type_error/optional_legacy_two_arg_constructor.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/optional_or_else_consumes_receiver.mojo	compile-reject	agree	error: value of type 'Optional[Res]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
-assets/type_error/optional_owned_iteration_linear_element.mojo	compile-reject	missing-import	error: unable to locate module 'optional'
+assets/type_error/optional_owned_iteration_linear_element.mojo	compile-reject	agree	error: 'opt' abandoned without being explicitly destroyed: type 'Optional' does not conditionally conform to 'Deinitable' for these parameters
 assets/type_error/origin_annotated_reassignment.mojo	compile-reject	agree	error: cannot implicitly convert 'List[Int]' value to 'Span[Int, origin_of(xs)]'
 assets/type_error/origin_cast_from_removed.mojo	compile-reject	agree	error: 'ImmOrigin' value has no attribute 'cast_from'
 assets/type_error/origin_delegated_value_return.mojo	compile-reject	agree	error: value of type 'Int' doesn't have a memory origin in origin specifier
@@ -339,7 +339,7 @@ assets/type_error/uninit_storage_compiler_private.mojo	compile-reject	agree	erro
 assets/type_error/untracked_pointer_field_tracked_argument.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/var_less_introduction.mojo	runs	subset	the pin runs it; Mojito rejects: var count
 assets/type_error/variadic_constructor_element_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
-assets/type_error/variadic_pack_all_conforms_to_false.mojo	compile-reject	missing-import	error: unable to locate module 'tuple'
+assets/type_error/variadic_pack_all_conforms_to_false.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'Bag[Int, Opaque]' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/variant_deinit_with_bad_handler.mojo	compile-reject	agree	error: invalid call to 'deinit_with': value passed to 'deinit_func' cannot be converted from 'def `lambda_0(a: Int) thin -> Int' to 'F'
 assets/type_error/variant_init_with_no_match.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/variant_set_linear_alternative.mojo	compile-reject	agree	error: no matching method in call to 'set'

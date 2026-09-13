@@ -3,7 +3,7 @@ from std.reflection.type_info import _unqualified_type_name
 from std.hashlib import Hasher, default_hasher, hash
 from std.iterable import Iterable, IterableOwned, Iterator, StopIteration
 from std.memory.alloc import unsafe_alloc
-from std.optional import Optional
+from std.collections.optional import Optional
 
 @fieldwise_init
 struct _SetIter[

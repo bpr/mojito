@@ -419,8 +419,8 @@ The implemented forms are:
   only the selected branch. Dropped branches disappear before type checking,
   which lets them contain code that would be invalid for the selected
   specialization. Upstream instead type-checks every branch symbolically and
-  rejects such code, so this is a divergence (`docs/roadmap.md` §2
-  `comptime-if-dropped-branch`) rather than a settled design.
+  rejects such code, so this is a divergence (`docs/roadmap.md` §3, the
+  untaken `comptime if` branch task) rather than a settled design.
 - `comptime for`: evaluates the iterable as either `range(...)` or a
   compile-time tuple/list, substitutes the loop variable with a literal, and
   splices a fresh elaborated copy of the loop body for each element. A

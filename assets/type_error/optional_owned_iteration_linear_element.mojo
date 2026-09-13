@@ -1,5 +1,5 @@
 # expect: requires 'Movable & Deinitable' elements
-from std.optional import Optional
+from std.collections.optional import Optional
 
 @explicit_destroy("close Conn")
 struct Conn(Movable, Deinitable where False):

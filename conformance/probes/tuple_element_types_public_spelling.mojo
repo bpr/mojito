@@ -4,7 +4,7 @@
 #
 # Context: at ae386d1b204, upstream `std/builtin/tuple.mojo` declares
 # `struct Tuple[*Ts: Movable]` with `comptime element_types = Self.Ts` —
-# exactly Mojito's spelling (`stdlib/std/collections/tuple.mojo`), so no
+# exactly Mojito's spelling (`stdlib/std/builtin/tuple.mojo`), so no
 # implementation work is open; this probe only watches the public names.
 # Re-run at every re-pin; Mojito accepts and prints 2 then 7.
 #
@@ -13,7 +13,7 @@
 #
 # If Mojo matches (accepts, prints 2 then 7): no action.
 # If Mojo renames the parameter or member: update
-#   stdlib/std/collections/tuple.mojo, the compiler's hardcoded
+#   stdlib/std/builtin/tuple.mojo, the compiler's hardcoded
 #   `element_types` sites (src/checker/type_resolution.rs member lookup and
 #   src/comptime/specialize.rs `Self.element_types[i]` rewrites), and parity
 #   rows types.tuples / generics.constraints.

@@ -11,7 +11,7 @@ from std.collections.dict import DictEntry, _DictEntryIter, _DictKeyIter
 from std.collections.list import List
 from std.hashlib import default_hasher, hash
 from std.iterable import Iterable
-from std.optional import Optional
+from std.collections.optional import Optional
 
 struct StringDict[V: Movable](
     Copyable where conforms_to(V, Copyable), Iterable where conforms_to(V, Copyable)

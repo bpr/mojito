@@ -3,7 +3,7 @@
 # element does not conform: the gated `write_to` is dropped and printing the
 # bag rejects.
 # expect: does not conform to trait 'Writable'
-from std.collections.tuple import Tuple
+from std.builtin.tuple import Tuple
 
 struct Opaque(Copyable, Movable):
     var n: Int
@@ -11,18 +11,18 @@ struct Opaque(Copyable, Movable):
     def __init__(out self, n: Int):
         self.n = n
 
-struct Bag[*Ts: Copyable & Movable](
+struct Bag[*Ts: Copyable & Movable & Deinitable](
     Copyable,
     Movable,
     Writable where Ts.all_conforms_to[Writable](),
 ):
-    var storage: Tuple[*Ts]
+    var storage: Tuple[*Self.Ts]
 
-    def __init__(out self, var *args: *Ts):
-        self.storage = Tuple[*Ts](*args^)
+    def __init__(out self, var *args: *Self.Ts):
+        self.storage = Tuple[*Self.Ts](*args^)
 
-    def write_to(self, mut writer: Some[Writer]) where Ts.all_conforms_to[Writable]():
-        comptime for i in range(Ts.length):
+    def write_to(self, mut writer: Some[Writer]) where Self.Ts.all_conforms_to[Writable]():
+        comptime for i in range(Self.Ts.length):
             writer.write(self.storage[i])
 
 def main():

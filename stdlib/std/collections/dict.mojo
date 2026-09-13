@@ -15,7 +15,7 @@ from std.collections.list import List
 from std.reflection.type_info import _unqualified_type_name
 from std.hashlib import Hasher, default_hasher, hash
 from std.iterable import Iterable, Iterator, StopIteration
-from std.optional import Optional
+from std.collections.optional import Optional
 
 struct DictEntry[
     K: Hashable & Equatable & Movable,

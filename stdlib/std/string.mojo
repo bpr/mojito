@@ -14,7 +14,7 @@
 from std.memory.alloc import unsafe_alloc
 
 from std.collections.list import List
-from std.optional import Optional
+from std.collections.optional import Optional
 from std.span import Span
 
 from std.iterable import Iterable, Iterator, StopIteration

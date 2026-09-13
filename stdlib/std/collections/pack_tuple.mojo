@@ -1,8 +1,8 @@
 # Compatibility wrapper for the earlier Mojito prototype.  New tuple displays
-# resolve to `std.collections.tuple.Tuple`; explicit PackTuple imports continue
+# resolve to `std.builtin.tuple.Tuple`; explicit PackTuple imports continue
 # to work during the migration.
 
-from std.collections.tuple import Tuple
+from std.builtin.tuple import Tuple
 
 struct PackTuple[*Ts: Copyable & Movable](Copyable, Movable):
     var storage: Tuple[*Ts]

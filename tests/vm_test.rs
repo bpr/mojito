@@ -72,7 +72,7 @@ fn optional_none_default_materializes_the_empty_optional() {
     // explicitly supplied Optional returns its value.
     assert_eq!(
         vm(concat!(
-            "from std.optional import Optional\n",
+            "from std.collections.optional import Optional\n",
             "def choose(arg: Optional[Int] = None) -> Int:\n",
             "    return arg.or_else(-1)\n",
             "def main():\n",

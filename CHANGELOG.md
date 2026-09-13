@@ -21,6 +21,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Optional`/`OptionalReg` now live at `std.collections.optional` and `Tuple`
+  at `std.builtin.tuple`, upstream's module homes; `std.optional` and
+  `std.collections.tuple` no longer exist. The prelude, `from std.collections
+  import Optional`, and the flat `optional` facade are unchanged. Five
+  `assets/` error fixtures that the pinned Mojo refused on the old import now
+  reach the defect they pin, and all five agree with it
+  (`conformance/assets-mojo-errors.tsv`).
+
 - The pinned Mojo now rejects only 21 of the ordinary `assets/` `_ok`
   fixtures, down from 102, and all 21 are the one `__has_next__` iterator
   family that has its own roadmap task. Thirty-five fixtures were respelled

@@ -3,7 +3,7 @@
 
 from std.collections.list import List
 from std.ffi import c_int, c_ssize_t, external_call
-from std.optional import Optional
+from std.collections.optional import Optional
 from std.os import abort, getenv, listdir, mkdir, remove, rmdir
 from std.os.path import exists, isdir, isfile, islink, join
 from std.pathlib import cwd

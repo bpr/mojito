@@ -14,7 +14,7 @@ from std.reflection.type_info import _unqualified_type_name
 from std.hashlib import Hasher
 from std.iterable import Iterable, IterableOwned, Iterator, StopIteration
 
-from std.optional import Optional
+from std.collections.optional import Optional
 
 
 @fieldwise_init
