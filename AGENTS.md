@@ -187,11 +187,15 @@ The memory-heavy corpus sweeps are their own lane
 (`scripts/check-pliron-heavy`, `tests/heavy/`): never run them beside the
 rest of the suite, and never in-session unless the owner asks.
 
-Before reporting a task complete: `cargo fmt --all`, `git diff --check`, and
-a clean `cargo build`; Clippy (`cargo clippy --workspace --exclude
-mojito-pliron --lib -- -D warnings`) only when the change is small enough for
-it to be quick. Full tests and the manifests are the nightly
-gate's job — report what was and was not run.
+Before reporting a task complete: `cargo fmt --all`, `git diff --check`, a
+clean `cargo build`, and a clean Clippy run (`cargo clippy --workspace
+--exclude mojito-pliron --lib -- -D warnings`) whatever the size of the
+change — it takes seconds. Fix every Clippy warning by rewriting the code the
+lint points at; do not add `#[allow(clippy::…)]` directives. An existing
+`allow` elsewhere is not precedent: an exception needs a very good reason,
+stated in the directive's `reason = "…"` and in the task summary. Full tests
+and the manifests are the nightly gate's job — report what was and was not
+run.
 
 ## Test and Fixture Ownership
 

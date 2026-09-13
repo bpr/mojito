@@ -33,6 +33,7 @@ assets/ok/collection_truthiness.mojo	main	exe-differential	sanitized
 assets/ok/comparable_ordered_algorithms.mojo	main	exe-differential	sanitized
 assets/ok/comprehension_temporary_source_drop.mojo	main	exe-differential	sanitized
 assets/ok/comptime_alias_generic.mojo	main	exe-differential	sanitized
+assets/ok/comptime_alias_value_body.mojo	main	exe-differential	sanitized
 assets/ok/comptime_collections.mojo	main	exe-differential	sanitized
 assets/ok/comptime_ctfe.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for.mojo	main	exe-differential	sanitized
@@ -40,7 +41,9 @@ assets/ok/comptime_frozen_struct.mojo	main	exe-differential	sanitized
 assets/ok/comptime_hash.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_generic_specialization.mojo	main	exe-differential	sanitized
+assets/ok/comptime_lambda_initializer.mojo	main	exe-differential	sanitized
 assets/ok/comptime_shadowed_locals.mojo	main	exe-differential	sanitized
+assets/ok/comptime_string_value.mojo	main	exe-differential	sanitized
 assets/ok/comptime_tuple.mojo	main	exe-differential	sanitized
 assets/ok/container_hashable.mojo	main	exe-differential	sanitized
 assets/ok/contextual_member_static.mojo	main	exe-differential	sanitized
@@ -85,6 +88,7 @@ assets/ok/func_styles.mojo	main	exe-differential	sanitized
 assets/ok/function_type_where_bound.mojo	main	exe-differential	sanitized
 assets/ok/function_type_where_unconstrained_actual.mojo	main	exe-differential	sanitized
 assets/ok/function_typed_kwargs.mojo	main	exe-differential	sanitized
+assets/ok/function_value_array_display.mojo	main	exe-differential	sanitized
 assets/ok/generic_copyable_iterator_refinement.mojo	main	exe-differential	sanitized
 assets/ok/generic_ctfe_associated_value.mojo	main	exe-differential	sanitized
 assets/ok/generic_ctfe_value_param.mojo	main	exe-differential	sanitized
@@ -94,6 +98,7 @@ assets/ok/generic_method_per_call_clones.mojo	main	exe-differential	sanitized
 assets/ok/generic_struct_instance_bodies.mojo	main	exe-differential	sanitized
 assets/ok/generic_struct_instance_dispatch.mojo	main	exe-differential	sanitized
 assets/ok/hashable_bucketing.mojo	main	exe-differential	sanitized
+assets/ok/hashable_extra_hash_overload.mojo	main	exe-differential	sanitized
 assets/ok/hashable_hasher_protocol.mojo	main	exe-differential	sanitized
 assets/ok/hasher_upstream_spellings.mojo	main	exe-differential	sanitized
 assets/ok/hasher_user_conformer.mojo	main	exe-differential	sanitized
@@ -105,6 +110,8 @@ assets/ok/hello_world.mojo	main	exe-differential	sanitized
 assets/ok/imm_origin_binders.mojo	main	exe-differential	sanitized
 assets/ok/imm_origin_cast_view.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion.mojo	main	exe-differential	sanitized
+assets/ok/implicit_conversion_exact_source.mojo	main	exe-differential	sanitized
+assets/ok/implicit_conversion_raising.mojo	main	exe-differential	sanitized
 assets/ok/indexer_normalization.mojo	main	exe-differential	sanitized
 assets/ok/init_out_self.mojo	main	exe-differential	sanitized
 assets/ok/inplace_field.mojo	main	exe-differential	sanitized
@@ -164,6 +171,7 @@ assets/ok/nominal_string_bool_mul.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_bytes_capacity.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_bytes_peek_split.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_case.mojo	main	exe-differential	sanitized
+assets/ok/nominal_string_codepoint_from_byte.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_codepoint_from_u32.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_codepoint_iter.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_codepoint_predicates.mojo	main	exe-differential	sanitized
@@ -308,15 +316,18 @@ assets/ok/pointer_field_view_plain_self.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_view_read_parameter.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_view_returned.mojo	main	exe-differential	sanitized
 assets/ok/pointer_immutable_conversion.mojo	main	exe-differential	sanitized
+assets/ok/pointer_origin_cast_upgrade_reads.mojo	main	exe-differential	sanitized
 assets/ok/pointer_origin_constructors.mojo	main	exe-differential	sanitized
 assets/ok/pointer_origin_field_inference.mojo	main	exe-differential	sanitized
 assets/ok/pointer_placeholder_parameter.mojo	main	exe-differential	sanitized
+assets/ok/pointer_take_pointee_tracked.mojo	main	exe-differential	sanitized
 assets/ok/pointer_temp_argument_loan.mojo	main	exe-differential	sanitized
 assets/ok/pointer_temp_argument_loan_return.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_owner_twice.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_place.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_ref_binding.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_ref_binding_twice.mojo	main	exe-differential	sanitized
+assets/ok/pointer_to_ref_union_origin.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_ref_write_through.mojo	main	exe-differential	sanitized
 assets/ok/pointer_unsafe_vocabulary.mojo	main	exe-differential	sanitized
 assets/ok/positional_only.mojo	main	exe-differential	sanitized
@@ -336,6 +347,7 @@ assets/ok/repr_type_names.mojo	main	exe-differential	sanitized
 assets/ok/reversed_iteration.mojo	main	exe-differential	sanitized
 assets/ok/reversed_list.mojo	main	exe-differential	sanitized
 assets/ok/scalar_dtype_construction.mojo	main	exe-differential	sanitized
+assets/ok/scalar_range_float_strided.mojo	main	exe-differential	sanitized
 assets/ok/scalar_range_sequential.mojo	main	exe-differential	sanitized
 assets/ok/scalar_range_strided.mojo	main	exe-differential	sanitized
 assets/ok/scalar_range_zero_starting.mojo	main	exe-differential	sanitized
@@ -402,6 +414,7 @@ assets/ok/ternary.mojo	main	exe-differential	sanitized
 assets/ok/trait_default_method.mojo	main	exe-differential	sanitized
 assets/ok/trait_inheritance.mojo	main	exe-differential	sanitized
 assets/ok/traits.mojo	main	exe-differential	sanitized
+assets/ok/transfer_into_read_parameter_borrows.mojo	main	exe-differential	sanitized
 assets/ok/transferred_carrier_keeps_source_alive.mojo	main	exe-differential	sanitized
 assets/ok/try_break_continue.mojo	main	exe-differential	sanitized
 assets/ok/try_reassign_outer.mojo	main	exe-differential	sanitized
@@ -450,6 +463,7 @@ assets/ok/with_exit_error_swallow.mojo	main	exe-differential	sanitized
 assets/ok/with_multiple.mojo	main	exe-differential	sanitized
 assets/ok/with_multiple_dependent.mojo	main	exe-differential	sanitized
 assets/ok/with_statement.mojo	main	exe-differential	sanitized
+assets/ok/writable_extra_write_to_overload.mojo	main	exe-differential	sanitized
 assets/extensions/ok/callable_struct_transfer_after_last_use.mojo	main	exe-differential	sanitized
 assets/extensions/ok/captured_store_local_carrier.mojo	main	exe-differential	sanitized
 assets/extensions/ok/comprehension_borrowed_named_source.mojo	main	exe-differential	sanitized

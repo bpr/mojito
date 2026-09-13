@@ -1404,10 +1404,18 @@ impl Checker {
         alias: &ComptimeAlias,
         args: &[mojito_ast::ast::ParamArg],
     ) -> Result<Ty, TypeError> {
-        let AliasBody::Type(template) = &alias.body else {
-            return Err(TypeError::Unsupported(format!(
-                "'{name}' is a Bool-valued comptime alias, not a type"
-            )));
+        let template = match &alias.body {
+            AliasBody::Type(template) => template,
+            AliasBody::Predicate(_) => {
+                return Err(TypeError::Unsupported(format!(
+                    "'{name}' is a Bool-valued comptime alias, not a type"
+                )));
+            }
+            AliasBody::Value => {
+                return Err(TypeError::Unsupported(format!(
+                    "'{name}' is a value comptime alias, not a type"
+                )));
+            }
         };
         let (_, tyargs) = self.resolve_use_params(name, &alias.decls, args, &[], &[])?;
         let mut types = HashMap::new();

@@ -622,7 +622,12 @@ impl VmBackend {
         let source = format!("{name}.{method}");
         let symbol = super::instance_dunder_symbol(prog, &name, method, static_ty, 1)
             .unwrap_or_else(|| prog.overload_name(&source, 1));
-        if let Some(index) = prog.index_of(&symbol) {
+        let writes_protocol = prog.sigs.get(&symbol).is_none_or(|sig| {
+            sig.param_types
+                .first()
+                .is_some_and(mojito_types::types::is_writer_parameter)
+        });
+        if writes_protocol && let Some(index) = prog.index_of(&symbol) {
             let receiver = Value::Struct {
                 name,
                 fields,

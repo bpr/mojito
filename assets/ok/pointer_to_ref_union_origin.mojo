@@ -1,6 +1,5 @@
-# expect: through a 'ref' binding requires a place or origin-parameter referent
-# A reference whose origin is a union of places has no single subtree base;
-# Pointer(to=...) stays rejected over it.
+# A reference whose origin is a union of places under one owner lends a
+# Pointer to the subtree of their deepest common base.
 @fieldwise_init
 struct Pair:
     var a: Int
@@ -14,5 +13,5 @@ struct Pair:
 def main():
     var t = Pair(3, 4)
     ref r = t.pick(True)
-    var p = UnsafePointer(to=r)
+    var p = Pointer(to=r)
     print(p[])

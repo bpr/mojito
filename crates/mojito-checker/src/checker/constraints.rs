@@ -1137,12 +1137,12 @@ impl Checker {
     }
 
     /// The compiled Bool body of a registered predicate alias, or `None` when
-    /// the name is unknown or names a type-bodied alias.
+    /// the name is unknown or names a type- or value-bodied alias.
     pub(super) fn predicate_alias(&self, name: &str) -> Option<(&[ParamDecl], &GenericConstraint)> {
         let alias = self.comptime_aliases.get(name)?;
         match &alias.body {
             AliasBody::Predicate(constraint) => Some((&alias.decls, constraint)),
-            AliasBody::Type(_) => None,
+            AliasBody::Type(_) | AliasBody::Value => None,
         }
     }
 

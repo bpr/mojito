@@ -470,6 +470,20 @@ impl VmBackend {
     pub fn bindings(&self) -> Vec<(String, Value)> {
         self.bindings.clone()
     }
+
+    /// The text of a nominal stdlib `String` value whose bytes live in this
+    /// VM's heap, or `None` for any other value.
+    pub fn nominal_string_text(&self, value: &Value) -> Option<String> {
+        if !matches!(value, Value::Struct { name, .. }
+            if mojito_symbol::symbol::is_stdlib_string_struct(name))
+        {
+            return None;
+        }
+        match self.string_struct_literal(value) {
+            Ok(Value::Str(text)) => Some(text),
+            _ => None,
+        }
+    }
 }
 
 impl VmBackend {

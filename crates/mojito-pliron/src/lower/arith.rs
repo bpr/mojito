@@ -31,6 +31,23 @@ impl FnLowering<'_> {
         call.get_result(ctx)
     }
 
+    /// One LLVM float intrinsic whose operands and result all share
+    /// `float_ty` (`llvm.ceil.f32`, `llvm.fma.f64`, ...).
+    pub(super) fn float_intrinsic(
+        &mut self,
+        ctx: &mut Context,
+        intrinsic: &str,
+        float_ty: TypeHandle,
+        operands: Vec<Value>,
+        dest: Reg,
+    ) -> Value {
+        let fn_ty = FuncType::get(ctx, float_ty, vec![float_ty; operands.len()], false);
+        let call =
+            CallIntrinsicOp::new(ctx, StringAttr::new(intrinsic.to_string()), fn_ty, operands);
+        self.append(ctx, call.get_operation(), Some(dest));
+        call.get_result(ctx)
+    }
+
     /// `x ** y` on Int/UInt: guard the exponent to the accepted range
     /// (`0 ..= u32::MAX`, one unsigned compare covers negative-as-i64 too),
     /// then call the bundled `std._intrinsics._pow_int` body — the same Mojo

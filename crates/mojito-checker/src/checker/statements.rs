@@ -2621,11 +2621,13 @@ impl Checker {
                 }
             }
         }
-        // A body is a type expression or a Bool proposition (a predicate
-        // alias). Some Bool bodies parse as type applications
-        // (`IsTriviallyCopyable[T]` is an `Index` shape), so a body that
-        // parses as a type but fails to lower falls back to the predicate
-        // path; a genuine type error is reported when neither path accepts.
+        // A body is a type expression, a Bool proposition (a predicate
+        // alias), or a compile-time value expression. Some Bool bodies parse
+        // as type applications (`IsTriviallyCopyable[T]` is an `Index` shape),
+        // so a body that parses as a type but fails to lower falls back to the
+        // predicate path; a genuine type error is reported when neither path
+        // accepts. A body that is not a proposition is a value, which
+        // elaboration evaluates and folds at each runtime use.
         let body = match super::constraints::assoc_body_source_type(value) {
             Ok(source_ty) => match self.lower_parameterized_member(type_params, &source_ty) {
                 Ok(template) => AliasBody::Type(Box::new(template)),
@@ -2634,9 +2636,15 @@ impl Checker {
                         .map_err(|_| type_error)?,
                 )),
             },
-            Err(_) => {
-                AliasBody::Predicate(Box::new(self.compile_predicate_alias_body(&decls, value)?))
-            }
+            Err(_) => match self.compile_predicate_alias_body(&decls, value) {
+                Ok(constraint) => AliasBody::Predicate(Box::new(constraint)),
+                Err(TypeError::Unsupported(message))
+                    if message.starts_with("a generic comptime alias must be defined by") =>
+                {
+                    AliasBody::Value
+                }
+                Err(error) => return Err(error),
+            },
         };
         self.comptime_aliases
             .insert(name.to_string(), ComptimeAlias { decls, body });

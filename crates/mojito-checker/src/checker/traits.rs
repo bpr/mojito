@@ -1446,18 +1446,10 @@ impl Checker {
                     })
                 })
             }),
-            "Writable" => self.structs.get(name).is_some_and(|info| {
-                ["write_to", "write_repr_to"].into_iter().all(|name| {
-                    info.methods.get(name).is_none_or(|methods| {
-                        methods.iter().any(|method| {
-                            method.params.len() == 1
-                                && method.conventions[0] == Some(ArgConvention::Mut)
-                                && matches!(&method.params[0], Ty::Param { bounds, .. } if bounds.iter().any(|bound| bound == "Writer"))
-                                && method.ret == Ty::None
-                        })
-                    })
-                })
-            }),
+            // A struct without a `Writer`-fed `write_to` writes through the
+            // reflective `Name(field=...)` default; any other `write_to` is an
+            // ordinary overload beside it, as in current Mojo.
+            "Writable" => self.structs.contains_key(name),
             // An operation trait with a known dunder signature requires the
             // struct to define that dunder (`Addable` needs `__add__`, etc.).
             // Layout/backend markers without a dunder remain accepted-but-shallow.
@@ -2132,18 +2124,6 @@ impl Checker {
                     .any(|conformance| conformance == "Hashable")
                 {
                     Some(format!("'{name}' does not declare Hashable conformance"))
-                } else if hashes.is_some_and(|methods| {
-                    methods
-                        .iter()
-                        .any(|method| method.params.is_empty() && method.ret == Ty::UInt)
-                }) {
-                    Some(
-                        "'__hash__(self) -> UInt' is not the Hashable protocol; spell \
-                         'def __hash__(self, mut hasher: Some[Hasher])' (or \
-                         '[H: Hasher](self, mut hasher: H)') and feed the hasher with \
-                         'hasher.update(...)'"
-                            .to_string(),
-                    )
                 } else if hashes.is_none() {
                     field_failure(&|field_ty| self.is_hashable(field_ty))
                 } else {

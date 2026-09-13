@@ -188,10 +188,19 @@ impl Flatten<'_> {
                 ),
                 _ => self.fresh(span(e), provenance),
             };
+            let raises = self
+                .checked_adjustments(e)
+                .into_iter()
+                .find_map(|adjustment| match adjustment {
+                    mojito_checked::checked::SemanticAdjustment::ConversionRaises(error) => {
+                        Some(error)
+                    }
+                    _ => None,
+                });
             self.emit(MirInstr::Call {
                 dest,
                 func: FuncRef::named(&target),
-                raises: None,
+                raises,
                 args: vec![argument],
                 kwargs: Vec::new(),
                 arg_places: vec![source_place.clone()],

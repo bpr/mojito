@@ -259,9 +259,13 @@ pub const RANGE_TYPE_NAME: &str = "Range";
 pub const SCALAR_RANGE_FAMILY: [&str; 3] =
     ["_ZeroStartingRange", "_SequentialRange", "_StridedRange"];
 
+/// The floating-point strided range: upstream's `_StridedRange` float path,
+/// which iterates by index through a fused multiply-add rather than by value.
+pub const FLOAT_STRIDED_RANGE: &str = "_FloatStridedRange";
+
 /// Decompose a checker-abstract scalar-range type — `Ty::Struct` naming a
-/// [`SCALAR_RANGE_FAMILY`] member (plain or module-qualified) with one
-/// concrete dtype value argument.
+/// [`SCALAR_RANGE_FAMILY`] member or [`FLOAT_STRIDED_RANGE`] (plain or
+/// module-qualified) with one concrete dtype value argument.
 ///
 /// This form exists only in the discovery round: the specialization fixpoint
 /// rewrites every occurrence into a registered concrete struct before MIR
@@ -272,6 +276,7 @@ pub fn scalar_range_parts(ty: &Ty) -> Option<(&'static str, mojito_ast::ast::Dty
     };
     let family = SCALAR_RANGE_FAMILY
         .iter()
+        .chain(std::iter::once(&FLOAT_STRIDED_RANGE))
         .find(|family| *family == name || name.ends_with(&format!("${family}")))?;
     let [TyArg::Val(CtValue::Dtype(dtype))] = arguments.as_slice() else {
         return None;
@@ -573,6 +578,15 @@ pub fn range_type() -> Ty {
 
 pub fn is_range_type(ty: &Ty) -> bool {
     nominal_type_arguments(ty, RANGE_TYPE_NAME).is_some_and(|arguments| arguments.is_empty())
+}
+
+/// Whether a `write_to`/`write_repr_to` parameter is the `Writable` protocol's writer.
+///
+/// The writer is `mut writer: Some[Writer]` or a `Writer`-bounded type
+/// parameter. A method with any other parameter is an ordinary overload, and
+/// the value displays through the reflective default instead.
+pub fn is_writer_parameter(ty: &Ty) -> bool {
+    matches!(ty, Ty::Param { bounds, .. } if bounds.iter().any(|bound| bound == "Writer"))
 }
 
 pub fn contains_infer(ty: &Ty) -> bool {

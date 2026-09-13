@@ -212,6 +212,7 @@ pub fn check_program_with_materialized_callables(
             &comprehension_bindings,
             &deletability,
             &explicit_destroy_types,
+            &checker.borrowed_read_call_places.borrow(),
         )?;
     }
     Ok(mojito_checked::checked::CheckedProgram::new(
@@ -226,6 +227,7 @@ pub fn check_program_with_materialized_callables(
         checker.implicit_conversions.into_inner(),
         checker.implicit_conversion_types.into_inner(),
         &checker.conversion_source_borrows.into_inner(),
+        &checker.implicit_conversion_raises.into_inner(),
         checker.declaration_types.into_inner(),
         checker.generic_parameters.into_inner(),
         &checker.expression_types.into_inner(),
@@ -502,6 +504,9 @@ pub struct Checker {
     /// parameterized target (`Optional[Int]`) keeps its arguments at the
     /// emit site rather than the constructor's bare struct name.
     implicit_conversion_types: RefCell<HashMap<SourceSpan, Ty>>,
+    /// The error type of each site in `implicit_conversions` whose selected
+    /// constructor raises.
+    implicit_conversion_raises: RefCell<HashMap<SourceSpan, Ty>>,
     /// Sites in `implicit_conversions` whose selected constructor borrows its
     /// single argument through a `ref [origin]` parameter: the conversion
     /// result borrows the source place (temporary-origin inference). The
@@ -711,6 +716,7 @@ impl Checker {
             raise_observation_frames: RefCell::new(Vec::new()),
             implicit_conversions: RefCell::new(HashMap::new()),
             implicit_conversion_types: RefCell::new(HashMap::new()),
+            implicit_conversion_raises: RefCell::new(HashMap::new()),
             conversion_source_borrows: RefCell::new(HashMap::new()),
             simd_constructions: RefCell::new(HashMap::new()),
             operation_adjustments: RefCell::new(HashMap::new()),
@@ -1290,7 +1296,7 @@ impl Checker {
     ) -> Result<Option<(String, Option<bool>)>, TypeError> {
         Ok(self
             .implicit_conversion_constructor(from, to)?
-            .map(|(target, source_borrow, _)| (target, source_borrow)))
+            .map(|selected| (selected.target, selected.source_borrow)))
     }
 
     /// Whether storing a `found` value where `expected` is declared goes
@@ -1311,18 +1317,19 @@ impl Checker {
         }
         matches!(
             self.implicit_conversion_constructor(found, expected),
-            Ok(Some((_, _, false)))
+            Ok(Some(SelectedConversion {
+                consumes_source: false,
+                ..
+            }))
         )
     }
 
-    /// The selected implicit converting constructor from `from` to `to`, its
-    /// `ref`-parameter source-borrow mutability, and whether it consumes its
-    /// source (a `var`/`deinit` parameter).
+    /// The selected implicit converting constructor from `from` to `to`.
     fn implicit_conversion_constructor(
         &self,
         from: &Ty,
         to: &Ty,
-    ) -> Result<Option<(String, Option<bool>, bool)>, TypeError> {
+    ) -> Result<Option<SelectedConversion>, TypeError> {
         let Ty::Struct(name, args) = to else {
             return Ok(None);
         };
@@ -1344,6 +1351,16 @@ impl Checker {
                     && coerces(from, &substitute(&sig.params[0], &subst))
             })
             .collect::<Vec<_>>();
+        // Several converting constructors may accept the source; one whose
+        // parameter is exactly the source type (a literal at its default
+        // type) wins, as in current Mojo.
+        let source = mojito_types::types::default_literal(from);
+        let exact = matches
+            .iter()
+            .filter(|sig| substitute(&sig.params[0], &subst) == source)
+            .copied()
+            .collect::<Vec<_>>();
+        let matches = if exact.len() == 1 { exact } else { matches };
         match matches.as_slice() {
             [] => Ok(None),
             [sig] => {
@@ -1366,7 +1383,15 @@ impl Checker {
                             | mojito_ast::ast::ArgConvention::Deinit
                     )
                 );
-                Ok(Some((target, source_borrow, consumes_source)))
+                let error = sig
+                    .raises
+                    .then(|| sig.error.as_deref().cloned().unwrap_or(Ty::Error));
+                Ok(Some(SelectedConversion {
+                    target,
+                    source_borrow,
+                    consumes_source,
+                    error,
+                }))
             }
             _ => Err(TypeError::BadCall {
                 func: name.clone(),
@@ -1386,10 +1411,16 @@ impl Checker {
         from: &Ty,
         to: &Ty,
     ) -> Result<bool, TypeError> {
-        let Some((target, source_borrow)) = self.implicit_conversion_target(from, to)? else {
+        let Some(SelectedConversion {
+            target,
+            source_borrow,
+            error,
+            ..
+        }) = self.implicit_conversion_constructor(from, to)?
+        else {
             return Ok(false);
         };
-        self.record_selected_conversion(expression, target, to, source_borrow)?;
+        self.record_selected_conversion(expression, target, to, source_borrow, error)?;
         Ok(true)
     }
 
@@ -1399,15 +1430,26 @@ impl Checker {
     /// source has no place to lend: it materializes as an anonymous owned
     /// binding — the hidden slot an explicit `View(temp)` construction gets —
     /// so the view borrows real frame storage and the temporary lives as long
-    /// as its borrower.
+    /// as its borrower. A raising constructor makes the conversion site a
+    /// raising call.
     fn record_selected_conversion(
         &self,
         expression: &Expr,
         target: String,
         to: &Ty,
         source_borrow: Option<bool>,
+        error: Option<Ty>,
     ) -> Result<(), TypeError> {
         let span = expression.source_span();
+        if let Some(error) = error {
+            self.implicit_conversion_raises
+                .borrow_mut()
+                .insert(span.clone(), error.clone());
+            self.require_error(
+                format!("implicit conversion through raising '{target}'"),
+                error,
+            )?;
+        }
         if let Some(mutable) = source_borrow {
             self.conversion_source_borrows
                 .borrow_mut()
@@ -1464,10 +1506,16 @@ impl Checker {
             self.record_literal_materializations(expression, from, to)?;
             return Ok(true);
         }
-        let Some((target, source_borrow)) = self.implicit_conversion_target(from, to)? else {
+        let Some(SelectedConversion {
+            target,
+            source_borrow,
+            error,
+            ..
+        }) = self.implicit_conversion_constructor(from, to)?
+        else {
             return Ok(false);
         };
-        self.record_selected_conversion(expression, target, to, source_borrow)?;
+        self.record_selected_conversion(expression, target, to, source_borrow, error)?;
         Ok(true)
     }
 
@@ -1842,13 +1890,30 @@ struct ComptimeAlias {
     body: AliasBody,
 }
 
-/// The lowered body of a [`ComptimeAlias`]: a symbolic type template, or a
+/// The `@implicit` converting constructor selected for one conversion.
+struct SelectedConversion {
+    /// The constructor's lowered symbol.
+    target: String,
+    /// `Some(loan mutability)` when the constructor borrows its argument
+    /// through a `ref [origin]` parameter (a view construction).
+    source_borrow: Option<bool>,
+    /// Whether the constructor consumes its source (a `var`/`deinit`
+    /// parameter).
+    consumes_source: bool,
+    /// The error type the constructor raises, if it raises.
+    error: Option<Ty>,
+}
+
+/// The lowered body of a [`ComptimeAlias`]: a symbolic type template, a
 /// symbolic Bool proposition (a predicate alias, usable exactly where
-/// `conforms_to`/`IsTrivially*` propositions are — never in type positions).
+/// `conforms_to`/`IsTrivially*` propositions are — never in type positions),
+/// or a compile-time value expression, which elaboration folds at each runtime
+/// use.
 #[derive(Clone)]
 enum AliasBody {
     Type(Box<Ty>),
     Predicate(Box<GenericConstraint>),
+    Value,
 }
 
 /// A parameterized associated type a conforming struct defines

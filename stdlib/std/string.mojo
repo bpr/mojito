@@ -1251,6 +1251,17 @@ struct Codepoint(
         self._scalar = scalar
         self._text = text^
 
+    # Upstream's unchecked scalar constructor: the caller guarantees a valid
+    # Unicode scalar value.
+    def __init__(out self, *, unsafe_unchecked_codepoint: UInt32):
+        self._scalar = Int(unsafe_unchecked_codepoint)
+        self._text = Codepoint._encode_utf8(self._scalar)
+
+    # A single byte is always a valid scalar (U+0000 through U+00FF).
+    def __init__(out self, codepoint: UInt8):
+        self._scalar = Int(codepoint)
+        self._text = Codepoint._encode_utf8(self._scalar)
+
     # The public scalar constructor: absent for negatives, the surrogate
     # range, and values beyond U+10FFFF.
     @staticmethod

@@ -139,6 +139,9 @@ impl Flatten<'_> {
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Reg {
         let (base, base_place) = self.lower_call_receiver(receiver);
+        // The getter's reference designates storage inside the receiver, so
+        // the receiver's root owns a loan the checked origin cannot name.
+        let receiver_root = base_place.as_ref().map(|place| place.root);
         let mut index_regs = Vec::with_capacity(indices.len());
         let mut index_places = Vec::with_capacity(indices.len());
         let mut sources = Vec::with_capacity(indices.len());
@@ -183,7 +186,8 @@ impl Flatten<'_> {
         }
         let (callee, callee_place) = match reference_result {
             Some(reference) => {
-                let place = self.materialize_call_reference_place(e, element, &reference);
+                let place =
+                    self.materialize_call_reference_place(e, element, &reference, receiver_root);
                 let value = self.fresh_typed(
                     e.source_span(),
                     Some(place.root),

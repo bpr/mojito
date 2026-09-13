@@ -63,6 +63,18 @@ impl Flatten<'_> {
         view_result: bool,
     ) -> (Reg, Option<MirPlace>) {
         let adjustments = self.checked_adjustments(expression);
+        // A `^` the checker bound to a read parameter lends its place like a
+        // plain read argument.
+        if let ExprKind::Transfer(inner) = &expression.kind
+            && adjustments.iter().any(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::BorrowReadArgument
+                )
+            })
+        {
+            return self.lower_call_argument_with(inner, view_result);
+        }
         // A temporary bound to a `ref [origin]` parameter: store the value in
         // a hidden slot registered under the checker-minted owner identity and
         // hand the call that slot's place — the VM/native ref binding then
@@ -488,12 +500,14 @@ impl Flatten<'_> {
     /// Store an accessor-produced reference in a hidden local and establish its
     /// checked owner loans.  This turns the handle into the same persistent,
     /// analyzable call-place representation as an explicit `ref` binding while
-    /// evaluating the accessor exactly once.
+    /// evaluating the accessor exactly once. A checked owner with no MIR slot
+    /// of its own lends through `fallback`, the storage the accessor reads.
     pub(super) fn materialize_call_reference_place(
         &mut self,
         expression: &Expr,
         handle: Reg,
         reference: &mojito_types::origin::RefTy,
+        fallback: Option<VarId>,
     ) -> MirPlace {
         let variable = self.var(&format!("$call_ref_r{}", handle.0));
         let storage_ty = Ty::Ref(reference.clone());
@@ -505,9 +519,29 @@ impl Flatten<'_> {
             binding_ty: Some(storage_ty.clone()),
         });
 
+        // The materialized reference's own origin names the storage it
+        // designates even when the expression's checked type is the call's
+        // result rather than the reference.
+        let mut origins = self.checked_reference_places(expression);
+        let own = match &reference.origin {
+            mojito_types::origin::Origin::Place(place) => vec![place],
+            mojito_types::origin::Origin::Union(members) => members
+                .iter()
+                .filter_map(|member| match member {
+                    mojito_types::origin::Origin::Place(place) => Some(place),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        for place in own {
+            if !origins.contains(place) {
+                origins.push(place.clone());
+            }
+        }
         let mut loans = Vec::new();
-        for origin in self.checked_reference_places(expression) {
-            let Some(canonical) = self.mir_interior_origin(&origin, None) else {
+        for origin in origins {
+            let Some(canonical) = self.mir_interior_origin(&origin, fallback) else {
                 continue;
             };
             let interior = canonical
@@ -559,7 +593,12 @@ impl Flatten<'_> {
             Some(Ty::Ref(reference)) => reference.clone(),
             _ => reference,
         };
-        Some(self.materialize_call_reference_place(expression, handle, &materialized_reference))
+        Some(self.materialize_call_reference_place(
+            expression,
+            handle,
+            &materialized_reference,
+            None,
+        ))
     }
 
     /// Lower ordinary field/intrinsic-index projections whose base is produced
@@ -645,6 +684,20 @@ impl Flatten<'_> {
     /// become hidden reference locals; value-returning accessors remain values
     /// and are never reconstructed as raw index projections.
     pub(super) fn lower_call_receiver(&mut self, expression: &Expr) -> (Reg, Option<MirPlace>) {
+        // A `^` receiver of a read method lends its place (checker-marked).
+        if let ExprKind::Transfer(inner) = &expression.kind
+            && self
+                .checked_adjustments(expression)
+                .iter()
+                .any(|adjustment| {
+                    matches!(
+                        adjustment,
+                        mojito_checked::checked::SemanticAdjustment::BorrowReadArgument
+                    )
+                })
+        {
+            return self.lower_call_receiver(inner);
+        }
         // A temporary receiver the checker materialized (the result borrows
         // it: `ref[self]`) lives in its hidden slot for the statement.
         if let Some(owner) = mojito_checked::checked::materialized_borrow_owner(

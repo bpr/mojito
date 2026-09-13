@@ -2,11 +2,11 @@
 # three private range structs (std/builtin/range.mojo): a zero-starting form,
 # a sequential form whose two-argument spelling never counts down, and a
 # strided form whose zero step canonicalizes to the empty range. Each struct
-# is its own borrowed iterator over `Scalar[dtype]` elements. The proof
-# subset is integral-only: float strided ranges, `reversed()`/`bounds()`/
-# `__has_next__`, and non-Int `Indexer` arguments to `range` are recorded
-# subset gaps, and `__getitem__` stays unchecked like the wider subset's
-# debug asserts.
+# is its own borrowed iterator over `Scalar[dtype]` elements. A float dtype
+# takes the strided form only, through `_FloatStridedRange`. `reversed()`/
+# `bounds()` on float ranges and non-Int `Indexer` arguments to `range` are
+# recorded subset gaps, and `__getitem__` stays unchecked like the wider
+# subset's debug asserts.
 
 from std.iter import Iterable, Iterator, StopIteration
 
@@ -146,6 +146,45 @@ struct _StridedRange[dtype: DType = DType.int](
 
     def __getitem__(self, idx: Int) -> Scalar[Self.dtype]:
         return self.start + Scalar[Self.dtype](idx) * self.step
+
+# A floating-point strided range iterates by index, as upstream's float path
+# does: element `k` is the fused multiply-add `k * step + start`, so the
+# sequence never drifts, and it has `ceil((end - start) / step)` elements
+# (none for a zero step).
+struct _FloatStridedRange[dtype: DType = DType.float64](
+    Copyable, Deinitable, ImplicitlyCopyable, Iterable, Iterator, Movable
+):
+    comptime Element = Scalar[Self.dtype]
+    comptime IteratorType[
+        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
+    ] = Self
+    var start: Scalar[Self.dtype]
+    var step: Scalar[Self.dtype]
+    var idx: Int
+    var count: Int
+
+    def __init__(
+        out self, start: Scalar[Self.dtype], end: Scalar[Self.dtype], step: Scalar[Self.dtype]
+    ):
+        self.start = start
+        self.step = step
+        self.idx = 0
+        self.count = 0
+        # Scalar comparisons produce width-1 masks; branch through Float64.
+        if Float64(step) != 0.0:
+            var raw = ((end - start) / step).__ceil__()
+            if Float64(raw) > 0.0:
+                self.count = Int(raw)
+
+    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
+        return self
+
+    def __next__(mut self) raises StopIteration -> Scalar[Self.dtype]:
+        if self.idx >= self.count:
+            raise StopIteration()
+        var result = Scalar[Self.dtype](self.idx).__fma__(self.step, self.start)
+        self.idx += 1
+        return result
 
 def range(end: Int) -> _ZeroStartingRange[DType.int]:
     return _ZeroStartingRange[DType.int](end)

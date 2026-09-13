@@ -183,10 +183,18 @@ pub(super) fn borrowable_read_arguments(
         ArgSlot::Keyword(position) => Some(&kwargs[*position].value),
         ArgSlot::Default => None,
     };
+    let read_slot = |index: usize| {
+        matches!(
+            conventions.get(index),
+            Some(None | Some(ArgConvention::Imm))
+        )
+    };
     let mut exclusive: Vec<(&str, Vec<PlaceSeg>)> = Vec::new();
     for (index, slot) in slots.iter().enumerate() {
         let Some(arg) = argument(slot) else { continue };
         let place = match &arg.kind {
+            // A `^` into a read slot lends its place rather than moving it.
+            ExprKind::Transfer(_) if read_slot(index) => None,
             ExprKind::Transfer(inner) => place_path(inner),
             _ if matches!(
                 conventions.get(index),
@@ -209,13 +217,20 @@ pub(super) fn borrowable_read_arguments(
     }
     let mut borrowable = Vec::new();
     for (index, slot) in slots.iter().enumerate() {
-        if !matches!(
-            conventions.get(index),
-            Some(None | Some(ArgConvention::Imm))
-        ) {
+        if !read_slot(index) {
             continue;
         }
         let Some(arg) = argument(slot) else { continue };
+        // A `^` into a read slot does not consume its source, as in current
+        // Mojo: the transfer node itself is recorded, and its place borrows
+        // like a plain read argument.
+        let arg = match &arg.kind {
+            ExprKind::Transfer(inner) => {
+                borrowable.push(arg.source_span());
+                inner.as_ref()
+            }
+            _ => arg,
+        };
         if !is_place_expr(arg) {
             continue;
         }
@@ -231,6 +246,38 @@ pub(super) fn borrowable_read_arguments(
         borrowable.push(arg.source_span());
     }
     borrowable
+}
+
+/// A `^` transfer produces a value, not a place, so it cannot bind a `mut` or
+/// `ref` parameter.
+pub(super) fn reject_transfer_into_mutable(
+    func: &str,
+    slots: &[ArgSlot],
+    conventions: &[Option<ArgConvention>],
+    args: &[Expr],
+    kwargs: &[mojito_ast::ast::KwArg],
+) -> Result<(), TypeError> {
+    for (index, slot) in slots.iter().enumerate() {
+        let argument = match slot {
+            ArgSlot::Positional(position) => &args[*position],
+            ArgSlot::Keyword(position) => &kwargs[*position].value,
+            ArgSlot::Default => continue,
+        };
+        if matches!(argument.kind, ExprKind::Transfer(_))
+            && matches!(
+                conventions.get(index),
+                Some(Some(ArgConvention::Mut | ArgConvention::Ref))
+            )
+        {
+            return Err(TypeError::BadCall {
+                func: func.to_string(),
+                reason: "value passed to a mutable argument must be mutable; a transferred \
+                         ('^') value is not a place"
+                    .to_string(),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// One step of a place's projection path (used by the place-sensitive borrow

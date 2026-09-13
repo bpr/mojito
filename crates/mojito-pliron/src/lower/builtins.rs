@@ -448,6 +448,21 @@ impl FnLowering<'_> {
                 self.reg_values.insert(dest.0, value);
                 Ok(())
             }
+            Ty::Simd {
+                dtype: Dtype::Float32,
+                ..
+            } => {
+                let intrinsic = match method {
+                    "__floor__" => "llvm.floor.f32",
+                    "__ceil__" => "llvm.ceil.f32",
+                    _ => "llvm.trunc.f32",
+                };
+                let value = self.reg_value(ctx, recv, ScalarTy::Sized(Dtype::Float32))?;
+                let f32_ty: TypeHandle = FP32Type::get(ctx).into();
+                let result = self.float_intrinsic(ctx, intrinsic, f32_ty, vec![value], dest);
+                self.reg_values.insert(dest.0, result);
+                Ok(())
+            }
             _ => {
                 let intrinsic = match method {
                     "__floor__" => "llvm.floor.f64",
@@ -460,6 +475,42 @@ impl FnLowering<'_> {
                 Ok(())
             }
         }
+    }
+
+    /// `__fma__` on a float scalar receiver — the VM's `builtin_fma`: the
+    /// fused `self * b + c` through `llvm.fma` at the operands' precision.
+    pub(super) fn lower_fma(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        operands: [Reg; 3],
+        recv_ty: &Ty,
+    ) -> Result<(), PlironError> {
+        let (scalar, intrinsic, float_ty): (ScalarTy, &str, TypeHandle) = match recv_ty {
+            Ty::Simd {
+                dtype: Dtype::Float32,
+                ..
+            } => (
+                ScalarTy::Sized(Dtype::Float32),
+                "llvm.fma.f32",
+                FP32Type::get(ctx).into(),
+            ),
+            Ty::Float64
+            | Ty::Simd {
+                dtype: Dtype::Float64,
+                ..
+            } => (ScalarTy::Float64, "llvm.fma.f64", FP64Type::get(ctx).into()),
+            other => {
+                return Err(self.unsupported_reg(format!("`__fma__` on `{other}`"), dest));
+            }
+        };
+        let mut values = Vec::with_capacity(operands.len());
+        for operand in operands {
+            values.push(self.reg_value(ctx, operand, scalar)?);
+        }
+        let result = self.float_intrinsic(ctx, intrinsic, float_ty, values, dest);
+        self.reg_values.insert(dest.0, result);
+        Ok(())
     }
 
     /// `__ceildiv__` on a scalar receiver — the VM's `builtin_ceildiv`:

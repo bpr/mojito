@@ -135,38 +135,81 @@ whatever its model, because it batches every change that needs a new
 The two checkboxes below, and the bullets inside the two standing ones,
 are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
 
-- [ ] **The pinned Mojo compiles and runs 26 fixtures the `assets/` error
-  folders claim it rejects**
+- [ ] **Free functions cannot overload on a read versus an owned parameter**
 
-  Problem: Mojito rejects a program the pin accepts, and the rejection is not a
-  deliberate one. The 2026-09-12 error-folder sweep found them among 318
-  fixtures; they are the `divergence` rows of
-  [`conformance/assets-mojo-errors.tsv`](../conformance/assets-mojo-errors.tsv),
-  which `scripts/sweep-assets-mojo --errors` gates.
-  - Re-measure with `scripts/sweep-assets-mojo --mojo-pixi-manifest PATH
-    --errors`; it fails when reality and that file differ, so the file is the
-    burn-down. Derive the family list from it when the work starts rather than
-    from this sentence.
-  - The `comptime` family is the largest: a generic alias body that is a value
-    rather than a type or a proposition (two rows), an impure CTFE callee, a
-    lambda in a comptime initializer, and a `Pointer` struct the pin builds
-    fieldwise. Mojito's VM-CTFE restrictions are the common cause.
-  - Five rows are `Pointer`/origin construction: an origin cast the pin
-    upgrades, `take` without an untracked origin, an offset place, a union
-    origin behind a `ref` binding, and an implicit `Span` return the pin does
-    not read as an escape.
-  - Four are trait conformance the pin accepts and Mojito does not:
-    `Hashable` from a value-returning `__hash__`, `Writable` from a
-    `mut writer: String`, an `@implicit` raising conversion, and an ambiguous
-    implicit conversion the pin resolves.
-  - The rest are one-offs: `use_after_move_arg` (the pin leaves `a` live after
-    `consume(a^)` into an immutable parameter), `ascii_rjust` with a multi-byte
-    fill character, `explicit_destroy` after a conditional or partial move,
-    runtime `DType`, a typed `def` display element, `Codepoint`-to-`String`
-    construction, variadic-struct argument inference, `TypeList` index bounds,
-    and float strided ranges, which Mojito simply does not implement.
-  - Model: Opus, plan first. Each family is its own pass and several are
-    semantic decisions, not respellings.
+  Problem: Mojito reports `'f' is already declared` for `def f(t: Thing)`
+  beside `def f(var t: Thing)`, which the pin accepts, selecting the `var`
+  overload for `f(a^)` and the read one for `f(a)`.
+  - Methods already break such ties on the receiver's transfer
+    (`select_method_overload`); free-function overload keys do not include the
+    parameter convention.
+  - Model: Opus, as-is.
+
+- [ ] **A thin function value cannot be bound to a local or iterated out of an
+  array**
+
+  Problem: `var f = fns[1]` over `var fns = [double, triple]` is rejected with
+  "closures cannot escape their defining scope", although the element is a
+  thin function value the pin stores in its `Array`.
+  - The checker's `inferred_binding_ty` treats every `Ty::Func` as an escaping
+    closure; a `def(...) thin` value needs no such rule.
+  - Iterating the array and calling each element is rejected by the pin too,
+    so only the indexed binding is a divergence.
+  - Model: Opus, as-is.
+
+- [ ] **A display of capturing lambdas is rejected**
+
+  Problem: `[lambda (x: Int) {k} -> Int: x * k]` runs at the pin (prints `6` for
+  `fns[0](2)`), while Mojito rejects a capturing element as a non-storable
+  callable.
+  - Thin function displays already store as `Array[def(...) thin -> R, N]`
+    (`assets/ok/function_value_array_display.mojo`); a capturing element needs
+    closure storage in the array on the VM and natively.
+  - Model: Opus, plan first.
+
+- [ ] **A `Float16` strided range has no fused multiply-add**
+
+  Problem: `range(Float16(...), Float16(...), Float16(...))` is rejected, because
+  `__ceil__` and `__fma__` exist only for `Float32` and `Float64` scalars.
+  - The VM computes `Float16` lanes as `f64` views, so a correct fused result
+    needs half-precision arithmetic rather than `f64::mul_add`.
+  - Model: Opus, as-is.
+
+- [ ] **The VM reads `None` through a tracked pointer cast to an untracked
+  origin and passed to a function**
+
+  Problem: `peek(Pointer(to=x).unsafe_origin_cast[MutUntrackedOrigin]())` prints
+  `None` on the VM, where the pin and native print the pointee.
+  - The VM's place pointer (`Value::Ref`) crosses into an untracked-typed
+    parameter whose reads expect a heap `Value::Pointer`.
+  - `assets/ok/pointer_origin_cast_upgrade_reads.mojo` uses a heap allocation
+    to stay clear of it.
+  - Model: Opus, as-is.
+
+- [ ] **A `DType` cannot be a runtime value**
+
+  Problem: `var x = DType.float32; print(x)` runs at the pin (`float32`), while
+  Mojito reports `Undefined variable 'DType'`
+  (`assets/type_error/dtype_runtime_value_rejected.mojo`, a `divergence` row of
+  `conformance/assets-mojo-errors.tsv`).
+  - `Ty::Dtype` is compile-time-only today; a runtime value needs a checked
+    value type, MIR constants, VM and native representations, display, `==`,
+    and the `is_integral`/`is_floating_point`/`is_signed`/`is_unsigned`/
+    `is_numeric` predicates.
+  - Model: Opus, plan first.
+
+- [ ] **A variadic struct's type arguments are not inferred from its
+  constructor**
+
+  Problem: `Pair((1, True))` for `struct Pair[*Ts](...)` with
+  `var storage: Tuple[*Self.Ts]` runs at the pin, while Mojito requires
+  `Pair[Int, Bool](...)`
+  (`assets/type_error/pack_struct_needs_explicit_args.mojo`, the other
+  `divergence` row).
+  - Monomorphization (`crates/mojito-comptime/src/comptime/mono.rs`) runs
+    before type checking, so argument types are only syntactically known
+    there; inference needs a checker-owned instantiation instead.
+  - Model: Opus, plan first.
 
 - [ ] **Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
   any order)*

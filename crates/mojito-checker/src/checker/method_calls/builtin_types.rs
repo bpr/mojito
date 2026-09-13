@@ -37,8 +37,7 @@ impl Checker {
         match method {
             // Provenance rebind (current Mojo's `unsafe_origin_cast`
             // vocabulary): the runtime value is unchanged; only the checked
-            // origin moves. The cast cannot upgrade a statically immutable
-            // capability.
+            // origin moves.
             "unsafe_origin_cast" => {
                 let [target] = param_args else {
                     return Err(TypeError::BadCall {
@@ -54,28 +53,26 @@ impl Checker {
                     });
                 }
                 let target = self.pointer_origin_arg(target)?;
-                // Upstream's `target_origin: Origin[mut=Self.mut]` demands the
-                // target match the receiver's mutability, so a statically
-                // known mismatch is an error in either direction. A parametric
-                // mutability on either side is not one: it resolves from the
-                // receiver at each concrete site.
-                match (origin.statically_mutable(), target.statically_mutable()) {
-                    (Some(false), Some(true)) => {
-                        return Err(TypeError::Unsupported(
-                            "an origin cast cannot upgrade capability: the source Pointer \
-                             origin is immutable"
-                                .to_string(),
-                        ));
-                    }
-                    (Some(true), Some(false)) => {
-                        return Err(TypeError::Unsupported(
-                            "an origin cast keeps the Pointer's capability: the source \
-                             Pointer origin is mutable, so the target origin must be too"
-                                .to_string(),
-                        ));
-                    }
-                    _ => {}
+                // Upstream's `target_origin: Origin[mut=Self.mut]` takes a
+                // mutable origin where an immutable one is expected, so only a
+                // statically mutable receiver cast to an immutable target is an
+                // error. An immutable receiver cast to a mutable origin is
+                // accepted but keeps its immutable capability. A parametric
+                // mutability resolves from the receiver at each concrete site.
+                if origin.statically_mutable() == Some(true)
+                    && target.statically_mutable() == Some(false)
+                {
+                    return Err(TypeError::Unsupported(
+                        "an origin cast keeps the Pointer's capability: the source \
+                         Pointer origin is mutable, so the target origin must be too"
+                            .to_string(),
+                    ));
                 }
+                let target = if origin.statically_mutable() == Some(false) {
+                    target.immutable()
+                } else {
+                    target
+                };
                 self.operation_adjustments.borrow_mut().insert(
                     span.clone(),
                     mojito_checked::checked::SemanticAdjustment::PointerOriginCast {
@@ -164,14 +161,25 @@ impl Checker {
                 Ok(Ty::None)
             }
             "unsafe_take_pointee" | "unsafe_deinit_pointee" => {
-                if !matches!(
+                // Upstream requires only a mutable pointer. An origin-bearing
+                // pointee still belongs to its checked storage, which would
+                // destroy it again, so a tracked origin is accepted only for a
+                // trivially destructible element.
+                let untracked = matches!(
                     origin,
                     mojito_types::origin::PointerOrigin::Untracked { mutable: true }
-                ) {
+                );
+                if origin.statically_mutable() == Some(false) {
                     return Err(TypeError::Unsupported(format!(
-                        "{method}() requires an allocation-owning Pointer with a \
-                         mutable untracked origin; an origin-bearing Pointer's \
-                         pointee is owned by its checked storage"
+                        "{method}() requires a Pointer with a mutable origin"
+                    )));
+                }
+                if !untracked
+                    && !self.is_trivially(mojito_types::types::TrivialLifecycle::Deinitable, elem)
+                {
+                    return Err(TypeError::Unsupported(format!(
+                        "{method}() through an origin-bearing Pointer requires a trivially \
+                         destructible element; '{elem}' is owned by its checked storage"
                     )));
                 }
                 if !args.is_empty() {

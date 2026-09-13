@@ -965,6 +965,10 @@ impl Checker {
                     .map(|(key, _)| key.clone())
                     .collect::<Vec<_>>();
                 let key_ty = self.infer_list_elem(&keys)?;
+                super::type_resolution::reject_stored_callable_type(
+                    &key_ty,
+                    "a collection display element",
+                )?;
                 for key in &keys {
                     self.check_consuming(key, &key_ty, "collection display element")?;
                 }
@@ -986,6 +990,10 @@ impl Checker {
                     .filter_map(|(_, value)| value.clone())
                     .collect::<Vec<_>>();
                 let value_ty = self.infer_list_elem(&values)?;
+                super::type_resolution::reject_stored_callable_type(
+                    &value_ty,
+                    "a collection display element",
+                )?;
                 for value in &values {
                     self.check_consuming(value, &value_ty, "dictionary display value")?;
                 }
@@ -1155,6 +1163,19 @@ impl Checker {
             // (notably `List[T]`) still controls contextual materialization.
             ExprKind::ListLit(elems) => {
                 let element = self.infer_list_elem(elems)?;
+                // A display of non-capturing function values stores them as a
+                // fixed-size array of that thin function type, as current
+                // Mojo does; a generic or capturing element is not storable.
+                if !matches!(
+                    &element,
+                    Ty::Func { environment, .. }
+                        if !matches!(environment, mojito_types::origin::CallableEnvironment::Capturing(_))
+                ) {
+                    super::type_resolution::reject_stored_callable_type(
+                        &element,
+                        "a collection display element",
+                    )?;
+                }
                 if !self.is_movable(&element) {
                     return Err(TypeError::TraitNotSatisfied {
                         param: "T".to_string(),
@@ -2184,10 +2205,6 @@ impl Checker {
             let actual = self.infer(value)?;
             self.record_literal_materializations(value, &actual, &materialized)?;
         }
-        super::type_resolution::reject_stored_callable_type(
-            &materialized,
-            "a collection display element",
-        )?;
         Ok(materialized)
     }
 

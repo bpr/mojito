@@ -446,6 +446,9 @@ pub enum SemanticAdjustment {
     /// site (the constructed type with its arguments, e.g. `Optional[Int]`),
     /// so the emit-site register is not typed by the constructor's bare name.
     ConversionResultType(Ty),
+    /// The error type raised by the `@implicit` constructor of the
+    /// `ImplicitConversion` at the same site: the conversion is a raising call.
+    ConversionRaises(Ty),
     /// Materialize an exact, compile-time-only numeric literal expression into
     /// its checked runtime scalar type.  Keeping this distinct from a user
     /// `@implicit` constructor preserves the language boundary: literal
@@ -1207,6 +1210,7 @@ impl CheckedProgram {
         implicit_conversions: HashMap<SourceSpan, String>,
         implicit_conversion_types: HashMap<SourceSpan, Ty>,
         conversion_source_borrows: &HashMap<SourceSpan, bool>,
+        conversion_raises: &HashMap<SourceSpan, Ty>,
         checked_types: HashMap<AnnotationSite, Ty>,
         generic_parameters: HashMap<GenericSite, Vec<mojito_types::types::ParamDecl>>,
         expression_types: &HashMap<SourceSpan, Ty>,
@@ -1261,6 +1265,7 @@ impl CheckedProgram {
             &implicit_conversions,
             &implicit_conversion_types,
             conversion_source_borrows,
+            conversion_raises,
             explicit_destroy_calls,
             reference_value_uses,
             copy_place_value_uses,
@@ -1440,6 +1445,7 @@ fn build_checked_expressions(
     conversions: &HashMap<SourceSpan, String>,
     conversion_types: &HashMap<SourceSpan, Ty>,
     conversion_source_borrows: &HashMap<SourceSpan, bool>,
+    conversion_raises: &HashMap<SourceSpan, Ty>,
     explicit_destroy: &HashSet<SourceSpan>,
     reference_value_uses: &HashMap<SourceSpan, bool>,
     copy_place_value_uses: &HashSet<SourceSpan>,
@@ -1472,6 +1478,7 @@ fn build_checked_expressions(
         conversions: &'a HashMap<SourceSpan, String>,
         conversion_types: &'a HashMap<SourceSpan, Ty>,
         conversion_source_borrows: &'a HashMap<SourceSpan, bool>,
+        conversion_raises: &'a HashMap<SourceSpan, Ty>,
         explicit_destroy: &'a HashSet<SourceSpan>,
         reference_value_uses: &'a HashMap<SourceSpan, bool>,
         copy_place_value_uses: &'a HashSet<SourceSpan>,
@@ -1711,13 +1718,20 @@ fn build_checked_expressions(
                     if let Some(ty) = self.conversion_types.get(&span) {
                         adjustments.push(SemanticAdjustment::ConversionResultType(ty.clone()));
                     }
+                    if let Some(error) = self.conversion_raises.get(&span) {
+                        adjustments.push(SemanticAdjustment::ConversionRaises(error.clone()));
+                    }
                     if let Some(mutable) = self.conversion_source_borrows.get(&span) {
                         adjustments
                             .push(SemanticAdjustment::BorrowConversionSource { mutable: *mutable });
                     }
                 }
             }
-            if matches!(expression.kind, Transfer(_)) {
+            // A `^` the checker bound to a read parameter or receiver lends
+            // its place and does not move it.
+            if matches!(expression.kind, Transfer(_))
+                && !self.borrowed_read_call_places.contains(&span)
+            {
                 adjustments.push(SemanticAdjustment::Move);
             }
             if self.explicit_destroy.contains(&span) {
@@ -2025,6 +2039,7 @@ fn build_checked_expressions(
         conversions,
         conversion_types,
         conversion_source_borrows,
+        conversion_raises,
         explicit_destroy,
         reference_value_uses,
         copy_place_value_uses,

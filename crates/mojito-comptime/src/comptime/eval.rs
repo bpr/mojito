@@ -235,6 +235,33 @@ impl Elab<'_> {
                     receiver => self.comptime_value_method(e, &receiver, method, args, scope),
                 }
             }
+            // An immediately invoked lambda whose body is a single `return`
+            // evaluates that expression with its parameters bound.
+            ExprKind::Invoke {
+                callee,
+                param_args,
+                args,
+                kwargs,
+            } if param_args.is_empty()
+                && kwargs.is_empty()
+                && let ExprKind::Lambda { def } = &callee.kind
+                && let mojito_ast::ast::StmtKind::Def { params, body, .. } = &def.kind
+                && let [returned] = body.as_slice()
+                && let mojito_ast::ast::StmtKind::Return(Some(value)) = &returned.kind =>
+            {
+                if params.len() != args.len() {
+                    return Err(ComptimeError::Arity(format!(
+                        "lambda expects {} argument(s), got {}",
+                        params.len(),
+                        args.len()
+                    )));
+                }
+                let mut bound = scope.clone();
+                for (param, arg) in params.iter().zip(args) {
+                    bound.insert(param.name.clone(), self.eval(arg, scope)?);
+                }
+                self.eval(value, &bound)
+            }
             ExprKind::Invoke {
                 callee,
                 param_args,
@@ -681,6 +708,13 @@ impl Elab<'_> {
         let mut values = Vec::with_capacity(args.len());
         for argument in args {
             values.push(match argument {
+                // A nested application of a generic alias (`Twice[Twice[5]]`)
+                // parses as a type argument but evaluates as the alias.
+                ParamArg::Type(mojito_ast::ast::Type::Named(alias, alias_args))
+                    if self.generic_aliases.borrow().contains_key(alias) =>
+                {
+                    self.apply_generic_alias(alias, alias_args, scope)?
+                }
                 ParamArg::Type(annotation) => {
                     CtValue::Type(Box::new(self.type_from_anno(annotation, scope)?))
                 }

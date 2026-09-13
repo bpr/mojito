@@ -1230,6 +1230,13 @@ impl Checker {
                 )
             })
             .collect::<Result<Vec<_>, TypeError>>()?;
+        super::places::reject_transfer_into_mutable(
+            name,
+            &slots,
+            &effective_conventions,
+            args,
+            kwargs,
+        )?;
         check_call_aliasing(&slots, &effective_conventions, &copied_reads, args, kwargs)?;
         self.borrowed_read_call_places
             .borrow_mut()
@@ -1471,6 +1478,13 @@ impl Checker {
                 )
             })
             .collect::<Result<Vec<_>, TypeError>>()?;
+        super::places::reject_transfer_into_mutable(
+            name,
+            &slots,
+            &effective_conventions,
+            args,
+            kwargs,
+        )?;
         check_call_aliasing(&slots, &effective_conventions, &copied_reads, args, kwargs)?;
         self.borrowed_read_call_places
             .borrow_mut()

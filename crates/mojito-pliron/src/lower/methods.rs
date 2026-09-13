@@ -142,6 +142,9 @@ impl FnLowering<'_> {
                 ("__ceildiv__", 1) => {
                     return self.lower_ceildiv(ctx, dest, recv, args[0], &recv_ty);
                 }
+                ("__fma__", 2) => {
+                    return self.lower_fma(ctx, dest, [recv, args[0], args[1]], &recv_ty);
+                }
                 _ => {}
             }
         }

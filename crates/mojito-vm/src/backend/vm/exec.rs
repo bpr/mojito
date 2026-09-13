@@ -763,13 +763,23 @@ impl VmBackend {
                 index,
                 ..
             } => {
-                let Value::Pointer { allocation, offset } = regs[pointer.0 as usize] else {
-                    return Err(RuntimeError::TypeError(
-                        "vm: compiler-private storage take requires Pointer".to_string(),
-                    ));
-                };
                 let index = value_as_index(&regs[index.0 as usize])?;
-                regs[dest.0 as usize] = self.heap_take(allocation, offset, index)?;
+                regs[dest.0 as usize] = match &regs[pointer.0 as usize] {
+                    Value::Pointer { allocation, offset } => {
+                        self.heap_take(*allocation, *offset, index)?
+                    }
+                    // A place pointer (`Pointer(to=x)`) designates one value
+                    // whose element the checker proved trivially destructible:
+                    // taking it reads the pointee.
+                    handle @ Value::Ref { .. } if index == 0 => {
+                        self.read_reference(&handle.clone(), frame_id, vars)?
+                    }
+                    _ => {
+                        return Err(RuntimeError::TypeError(
+                            "vm: compiler-private storage take requires Pointer".to_string(),
+                        ));
+                    }
+                };
             }
             MirInstr::PointerStorageDestroy {
                 dest,
@@ -777,13 +787,20 @@ impl VmBackend {
                 index,
                 ..
             } => {
-                let Value::Pointer { allocation, offset } = regs[pointer.0 as usize] else {
-                    return Err(RuntimeError::TypeError(
-                        "vm: compiler-private storage destroy requires Pointer".to_string(),
-                    ));
-                };
                 let index = value_as_index(&regs[index.0 as usize])?;
-                self.heap_destroy(prog, allocation, offset, index)?;
+                match regs[pointer.0 as usize] {
+                    Value::Pointer { allocation, offset } => {
+                        self.heap_destroy(prog, allocation, offset, index)?;
+                    }
+                    // A place pointer's element is trivially destructible
+                    // (checker-proved): destroying it has no effect.
+                    Value::Ref { .. } if index == 0 => {}
+                    _ => {
+                        return Err(RuntimeError::TypeError(
+                            "vm: compiler-private storage destroy requires Pointer".to_string(),
+                        ));
+                    }
+                }
                 regs[dest.0 as usize] = Value::None;
             }
             MirInstr::UninitStorage { dest, init } => {

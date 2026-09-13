@@ -150,6 +150,26 @@ impl Elab<'_> {
         env: &HashMap<String, CtValue>,
         shadowed: &HashSet<String>,
     ) -> Result<(), ComptimeError> {
+        // A generic comptime alias applied in a runtime position
+        // (`Twice[3]`) folds to the literal form of its compile-time value;
+        // a type-valued application is left for the checker.
+        let alias_application = match &expr.kind {
+            ExprKind::Index { object, .. } => match &object.kind {
+                ExprKind::Identifier(alias) => Some(alias.as_str()),
+                _ => None,
+            },
+            ExprKind::TypeApply { name, .. } => Some(name.as_str()),
+            _ => None,
+        }
+        .is_some_and(|alias| {
+            !shadowed.contains(alias) && self.generic_aliases.borrow().contains_key(alias)
+        });
+        if alias_application && let Some(mut literal) = self.eval(expr, env)?.materialize(expr.span)
+        {
+            literal.source.clone_from(&expr.source);
+            *expr = literal;
+            return Ok(());
+        }
         let binding = |name: &str| {
             if shadowed.contains(name) {
                 None

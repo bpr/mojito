@@ -96,8 +96,10 @@ pub(super) fn synthesize_copyable_copy(program: &mut [Stmt]) {
 }
 
 /// Materialize Hashable's reflective field default as ordinary source AST.
-/// Explicit implementations win; conditional conformances carry the same
-/// availability predicate onto the synthesized method.
+/// An explicit hasher-fed `__hash__(self, mut hasher)` wins; any other
+/// `__hash__` is an ordinary overload beside the default, as in current Mojo.
+/// Conditional conformances carry the same availability predicate onto the
+/// synthesized method.
 pub(super) fn synthesize_hashable_hash(program: &mut [Stmt]) {
     for statement in program {
         let span = statement.span;
@@ -112,7 +114,13 @@ pub(super) fn synthesize_hashable_hash(program: &mut [Stmt]) {
             continue;
         };
         if !conforms.iter().any(|conformance| conformance == "Hashable")
-            || methods.iter().any(|method| method.name == "__hash__")
+            || methods.iter().any(|method| {
+                method.name == "__hash__"
+                    && matches!(
+                        method.params.as_slice(),
+                        [parameter] if parameter.convention == Some(mojito_ast::ast::ArgConvention::Mut)
+                    )
+            })
         {
             continue;
         }

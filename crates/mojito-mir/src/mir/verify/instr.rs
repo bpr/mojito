@@ -875,10 +875,11 @@ pub(super) fn verify_instruction(
             match reg_ty(pointer) {
                 Some(Ty::Pointer {
                     element: actual,
-                    origin: mojito_types::origin::PointerOrigin::Untracked { mutable: true },
-                }) if types_compatible(actual, element) => {}
+                    origin,
+                }) if origin.statically_mutable() != Some(false)
+                    && types_compatible(actual, element) => {}
                 Some(found) => errors.push(format!(
-                    "{prefix}: compiler-private pointer storage operation expects Pointer[{element}, MutUntrackedOrigin], got {found}"
+                    "{prefix}: compiler-private pointer storage operation expects a mutable Pointer[{element}], got {found}"
                 )),
                 None => {}
             }

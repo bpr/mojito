@@ -601,6 +601,34 @@ impl Checker {
                 "reduce_and" | "reduce_or" if dtype == Dtype::Bool && args.is_empty() => {
                     Ok(Ty::Bool)
                 }
+                // A `Float32`/`Float64` scalar's rounding dunders and its
+                // fused multiply-add (`k.__fma__(step, start)`, a float range
+                // element) are intrinsics at the scalar's own precision.
+                "__floor__" | "__ceil__" | "__trunc__"
+                    if width == 1
+                        && matches!(dtype, Dtype::Float32 | Dtype::Float64)
+                        && args.is_empty()
+                        && param_args.is_empty() =>
+                {
+                    Ok(obj_ty.clone())
+                }
+                "__fma__"
+                    if width == 1
+                        && matches!(dtype, Dtype::Float32 | Dtype::Float64)
+                        && args.len() == 2 =>
+                {
+                    for argument in args {
+                        let found = self.infer(argument)?;
+                        if found != obj_ty {
+                            return Err(TypeError::TypeMismatch {
+                                expected: obj_ty.to_string(),
+                                found: found.to_string(),
+                                context: "argument to '__fma__'".to_string(),
+                            });
+                        }
+                    }
+                    Ok(obj_ty.clone())
+                }
                 _ => Err(TypeError::NoSuchMethod {
                     object_type: obj_ty.to_string(),
                     method: method.to_string(),
@@ -1242,6 +1270,51 @@ impl Checker {
                     parameter_names: Vec::new(),
                 }))
             }
+            // A `Float64`'s fused multiply-add (`k.__fma__(step, start)`, a
+            // float range element) is an intrinsic over the scalar itself;
+            // sized float scalars resolve through the SIMD method table.
+            _ if kwargs.is_empty()
+                && param_args.is_empty()
+                && obj_ty == Ty::Float64
+                && method == "__fma__"
+                && args.len() == 2 =>
+            {
+                for found in self.builtin_args(method, args.len(), args)? {
+                    if found != obj_ty {
+                        return Err(TypeError::TypeMismatch {
+                            expected: obj_ty.to_string(),
+                            found: found.to_string(),
+                            context: format!("argument to '{method}'"),
+                        });
+                    }
+                }
+                Ok(Some(MethodCallResolution {
+                    conversion_score: 0,
+                    slots: (0..args.len())
+                        .map(mojito_ast::call::ArgSlot::Positional)
+                        .collect(),
+                    positional_overflow: vec![],
+                    keyword_overflow: vec![],
+                    variadic_element: None,
+                    keyword_element: None,
+                    conventions: vec![None; args.len()],
+                    self_convention: None,
+                    return_type: obj_ty.clone(),
+                    result_adapter: None,
+                    raises: false,
+                    error: None,
+                    mutates_receiver: false,
+                    consumes_receiver: false,
+                    lowered_name: None,
+                    ref_params: vec![],
+                    ref_return: None,
+                    param_types: vec![obj_ty.clone(); args.len()],
+                    param_decls: vec![],
+                    parametric_origin_writes: vec![],
+                    instantiation: None,
+                    parameter_names: Vec::new(),
+                }))
+            }
             // `x.__floor__()` / `x.__ceildiv__(y)` on a concrete type
             // conforming to the granting rounding trait is the same VM
             // intrinsic the abstract Floorable/Ceilable/Truncable/CeilDivable
@@ -1612,6 +1685,16 @@ impl Checker {
         } else {
             resolved.self_convention
         };
+        // A `^` receiver of a read method lends its place instead of moving
+        // it, as a `^` into a read parameter does.
+        if !resolved.consumes_receiver
+            && matches!(resolved.self_convention, None | Some(ArgConvention::Imm))
+            && let ExprKind::Transfer(inner) = &object.kind
+        {
+            self.borrowed_read_call_places
+                .borrow_mut()
+                .extend([object.source_span(), inner.source_span()]);
+        }
         // A `deinit self` call always consumes its receiver. Mojo may satisfy
         // that consumption by implicitly copying an `ImplicitlyCopyable` place;
         // a merely movable (or explicitly-copy-only) place still requires `^`.
@@ -1731,6 +1814,13 @@ impl Checker {
                 )
             })
             .collect::<Result<Vec<_>, TypeError>>()?;
+        crate::checker::places::reject_transfer_into_mutable(
+            method,
+            &resolved.slots,
+            &effective_conventions,
+            args,
+            kwargs,
+        )?;
         check_call_aliasing(
             &resolved.slots,
             &effective_conventions,

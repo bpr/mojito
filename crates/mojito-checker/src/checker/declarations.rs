@@ -1037,11 +1037,10 @@ impl Checker {
                 || m.params[0].kind != mojito_ast::ast::ParamKind::Regular
                 || m.params[0].default.is_some()
                 || !implicit_convention_ok
-                || m.ret.is_some()
-                || m.raises)
+                || m.ret.is_some())
         {
             return Err(TypeError::Unsupported(
-                "@implicit requires a non-raising single-argument '__init__(out self, value: T)' \
+                "@implicit requires a single-argument '__init__(out self, value: T)' \
                  (the argument may be a 'var' or 'ref [origin]' parameter)"
                     .to_string(),
             ));

@@ -786,13 +786,11 @@ impl Checker {
                 "range requires a numeric dtype".to_string(),
             ));
         }
-        if dtype.is_float() {
-            return Err(TypeError::Unsupported(if args.len() == 3 {
-                "float strided ranges are not supported; use an integral dtype".to_string()
-            } else {
+        if dtype.is_float() && args.len() != 3 {
+            return Err(TypeError::Unsupported(
                 "a floating-point range requires an explicit step; use range(start, end, step)"
-                    .to_string()
-            }));
+                    .to_string(),
+            ));
         }
         let lane = simd_ty(dtype, 1);
         for (ty, arg) in tys.iter().zip(args) {
@@ -805,7 +803,11 @@ impl Checker {
             }
             self.record_literal_materializations(arg, ty, &lane)?;
         }
-        let family = mojito_types::types::SCALAR_RANGE_FAMILY[args.len() - 1];
+        let family = if dtype.is_float() {
+            mojito_types::types::FLOAT_STRIDED_RANGE
+        } else {
+            mojito_types::types::SCALAR_RANGE_FAMILY[args.len() - 1]
+        };
         let arguments = vec![TyArg::Val(CtValue::Dtype(dtype))];
         self.generic_instantiations.borrow_mut().insert(
             span.clone(),

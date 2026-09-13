@@ -842,6 +842,14 @@ impl Checker {
                     interior: Vec::new(),
                     subtree: true,
                 },
+                // A union of places under one owner (`ref[self.a, self.b]`)
+                // designates some descendant of their deepest common base.
+                Origin::Union(members) if let Some(place) = union_subtree_place(&members) => {
+                    PointerOrigin::Place {
+                        place,
+                        mutable: matches!(reference.mutability, Mutability::Mutable),
+                    }
+                }
                 other => {
                     return Err(TypeError::Unsupported(format!(
                         "Pointer(to=...) through a 'ref' binding requires a place or \
@@ -921,4 +929,38 @@ fn is_optional_int(ty: &Ty) -> bool {
     matches!(ty, Ty::Struct(name, args)
         if (name == "Optional" || name.ends_with("$Optional"))
             && matches!(args.as_slice(), [mojito_types::types::TyArg::Ty(Ty::Int)]))
+}
+
+/// The subtree of the deepest common base of a union of places that share one
+/// owner, or `None` when a member is not a place or the owners differ.
+fn union_subtree_place(
+    members: &[mojito_types::origin::Origin],
+) -> Option<mojito_types::origin::OriginPlace> {
+    use mojito_types::origin::{Origin, OriginPlace, OriginSeg};
+    let places = members
+        .iter()
+        .map(|member| match member {
+            Origin::Place(place) => Some(place),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let (first, rest) = places.split_first()?;
+    if rest.iter().any(|place| place.root != first.root) {
+        return None;
+    }
+    let common = first
+        .path
+        .iter()
+        .enumerate()
+        .take_while(|(index, segment)| {
+            rest.iter()
+                .all(|place| place.path.get(*index) == Some(segment))
+        })
+        .count();
+    let mut path = first.path[..common].to_vec();
+    path.push(OriginSeg::Subtree);
+    Some(OriginPlace {
+        root: first.root,
+        path,
+    })
 }

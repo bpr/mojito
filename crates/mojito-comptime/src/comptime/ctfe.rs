@@ -169,7 +169,7 @@ impl Elab<'_> {
             .run_function_value(&program, name, args, value_params, self.fuel.get())
             .map_err(|e| ComptimeError::NotComptime(format!("VM CTFE failed for '{name}': {e}")))?;
         self.fuel.set(remaining_fuel);
-        Ok(Some(self.vm_value_to_ct(value)?))
+        Ok(Some(self.freeze_vm_result(&vm, value)?))
     }
 
     /// Convert a CTFE result back into a compile-time value, freezing a
@@ -202,6 +202,20 @@ impl Elab<'_> {
                 })
             }
             other => vm_to_ct(other),
+        }
+    }
+
+    /// Freeze the result of a VM-CTFE run while `vm` still owns its heap: a
+    /// `String` becomes its text, anything else goes through
+    /// [`Self::vm_value_to_ct`].
+    pub(super) fn freeze_vm_result(
+        &self,
+        vm: &VmBackend,
+        value: Value,
+    ) -> Result<CtValue, ComptimeError> {
+        match vm.nominal_string_text(&value) {
+            Some(text) => Ok(CtValue::Str(text)),
+            None => self.vm_value_to_ct(value),
         }
     }
 
@@ -291,7 +305,7 @@ impl Elab<'_> {
                 ))
             })?;
         self.fuel.set(remaining_fuel);
-        self.vm_value_to_ct(value)
+        self.freeze_vm_result(&vm, value)
     }
 
     /// Evaluate a call to a type-parameterized free function
@@ -451,7 +465,7 @@ impl Elab<'_> {
             )
             .map_err(|e| ComptimeError::NotComptime(format!("VM CTFE failed for '{name}': {e}")))?;
         self.fuel.set(remaining_fuel);
-        self.vm_value_to_ct(value)
+        self.freeze_vm_result(&vm, value)
     }
 
     /// Evaluate a general expression over compile-time values — a method

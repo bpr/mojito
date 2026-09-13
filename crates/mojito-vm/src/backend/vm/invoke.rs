@@ -478,6 +478,10 @@ impl VmBackend {
                 }
                 // `CeilDivable` — `x.__ceildiv__(y)`.
                 ("__ceildiv__", 1) => return crate::runtime::builtin_ceildiv(&recv, &args[0]),
+                // A float range element's fused `self * b + c`.
+                ("__fma__", 2) => {
+                    return crate::runtime::builtin_fma(&recv, &args[0], &args[1]);
+                }
                 _ => {}
             }
         }

@@ -124,9 +124,8 @@ impl FnLowering<'_> {
         self.print_value(ctx, reg, dest)
     }
 
-    /// Display one nominal struct by calling its unique compiled `write_to`
-    /// instance over a fresh builtin-string accumulator, then write the
-    /// accumulated bytes to stdout and free them.
+    /// Display one nominal struct into a fresh builtin-string accumulator,
+    /// then write the accumulated bytes to stdout and free them.
     pub(super) fn print_struct_via_write_to(
         &mut self,
         ctx: &mut Context,
@@ -134,50 +133,9 @@ impl FnLowering<'_> {
         name: &str,
         dest: Reg,
     ) -> Result<(), PlironError> {
-        let prefix = format!("{name}.write_to");
-        // The instance's per-instantiation clone (`write_to$y3:Int`) wins
-        // over the template's erased `write_to` instantiated for the same
-        // receiver.
-        let mut candidates: Vec<_> = self.signatures.get_key_value(&prefix).into_iter().collect();
-        if candidates.is_empty() {
-            candidates = self
-                .signatures
-                .iter()
-                .filter(|(fname, _)| fname.starts_with(&prefix))
-                .collect();
-        }
-        if candidates.len() > 1 {
-            candidates.retain(|(fname, _)| fname.as_str() != prefix);
-        }
-        let [(_, signature)] = candidates.as_slice() else {
-            return Err(self.unsupported_reg(
-                if candidates.is_empty() {
-                    format!("display of `{name}` without a compiled `write_to`")
-                } else {
-                    format!("display of `{name}` with ambiguous `write_to` instances")
-                },
-                dest,
-            ));
-        };
-        if signature.outcome.is_some() {
-            return Err(self.unsupported_reg(format!("raising `{prefix}`"), dest));
-        }
-        let callee: Identifier = signature
-            .mangled
-            .as_str()
-            .try_into()
-            .expect("mangled names are identifier-safe");
-        let func_ty = signature.func_ty;
         let writer = self.entry_alloca(ctx, 16, 8);
         self.mem_zero(ctx, writer, 16);
-        let recv_ptr = self.reg_ptr(ctx, arg)?;
-        let call = CallOp::new(
-            ctx,
-            CallOpCallable::Direct(callee),
-            func_ty,
-            vec![recv_ptr, writer],
-        );
-        self.append(ctx, call.get_operation(), Some(dest));
+        self.append_struct_via_write_to(ctx, arg, name, writer, dest)?;
         let (data, len) = self.string_parts(ctx, writer, dest);
         self.write_stdout(ctx, data, len, dest);
         self.emit_free(ctx, data);
@@ -185,8 +143,7 @@ impl FnLowering<'_> {
     }
 
     /// Append one nominal struct's display text into an existing
-    /// builtin-string writer by calling its unique compiled `write_to`
-    /// instance with that writer — the VM's `format_value` recursion when a
+    /// builtin-string writer — the VM's `format_value` recursion when a
     /// `Writer.write` argument is itself a struct.
     pub(super) fn append_struct_via_write_to(
         &mut self,
@@ -196,49 +153,8 @@ impl FnLowering<'_> {
         writer: Value,
         dest: Reg,
     ) -> Result<(), PlironError> {
-        let prefix = format!("{name}.write_to");
-        // The instance's per-instantiation clone (`write_to$y3:Int`) wins
-        // over the template's erased `write_to` instantiated for the same
-        // receiver.
-        let mut candidates: Vec<_> = self.signatures.get_key_value(&prefix).into_iter().collect();
-        if candidates.is_empty() {
-            candidates = self
-                .signatures
-                .iter()
-                .filter(|(fname, _)| fname.starts_with(&prefix))
-                .collect();
-        }
-        if candidates.len() > 1 {
-            candidates.retain(|(fname, _)| fname.as_str() != prefix);
-        }
-        let [(_, signature)] = candidates.as_slice() else {
-            return Err(self.unsupported_reg(
-                if candidates.is_empty() {
-                    format!("display of `{name}` without a compiled `write_to`")
-                } else {
-                    format!("display of `{name}` with ambiguous `write_to` instances")
-                },
-                dest,
-            ));
-        };
-        if signature.outcome.is_some() {
-            return Err(self.unsupported_reg(format!("raising `{prefix}`"), dest));
-        }
-        let callee: Identifier = signature
-            .mangled
-            .as_str()
-            .try_into()
-            .expect("mangled names are identifier-safe");
-        let func_ty = signature.func_ty;
-        let recv_ptr = self.reg_ptr(ctx, arg)?;
-        let call = CallOp::new(
-            ctx,
-            CallOpCallable::Direct(callee),
-            func_ty,
-            vec![recv_ptr, writer],
-        );
-        self.append(ctx, call.get_operation(), Some(dest));
-        Ok(())
+        let receiver = self.reg_ptr(ctx, arg)?;
+        self.append_struct_display(ctx, receiver, name, writer, dest)
     }
 
     /// Contribute one scalar/literal Hashable leaf to a caller-owned hasher —
@@ -1001,5 +917,148 @@ impl FnLowering<'_> {
                 dest,
             )),
         }
+    }
+
+    /// Append the display text of the struct stored at `receiver`: its
+    /// unique compiled `write_to` instance, or, when the struct has no
+    /// `Writer`-fed `write_to`, the reflective `Name(field=value, ...)`
+    /// default the VM's `format_value` writes.
+    fn append_struct_display(
+        &mut self,
+        ctx: &mut Context,
+        receiver: Value,
+        name: &str,
+        writer: Value,
+        dest: Reg,
+    ) -> Result<(), PlironError> {
+        let prefix = format!("{name}.write_to");
+        // The instance's per-instantiation clone (`write_to$y3:Int`) wins
+        // over the template's erased `write_to` instantiated for the same
+        // receiver.
+        let mut candidates: Vec<_> = self.signatures.get_key_value(&prefix).into_iter().collect();
+        if candidates.is_empty() {
+            candidates = self
+                .signatures
+                .iter()
+                .filter(|(fname, _)| fname.starts_with(&prefix))
+                .collect();
+        }
+        // A `write_to` whose parameter is not the protocol's writer is an
+        // ordinary overload, not the display implementation. Monomorphization
+        // binds the protocol's writer to the builtin string writer.
+        candidates.retain(|(fname, _)| {
+            self.declarations
+                .get(fname.as_str())
+                .is_none_or(|declaration| {
+                    declaration.param_types.first().is_some_and(|parameter| {
+                        *parameter == Ty::StringLiteral
+                            || mojito_types::types::is_writer_parameter(parameter)
+                    })
+                })
+        });
+        if candidates.len() > 1 {
+            candidates.retain(|(fname, _)| fname.as_str() != prefix);
+        }
+        if candidates.is_empty() {
+            return self.append_reflective_struct(ctx, receiver, name, writer, dest);
+        }
+        let [(_, signature)] = candidates.as_slice() else {
+            return Err(self.unsupported_reg(
+                format!("display of `{name}` with ambiguous `write_to` instances"),
+                dest,
+            ));
+        };
+        if signature.outcome.is_some() {
+            return Err(self.unsupported_reg(format!("raising `{prefix}`"), dest));
+        }
+        let callee: Identifier = signature
+            .mangled
+            .as_str()
+            .try_into()
+            .expect("mangled names are identifier-safe");
+        let func_ty = signature.func_ty;
+        let call = CallOp::new(
+            ctx,
+            CallOpCallable::Direct(callee),
+            func_ty,
+            vec![receiver, writer],
+        );
+        self.append(ctx, call.get_operation(), Some(dest));
+        Ok(())
+    }
+
+    /// Append constant `bytes` to a builtin-string writer.
+    fn append_literal(&mut self, ctx: &mut Context, writer: Value, bytes: &[u8], dest: Reg) {
+        let global = self.shared.intern_string(ctx, bytes);
+        let data = self.global_address(ctx, &global, dest);
+        let len = self.uint_constant(ctx, bytes.len() as u64);
+        self.append_string_pair(ctx, writer, data, len, dest);
+    }
+
+    /// The reflective display of a struct with no `Writer`-fed `write_to`:
+    /// `Name(field=value, ...)`, each field written through its own display.
+    fn append_reflective_struct(
+        &mut self,
+        ctx: &mut Context,
+        receiver: Value,
+        name: &str,
+        writer: Value,
+        dest: Reg,
+    ) -> Result<(), PlironError> {
+        let Some(declaration) = self.struct_decls.get(name).copied() else {
+            return Err(self.unsupported_reg(
+                format!("display of `{name}` without a compiled `write_to`"),
+                dest,
+            ));
+        };
+        let field_tys: Vec<Ty> = declaration
+            .fields
+            .iter()
+            .map(|(_, ty)| ty.clone())
+            .collect();
+        let layout = self.struct_layout_of(&field_tys, dest)?;
+        let template = name.split("$mono").next().unwrap_or(name);
+        self.append_literal(ctx, writer, format!("{template}(").as_bytes(), dest);
+        for (index, (field, ty)) in declaration.fields.iter().enumerate() {
+            if index > 0 {
+                self.append_literal(ctx, writer, b", ", dest);
+            }
+            self.append_literal(ctx, writer, format!("{field}=").as_bytes(), dest);
+            let address = self.gep_byte(ctx, receiver, layout.offsets[index], dest);
+            self.append_field_display(ctx, address, ty, writer, dest)?;
+        }
+        self.append_literal(ctx, writer, b")", dest);
+        Ok(())
+    }
+
+    /// Append the display text of the `ty` value stored at `address`.
+    fn append_field_display(
+        &mut self,
+        ctx: &mut Context,
+        address: Value,
+        ty: &Ty,
+        writer: Value,
+        dest: Reg,
+    ) -> Result<(), PlironError> {
+        if let Ty::Struct(name, _) = ty {
+            if mojito_symbol::symbol::is_stdlib_string_struct(name)
+                || mojito_types::types::is_stdlib_string_span_struct(name)
+            {
+                let (data, len) = self.string_parts(ctx, address, dest);
+                self.append_string_pair(ctx, writer, data, len, dest);
+                return Ok(());
+            }
+            return self.append_struct_display(ctx, address, name, writer, dest);
+        }
+        let LowerTy::Scalar(scalar) = lower_ty(self.name, ty, &self.layout, self.reg_span(dest))?
+        else {
+            return Err(self.unsupported_reg(format!("reflective display of a `{ty}` field"), dest));
+        };
+        let handle = scalar.handle(ctx);
+        let load = LoadOp::new(ctx, address, handle);
+        self.append(ctx, load.get_operation(), Some(dest));
+        let (data, len) = self.format_scalar(ctx, scalar, load.get_result(ctx), dest)?;
+        self.append_string_pair(ctx, writer, data, len, dest);
+        Ok(())
     }
 }

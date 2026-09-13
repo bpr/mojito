@@ -234,7 +234,9 @@ impl Specializer<'_> {
         }
         let exact = format!("{name}.{method}");
         if self.functions.contains_key(exact.as_str()) {
-            self.enqueue_nominal_method_instance(owner, &ty, method, 1, &[])?;
+            if self.writes_protocol(&exact) {
+                self.enqueue_nominal_method_instance(owner, &ty, method, 1, &[])?;
+            }
             return Ok(());
         }
         // A closed instance displays through its per-instantiation
@@ -264,7 +266,7 @@ impl Specializer<'_> {
                 1,
             )
         });
-        if !self.functions.contains_key(target.as_str()) {
+        if !self.functions.contains_key(target.as_str()) || !self.writes_protocol(&target) {
             return Ok(());
         }
         let Some(declaration) = self.declarations.get(target.as_str()).copied() else {
@@ -336,5 +338,16 @@ impl Specializer<'_> {
         let (bindings, arguments, _) = self.infer_receiver_call(owner, &target, ty, None)?;
         self.enqueue(&target, bindings, arguments)?;
         Ok(())
+    }
+
+    /// Whether a display method takes the `Writable` protocol's writer; any
+    /// other `write_to` is an ordinary overload and never serves display.
+    fn writes_protocol(&self, target: &str) -> bool {
+        self.declarations.get(target).is_none_or(|declaration| {
+            declaration
+                .param_types
+                .first()
+                .is_some_and(mojito_types::types::is_writer_parameter)
+        })
     }
 }

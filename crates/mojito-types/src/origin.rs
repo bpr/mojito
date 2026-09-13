@@ -346,6 +346,38 @@ impl PointerOrigin {
         }
     }
 
+    /// The same provenance with writes through the pointer forbidden.
+    #[must_use]
+    pub fn immutable(self) -> Self {
+        match self {
+            Self::Place { place, .. } => Self::Place {
+                place,
+                mutable: false,
+            },
+            Self::Untracked { .. } => Self::Untracked { mutable: false },
+            Self::UnsafeAny { .. } => Self::UnsafeAny { mutable: false },
+            Self::Static => Self::Static,
+            Self::Param {
+                id,
+                interior,
+                subtree,
+                ..
+            } => Self::Param {
+                id,
+                mutability: Mutability::Immutable,
+                interior,
+                subtree,
+            },
+            Self::SelfPlace {
+                interior, subtree, ..
+            } => Self::SelfPlace {
+                mutability: Mutability::Immutable,
+                interior,
+                subtree,
+            },
+        }
+    }
+
     /// Whether a pointer of this provenance may bind a parameter declared
     /// with `expected`: an unsafe-any expectation (`ImmPointer[T, _]`, the
     /// placeholder origin of a free function's raw-pointer parameter) accepts

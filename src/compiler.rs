@@ -699,6 +699,7 @@ fn scalar_range_template_names(linked: &[Stmt]) -> std::collections::HashMap<&'s
         };
         if let Some(family) = crate::types::SCALAR_RANGE_FAMILY
             .iter()
+            .chain(std::iter::once(&crate::types::FLOAT_STRIDED_RANGE))
             .find(|family| name == *family || name.ends_with(&format!("${family}")))
         {
             names.entry(*family).or_insert_with(|| name.clone());

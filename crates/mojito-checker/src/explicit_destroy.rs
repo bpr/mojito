@@ -40,20 +40,21 @@ pub fn check(
     >,
     deletability: &CheckedDeletability,
     types: &HashMap<String, ExplicitDestroyInfo>,
+    lent: &HashSet<SourceSpan>,
 ) -> Result<(), TypeError> {
     if types.is_empty() {
         return Ok(());
     }
+    let lent = std::rc::Rc::new(lent.clone());
     for statement in statements {
         match &statement.kind {
-            StmtKind::Def { params, body, .. } => check_def(
+            StmtKind::Def { .. } => check_def(
                 statement,
-                params,
-                body,
                 binding_types,
                 comprehension_bindings,
                 deletability,
                 types,
+                &lent,
             )?,
             // A template shell carries signatures only.
             StmtKind::Struct {
@@ -93,6 +94,7 @@ pub fn check(
                         comprehension_bindings,
                         deletability,
                         types,
+                        &lent,
                     )?;
                 }
             }
@@ -112,6 +114,9 @@ fn check_expr(
     types: &HashMap<String, ExplicitDestroyInfo>,
 ) -> Result<(), TypeError> {
     match &expr.kind {
+        ExprKind::Transfer(inner) if env.lent.contains(&expr.source_span()) => {
+            check_expr(inner, env, comprehension_bindings, types)?;
+        }
         ExprKind::Transfer(inner) => move_root(inner, env, types)?,
         ExprKind::MethodCall {
             object,
@@ -271,6 +276,9 @@ fn check_expr(
 struct Env {
     scopes: Vec<HashMap<String, usize>>,
     vars: Vec<Var>,
+    /// Spans of `^` transfers the checker bound to a read parameter or
+    /// receiver: they lend their place and consume nothing.
+    lent: std::rc::Rc<HashSet<SourceSpan>>,
 }
 
 impl Env {
@@ -485,8 +493,12 @@ fn check_function<'a>(
     >,
     deletability: &CheckedDeletability,
     types: &HashMap<String, ExplicitDestroyInfo>,
+    lent: &std::rc::Rc<HashSet<SourceSpan>>,
 ) -> Result<(), TypeError> {
-    let mut env = Env::default();
+    let mut env = Env {
+        lent: std::rc::Rc::clone(lent),
+        ..Env::default()
+    };
     env.push();
     for (name, ty, convention, deinitable, linear) in params {
         let explicit = if deinitable {
@@ -867,25 +879,22 @@ fn check_stmt(
         }
         // A nested function's parameters and locals carry their own
         // obligations; its captures never move the enclosing values.
-        StmtKind::Def { params, body, .. } => check_def(
+        StmtKind::Def { .. } => check_def(
             stmt,
-            params,
-            body,
             binding_types,
             comprehension_bindings,
             deletability,
             types,
+            &env.lent,
         )?,
         _ => {}
     }
     Ok(Some(env))
 }
 
-/// Check one free (top-level or nested) function definition.
+/// Check one free (top-level or nested) function definition statement.
 fn check_def(
     statement: &Stmt,
-    params: &[mojito_ast::ast::FnParam],
-    body: &[Stmt],
     binding_types: &HashMap<SourceSpan, Ty>,
     comprehension_bindings: &HashMap<
         SourceSpan,
@@ -893,7 +902,11 @@ fn check_def(
     >,
     deletability: &CheckedDeletability,
     types: &HashMap<String, ExplicitDestroyInfo>,
+    lent: &std::rc::Rc<HashSet<SourceSpan>>,
 ) -> Result<(), TypeError> {
+    let StmtKind::Def { params, body, .. } = &statement.kind else {
+        return Ok(());
+    };
     let params = params.iter().enumerate().map(|(param, p)| {
         let site = AnnotationSite::FunctionParam {
             module: statement.module.clone(),
@@ -916,6 +929,7 @@ fn check_def(
         comprehension_bindings,
         deletability,
         types,
+        lent,
     )
 }
 
@@ -1202,7 +1216,7 @@ fn consumed_roots_in_stmts(statements: &[Stmt], env: &Env, roots: &mut HashSet<u
 
 fn consumed_roots_in_expr(expr: &Expr, env: &Env, roots: &mut HashSet<usize>) {
     match &expr.kind {
-        ExprKind::Transfer(inner) => {
+        ExprKind::Transfer(inner) if !env.lent.contains(&expr.source_span()) => {
             if let Some((id, _)) = obligation_place(inner, env) {
                 roots.insert(id);
             }

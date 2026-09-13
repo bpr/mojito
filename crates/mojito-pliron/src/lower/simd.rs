@@ -434,6 +434,27 @@ impl FnLowering<'_> {
                 };
                 self.lower_simd_binop(ctx, op, dest, recv, args[0], dtype, width)
             }
+            // A `Float32`/`Float64` scalar's rounding dunders and fused
+            // multiply-add (`runtime::builtin_round_dir`/`builtin_fma`).
+            "__floor__" | "__ceil__" | "__trunc__"
+                if width == 1
+                    && matches!(dtype, Dtype::Float32 | Dtype::Float64)
+                    && args.is_empty() =>
+            {
+                self.lower_round_dir(ctx, dest, recv, &Ty::Simd { dtype, width: 1 }, method)
+            }
+            "__fma__"
+                if width == 1
+                    && matches!(dtype, Dtype::Float32 | Dtype::Float64)
+                    && args.len() == 2 =>
+            {
+                self.lower_fma(
+                    ctx,
+                    dest,
+                    [recv, args[0], args[1]],
+                    &Ty::Simd { dtype, width: 1 },
+                )
+            }
             _ => Err(self.unsupported_reg(format!("SIMD method `{method}`"), dest)),
         }
     }

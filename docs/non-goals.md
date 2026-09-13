@@ -62,8 +62,9 @@ These are the two admitted extensions under the match-or-subset rule
 
 Not to be relaxed: Mojito tracks interior references through `Pointer` and
 through views into a container, and traps on unsafe-memory misuse the pinned
-Mojo leaves undefined. The 2026-09-12 error-folder sweep measured the gap at 25
-fixtures the pin compiles and runs while Mojito rejects or traps
+Mojo leaves undefined. The 2026-09-12 error-folder sweep, with its 2026-09-13
+divergence triage, measured the gap at 33 fixtures the pin compiles and runs
+while Mojito rejects or traps
 (`conformance/assets-mojo-errors.tsv`, family `subset`). Invariant 1 permits it:
 Mojito may reject valid Mojo.
 
@@ -83,9 +84,30 @@ Mojito may reject valid Mojo.
   counterpart to agree with.
 - `assets/type_error/var_less_introduction.mojo` rejects a var-less
   introduction that the pin only deprecates, with a warning, and runs.
+- `mapping_key_ref_write.mojo` and `set_element_ref_write.mojo` reject a write
+  through a `for ref` key or set element. The pin accepts it and then answers
+  membership from a stale hash index (`set-ref-write-gap`).
+- `pointer_to_place_offset_rejected.mojo` rejects offset 1 of a pointer to a
+  single local, which the pin reads from the neighbouring stack slot.
+- `span_implicit_return_escape.mojo` rejects returning a frame-local `List` as a
+  `Span`; the pin returns a dangling view.
+- `pointer_take_tracked_nontrivial.mojo` rejects `unsafe_take_pointee()` of a
+  `String` through `Pointer(to=s)`. The pin moves the value out and leaves `s`
+  to be destroyed again; Mojito allows a tracked take only for a trivially
+  destructible element.
+- `typelist_index_out_of_range.mojo` bounds-checks a `TypeList` index. The pin
+  has no check and yields the malformed type `Int, Bool[2]`, failing only at a
+  later use.
+- `generic_ctfe_impure.mojo` keeps VM-CTFE pure. The pin lets a compile-time
+  callee `print`, but that output has no stable home: it appears under
+  `mojo run` and is absent from a `mojo build` binary.
+- `assets/runtime_error/nominal_string_justify_fillchar.mojo` traps on an
+  `assert` in upstream's own `_justify`. Mojito evaluates every
+  standard-library assert, as the pin does under `-D ASSERT=all`; the pin's
+  default level skips it.
 
-The 26 fixtures in the same sweep where Mojito's rejection is *not* deliberate
-are the opposite case and stay on `docs/roadmap.md` as `divergence` rows.
+The fixtures in the same sweep where Mojito's rejection is *not* deliberate are
+the opposite case and stay on `docs/roadmap.md` as `divergence` rows.
 
 ### Divergences retained across re-pins
 
