@@ -610,6 +610,9 @@ impl VmBackend {
                     (true, _) => format!("Int({digits})"),
                 });
             }
+            if let Some(text) = self.simd_integer_text(prog, &value)? {
+                return Ok(text);
+            }
             if repr {
                 return Ok(scalar_repr(&value));
             }
@@ -734,6 +737,42 @@ impl VmBackend {
         Ok(Some(
             std::string::String::from_utf8_lossy(&bytes).into_owned(),
         ))
+    }
+
+    /// The display text of an integer `SIMD` value — a sized scalar such as
+    /// `Int32` or a vector's `[l0, l1, ...]` — with every lane through the
+    /// bundled digit bodies at the dtype's signedness, as native `print_simd`
+    /// emits it. `None` for float and bool lanes, and without the bundled
+    /// stdlib.
+    fn simd_integer_text(
+        &mut self,
+        prog: &Prog,
+        value: &Value,
+    ) -> Result<Option<String>, RuntimeError> {
+        let Value::Simd {
+            dtype,
+            lanes: crate::runtime::SimdLanes::Int(lanes),
+        } = value
+        else {
+            return Ok(None);
+        };
+        let signed = crate::runtime::integer_dtype_bits(*dtype).is_some_and(|(_, signed)| signed);
+        let mut cells = Vec::with_capacity(lanes.len());
+        for &lane in lanes {
+            let scalar = if signed {
+                Value::Int(lane as i64)
+            } else {
+                Value::UInt(lane as u64)
+            };
+            let Some(digits) = self.integer_digits(prog, &scalar)? else {
+                return Ok(None);
+            };
+            cells.push(digits);
+        }
+        Ok(Some(match cells.as_slice() {
+            [lane] => lane.clone(),
+            _ => format!("[{}]", cells.join(", ")),
+        }))
     }
 }
 

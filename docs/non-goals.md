@@ -121,6 +121,14 @@ implementation would be the wrong shape, not a better one.
 - allocation
 - traps
 
+The integer arms of the VM's `Display for Value` stay Rust too, for a
+different reason: every program-visible text path, sized `SIMD` lanes
+included, formats integers through the bundled `_int_digits`/`_uint_digits`
+bodies, and what is left has no VM to run them and is not program output.
+Those callers are runtime diagnostics, which upstream's C++ compiler writes,
+and the CLI's stdin binding echo, which runs after execution and is excluded
+from differential comparison.
+
 ## Not To Be Fixed
 
 ### Native SIMD: signed-zero min/max is unspecified

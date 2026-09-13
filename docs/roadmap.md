@@ -200,14 +200,6 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
   Problem: parts of Mojito's stdlib lean on the Rust runtime where upstream
   is pure Mojo. Each is a candidate port, preferred over any new bridge
   (2026-09-07 direction).
-  - The VM's `Display for Value` still renders `Int`/`UInt` in Rust. The
-    2026-09-12 integer-formatting port moved every program-visible text
-    path — `print`, `String(...)`, `repr`, `Writer.write`, format
-    templates — to the bundled `_int_digits`/`_uint_digits` bodies, but a
-    `fmt::Display` impl has no VM to call them with, so three callers keep
-    the Rust arms: diagnostics, the CLI binding dump, and `SIMD` lanes.
-    - Model: Opus, as-is. Each caller needs a VM-aware renderer, or a
-      reason to stay Rust.
   - The literal-filled `String.__init__(literal)` and
     `StringSpan.__init__(literal)` constructors, and the
     `String._as_string_literal()` struct-to-literal bridge behind
