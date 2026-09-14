@@ -153,6 +153,11 @@ impl Elab<'_> {
                 }
             }
             StmtKind::ComptimeFor { var, iter, body } => {
+                if !matches!(&iter.kind, ExprKind::Call { name, .. } if name == "range")
+                    && let CtValue::Tuple(elements) = self.eval(iter, env)?
+                {
+                    return Err(ComptimeError::NotIterable(tuple_type_spelling(&elements)));
+                }
                 for v in self.eval_iter(iter, env)? {
                     self.burn()?;
                     let subs: Subs = &|n| (n == var).then(|| v.clone());
@@ -832,4 +837,23 @@ fn stmt_methods(stmt: &Stmt) -> Vec<mojito_ast::ast::Method> {
         StmtKind::Struct { methods, .. } => methods.clone(),
         _ => Vec::new(),
     }
+}
+
+/// Upstream's spelling of a compile-time tuple's type (`Tuple[Int, String]`).
+fn tuple_type_spelling(elements: &[CtValue]) -> String {
+    let names: Vec<&str> = elements
+        .iter()
+        .map(|element| match element {
+            CtValue::Int(_) | CtValue::IntLiteral(_) => "Int",
+            CtValue::UInt(_) => "UInt",
+            CtValue::Float(_) | CtValue::FloatLiteral(_) => "Float64",
+            CtValue::Bool(_) => "Bool",
+            CtValue::Str(_) => "String",
+            CtValue::Tuple(_) => "Tuple",
+            CtValue::List(_) => "List",
+            CtValue::Struct { name, .. } => name.as_str(),
+            _ => "AnyType",
+        })
+        .collect();
+    format!("Tuple[{}]", names.join(", "))
 }

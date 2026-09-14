@@ -21,6 +21,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A variadic struct's members now spell the struct's own pack `Self.Ts`, as
+  upstream requires: a field type, a `comptime` member, a method signature,
+  an availability clause, or a body naming it bare (`Tuple[*Ts]`,
+  `var *args: *Ts`, `Ts.length`, `Ts[i]`, `where Ts.all_conforms_to[X]()`)
+  is rejected with upstream's `unqualified access to struct parameter 'Ts';
+  use 'Self.Ts' instead`. The bare name remains the struct header's — its
+  parameter list, conformance clauses, and trailing `where` — and a `def`'s
+  or a method's own pack. The parser keeps the qualified spread `*Self.Ts`
+  apart from the bare one, an elaboration pass checks each variadic struct
+  before anything copies its field types, and `conforms_to(Self.Ts.values,
+  X)` is accepted on a method beside `Self.Ts.all_conforms_to[X]()`. The
+  stdlib's `Tuple`, `PackTuple`, `TString`, `TypeNames`, and `Variant` are
+  respelled; five `assets/type_error/pack_*_unqualified.mojo` fixtures and
+  `assets/ok/pack_bare_in_struct_header.mojo` pin both sides against the pin.
 - A write through a pointer field (or pointer parameter) whose origin binder
   has symbolic mutability (`Origin[mut=m]`, or a bare `Origin`) is now judged
   as upstream does. It is rejected inside the generic body, and in

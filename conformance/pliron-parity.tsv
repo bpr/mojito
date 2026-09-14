@@ -15,6 +15,14 @@ assets/ok/array_comparable.mojo	main	exe-differential	sanitized
 assets/ok/array_element_assignment.mojo	main	exe-differential	sanitized
 assets/ok/array_fixed_size_core.mojo	main	exe-differential	sanitized
 assets/ok/array_struct_elements_and_fill.mojo	main	exe-differential	sanitized
+assets/ok/assign_interior_view_over_sibling_field.mojo	main	exe-differential	sanitized
+assets/ok/assign_interior_view_through_temporary.mojo	main	exe-differential	sanitized
+assets/ok/assign_interior_view_to_other_local.mojo	main	exe-differential	sanitized
+assets/ok/assign_nested_call_interior_view_over_source.mojo	main	exe-differential	sanitized
+assets/ok/assign_plain_named_view_over_source.mojo	main	exe-differential	sanitized
+assets/ok/assign_plain_view_temporary_over_field.mojo	main	exe-differential	sanitized
+assets/ok/assign_plain_view_temporary_over_source.mojo	main	exe-differential	sanitized
+assets/ok/assign_register_passable_element_over_list.mojo	main	exe-differential	sanitized
 assets/ok/associated_trait_self_element.mojo	main	exe-differential	sanitized
 assets/ok/associated_type_return.mojo	main	exe-differential	sanitized
 assets/ok/augmented_bitwise_assignment.mojo	main	exe-differential	sanitized
@@ -89,6 +97,7 @@ assets/ok/function_type_where_bound.mojo	main	exe-differential	sanitized
 assets/ok/function_type_where_unconstrained_actual.mojo	main	exe-differential	sanitized
 assets/ok/function_typed_kwargs.mojo	main	exe-differential	sanitized
 assets/ok/function_value_array_display.mojo	main	exe-differential	sanitized
+assets/ok/function_value_array_element_binding.mojo	main	exe-differential	sanitized
 assets/ok/generic_copyable_iterator_refinement.mojo	main	exe-differential	sanitized
 assets/ok/generic_ctfe_associated_value.mojo	main	exe-differential	sanitized
 assets/ok/generic_ctfe_value_param.mojo	main	exe-differential	sanitized
@@ -223,6 +232,7 @@ assets/ok/overloading_variadic_constructor.mojo	main	exe-differential	sanitized
 assets/ok/owned_iteration_iterator_owned_type.mojo	main	exe-differential	sanitized
 assets/ok/owned_pointer_api.mojo	main	exe-differential	sanitized
 assets/ok/ownership_marker_traits.mojo	main	exe-differential	sanitized
+assets/ok/pack_bare_in_struct_header.mojo	main	exe-differential	sanitized
 assets/ok/pack_element_temporaries.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_pair.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_variadic_init.mojo	main	exe-differential	sanitized
@@ -409,6 +419,7 @@ assets/ok/stored_array_span_iterators.mojo	main	exe-differential	sanitized
 assets/ok/string_capacity.mojo	main	exe-differential	sanitized
 assets/ok/string_escapes.mojo	main	exe-differential	sanitized
 assets/ok/string_grapheme_iteration.mojo	main	exe-differential	sanitized
+assets/ok/string_iadd_view_operand.mojo	main	exe-differential	sanitized
 assets/ok/string_literal_bytes.mojo	main	exe-differential	sanitized
 assets/ok/string_literal_overload.mojo	main	exe-differential	sanitized
 assets/ok/string_overload_conversion.mojo	main	exe-differential	sanitized
@@ -479,7 +490,6 @@ assets/ok/writable_extra_write_to_overload.mojo	main	exe-differential	sanitized
 assets/extensions/ok/callable_struct_transfer_after_last_use.mojo	main	exe-differential	sanitized
 assets/extensions/ok/captured_store_local_carrier.mojo	main	exe-differential	sanitized
 assets/extensions/ok/comprehension_borrowed_named_source.mojo	main	exe-differential	sanitized
-assets/extensions/ok/comptime_for_tuple.mojo	main	exe-differential	sanitized
 assets/extensions/ok/container_owning_family_apis.mojo	main	exe-differential	sanitized
 assets/extensions/ok/copyable_iterator_reference_aggregate.mojo	main	exe-differential	sanitized
 assets/extensions/ok/delegated_ref_return_projection.mojo	main	exe-differential	sanitized

@@ -16,8 +16,9 @@ impl Flatten<'_> {
     ) {
         // Bracket each HIR instruction for temporary-argument anchors (see
         // `lower_stmt`, whose statements arrive through this dispatcher too):
-        // hidden `$arg_loan_r` slots stay live until the instruction's
-        // statement completes via a trailing `KeepAlive` use.
+        // hidden `$arg_loan_r` slots stay live until the consuming call has
+        // returned — at the latest the instruction's end — via a `KeepAlive`
+        // use; an assignment flushes them before its store.
         let saved = std::mem::take(&mut self.pending_argument_anchors);
         self.lower_instr_dispatch(i, outer_map);
         self.flush_argument_anchors();
@@ -43,6 +44,9 @@ impl Flatten<'_> {
                 if let Some(target) = binding_ty.as_ref() {
                     src = self.materialize_register(src, target, expr.source_span());
                 }
+                // The consuming call has returned: its temporary arguments'
+                // loans end before the store replaces the destination.
+                self.flush_argument_anchors();
                 let writes_through_reference = self.aliases.contains_key(dest)
                     || (self.runtime_aliases.contains(dest) && !self.pointer_valued_slot(*dest));
                 if !writes_through_reference
@@ -510,6 +514,20 @@ impl Flatten<'_> {
     /// [`MirPlace`] — a root variable plus a projection chain — flattening any
     /// subscript index into a register **once**. The checker guarantees the root
     /// is a variable (or `self`), so a non-variable root is unreachable.
+    /// Lower the right-hand side of an augmented subscript. An in-place dunder
+    /// takes it as a call argument, so a view temporary (`xs[0] +=
+    /// t.rstrip()`) anchors its borrowed source through the call.
+    fn lower_augmented_operand(&mut self, rhs_expression: &Expr, inplace: bool) -> Reg {
+        let rhs = self.expr(rhs_expression);
+        if inplace {
+            let adjustments = self.checked_adjustments(rhs_expression);
+            let saved_anchor_permission = std::mem::replace(&mut self.allow_argument_anchors, true);
+            self.anchor_temporary_argument(rhs_expression, rhs, &adjustments, false);
+            self.allow_argument_anchors = saved_anchor_permission;
+        }
+        rhs
+    }
+
     pub(super) fn place(&mut self, e: &Expr) -> MirPlace {
         // A materialized borrow-source temporary's place is its hidden slot,
         // registered under the checker-minted owner when the argument lowered.
@@ -695,8 +713,12 @@ impl Flatten<'_> {
             return false;
         };
         let (recv, recv_place) = self.lower_call_receiver(place);
+        // A view temporary operand (`s += t.rstrip()`) anchors its borrowed
+        // source through the call, as an ordinary method argument does.
+        let saved_anchor_permission = std::mem::replace(&mut self.allow_argument_anchors, true);
         let (args, arg_places) =
             self.lower_call_arguments(std::slice::from_ref(rhs_expression), false);
+        self.allow_argument_anchors = saved_anchor_permission;
         let dest = self.fresh(place.source_span(), None);
         self.emit_interior_invalidations(place, None);
         self.emit_checked_call_boundary(&contract, &place.source_span());
@@ -844,7 +866,7 @@ impl Flatten<'_> {
                         &plan.operand_ty,
                         &target.source_span(),
                     );
-                    let rhs = self.expr(rhs_expression);
+                    let rhs = self.lower_augmented_operand(rhs_expression, plan.inplace.is_some());
                     let current =
                         self.fresh_typed(target.source_span(), None, plan.operand_ty.clone());
                     self.emit(MirInstr::ReadRef {
@@ -881,7 +903,7 @@ impl Flatten<'_> {
 
                 // Value-getter ordering is raw receiver/index, RHS, accessor
                 // adaptation/getter, operator, setter adaptation/setter.
-                let rhs = self.expr(rhs_expression);
+                let rhs = self.lower_augmented_operand(rhs_expression, plan.inplace.is_some());
                 let getter_index = self.apply_checked_call_value_adjustments(
                     &plan.getter,
                     index_source,
@@ -1036,7 +1058,7 @@ impl Flatten<'_> {
                         &plan.operand_ty,
                         &target.source_span(),
                     );
-                    let rhs = self.expr(rhs_expression);
+                    let rhs = self.lower_augmented_operand(rhs_expression, plan.inplace.is_some());
                     let current =
                         self.fresh_typed(target.source_span(), None, plan.operand_ty.clone());
                     self.emit(MirInstr::ReadRef {
@@ -1071,7 +1093,7 @@ impl Flatten<'_> {
                     return true;
                 }
 
-                let rhs = self.expr(rhs_expression);
+                let rhs = self.lower_augmented_operand(rhs_expression, plan.inplace.is_some());
                 self.emit_checked_call_boundary(&plan.getter, &target.source_span());
                 let current =
                     self.fresh_typed(target.source_span(), None, plan.getter.result_ty.clone());
@@ -1215,7 +1237,11 @@ impl Flatten<'_> {
                 // Value getters defer every call-local argument adaptation
                 // until after the RHS. Building the raw descriptor/index list
                 // above has already performed each source evaluation once.
-                let value_rhs = plan.setter.as_ref().map(|_| self.expr(rhs_expression));
+                let inplace = plan.inplace.is_some();
+                let value_rhs = plan
+                    .setter
+                    .as_ref()
+                    .map(|_| self.lower_augmented_operand(rhs_expression, inplace));
                 let getter_args = raw_args
                     .iter()
                     .enumerate()
@@ -1280,7 +1306,7 @@ impl Flatten<'_> {
                         &plan.operand_ty,
                         &target.source_span(),
                     );
-                    let rhs = self.expr(rhs_expression);
+                    let rhs = self.lower_augmented_operand(rhs_expression, plan.inplace.is_some());
                     let current =
                         self.fresh_typed(target.source_span(), None, plan.operand_ty.clone());
                     self.emit(MirInstr::ReadRef {
@@ -1917,8 +1943,10 @@ impl Flatten<'_> {
     ) {
         // Bracket the statement for temporary-argument anchors: hidden
         // `$arg_loan_r` slots created while lowering this statement's calls
-        // stay live (as do their loans) until the statement completes — the
-        // temporary's upstream lifetime — via a trailing `KeepAlive` use.
+        // stay live (as do their loans) until the consuming call returns, at
+        // the latest the statement's end, via a `KeepAlive` use. An assignment
+        // flushes them before its store, because upstream destroys the
+        // temporary at the call.
         // Nested statement lowering saves and restores the enclosing list, so
         // each statement flushes exactly its own anchors.
         let saved = std::mem::take(&mut self.pending_argument_anchors);
@@ -2173,6 +2201,7 @@ impl Flatten<'_> {
                     return;
                 }
                 let (src, _) = self.lower_assignment_value(place, value);
+                self.flush_argument_anchors();
                 // A store through an origin-bearing pointer writes its source
                 // place; the checker fixed the offset to 0 and required
                 // mutable provenance. A stably bound pointer substitutes the

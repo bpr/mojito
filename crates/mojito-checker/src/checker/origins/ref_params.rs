@@ -559,14 +559,15 @@ impl Checker {
                 ) {
                     let carried = self.aggregate_origins(object);
                     if !carried.is_empty() {
-                        return carried;
+                        return self.project_view_result_interior(expression, carried);
                     }
                     if matches!(
                         object.kind,
                         ExprKind::Identifier(_) | ExprKind::Member { .. }
                     ) && let Ok(place) = self.origin_place(object)
                     {
-                        return vec![Origin::Place(place)];
+                        return self
+                            .project_view_result_interior(expression, vec![Origin::Place(place)]);
                     }
                 }
                 Vec::new()
@@ -629,7 +630,7 @@ impl Checker {
                     {
                         append_unique(&mut carried, [Origin::Place(place)]);
                     }
-                    return carried;
+                    return self.project_view_result_interior(expression, carried);
                 }
                 let mut result = Vec::new();
                 for argument in args {
@@ -642,5 +643,31 @@ impl Checker {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// Project a view-returning call's carried origins through the owned
+    /// interior its declared return origin names (`s.rstrip()` carries
+    /// `s.<bytes>`, not `s`). A call with no declared projection keeps them.
+    pub(in crate::checker) fn project_view_result_interior(
+        &self,
+        call: &Expr,
+        carried: Vec<mojito_types::origin::Origin>,
+    ) -> Vec<mojito_types::origin::Origin> {
+        let Some(tags) = self
+            .view_result_interiors
+            .borrow()
+            .get(&call.source_span())
+            .cloned()
+        else {
+            return carried;
+        };
+        let path: Vec<_> = tags
+            .into_iter()
+            .map(mojito_types::origin::OriginSeg::Interior)
+            .collect();
+        carried
+            .into_iter()
+            .map(|origin| super::project_origin(origin, &path))
+            .collect()
     }
 }

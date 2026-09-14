@@ -673,14 +673,12 @@ fn value_parameterized_generics_parity() {
 
 #[test]
 fn nested_def_closures_parity() {
-    // Nested `def`s cover a
-    // read-capture, a write-capture (reference semantics), and self-recursion.
+    // Nested `def`s cover a read-capture and a write-capture (reference
+    // semantics); a nested `def` naming itself is rejected, as upstream.
     let read = "def adder(n: Int) -> Int:\n    def add_n(x: Int) {n} -> Int:\n        return x + n\n    return add_n(100)\n\ndef main():\n    print(adder(42))\n";
     assert_eq!(parity(read), "142\n");
     let write = "def counter() -> Int:\n    var total: Int = 0\n    def add(x: Int) {mut total}:\n        total = total + x\n    add(5)\n    add(3)\n    return total\n\ndef main():\n    print(counter())\n";
     assert_eq!(parity(write), "8\n");
-    let rec = "def factorial(base: Int) -> Int:\n    def fact(n: Int) {base} -> Int:\n        if n <= 1:\n            return base\n        return n * fact(n - 1)\n    return fact(5)\n\ndef main():\n    print(factorial(1))\n";
-    assert_eq!(parity(rec), "120\n");
 }
 
 #[test]
@@ -1857,7 +1855,7 @@ fn retained_template_executes_erased_dispatch_under_the_compiler() {
     // The runtime half of the erased-dispatch residue witness: the retained
     // abstract template's `__iterator_dispatch` protocol and copy adapter
     // execute end to end through the authoritative pipeline.
-    let src = "from std.iter import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item.copy()\n    return default.copy()\n\ndef main():\n    comptime for i in (1, \"s\"):\n        print(first([i.copy(), i.copy()], i))\n";
+    let src = "from std.iter import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item.copy()\n    return default.copy()\n\ndef main():\n    print(first([1, 1], 1))\n    print(first([\"s\", \"s\"], \"s\"))\n";
     assert_eq!(run_compiled(src).expect("erased path runs"), "1\ns\n");
 }
 

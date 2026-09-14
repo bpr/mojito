@@ -1,4 +1,5 @@
 # expect: invalidated interior reference
+# requires: stdlib
 # The comprehension path shares the statement loop's mapping loan: mutating
 # the dict from the element expression invalidates the iteration generation.
 def grow(mut d: Dict[String, Int], key: String) -> Int:

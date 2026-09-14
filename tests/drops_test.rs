@@ -160,7 +160,7 @@ fn copyable_nominal_tuple_element_transfer_remains_a_copy() {
 #[test]
 fn moved_variadic_pack_becomes_tuple_storage_without_double_drop() {
     let src = format!(
-        "{MOVABLE_NOISY}struct PackHolder[*Ts: Movable](Movable):\n    var storage: Tuple[*Ts]\n\n    def __init__(out self, var *args: *Ts):\n        self.storage = Tuple(*args^)\n\ndef main():\n    var value = PackHolder[Noisy, Int](Noisy(7), 9)\n    print(\"use\", value.storage[1])\n    var keep_alive = value.storage[1]\n"
+        "{MOVABLE_NOISY}struct PackHolder[*Ts: Movable](Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\ndef main():\n    var value = PackHolder[Noisy, Int](Noisy(7), 9)\n    print(\"use\", value.storage[1])\n    var keep_alive = value.storage[1]\n"
     );
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler

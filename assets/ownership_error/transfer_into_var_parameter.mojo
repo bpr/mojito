@@ -1,4 +1,5 @@
 # expect: use of uninitialized value 'a'
+# requires: stdlib
 # A `^` into an owned `var` parameter moves the value out of its source.
 struct Thing(Movable):
     var s: String

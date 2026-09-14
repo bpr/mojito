@@ -274,6 +274,18 @@ impl Checker {
         if let Some(inner) = super::immutable_origin_cast(expression) {
             return self.explicit_origin_argument(&ParamArg::Value(inner?.clone()));
         }
+        // `base._get_owned_interior["tag"]` names the owned interior region
+        // of `base`'s origin; an abstract receiver origin stays as is.
+        if let Some((base, tag)) = super::interior_origin_syntax(expression) {
+            return self
+                .explicit_origin_argument(&ParamArg::Value(base.clone()))
+                .map(|origin| {
+                    super::project_origin(
+                        origin,
+                        &[mojito_types::origin::OriginSeg::Interior(tag.to_string())],
+                    )
+                });
+        }
         match &expression.kind {
             ExprKind::Call {
                 name,

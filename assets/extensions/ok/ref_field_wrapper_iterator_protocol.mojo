@@ -56,6 +56,9 @@ struct Table(Iterable):
         self.entries.append(Pair(1, 10))
         self.entries.append(Pair(2, 20))
 
+    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
+        return self.keys()
+
     def keys(ref self) -> Self.IteratorType[origin_of(self)]:
         ref source = self.entries
         return KeyIter(EntryIter(source, 0))

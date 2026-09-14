@@ -158,11 +158,17 @@ pub(super) fn definitely_initializes_self_field(body: &[Stmt], field: &str) -> b
     flow.valid && flow.normal.is_none_or(|initialized| initialized)
 }
 
-/// Whether a parameter annotation is exactly the bare `StringLiteral`.
+/// Whether a parameter annotation is exactly the bare `StringLiteral`, or a
+/// specialized `*args: *Ts` pack (`$pack[...]`, or the `__RuntimeTuple[...]`
+/// a forwarded nested pack is stamped with) whose elements may be that
+/// per-call inferred literal type.
 pub(super) fn is_string_literal_annotation(annotation: &SourceType) -> bool {
     match annotation {
         SourceType::StringLiteral => true,
-        SourceType::Named(name, args) => name == "StringLiteral" && args.is_empty(),
+        SourceType::Named(name, args) => {
+            matches!(name.as_str(), "$pack" | "__RuntimeTuple")
+                || (name == "StringLiteral" && args.is_empty())
+        }
         _ => false,
     }
 }
@@ -385,6 +391,7 @@ impl Checker {
                 )?),
                 _ => None,
             },
+            view_return_interior: view_return_interior_tags(method.ret.as_ref()),
             implicit: method
                 .decorators
                 .iter()
@@ -1676,6 +1683,7 @@ impl Checker {
                             parametric_origin_writes: sig.parametric_origin_writes.clone(),
                             instantiation,
                             parameter_names: sig.names.clone(),
+                            view_return_interior: sig.view_return_interior.clone(),
                         });
                     }
                 }

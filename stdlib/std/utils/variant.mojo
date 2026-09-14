@@ -1,5 +1,5 @@
 # Self-hosted `Variant`: current Mojo's tagged union, written over the
-# compiler-private `__VariantStorage[*Ts]` storage — the intrinsic tag+payload
+# compiler-private `__VariantStorage[*Self.Ts]` storage — the intrinsic tag+payload
 # union the register VM executes and the native layout engine lays out
 # (upstream keeps its storage in an MLIR `!kgen.variant`). The public API and
 # the pack-driven protocol bodies follow upstream's `utils/variant.mojo`.
@@ -22,18 +22,18 @@ struct Variant[*Ts: AnyType](
     Movable where Ts.all_conforms_to[Movable](),
     Writable where Ts.all_conforms_to[Writable](),
 ):
-    var _storage: __VariantStorage[*Ts]
+    var _storage: __VariantStorage[*Self.Ts]
 
     @implicit
     def __init__[T: Movable](out self, var value: T):
         comptime if Self.Ts.contains[T]():
             pass
-        self._storage = __VariantStorage[*Ts](value^)
+        self._storage = __VariantStorage[*Self.Ts](value^)
 
     def __init__[T: AnyType, //, F: def() -> T](out self, *, init_with: F):
         comptime if Self.Ts.contains[T]():
             pass
-        self._storage = __VariantStorage[*Ts](init_with=init_with)
+        self._storage = __VariantStorage[*Self.Ts](init_with=init_with)
 
     def __getitem_param__[T: AnyType](ref self) -> ref[origin_of(self)] T:
         comptime if Self.Ts.contains[T]():

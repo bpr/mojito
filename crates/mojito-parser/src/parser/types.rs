@@ -11,12 +11,15 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         let ty = match self.next_token()? {
             // A variadic type-pack reference in `*args: *ArgTypes`. Inside a
             // struct, current Mojo spells the struct's own pack `*Self.Ts`;
-            // both spellings name the same pack.
+            // the qualified spread keeps its own node so the elaborator can
+            // tell it from a bare `*Ts`, which a struct member may not use.
             Token::Star => {
-                let mut name = self.expect_identifier("Expected a type-pack name after '*'")?;
+                let name = self.expect_identifier("Expected a type-pack name after '*'")?;
                 if name == "Self" && matches!(self.peek_token()?, Some(Token::Dot)) {
                     self.next_token()?; // consume '.'
-                    name = self.expect_identifier("Expected a type-pack name after '*Self.'")?;
+                    let pack =
+                        self.expect_identifier("Expected a type-pack name after '*Self.'")?;
+                    return Ok(Type::SelfParam(format!("*{pack}")));
                 }
                 Ok(Type::Named(format!("*{name}"), Vec::new()))
             }

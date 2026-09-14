@@ -1,6 +1,6 @@
 # A pointer to an immutable parameter has immutable provenance, so stores
 # through it are rejected.
-# expect: immutable origin
+# expect: expression must be mutable in assignment
 def observe(x: Int):
     var p = UnsafePointer(to=x)
     p[0] = 1

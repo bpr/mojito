@@ -17,16 +17,16 @@ struct Tuple[*Ts: Movable](
     Sized,
     Writable where conforms_to(Ts.values, Writable),
 ):
-    comptime element_types = Ts
-    var storage: __RuntimeTuple[*Ts]
+    comptime element_types = Self.Ts
+    var storage: __RuntimeTuple[*Self.Ts]
 
-    def __init__(out self, var *args: *Ts):
+    def __init__(out self, var *args: *Self.Ts):
         self.storage = __RuntimeTuple(*args^)
 
     # Current Mojo's compile-time-index hook.
     def __getitem_param__[index: Int](
         ref self
-    ) -> ref[origin_of(self)] Ts[index]:
+    ) -> ref[origin_of(self)] Self.Ts[index]:
         return self.storage[index]
 
     def __len__(self) -> Int:
@@ -34,28 +34,28 @@ struct Tuple[*Ts: Movable](
 
     @staticmethod
     def __len__() -> Int:
-        return Ts.length
+        return Self.Ts.length
 
     def __eq__(self, other: Self) -> Bool where conforms_to(
-        Ts.values, Equatable
+        Self.Ts.values,Equatable
     ):
-        comptime for i in range(len(Ts)):
+        comptime for i in range(len(Self.Ts)):
             if self.storage[i] != other.storage[i]:
                 return False
         return True
 
     def __ne__(self, other: Self) -> Bool where conforms_to(
-        Ts.values, Equatable
+        Self.Ts.values,Equatable
     ):
-        comptime for i in range(len(Ts)):
+        comptime for i in range(len(Self.Ts)):
             if self.storage[i] != other.storage[i]:
                 return True
         return False
 
     def __lt__(self, other: Self) -> Bool where conforms_to(
-        Ts.values, Comparable
-    ) and conforms_to(Ts.values, Equatable):
-        comptime for i in range(len(Ts)):
+        Self.Ts.values,Comparable
+    ) and conforms_to(Self.Ts.values, Equatable):
+        comptime for i in range(len(Self.Ts)):
             if self.storage[i] < other.storage[i]:
                 return True
             if other.storage[i] < self.storage[i]:
@@ -63,9 +63,9 @@ struct Tuple[*Ts: Movable](
         return False
 
     def __le__(self, other: Self) -> Bool where conforms_to(
-        Ts.values, Comparable
-    ) and conforms_to(Ts.values, Equatable):
-        comptime for i in range(len(Ts)):
+        Self.Ts.values,Comparable
+    ) and conforms_to(Self.Ts.values, Equatable):
+        comptime for i in range(len(Self.Ts)):
             if self.storage[i] < other.storage[i]:
                 return True
             if other.storage[i] < self.storage[i]:
@@ -73,9 +73,9 @@ struct Tuple[*Ts: Movable](
         return True
 
     def __gt__(self, other: Self) -> Bool where conforms_to(
-        Ts.values, Comparable
-    ) and conforms_to(Ts.values, Equatable):
-        comptime for i in range(len(Ts)):
+        Self.Ts.values,Comparable
+    ) and conforms_to(Self.Ts.values, Equatable):
+        comptime for i in range(len(Self.Ts)):
             if other.storage[i] < self.storage[i]:
                 return True
             if self.storage[i] < other.storage[i]:
@@ -83,9 +83,9 @@ struct Tuple[*Ts: Movable](
         return False
 
     def __ge__(self, other: Self) -> Bool where conforms_to(
-        Ts.values, Comparable
-    ) and conforms_to(Ts.values, Equatable):
-        comptime for i in range(len(Ts)):
+        Self.Ts.values,Comparable
+    ) and conforms_to(Self.Ts.values, Equatable):
+        comptime for i in range(len(Self.Ts)):
             if other.storage[i] < self.storage[i]:
                 return True
             if self.storage[i] < other.storage[i]:
@@ -93,36 +93,36 @@ struct Tuple[*Ts: Movable](
         return True
 
     def __hash__[H: Hasher](self, mut hasher: H) where conforms_to(
-        Ts.values, Hashable
+        Self.Ts.values,Hashable
     ):
-        comptime for i in range(len(Ts)):
+        comptime for i in range(len(Self.Ts)):
             hasher.update(self.storage[i])
 
     def __contains__[T: Equatable](self, value: T) -> Bool:
-        comptime for i in range(len(Ts)):
-            comptime if T == Ts[i]:
+        comptime for i in range(len(Self.Ts)):
+            comptime if T == Self.Ts[i]:
                 if self.storage[i] == value:
                     return True
         return False
 
     def write_to(self, mut writer: Some[Writer]) where conforms_to(
-        Ts.values, Writable
+        Self.Ts.values,Writable
     ):
         writer.write("(")
-        comptime for i in range(len(Ts)):
+        comptime for i in range(len(Self.Ts)):
             comptime if i > 0:
                 writer.write(", ")
             writer.write(self.storage[i])
-        comptime if len(Ts) == 1:
+        comptime if len(Self.Ts) == 1:
             writer.write(",")
         writer.write(")")
 
     # Upstream's `Tuple[<element types>](<element reprs>)`.
     def write_repr_to(self, mut writer: Some[Writer]) where conforms_to(
-        Ts.values, Writable
+        Self.Ts.values,Writable
     ):
         writer.write(_unqualified_type_name[Self](), "(")
-        comptime for i in range(len(Ts)):
+        comptime for i in range(len(Self.Ts)):
             comptime if i > 0:
                 writer.write(", ")
             writer.write(repr(self.storage[i]))
@@ -130,19 +130,19 @@ struct Tuple[*Ts: Movable](
 
     def consume_elements[
         elt_handler: def[index: Int](
-            var element: Ts[index]
+            var element: Self.Ts[index]
         ) capturing
     ](deinit self):
         # Indexed transfer is legal only through this compiler-private storage
         # field.  A user-facing `tuple[index]^` remains rejected.
-        comptime for i in range(len(Ts)):
+        comptime for i in range(len(Self.Ts)):
             elt_handler[i](self.storage[i]^)
 
     # Current Mojo's family spelling for the same consuming teardown.
     def deinit_with[
         elt_handler: def[index: Int](
-            var element: Ts[index]
+            var element: Self.Ts[index]
         ) capturing
     ](deinit self):
-        comptime for i in range(len(Ts)):
+        comptime for i in range(len(Self.Ts)):
             elt_handler[i](self.storage[i]^)

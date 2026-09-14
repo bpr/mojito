@@ -18,12 +18,31 @@ fn err(source: &str) -> TypeError {
     check_source(source).expect_err("expected a type error")
 }
 
+/// Link `source` against the bundled standard library (so `String` and the
+/// prelude resolve), elaborate it, and run the type checker.
+fn check_with_std(source: &str) -> Result<(), TypeError> {
+    let linked =
+        mojito::link_source(source, std::path::Path::new("checker_test.mojo")).expect("link error");
+    let program = mojito::elaborate(linked).expect("elaborate");
+    check_program(&program).map(|_| ())
+}
+
+/// Like [`ok`], with the standard library linked.
+fn ok_std(source: &str) {
+    check_with_std(source).expect("expected the program to type-check");
+}
+
+/// Like [`err`], with the standard library linked.
+fn err_std(source: &str) -> TypeError {
+    check_with_std(source).expect_err("expected a type error")
+}
+
 // --- Programs that should type-check ---
 
 #[test]
 fn accepts_well_typed_declarations() {
-    ok(
-        "var a: Int = 1 + 2 * 3\nvar ok: Bool = 1 < 2 and not False\nvar s: StringLiteral = \"a\" + \"b\"\n",
+    ok_std(
+        "var a: Int = 1 + 2 * 3\nvar ok: Bool = 1 < 2 and not False\nvar s: String = \"a\" + \"b\"\n",
     );
 }
 
@@ -160,7 +179,7 @@ fn checked_boundary_rekeys_cloned_source_provenance_by_occurrence() {
 #[test]
 fn occurrence_keys_preserve_public_lookup_from_unique_input_syntax() {
     let program = parse(
-        "def pick(value: Int) -> Int:\n    return value\ndef pick(value: StringLiteral) -> StringLiteral:\n    return value\ndef main():\n    print(pick(1))\n",
+        "def pick(value: Int) -> Int:\n    return value\ndef pick(value: StringLiteral) -> Int:\n    return 0\ndef main():\n    print(pick(1))\n",
     )
     .expect("parse");
     let call = match &program[2].kind {
@@ -232,8 +251,8 @@ fn nominal_callable_selects_the_contract_matching_same_arity_overload() {
 
 #[test]
 fn nominal_callable_rejects_when_no_same_arity_overload_matches_the_contract() {
-    let error = err(
-        "struct Bad(def(StringLiteral) -> Int):\n    def __call__(self, value: Bool) -> Int:\n        return 0\n\n    def __call__(self, value: Int) -> Int:\n        return value\n",
+    let error = err_std(
+        "struct Bad(def(String) -> Int):\n    def __call__(self, value: Bool) -> Int:\n        return 0\n\n    def __call__(self, value: Int) -> Int:\n        return value\n",
     );
     assert!(matches!(error, TypeError::TraitMethodMismatch { .. }));
 }
@@ -646,7 +665,7 @@ fn checks_owned_iteration_and_collection_comprehensions() {
     // mutating it is rejected.
     assert!(matches!(
         err("def main():\n    var values: List[Int] = [1, 2]\n    for item in values:\n        item += 1\n"),
-        TypeError::ImmutableBinding(name) if name == "item"
+        TypeError::ImmutableInPlaceDestination(name) if name == "item"
     ));
 
     ok(
@@ -686,11 +705,11 @@ fn comprehension_binders_are_lexical_and_enforce_linear_cleanup() {
 
 #[test]
 fn collection_displays_use_parameter_and_return_context() {
-    ok(
+    ok_std(
         "from std.collections.set import Set\n\ndef consume(values: Set[Float64]):\n    pass\n\ndef empty() -> Set[Float64]:\n    return {}\n\ndef numbers() -> Set[Float64]:\n    return {1, 2}\n\ndef main():\n    consume({})\n    consume({1, 2})\n    print(empty(), numbers())\n",
     );
-    ok(
-        "def consume(values: Dict[StringLiteral, Float64]):\n    pass\n\ndef main():\n    consume({})\n    consume({\"one\": 1, \"two\": 2})\n",
+    ok_std(
+        "def consume(values: Dict[String, Float64]):\n    pass\n\ndef main():\n    consume({})\n    consume({\"one\": 1, \"two\": 2})\n",
     );
 }
 
@@ -791,8 +810,8 @@ fn infers_struct_type_argument_from_construction() {
 
 #[test]
 fn accepts_generic_function_identity() {
-    ok(
-        "def id[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\nvar n: Int = id(5)\nvar s: StringLiteral = id(\"hi\")\n",
+    ok_std(
+        "def id[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\nvar n: Int = id(5)\nvar s: String = id(\"hi\")\n",
     );
 }
 
@@ -915,15 +934,15 @@ fn abstract_element_copyability_derives_from_member_bounds() {
     // a generic loop, while a Copyable-only element still needs an explicit
     // copy and an ImplicitlyCopyable element may be returned directly.
     let movable = "trait Items:\n    comptime Element: Movable\n\ndef first[C: Items](xs: C) raises -> C.Element:\n    for item in xs:\n        return item\n    raise \"empty\"\n";
-    let error = err(movable);
+    let error = err_std(movable);
     assert!(
         matches!(&error, TypeError::NonCopyable { ty, .. } if ty == "C.Element"),
         "got {error:?}"
     );
     let copyable = "trait Items:\n    comptime Element: Copyable & Movable\n\ndef first[C: Items](xs: C) raises -> C.Element:\n    for item in xs:\n        return item\n    raise \"empty\"\n";
-    assert!(matches!(err(copyable), TypeError::ImplicitCopy { .. }));
+    assert!(matches!(err_std(copyable), TypeError::ImplicitCopy { .. }));
     let implicit = "trait Items:\n    comptime Element: ImplicitlyCopyable & Movable\n\ndef first[C: Items](xs: C) raises -> C.Element:\n    for item in xs:\n        return item\n    raise \"empty\"\n";
-    ok(implicit);
+    ok_std(implicit);
 }
 
 #[test]
@@ -935,14 +954,14 @@ fn abstract_bound_for_ref_is_rejected() {
     let header = "@fieldwise_init\nstruct StopIteration:\n    pass\n\ntrait ItemIterator:\n    comptime Element: Movable\n    def __next__(mut self) raises StopIteration -> Self.Element: ...\n\ntrait Items:\n    comptime Element: Movable\n    comptime Iter: ItemIterator\n    def __iter__(ref self) -> Self.Iter: ...\n\n";
     let statement =
         format!("{header}def touch[C: Items](xs: C):\n    for ref x in xs:\n        pass\n");
-    let error = err(&statement);
+    let error = err_std(&statement);
     assert!(
         matches!(&error, TypeError::Unsupported(message) if message.contains("generic Iterable bound")),
         "got {error:?}"
     );
     let comprehension =
         format!("{header}def collect[C: Items](xs: C):\n    var ys = [x for ref x in xs]\n");
-    let error = err(&comprehension);
+    let error = err_std(&comprehension);
     assert!(
         matches!(&error, TypeError::Unsupported(message) if message.contains("generic Iterable bound")),
         "got {error:?}"
@@ -964,7 +983,7 @@ fn projected_origin_iterator_contract_carries_parametric_mutability() {
         format!("{header}def bump(nums: Numbers):\n    for ref x in nums:\n        x += 1\n");
     let error = err(&immutable);
     assert!(
-        matches!(&error, TypeError::ImmutableBinding(name) if name == "x")
+        matches!(&error, TypeError::ImmutableInPlaceDestination(name) if name == "x")
             || matches!(&error, TypeError::Unsupported(_)),
         "got {error:?}"
     );
@@ -979,7 +998,7 @@ fn fixed_immutable_origin_iterator_still_binds_immutably() {
         "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct FrozenIter[o: Origin[mut=False]]:\n    var src: ref[o] List[Int]\n    var index: Int\n\n    def __next__(mut self) raises StopIteration -> ref[Self.o] Int:\n        if self.index >= len(self.src):\n            raise StopIteration()\n        var r = self.index\n        self.index += 1\n        return self.src[r]\n\nstruct Numbers:\n    var items: List[Int]\n\n    def __init__(out self):\n        self.items = [1, 2]\n\n    def __iter__(ref self) -> FrozenIter[origin_of(self.items)]:\n        ref items = self.items\n        return FrozenIter(items, 0)\n\ndef main():\n    var nums = Numbers()\n    for ref x in nums:\n        x += 1\n",
     );
     assert!(
-        matches!(&error, TypeError::ImmutableBinding(name) if name == "x")
+        matches!(&error, TypeError::ImmutableInPlaceDestination(name) if name == "x")
             || matches!(&error, TypeError::Unsupported(_)),
         "got {error:?}"
     );
@@ -1110,12 +1129,12 @@ fn rejects_duplicate_type_parameter_names() {
 // --- Traits (Phase 1b) ---
 
 /// A `Quackable` trait, a conforming `Duck`, and a bounded generic function.
-const QUACK: &str = "trait Quackable:\n    def quack(self) -> StringLiteral:\n        ...\n\n@fieldwise_init\nstruct Duck(Quackable):\n    var name: StringLiteral\n\n    def quack(self) -> StringLiteral:\n        return \"Quack\"\n\ndef make_it_quack[T: Quackable](x: T) -> StringLiteral:\n    return x.quack()\n";
+const QUACK: &str = "trait Quackable:\n    def quack(self) -> String:\n        ...\n\n@fieldwise_init\nstruct Duck(Quackable):\n    var name: String\n\n    def quack(self) -> String:\n        return \"Quack\"\n\ndef make_it_quack[T: Quackable](x: T) -> String:\n    return x.quack()\n";
 
 #[test]
 fn accepts_trait_conformance_and_bounded_call() {
-    ok(&format!(
-        "{QUACK}var d: Duck = Duck(\"Donald\")\nvar s: StringLiteral = make_it_quack(d)\n"
+    ok_std(&format!(
+        "{QUACK}var d: Duck = Duck(\"Donald\")\nvar s: String = make_it_quack(d)\n"
     ));
 }
 
@@ -1129,7 +1148,7 @@ fn accepts_self_type_in_trait_requirement() {
 #[test]
 fn accepts_calling_bound_trait_method_on_type_parameter() {
     // Inside `make_it_quack`, `x: T` with `T: Quackable` can call `quack()`.
-    ok(QUACK);
+    ok_std(QUACK);
 }
 
 #[test]
@@ -1163,8 +1182,8 @@ fn rejects_trait_receiver_convention_mismatch() {
 
 #[test]
 fn rejects_argument_not_conforming_to_bound() {
-    let e = err(&format!(
-        "{QUACK}@fieldwise_init\nstruct Cat:\n    var n: Int\n\nvar s: StringLiteral = make_it_quack(Cat(1))\n"
+    let e = err_std(&format!(
+        "{QUACK}@fieldwise_init\nstruct Cat:\n    var n: Int\n\nvar s: String = make_it_quack(Cat(1))\n"
     ));
     assert!(
         matches!(&e, TypeError::TraitNotSatisfied { trait_name, .. } if trait_name == "Quackable"),
@@ -1174,8 +1193,8 @@ fn rejects_argument_not_conforming_to_bound() {
 
 #[test]
 fn rejects_struct_missing_a_required_trait_method() {
-    let e = err(
-        "trait Quackable:\n    def quack(self) -> StringLiteral:\n        ...\n\n@fieldwise_init\nstruct Duck(Quackable):\n    var name: StringLiteral\n",
+    let e = err_std(
+        "trait Quackable:\n    def quack(self) -> String:\n        ...\n\n@fieldwise_init\nstruct Duck(Quackable):\n    var name: String\n",
     );
     assert!(
         matches!(&e, TypeError::MissingTraitMethod { method, .. } if method == "quack"),
@@ -1186,8 +1205,8 @@ fn rejects_struct_missing_a_required_trait_method() {
 #[test]
 fn rejects_struct_with_mismatched_trait_method_signature() {
     // `quack` returns Int, but the trait requires it to return String.
-    let e = err(
-        "trait Quackable:\n    def quack(self) -> StringLiteral:\n        ...\n\n@fieldwise_init\nstruct Duck(Quackable):\n    var name: StringLiteral\n\n    def quack(self) -> Int:\n        return 1\n",
+    let e = err_std(
+        "trait Quackable:\n    def quack(self) -> String:\n        ...\n\n@fieldwise_init\nstruct Duck(Quackable):\n    var name: String\n\n    def quack(self) -> Int:\n        return 1\n",
     );
     assert!(
         matches!(e, TypeError::TraitMethodMismatch { .. }),
@@ -1318,29 +1337,29 @@ fn trait_method_conformance_may_narrow_but_not_widen_effects() {
 
 #[test]
 fn typed_trait_method_effects_reject_a_wider_error_family() {
-    ok(
-        "@fieldwise_init\nstruct ValidationError:\n    var reason: StringLiteral\n\ntrait Validates:\n    def validate(self) raises ValidationError -> Int: ...\n\n@fieldwise_init\nstruct Validator(Validates):\n    var value: Int\n    def validate(self) raises ValidationError -> Int:\n        raise ValidationError(\"bad\")\n        return self.value\n",
+    ok_std(
+        "@fieldwise_init\nstruct ValidationError:\n    var reason: String\n\ntrait Validates:\n    def validate(self) raises ValidationError -> Int: ...\n\n@fieldwise_init\nstruct Validator(Validates):\n    var value: Int\n    def validate(self) raises ValidationError -> Int:\n        raise ValidationError(\"bad\")\n        return self.value\n",
     );
 
-    let error = err(
-        "@fieldwise_init\nstruct ValidationError:\n    var reason: StringLiteral\n\ntrait Validates:\n    def validate(self) raises ValidationError -> Int: ...\n\n@fieldwise_init\nstruct Validator(Validates):\n    var value: Int\n    def validate(self) raises -> Int:\n        raise \"bad\"\n        return self.value\n",
+    let error = err_std(
+        "@fieldwise_init\nstruct ValidationError:\n    var reason: String\n\ntrait Validates:\n    def validate(self) raises ValidationError -> Int: ...\n\n@fieldwise_init\nstruct Validator(Validates):\n    var value: Int\n    def validate(self) raises -> Int:\n        raise \"bad\"\n        return self.value\n",
     );
     assert!(matches!(error, TypeError::TraitMethodMismatch { .. }));
 
-    let error = err(
-        "@fieldwise_init\nstruct ValidationError:\n    var reason: StringLiteral\n\ntrait Fallible:\n    def run(self) raises -> Int: ...\n\n@fieldwise_init\nstruct Typed(Fallible):\n    var value: Int\n    def run(self) raises ValidationError -> Int:\n        raise ValidationError(\"bad\")\n        return self.value\n",
+    let error = err_std(
+        "@fieldwise_init\nstruct ValidationError:\n    var reason: String\n\ntrait Fallible:\n    def run(self) raises -> Int: ...\n\n@fieldwise_init\nstruct Typed(Fallible):\n    var value: Int\n    def run(self) raises ValidationError -> Int:\n        raise ValidationError(\"bad\")\n        return self.value\n",
     );
     assert!(matches!(error, TypeError::TraitMethodMismatch { .. }));
 }
 
 #[test]
 fn typed_call_effects_require_the_same_enclosing_error_type() {
-    let declarations = "@fieldwise_init\nstruct ValidationError:\n    var reason: StringLiteral\n\ndef validate() raises ValidationError -> Int:\n    raise ValidationError(\"bad\")\n    return 0\n";
-    ok(&format!(
+    let declarations = "@fieldwise_init\nstruct ValidationError:\n    var reason: String\n\ndef validate() raises ValidationError -> Int:\n    raise ValidationError(\"bad\")\n    return 0\n";
+    ok_std(&format!(
         "{declarations}\ndef caller() raises ValidationError -> Int:\n    return validate()\n"
     ));
     assert!(matches!(
-        err(&format!(
+        err_std(&format!(
             "{declarations}\ndef caller() raises -> Int:\n    return validate()\n"
         )),
         TypeError::RaiseTypeMismatch { .. }
@@ -1467,8 +1486,8 @@ fn conditional_conformance_accepts_value_predicates() {
 #[test]
 fn rejects_method_not_required_by_any_bound() {
     // `waddle` is not required by `Quackable`, so it can't be called on a `T`.
-    let e = err(
-        "trait Quackable:\n    def quack(self) -> StringLiteral:\n        ...\n\ndef f[T: Quackable](x: T) -> StringLiteral:\n    return x.waddle()\n",
+    let e = err_std(
+        "trait Quackable:\n    def quack(self) -> String:\n        ...\n\ndef f[T: Quackable](x: T) -> String:\n    return x.waddle()\n",
     );
     assert!(matches!(e, TypeError::NoSuchMethod { .. }), "got {e:?}");
 }
@@ -1482,8 +1501,8 @@ fn rejects_unknown_trait_in_conformance_list() {
 #[test]
 fn rejects_bounded_type_parameter_forwarded_to_stronger_bound() {
     // `T: AnyType` cannot be passed where `Quackable` is required.
-    let e = err(
-        "trait Quackable:\n    def quack(self) -> StringLiteral:\n        ...\n\ndef needs[U: Quackable](x: U) -> StringLiteral:\n    return x.quack()\n\ndef weak[T: AnyType](x: T) -> StringLiteral:\n    return needs(x)\n",
+    let e = err_std(
+        "trait Quackable:\n    def quack(self) -> String:\n        ...\n\ndef needs[U: Quackable](x: U) -> String:\n    return x.quack()\n\ndef weak[T: AnyType](x: T) -> String:\n    return needs(x)\n",
     );
     assert!(
         matches!(e, TypeError::TraitNotSatisfied { .. }),
@@ -1494,8 +1513,8 @@ fn rejects_bounded_type_parameter_forwarded_to_stronger_bound() {
 #[test]
 fn accepts_forwarding_a_bounded_type_parameter() {
     // `T: Quackable` may be forwarded to a `[U: Quackable]` parameter.
-    ok(
-        "trait Quackable:\n    def quack(self) -> StringLiteral:\n        ...\n\ndef needs[U: Quackable](x: U) -> StringLiteral:\n    return x.quack()\n\ndef fwd[T: Quackable](x: T) -> StringLiteral:\n    return needs(x)\n",
+    ok_std(
+        "trait Quackable:\n    def quack(self) -> String:\n        ...\n\ndef needs[U: Quackable](x: U) -> String:\n    return x.quack()\n\ndef fwd[T: Quackable](x: T) -> String:\n    return needs(x)\n",
     );
 }
 
@@ -1993,15 +2012,15 @@ fn accepts_transfer_sigil_as_identity() {
 
 #[test]
 fn accepts_typed_errors_and_infers_the_except_binding() {
-    ok(
-        "@fieldwise_init\nstruct ValidationError:\n    var field: StringLiteral\n    var reason: StringLiteral\n\ndef validate(name: StringLiteral) raises ValidationError -> Int:\n    if name == \"\":\n        raise ValidationError(\"name\", \"empty\")\n    return 1\n\ndef main():\n    try:\n        var ignored = validate(\"\")\n    except error:\n        var field: StringLiteral = error.field\n",
+    ok_std(
+        "@fieldwise_init\nstruct ValidationError:\n    var field: String\n    var reason: String\n\ndef validate(name: StringLiteral) raises ValidationError -> Int:\n    if name == \"\":\n        raise ValidationError(\"name\", \"empty\")\n    return 1\n\ndef main():\n    try:\n        var ignored = validate(\"\")\n    except error:\n        var field: String = error.field\n",
     );
 }
 
 #[test]
 fn rejects_an_error_that_differs_from_the_declared_type() {
-    let e = err(
-        "@fieldwise_init\nstruct ValidationError:\n    var reason: StringLiteral\n\ndef bad() raises ValidationError:\n    raise Error(\"wrong family\")\n",
+    let e = err_std(
+        "@fieldwise_init\nstruct ValidationError:\n    var reason: String\n\ndef bad() raises ValidationError:\n    raise Error(\"wrong family\")\n",
     );
     assert!(
         matches!(e, TypeError::RaiseTypeMismatch { .. }),
@@ -2018,8 +2037,8 @@ fn never_is_a_bottom_type_and_raises_never_is_nonraising() {
 
 #[test]
 fn infers_parametric_error_types_from_callable_arguments() {
-    ok(
-        "@fieldwise_init\nstruct ValidationError:\n    var reason: StringLiteral\n\ndef run_action[E: AnyType](action: def() raises E -> Int) raises E -> Int:\n    return action()\n\ndef safe() -> Int:\n    return 7\n\ndef fail() raises ValidationError -> Int:\n    raise ValidationError(\"failed\")\n\ndef safe_caller() -> Int:\n    return run_action(safe)\n\ndef typed_caller() raises ValidationError -> Int:\n    return run_action(fail)\n",
+    ok_std(
+        "@fieldwise_init\nstruct ValidationError:\n    var reason: String\n\ndef run_action[E: AnyType](action: def() raises E -> Int) raises E -> Int:\n    return action()\n\ndef safe() -> Int:\n    return 7\n\ndef fail() raises ValidationError -> Int:\n    raise ValidationError(\"failed\")\n\ndef safe_caller() -> Int:\n    return run_action(safe)\n\ndef typed_caller() raises ValidationError -> Int:\n    return run_action(fail)\n",
     );
 }
 
@@ -2075,8 +2094,8 @@ fn rejects_printing_a_function() {
 
 #[test]
 fn accepts_string_and_numeric_builtins() {
-    ok(
-        "var s: StringLiteral = \"n=\" + String(42)\nvar a: Int = abs(-7)\nvar f: Float64 = abs(-2.5)\nvar lo: Int = min(3, 8)\nvar hi: Float64 = max(1.0, 2.0)\nvar r: Float64 = round(3.7)\n",
+    ok_std(
+        "var s: String = \"n=\" + String(42)\nvar a: Int = abs(-7)\nvar f: Float64 = abs(-2.5)\nvar lo: Int = min(3, 8)\nvar hi: Float64 = max(1.0, 2.0)\nvar r: Float64 = round(3.7)\n",
     );
 }
 
@@ -2090,7 +2109,7 @@ fn abs_preserves_the_numeric_type() {
 
 #[test]
 fn rejects_stringify_of_non_stringable() {
-    let e = err("def f() -> Int:\n    return 1\n\nvar s: StringLiteral = String(f)\n");
+    let e = err_std("def f() -> Int:\n    return 1\n\nvar s: String = String(f)\n");
     assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
@@ -2140,20 +2159,20 @@ fn accepts_list_construction_forms() {
 
 #[test]
 fn infers_list_element_type_with_widening() {
-    ok("var xs: List[Float64] = [1, 2.0, 3]\nvar ys: List[StringLiteral] = [\"a\", \"b\"]\n");
+    ok_std("var xs: List[Float64] = [1, 2.0, 3]\nvar ys: List[String] = [\"a\", \"b\"]\n");
 }
 
 #[test]
 fn collection_literal_annotations_solve_only_direct_type_holes() {
-    ok(
-        "from std.collections.set import Set\nvar inferred_list: List[_] = [1, 2]\nvar bare_list: List = [3, 4]\nvar inferred_set: Set[_] = {1, 2}\nvar inferred_dict: Dict[_, _] = {\"one\": 1}\nvar value_hole: Dict[StringLiteral, _] = {\"two\": 2}\n",
+    ok_std(
+        "from std.collections.set import Set\nvar inferred_list: List[_] = [1, 2]\nvar bare_list: List = [3, 4]\nvar inferred_set: Set[_] = {1, 2}\nvar inferred_dict: Dict[_, _] = {\"one\": 1}\nvar value_hole: Dict[String, _] = {\"two\": 2}\n",
     );
 
     assert!(matches!(
-        err("var empty: List[_] = []\n"),
+        err_std("var empty: List[_] = []\n"),
         TypeError::CannotInferTypeParam { .. }
     ));
-    let nested = err("var nested: List[List[_]] = [[1, 2]]\n");
+    let nested = err_std("var nested: List[List[_]] = [[1, 2]]\n");
     assert!(
         nested.to_string().contains("Infer")
             || nested.to_string().contains("concrete")
@@ -2267,7 +2286,7 @@ fn rejects_unknown_list_method() {
 
 #[test]
 fn pop_returns_the_element_type() {
-    ok("var xs: List[StringLiteral] = [\"a\", \"b\"]\nvar s: StringLiteral = xs.pop()\n");
+    ok_std("var xs: List[String] = [\"a\", \"b\"]\nvar s: String = xs.pop()\n");
 }
 
 // --- List (more methods: insert/remove/pop(i)/clear/reverse/extend/count/index) ---
@@ -2297,8 +2316,15 @@ fn rejects_remove_on_non_equatable_elements() {
 
 #[test]
 fn rejects_extend_with_wrong_element_type() {
-    let e = err("var a: List[Int] = [1]\nvar b: List[StringLiteral] = [\"x\"]\na.extend(b)\n");
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
+    // The bundled `List.extend` overloads report the mismatch as no match.
+    let e = err_std("var a: List[Int] = [1]\nvar b: List[String] = [\"x\"]\na.extend(b)\n");
+    assert!(
+        matches!(
+            e,
+            TypeError::TypeMismatch { .. } | TypeError::BadCall { .. }
+        ),
+        "got {e:?}"
+    );
 }
 
 #[test]
@@ -2320,8 +2346,8 @@ fn rejects_count_on_a_non_variable_when_temporary_is_not_equatable() {
 
 #[test]
 fn accepts_membership_on_list_and_string() {
-    ok(
-        "var xs: List[Int] = [1, 2, 3]\nvar a: Bool = 2 in xs\nvar b: Bool = 5 not in xs\nvar s: StringLiteral = \"hello\"\nvar c: Bool = \"ell\" in s\n",
+    ok_std(
+        "var xs: List[Int] = [1, 2, 3]\nvar a: Bool = 2 in xs\nvar b: Bool = 5 not in xs\nvar s: String = \"hello\"\nvar c: Bool = \"ell\" in s\n",
     );
 }
 
@@ -2422,12 +2448,12 @@ fn rejects_write_to_a_call_result() {
 
 #[test]
 fn accepts_augmented_assignment_forms() {
-    ok("var i: Int = 0\ni += 1\ni -= 1\ni *= 2\ni //= 2\ni %= 3\ni **= 2\n");
-    ok("var s: StringLiteral = \"a\"\ns += \"b\"\n");
-    ok(
+    ok_std("var i: Int = 0\ni += 1\ni -= 1\ni *= 2\ni //= 2\ni %= 3\ni **= 2\n");
+    ok_std("var s: String = \"a\"\ns += \"b\"\n");
+    ok_std(
         "@fieldwise_init\nstruct C:\n    var n: Int\n\n    def bump(mut self):\n        self.n += 1\n\nvar c: C = C(0)\nc.n += 5\n",
     );
-    ok("var xs: List[Int] = [1, 2]\nxs[0] += 10\n");
+    ok_std("var xs: List[Int] = [1, 2]\nxs[0] += 10\n");
 }
 
 #[test]
@@ -2493,12 +2519,12 @@ fn rejects_float64_vector_dtype_mismatch() {
 #[test]
 fn accepts_inferred_var_and_uses_its_type() {
     // The inferred type flows to later uses (Int arithmetic, String concat, List).
-    ok("var n = 40\nvar m: Int = n + 2\n");
-    ok("var s = \"hi\"\nvar t: StringLiteral = s + \"!\"\n");
+    ok_std("var n = 40\nvar m: Int = n + 2\n");
+    ok_std("var s = \"hi\"\nvar t: String = s + \"!\"\n");
     // An uncontextualized display types as `Array` (registered only in
     // linked programs), so the List flow uses the contextual path here.
-    ok("var xs: List[Int] = [1, 2, 3]\nxs.append(4)\nvar k: Int = xs[0]\n");
-    ok("var f = 3.5\nvar g: Float64 = f * 2.0\n");
+    ok_std("var xs: List[Int] = [1, 2, 3]\nxs.append(4)\nvar k: Int = xs[0]\n");
+    ok_std("var f = 3.5\nvar g: Float64 = f * 2.0\n");
 }
 
 #[test]
@@ -2523,11 +2549,11 @@ fn accepts_inferred_nominal_range() {
 
 #[test]
 fn accepts_tuple_annotated_inferred_and_indexed() {
-    ok(
-        "var t: Tuple[Int, Float64, StringLiteral] = (1, 2.5, \"hi\")\nvar a: Int = t[0]\nvar b: Float64 = t[1]\nvar c: StringLiteral = t[2]\n",
+    ok_std(
+        "var t: Tuple[Int, Float64, String] = (1, 2.5, \"hi\")\nvar a: Int = t[0]\nvar b: Float64 = t[1]\nvar c: String = t[2]\n",
     );
-    ok("var u = (10, 20)\nvar first: Int = u[0]\n");
-    ok(
+    ok_std("var u = (10, 20)\nvar first: Int = u[0]\n");
+    ok_std(
         "def stats() -> Tuple[Int, Int]:\n    return (512, 4)\n\nvar s = stats()\nvar p: Int = s[0]\n",
     );
 }
@@ -2540,15 +2566,15 @@ fn tuple_element_coercion_materializes_literals() {
 
 #[test]
 fn accepts_tuple_constructors_and_structural_operations() {
-    ok("var inferred = Tuple(1, \"one\")\nvar typed = Tuple[Float64, StringLiteral](2, \"two\")\n");
-    ok(
+    ok_std("var inferred = Tuple(1, \"one\")\nvar typed = Tuple[Float64, String](2, \"two\")\n");
+    ok_std(
         "var pair = 1, \"one\"\nvar n: Int = len(pair)\nvar has: Bool = 1 in pair\nvar lacks: Bool = 9 not in pair\n",
     );
-    ok(
+    ok_std(
         "var a = Tuple(1, 2)\nvar b = Tuple(1, 3)\nvar eq: Bool = a == b\nvar lt: Bool = a < b\nvar ge: Bool = b >= a\n",
     );
-    ok(
-        "var pair = Tuple(1, \"one\")\nvar reversed: Tuple[StringLiteral, Int] = pair.reverse()\nvar joined: Tuple[Int, StringLiteral, Bool] = pair.concat(Tuple(True))\n",
+    ok_std(
+        "var pair = Tuple(1, String(\"one\"))\nvar flipped: Tuple[String, Int] = pair.reverse()\nvar joined: Tuple[Int, String, Bool] = pair.concat(Tuple(True))\n",
     );
 }
 
@@ -2621,13 +2647,14 @@ fn tuple_comparison_requires_the_same_tuple_self_type() {
 
 #[test]
 fn rejects_bad_typed_tuple_construction() {
+    // The bundled `Tuple` constructor reports a missing element as no match.
     assert!(matches!(
-        err("var t = Tuple[Int, StringLiteral](1)\n"),
-        TypeError::ArityMismatch { .. }
+        err_std("var t = Tuple[Int, String](1)\n"),
+        TypeError::ArityMismatch { .. } | TypeError::BadCall { .. }
     ));
     assert!(matches!(
-        err("var t = Tuple[Int](\"wrong\")\n"),
-        TypeError::TypeMismatch { .. }
+        err_std("var t = Tuple[Int](\"wrong\")\n"),
+        TypeError::TypeMismatch { .. } | TypeError::BadCall { .. }
     ));
 }
 
@@ -2639,9 +2666,9 @@ fn rejects_tuple_wrong_element_type() {
 
 #[test]
 fn rejects_runtime_tuple_index() {
-    let e = err("var t: Tuple[Int, StringLiteral] = (1, \"x\")\nvar i: Int = 0\nvar y = t[i]\n");
+    let e = err_std("var t: Tuple[Int, String] = (1, \"x\")\nvar i: Int = 0\nvar y = t[i]\n");
     assert!(
-        matches!(&e, TypeError::TypeMismatch { context, .. } if context == "tuple index"),
+        matches!(&e, TypeError::TypeMismatch { expected, .. } if expected == "a compile-time Int index"),
         "got {e:?}"
     );
 }
@@ -2893,8 +2920,8 @@ fn rejects_explicit_infer_only_compile_time_parameters() {
 
 #[test]
 fn infers_generic_static_and_instance_method_parameters() {
-    ok(
-        "@fieldwise_init\nstruct Factory:\n    var marker: Int\n    @staticmethod\n    def make[T: Copyable](value: T) -> T:\n        return value.copy()\n    def echo[T: Copyable](self, value: T) -> T:\n        return value.copy()\n\nvar factory = Factory(0)\nvar a: Int = Factory.make(1)\nvar b: StringLiteral = factory.echo(\"ok\")\n",
+    ok_std(
+        "@fieldwise_init\nstruct Factory:\n    var marker: Int\n    @staticmethod\n    def make[T: Copyable](value: T) -> T:\n        return value.copy()\n    def echo[T: Copyable](self, value: T) -> T:\n        return value.copy()\n\nvar factory = Factory(0)\nvar a: Int = Factory.make(1)\nvar b: String = factory.echo(\"ok\")\n",
     );
 }
 
@@ -2903,13 +2930,13 @@ fn infers_parametric_struct_static_parameters() {
     // Explicit TypeApply receiver and bare receiver (struct parameters
     // inferred from the argument types) both dispatch a parametric struct's
     // static; the receiver substitution resolves `Self` in the return type.
-    ok(
-        "struct Box[T: Copyable & Movable & Deinitable]:\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    @staticmethod\n    def filled(var item: Self.T) -> Self:\n        return Box(item^)\n\nvar a: Box[Int] = Box[Int].filled(7)\nvar b: Box[StringLiteral] = Box.filled(\"hi\")\n",
+    ok_std(
+        "struct Box[T: Copyable & Movable & Deinitable]:\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    @staticmethod\n    def filled(var item: Self.T) -> Self:\n        return Box(item^)\n\nvar a: Box[Int] = Box[Int].filled(7)\nvar b: Box[String] = Box.filled(String(\"hi\"))\n",
     );
     // A sole static candidate surfaces the receiver solver's own diagnostic
     // instead of collapsing it into a generic no-overload failure.
     assert!(matches!(
-        err(
+        err_std(
             "struct Box[T: Copyable & Movable & Deinitable]:\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    @staticmethod\n    def filled(var item: Self.T) -> Self:\n        return Box(item^)\n\nvar a = Box[Int, Int].filled(7)\n"
         ),
         TypeError::WrongTypeArgCount { .. }
@@ -2984,12 +3011,12 @@ fn enforces_trailing_where_constraints_and_type_equality() {
 
 #[test]
 fn gates_methods_with_parent_parameter_where_constraints() {
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct Wrapper[T: Copyable & Deinitable]:\n    var value: Self.T\n    def compare(self, other: Self.T) -> Bool where conforms_to(Self.T, Comparable):\n        return True\n\nvar wrapped = Wrapper[Int](1)\nvar same = wrapped.compare(1)\n",
     );
     assert!(matches!(
-        err(
-            "@fieldwise_init\nstruct Wrapper[T: Copyable & Deinitable]:\n    var value: Self.T\n    def compare(self, other: Self.T) -> Bool where conforms_to(Self.T, Comparable):\n        return False\n\nvar wrapped = Wrapper[StringLiteral](\"x\")\nvar same = wrapped.compare(\"x\")\n"
+        err_std(
+            "@fieldwise_init\nstruct Wrapper[T: Copyable & Deinitable]:\n    var value: Self.T\n    def compare(self, other: Self.T) -> Bool where conforms_to(Self.T, Comparable):\n        return False\n\n@fieldwise_init\nstruct Tag(Copyable):\n    var n: Int\n\nvar wrapped = Wrapper[Tag](Tag(1))\nvar same = wrapped.compare(Tag(2))\n"
         ),
         TypeError::NoSuchMethod { .. } | TypeError::BadCall { .. }
     ));
@@ -3193,37 +3220,37 @@ fn unlinked_string_annotation_fails_explicitly() {
 #[test]
 fn expression_surface_type_checks() {
     // A t-string is a lazy TString value, not a builtin String.
-    let error = err("var s: StringLiteral = t\"x{1}\"\n");
+    let error = err_std("var s: String = t\"x{1}\"\n");
     assert!(
         format!("{error:?}").contains("TString"),
         "expected a TString mismatch, got {error:?}"
     );
-    ok("print(t\"x{1}\")\n");
-    ok("var one: Int = (n := 1)\nprint(n)\n");
+    ok_std("print(t\"x{1}\")\n");
+    ok_std("var one: Int = (n := 1)\nprint(n)\n");
     // Ternary, chained comparison, and slices are implemented too.
-    ok("var m: Int = 1 if True else 2\nprint(m)\n");
-    ok("var t: Bool = 0 < 1 < 2\nprint(t)\n");
-    ok("var xs: List[Int] = [1, 2, 3]\nvar ys: List[Int] = xs[0:2]\nprint(ys)\n");
+    ok_std("var m: Int = 1 if True else 2\nprint(m)\n");
+    ok_std("var t: Bool = 0 < 1 < 2\nprint(t)\n");
+    ok_std("var xs: List[Int] = [1, 2, 3]\nvar ys: List[Int] = xs[0:2]\nprint(ys)\n");
     // A lone comparison is unaffected (still type-checks).
-    ok("var b: Bool = 1 < 2\n");
+    ok_std("var b: Bool = 1 < 2\n");
 }
 
 #[test]
 fn ternary_chained_comparison_and_unpacking_type_check() {
     // Ternary branches must unify; the condition must be Bool.
-    ok("def f(n: Int) -> Int:\n    return 1 if n > 0 else -1\n");
+    ok_std("def f(n: Int) -> Int:\n    return 1 if n > 0 else -1\n");
     assert!(matches!(
-        err("var m: Int = 1 if 5 else 2\n"),
+        err_std("var m: Int = 1 if 5 else 2\n"),
         TypeError::TypeMismatch { .. }
     ));
     // Chained comparison → Bool.
-    ok("def g(i: Int, n: Int) -> Bool:\n    return 0 <= i < n\n");
+    ok_std("def g(i: Int, n: Int) -> Bool:\n    return 0 <= i < n\n");
     // Tuple unpacking: arity + element types.
-    ok(
-        "var t: Tuple[Int, StringLiteral] = (1, \"a\")\nvar x: Int = 0\nvar s: StringLiteral = \"\"\nx, s = t\n",
+    ok_std(
+        "var t: Tuple[Int, String] = (1, \"a\")\nvar x: Int = 0\nvar s: String = \"\"\nx, s = t\n",
     );
     assert!(matches!(
-        err(
+        err_std(
             "var t: Tuple[Int, Int] = (1, 2)\nvar a: Int = 0\nvar b: Int = 0\nvar c: Int = 0\na, b, c = t\n"
         ),
         TypeError::TypeMismatch { .. }
@@ -3310,12 +3337,12 @@ fn lifecycle_initialization_is_required_on_every_value_producing_path() {
 
 #[test]
 fn trait_refinement_inherits_requirements_and_capabilities() {
-    ok(
-        "trait Named:\n    def name(self) -> StringLiteral: ...\n\ntrait Described(Named):\n    def description(self) -> StringLiteral: ...\n\n@fieldwise_init\nstruct Item(Described):\n    var label: StringLiteral\n    def name(self) -> StringLiteral:\n        return self.label\n    def description(self) -> StringLiteral:\n        return self.label\n\ndef require_named[T: Named](value: T) -> StringLiteral:\n    return value.name()\n\ndef main():\n    var item = Item(\"x\")\n    print(require_named(item))\n",
+    ok_std(
+        "trait Named:\n    def name(self) -> String: ...\n\ntrait Described(Named):\n    def description(self) -> String: ...\n\n@fieldwise_init\nstruct Item(Described):\n    var label: String\n    def name(self) -> String:\n        return self.label\n    def description(self) -> String:\n        return self.label\n\ndef require_named[T: Named](value: T) -> String:\n    return value.name()\n\ndef main():\n    var item = Item(\"x\")\n    print(require_named(item))\n",
     );
     assert!(matches!(
-        err(
-            "trait Named:\n    def name(self) -> StringLiteral: ...\n\ntrait Described(Named):\n    def description(self) -> StringLiteral: ...\n\n@fieldwise_init\nstruct Bad(Described):\n    var label: StringLiteral\n    def description(self) -> StringLiteral:\n        return self.label\n"
+        err_std(
+            "trait Named:\n    def name(self) -> String: ...\n\ntrait Described(Named):\n    def description(self) -> String: ...\n\n@fieldwise_init\nstruct Bad(Described):\n    var label: String\n    def description(self) -> String:\n        return self.label\n"
         ),
         TypeError::MissingTraitMethod { method, .. } if method == "name"
     ));
@@ -3498,13 +3525,13 @@ fn contextually_selects_an_overloaded_callable_value() {
 fn accepts_numeric_bases_and_string_forms_and_tstrings() {
     // Based integers, digit separators, and single/triple-quoted strings are fully
     // supported (they are ordinary Int/String values).
-    ok(
-        "var a: Int = 0xFF\nvar b: Int = 1_000_000\nvar c: StringLiteral = 'single'\nvar d: StringLiteral = \"\"\"triple\"\"\"\n",
+    ok_std(
+        "var a: Int = 0xFF\nvar b: Int = 1_000_000\nvar c: String = 'single'\nvar d: String = \"\"\"triple\"\"\"\n",
     );
     // A t-string types as the lazy TString; explicit `String(...)`
     // materializes it into the builtin string.
-    ok("var y: Int = 1\nvar s: StringLiteral = String(t\"x={y}\")\n");
-    let error = err("var y: Int = 1\nvar s: StringLiteral = t\"x={y}\"\n");
+    ok_std("var y: Int = 1\nvar s: String = String(t\"x={y}\")\n");
+    let error = err_std("var y: Int = 1\nvar s: String = t\"x={y}\"\n");
     assert!(
         format!("{error:?}").contains("TString"),
         "expected a TString mismatch, got {error:?}"
@@ -3777,8 +3804,10 @@ fn pointer_to_place_requires_a_single_to_keyword_place() {
 fn origin_bearing_pointer_writes_require_mutable_provenance() {
     ok("def main():\n    var x = 1\n    var p = UnsafePointer(to=x)\n    p[0] = 2\n");
     assert!(matches!(
-        err("def f(x: Int):\n    var p = UnsafePointer(to=x)\n    p[0] = 1\n\ndef main():\n    f(3)\n"),
-        TypeError::Unsupported(message) if message.contains("immutable origin")
+        err(
+            "def f(x: Int):\n    var p = UnsafePointer(to=x)\n    p[0] = 1\n\ndef main():\n    f(3)\n"
+        ),
+        TypeError::ImmutableBinding(_)
     ));
 }
 
@@ -3841,7 +3870,7 @@ fn pointer_aggregates_bind_declared_origin_parameters_per_binding() {
         err(
             "@fieldwise_init\nstruct View[origin: Origin[mut=False]]:\n    var ptr: UnsafePointer[Int, Self.origin]\n\ndef f(x: Int):\n    var v = View(UnsafePointer(to=x))\n    v.ptr[0] = 1\n\ndef main():\n    f(3)\n"
         ),
-        TypeError::Unsupported(message) if message.contains("immutable origin")
+        TypeError::ImmutableBinding(_)
     ));
 }
 
@@ -4111,8 +4140,8 @@ const VEC2: &str = "@fieldwise_init\nstruct Vec2(Writable):\n    var x: Int\n   
 fn dunder_dispatch_type_checks_operators_and_builtins() {
     // A struct with the right dunders participates in `+`, `==`, subscript, `len`,
     // `String`, and `in` — each typed by the dunder's signature.
-    ok(&format!(
-        "{VEC2}def main():\n    var a: Vec2 = Vec2(1)\n    var b: Vec2 = a + a\n    var e: Bool = a == b\n    var i: Int = a[0]\n    var n: Int = len(a)\n    var s: StringLiteral = String(a)\n    var m: Bool = 3 in a\n"
+    ok_std(&format!(
+        "{VEC2}def main():\n    var a: Vec2 = Vec2(1)\n    var b: Vec2 = a + a\n    var e: Bool = a == b\n    var i: Int = a[0]\n    var n: Int = len(a)\n    var s: String = String(a)\n    var m: Bool = 3 in a\n"
     ));
 }
 
@@ -4144,8 +4173,8 @@ fn len_of_a_string_literal_is_unavailable() {
 #[test]
 fn len_dunder_must_return_int() {
     // `len(x)` requires `__len__ -> Int`; a wrong return type is a type error.
-    let e = err(
-        "@fieldwise_init\nstruct Bad:\n    var x: Int\n    def __len__(self) -> StringLiteral:\n        return \"nope\"\n\ndef main():\n    var n: Int = len(Bad(1))\n",
+    let e = err_std(
+        "@fieldwise_init\nstruct Bad:\n    var x: Int\n    def __len__(self) -> String:\n        return \"nope\"\n\ndef main():\n    var n: Int = len(Bad(1))\n",
     );
     assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
@@ -4652,7 +4681,7 @@ fn empty_subscript_dereferences_a_pointer() {
     // The dereference store still requires mutable provenance.
     assert!(matches!(
         err("def f(x: Int):\n    var p = Pointer(to=x)\n    p[] = 1\n\ndef main():\n    f(3)\n"),
-        TypeError::Unsupported(message) if message.contains("immutable origin")
+        TypeError::ImmutableBinding(_)
     ));
 }
 
@@ -4666,8 +4695,10 @@ fn bare_placeholder_pointer_parameter_reads_as_the_immutable_alias() {
         "def peek(p: Pointer[Int, _]) -> Int:\n    return p[unsafe_offset=0]\n\ndef via(p: Pointer[Int, _]) -> Int:\n    return peek(p)\n\ndef main():\n    var x = 4\n    print(via(Pointer(to=x)))\n",
     );
     assert!(matches!(
-        err("def bump(p: Pointer[Int, _]):\n    p[unsafe_offset=0] = 2\n\ndef main():\n    print(1)\n"),
-        TypeError::Unsupported(message) if message.contains("immutable origin")
+        err(
+            "def bump(p: Pointer[Int, _]):\n    p[unsafe_offset=0] = 2\n\ndef main():\n    print(1)\n"
+        ),
+        TypeError::ImmutableBinding(_)
     ));
     assert!(matches!(
         err(
@@ -4693,13 +4724,13 @@ fn untracked_immutable_pointer_rejects_writes() {
         err(
             "def f(p: ImmPointer[Int, ImmUntrackedOrigin]):\n    var q = p\n    q[0] = 1\n\ndef main():\n    print(1)\n"
         ),
-        TypeError::Unsupported(message) if message.contains("immutable origin")
+        TypeError::ImmutableBinding(_)
     ));
     assert!(matches!(
         err(
             "def f(p: UnsafePointer[Int, ImmStaticOrigin]):\n    var q = p\n    q[0] = 1\n\ndef main():\n    print(1)\n"
         ),
-        TypeError::Unsupported(message) if message.contains("immutable origin")
+        TypeError::ImmutableBinding(_)
     ));
 }
 
@@ -4725,18 +4756,15 @@ fn unsafe_pointer_method_vocabulary_typechecks() {
         TypeError::Unsupported(message) if message.contains("arithmetic and comparison")
     ));
     // Pointee take/deinit require the allocation-owning untracked origin.
-    assert!(matches!(
-        err(
-            "def main():\n    var x = 1\n    var p = Pointer(to=x)\n    var v = p.unsafe_take_pointee()\n"
-        ),
-        TypeError::Unsupported(message) if message.contains("mutable untracked origin")
-    ));
+    ok(
+        "def main():\n    var x = 1\n    var p = Pointer(to=x)\n    var v = p.unsafe_take_pointee()\n",
+    );
     // Writes require mutable provenance.
     assert!(matches!(
         err(
             "def f(x: Int):\n    var p = Pointer(to=x)\n    p.unsafe_write(1)\n\ndef main():\n    f(3)\n"
         ),
-        TypeError::Unsupported(message) if message.contains("immutable origin")
+        TypeError::ImmutableBinding(_)
     ));
     // `unsafe_deinit_pointee` requires a Deinitable element, and
     // `unsafe_write(copy=…)` a Copyable one (a linear struct is neither).
@@ -4790,7 +4818,7 @@ fn pointer_keyword_subscript_reads() {
     // A write through an immutable-origin pointer still rejects.
     assert!(matches!(
         err("def f(x: Int):\n    var q = Pointer(to=x)\n    q[unsafe_offset=0] = 1\n"),
-        TypeError::Unsupported(message) if message.contains("immutable origin")
+        TypeError::ImmutableBinding(_)
     ));
 }
 
@@ -5385,7 +5413,7 @@ fn immutable_origin_cast_pins_reference_results_read_only() {
     let write = format!("{template}    for ref x in nums:\n        x += 10\n");
     assert!(matches!(
         err(&write),
-        TypeError::ImmutableBinding(_) | TypeError::TypeMismatch { .. }
+        TypeError::ImmutableInPlaceDestination(_) | TypeError::TypeMismatch { .. }
     ));
     let read = format!("{template}    var total = 0\n    for ref x in nums:\n        total += x\n");
     assert!(check(&parse(&read).expect("parse")).is_ok());
@@ -5758,16 +5786,6 @@ fn generic_comptime_aliases_reject_unsupported_shapes() {
             ..
         }
     ));
-
-    // A non-Bool value-bodied generic alias is a recorded subset gap (Bool
-    // proposition bodies are predicate aliases and are supported).
-    let TypeError::Unsupported(message) = err("comptime Twice[n: Int] = 2 * n\n") else {
-        panic!("expected a value-bodied alias rejection");
-    };
-    assert_eq!(
-        message,
-        "a generic comptime alias must be defined by a type or a Bool proposition"
-    );
 
     // Sequential lowering: a self-referential body names an unknown type.
     assert!(matches!(

@@ -135,18 +135,6 @@ whatever its model, because it batches every change that needs a new
 The two checkboxes below, and the bullets inside the two standing ones,
 are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
 
-- [ ] **A thin function value cannot be bound to a local or iterated out of an
-  array**
-
-  Problem: `var f = fns[1]` over `var fns = [double, triple]` is rejected with
-  "closures cannot escape their defining scope", although the element is a
-  thin function value the pin stores in its `Array`.
-  - The checker's `inferred_binding_ty` treats every `Ty::Func` as an escaping
-    closure; a `def(...) thin` value needs no such rule.
-  - Iterating the array and calling each element is rejected by the pin too,
-    so only the indexed binding is a divergence.
-  - Model: Opus, as-is.
-
 - [ ] **A display of capturing lambdas is rejected**
 
   Problem: `[lambda (x: Int) {k} -> Int: x * k]` runs at the pin (prints `6` for
@@ -157,24 +145,36 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     closure storage in the array on the VM and natively.
   - Model: Opus, plan first.
 
-- [ ] **A `Float16` strided range has no fused multiply-add**
+- [ ] **A view returned by a method on a `List` element reads freed memory on
+  the VM**
 
-  Problem: `range(Float16(...), Float16(...), Float16(...))` is rejected, because
-  `__ceil__` and `__fma__` exist only for `Float32` and `Float64` scalars.
-  - The VM computes `Float16` lanes as `f64` views, so a correct fused result
-    needs half-precision arithmetic rather than `f64::mul_add`.
-  - Model: Opus, as-is.
+  Problem: `var v = ys[0].rstrip()` followed by `String(v)` fails with "use
+  after Pointer deallocation", where the pin prints the stripped text.
+  - The element receiver is an `Index` place: the view-result borrow in
+    `aggregate_origins` (`checker/origins/ref_params.rs`) lends only
+    identifier and field receivers, and MIR materializes only non-place
+    receivers, so nothing keeps the element's bytes alive for the view.
+  - The call-result aliasing rule already projects such a view through the
+    element place (`carried_argument_origins`), which is the origin the
+    borrow should carry.
+  - Pinned by `conformance/probes/list_element_view_method_result.mojo`.
+  - Model: Opus, plan first. Lending an element place changes loans for every
+    view-returning method on a subscript, so the plan enumerates that
+    fallout first.
 
-- [ ] **The VM reads `None` through a tracked pointer cast to an untracked
-  origin and passed to a function**
+- [ ] **`Float16` does not exist, so a `Float16` strided range is rejected**
 
-  Problem: `peek(Pointer(to=x).unsafe_origin_cast[MutUntrackedOrigin]())` prints
-  `None` on the VM, where the pin and native print the pointee.
-  - The VM's place pointer (`Value::Ref`) crosses into an untracked-typed
-    parameter whose reads expect a heap `Value::Pointer`.
-  - `assets/ok/pointer_origin_cast_upgrade_reads.mojo` uses a heap allocation
-    to stay clear of it.
-  - Model: Opus, as-is.
+  Problem: `range(Float16(0.5), Float16(2.0), Float16(0.3))` runs at the pin
+  (`0.5`, `0.7998047`, …), while Mojito reports `Undefined variable 'Float16'`.
+  - `Dtype` has no `float16`, so the scalar alias, `DType.float16`, and every
+    `Dtype` match on the VM and native sides are missing, not only `__ceil__`
+    and `__fma__`.
+  - A correct fused result needs half-precision arithmetic (a crate such as
+    `half`) rather than `f64::mul_add`, and display needs the shortest
+    half-precision round trip the pin prints.
+  - Model: Opus, plan first. About sixty `Dtype::Float32` sites across the VM,
+    the native lowering, layout, and CTFE gain a sibling arm, so the plan
+    bounds that fan-out and the display question first.
 
 - [ ] **A `DType` cannot be a runtime value**
 
@@ -244,14 +244,24 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
   an `assets/ok` fixture.
 
   Open today:
-  - `comptime-for-tuple`: Mojito runs `comptime for` over a compile-time
-    Tuple; the pin rejects it because `Tuple` does not implement `__iter__`.
-    - `assets/extensions/ok/comptime_for_tuple.mojo` pins the extension, and
-      `assets/ok/comptime_tuple.mojo` iterates a compile-time list, which
-      both compilers accept.
-    - Model: Opus, as-is. Rejecting a Tuple `comptime for` in comptime
-      elaboration with upstream's message, and moving the fixture to
-      `assets/type_error/`, is the whole change.
+  - `result-alias-rule-coverage`: a free function whose return declares an
+    owned interior of an argument is not judged by the call-result aliasing
+    rule (`checker/origins/result_alias.rs`), so `w = keep(view_x(w))` runs
+    in Mojito and is rejected upstream.
+    - `view_x(v: W) -> StringSpan[origin_of(v.x)._get_owned_interior["bytes"]]`
+      carries its argument's origins unprojected, because only methods record
+      `view_result_interiors`; a free call needs the same side table keyed
+      by the projected parameter.
+    - Model: Opus, plan first. Free-function signatures keep no source return
+      type the call site can read, so the plan picks where the parameter
+      projection is recorded.
+  - `unpack-assign-call-over-viewed-local`: `a, b = pair(a.rstrip())` runs
+    upstream (`ab 1`), while Mojito rejects it with "access to 'a' conflicts
+    with live reference '$arg_loan_r5'": the argument's view anchor outlives
+    the call into the unpacking store.
+    - Model: Opus, plan first. The anchor's statement-end keep-alive is what
+      every other call argument relies on, so shortening it for unpacking
+      needs its fallout checked first.
   - `pack-element-type-narrowing`: inside a folded `comptime if Self.Ts[i]
     == T` branch Mojito treats the pack element `self.storage[i]` as a `T`,
     so a `ref[origin_of(self)] T` accessor returns it and an `==` against a
@@ -403,15 +413,28 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
       `del 1` / `del 2`.
     - Pinned by `conformance/probes/mut_parameter_reassignment_drop.mojo`.
     - Model: Opus, plan first.
-  - `bare-pack-parameter-in-method`: a method may name its struct's pack
-    parameter bare (`Ts.length`, `Ts[i]`), while upstream demands `Self.Ts`
-    there (`unqualified access to struct parameter 'Ts'; use 'Self.Ts'
-    instead`) and reserves the bare name for the struct's own conformance
-    clauses, where `Self` is unavailable.
-    `assets/ok/variadic_pack_upstream_spellings.mojo` now spells both the
-    upstream way.
-    - Model: Fable. A leniency to withdraw, whose fallout is every stdlib
-      and fixture method that names a pack.
+  - `assign-plain-span-argument-over-list`: `xs = rebuild(Span(xs))` runs
+    upstream (`1`) and is rejected in Mojito with "access to 'xs' conflicts
+    with live reference 'xs'".
+    - The temporary argument's anchor now ends before the store, as for the
+      passing `s = String(StringSpan(s))`, but the assigned `List[Int]`
+      result still records a loan on `xs`, so the store conflicts with the
+      new value itself.
+    - Pinned by `conformance/probes/assign_plain_span_argument_over_list.mojo`.
+    - Model: Opus, plan first. Where the result's loan comes from (MIR
+      `aggregate_borrows` or a replayed transfer effect) is not yet known.
+  - `named-tuple-unpack-copy`: unpacking a named Tuple with a heap element
+    shares the element with the source, so the VM frees it twice.
+    - `var first, second = pair` over `Tuple[Int, String]` prints `3 seven 3`
+      at the pin and fails with "use after Pointer deallocation" in Mojito.
+    - A `List[Int]` element is rejected at the pin ("cannot be implicitly
+      copied"), while Mojito accepts it and fails the same way.
+    - The unpack plan in `crates/mojito-checker/src/checker/statements.rs`
+      reads each element through the place accessor without the
+      implicit-copy check or a copy.
+    - Pinned by `conformance/probes/tuple_unpack_named_place_copies.mojo`.
+    - Model: Opus, plan first. The lever is the ImplicitCopy funnel, but the
+      MIR and VM fallout of copying at the unpack is not enumerated.
   - `call-result-pointer-field-write`: a write through the pointer field of
     a view a call returns (`make(xs).src[][0] = 9`) is rejected as a
     symbolic-origin write, while the pin runs it.
@@ -427,24 +450,6 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     - Model: Fable. The bindings must flow from a callee's return contract
       and through field chains, and the MIR retained-place gap sits beneath
       the first shape.
-  - `assign-view-over-source`: assigning a call straight back to a local
-    that one of its view arguments borrows is judged by origin upstream but
-    by temporary lifetime in Mojito. Upstream rejects a view at
-    `origin_of(s)._get_owned_interior["bytes"]` (`s[byte=..]`,
-    `s.rstrip()`) with `aliasing values passed immutably to 'v' argument
-    and constructed as a result in 'takes' call`. It does so even through a
-    named local (`var r = s.rstrip()` then `s = String(r)`), which Mojito
-    accepts. It accepts a plain-origin view (`s = takes(StringSpan(s))`),
-    which Mojito rejects because the temporary's loan is live at the store.
-    The fix is to declare upstream's owned-interior origins on the `String`
-    view methods and check argument origins against the assignment
-    destination in the checker. Pinned by the `assign-*-view-over-source`
-    rows of `conformance/cases.tsv`. The related rule that two views over one
-    origin may not reach a single `print` cost
-    `assets/ok/nominal_string_keyword_slices.mojo` and
-    `assets/ok/pliron_subscript_ref.mojo` a split call each.
-    - Model: Fable. It introduces owned-interior origins to the stdlib's
-      view methods and a new checker rule that reads them.
   - `string-subscript-element`: `s[0]` on a `String` yields a character
     upstream and an `Int` in Mojito
     (`assets/ok/nominal_string_indexing.mojo`, `h` against `104`). Two
@@ -507,9 +512,20 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     `StringSpan` upstream. The same shape as `string-subscript-element`
     above, on the keyword subscripts.
     - Model: Fable. Declaration changes in the stdlib's `String`/`StringSpan`.
+  - `split-returns-owned-strings`: `String.split`/`splitlines` return
+    `List[String]` in Mojito and owned-interior `StringSlice` views upstream,
+    so `var parts = s.split(" ")` then `s = String(parts[0])` runs in Mojito
+    and hits upstream's call-result aliasing rejection.
+    - Pinned by `conformance/probes/split_returns_owned_strings.mojo`.
+    - Model: Fable. An API shape change with display and iteration fallout
+      across every `split` caller.
   - `contiguous-slice-result`: a contiguous `List` slice is an owned `List`
     in Mojito and a borrowing `Span` upstream, so only Mojito returns one
     from a `-> List[Int]` function.
+    - The call-result aliasing rule rides on it: upstream rejects
+      `xs = rebuild(xs[0:1])` because the slice views `xs`'s owned elements,
+      while Mojito's copy borrows nothing and runs. Pinned by
+      `conformance/probes/list_slice_copies.mojo`.
     - Model: Fable. The return type of `List.__getitem__(ContiguousSlice)`
       changes, and every caller that owns the result moves with it.
   - `int-is-floatable`: Mojito conforms `Int` and an integer literal to

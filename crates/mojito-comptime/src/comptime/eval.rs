@@ -341,20 +341,13 @@ impl Elab<'_> {
                         "TypeList[...] takes a pack projection ('Ts.values')".to_string(),
                     ));
                 };
-                let values = match &projection.kind {
-                    ExprKind::Member { object, field }
-                        if field == "values" && matches!(&object.kind, ExprKind::Identifier(_)) =>
-                    {
-                        let ExprKind::Identifier(pack) = &object.kind else {
-                            unreachable!("guarded above");
-                        };
-                        scope.get(pack).cloned().ok_or_else(|| {
-                            ComptimeError::NotComptime(format!(
-                                "unknown compile-time type pack '{pack}'"
-                            ))
-                        })?
-                    }
-                    _ => self.eval(projection, scope)?,
+                let values = match pack_values_projection(projection) {
+                    Some(pack) => scope.get(pack).cloned().ok_or_else(|| {
+                        ComptimeError::NotComptime(format!(
+                            "unknown compile-time type pack '{pack}'"
+                        ))
+                    })?,
+                    None => self.eval(projection, scope)?,
                 };
                 let elements = values.as_sequence("TypeList element pack")?;
                 Ok(make_typelist(elements))
@@ -368,20 +361,13 @@ impl Elab<'_> {
                     ));
                 };
                 let trait_name = mojito_ast::ast::canonical_trait_name(trait_name);
-                let values = match &args[0].kind {
-                    ExprKind::Member { object, field }
-                        if field == "values" && matches!(&object.kind, ExprKind::Identifier(_)) =>
-                    {
-                        let ExprKind::Identifier(pack) = &object.kind else {
-                            unreachable!("guard established a pack identifier")
-                        };
-                        scope.get(pack).cloned().ok_or_else(|| {
-                            ComptimeError::NotComptime(format!(
-                                "unknown compile-time type pack '{pack}'"
-                            ))
-                        })?
-                    }
-                    _ => self.eval(&args[0], scope)?,
+                let values = match pack_values_projection(&args[0]) {
+                    Some(pack) => scope.get(pack).cloned().ok_or_else(|| {
+                        ComptimeError::NotComptime(format!(
+                            "unknown compile-time type pack '{pack}'"
+                        ))
+                    })?,
+                    None => self.eval(&args[0], scope)?,
                 };
                 let types = match values {
                     CtValue::Type(ty) => vec![*ty],

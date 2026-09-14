@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	337
+# swept-count	354
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -43,7 +43,6 @@ assets/origin_error/projected_origin_mismatch.mojo	compile-reject	agree	error: c
 assets/origin_error/returned_loan_conflict.mojo	runs	subset	the pin runs it; Mojito rejects a returned loan that conflicts with a live reference
 assets/origin_error/returned_local.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(source)'
 assets/origin_error/returned_pointer_deref_immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
-assets/ownership_error/assign_call_over_viewed_local.mojo	compile-reject	agree	error: aliasing values passed immutably to 'v' argument and constructed as a result in 'takes' call
 assets/ownership_error/comprehension_interior_invalidation.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference
 assets/ownership_error/conditional_move.mojo	compile-reject	agree	error: use of uninitialized value 'a'
 assets/ownership_error/deinit_receiver_raising_in_try.mojo	compile-reject	agree	error: use of uninitialized value 'o'
@@ -140,6 +139,20 @@ assets/type_error/array_display_length_mismatch.mojo	compile-reject	agree	error:
 assets/type_error/array_display_requires_movable_element.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/array_element_assignment_immutable.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/array_linear_element_needs_explicit_destroy.mojo	compile-reject	agree	error: 'a' abandoned without being explicitly destroyed: Use `deinit_with()` to explicitly destroy an `Array` of non-`Deinitable` elements
+assets/type_error/assign_call_over_viewed_local.mojo	compile-reject	agree	error: aliasing values passed immutably to 'v' argument and constructed as a result in 'takes' call
+assets/type_error/assign_field_interior_view_over_whole.mojo	compile-reject	agree	error: aliasing values passed immutably to 'v' argument and constructed as a result in 'rebox' call
+assets/type_error/assign_interior_element_over_list.mojo	compile-reject	agree	error: aliasing values passed immutably to 'x' argument and constructed as a result in 'rebuild' call
+assets/type_error/assign_interior_mut_element_over_list.mojo	compile-reject	agree	error: aliasing values passed immutably to 'x' argument and constructed as a result in 'rebuild' call
+assets/type_error/assign_interior_view_aggregate_over_source.mojo	compile-reject	agree	error: aliasing values passed immutably to 'h' argument and constructed as a result in 'consume' call
+assets/type_error/assign_interior_view_initializer_over_source.mojo	compile-reject	agree	error: aliasing values passed immutably to 'args' argument and constructed as a result in 'String' initializer call
+assets/type_error/assign_interior_view_over_field.mojo	compile-reject	agree	error: aliasing values passed immutably to 'args' argument and constructed as a result in 'String' initializer call
+assets/type_error/assign_interior_view_over_mut_parameter.mojo	compile-reject	agree	error: aliasing values passed immutably to 'v' argument and constructed as a result in 'takes' call
+assets/type_error/assign_interior_view_over_source.mojo	compile-reject	agree	error: aliasing values passed immutably to 'v' argument and constructed as a result in 'takes' call
+assets/type_error/assign_interior_view_receiver_over_source.mojo	compile-reject	agree	error: aliasing values passed immutably to 'self' argument and constructed as a result in 'upper' call
+assets/type_error/assign_interior_view_through_generic_over_source.mojo	compile-reject	agree	error: aliasing values passed immutably to 'args' argument and constructed as a result in 'String' initializer call
+assets/type_error/assign_named_interior_view_aggregate_over_source.mojo	compile-reject	agree	error: aliasing values passed immutably to 'h' argument and constructed as a result in 'consume' call
+assets/type_error/assign_named_interior_view_over_source.mojo	compile-reject	agree	error: aliasing values passed immutably to 'view' argument and constructed as a result in 'takes' call
+assets/type_error/assign_subscript_call_over_viewed_element.mojo	compile-reject	agree	error: aliasing values passed immutably to 'v' argument and constructed as a result in 'keep' call
 assets/type_error/associated_value_in_type_position.mojo	compile-reject	agree	error: expected a type, not a value
 assets/type_error/bad_operator.mojo	compile-reject	agree	error: no matching method in call to '__add__'
 assets/type_error/bare_move_initializer.mojo	compile-reject	agree	error: 'move' argument must be passed as 'deinit'
@@ -154,6 +167,7 @@ assets/type_error/comptime_collection_runtime_use.mojo	compile-reject	agree	erro
 assets/type_error/comptime_constants.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/comptime_dict_raising_subscript.mojo	compile-reject	agree	error: cannot call raising function in comptime initializer
 assets/type_error/comptime_dict_result_not_freezable.mojo	runs	subset	the pin runs it; Mojito rejects: cannot cross back from VM CTFE
+assets/type_error/comptime_for_tuple.mojo	compile-reject	agree	error: 'Tuple[String, String, String]' does not implement the '__iter__' method
 assets/type_error/comptime_if_instantiated_bad_branch.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["bad"]' value to 'Int'
 assets/type_error/comptime_list_runtime_use.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Array[Int, Int(3)]' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/comptime_struct_missing_field.mojo	compile-reject	agree	error: 'Extent' value has no attribute 'missing'
@@ -276,7 +290,12 @@ assets/type_error/owned_iteration_linear_user_iterator.mojo	compile-reject	agree
 assets/type_error/owned_pack_iteration_linear_break.mojo	compile-reject	agree	error: value of type 'Conn' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/owned_pointer_linear_pointee_must_be_consumed.mojo	compile-reject	agree	error: 'leaked' abandoned without being explicitly destroyed: Use `into_inner()` (for a `Movable` `T`) or `unsafe_take_allocation()` to consume an `OwnedPointer` whose element type is not `Deinitable`
 assets/type_error/owned_pointer_take_is_renamed.mojo	compile-reject	agree	error: 'OwnedPointer[Int]' value has no attribute 'take'
-assets/type_error/pack_bound_violation.mojo	compile-reject	agree	error: 'Pair' parameter 'Ts' has 'Copyable & Deinitable' type, but value has type 'AnyStruct[NoCopy]'
+assets/type_error/pack_alias_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
+assets/type_error/pack_bound_violation.mojo	compile-reject	agreeerror: 'Pair' parameter 'Ts' has 'Copyable & Deinitable' type, but value has type 'AnyStruct[NoCopy]'
+assets/type_error/pack_field_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
+assets/type_error/pack_init_spread_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
+assets/type_error/pack_method_body_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
+assets/type_error/pack_method_where_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
 assets/type_error/pack_struct_init_arity.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/pack_struct_needs_explicit_args.mojo	runs	divergence	the pin runs it; Mojito rejects: variadic struct 'Pair' requires explicit compile-time type arguments
 assets/type_error/pack_struct_runtime_getitem_index.mojo	compile-reject	ledgered	error: invalid call to '__getitem__': unexpected argument
@@ -330,6 +349,7 @@ assets/type_error/span_strided_slice_rejected.mojo	compile-reject	agree	error: n
 assets/type_error/static_origin_local.mojo	compile-reject	agree	error: invalid call to 'observe_static': value passed to 'value' cannot be converted from 'Int' to ref 'Int'
 assets/type_error/static_pointer_alloc_removed.mojo	compile-reject	agree	error: 'Pointer[Int, _]' value has no attribute 'alloc'
 assets/type_error/string_grapheme_slice_rejected.mojo	compile-reject	agree	error: no matching method in call to '__getitem__'
+assets/type_error/string_iadd_view_aliases_receiver.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed immutably to 'other' argument in '__iadd__' call
 assets/type_error/string_len_ambiguous.mojo	compile-reject	agree	error: `len(String/StringSlice)` is not supported because Mojo strings are UTF-8 encoded, so a single length is ambiguous: it could mean the number of UTF-8 bytes, the number of Unicode code points, or the number of user-visible characters (grapheme clusters). Use `s.byte_length()` or `len(s.bytes())` for the number of UTF-8 bytes, `len(s.codepoints())` for Unicode code points, or `len(s.graphemes())` for grapheme clusters.
 assets/type_error/string_literal_positional_slice_removed.mojo	compile-reject	agree	error: String does not support direct positional slicing like `s[a:b]` because Mojo strings are UTF-8 encoded, and the same range can mean different things. Use `s[byte=a:b]` to slice by raw UTF-8 byte positions, or `s[codepoint=a:b]` to slice by Unicode code points.
 assets/type_error/string_span_len_ambiguous.mojo	compile-reject	agree	error: `len(String/StringSlice)` is not supported because Mojo strings are UTF-8 encoded, so a single length is ambiguous: it could mean the number of UTF-8 bytes, the number of Unicode code points, or the number of user-visible characters (grapheme clusters). Use `s.byte_length()` or `len(s.bytes())` for the number of UTF-8 bytes, `len(s.codepoints())` for Unicode code points, or `len(s.graphemes())` for grapheme clusters.

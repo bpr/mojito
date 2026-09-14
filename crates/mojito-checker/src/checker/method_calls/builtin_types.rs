@@ -70,7 +70,9 @@ impl Checker {
                             .to_string(),
                     ));
                 }
-                let target = if origin.statically_mutable() == Some(false) {
+                let target = if origin.statically_mutable() == Some(false)
+                    && target.statically_mutable() == Some(true)
+                {
                     target.immutable()
                 } else {
                     target

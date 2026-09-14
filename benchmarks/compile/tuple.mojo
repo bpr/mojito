@@ -1,14 +1,14 @@
 # Real Mojo's dependent tuple accessor on a variadic-generic struct:
-# `def __getitem__[i: Int](self) -> Ts[i]` unrolls per element at
+# `def __getitem__[i: Int](self) -> Self.Ts[i]` unrolls per element at
 # specialization, so `p[k]` (compile-time-constant k) has the exact
 # per-index element type.
 struct Pair[*Ts: Copyable & Movable](Copyable, Movable):
-    var storage: Tuple[*Ts]
+    var storage: Tuple[*Self.Ts]
 
-    def __init__(out self, var *args: *Ts):
+    def __init__(out self, var *args: *Self.Ts):
         self.storage = Tuple(*args^)
 
-    def __getitem__[i: Int](self) -> Ts[i]:
+    def __getitem__[i: Int](self) -> Self.Ts[i]:
         return self.storage[i]
 
     def __len__(self) -> Int:

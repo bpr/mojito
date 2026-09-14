@@ -831,19 +831,19 @@ struct String(
             j += 1
         return result^
 
-    def __iadd__(mut self, other: Self):
-        var data = unsafe_alloc[Byte](self.size + other.size)
+    def __iadd__(mut self, other: StringSpan):
+        var data = unsafe_alloc[Byte](self.size + other._size)
         var i = 0
         while i < self.size:
             data[i] = self.data[i]
             i += 1
         var j = 0
-        while j < other.size:
-            data[self.size + j] = other.data[j]
+        while j < other._size:
+            data[self.size + j] = other._data[j]
             j += 1
         self.data.unsafe_free()
         self.data = data
-        self.size = self.size + other.size
+        self.size = self.size + other._size
         self.cap = self.size
 
     def __bool__(self) -> Bool:
@@ -1036,30 +1036,32 @@ struct String(
     def graphemes(self) -> _GraphemeIter[origin_of(self)]:
         return _GraphemeIter(StringSpan(self), 0)
 
-    # The strip family returns borrowed views of this buffer (the view's
-    # result carries this String's origin).
-    def strip(self) -> StringSpan[origin_of(self)]:
+    # The strip family returns views borrowing this String's owned bytes
+    # (`_get_owned_interior["bytes"]`, upstream's origin), so a call assigned
+    # straight back over the String is rejected while a plain `StringSpan(s)`
+    # view of it is not.
+    def strip(self) -> StringSpan[origin_of(self)._get_owned_interior["bytes"]]:
         return StringSpan(self).strip()
 
-    def strip(self, chars: StringSpan) -> StringSpan[origin_of(self)]:
+    def strip(self, chars: StringSpan) -> StringSpan[origin_of(self)._get_owned_interior["bytes"]]:
         return StringSpan(self).strip(chars)
 
-    def lstrip(self) -> StringSpan[origin_of(self)]:
+    def lstrip(self) -> StringSpan[origin_of(self)._get_owned_interior["bytes"]]:
         return StringSpan(self).lstrip()
 
-    def lstrip(self, chars: StringSpan) -> StringSpan[origin_of(self)]:
+    def lstrip(self, chars: StringSpan) -> StringSpan[origin_of(self)._get_owned_interior["bytes"]]:
         return StringSpan(self).lstrip(chars)
 
-    def rstrip(self) -> StringSpan[origin_of(self)]:
+    def rstrip(self) -> StringSpan[origin_of(self)._get_owned_interior["bytes"]]:
         return StringSpan(self).rstrip()
 
-    def rstrip(self, chars: StringSpan) -> StringSpan[origin_of(self)]:
+    def rstrip(self, chars: StringSpan) -> StringSpan[origin_of(self)._get_owned_interior["bytes"]]:
         return StringSpan(self).rstrip(chars)
 
-    def removeprefix(self, prefix: StringSpan, /) -> StringSpan[origin_of(self)]:
+    def removeprefix(self, prefix: StringSpan, /) -> StringSpan[origin_of(self)._get_owned_interior["bytes"]]:
         return StringSpan(self).removeprefix(prefix)
 
-    def removesuffix(self, suffix: StringSpan, /) -> StringSpan[origin_of(self)]:
+    def removesuffix(self, suffix: StringSpan, /) -> StringSpan[origin_of(self)._get_owned_interior["bytes"]]:
         return StringSpan(self).removesuffix(suffix)
 
     # Append `count` bytes of `src` from byte offset `start`, doubling the
@@ -1079,7 +1081,7 @@ struct String(
         self.size = needed
 
     # A borrowed view over bytes `[start, end)` of this buffer.
-    def _byte_view(self, start: Int, end: Int) -> StringSpan[origin_of(self)]:
+    def _byte_view(self, start: Int, end: Int) -> StringSpan[origin_of(self)._get_owned_interior["bytes"]]:
         var view = StringSpan(self)
         view._data = view._data.unsafe_offset(start)
         view._size = end - start
@@ -1155,7 +1157,7 @@ struct String(
     # explicitly and violations abort. Byte endpoints must fall on UTF-8
     # codepoint boundaries; the result is a borrowed `StringSpan` view of
     # this String's buffer.
-    def __getitem__(ref self, *, byte: ContiguousSlice) -> StringSpan[origin_of(self)]:
+    def __getitem__(ref self, *, byte: ContiguousSlice) -> StringSpan[origin_of(self)._get_owned_interior["bytes"]]:
         var start = byte.start.or_else(0)
         var end = byte.end.or_else(self.size)
         check_slice_bounds(start, end, self.size)
@@ -1168,7 +1170,7 @@ struct String(
         view._size = end - start
         return view^
 
-    def __getitem__(ref self, *, codepoint: ContiguousSlice) -> StringSpan[origin_of(self)]:
+    def __getitem__(ref self, *, codepoint: ContiguousSlice) -> StringSpan[origin_of(self)._get_owned_interior["bytes"]]:
         var view = StringSpan(self)
         var total = view.count_codepoints()
         var start = codepoint.start.or_else(0)

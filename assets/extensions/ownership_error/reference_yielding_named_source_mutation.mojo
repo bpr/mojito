@@ -1,4 +1,5 @@
 # expect: conflicts with live reference
+# requires: stdlib
 # A user reference-yielding iterator borrows its *named* source for the duration
 # of the loop (a live shared loan). Mutating that source while iterating — here a
 # `mut self` method call that overwrites the borrowed storage — is rejected by the

@@ -334,11 +334,12 @@ def main():
 
 #[test]
 fn simd_lane_writes_preserve_bounds_traps() {
-    for (dtype, width, value) in [
-        ("int32", 4, "7"),
-        ("float32", 4, "1.5"),
-        ("bool", 4, "True"),
-        ("int32", 1, "7"),
+    // A multi-lane bool mask splats one Bool only through `fill=`.
+    for (dtype, width, value, splat) in [
+        ("int32", 4, "7", "7"),
+        ("float32", 4, "1.5", "1.5"),
+        ("bool", 4, "True", "fill=True"),
+        ("int32", 1, "7", "7"),
     ] {
         for index in [-1, width] {
             let name = format!("simd-lane-write-{dtype}-{width}-{index}");
@@ -348,7 +349,7 @@ def write(mut v: SIMD[DType.{dtype}, {width}], i: Int):
     v[i] = {value}
 
 def main():
-    var v = SIMD[DType.{dtype}, {width}]({value})
+    var v = SIMD[DType.{dtype}, {width}]({splat})
     write(v, {index})
     print(v)
 "

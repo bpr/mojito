@@ -229,6 +229,7 @@ impl Checker {
                         parametric_origin_writes: sig.parametric_origin_writes.clone(),
                         instantiation: None,
                         parameter_names: Vec::new(),
+                        view_return_interior: Vec::new(),
                     });
                 }
             }
@@ -1037,6 +1038,7 @@ impl Checker {
                                     parametric_origin_writes: sig.parametric_origin_writes.clone(),
                                     instantiation: instantiation.clone(),
                                     parameter_names: sig.names.clone(),
+                                    view_return_interior: sig.view_return_interior.clone(),
                                     param_types: params,
                                     param_decls: sig.decls.clone(),
                                 });
@@ -1195,6 +1197,7 @@ impl Checker {
                         parametric_origin_writes: sig.parametric_origin_writes.clone(),
                         instantiation: None,
                         parameter_names: Vec::new(),
+                        view_return_interior: Vec::new(),
                     });
                 }
                 select_method_overload(
@@ -1244,6 +1247,7 @@ impl Checker {
                     parametric_origin_writes: Vec::new(),
                     instantiation: None,
                     parameter_names: Vec::new(),
+                    view_return_interior: Vec::new(),
                 }))
             }
             // Hashable scalar leaves contribute themselves to the
@@ -1291,6 +1295,7 @@ impl Checker {
                     parametric_origin_writes: vec![],
                     instantiation: None,
                     parameter_names: Vec::new(),
+                    view_return_interior: Vec::new(),
                 }))
             }
             // A `Float64`'s fused multiply-add (`k.__fma__(step, start)`, a
@@ -1336,6 +1341,7 @@ impl Checker {
                     parametric_origin_writes: vec![],
                     instantiation: None,
                     parameter_names: Vec::new(),
+                    view_return_interior: Vec::new(),
                 }))
             }
             // `x.__floor__()` / `x.__ceildiv__(y)` on a concrete type
@@ -1387,6 +1393,7 @@ impl Checker {
                     parametric_origin_writes: vec![],
                     instantiation: None,
                     parameter_names: Vec::new(),
+                    view_return_interior: Vec::new(),
                 }))
             }
             _ => Ok(None),
@@ -1859,6 +1866,16 @@ impl Checker {
             args,
             kwargs,
         )?;
+        if resolved.self_convention == Some(ArgConvention::Mut) {
+            self.check_mutable_receiver_carried_aliases(
+                object,
+                method,
+                &resolved.parameter_names,
+                &resolved.slots,
+                args,
+                kwargs,
+            )?;
+        }
         self.borrowed_read_call_places
             .borrow_mut()
             .extend(borrowable_read_arguments(
@@ -2103,6 +2120,11 @@ impl Checker {
                             materialized: None,
                         },
                     );
+                if !resolved.view_return_interior.is_empty() {
+                    self.view_result_interiors
+                        .borrow_mut()
+                        .insert(span.clone(), resolved.view_return_interior.clone());
+                }
                 // An owning temporary receiver (`String("abc").codepoints()`)
                 // has no place to lend, so materialize it as an anonymous
                 // owned binding: the hidden slot gives the loan a real place
@@ -2118,6 +2140,20 @@ impl Checker {
                     let _ = self.materialize_borrow_owner(object, resolved.mutates_receiver);
                 }
             }
+            self.call_parameters.borrow_mut().insert(
+                span.clone(),
+                resolved
+                    .parameter_names
+                    .iter()
+                    .zip(&resolved.conventions)
+                    .zip(&resolved.param_types)
+                    .map(|((name, convention), ty)| crate::checker::CallParameter {
+                        name: name.clone(),
+                        convention: *convention,
+                        ty: ty.clone(),
+                    })
+                    .collect(),
+            );
             self.selected_calls.borrow_mut().insert(
                 span,
                 mojito_checked::checked::CheckedCallContract {

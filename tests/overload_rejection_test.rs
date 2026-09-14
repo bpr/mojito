@@ -213,7 +213,7 @@ fn generic_constraint_messages_do_not_distinguish_overloads() {
 #[test]
 fn rejects_duplicate_method_differing_only_in_return_type() {
     assert_redeclaration(
-        "@fieldwise_init\nstruct C:\n    var n: Int\n    def m(self) -> Int:\n        return self.n\n    def m(self) -> StringLiteral:\n        return \"x\"\n",
+        "@fieldwise_init\nstruct C:\n    var n: Int\n    def m(self) -> Int:\n        return self.n\n    def m(self) -> Bool:\n        return True\n",
         "m",
     );
 }
@@ -463,10 +463,10 @@ fn method_literal_uses_its_default_type() {
 
 #[test]
 fn reports_substitution_induced_method_ambiguity_as_ambiguous() {
-    // On `Pair[StringLiteral]`, `m(Self.T)` and `m(String)` substitute to the same
+    // On `Pair[Int]`, `m(Self.T)` and `m(Int)` substitute to the same
     // signature; the tie must be reported as ambiguity, not "no method".
     match err(
-        "@fieldwise_init\nstruct Pair[T: Copyable & Movable & Deinitable]:\n    var a: Self.T\n    def m(self, x: Self.T) -> Int:\n        return 0\n    def m(self, x: StringLiteral) -> Int:\n        return 1\n\nvar p: Pair[StringLiteral] = Pair(\"hi\")\nvar r: Int = p.m(\"x\")\n",
+        "@fieldwise_init\nstruct Pair[T: Copyable & Movable & Deinitable]:\n    var a: Self.T\n    def m(self, x: Self.T) -> Int:\n        return 0\n    def m(self, x: Int) -> Int:\n        return 1\n\nvar p: Pair[Int] = Pair(5)\nvar r: Int = p.m(7)\n",
     ) {
         TypeError::BadCall { reason, .. } => {
             assert!(reason.contains("ambiguous"), "got: {reason}");

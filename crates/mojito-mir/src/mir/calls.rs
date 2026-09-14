@@ -918,7 +918,7 @@ impl Flatten<'_> {
     /// would drop the source before the call runs when the argument is the
     /// source's last use — so it anchors in every argument list: one loan on
     /// the source, never a duplicate of a channel that does not exist.
-    fn anchor_temporary_argument(
+    pub(super) fn anchor_temporary_argument(
         &mut self,
         expression: &Expr,
         value: Reg,

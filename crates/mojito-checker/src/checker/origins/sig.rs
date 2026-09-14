@@ -24,6 +24,51 @@ pub(in crate::checker) fn interior_origin_syntax(expr: &Expr) -> Option<(&Expr, 
     (field == "_get_owned_interior").then_some((base, name.as_str()))
 }
 
+/// The owned-interior tags a struct-typed return annotation projects on its
+/// receiver origin, innermost first:
+/// `StringSpan[origin_of(self)._get_owned_interior["bytes"]]` gives
+/// `["bytes"]`. A base under `self` (`origin_of(self.items)`) widens to the
+/// receiver, as an abstract signature's `origin_of` does. Any other return,
+/// or a projection over a non-receiver base, gives no tags.
+pub(in crate::checker) fn view_return_interior_tags(ret: Option<&SourceType>) -> Vec<String> {
+    let Some(SourceType::Named(_, arguments)) = ret else {
+        return Vec::new();
+    };
+    arguments
+        .iter()
+        .find_map(|argument| {
+            let mut expression = match argument {
+                mojito_ast::ast::ParamArg::Value(expression) => expression,
+                mojito_ast::ast::ParamArg::Named { value, .. } => match value.as_ref() {
+                    mojito_ast::ast::ParamArg::Value(expression) => expression,
+                    _ => return None,
+                },
+                mojito_ast::ast::ParamArg::Type(_) => return None,
+            };
+            let mut tags = Vec::new();
+            while let Some((base, tag)) = interior_origin_syntax(expression) {
+                tags.push(tag.to_string());
+                expression = base;
+            }
+            if tags.is_empty() {
+                return None;
+            }
+            let ExprKind::Call { name, args, .. } = &expression.kind else {
+                return None;
+            };
+            let [place] = args.as_slice() else {
+                return None;
+            };
+            (name == "origin_of"
+                && matches!(crate::checker::places::place_path(place), Some(("self", _))))
+            .then(|| {
+                tags.reverse();
+                tags
+            })
+        })
+        .unwrap_or_default()
+}
+
 /// Recognize the experimental conservative-origin spelling `base._subtree`
 /// (current Mojo's `Origin._subtree` member). Like `_get_owned_interior`, it is
 /// accepted only in origin positions — this pass, Pointer origin arguments and

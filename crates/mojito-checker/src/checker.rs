@@ -560,6 +560,15 @@ pub struct Checker {
     /// Kept separate from operation adjustments because a Variant projection,
     /// for example, carries both facts at the same checked node.
     interior_references: RefCell<HashMap<SourceSpan, mojito_types::origin::OriginPlace>>,
+    /// Per view-returning method call, the owned-interior tags its declared
+    /// return origin projects on the receiver (see
+    /// [`MethodSig::view_return_interior`]). Checker-only: MIR loans stay
+    /// whole-place.
+    view_result_interiors: RefCell<HashMap<SourceSpan, Vec<String>>>,
+    /// Per selected call, the callee's runtime parameters in declaration
+    /// order, for rules that name a parameter or read a free call's
+    /// conventions (free calls record no `CheckedCallContract`).
+    call_parameters: RefCell<HashMap<SourceSpan, Vec<CallParameter>>>,
     /// Mutations which invalidate interior generations below checked bases.
     interior_invalidations:
         RefCell<HashMap<SourceSpan, Vec<mojito_checked::checked::InteriorInvalidation>>>,
@@ -742,6 +751,8 @@ impl Checker {
             storage_origin_demands: RefCell::new(None),
             tuple_unpack_plans: RefCell::new(HashMap::new()),
             interior_references: RefCell::new(HashMap::new()),
+            view_result_interiors: RefCell::new(HashMap::new()),
+            call_parameters: RefCell::new(HashMap::new()),
             interior_invalidations: RefCell::new(HashMap::new()),
             declaration_types: RefCell::new(HashMap::new()),
             generic_parameters: RefCell::new(HashMap::new()),
@@ -1789,6 +1800,10 @@ struct MethodSig {
     self_convention: Option<mojito_ast::ast::ArgConvention>,
     ref_params: Vec<Option<mojito_types::origin::RefSig>>,
     ref_return: Option<mojito_types::origin::RefSig>,
+    /// The owned-interior tags a struct-typed view return projects on the
+    /// receiver's origin (`-> StringSpan[origin_of(self)._get_owned_interior["bytes"]]`
+    /// is `["bytes"]`), innermost first. Empty for every other return.
+    view_return_interior: Vec<String>,
     implicit: bool,
     /// Origin parameters the body writes through via a parametric-mut ref
     /// field subscript (`self.field[i] = v`). The write is legal only for
@@ -1826,6 +1841,7 @@ impl MethodSig {
             self_convention: None,
             ref_params: vec![None; len],
             ref_return: None,
+            view_return_interior: Vec::new(),
             implicit: false,
             parametric_origin_writes: Vec::new(),
             origin_binders: vec![None; len],
@@ -2028,6 +2044,15 @@ struct MethodCallResolution {
     instantiation: Option<Vec<TyArg>>,
     /// The selected signature's runtime parameter names, in declaration order.
     parameter_names: Vec<String>,
+    /// See [`MethodSig::view_return_interior`].
+    view_return_interior: Vec<String>,
+}
+
+/// One runtime parameter of a selected callee, recorded per call site.
+struct CallParameter {
+    name: String,
+    convention: Option<ArgConvention>,
+    ty: Ty,
 }
 
 type SubscriptDescriptorPlan = (Vec<Option<SliceKind>>, bool);

@@ -1,4 +1,4 @@
-# expect: immutable origin
+# expect: expression must be mutable in assignment
 # A bare placeholder-origin pointer parameter (`Pointer[T, _]`) infers its
 # origin per call, so the body cannot prove the mutable capability a write
 # through it needs: upstream rejects the store ("expression must be mutable

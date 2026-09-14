@@ -339,6 +339,7 @@ impl Checker {
                     parametric_origin_writes: sig.parametric_origin_writes.clone(),
                     instantiation: instantiation.clone(),
                     parameter_names: sig.names.clone(),
+                    view_return_interior: sig.view_return_interior.clone(),
                 });
             }
         }

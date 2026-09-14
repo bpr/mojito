@@ -413,6 +413,9 @@ pub enum ComptimeError {
     BadArithmetic(String),
     /// A `comptime for` iterable was not a `range(...)` / tuple / list.
     BadRange(String),
+    /// A `comptime for` iterable whose type has no `__iter__` (a compile-time
+    /// Tuple); the payload is the type's spelling.
+    NotIterable(String),
     /// A CTFE call had the wrong number of arguments.
     Arity(String),
     /// An inferred type-pack element failed one of the pack's trait bounds at
@@ -423,6 +426,10 @@ pub enum ComptimeError {
     GenericBound(Box<GenericBoundError>),
     /// A fully specialized declaration's trailing `where` predicate was false.
     Constraint(String),
+    /// A variadic struct member spelled the struct's own pack bare, where
+    /// upstream requires `Self.Ts`; the message is upstream's diagnostic, the
+    /// same text the checker reports for a non-pack parameter.
+    UnqualifiedStructParam(String),
     /// The compile-time step/iteration quota was exceeded (a likely infinite loop).
     QuotaExceeded,
 }
@@ -459,7 +466,12 @@ impl std::fmt::Display for ComptimeError {
             Self::BadRange(s) => {
                 write!(f, "'comptime for' needs a range(...)/tuple/list: {s}")
             }
+            Self::NotIterable(ty) => write!(f, "'{ty}' does not implement the '__iter__' method"),
             Self::Arity(s) => write!(f, "compile-time call arity: {s}"),
+            Self::UnqualifiedStructParam(name) => write!(
+                f,
+                "unqualified access to struct parameter '{name}'; use 'Self.{name}' instead"
+            ),
             Self::PackBound(error) => {
                 let PackBoundError {
                     function,
@@ -595,6 +607,7 @@ pub fn elaborate_with_requests(
             .or_default()
             .push(request.arguments().to_vec());
     }
+    pack_qualification::qualify_struct_packs(&mut program)?;
     synthesize_copyable_copy(&mut program);
     synthesize_hashable_hash(&mut program);
     desugar_simd_keyed_methods(&mut program);
@@ -716,6 +729,7 @@ pub fn elaborate_with_requests(
 mod crossing;
 mod ctfe_calls;
 mod elab;
+mod pack_qualification;
 mod packs;
 mod params;
 mod simd_width;
@@ -739,6 +753,31 @@ fn mk(kind: StmtKind, span: Span) -> Stmt {
         span,
         module: None,
         syntax_id: mojito_common::token::SyntaxId::fresh(),
+    }
+}
+
+/// The pack an expression names, bare (`Ts`, a `def`'s own pack) or through
+/// `Self` (`Self.Ts`, a struct's pack inside its members).
+fn pack_name(expression: &Expr) -> Option<&str> {
+    match &expression.kind {
+        ExprKind::Identifier(name) => Some(name),
+        ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(base) if base == "Self") => {
+            Some(field)
+        }
+        _ => None,
+    }
+}
+
+/// Whether an expression names the pack `binding` in either spelling.
+fn names_pack(expression: &Expr, binding: &str) -> bool {
+    pack_name(expression) == Some(binding)
+}
+
+/// The pack a `.values` projection names: `Ts.values` or `Self.Ts.values`.
+fn pack_values_projection(expression: &Expr) -> Option<&str> {
+    match &expression.kind {
+        ExprKind::Member { object, field } if field == "values" => pack_name(object),
+        _ => None,
     }
 }
 
@@ -2019,7 +2058,8 @@ mod tuple_request_tests {
     use mojito_ast::ast::{ExprKind, StmtKind};
     use mojito_types::types::tuple_type;
 
-    const TEMPLATE: &str = "struct Tuple[*Ts: AnyType]:\n    var storage: __RuntimeTuple[*Ts]\n\n";
+    const TEMPLATE: &str =
+        "struct Tuple[*Ts: AnyType]:\n    var storage: __RuntimeTuple[*Self.Ts]\n\n";
 
     fn bare_call(program: &[mojito_ast::ast::Stmt]) -> &mojito_ast::ast::Expr {
         program

@@ -541,7 +541,9 @@ impl Checker {
         args: &[mojito_ast::ast::ParamArg],
     ) -> Result<Option<CtValue>, TypeError> {
         if args.is_empty() {
-            if let Some(ty) = scalar_type_name(name) {
+            // A type value names the nominal `String`, not the compile-time
+            // literal type a `[text: String]` value parameter binds.
+            if let Some(ty) = scalar_type_name(name).filter(|ty| *ty != Ty::StringLiteral) {
                 return Ok(Some(CtValue::Type(Box::new(ty))));
             }
             if name == "None" {
@@ -765,18 +767,11 @@ impl Checker {
             ExprKind::Call {
                 name, args, kwargs, ..
             } if name == "conforms_to" && kwargs.is_empty() && args.len() == 2 => {
-                let (param, pack) = match &args[0].kind {
-                    ExprKind::Identifier(param) => (param.clone(), false),
-                    ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
+                let (param, pack) = match (pack_values_projection(&args[0]), &args[0].kind) {
+                    (Some(pack), _) => (pack.to_string(), true),
+                    (None, ExprKind::Identifier(param)) => (param.clone(), false),
+                    (None, ExprKind::Member { object, field }) if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
                         (field.clone(), false)
-                    }
-                    ExprKind::Member { object, field }
-                        if field == "values" && matches!(&object.kind, ExprKind::Identifier(_)) =>
-                    {
-                        let ExprKind::Identifier(param) = &object.kind else {
-                            unreachable!()
-                        };
-                        (param.clone(), true)
                     }
                     _ => {
                         return Err(TypeError::Unsupported(
@@ -963,23 +958,17 @@ impl Checker {
                 args,
                 kwargs,
             } if name == "TypeList" && args.is_empty() && kwargs.is_empty() => {
-                let [
-                    mojito_ast::ast::ParamArg::Value(Expr {
-                        kind: ExprKind::Member { object, field },
-                        ..
-                    }),
-                ] = param_args.as_slice()
-                else {
+                let [mojito_ast::ast::ParamArg::Value(projection)] = param_args.as_slice() else {
                     return Err(TypeError::Unsupported(
                         "TypeList[...] takes a pack projection ('Ts.values')".to_string(),
                     ));
                 };
-                let (ExprKind::Identifier(pack), "values") = (&object.kind, field.as_str()) else {
+                let Some(pack) = pack_values_projection(projection) else {
                     return Err(TypeError::Unsupported(
                         "TypeList[...] takes a pack projection ('Ts.values')".to_string(),
                     ));
                 };
-                Ok(Some(TypeListReceiver::Pack(pack.clone())))
+                Ok(Some(TypeListReceiver::Pack(pack.to_string())))
             }
             ExprKind::Invoke {
                 callee,
@@ -1576,6 +1565,25 @@ pub(super) fn assoc_param_kind(param: &mojito_ast::ast::TypeParam) -> AssocParam
         AssocParamKind::Value
     } else {
         AssocParamKind::Type
+    }
+}
+
+/// The pack a `.values` projection names: `Ts.values` (a `def`'s own pack)
+/// or `Self.Ts.values` (a struct's pack inside its members).
+fn pack_values_projection(expression: &Expr) -> Option<&str> {
+    let ExprKind::Member { object, field } = &expression.kind else {
+        return None;
+    };
+    if field != "values" {
+        return None;
+    }
+    match &object.kind {
+        ExprKind::Identifier(pack) => Some(pack),
+        ExprKind::Member {
+            object: base,
+            field: pack,
+        } if matches!(&base.kind, ExprKind::Identifier(name) if name == "Self") => Some(pack),
+        _ => None,
     }
 }
 

@@ -51,9 +51,11 @@ impl Checker {
 
     /// The source spelling `StringLiteral`: upstream parameterizes the type
     /// by the literal's value, so the bare spelling is concrete only as a
-    /// whole parameter annotation, where the value infers per call.
+    /// whole parameter annotation, where the value infers per call. A
+    /// generated tuple specialization stamps an inferred literal element
+    /// with the same spelling, so it is concrete there too.
     pub(super) fn bare_string_literal(&self) -> Result<Ty, TypeError> {
-        if self.bare_string_literal_parameter.get() {
+        if self.bare_string_literal_parameter.get() || self.allow_generated_tuple_forward_types {
             Ok(Ty::StringLiteral)
         } else {
             Err(TypeError::Unsupported(

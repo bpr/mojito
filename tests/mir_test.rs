@@ -1891,7 +1891,7 @@ fn method_call_temporary_view_argument_anchors_its_source_loan() {
     // A loan-carrying temporary built inline as a METHOD argument anchors in
     // a hidden `$arg_loan_r` slot exactly like a plain call's (this callee
     // has no transfer effects or checker-selected `ref`-argument borrows to
-    // carry the loan), and the statement-end `KeepAlive` keeps the view's
+    // carry the loan), and the post-call `KeepAlive` keeps the view's
     // source alive through the call.
     let source = "def main():\n    var a: List[Int] = [1, 2]\n    var b = List[Int]()\n    b.extend(Span(a))\n    print(b[1])\n";
     let compiler = Compiler::default().with_snippet_module_scope();
@@ -1946,7 +1946,7 @@ fn parameterized_static_temporary_view_arguments_anchor_their_source_loans() {
     // argument anchors in a hidden `$arg_loan_r` slot for BOTH
     // static-receiver parses — the TypeApply spelling (`Pair[Int,
     // String].sum(...)`) and the single-argument subscript spelling
-    // (`Tally[Int].total(...)`) — and each statement-end `KeepAlive` keeps
+    // (`Tally[Int].total(...)`) — and each post-call `KeepAlive` keeps
     // the view's source alive through its call.
     let source = include_str!("../assets/ok/span_temp_static_argument.mojo");
     let compiler = Compiler::default().with_snippet_module_scope();
@@ -2003,6 +2003,79 @@ fn parameterized_static_temporary_view_arguments_anchor_their_source_loans() {
             "the `{list}` anchor outlives the {callee} call"
         );
     }
+}
+
+#[test]
+fn assignment_flushes_temporary_argument_anchors_before_the_store() {
+    // A plain-origin view temporary passed to a call assigned straight back
+    // over its source: the anchor's `KeepAlive` follows the call but precedes
+    // the store into `s`, because upstream destroys the temporary at the call.
+    let source =
+        "def main():\n    var s = String(\"abc\")\n    s = String(StringSpan(s))\n    print(s)\n";
+    let compiler = Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile assignment over a plain view temporary");
+    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let (_, main) = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered");
+    let s = main
+        .var_names
+        .iter()
+        .position(|name| name == "s")
+        .expect("s slot") as u32;
+    let anchor = main
+        .var_names
+        .iter()
+        .position(|name| name.starts_with("$arg_loan"))
+        .expect("hidden argument anchor slot") as u32;
+    let instructions = main
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .collect::<Vec<_>>();
+    let keep_alive = instructions
+        .iter()
+        .position(
+            |instruction| matches!(instruction, MirInstr::KeepAlive { var } if *var == anchor),
+        )
+        .expect("the anchor flushes as a KeepAlive");
+    let anchored = instructions
+        .iter()
+        .position(|instruction| {
+            matches!(
+                instruction,
+                MirInstr::EstablishLoans { reference, .. } if *reference == anchor
+            )
+        })
+        .expect("the anchor slot borrows the view's source");
+    let call = instructions[anchored..keep_alive]
+        .iter()
+        .position(|instruction| {
+            matches!(
+                instruction,
+                MirInstr::Call { .. } | MirInstr::MethodCall { .. }
+            )
+        });
+    assert!(
+        call.is_some(),
+        "the String call follows the anchor and precedes its KeepAlive"
+    );
+    let store = instructions
+        .iter()
+        .rposition(|instruction| match instruction {
+            MirInstr::DefVar { var, .. } => *var == s,
+            MirInstr::Store { place, .. } => place.root == s,
+            _ => false,
+        })
+        .expect("the assignment stores into s");
+    assert!(
+        keep_alive < store,
+        "the anchor's loans end before the store into s"
+    );
 }
 
 #[test]

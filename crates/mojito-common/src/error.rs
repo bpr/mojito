@@ -157,6 +157,19 @@ pub enum TypeError {
     ImmutableBinding(String),
     /// An augmented assignment whose destination binding is immutable.
     ImmutableInPlaceDestination(String),
+    /// A call assigned back over its destination borrows an owned interior
+    /// of that destination through one of its direct arguments.
+    AliasingResultArgument {
+        parameter: String,
+        callee: String,
+        initializer: bool,
+    },
+    /// A `mut self` method call whose direct argument carries a borrow of the
+    /// receiver's storage (`s += s.rstrip()`).
+    AliasingMutableReceiverArgument {
+        parameter: String,
+        callee: String,
+    },
     /// A reference return is rooted in storage not named by its declared origin.
     ReturnsReferenceToLocal,
     /// A store into storage that outlives the frame carries a loan rooted in
@@ -537,6 +550,27 @@ impl fmt::Display for TypeError {
                     "expression must be mutable for in-place operator destination ('{name}')"
                 )
             }
+            Self::AliasingResultArgument {
+                parameter,
+                callee,
+                initializer,
+            } => {
+                let call = if *initializer {
+                    "initializer call"
+                } else {
+                    "call"
+                };
+                write!(
+                    f,
+                    "aliasing values passed immutably to '{parameter}' argument and \
+                     constructed as a result in '{callee}' {call}"
+                )
+            }
+            Self::AliasingMutableReceiverArgument { parameter, callee } => write!(
+                f,
+                "aliasing values passed mutably to 'self' argument and passed immutably \
+                 to '{parameter}' argument in '{callee}' call"
+            ),
             Self::AssignToUndeclared(name) => {
                 write!(
                     f,

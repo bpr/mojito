@@ -1181,7 +1181,7 @@ impl Elab<'_> {
         type_pack_expansions.insert(binding.clone(), source_types.clone());
         let mut specialized_associated = associated.clone();
         for member in &mut specialized_associated {
-            if matches!(&member.value.kind, ExprKind::Identifier(name) if name == &binding) {
+            if names_pack(&member.value, &binding) {
                 member.value.kind = ExprKind::TupleLit(
                     source_types
                         .iter()
@@ -2346,8 +2346,7 @@ impl Elab<'_> {
                 let pack_matches = matches!(
                     &args[0].kind,
                     ExprKind::Member { object, field }
-                        if field == "values"
-                            && matches!(&object.kind, ExprKind::Identifier(name) if name == binding)
+                        if field == "values" && names_pack(object, binding)
                 );
                 if !pack_matches {
                     return Ok(expression.clone());
@@ -2376,18 +2375,7 @@ impl Elab<'_> {
                 let ExprKind::Member { object, field } = &callee.kind else {
                     return Ok(expression.clone());
                 };
-                let names_pack = match &object.kind {
-                    ExprKind::Identifier(name) => name == binding,
-                    ExprKind::Member {
-                        object: base,
-                        field: name,
-                    } => {
-                        name == binding
-                            && matches!(&base.kind, ExprKind::Identifier(base) if base == "Self")
-                    }
-                    _ => false,
-                };
-                if !names_pack
+                if !names_pack(object, binding)
                     || !matches!(
                         field.as_str(),
                         "all_conforms_to" | "contains" | "all" | "any"

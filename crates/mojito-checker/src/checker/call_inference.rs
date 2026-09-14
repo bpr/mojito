@@ -105,7 +105,12 @@ impl Checker {
         self.overload_targets
             .borrow_mut()
             .insert(span.clone(), "String".to_string());
-        self.implicit_conversions.borrow_mut().insert(span, target);
+        // As in `nominal_string_wrap`: a view conversion already recorded at
+        // this span supersedes the wrap.
+        self.implicit_conversions
+            .borrow_mut()
+            .entry(span)
+            .or_insert(target);
         Ok(nominal)
     }
 
@@ -123,7 +128,13 @@ impl Checker {
         else {
             return Ok(Ty::StringLiteral);
         };
-        self.implicit_conversions.borrow_mut().insert(span, target);
+        // A view conversion of the produced temporary (`s.startswith(String(5))`
+        // at a `StringSpan` parameter) shares this span and supersedes the wrap;
+        // re-inferring the argument must not revert it.
+        self.implicit_conversions
+            .borrow_mut()
+            .entry(span)
+            .or_insert(target);
         Ok(nominal)
     }
 
@@ -652,6 +663,7 @@ impl Checker {
                         // residues exactly like the single-callable path.
                         self.apply_transfer_effects(name, None, args, &span)?;
                         self.record_call_through(name, &prepared, args);
+                        self.record_call_parameter_names(&span, &prepared);
                         let callee_decls = match &prepared {
                             Ty::GenericFunc { decls, .. } => decls.as_slice(),
                             _ => &[],
@@ -822,11 +834,44 @@ impl Checker {
                 .insert(span.clone(), target);
         }
         self.record_view_result_borrow(&span, &ret);
+        self.record_call_parameter_names(&span, &ty);
         if let Some(error) = error.filter(|ty| *ty != Ty::Never) {
             self.record_call_effect(span, error.clone());
             self.require_error(format!("call to raising function '{name}'"), error)?;
         }
         Ok(ret)
+    }
+
+    /// Record a direct callable's runtime parameters for the call at `span`;
+    /// a callable struct value records none.
+    fn record_call_parameter_names(&self, span: &SourceSpan, callee: &Ty) {
+        if let Ty::Func {
+            names,
+            params,
+            conventions,
+            ..
+        }
+        | Ty::GenericFunc {
+            names,
+            params,
+            conventions,
+            ..
+        } = callee
+        {
+            self.call_parameters.borrow_mut().insert(
+                span.clone(),
+                names
+                    .iter()
+                    .zip(params)
+                    .zip(conventions)
+                    .map(|((name, ty), convention)| super::CallParameter {
+                        name: name.clone(),
+                        convention: *convention,
+                        ty: ty.clone(),
+                    })
+                    .collect(),
+            );
+        }
     }
 
     /// A non-method call whose result is a ref-field struct (a borrowing

@@ -82,7 +82,11 @@ pub enum Type {
     /// `Self.T` — one of the enclosing struct's own type parameters, referenced
     /// from inside its body (Mojo spelling; a bare `T` is not in scope there).
     /// The checker also accepts it as a shorthand for a type-valued associated
-    /// member when there is no struct parameter by that name.
+    /// member when there is no struct parameter by that name. The qualified
+    /// pack spread `*Self.Ts` keeps the leading `*` in the name
+    /// (`SelfParam("*Ts")`); the elaborator's pack-qualification pass folds
+    /// it onto the bare `Named("*Ts")` spread once a struct's members are
+    /// known to qualify every use.
     SelfParam(String),
     /// `Base.Member` in type position — an associated type/comptime member lookup
     /// on a type parameter, `Self`, or a concrete type. `args` is the parameter

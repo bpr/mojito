@@ -1,4 +1,5 @@
 # expect: conflicts with live reference
+# requires: stdlib
 # A comprehension over a named user iterable borrows its source with the same
 # whole-place shared loan as a `for` statement. Mutating that source while the
 # comprehension's borrowing iterator is live — here a `mut self` method call in

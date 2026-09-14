@@ -12,5 +12,5 @@
 #
 # The error is the pin's FIRST complaint, so it can mask a later one: lifting
 # a mask moves a row to another family rather than deleting it.
-# swept-count	464
+# swept-count	498
 fixture	family	first-error

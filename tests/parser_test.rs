@@ -2137,6 +2137,36 @@ fn retains_variadic_type_pack_declarations_and_uses() {
 }
 
 #[test]
+fn keeps_the_qualified_pack_spread_apart_from_the_bare_one() {
+    // `*Self.Ts` is the struct's own pack spelled from inside a member; the
+    // parser keeps it distinct from a bare `*Ts` so the elaborator can reject
+    // the bare spelling in a member.
+    let parsed = parse(
+        "struct Pair[*Ts: Movable]:\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple[*Self.Ts](*args^)\n",
+    );
+    let StmtKind::Struct {
+        fields, methods, ..
+    } = &parsed[0].kind
+    else {
+        panic!("expected struct declaration")
+    };
+    let spread = ParamArg::Type(Type::SelfParam("*Ts".into()));
+    assert_eq!(
+        fields[0].ty,
+        Type::Named("Tuple".into(), vec![spread.clone()])
+    );
+    assert_eq!(methods[0].params[0].ty, Type::SelfParam("*Ts".into()));
+    let StmtKind::SetPlace { value, .. } = &methods[0].body[0].kind else {
+        panic!("expected the field store")
+    };
+    assert!(
+        matches!(&value.kind, ExprKind::Call { name, param_args, .. }
+            if name == "Tuple" && param_args == &[spread.clone()]),
+        "got {value:?}"
+    );
+}
+
+#[test]
 fn parses_positional_only_and_keyword_only_markers() {
     let (p, slash, star) = def_params("def mn(a: Int, b: Int, /) -> Int:\n    return a\n");
     assert_eq!(p.len(), 2);

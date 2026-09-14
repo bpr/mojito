@@ -6,13 +6,13 @@
 # captured elements in source order, so print/String() consume a TString
 # through the ordinary Writable machinery.
 struct TString[*Ts: Movable & Writable](Movable, Writable):
-    var storage: Tuple[*Ts]
+    var storage: Tuple[*Self.Ts]
 
-    def __init__(out self, var *args: *Ts):
+    def __init__(out self, var *args: *Self.Ts):
         self.storage = Tuple(*args^)
 
     def write_to(self, mut writer: Some[Writer]):
-        comptime for i in range(len(Ts)):
+        comptime for i in range(len(Self.Ts)):
             # The unrolled iterations share one scope, so the ref binding
             # needs a nested block; the ref read keeps non-Copyable
             # captured values legal where a value read would demand a copy.

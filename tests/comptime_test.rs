@@ -171,7 +171,7 @@ fn runtime_pack_spread_rejects_shadowing_value_bindings() {
     let nested = "def inspect[*Ts: Movable & Deinitable](var *args: *Ts):\n    def nested(var args: Tuple[Int, Int]):\n        print(Tuple(*args^))\n    nested(Tuple(9, 10))\n\ndef main():\n    inspect(1, True)\n";
     let loop_binding = "def inspect[*Ts: Movable & Deinitable](var *args: *Ts):\n    for args in [Tuple(9, 10)]:\n        print(Tuple(*args))\n\ndef main():\n    inspect(1, True)\n";
     let comprehension = "def inspect[*Ts: Movable & Deinitable](var *args: *Ts):\n    var lengths = [len(Tuple(*args)) for args in [Tuple(9, 10)]]\n    print(lengths[0])\n\ndef main():\n    inspect(1, True)\n";
-    let sibling_method = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n    def __init__(out self, var *args: *Ts):\n        self.storage = Tuple(*args^)\n    def shadow(self, var args: Tuple[Int, Int]):\n        print(Tuple(*args^))\n\ndef main():\n    var pair = Pair[Int](1)\n    pair.shadow(Tuple(9, 10))\n";
+    let sibling_method = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n    def shadow(self, var args: Tuple[Int, Int]):\n        print(Tuple(*args^))\n\ndef main():\n    var pair = Pair[Int](1)\n    pair.shadow(Tuple(9, 10))\n";
 
     for source in [block, nested, loop_binding, comprehension, sibling_method] {
         let error = run(source).unwrap_err();
@@ -822,7 +822,7 @@ fn variadic_struct_specialization_folds_a_diagnostic_where_clause() {
 fn variadic_struct_specializes_with_per_index_typed_storage() {
     // `p.storage[0]` has the exact element type (Int here), so it participates
     // in Int arithmetic; `p.storage[1]` is exactly Bool.
-    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\ndef main():\n    var p = Pair[Int, Bool]((1, True))\n    var n: Int = p.storage[0] + 41\n    var b: Bool = p.storage[1]\n    print(n)\n    print(b)\n";
+    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    var p = Pair[Int, Bool]((1, True))\n    var n: Int = p.storage[0] + 41\n    var b: Bool = p.storage[1]\n    print(n)\n    print(b)\n";
     assert_eq!(run(src).unwrap(), "42\nTrue\n");
 }
 
@@ -830,7 +830,7 @@ fn variadic_struct_specializes_with_per_index_typed_storage() {
 fn variadic_struct_element_type_mismatch_is_rejected() {
     // Per-index typing is exact: reading the Int element into a Bool is a type
     // error, not a common-bound erasure.
-    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\ndef main():\n    var p = Pair[Int, Bool]((1, True))\n    var b: Bool = p.storage[0]\n    print(b)\n";
+    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    var p = Pair[Int, Bool]((1, True))\n    var b: Bool = p.storage[0]\n    print(b)\n";
     let err = run(src).unwrap_err();
     assert!(err.contains("expected Bool, found Int"), "got: {err}");
 }
@@ -840,7 +840,7 @@ fn variadic_struct_distinct_instantiations_coexist() {
     // Two specializations of one template are distinct concrete structs with
     // independent field types (regression: annotation sites keyed by span
     // collided across specializations sharing the template's span).
-    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\ndef main():\n    var a = Pair[Int, Bool]((1, True))\n    var b = Pair[Int, Int]((2, 3))\n    var c = Pair[String]((\"solo\",))\n    print(a.storage[0] + b.storage[1])\n    print(c.storage[0])\n";
+    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    var a = Pair[Int, Bool]((1, True))\n    var b = Pair[Int, Int]((2, 3))\n    var c = Pair[String]((\"solo\",))\n    print(a.storage[0] + b.storage[1])\n    print(c.storage[0])\n";
     assert_eq!(run(src).unwrap(), "4\nsolo\n");
 }
 
@@ -849,13 +849,13 @@ fn variadic_struct_annotations_and_methods_use_the_specialization() {
     // The struct type appears in a def parameter annotation (rewritten to the
     // specialized struct), and a concrete method runs against the expanded
     // storage.
-    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\n    def size(self) -> Int:\n        return len(self.storage)\n\ndef first_int(p: Pair[Int, Bool]) -> Int:\n    return p.storage[0]\n\ndef main():\n    var p: Pair[Int, Bool] = Pair[Int, Bool]((1, True))\n    var q = p.copy()\n    print(first_int(q))\n    print(q.size())\n";
+    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def size(self) -> Int:\n        return len(self.storage)\n\ndef first_int(p: Pair[Int, Bool]) -> Int:\n    return p.storage[0]\n\ndef main():\n    var p: Pair[Int, Bool] = Pair[Int, Bool]((1, True))\n    var q = p.copy()\n    print(first_int(q))\n    print(q.size())\n";
     assert_eq!(run(src).unwrap(), "1\n2\n");
 }
 
 #[test]
 fn variadic_struct_requires_explicit_type_arguments() {
-    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\ndef main():\n    var p = Pair((1, True))\n    print(p.storage[0])\n";
+    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    var p = Pair((1, True))\n    print(p.storage[0])\n";
     let err = run(src).unwrap_err();
     assert!(
         err.contains("variadic struct 'Pair' requires explicit compile-time type arguments"),
@@ -865,7 +865,7 @@ fn variadic_struct_requires_explicit_type_arguments() {
 
 #[test]
 fn variadic_struct_bare_template_use_is_rejected() {
-    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\ndef main():\n    var x = Pair\n    print(\"unreachable\")\n";
+    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    var x = Pair\n    print(\"unreachable\")\n";
     let err = run(src).unwrap_err();
     assert!(
         err.contains("variadic struct 'Pair' requires explicit compile-time type arguments"),
@@ -876,7 +876,7 @@ fn variadic_struct_bare_template_use_is_rejected() {
 #[test]
 fn variadic_struct_supports_exactly_one_pack() {
     // One trailing pack and no other compile-time parameters (current scope).
-    let src = "@fieldwise_init\nstruct Bad[T: Copyable & Movable, *Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\ndef main():\n    var x = Bad[Int, Bool]((True,))\n    print(\"unreachable\")\n";
+    let src = "@fieldwise_init\nstruct Bad[T: Copyable & Movable, *Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    var x = Bad[Int, Bool]((True,))\n    print(\"unreachable\")\n";
     let err = run(src).unwrap_err();
     assert!(
         err.contains("supports exactly one type-parameter pack"),
@@ -886,7 +886,7 @@ fn variadic_struct_supports_exactly_one_pack() {
 
 #[test]
 fn variadic_struct_runtime_index_is_rejected() {
-    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\ndef main():\n    var p = Pair[Int, Bool]((1, True))\n    var i = 0\n    print(p.storage[i])\n";
+    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    var p = Pair[Int, Bool]((1, True))\n    var i = 0\n    print(p.storage[i])\n";
     let err = run(src).unwrap_err();
     assert!(err.contains("compile-time Int index"), "got: {err}");
 }
@@ -896,13 +896,13 @@ fn variadic_struct_pack_init_constructs_per_position() {
     // Real Mojo's Tuple constructor shape: `var *args: *Ts` binds the
     // heterogeneous pack (each argument checked against its per-index element
     // type) and `Tuple(*args^)` transfers the elements into storage.
-    let src = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\n    def __init__(out self, var *args: *Ts):\n        self.storage = Tuple(*args^)\n\n    def size(self) -> Int:\n        return len(self.storage)\n\ndef main():\n    var p = Pair[Int, String, Bool](7, \"x\", False)\n    print(p.size())\n    print(p.storage[0])\n    print(p.storage[1])\n    print(p.storage[2])\n";
+    let src = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n    def size(self) -> Int:\n        return len(self.storage)\n\ndef main():\n    var p = Pair[Int, String, Bool](7, \"x\", False)\n    print(p.size())\n    print(p.storage[0])\n    print(p.storage[1])\n    print(p.storage[2])\n";
     assert_eq!(run(src).unwrap(), "3\n7\nx\nFalse\n");
 }
 
 #[test]
 fn variadic_struct_pack_init_rejects_wrong_arity_and_types() {
-    let template = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\n    def __init__(out self, var *args: *Ts):\n        self.storage = Tuple(*args^)\n\n";
+    let template = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n";
     // Too few arguments for the pack.
     let arity = format!(
         "{template}def main():\n    var p = Pair[Int, String](1)\n    print(p.storage[0])\n"
@@ -929,7 +929,7 @@ fn variadic_struct_dependent_getitem_unrolls_per_element() {
     // unrolls into one concrete accessor per pack element at specialization;
     // `p[k]` requires a compile-time-constant index, has the exact element
     // type, and dispatches the checker-resolved accessor.
-    let src = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\n    def __init__(out self, var *args: *Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem__[i: Int](self) -> Ts[i]:\n        return self.storage[i]\n\n    def __len__(self) -> Int:\n        return len(self.storage)\n\ndef main():\n    var p = Pair[Int, String, Bool](7, \"mid\", True)\n    var n: Int = p[0]\n    var s: String = p[1]\n    var b: Bool = p[2]\n    print(n)\n    print(s)\n    print(b)\n    print(len(p))\n";
+    let src = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem__[i: Int](self) -> Self.Ts[i]:\n        return self.storage[i]\n\n    def __len__(self) -> Int:\n        return len(self.storage)\n\ndef main():\n    var p = Pair[Int, String, Bool](7, \"mid\", True)\n    var n: Int = p[0]\n    var s: String = p[1]\n    var b: Bool = p[2]\n    print(n)\n    print(s)\n    print(b)\n    print(len(p))\n";
     assert_eq!(run_compiled(src).unwrap(), "7\nmid\nTrue\n3\n");
 }
 
@@ -938,13 +938,13 @@ fn current_getitem_param_hook_handles_places_and_rvalues() {
     // Current Mojo spells a compile-time parameter subscript hook
     // `__getitem_param__`. A place preserves its reference result, while an
     // implicitly-copyable rvalue uses the generated value-returning twin.
-    let src = "struct CurrentPair[*Ts: ImplicitlyCopyable & Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\n    def __init__(out self, var *args: *Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem_param__[i: Int](ref self) -> ref[origin_of(self)] Ts[i]:\n        return self.storage[i]\n\ndef main():\n    var pair = CurrentPair[Int, String](7, \"current\")\n    print(pair[0], pair[1])\n    print(CurrentPair[Int, String](9, \"rvalue\")[0])\n";
+    let src = "struct CurrentPair[*Ts: ImplicitlyCopyable & Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem_param__[i: Int](ref self) -> ref[origin_of(self)] Self.Ts[i]:\n        return self.storage[i]\n\ndef main():\n    var pair = CurrentPair[Int, String](7, \"current\")\n    print(pair[0], pair[1])\n    print(CurrentPair[Int, String](9, \"rvalue\")[0])\n";
     assert_eq!(run_compiled(src).unwrap(), "7 current\n9\n");
 }
 
 #[test]
 fn current_getitem_param_reference_result_can_bind_an_explicit_ref() {
-    let src = "struct CurrentPair[*Ts: ImplicitlyCopyable & Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\n    def __init__(out self, var *args: *Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem_param__[i: Int](ref self) -> ref[origin_of(self)] Ts[i]:\n        return self.storage[i]\n\ndef main():\n    var pair = CurrentPair[Int, String](7, \"current\")\n    ref alias = pair[0]\n    alias += 5\n    print(alias)\n    print(pair[0])\n";
+    let src = "struct CurrentPair[*Ts: ImplicitlyCopyable & Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem_param__[i: Int](ref self) -> ref[origin_of(self)] Self.Ts[i]:\n        return self.storage[i]\n\ndef main():\n    var pair = CurrentPair[Int, String](7, \"current\")\n    ref alias = pair[0]\n    alias += 5\n    print(alias)\n    print(pair[0])\n";
     assert_eq!(run_compiled(src).unwrap(), "12\n12\n");
 }
 
@@ -957,13 +957,13 @@ fn general_getitem_param_hook_uses_a_checked_value_parameter() {
 #[test]
 fn variadic_struct_dependent_getitem_dispatches_per_instantiation() {
     // Two specializations resolve their own accessor families independently.
-    let src = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\n    def __init__(out self, var *args: *Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem__[i: Int](self) -> Ts[i]:\n        return self.storage[i]\n\ndef main():\n    var a = Pair[Int, Bool](1, True)\n    var b = Pair[String, Int](\"s\", 5)\n    print(a[0] + b[1])\n    print(b[0])\n";
+    let src = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem__[i: Int](self) -> Self.Ts[i]:\n        return self.storage[i]\n\ndef main():\n    var a = Pair[Int, Bool](1, True)\n    var b = Pair[String, Int](\"s\", 5)\n    print(a[0] + b[1])\n    print(b[0])\n";
     assert_eq!(run_compiled(src).unwrap(), "6\ns\n");
 }
 
 #[test]
 fn variadic_struct_dependent_getitem_rejects_bad_indices() {
-    let template = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\n    def __init__(out self, var *args: *Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem__[i: Int](self) -> Ts[i]:\n        return self.storage[i]\n\n";
+    let template = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem__[i: Int](self) -> Self.Ts[i]:\n        return self.storage[i]\n\n";
     // A runtime-varying index cannot select among heterogeneous elements.
     let runtime = format!(
         "{template}def main():\n    var p = Pair[Int, Bool](1, True)\n    var i = 0\n    print(p[i])\n"
@@ -989,14 +989,14 @@ fn variadic_struct_bound_violation_rejects_via_spec_conformance() {
     // (non-Copyable element inside a Copyable struct) is rejected when the
     // specialization's declared conformances are verified. Def-pack bounds are
     // diagnosed independently at their requesting call, before specialization.
-    let src = "struct NoCopy(Movable):\n    var x: Int\n\n    def __init__(out self, x: Int):\n        self.x = x\n\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\n    def __init__(out self, var *args: *Ts):\n        self.storage = Tuple(*args^)\n\ndef main():\n    var p = Pair[NoCopy, Int](NoCopy(1), 2)\n    print(p.storage[1])\n";
+    let src = "struct NoCopy(Movable):\n    var x: Int\n\n    def __init__(out self, x: Int):\n        self.x = x\n\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\ndef main():\n    var p = Pair[NoCopy, Int](NoCopy(1), 2)\n    print(p.storage[1])\n";
     let err = run(src).unwrap_err();
     assert!(err.contains("not Copyable"), "got: {err}");
 }
 
 #[test]
 fn associated_type_facts_request_nested_variadic_struct_specializations() {
-    let src = "@fieldwise_init\nstruct Nested[*Ts: Movable](Movable):\n    pass\n\n@fieldwise_init\nstruct Family[*Ts: Movable](Movable):\n    comptime NestedType = Nested[*Ts]\n    var marker: Int\n\ndef main():\n    var value = Family[Int, Bool](42)\n    print(value.marker)\n";
+    let src = "@fieldwise_init\nstruct Nested[*Ts: Movable](Movable):\n    pass\n\n@fieldwise_init\nstruct Family[*Ts: Movable](Movable):\n    comptime NestedType = Nested[*Self.Ts]\n    var marker: Int\n\ndef main():\n    var value = Family[Int, Bool](42)\n    print(value.marker)\n";
     assert_eq!(run(src).unwrap(), "42\n");
 }
 
@@ -1158,4 +1158,50 @@ fn conditional_conformance_refines_a_comptime_alias_body() {
         err.contains("does not conform to trait 'Copyable'"),
         "{err}"
     );
+}
+
+#[test]
+fn variadic_struct_members_spell_the_struct_pack_through_self() {
+    // Upstream's rule: inside a struct's members the struct's own pack is
+    // `Self.Ts`; a bare `Ts` in a field type, a `comptime` member, a method
+    // signature, an availability clause, or a body reports upstream's text.
+    let header =
+        "struct Bag[*Ts: Movable](Deinitable where Ts.all_conforms_to[Deinitable](), Movable):\n";
+    let init = "    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple[*Self.Ts](*args^)\n";
+    let main = "\ndef main():\n    var b = Bag[Int, Bool](1, True)\n    print(b.storage[0])\n";
+    let bare = [
+        format!("{header}    var storage: Tuple[*Ts]\n{init}{main}"),
+        format!(
+            "{header}    comptime element_types = Ts\n    var storage: Tuple[*Self.Ts]\n{init}{main}"
+        ),
+        format!(
+            "{header}    var storage: Tuple[*Self.Ts]\n    def __init__(out self, var *args: *Ts):\n        self.storage = Tuple[*Self.Ts](*args^)\n{main}"
+        ),
+        format!(
+            "{header}    var storage: Tuple[*Self.Ts]\n{init}    def first[i: Int](self) -> Ts[i]:\n        return self.storage[i]\n{main}"
+        ),
+        format!(
+            "{header}    var storage: Tuple[*Self.Ts]\n{init}    def count(self) -> Int where Ts.all_conforms_to[Copyable]():\n        return Self.Ts.length\n{main}"
+        ),
+        format!(
+            "{header}    var storage: Tuple[*Self.Ts]\n{init}    def count(self) -> Int:\n        comptime for i in range(len(Ts)):\n            pass\n        return Self.Ts.length\n{main}"
+        ),
+    ];
+    for src in &bare {
+        let err = run(src).unwrap_err();
+        assert!(
+            err.contains("unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead"),
+            "{src}\n{err}"
+        );
+    }
+}
+
+#[test]
+fn struct_header_and_method_own_packs_keep_the_bare_name() {
+    // The header has no `Self`: conformance clauses and the trailing `where`
+    // name the pack bare. A method's own pack is its own binding, and
+    // `conforms_to(Self.Ts.values, X)` on a method folds like
+    // `Self.Ts.all_conforms_to[X]()`.
+    let src = "struct Bag[*Ts: Movable](\n    Copyable where Ts.all_conforms_to[Copyable](),\n    Deinitable where Ts.all_conforms_to[Deinitable](),\n    Movable,\n) where (conforms_to(Ts.values, Movable), \"pack elements must be Movable\"):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple[*Self.Ts](*args^)\n\n    def count(self) -> Int where conforms_to(Self.Ts.values, Copyable):\n        return Self.Ts.length\n\n    def tally[*Us: Movable](self, var *extra: *Us) -> Int:\n        var total = Self.Ts.length\n        comptime for i in range(Us.length):\n            total += 1\n        return total\n\ndef main():\n    var b = Bag[Int, Bool](1, True)\n    print(b.count())\n    print(b.tally(7, \"x\", False))\n";
+    assert_eq!(run(src).unwrap(), "2\n5\n");
 }

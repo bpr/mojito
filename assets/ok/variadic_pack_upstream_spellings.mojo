@@ -5,8 +5,8 @@
 # with `==`, and conditional conformances and method availability spell
 # `where Ts.all_conforms_to[Trait]()`. A struct's own conformance clauses
 # name the parameter bare, because `Self` is not available there; everywhere
-# inside a method it is `Self.Ts` (Mojito also accepts the bare name there —
-# see the divergence ledger in `docs/roadmap.md`).
+# inside a member it is `Self.Ts` (`assets/type_error/pack_*_unqualified.mojo`
+# pin the bare spellings both compilers reject).
 struct Bag[*Ts: Movable](
     Copyable where Ts.all_conforms_to[Copyable](),
     Deinitable where Ts.all_conforms_to[Deinitable](),

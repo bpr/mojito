@@ -5,15 +5,15 @@
 from std.builtin.tuple import Tuple
 
 struct PackTuple[*Ts: Copyable & Movable](Copyable, Movable):
-    var storage: Tuple[*Ts]
+    var storage: Tuple[*Self.Ts]
 
-    def __init__(out self, var *args: *Ts):
-        self.storage = Tuple[*Ts](*args^)
+    def __init__(out self, var *args: *Self.Ts):
+        self.storage = Tuple[*Self.Ts](*args^)
 
-    def __getitem__[index: Int](self) -> Ts[index]:
+    def __getitem__[index: Int](self) -> Self.Ts[index]:
         return self.storage[index]
 
-    def __getitem_param__[index: Int](self) -> Ts[index]:
+    def __getitem_param__[index: Int](self) -> Self.Ts[index]:
         return self.storage[index]
 
     def __len__(self) -> Int:

@@ -24,7 +24,7 @@ struct TypeNames[*Ts: Movable](ImplicitlyCopyable, Movable, Writable):
         self._unused = 0
 
     def write_to(self, mut writer: Some[Writer]):
-        var full = String(_unqualified_type_name[Tuple[*Ts]]())
+        var full = String(_unqualified_type_name[Tuple[*Self.Ts]]())
         # "Tuple[" is six bytes; the closing bracket is the last one.
         var names = full[byte=6:full.byte_length() - 1]
         writer.write(names)

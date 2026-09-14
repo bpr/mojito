@@ -633,6 +633,23 @@ impl Checker {
                         if !self.is_binding_mutable(name) {
                             return Err(TypeError::ImmutableBinding(name.clone()));
                         }
+                        // Judged before the old value's invalidation, so the
+                        // diagnostic names the aliasing call, not a stale use.
+                        let destination = match &target {
+                            Ty::Ref(reference) => match &reference.origin {
+                                mojito_types::origin::Origin::Place(place) => Some(place.clone()),
+                                _ => None,
+                            },
+                            _ => self.lookup_owner(name).map(|root| {
+                                mojito_types::origin::OriginPlace {
+                                    root,
+                                    path: Vec::new(),
+                                }
+                            }),
+                        };
+                        if let Some(destination) = destination {
+                            self.check_result_aliases_destination(&destination, value)?;
+                        }
                         match &target {
                             // Assignment to a reference binding writes through
                             // the handle; it does not rebind the handle.  Use
@@ -665,10 +682,17 @@ impl Checker {
                             Ty::Ref(reference) => *reference.referent,
                             other => other,
                         };
-                        // Assigning a closure could move it to an outer binding.
+                        // Assigning a closure could move it to an outer binding;
+                        // a thin function value captures nothing.
                         if matches!(
                             found,
                             Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_)
+                        ) && !matches!(
+                            found,
+                            Ty::Func {
+                                environment: mojito_types::origin::CallableEnvironment::Thin,
+                                ..
+                            }
                         ) {
                             return Err(TypeError::ClosureEscape);
                         }
@@ -1200,6 +1224,13 @@ impl Checker {
                     .check_nominal_subscript_assignment(place, value)?
                     .is_some()
                 {
+                    if let ExprKind::Index { object, .. }
+                    | ExprKind::Slice { object, .. }
+                    | ExprKind::MultiIndex { object, .. } = &place.kind
+                        && let Ok(container) = self.origin_place(object)
+                    {
+                        self.check_result_carries_container_interior(&container, value)?;
+                    }
                     self.record_place_write_invalidation(place.source_span(), place);
                     return Ok(());
                 }
@@ -1214,6 +1245,9 @@ impl Checker {
                 // collection display materializes against it (`self.items =
                 // [7, 8, 9]` stays `List[Int]` for a List-typed field).
                 let found = self.infer_with_expected(value, &target, true)?;
+                if let Ok(destination) = self.origin_place(place) {
+                    self.check_result_aliases_destination(&destination, value)?;
+                }
                 // A store into storage that outlives this frame (a parameter
                 // or `self` root) must not smuggle a frame-local loan outward
                 // — the symmetric twin of the Return escape check. Rebinding a

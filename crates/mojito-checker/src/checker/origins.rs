@@ -36,6 +36,7 @@ mod binders;
 mod construct;
 mod interior;
 mod ref_params;
+mod result_alias;
 mod sig;
 mod solve;
 mod subst;

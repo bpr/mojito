@@ -188,8 +188,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   positions and by the checker where trait names are extracted from
   expressions.
 - `checker/origins.rs` (split across `origins/{actuals,binders,construct,
-  transfer,solve,sig,subst,interior,ref_params}.rs`) owns origin/reference-handle
-  derivation, constructor origin binding (`origins/construct.rs`:
+  transfer,solve,sig,subst,interior,ref_params,result_alias}.rs`) owns
+  origin/reference-handle derivation, constructor origin binding
+  (`origins/construct.rs`:
   `bind_constructor_origins` binds a struct's origin binder from a
   `Pointer[Self.T, Self.origin]` argument and checks an explicitly applied
   origin; `substitute_pointer_origin_params` rewrites the parameter types),
@@ -207,7 +208,20 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`bake_value_transfer_effects`), the higher-order call-through channel
   (`record_call_through`, `apply_call_through_effects`,
   `translate_call_through`), and the span-keyed `CheckedCallTransfer`
-  handoff to MIR, destination interior paths included).
+  handoff to MIR, destination interior paths included), and the call-result
+  aliasing rule (`origins/result_alias.rs`:
+  `check_result_aliases_destination`, called from the `Assign` and `SetPlace`
+  arms, rejects `D = f(args)` when a direct
+  argument of the outermost call borrows an owned interior of `D`;
+  `check_result_carries_container_interior` judges a nominal `__setitem__`
+  store by the argument values' carried origins only; a
+  view-returning method call projects its carried origins through the tags
+  `MethodSig::view_return_interior` lowers from its return annotation, kept
+  per call in the checker-only `view_result_interiors` table, and
+  `call_parameters` names each argument), plus its `mut self` twin
+  (`check_mutable_receiver_carried_aliases`, called from
+  `infer_method_call`: a read argument whose value borrows the receiver's
+  storage, `s += s.rstrip()`, is rejected).
 - `checker/scopes.rs` owns lexical scope, binding declaration/mutability, and
   nested-def capture-access checks.
 - `checker/constraints.rs` owns compile-time evaluation and generic-constraint
@@ -393,6 +407,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   below (`comptime/elab.rs` holds the root driver's own cluster), and the
   root's helper clusters live in
   `comptime/{synth,ctfe_calls,packs,params,simd_width}.rs`.
+- `comptime/pack_qualification.rs` owns upstream's spelling rule for a
+  variadic struct's own pack (`qualify_struct_packs`, the first step of
+  `elaborate_with_requests`): a member naming the pack bare reports
+  `ComptimeError::UnqualifiedStructParam`, the header keeps the bare name,
+  and the parser's qualified spread `Type::SelfParam("*Ts")` is folded onto
+  the bare `Named("*Ts")` node every later fold expands. It walks members
+  with `mojito_ast::visit` (`Visitor` + `walk_*`), the crate's read-only AST
+  traversal with a scope hook for shadowing binders.
 - `comptime/eval.rs` owns compile-time expression evaluation (the `eval`
   dispatcher, set/dictionary displays and the explicit literal constructors,
   the structural collection folds `len`/`in`/`keys`/`values`, reflection
@@ -448,6 +470,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 |---|---|---|
 | Syntax or AST shape | [`grammar.md`](grammar.md), `parser.rs`, `ast.rs` | Parser tests, `frontend.md`, feature matrix. |
 | Argument binding | `call.rs` | Checker/VM adapters and call-parity tests. |
+| A read-only AST walk | `mojito-ast/visit.rs` | `comptime/pack_qualification.rs`, the first visitor. |
 | Overload identity | `symbol.rs` | Checker selection, MIR declarations, symbol/rejection tests. |
 | Type rules | `checker.rs` or focused checker child | `CheckedProgram`, negative checker tests. |
 | Ownership/destruction | `analysis.rs` and its `analysis/` submodules | MIR place/use forms, ownership and drop tests. |

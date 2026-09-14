@@ -741,7 +741,7 @@ fn owned_iteration_requires_deinitable_elements() {
         );
     }
 
-    let user_iterator = "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, Deinitable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def close(deinit self):\n        print(\"close\", self.id)\n\nstruct Drain(Iterator, Movable):\n    comptime Element = Conn\n    var remaining: Int\n\n    def __init__(out self, remaining: Int):\n        self.remaining = remaining\n\n    def __next__(mut self) raises StopIteration -> Conn:\n        if self.remaining == 0:\n            raise StopIteration()\n        self.remaining -= 1\n        return Conn(self.remaining)\n\nstruct Bucket(Movable):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def __iter__(var self) -> Drain:\n        return Drain(self.count)\n\ndef main():\n    var bucket = Bucket(2)\n    for var item in bucket^:\n        item^.close()\n";
+    let user_iterator = "@explicit_destroy(\"close Conn\")\nstruct Conn(Movable, Deinitable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def close(deinit self):\n        print(\"close\", self.id)\n\nstruct Drain(Iterator, Movable):\n    comptime Element = Conn\n    var remaining: Int\n\n    def __init__(out self, remaining: Int):\n        self.remaining = remaining\n\n    def __next__(mut self) raises StopIteration -> Conn:\n        if self.remaining == 0:\n            raise StopIteration()\n        self.remaining -= 1\n        return Conn(self.remaining)\n\nstruct Bucket(Movable):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def __iter__(var self) -> Drain:\n        return Drain(self.count)\n\ndef main():\n    var bucket = Bucket(2)\n    for var item in bucket^:\n        item^.close()\n";
     let error = compiler
         .compile_unlinked(user_iterator)
         .expect_err("linear user iterator");
@@ -963,4 +963,31 @@ fn type_names_accept_applied_pack_elements_and_nested_spellings() {
         output.output,
         "Tuple[SIMD[DType.int, 1], Bool]\nSIMD[DType.int, 4]\nDict[String, SIMD[DType.int, 1], AHasher[[0, 0, 0, 0] : SIMD[DType.uint64, 4]]]\nOptional[Set[SIMD[DType.int, 1], AHasher[[0, 0, 0, 0] : SIMD[DType.uint64, 4]]]]\nList[Flag[True]]\n"
     );
+}
+
+#[test]
+fn assigned_call_over_owned_interior_view_argument_rejects() {
+    // `s.rstrip()` borrows `s`'s owned bytes, so a call assigned straight
+    // back to `s` would replace the storage its argument still reads.
+    let error = Compiler::default()
+        .compile_unlinked(
+            "def takes(v: StringSpan) -> String:\n    return String(v)\n\ndef main():\n    var s = String(\"abc  \")\n    s = takes(s.rstrip())\n    print(s)\n",
+        )
+        .expect_err("the call result aliases its view argument");
+    assert_eq!(
+        error.to_string(),
+        "aliasing values passed immutably to 'v' argument and constructed as a result in 'takes' call"
+    );
+}
+
+#[test]
+fn assigned_call_over_plain_origin_view_argument_is_accepted() {
+    // `StringSpan(s)` borrows `s` itself rather than an owned interior of it,
+    // and the temporary's loan ends when the call returns.
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_unlinked("def main():\n    var s = String(\"abc\")\n    s = String(StringSpan(s))\n    print(s)\n")
+        .expect("a plain-origin view temporary does not alias the destination");
+    let execution = compiler.execute(&program).expect("execute");
+    assert_eq!(execution.output, "abc\n");
 }

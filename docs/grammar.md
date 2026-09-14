@@ -385,9 +385,12 @@ current Mojo). On a `def`, a type pack pairs with a `*args: *Ts` runtime
 parameter (heterogeneous variadic; see **def_stmt**). On a `struct`, a type pack
 makes the struct **variadic-generic**: compile-time elaboration specializes the
 struct per instantiation, expanding pack-typed member annotations such as
-`Tuple[*Ts]` to the concrete element list; a member may spell the struct's own
-pack `*Self.Ts` (current Mojo's spelling) or `*Ts` — both name the same pack,
-and an indexed element likewise spells `Self.Ts[i]` or `Ts[i]`.
+`Tuple[*Self.Ts]` to the concrete element list. A member spells the struct's
+own pack `*Self.Ts` (an indexed element `Self.Ts[i]`, its length
+`Self.Ts.length`); the bare `Ts` belongs to the struct header — the parameter
+list, the conformance clauses, and the trailing `where`, where `Self` is not
+available — and a member naming it bare is rejected with current Mojo's
+`unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead`.
 A variadic struct currently supports exactly one type-parameter pack and no
 other compile-time parameters, and must be instantiated with explicit bracket
 arguments (`Pair[Int, Bool](...)`; the elaborator does not infer struct
@@ -454,8 +457,9 @@ An optional `params_decl` list after the name makes the struct generic
 (`struct Pair[T: Copyable & Movable]:`, or `struct FixedBuffer[size: Int]:` with a value
 parameter, or the variadic-generic `struct Pair[*Ts: Copyable & Movable]:` — see
 **Parameterization**). Inside the struct body, refer to the struct's own type
-parameters as `Self.T` and value parameters as `Self.n` (an `Int` value), and to the
-struct type itself as `Self` (see **Types**); methods do not take their own parameters.
+parameters as `Self.T`, value parameters as `Self.n` (an `Int` value), and a pack as
+`Self.Ts` (`*Self.Ts` in a spread), and to the struct type itself as `Self` (see
+**Types**); a method's own `[...]` parameters, a pack included, keep their bare names.
 
 An optional `conformance` list — a parenthesized, comma-separated list of trait names
 after the name (and after any `params_decl`) — declares that the struct **conforms** to

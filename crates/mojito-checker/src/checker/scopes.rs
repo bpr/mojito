@@ -134,13 +134,18 @@ impl Checker {
     /// annotation) or a var-less `x = e`. A numeric literal materializes to its
     /// default kind (`default_literal`); a value that cannot live in a named
     /// binding is rejected: a closure (`ClosureEscape`, matching `return`/reassign)
-    /// or another value outside the source language's first-class surface.
+    /// or another value outside the source language's first-class surface. A
+    /// `def(...) thin` value captures nothing, so it binds like any other value.
     #[allow(
         clippy::unused_self,
         reason = "TODO: make an associated function or use the receiver"
     )]
     pub(super) fn inferred_binding_ty(&self, value_ty: &Ty, _name: &str) -> Result<Ty, TypeError> {
         match value_ty {
+            Ty::Func {
+                environment: mojito_types::origin::CallableEnvironment::Thin,
+                ..
+            } => Ok(value_ty.clone()),
             Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_) => {
                 Err(TypeError::ClosureEscape)
             }
