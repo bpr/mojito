@@ -1369,6 +1369,15 @@ impl Checker {
                     let constraint = self.compile_where_clause(condition)?;
                     self.validate_declaration_constraint(name, &constraint)?;
                 }
+                if ty
+                    .as_ref()
+                    .is_some_and(super::declarations::is_string_literal_annotation)
+                {
+                    return Err(TypeError::Unsupported(
+                        "cannot construct a value with parametric type: 'StringLiteral[_]'"
+                            .to_string(),
+                    ));
+                }
                 // A comptime `Int` is recorded (for value-parameter use) and bound as
                 // `Int`. A richer comptime value (tuple/list/string) the `Int` folder
                 // can't evaluate is still an ordinary binding — the elaborator has
@@ -2549,10 +2558,13 @@ impl Checker {
                 // omitting an origin slot rejects, a placeholder is inferred
                 // (a bare `Pointer[T, _]` is concrete here only).
                 self.resolving_parameter_annotation.set(true);
+                self.bare_string_literal_parameter
+                    .set(super::declarations::is_string_literal_annotation(&parameter.ty));
                 let resolved = self.resolve_storage_annotation(
                     &parameter.ty,
                     super::StorageStrictness::AllowBare,
                 );
+                self.bare_string_literal_parameter.set(false);
                 self.resolving_parameter_annotation.set(false);
                 resolved
             })

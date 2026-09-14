@@ -196,6 +196,7 @@ assets/ok/nominal_string_split.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nominal_string_split_forms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nominal_string_strip.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nominal_string_unicode_case.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/nominal_string_writer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/number_and_string_literals.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/numeric_operation_traits.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/optional_is_none.mojo	-	ineligible	no-scalar-entry-shape
@@ -399,6 +400,7 @@ assets/ok/stored_array_span_iterators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_capacity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_escapes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_grapheme_iteration.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/string_literal_bytes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_literal_overload.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_overload_conversion.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_span_equatable.mojo	-	ineligible	no-scalar-entry-shape
@@ -479,7 +481,6 @@ assets/extensions/ok/interior_dest_rebind_releases_loans.mojo	-	ineligible	no-sc
 assets/extensions/ok/iterable_associated_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/lambda_captures.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/nested_def_captured_param_store.mojo	-	ineligible	no-scalar-entry-shape
-assets/extensions/ok/nominal_string_writer.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/origin_argument_alias_bodies.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/origin_argument_direct_applications.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/origin_delegated_call_arguments_run.mojo	-	ineligible	no-scalar-entry-shape

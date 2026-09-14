@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	313
+# swept-count	315
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -47,7 +47,7 @@ assets/ownership_error/assign_call_over_viewed_local.mojo	compile-reject	agree	e
 assets/ownership_error/comprehension_interior_invalidation.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference
 assets/ownership_error/conditional_move.mojo	compile-reject	agree	error: use of uninitialized value 'a'
 assets/ownership_error/deinit_receiver_raising_in_try.mojo	compile-reject	agree	error: use of uninitialized value 'o'
-assets/ownership_error/dict_comprehension_source_mutation.mojo	compile-reject	agree	error: 'Dict' parameter 'K' has 'KeyElement' type, but value has type 'AnyStruct[StringLiteral[_]]'
+assets/ownership_error/dict_comprehension_source_mutation.mojo	compile-reject	agree	error: aliasing values passed mutably to 'd' argument and passed immutably to 'key' argument in 'grow' call
 assets/ownership_error/dict_setitem_during_iteration.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference
 assets/ownership_error/double_move.mojo	compile-reject	agree	error: use of uninitialized value 'a'
 assets/ownership_error/double_move_in_try.mojo	compile-reject	agree	error: use of uninitialized value 's'
@@ -348,4 +348,5 @@ assets/type_error/with_consuming_enter_and_exit.mojo	compile-reject	agree	error:
 assets/type_error/with_error_exit_only.mojo	compile-reject	agree	error: invalid call to '__exit__': missing required argument: 'err'
 assets/type_error/with_no_enter.mojo	compile-reject	agree	error: 'NoEnter' does not implement the '__enter__' method
 assets/type_error/writer_missing_write.mojo	compile-reject	agree	error: 'BrokenWriter' does not implement all requirements for 'Writer'
+assets/type_error/writer_string_payload.mojo	compile-reject	agree	error: 'Buf' does not implement all requirements for 'Writer'
 assets/type_error/wrong_return.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["not an int"]' value to 'Int'

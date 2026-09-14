@@ -427,10 +427,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   computes, and the value-specialization demangler
   (`demangle_specialization`, `unqualified_instance_name`) behind
   `_unqualified_type_name`'s spelling of a minted clone.
-- `crates/mojito-symbol/src/symbol.rs` also owns the string bridge identities
+- `crates/mojito-symbol/src/symbol.rs` also owns the string identities
   (`is_stdlib_string_struct`/`is_stdlib_string_span_struct`, re-exported from
-  `mojito-types`; `string_ctor_overload_struct`/`string_span_ctor_overload_struct`
-  over the `.__init__$ov$StringLiteral` constructor symbols) and the
+  `mojito-types`; `nominal_string_literal_ctor_symbol`, the literal→`String`
+  wrap MIR emits) and the
   instance-clone identity shared by the checker and both backends:
   `specialized_method_values`,
   `materialized_instantiation_argument`, and `instance_method_clone_name`

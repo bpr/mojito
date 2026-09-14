@@ -196,6 +196,7 @@ assets/ok/nominal_string_split.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_split_forms.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_strip.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_unicode_case.mojo	main	exe-differential	sanitized
+assets/ok/nominal_string_writer.mojo	main	exe-differential	sanitized
 assets/ok/number_and_string_literals.mojo	main	exe-differential	sanitized
 assets/ok/numeric_operation_traits.mojo	main	exe-differential	sanitized
 assets/ok/optional_is_none.mojo	main	exe-differential	sanitized
@@ -399,6 +400,7 @@ assets/ok/stored_array_span_iterators.mojo	main	exe-differential	sanitized
 assets/ok/string_capacity.mojo	main	exe-differential	sanitized
 assets/ok/string_escapes.mojo	main	exe-differential	sanitized
 assets/ok/string_grapheme_iteration.mojo	main	exe-differential	sanitized
+assets/ok/string_literal_bytes.mojo	main	exe-differential	sanitized
 assets/ok/string_literal_overload.mojo	main	exe-differential	sanitized
 assets/ok/string_overload_conversion.mojo	main	exe-differential	sanitized
 assets/ok/string_span_equatable.mojo	main	exe-differential	sanitized
@@ -479,7 +481,6 @@ assets/extensions/ok/interior_dest_rebind_releases_loans.mojo	main	exe-different
 assets/extensions/ok/iterable_associated_element.mojo	-	ineligible	no-main-entry
 assets/extensions/ok/lambda_captures.mojo	main	exe-differential	sanitized
 assets/extensions/ok/nested_def_captured_param_store.mojo	main	exe-differential	sanitized
-assets/extensions/ok/nominal_string_writer.mojo	main	exe-differential	sanitized
 assets/extensions/ok/origin_argument_alias_bodies.mojo	main	exe-differential	sanitized
 assets/extensions/ok/origin_argument_direct_applications.mojo	main	exe-differential	sanitized
 assets/extensions/ok/origin_delegated_call_arguments_run.mojo	main	exe-differential	sanitized

@@ -169,7 +169,7 @@ struct FileHandle(Defaultable, Movable, Writer):
                 abort("write() returned 0 bytes (file may be full or closed)")
             total_written += bytes_written
 
-    def write_string(mut self, string: String):
+    def write_string(mut self, string: StringSpan):
         self.write_bytes(string.as_bytes())
 
     def _write(self, ptr: Pointer[UInt8, _], len: Int) raises:

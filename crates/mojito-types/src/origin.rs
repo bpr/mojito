@@ -378,6 +378,40 @@ impl PointerOrigin {
         }
     }
 
+    /// The same provenance with writes through the pointer permitted
+    /// (upstream's `unsafe_mut_cast[True]`). A static constant has no mutable
+    /// counterpart, so it widens to the mutable untracked origin: neither
+    /// holds a loan.
+    #[must_use]
+    pub fn mutable(self) -> Self {
+        match self {
+            Self::Place { place, .. } => Self::Place {
+                place,
+                mutable: true,
+            },
+            Self::Untracked { .. } | Self::Static => Self::Untracked { mutable: true },
+            Self::UnsafeAny { .. } => Self::UnsafeAny { mutable: true },
+            Self::Param {
+                id,
+                interior,
+                subtree,
+                ..
+            } => Self::Param {
+                id,
+                mutability: Mutability::Mutable,
+                interior,
+                subtree,
+            },
+            Self::SelfPlace {
+                interior, subtree, ..
+            } => Self::SelfPlace {
+                mutability: Mutability::Mutable,
+                interior,
+                subtree,
+            },
+        }
+    }
+
     /// Whether a pointer of this provenance may bind a parameter declared
     /// with `expected`: an unsafe-any expectation (`ImmPointer[T, _]`, the
     /// placeholder origin of a free function's raw-pointer parameter) accepts

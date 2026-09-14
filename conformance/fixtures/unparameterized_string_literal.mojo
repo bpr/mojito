@@ -1,9 +1,6 @@
-# Mojito's `StringLiteral` is one unparameterized value type, so it annotates
-# variables and returns; upstream parameterizes it by the literal's own text,
-# which leaves `StringLiteral` non-concrete everywhere but a parameter.
-# StringLiteral as a value type: typed variables, parameter and return
-# passing, copies, printing, and conversion into an owned String — all over
-# the borrowed 16-byte descriptor.
+# `StringLiteral` is parameterized by the literal's own text, so the bare
+# spelling is concrete only as a parameter annotation: a return and a variable
+# annotated `StringLiteral` are rejected (`'StringLiteral[_]' is not concrete`).
 def echo(s: StringLiteral) -> StringLiteral:
     return s
 

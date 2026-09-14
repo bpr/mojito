@@ -1375,16 +1375,10 @@ impl Checker {
             "Writer" => self.structs.get(name).is_some_and(|info| {
                 info.methods.get("write_string").is_some_and(|methods| {
                     methods.iter().any(|method| {
-                        // The payload parameter may be spelled as the
-                        // compile-time literal or the nominal String; the VM
-                        // write bridge materializes for the nominal spelling.
-                        let payload = match method.params.as_slice() {
-                            [Ty::StringLiteral] => true,
-                            [Ty::Struct(name, args)] => {
-                                args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name)
-                            }
-                            _ => false,
-                        };
+                        // Upstream's `write_string(mut self, string:
+                        // StringSlice)`: the payload is the borrowed view.
+                        let payload = matches!(method.params.as_slice(),
+                            [Ty::Struct(name, _)] if mojito_types::types::is_stdlib_string_span_struct(name));
                         method.has_self
                             && method.self_convention == Some(ArgConvention::Mut)
                             && payload
@@ -2755,6 +2749,19 @@ impl Checker {
                 signature.self_convention = Some(ArgConvention::Var);
                 methods.push(signature);
             }
+        }
+        // `Writer.write_string(mut self, string: StringSlice)`: the one required
+        // method, callable on a `Some[Writer]` receiver.
+        if method == "write_string" && argc == 1 && bounds.iter().any(|b| b == "Writer") {
+            let mut signature = MethodSig::intrinsic(
+                vec![Ty::Struct(
+                    mojito_types::types::STDLIB_STRING_SPAN_STRUCT.to_string(),
+                    Vec::new(),
+                )],
+                Ty::None,
+            );
+            signature.self_convention = Some(ArgConvention::Mut);
+            methods.push(signature);
         }
         // Current Mojo's `Copyable` trait carries a non-overridable default
         // `copy(self) -> Self`; elaboration synthesizes the concrete method on

@@ -12,7 +12,7 @@ from std.iter import Iterable, Iterator, StopIteration
 
 
 
-from std.string import String
+from std.string import String, StringSpan
 
 # The audited head's strict-slice abort messages with the index and valid
 # range interpolated, mirroring `std.string.check_slice_bounds`. This module
@@ -24,8 +24,8 @@ struct _BoundsMessage(Movable, Writer):
     def __init__(out self):
         self.text = String("")
 
-    def write_string(mut self, chunk: String):
-        self.text = self.text + chunk
+    def write_string(mut self, chunk: StringSpan):
+        self.text.write_string(chunk)
 
 
 def _check_span_slice_bounds(start: Int, end: Int, length: Int):

@@ -158,6 +158,15 @@ pub(super) fn definitely_initializes_self_field(body: &[Stmt], field: &str) -> b
     flow.valid && flow.normal.is_none_or(|initialized| initialized)
 }
 
+/// Whether a parameter annotation is exactly the bare `StringLiteral`.
+pub(super) fn is_string_literal_annotation(annotation: &SourceType) -> bool {
+    match annotation {
+        SourceType::StringLiteral => true,
+        SourceType::Named(name, args) => name == "StringLiteral" && args.is_empty(),
+        _ => false,
+    }
+}
+
 #[derive(Clone, Copy)]
 struct InitFieldFlow {
     /// Initialization state on normal fallthrough, or `None` when no path falls
@@ -1241,8 +1250,11 @@ impl Checker {
             // placeholder marks the slot explicitly inferred (a bare
             // `Pointer[T, _]` is concrete here only).
             self.resolving_parameter_annotation.set(true);
+            self.bare_string_literal_parameter
+                .set(is_string_literal_annotation(&p.ty));
             let resolved =
                 self.resolve_storage_annotation(&p.ty, super::StorageStrictness::AllowBare);
+            self.bare_string_literal_parameter.set(false);
             self.resolving_parameter_annotation.set(false);
             let mut pty = resolved?;
             pty = match p.kind {

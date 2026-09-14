@@ -3,9 +3,8 @@
 # Current Mojo exposes a String-keyed container instead of materializing keyword
 # collectors as a general-purpose hash dictionary. Keeping the key type out of the
 # parameter list also makes the call ABI explicit: `StringDict[V]` owns the
-# homogeneous values collected at a call boundary. Mojito spells the key type
-# `StringLiteral`: keyword names are compile-time strings, and the VM's kwargs
-# ABI stores literal values, independent of the nominal `String` struct.
+# homogeneous values collected at a call boundary. Keys are owned `String`s, as
+# upstream's `OwnedKwargsDict.key_type`.
 
 from std.collections.dict import DictEntry, _DictEntryIter, _DictKeyIter
 from std.collections.list import List
@@ -16,18 +15,18 @@ from std.collections.optional import Optional
 struct StringDict[V: Movable](
     Copyable where conforms_to(V, Copyable), Iterable where conforms_to(V, Copyable)
 ):
-    comptime Element = StringLiteral
+    comptime Element = String
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = _DictKeyIter[StringLiteral, Self.V, default_hasher, iterable_origin]
+    ] = _DictKeyIter[String, Self.V, default_hasher, iterable_origin]
 
-    var entries: List[DictEntry[StringLiteral, Self.V]]
+    var entries: List[DictEntry[String, Self.V]]
     var index: List[List[Int]]
     var nbuckets: Int
     var count: Int
 
     def __init__(out self):
-        self.entries = List[DictEntry[StringLiteral, Self.V]]()
+        self.entries = List[DictEntry[String, Self.V]]()
         self.index = List[List[Int]]()
         self.nbuckets = 8
         self.count = 0
@@ -37,7 +36,7 @@ struct StringDict[V: Movable](
             i = i + 1
 
     def __init__(out self, *, copy: Self) where conforms_to(Self.V, Copyable):
-        self.entries = List[DictEntry[StringLiteral, Self.V]](copy: copy.entries)
+        self.entries = List[DictEntry[String, Self.V]](copy: copy.entries)
         self.index = List[List[Int]](copy: copy.index)
         self.nbuckets = copy.nbuckets
         self.count = copy.count
@@ -45,7 +44,7 @@ struct StringDict[V: Movable](
     def copy(self) -> Self where conforms_to(Self.V, Copyable):
         return StringDict[Self.V](copy: self)
 
-    def find_index(self, key: StringLiteral) -> Int:
+    def find_index(self, key: String) -> Int:
         var bucket: Int = Int(hash(key)) & (self.nbuckets - 1)
         for entry_index in self.index._get_copy(bucket):
             ref entry = self.entries[entry_index]
@@ -53,12 +52,11 @@ struct StringDict[V: Movable](
                 return entry_index
         return -1
 
-    def __contains__(self, key: StringLiteral) -> Bool:
+    def __contains__(self, key: String) -> Bool:
         return self.find_index(key) >= 0
 
-    # A copying read: the `StringLiteral`-keyed entry list keeps the erased
-    # path, where a reference result cannot spell its interior origin.
-    def __getitem__(self, key: StringLiteral) raises -> Self.V where conforms_to(
+    # A copying read of the value.
+    def __getitem__(self, key: String) raises -> Self.V where conforms_to(
         Self.V, Copyable
     ):
         var i: Int = self.find_index(key)
@@ -66,16 +64,16 @@ struct StringDict[V: Movable](
             return self.entries[i].value.copy()
         raise Error("missing key")
 
-    def __setitem__(mut self, key: StringLiteral, var value: Self.V) where conforms_to(
+    def __setitem__(mut self, key: String, var value: Self.V) where conforms_to(
         Self.V, Deinitable
     ):
         var existing: Int = self.find_index(key)
         if existing >= 0:
-            self.entries[existing] = DictEntry[StringLiteral, Self.V](key, value^)
+            self.entries[existing] = DictEntry[String, Self.V](key, value^)
             return
 
         var entry_index: Int = len(self.entries)
-        self.entries.append(DictEntry[StringLiteral, Self.V](key, value^))
+        self.entries.append(DictEntry[String, Self.V](key, value^))
         var bucket: Int = Int(hash(key)) & (self.nbuckets - 1)
         var bucket_entries: List[Int] = self.index._get_copy(bucket)
         bucket_entries.append(entry_index)
@@ -108,20 +106,20 @@ struct StringDict[V: Movable](
     # previous entry (key and value) out and returns it; a fresh key returns
     # an empty Optional. Nothing is destroyed in place, so no `Deinitable`
     # bound is required.
-    def insert(mut self, key: StringLiteral, var value: Self.V) -> Optional[
-        DictEntry[StringLiteral, Self.V]
+    def insert(mut self, key: String, var value: Self.V) -> Optional[
+        DictEntry[String, Self.V]
     ]:
         var existing: Int = self.find_index(key)
         if existing >= 0:
-            var displaced = Optional[DictEntry[StringLiteral, Self.V]](
+            var displaced = Optional[DictEntry[String, Self.V]](
                 self.entries.data.unsafe_offset(existing).unsafe_take_pointee()
             )
-            self.entries.data[existing] = DictEntry[StringLiteral, Self.V](key, value^)
+            self.entries.data[existing] = DictEntry[String, Self.V](key, value^)
             return displaced^
         # Fresh-key path: append and index directly (like `__setitem__`'s
         # fresh branch) — delegating would demand its `Deinitable` bound.
         var entry_index: Int = len(self.entries)
-        self.entries.append(DictEntry[StringLiteral, Self.V](key, value^))
+        self.entries.append(DictEntry[String, Self.V](key, value^))
         var bucket: Int = Int(hash(key)) & (self.nbuckets - 1)
         var bucket_entries: List[Int] = self.index._get_copy(bucket)
         bucket_entries.append(entry_index)
@@ -129,20 +127,20 @@ struct StringDict[V: Movable](
         self.count = self.count + 1
         if self.count == self.nbuckets:
             self.rehash(self.nbuckets * 2)
-        return Optional[DictEntry[StringLiteral, Self.V]]()
+        return Optional[DictEntry[String, Self.V]]()
 
     # Consuming teardown: every entry is handed front-to-back to the consuming
     # handler; the bucket index holds only integers and drops with the shell.
     def deinit_with(
         deinit self,
-        elt_handler: def(var key: StringLiteral, var value: Self.V) capturing[_],
+        elt_handler: def(var key: String, var value: Self.V) capturing[_],
         /,
     ):
         while len(self.entries) > 0:
             var entry = self.entries.pop(0)
             elt_handler(entry.key^, entry.value^)
 
-    def get(self, key: StringLiteral) -> Optional[Self.V] where conforms_to(
+    def get(self, key: String) -> Optional[Self.V] where conforms_to(
         Self.V, Copyable
     ):
         var i: Int = self.find_index(key)
@@ -150,7 +148,7 @@ struct StringDict[V: Movable](
             return Optional[Self.V](self.entries[i].value.copy())
         return Optional[Self.V]()
 
-    def get(self, key: StringLiteral, default: Self.V) -> Self.V where conforms_to(
+    def get(self, key: String, default: Self.V) -> Self.V where conforms_to(
         Self.V, Copyable
     ):
         var i: Int = self.find_index(key)
@@ -161,8 +159,8 @@ struct StringDict[V: Movable](
     def __len__(self) -> Int:
         return self.count
 
-    def keys(self) -> List[StringLiteral]:
-        var result: List[StringLiteral] = List[StringLiteral]()
+    def keys(self) -> List[String]:
+        var result: List[String] = List[String]()
         var i: Int = 0
         while i < len(self.entries):
             ref entry = self.entries[i]
@@ -178,7 +176,7 @@ struct StringDict[V: Movable](
             i = i + 1
         return result^
 
-    def items(self) -> List[DictEntry[StringLiteral, Self.V]] where conforms_to(
+    def items(self) -> List[DictEntry[String, Self.V]] where conforms_to(
         Self.V, Copyable
     ):
         return self.entries.copy()

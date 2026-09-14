@@ -70,6 +70,10 @@ pub struct VmBackend {
     /// into, allocated on first use and reused — the VM's counterpart to the
     /// native backend's per-function formatting alloca.
     digit_scratch: Option<Value>,
+    /// The never-freed UTF-8 byte allocation behind each distinct literal
+    /// text, by text — the VM's counterpart to the native backend's interned
+    /// `mjstr_<n>` globals, which `StringLiteral.ptr()` addresses.
+    static_literals: HashMap<String, u64>,
 }
 
 impl VmBackend {

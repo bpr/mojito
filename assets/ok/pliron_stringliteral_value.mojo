@@ -1,9 +1,7 @@
-# StringLiteral as a value type: typed parameters, copies, printing, and
-# conversion into an owned String — all over the borrowed 16-byte descriptor.
-# A *runtime* StringLiteral value (a variable or return annotated
-# `StringLiteral`, or one picked by a runtime flag) is Mojito-only: upstream
-# parameterizes the type by the literal itself, so only the parameter position
-# infers. See the `unparameterized-string-literal` conformance case.
+# StringLiteral parameters: a literal passed and picked at run time, copies,
+# printing, and conversion into an owned String — all over the borrowed 16-byte
+# descriptor. The bare `StringLiteral` spelling is concrete only as a parameter
+# annotation (see the `unparameterized-string-literal` conformance case).
 def echo(s: StringLiteral) -> String:
     return String(s)
 

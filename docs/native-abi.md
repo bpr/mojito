@@ -178,21 +178,16 @@ specialized name). Rules:
   ordinary aggregate rules — `{ data: *mut u8, size: i64, cap: i64 }` (24/8),
   the runtime's `MjString`. `data` is `size` initialized bytes of UTF-8 in a
   `cap`-byte allocation obtained from `mjrt_alloc`.
-- Two stdlib String bodies are **bridged natively** rather than compiled
-  (their byte loops need machinery beyond this stage), mirroring the VM's own
-  literal bridge: the literal constructor fills `{data: mjrt_alloc(len, 1),
-  size: len, cap: len}` from the constant pool, and the copy constructor
-  allocates `cap` bytes and copies `size`, preserving `size`/`cap` exactly
-  like the stdlib body. `String.__deinit__` compiles from its real MIR
-  (`Pointer.unsafe_free()` lowers to `mjrt_free`).
-- The `StringSpan` literal constructor (`StringSpan.__init__$ov$StringLiteral`,
-  also a never-executing stub) is bridged the same way: the view is the
-  ordinary 16/8 aggregate `{ _data: *const u8, _size: i64 }` whose `_data`
-  addresses the interned constant for a compile-time literal, or a
-  never-freed `mjrt_alloc` copy for a runtime string source. A view owns no
-  heap, so no release runs; `mjrt_pointer_status` classifies the constant
-  pool address as live. A `StringSpan` parameter's literal default is filled
-  the same way.
+- A literal's `byte_length()` and `ptr()` read the descriptor: the interned
+  constant's address and length for a compile-time literal, or a runtime
+  descriptor's `data`/`len`. Every String and `StringSpan` constructor,
+  including the literal ones, compiles from its stdlib body: `String(literal)`
+  allocates `len` bytes and `memcpy`s from `ptr()`, and `StringSpan(literal)`
+  is the ordinary 16/8 aggregate `{ _data: *const u8, _size: i64 }` whose
+  `_data` is `ptr()`. A view owns no heap, so no release runs;
+  `mjrt_pointer_status` classifies the constant pool address as live.
+  `String.__deinit__` compiles from its real MIR (`Pointer.unsafe_free()`
+  lowers to `mjrt_free`).
 
 ### Errors and exceptional control flow
 

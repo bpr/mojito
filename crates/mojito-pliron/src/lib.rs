@@ -1227,11 +1227,6 @@ fn constructor_init_target<'p>(
     if !structs.contains_key(name) {
         return None;
     }
-    // The nominal String constructor is the backend's literal bridge; its
-    // stdlib `__init__` bodies never lower.
-    if mojito_symbol::symbol::is_stdlib_string_struct(name) {
-        return None;
-    }
     if argc == 0 && kwargs.len() == 1 && kwargs[0].0 == "copy" {
         return None;
     }

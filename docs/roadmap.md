@@ -207,18 +207,6 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
   Problem: parts of Mojito's stdlib lean on the Rust runtime where upstream
   is pure Mojo. Each is a candidate port, preferred over any new bridge
   (2026-09-07 direction).
-  - The literal-filled `String.__init__(literal)` and
-    `StringSpan.__init__(literal)` constructors, and the
-    `String._as_string_literal()` struct-to-literal bridge behind
-    `String.write_to`. Upstream: `StringLiteral` is a `StaticString` and
-    `write_to` writes the bytes. The same representation gap is why the pin
-    rejects `assets/ok/pliron_stringliteral_value.mojo` and
-    `assets/ok/tuple_unpack_call.mojo`: they spell `StringLiteral` bare as a
-    type, where upstream's is value-parameterized (`StringLiteral[v]`).
-    - Model: Opus, plan first. The port only works once `StringLiteral` and
-      `String` agree on a runtime representation, which is also what the
-      erased-path residue in section 4 needs, so plan the representation
-      before touching the constructors.
   - Float formatting in Rust: the float arm of the VM's `Display for Value`
     and the native `mjrt_fmt_f64`. Upstream formats `Float64` in Mojo
     (Dragonbox in `format_float`). Five corpus fixtures print different text
@@ -234,6 +222,19 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
 
   Four runtime services are deliberately not on that list; they are in
   [`docs/non-goals.md`](non-goals.md).
+
+- [ ] **`String` always owns a heap buffer, where upstream's has three
+  representations**
+
+  Problem: `String(literal)` allocates and copies the literal's bytes, while
+  upstream points at the static bytes and copies only on the first mutation.
+  - Upstream packs a static-constant, an inline (up to 23 bytes), and a
+    reference-counted heap form into the same 24 bytes, flagged in
+    `_capacity_or_data`; Mojito's `{data, size, cap}` has only the heap form.
+  - No program output differs; allocation counts and `capacity()` do.
+  - Port the static form first: every mutator, `__del__`, copy, and move
+    must respect a non-owning flag, on both backends.
+  - Model: Opus, plan first.
 
 - [ ] **Behavioral divergences from the pinned Mojo — burn to zero**
   *(standing)*
@@ -352,13 +353,6 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     were respelled onto `thin` contracts and `@parameter def` arguments.
     - Model: Opus, plan first. The four share one question — what a capturing
       callable *value* is — and the plan settles that before any rejection.
-  - `unparameterized-string-literal`: Mojito's `StringLiteral` is one
-    unparameterized value type, so it annotates variables and returns;
-    upstream parameterizes it by the literal's own text. Already tracked as a
-    representation gap in the shortcuts entry above; the `cases.tsv` row is
-    new.
-    - Model: Opus, plan first — with the `String`/`StringLiteral`
-      representation port it depends on.
   - `interior-generation-view-consume` / `interior-generation-view-drop`:
     a struct field typed
     `Pointer[T, Self.origin._get_owned_interior["tag"]]` over a generic
@@ -503,12 +497,6 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     from a `-> List[Int]` function.
     - Model: Fable. The return type of `List.__getitem__(ContiguousSlice)`
       changes, and every caller that owns the result moves with it.
-  - `writer-string-payload`: Mojito's `Writer` requires
-    `write_string(mut self, chunk: String)` and also accepts the
-    `StringLiteral` spelling; upstream's requires a `StringSpan`. One corpus
-    fixture moved to `assets/extensions/` for it.
-    - Model: Fable. The protocol's payload type changes across the stdlib's
-      writers.
   - `int-is-floatable`: Mojito conforms `Int` and an integer literal to
     `Floatable`; upstream conforms neither, so a `Floatable`-bounded helper
     takes only a float there. Mojito also resolves `len(x)` from a bare
@@ -623,15 +611,12 @@ need. Start them only once sections 1 and 2 are clear.
 
   2. **Monomorphization coverage and cost** — where the erased path still
      stands in for an instance clone, and what minting costs.
-     - An instantiation whose argument mentions `StringLiteral` (`{"a": 1}`
-       is `Dict[StringLiteral, Int]`) keeps the erased path: its values keep
-       the literal runtime representation while an un-annotated binding
-       materializes `String`. Lifting it needs one runtime representation
-       for `StringLiteral` and `String`, or typing the display as
-       `Dict[String, Int]` as Mojo does. `StringDict.__getitem__` stays a
-       `Copyable`-guarded copy for the same reason: its
-       `StringLiteral`-keyed entry list keeps the erased path, where a
-       reference result cannot spell its interior origin.
+     - A generic instantiated at `StringLiteral` by a literal argument
+       (`T = StringLiteral`) keeps the erased path, since
+       `instance_method_clone_name` mints no clone for it. Displays and
+       `StringDict` keys now materialize `String`, so they no longer reach
+       it; whether `StringDict.__getitem__` can now return a reference
+       instead of its `Copyable`-guarded copy is unchecked.
      - A call inside an unstamped bundled body on a bundled struct's
        generic method keeps the erased path. Requests are admitted from
        user code, clone bodies, variadic specs, instances, and user
@@ -680,7 +665,10 @@ need. Start them only once sections 1 and 2 are clear.
 
   4. **Everyday spellings that still reject** — checker context and stdlib
      API shapes.
-     - A list display as an argument to an explicitly applied constructor
+     - A lambda parameter annotated `String` (`lambda (s: String): print(s)`)
+       reports `unknown type 'String'`, while a nested `def` with the same
+       parameter runs. The lambda's hidden `def` apparently misses the
+       prelude qualification the other annotations get.     - A list display as an argument to an explicitly applied constructor
        at runtime (`Dict[String, Int](["a"], [1], None)`) takes no context
        from the parameterized `List[Self.K]` parameter and materializes as
        `Array`, so no overload matches. Spell the lists

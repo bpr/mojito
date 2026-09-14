@@ -472,22 +472,6 @@ pub fn function_symbol(base: &str, sig: &SignatureKey) -> String {
     format!("{base}{}", sig.suffix())
 }
 
-/// The struct a literal→String conversion constructor symbol targets.
-///
-/// `<name>.__init__$ov$StringLiteral` is the nominal String's
-/// `StringLiteral`-typed constructor, whose declared body is a never-execute
-/// field-contract stub, so native lowering routes the call to the string
-/// constructor bridge instead of the compiled signature.
-///
-/// Returns the receiver struct name when `symbol` has that exact shape.
-/// Compiled unconditionally (its only caller is the pliron backend) so this
-/// crate's surface does not vary by feature.
-pub fn string_ctor_overload_struct(symbol: &str) -> Option<&str> {
-    symbol
-        .strip_suffix(".__init__$ov$StringLiteral")
-        .filter(|name| is_stdlib_string_struct(name))
-}
-
 /// The nominal String's `StringLiteral` constructor symbol — the wrap that
 /// materializes a compile-time string result (`String("abc")`, `repr(x)`,
 /// `input(...)`) as the nominal struct.
@@ -500,20 +484,6 @@ pub fn nominal_string_literal_ctor_symbol() -> String {
 /// `@implicit` view constructor borrowing a String.
 pub fn single_nominal_string_ctor(symbol: &str) -> bool {
     symbol.ends_with(".__init__$ov$String")
-}
-
-/// The view struct a literal→`StringSpan` constructor symbol targets.
-///
-/// `StringSpan.__init__$ov$StringLiteral` is the bundled view's `@implicit`
-/// `StringLiteral` constructor (upstream's `StaticString` initializer), whose
-/// declared body is a never-execute field-contract stub; the backends build
-/// the view over the literal's bytes instead.
-///
-/// Returns the struct name when `symbol` has that exact shape.
-pub fn string_span_ctor_overload_struct(symbol: &str) -> Option<&str> {
-    symbol
-        .strip_suffix(".__init__$ov$StringLiteral")
-        .filter(|name| is_stdlib_string_span_struct(name))
 }
 
 /// The lowered symbol of an overloaded struct method (including `__init__` and

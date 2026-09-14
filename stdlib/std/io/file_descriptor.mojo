@@ -26,7 +26,7 @@ struct FileDescriptor(Copyable, ImplicitlyCopyable, Movable, TrivialRegisterPass
         if written != len(bytes):
             abort("expected amount of bytes not written")
 
-    def write_string(mut self, string: String):
+    def write_string(mut self, string: StringSpan):
         self.write_bytes(string.as_bytes())
 
     def read_bytes[origin: Origin[mut=True]](mut self, buffer: Span[Byte, origin]) raises -> Int:

@@ -332,24 +332,6 @@ impl VmBackend {
             }
             None => args,
         };
-        // Literal-to-struct bridge: the nominal stdlib String's literal
-        // constructor never executes its body — the byte buffer is filled
-        // from the literal's UTF-8 bytes here instead.
-        if mojito_symbol::symbol::is_stdlib_string_struct(name)
-            && let [Value::Str(literal)] = user_args.as_slice()
-        {
-            let literal = literal.clone();
-            return self.materialize_string_struct(skeleton, &literal);
-        }
-        // The same bridge for the view's `StringLiteral` constructor: the
-        // `ref src: String` overload binds a reference handle, never a
-        // literal, so the argument shape selects the bridge unambiguously.
-        if mojito_symbol::symbol::is_stdlib_string_span_struct(name)
-            && let [Value::Str(literal)] = user_args.as_slice()
-        {
-            let literal = literal.clone();
-            return self.materialize_string_span(skeleton, &literal);
-        }
         let mut bound = Vec::with_capacity(user_args.len() + 1);
         bound.push(skeleton);
         bound.extend(user_args);
@@ -461,6 +443,70 @@ impl VmBackend {
         self.materialize_string_struct(skeleton, text)
     }
 
+    /// A `StringSpan` view over a fresh buffer holding `text`'s UTF-8 bytes,
+    /// with the buffer's allocation for the caller to free once the view's
+    /// borrow ends.
+    pub(super) fn temporary_string_span(
+        &mut self,
+        prog: &Prog,
+        text: &str,
+    ) -> Result<(Value, u64), RuntimeError> {
+        let def = prog
+            .structs
+            .get(mojito_types::types::STDLIB_STRING_SPAN_STRUCT)
+            .ok_or_else(|| {
+                RuntimeError::Unsupported("vm: Writer payloads need the linked StringSpan".into())
+            })?;
+        let allocation = self.alloc_utf8_bytes(text.as_bytes())?;
+        let fields = def
+            .fields
+            .iter()
+            .map(|(field, _)| {
+                let value = match field.as_str() {
+                    "_data" => Value::Pointer {
+                        allocation,
+                        offset: 0,
+                    },
+                    "_size" => Value::Int(text.len() as i64),
+                    other => unreachable!("unexpected StringSpan field '{other}'"),
+                };
+                (field.clone(), value)
+            })
+            .collect();
+        let view = Value::Struct {
+            name: mojito_types::types::STDLIB_STRING_SPAN_STRUCT.to_string(),
+            fields,
+            value_params: Vec::new(),
+        };
+        Ok((view, allocation))
+    }
+
+    /// Read a `StringSpan` view's bytes back as text (lossy, like the
+    /// nominal String read-back).
+    pub(super) fn string_span_text(&self, view: &Value) -> Result<String, RuntimeError> {
+        let Value::Struct { fields, .. } = view else {
+            return Err(RuntimeError::TypeError(format!(
+                "vm: Writer.write_string expects a StringSpan, got {}",
+                crate::runtime::type_name(view)
+            )));
+        };
+        let field = |name: &str| {
+            fields
+                .iter()
+                .find(|(field, _)| field == name)
+                .map(|(_, value)| value)
+        };
+        let (Some(pointer @ Value::Pointer { .. }), Some(Value::Int(size))) =
+            (field("_data"), field("_size"))
+        else {
+            return Err(RuntimeError::TypeError(
+                "vm: StringSpan value is missing its byte view".to_string(),
+            ));
+        };
+        let bytes = self.heap_bytes(pointer, *size)?;
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
     /// Fill a nominal `String` skeleton from a literal's UTF-8 bytes: one
     /// heap allocation holding width-1 `UInt8` scalars, sized exactly.
     pub(super) fn materialize_string_struct(
@@ -487,41 +533,6 @@ impl VmBackend {
                 "size" => Value::Int(bytes.len() as i64),
                 "cap" => Value::Int(bytes.len() as i64),
                 other => unreachable!("unexpected String field '{other}'"),
-            };
-        }
-        Ok(Value::Struct {
-            name,
-            fields,
-            value_params,
-        })
-    }
-
-    /// Fill a `StringSpan` skeleton from a literal's UTF-8 bytes: a view over
-    /// a never-freed byte buffer (the arena never reclaims, so the bytes live
-    /// as long as the program — upstream's `StaticString` origin).
-    pub(super) fn materialize_string_span(
-        &mut self,
-        skeleton: Value,
-        literal: &str,
-    ) -> Result<Value, RuntimeError> {
-        let bytes = literal.as_bytes();
-        let allocation = self.alloc_utf8_bytes(bytes)?;
-        let Value::Struct {
-            name,
-            mut fields,
-            value_params,
-        } = skeleton
-        else {
-            unreachable!("string view construction starts from a struct skeleton");
-        };
-        for (field, slot) in &mut fields {
-            *slot = match field.as_str() {
-                "_data" => Value::Pointer {
-                    allocation,
-                    offset: 0,
-                },
-                "_size" => Value::Int(bytes.len() as i64),
-                other => unreachable!("unexpected StringSpan field '{other}'"),
             };
         }
         Ok(Value::Struct {
@@ -817,6 +828,17 @@ impl VmBackend {
         } else {
             Value::Int(bits)
         }))
+    }
+
+    /// The program-lifetime byte allocation holding `text`'s UTF-8 bytes,
+    /// allocated once per distinct text and never freed.
+    pub(super) fn static_literal_bytes(&mut self, text: &str) -> Result<u64, RuntimeError> {
+        if let Some(allocation) = self.static_literals.get(text) {
+            return Ok(*allocation);
+        }
+        let allocation = self.alloc_utf8_bytes(text.as_bytes())?;
+        self.static_literals.insert(text.to_string(), allocation);
+        Ok(allocation)
     }
 
     fn alloc_utf8_bytes(&mut self, bytes: &[u8]) -> Result<u64, RuntimeError> {

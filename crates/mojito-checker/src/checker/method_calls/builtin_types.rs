@@ -26,9 +26,10 @@ impl Checker {
         if !kwargs.is_empty() && method != "unsafe_write" {
             reject_kwargs(kwargs)?;
         }
-        // `unsafe_origin_cast` takes its target origin as the sole compile-time
-        // parameter argument; no other pointer method is parameterized.
-        if !param_args.is_empty() && method != "unsafe_origin_cast" {
+        // `unsafe_origin_cast` takes its target origin and `unsafe_mut_cast`
+        // its target mutability as the sole compile-time parameter argument;
+        // no other pointer method is parameterized.
+        if !param_args.is_empty() && !matches!(method, "unsafe_origin_cast" | "unsafe_mut_cast") {
             return Err(TypeError::BadCall {
                 func: format!("Pointer.{method}"),
                 reason: "compile-time parameter arguments are not supported here".to_string(),
@@ -72,6 +73,46 @@ impl Checker {
                     target.immutable()
                 } else {
                     target
+                };
+                self.operation_adjustments.borrow_mut().insert(
+                    span.clone(),
+                    mojito_checked::checked::SemanticAdjustment::PointerOriginCast {
+                        origin: target.clone(),
+                    },
+                );
+                Ok(Ty::Pointer {
+                    element: Box::new(elem.clone()),
+                    origin: target,
+                })
+            }
+            // Capability rebind (upstream's `unsafe_mut_cast[target_mut]`): the
+            // runtime value is unchanged, as for an origin cast.
+            "unsafe_mut_cast" => {
+                let mut target = param_args.first();
+                while let Some(mojito_ast::ast::ParamArg::Named { value, .. }) = target {
+                    target = Some(value);
+                }
+                let Some(mojito_ast::ast::ParamArg::Value(Expr {
+                    kind: ExprKind::Bool(target_mut),
+                    ..
+                })) = target
+                else {
+                    return Err(TypeError::BadCall {
+                        func: "Pointer.unsafe_mut_cast".to_string(),
+                        reason: "expected exactly one Bool literal parameter argument".to_string(),
+                    });
+                };
+                if param_args.len() != 1 || !args.is_empty() {
+                    return Err(TypeError::ArityMismatch {
+                        name: "unsafe_mut_cast".to_string(),
+                        expected: 0,
+                        got: args.len(),
+                    });
+                }
+                let target = if *target_mut {
+                    origin.clone().mutable()
+                } else {
+                    origin.clone().immutable()
                 };
                 self.operation_adjustments.borrow_mut().insert(
                     span.clone(),

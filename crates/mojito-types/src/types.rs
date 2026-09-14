@@ -99,10 +99,9 @@ pub enum Ty {
     Int,
     UInt,
     Bool,
-    /// The compile-time string literal type (Mojo's `StringLiteral`). The
-    /// nominal runtime `String` is the self-hosted stdlib struct; until the
-    /// annotation takeover lands, source `String` annotations still resolve
-    /// here.
+    /// The compile-time string literal type (Mojo's `StringLiteral`). Its
+    /// source spelling is concrete only as a parameter annotation; the
+    /// nominal runtime `String` is the self-hosted stdlib struct.
     StringLiteral,
     Float64,
     None,

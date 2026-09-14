@@ -2515,20 +2515,22 @@ destinations carry interior paths.
 
 The self-hosted `String` (stdlib/std/string.mojo) is an ordinary struct — a
 UTF-8 byte buffer over `UnsafePointer[Byte]` in the List storage pattern —
-with exactly two deliberate intrinsic crossings, both keyed on the linked
-declaration identity (`symbol::is_stdlib_string_struct`): the `@implicit`
-literal constructor (`String("...")`) never executes its declared body — the
-VM fills the byte buffer from the literal's UTF-8 bytes — and
-`_as_string_literal(self) -> StringLiteral` reads the buffer back into a
-builtin string value for the Writer path. The borrowed view `StringSpan` has
-the one matching crossing: its `@implicit` `StringLiteral` constructor
-(upstream's `StaticString` initializer, keyed on
-`symbol::is_stdlib_string_span_struct`) is a never-executing stub the VM
-replaces with a view over a never-freed byte buffer and the native backend
-with a view over the interned constant. Everything else (comparison,
-concatenation, membership, hashing, decoding, slicing, and the result APIs,
-which live on the view with `String` forwarding through `StringSpan(self)`)
-is pure library code.
+and its literal constructors are ordinary Mojo bodies. The one intrinsic is
+upstream's pair of `StringLiteral` byte primitives, `byte_length()` and
+`ptr() -> Pointer[Byte, ImmStaticOrigin]` (`pop.string.size` /
+`pop.string.address`): the VM addresses a never-freed allocation interned
+per literal text, the native backend the interned `mjstr_<n>` constant or a
+runtime descriptor's bytes. `String(literal)` allocates and `memcpy`s from
+`ptr()`; `StringSpan(literal)` (upstream's `StaticString` initializer) views
+`ptr()` through `unsafe_mut_cast[True]()` and `unsafe_origin_cast`. Writing
+goes the other way through upstream's `Writer.write_string(mut self, string:
+StringSlice)`: `String.write_to` hands the writer `StringSpan(self)` and
+`StringSpan.write_to` hands itself. The VM's builtin text accumulator and the
+native print path read the view's bytes; a user writer's `write(...)` gets
+each formatted argument as a view over a buffer freed after the call.
+Everything else (comparison, concatenation, membership, hashing, decoding,
+slicing, and the result APIs, which live on the view with `String`
+forwarding through `StringSpan(self)`) is pure library code.
 
 The `StringLiteral`-vs-`String` split is realized at the type level. The
 compile-time literal type is `Ty::StringLiteral` (spelled `StringLiteral` in

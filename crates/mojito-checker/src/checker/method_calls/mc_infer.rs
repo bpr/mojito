@@ -852,6 +852,28 @@ impl Checker {
             self.infer_print(args, &[])?;
             return self.nominal_string_wrap(span);
         }
+        // Upstream's `StringLiteral` byte primitives (`pop.string.size` /
+        // `pop.string.address`): the literal's UTF-8 bytes live for the whole
+        // program, so the pointer carries the static origin.
+        if obj_ty == Ty::StringLiteral && args.is_empty() {
+            match method {
+                "byte_length" => {
+                    reject_kwargs(kwargs)?;
+                    return Ok(Ty::Int);
+                }
+                "ptr" | "unsafe_ptr" => {
+                    reject_kwargs(kwargs)?;
+                    return Ok(Ty::Pointer {
+                        element: Box::new(Ty::Simd {
+                            dtype: Dtype::UInt8,
+                            width: 1,
+                        }),
+                        origin: mojito_types::origin::PointerOrigin::Static,
+                    });
+                }
+                _ => {}
+            }
+        }
         if let Ty::Tuple(elements) = &obj_ty {
             reject_kwargs(kwargs)?;
             return self.infer_tuple_method(&span, object, method, elements, call);

@@ -22,20 +22,6 @@ impl FnLowering<'_> {
         if intercepted_call(name) {
             return self.lower_unsafe_alloc(ctx, dest, args, kwargs);
         }
-        // Literal→String conversion arrives as the nominal String's
-        // `StringLiteral` constructor overload symbol, whose declared body is
-        // a never-execute field-contract stub: route it to the native
-        // constructor bridge exactly like the type-name call shape, ahead
-        // of the compiled-signature dispatch that would run the stub.
-        if mojito_symbol::symbol::string_ctor_overload_struct(name).is_some() {
-            return self.lower_string_ctor(ctx, dest, args, kwargs);
-        }
-        // The view's `StringLiteral` constructor is the same kind of stub;
-        // it must be intercepted here, before the compiled-signature
-        // dispatch, or the stub would run and yield an empty view.
-        if mojito_symbol::symbol::string_span_ctor_overload_struct(name).is_some() {
-            return self.lower_string_span_ctor(ctx, dest, args, kwargs);
-        }
         if !self.signatures.contains_key(name) {
             if matches!(name, "Int" | "UInt" | "Float64" | "Bool") {
                 return self.lower_convert(ctx, dest, name, args, kwargs);

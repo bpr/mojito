@@ -46,13 +46,27 @@ impl Checker {
         self.resolve_ty_from_anno(ty)
     }
 
+    /// The source spelling `StringLiteral`: upstream parameterizes the type
+    /// by the literal's value, so the bare spelling is concrete only as a
+    /// whole parameter annotation, where the value infers per call.
+    pub(super) fn bare_string_literal(&self) -> Result<Ty, TypeError> {
+        if self.bare_string_literal_parameter.get() {
+            Ok(Ty::StringLiteral)
+        } else {
+            Err(TypeError::Unsupported(
+                "'StringLiteral[_]' is not concrete, use '[]' to bind missing parameters"
+                    .to_string(),
+            ))
+        }
+    }
+
     #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn resolve_ty_from_anno(&self, ty: &SourceType) -> Result<Ty, TypeError> {
         Ok(match ty {
             SourceType::Int => Ty::Int,
             SourceType::UInt => Ty::UInt,
             SourceType::Bool => Ty::Bool,
-            SourceType::StringLiteral => Ty::StringLiteral,
+            SourceType::StringLiteral => self.bare_string_literal()?,
             SourceType::Float64 => Ty::Float64,
             SourceType::None => Ty::None,
             SourceType::Func {
@@ -277,11 +291,8 @@ impl Checker {
                     return self
                         .ty_from_anno(&SourceType::Named("StringSpan".to_string(), args.clone()));
                 }
-                // Mojo exposes the compile-time `StringLiteral` type. Mojito
-                // materializes string literals directly as runtime strings, so
-                // it is represented by the existing string type.
                 if name == "StringLiteral" && args.is_empty() {
-                    return Ok(Ty::StringLiteral);
+                    return self.bare_string_literal();
                 }
                 if args.is_empty()
                     && let Some(parameter) = self.lookup_tparam(name)

@@ -112,7 +112,7 @@ impl Checker {
                 self.register_named_bindings(key)?;
             }
             self.register_named_bindings(value)?;
-            let value_ty = default_literal(&self.infer(value)?);
+            let value_ty = self.materialized_element_ty(value)?;
             self.check_consuming(value, &value_ty, "collection comprehension element")?;
             let result_ty = match kind {
                 mojito_ast::ast::CollectionKind::List => list_type(value_ty),
@@ -129,7 +129,7 @@ impl Checker {
                 }
                 mojito_ast::ast::CollectionKind::Dict => {
                     let key = key.as_ref().expect("dictionary comprehension has a key");
-                    let key_ty = default_literal(&self.infer(key)?);
+                    let key_ty = self.materialized_element_ty(key)?;
                     self.check_consuming(key, &key_ty, "dictionary comprehension key")?;
                     if !self.is_hashable(&key_ty) {
                         return Err(TypeError::TraitNotSatisfied {
@@ -2183,6 +2183,15 @@ impl Checker {
     /// Infer the common element type of a non-empty list of expressions: numeric
     /// elements unify (widening literals), non-numeric elements must match; the
     /// result is materialized (a literal → its concrete default).
+    /// The stored type of one collection element or key: a literal default,
+    /// with a string literal wrapped into the nominal `String`.
+    pub(super) fn materialized_element_ty(&self, element: &Expr) -> Result<Ty, TypeError> {
+        match self.infer(element)? {
+            Ty::StringLiteral => self.nominal_string_wrap(element.source_span()),
+            ty => Ok(default_literal(&ty)),
+        }
+    }
+
     pub(super) fn infer_list_elem(&self, elems: &[Expr]) -> Result<Ty, TypeError> {
         let mut acc: Option<Ty> = None;
         for e in elems {
@@ -2200,6 +2209,15 @@ impl Checker {
         let element = acc.ok_or_else(|| {
             TypeError::InvariantViolation("empty list reached non-empty inference".to_string())
         })?;
+        // A string element materializes the nominal `String`, as upstream's
+        // non-materializable `StringLiteral` does in every runtime display.
+        if element == Ty::StringLiteral {
+            let mut materialized = element;
+            for value in elems {
+                materialized = self.nominal_string_wrap(value.source_span())?;
+            }
+            return Ok(materialized);
+        }
         let materialized = default_literal(&element);
         for value in elems {
             let actual = self.infer(value)?;

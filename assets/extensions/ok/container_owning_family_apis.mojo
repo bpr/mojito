@@ -61,6 +61,9 @@ def main():
     var sd_displaced = sd.insert("a", 2)
     print("sd displaced", sd_displaced.value().value)
     print("sd fresh", Bool(sd.insert("b", 3)))
-    sd^.deinit_with(lambda (var key: StringLiteral, var value: Int): print("sd torn", key, value))
+    def sd_torn(var key: String, var value: Int):
+        print("sd torn", key, value)
+
+    sd^.deinit_with(sd_torn)
 
     print("done")

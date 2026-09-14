@@ -32,8 +32,8 @@ struct _BoundsMessage(Movable, Writer):
     def __init__(out self):
         self.text = String("")
 
-    def write_string(mut self, chunk: String):
-        self.text = self.text + chunk
+    def write_string(mut self, chunk: StringSpan):
+        self.text.write_string(chunk)
 
 
 def check_slice_bounds(start: Int, end: Int, length: Int):
@@ -667,15 +667,16 @@ struct String(
     var size: Int
     var cap: Int
 
+    # Copies the literal's static bytes into an owned buffer. `@implicit` lets
+    # a literal convert wherever the nominal String is expected.
     @implicit
     def __init__(out self, literal: StringLiteral):
-        # The compiler replaces this call: `data`/`size`/`cap` are filled
-        # from the literal's UTF-8 bytes.  The body only establishes the
-        # field contract and never executes.  `@implicit` lets a literal
-        # convert wherever the nominal String is expected.
-        self.size = 0
-        self.cap = 1
+        self.size = literal.byte_length()
+        self.cap = self.size if self.size > 0 else 1
         self.data = unsafe_alloc[Byte](self.cap)
+        var copied = external_call["memcpy", Pointer[UInt8, MutUntrackedOrigin]](
+            self.data, literal.ptr(), UInt(self.size)
+        )
 
     def __init__(out self):
         self.size = 0
@@ -859,8 +860,8 @@ struct String(
 
     # `Writer` conformance: `s.write(a, b, ...)` appends each argument's
     # written text to this buffer (amortized doubling growth).
-    def write_string(mut self, chunk: String):
-        self._append_bytes_of(chunk, 0, chunk.size)
+    def write_string(mut self, chunk: StringSpan):
+        self._append_bytes_of(chunk, 0, chunk.byte_length())
 
     # The result APIs (search, affix tests, replace, split, case, predicates,
     # justification, and the strip family) live on `StringSpan` in upstream's
@@ -1201,14 +1202,8 @@ struct String(
             i += 1
         return result^
 
-    def _as_string_literal(self) -> StringLiteral:
-        # The compiler replaces this call: the byte buffer reads back as a
-        # compile-time string value (the struct-to-literal bridge).  The body
-        # only establishes the signature and never executes.
-        return ""
-
     def write_to(self, mut writer: Some[Writer]):
-        writer.write(self._as_string_literal())
+        writer.write_string(StringSpan(self))
 
     # Upstream's single-quoted repr with backslash escapes for `\\`, `'`,
     # newline, tab, and carriage return.
@@ -1405,17 +1400,15 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         ]()
         self._size = src.size
 
-    # Upstream's `StaticString` initializer (the origin is erased here). The
-    # compiler replaces this call: `_data`/`_size` view the literal's UTF-8
-    # bytes, which live for the whole program. The body only establishes the
-    # field contract and never executes. `@implicit` lets a literal convert
-    # wherever a view is expected.
+    # Upstream's `StaticString` initializer (the origin is erased here): a
+    # view over the literal's UTF-8 bytes, which live for the whole program.
+    # `@implicit` lets a literal convert wherever a view is expected.
     @implicit
     def __init__(out self, literal: StringLiteral):
-        self._data = unsafe_alloc[Byte](1).unsafe_origin_cast[
+        self._data = literal.ptr().unsafe_mut_cast[True]().unsafe_origin_cast[
             origin._get_owned_interior["bytes"]
         ]()
-        self._size = 0
+        self._size = literal.byte_length()
 
     # Ordinary StringSpan iteration also yields grapheme-cluster sub-views.
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
@@ -1810,7 +1803,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         return self._sub_view(self._grapheme_offset(start), self._grapheme_offset(end))
 
     def write_to(self, mut writer: Some[Writer]):
-        writer.write(self.to_string())
+        writer.write_string(self)
 
     def write_repr_to(self, mut writer: Some[Writer]):
         self.to_string().write_repr_to(writer)

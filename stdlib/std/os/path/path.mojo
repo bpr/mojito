@@ -260,18 +260,18 @@ def expandvars[PathLike: stdPathLike, //](path: PathLike) -> String:
         if Bool(bytes[j] == UInt8(36)) and j + 1 < n:
             if not Bool(buf):
                 buf.reserve_bytes(2 * n)
-            buf.write_string(String(path_str[byte=i:j]))
+            buf.write_string(path_str[byte=i:j])
             var name, length = _parse_variable_name(path_str, j + 1)
             if name.startswith("{") or name == "":
-                buf.write_string(String(path_str[byte=j:j + length + 1]))
+                buf.write_string(path_str[byte=j:j + length + 1])
             elif _is_shell_special_variable(bytes[j + 1]):
-                buf.write_string(String(path_str[byte=j:j + 2]))
+                buf.write_string(path_str[byte=j:j + 2])
             else:
                 var value = getenv(name)
                 if value != "":
                     buf.write_string(value)
                 else:
-                    buf.write_string(String(path_str[byte=j:j + length + 1]))
+                    buf.write_string(path_str[byte=j:j + length + 1])
             j += length
             i = j + 1
         j += 1

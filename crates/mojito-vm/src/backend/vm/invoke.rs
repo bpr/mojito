@@ -246,8 +246,8 @@ impl VmBackend {
             RuntimeError::Unsupported("vm: kwargs StringDict has no __setitem__".to_string())
         })?;
         for (key, value) in entries {
-            let (_, frame) =
-                self.call_frame(prog, fidx, vec![dict, Value::Str(key), value], &[])?;
+            let key = self.nominal_string_value(prog, &key)?;
+            let (_, frame) = self.call_frame(prog, fidx, vec![dict, key, value], &[])?;
             dict = frame.into_iter().next().unwrap_or(Value::None);
         }
         Ok(dict)
@@ -316,10 +316,13 @@ impl VmBackend {
                     _ => {}
                 }
             }
-            let Some(Value::Str(key)) = key else {
+            let Some(key @ Value::Struct { .. }) = key else {
                 return Err(RuntimeError::TypeError(
                     "StringDict entry key is not a String".to_string(),
                 ));
+            };
+            let Value::Str(key) = self.string_struct_literal(&key)? else {
+                unreachable!("the string read-back yields text");
             };
             let value = value.ok_or_else(|| {
                 RuntimeError::TypeError("StringDict entry has no value".to_string())
@@ -374,15 +377,6 @@ impl VmBackend {
         // reach here (the checker resolves them to the value read).
         if method == "copy" && !matches!(recv, Value::Struct { .. }) {
             return Ok(recv.clone());
-        }
-        // Struct-to-literal bridge: the nominal String's `_as_string_literal`
-        // reads the byte buffer back into a compile-time string value; the
-        // declared body never executes.
-        if method == "_as_string_literal"
-            && let Value::Struct { name, .. } = &recv
-            && mojito_symbol::symbol::is_stdlib_string_struct(name)
-        {
-            return self.string_struct_literal(&recv);
         }
         // `format` on a nominal String receiver reads the template back
         // through the bridge and runs the builtin template formatter; the
@@ -489,6 +483,28 @@ impl VmBackend {
             Value::Str(template) if method == "format" => {
                 self.format_template(prog, template, &args).map(Value::Str)
             }
+            // The builtin text writer's `Writer.write_string`: append the
+            // view's bytes.
+            Value::Str(current) if method == "write_string" && args.len() == 1 => {
+                let place = recv_place.as_ref().ok_or_else(|| {
+                    RuntimeError::Unsupported(
+                        "vm: Writer.write_string needs a mutable place".into(),
+                    )
+                })?;
+                let text = format!("{current}{}", self.string_span_text(&args[0])?);
+                self.store_at_call_place(prog, frame_id, place, Value::Str(text), regs, vars)?;
+                Ok(Value::None)
+            }
+            Value::Str(text) if method == "byte_length" && args.is_empty() => {
+                Ok(Value::Int(text.len() as i64))
+            }
+            Value::Str(text) if matches!(method, "ptr" | "unsafe_ptr") && args.is_empty() => {
+                let allocation = self.static_literal_bytes(text)?;
+                Ok(Value::Pointer {
+                    allocation,
+                    offset: 0,
+                })
+            }
             Value::Str(current) if method == "write" => {
                 let place = recv_place.as_ref().ok_or_else(|| {
                     RuntimeError::Unsupported("vm: Writer.write needs a mutable place".into())
@@ -564,16 +580,6 @@ impl VmBackend {
                 let index = prog
                     .index_of(&format!("{name}.write_string"))
                     .expect("guard established Writer.write_string");
-                // A `write_string` declaring the nominal String receives a
-                // materialized struct; the literal spelling keeps `Value::Str`.
-                let nominal_payload = prog
-                    .sigs
-                    .get(&format!("{name}.write_string"))
-                    .and_then(|signature| signature.param_types.first())
-                    .is_some_and(|ty| {
-                        matches!(ty, Ty::Struct(payload, args)
-                        if args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(payload))
-                    });
                 // The formatted arguments' `write_to` frames may read
                 // references into this caller (see the builtin-string arm).
                 let stack_base = self.push_caller_mirror(frame_id, regs, vars);
@@ -581,13 +587,12 @@ impl VmBackend {
                     for (position, argument) in args.into_iter().enumerate() {
                         let static_ty = arg_types.get(position).and_then(Option::as_ref);
                         let text = self.format_value(prog, argument, false, static_ty)?;
-                        let payload = if nominal_payload {
-                            self.nominal_string_value(prog, &text)?
-                        } else {
-                            Value::Str(text)
-                        };
+                        // `write_string` borrows a view over a temporary buffer
+                        // that lives exactly as long as the call.
+                        let (payload, allocation) = self.temporary_string_span(prog, &text)?;
                         let (_, variables) =
                             self.call_frame(prog, index, vec![writer.clone(), payload], &[])?;
+                        self.heap_free(allocation, 0)?;
                         writer = variables.into_iter().next().unwrap_or(Value::None);
                     }
                     Ok::<_, RuntimeError>(())

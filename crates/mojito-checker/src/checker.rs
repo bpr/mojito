@@ -437,6 +437,10 @@ pub struct Checker {
     /// alias; upstream infers the origin per call there and rejects the
     /// placeholder elsewhere as not concrete).
     resolving_parameter_annotation: std::cell::Cell<bool>,
+    /// Set while resolving a parameter annotation that is exactly
+    /// `StringLiteral`: upstream's value-parameterized literal type infers
+    /// its parameter there and is not concrete anywhere else.
+    bare_string_literal_parameter: std::cell::Cell<bool>,
     /// The declaration currently being checked comes from the bundled
     /// standard-library crossing package (`stdlib/std/memory/`). Only such
     /// declarations may name compiler-private storage types (`__UninitStorage`)
@@ -708,6 +712,7 @@ impl Checker {
             transfer_frames: RefCell::new(Vec::new()),
             transfer_effects: RefCell::new(transfer_effects),
             resolving_parameter_annotation: std::cell::Cell::new(false),
+            bare_string_literal_parameter: std::cell::Cell::new(false),
             call_transfers: RefCell::new(HashMap::new()),
             effect_observations: RefCell::new(HashMap::new()),
             call_through_effects: RefCell::new(call_through_seed),

@@ -456,6 +456,15 @@ impl FnLowering<'_> {
             self.reg_values.insert(reg.0, storage);
             return Ok(storage);
         }
+        // A runtime string's `(data, len)` pair passed as a `StringLiteral`
+        // aggregate: the borrowed descriptor over the same bytes. Releasing
+        // an owned buffer still reads the pair, not this storage.
+        if let Some(descriptor) = self.str_runtime.get(&reg.0).copied() {
+            let storage = self.entry_alloca(ctx, 16, 8);
+            self.store_string_span_fields(ctx, storage, descriptor.data, descriptor.len, reg);
+            self.reg_values.insert(reg.0, storage);
+            return Ok(storage);
+        }
         Err(self.unsupported(
             format!("read of undefined aggregate register %r{}", reg.0),
             self.reg_span(reg),

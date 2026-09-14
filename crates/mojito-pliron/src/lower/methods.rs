@@ -49,6 +49,18 @@ impl FnLowering<'_> {
         if let Some(Ty::Simd { dtype, width }) = self.func.reg_types.get(&recv.0).cloned() {
             return self.lower_simd_method(ctx, dest, recv, dtype, width as usize, method, args);
         }
+        // `StringLiteral`'s byte primitives read the descriptor: the interned
+        // constant's address and length, or a runtime literal's `(data, len)`.
+        if resolved.is_none()
+            && args.is_empty()
+            && matches!(method, "byte_length" | "ptr" | "unsafe_ptr")
+            && matches!(self.func.reg_types.get(&recv.0), Some(Ty::StringLiteral))
+        {
+            let (data, len) = self.writer_argument_text(ctx, recv, dest)?;
+            let value = if method == "byte_length" { len } else { data };
+            self.reg_values.insert(dest.0, value);
+            return Ok(());
+        }
         // Slice descriptors are checker-virtual: `indices` is the VM's
         // intrinsic normalization and `__eq__`/`__ne__` compare the raw
         // bounds; no other method exists on them.
@@ -68,9 +80,10 @@ impl FnLowering<'_> {
             return Err(self.unsupported_reg(format!("slice descriptor method `{method}`"), dest));
         }
         // The builtin-string writer receiver (`write_to`'s `Value::Str`
-        // accumulator) appends each argument's display text in place.
+        // accumulator) appends each argument's display text in place; its
+        // `write_string` appends the view's bytes the same way.
         if resolved.is_none()
-            && method == "write"
+            && matches!(method, "write" | "write_string")
             && matches!(self.func.reg_types.get(&recv.0), Some(Ty::StringLiteral))
         {
             return self.lower_str_writer_write(ctx, dest, recv, args, recv_place);
@@ -613,12 +626,11 @@ impl FnLowering<'_> {
             .declarations
             .get(&write_string)
             .and_then(|decl| decl.param_types.first());
-        let nominal_payload = matches!(payload_ty, Some(Ty::Struct(payload, args))
-            if args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(payload));
-        let literal_payload = matches!(payload_ty, Some(Ty::StringLiteral));
-        if !nominal_payload && !literal_payload {
+        if !matches!(payload_ty, Some(Ty::Struct(payload, _))
+            if mojito_symbol::symbol::is_stdlib_string_span_struct(payload))
+        {
             return Err(self.unsupported_reg(
-                format!("`{write_string}` without a nominal String payload"),
+                format!("`{write_string}` without a StringSpan payload"),
                 dest,
             ));
         }
@@ -697,16 +709,8 @@ impl FnLowering<'_> {
             } else {
                 self.writer_argument_text(ctx, *arg, dest)?
             };
-            let payload = self.entry_alloca(ctx, if nominal_payload { 24 } else { 16 }, 8);
-            if nominal_payload {
-                self.store_string_fields(ctx, payload, data, len, len, dest);
-            } else {
-                let store = StoreOp::new(ctx, data, payload);
-                self.append(ctx, store.get_operation(), Some(dest));
-                let len_address = self.gep_byte(ctx, payload, 8, dest);
-                let store = StoreOp::new(ctx, len, len_address);
-                self.append(ctx, store.get_operation(), Some(dest));
-            }
+            let payload = self.entry_alloca(ctx, 16, 8);
+            self.store_string_span_fields(ctx, payload, data, len, dest);
             let call = CallOp::new(
                 ctx,
                 CallOpCallable::Direct(callee.clone()),
