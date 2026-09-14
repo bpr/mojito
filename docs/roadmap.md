@@ -412,22 +412,21 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     upstream way.
     - Model: Fable. A leniency to withdraw, whose fallout is every stdlib
       and fixture method that names a pack.
-  - `symbolic-origin-pointer-write`: a write through a pointer field whose
-    origin binder has symbolic mutability (`Origin[mut=m]`, or a bare
-    `Origin`) is accepted however the binder was bound, while upstream
-    judges the binder per instantiation and rejects the write from an
-    immutable place (`expression must be mutable in assignment`). Origin
-    arguments are erased from checked identity, so no per-instance binding
-    reaches `check_pointer_write`; carrying it there is the fix. An
-    `ImmOrigin(o)` origin argument (`Cell[ImmOrigin(o)]`) erases the same
-    way, so a write through that view's pointer field is accepted too.
-    `assets/extensions/ok/pointer_field_parametric_mut_subscript_write.mojo`
-    and
-    `assets/extensions/ok/pointer_field_parametric_mut_write_generic_wrapper.mojo`
-    are the corpus fixtures. A `where Self.m` clause does not discharge it
-    upstream either, so there is no spelling to respell to.
-    - Model: Fable. Origin arguments must survive checked identity, which
-      erases them today.
+  - `call-result-pointer-field-write`: a write through the pointer field of
+    a view a call returns (`make(xs).src[][0] = 9`) is rejected as a
+    symbolic-origin write, while the pin runs it.
+    - A symbolic `Origin[mut=m]` binder resolves through a named binding's
+      construction-time origins; a call result has none, so the write is
+      judged as if in the generic body. Before that rejection the program
+      died in MIR (`selected subscript reference receiver has no retained
+      caller place`).
+    - A nested `ImmOrigin(o)` application has the mirror gap: the cast is
+      kept per identifier binding, so `w.cell.src[][0] = 1` through
+      `Wrap(Cell[ImmOrigin(origin_of(xs))](…))` still writes.
+    - Pinned by `conformance/probes/call_result_pointer_field_write.mojo`.
+    - Model: Fable. The bindings must flow from a callee's return contract
+      and through field chains, and the MIR retained-place gap sits beneath
+      the first shape.
   - `assign-view-over-source`: assigning a call straight back to a local
     that one of its view arguments borrows is judged by origin upstream but
     by temporary lifetime in Mojito. Upstream rejects a view at
@@ -467,9 +466,13 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     (`pointer_field_*`, among them the `View`/`KeyIter` iterators whose
     `[o]` value will not convert to `[origin_of(self)]`), and five more were
     respelled to bind the origin.
-    - Model: Fable. Origin arguments must survive checked identity (the same
-      lever as `symbolic-origin-pointer-write`), and the exclusivity rule is
-      a new analysis rather than a spelling.
+    - A view local rebound to a view over another origin (`p =
+      P(Pointer(to=ys))` after `P(Pointer(to=xs))`) is accepted for the
+      same reason; the pin rejects it with `cannot implicitly convert
+      'P[origin_of(ys)]' value to 'P[origin_of(xs)]'`. Pinned by
+      `conformance/probes/rebound_view_origin_identity.mojo`.
+    - Model: Fable. Origin arguments must survive checked identity, and the
+      exclusivity rule is a new analysis rather than a spelling.
   - `int-true-division`: `Int / Int` is true division into `Float64` in
     Mojito; the pin truncates back to `Int` and divides only an `IntLiteral`
     pair into a float. An `output-diff` row, not a rejection, so it is not on

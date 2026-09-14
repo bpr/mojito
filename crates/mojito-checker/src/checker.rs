@@ -324,6 +324,11 @@ pub struct Checker {
     /// origin_of(xs)]`), parallel to the lexical value scopes, so a later
     /// reassignment is judged against the same demand as the declaration.
     storage_origin_demand_scopes: Vec<HashMap<String, Vec<(String, mojito_types::origin::Origin)>>>,
+    /// The origin binders a binding's construction bound through an
+    /// `ImmOrigin(o)` cast (`Cell[ImmOrigin(origin_of(xs))](...)`), parallel
+    /// to the lexical value scopes: the cast drops the source's mutable
+    /// capability, which the construction-time origins alone cannot show.
+    immutable_origin_binder_scopes: Vec<HashMap<String, Vec<mojito_types::origin::OriginParamId>>>,
     aggregate_field_origin_scopes:
         Vec<HashMap<String, HashMap<String, Vec<mojito_types::origin::Origin>>>>,
     /// Reference-parameter handle types. Parameter expression typing still
@@ -541,6 +546,11 @@ pub struct Checker {
     /// origin)`), so the binding site can judge the initializer against them
     /// after they are erased from the type. `None` = not collecting.
     storage_origin_demands: RefCell<Option<Vec<(String, mojito_types::origin::Origin)>>>,
+    /// Per construction expression, the origin binders its explicit
+    /// application bound through an `ImmOrigin(o)` cast; a `var` binding of
+    /// the construction copies them into `immutable_origin_binder_scopes`.
+    construction_immutable_binders:
+        RefCell<HashMap<SourceSpan, Vec<mojito_types::origin::OriginParamId>>>,
     /// Synthetic tuple element reads introduced by unpacking have no source
     /// expression nodes. Retain their checked types and exact generated
     /// accessors on the RHS expression for HIR/MIR lowering.
@@ -674,6 +684,8 @@ impl Checker {
             aggregate_origin_scopes: vec![HashMap::new()],
             aggregate_field_origin_scopes: vec![HashMap::new()],
             storage_origin_demand_scopes: vec![HashMap::new()],
+            immutable_origin_binder_scopes: vec![HashMap::new()],
+            construction_immutable_binders: RefCell::new(HashMap::new()),
             reference_parameter_scopes: vec![HashMap::new()],
             reference_parameter_binders: HashMap::new(),
             callable_origin_scopes: vec![HashMap::new()],

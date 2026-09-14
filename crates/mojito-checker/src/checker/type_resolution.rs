@@ -29,6 +29,9 @@ pub(super) fn reject_stored_callable_type(ty: &Ty, position: &str) -> Result<(),
 pub(in crate::checker) struct ExplicitStructOrigin {
     pub(in crate::checker) id: mojito_types::origin::OriginParamId,
     pub(in crate::checker) origin: mojito_types::origin::Origin,
+    /// The argument's capability when known (`None` for a symbolic one): an
+    /// `ImmOrigin(o)` cast binds the slot immutably whatever `o` allows.
+    pub(in crate::checker) mutability: Option<mojito_types::origin::Mutability>,
 }
 
 /// A struct application's compile-time arguments with the origin slots
@@ -847,6 +850,7 @@ impl Checker {
                 explicit_origins.push(ExplicitStructOrigin {
                     id: slot_id(param),
                     origin,
+                    mutability,
                 });
             }
             let forwarded: Vec<mojito_ast::ast::ParamArg> = explicit
@@ -884,6 +888,7 @@ impl Checker {
                         explicit_origins.push(ExplicitStructOrigin {
                             id: slot_id(param),
                             origin,
+                            mutability,
                         });
                         continue;
                     }

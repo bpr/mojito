@@ -1003,6 +1003,51 @@ fn parametric_mut_origin_binder_is_erased_from_struct_parameters() {
 }
 
 #[test]
+fn symbolic_origin_pointer_write_is_judged_per_binding() {
+    // A pointer field whose origin binder has symbolic mutability
+    // (`Origin[mut=m]`) resolves the binder through the holder's
+    // construction-time origins: a mutable source writes through, an
+    // immutable one rejects, as upstream judges the binder per instantiation.
+    const P: &str = "@fieldwise_init\nstruct P[m: Bool, //, o: Origin[mut=m]]:\n    var src: Pointer[List[Int], Self.o]\n\n";
+    ok(&format!(
+        "{P}def main():\n    var xs = List[Int]()\n    xs.append(7)\n    var p = P(Pointer(to=xs))\n    p.src[][0] = 9\n    print(xs[0])\n"
+    ));
+    let error = err(&format!(
+        "{P}def show(xs: List[Int]):\n    var p = P(Pointer(to=xs))\n    p.src[][0] = 9\n\ndef main():\n    var xs = List[Int]()\n    xs.append(7)\n    show(xs)\n"
+    ));
+    assert!(
+        matches!(&error, TypeError::ImmutableBinding(_)),
+        "got {error:?}"
+    );
+}
+
+#[test]
+fn symbolic_origin_pointer_write_rejects_in_the_generic_body() {
+    // Upstream never accepts the write inside the generic body, whatever
+    // the instantiation: `m` is not provably True there.
+    let error = err(
+        "struct View[m: Bool, //, o: Origin[mut=m]]:\n    var src: Pointer[List[Int], Self.o]\n\n    def __init__(out self, ref[Self.o] xs: List[Int]):\n        self.src = Pointer(to=xs)\n\n    def put(mut self, x: Int):\n        self.src[][0] = x\n\ndef main():\n    var data = List[Int]()\n    data.append(7)\n    var v = View(data)\n    v.put(9)\n",
+    );
+    assert!(
+        matches!(&error, TypeError::ImmutableBinding(_)),
+        "got {error:?}"
+    );
+}
+
+#[test]
+fn imm_origin_cast_binder_rejects_pointer_write() {
+    // `Cell[ImmOrigin(origin_of(xs))]` binds the binder immutably whatever
+    // `xs` allows; the binding keeps the cast for its writes, reads stay fine.
+    const C: &str = "@fieldwise_init\nstruct Cell[m: Bool, //, o: Origin[mut=m]]:\n    var src: Pointer[List[Int], Self.o]\n\ndef main():\n    var xs = List[Int]()\n    xs.append(7)\n    var c = Cell[ImmOrigin(origin_of(xs))](Pointer(to=xs))\n";
+    ok(&format!("{C}    print(c.src[][0])\n"));
+    let error = err(&format!("{C}    c.src[][0] = 9\n"));
+    assert!(
+        matches!(&error, TypeError::ImmutableBinding(_)),
+        "got {error:?}"
+    );
+}
+
+#[test]
 fn struct_declarations_resolve_order_independently() {
     // Signatures (fields, member types, method signatures) register for every
     // top-level struct before any body checks, so same-module declarations may

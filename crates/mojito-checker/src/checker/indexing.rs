@@ -158,7 +158,7 @@ impl Checker {
                 if matches!(index.kind, ExprKind::EmptySubscript) {
                     return match self.infer(object)? {
                         Ty::Pointer { element, origin } => {
-                            self.check_pointer_write(&origin)?;
+                            self.check_pointer_write(object, &origin)?;
                             Ok(*element)
                         }
                         other => Err(TypeError::Unsupported(format!(
@@ -277,7 +277,7 @@ impl Checker {
                     // provenance must carry mutable capability.
                     Ty::Pointer { element, origin } => {
                         self.check_pointer_offset(origin, index)?;
-                        self.check_pointer_write(origin)?;
+                        self.check_pointer_write(object, origin)?;
                         (**element).clone()
                     }
                     // A SIMD lane write `v[i] = e`: the target is the width-1 scalar.
@@ -326,7 +326,7 @@ impl Checker {
                     && let Ty::Pointer { element, origin } = self.infer(object)?
                 {
                     self.check_pointer_offset(&origin, offset)?;
-                    self.check_pointer_write(&origin)?;
+                    self.check_pointer_write(object, &origin)?;
                     let idx_ty = self.infer(offset)?;
                     if !self.is_index_type(&idx_ty) {
                         return Err(TypeError::TypeMismatch {
@@ -1696,26 +1696,87 @@ impl Checker {
         }
     }
 
-    /// Reject a write through a pointer whose provenance does not carry
-    /// statically known mutable capability. A symbolic parameter mutability is
-    /// writable here and judged per instantiation upstream; Mojito does not
-    /// yet make that per-instantiation judgment, so an immutable place bound
-    /// to a symbolic binder writes through (a tracked divergence in
-    /// `docs/roadmap.md`).
-    #[allow(
-        clippy::unused_self,
-        reason = "TODO: make an associated function or use the receiver"
-    )]
+    /// Reject a write through `pointer` unless its provenance carries
+    /// mutable capability at this site: an immutable provenance, and a
+    /// `Origin[mut=m]` binder that no binding resolves (the generic body
+    /// itself, a `Pointer[T, o]` parameter), both reject — upstream judges
+    /// the binder per instantiation and never inside the generic body.
     pub(super) fn check_pointer_write(
         &self,
+        pointer: &Expr,
         origin: &mojito_types::origin::PointerOrigin,
     ) -> Result<(), TypeError> {
-        if origin.statically_mutable() == Some(false) {
-            return Err(TypeError::Unsupported(
-                "cannot write through a Pointer with an immutable origin".to_string(),
-            ));
+        match self.pointer_write_capability(pointer, origin) {
+            Some(true) => Ok(()),
+            Some(false) => Err(TypeError::ImmutableBinding(
+                "write through a Pointer whose origin is immutable".to_string(),
+            )),
+            None => Err(TypeError::ImmutableBinding(
+                "write through a Pointer whose origin mutability is not known here".to_string(),
+            )),
         }
-        Ok(())
+    }
+
+    /// Whether writes through `pointer` are permitted here: `Some` when the
+    /// provenance's capability is known, `None` when it stays symbolic. A
+    /// symbolic `origin_of(self)` takes the receiver's own mutability, and a
+    /// pointer field's `Origin[mut=m]` binder resolves through the holder's
+    /// construction-time origins (`resolve_receiver_origin_arguments`): the
+    /// place those name is writable or not, while a resolution that only
+    /// reaches the holder's own storage found no binding and stays symbolic.
+    pub(super) fn pointer_write_capability(
+        &self,
+        pointer: &Expr,
+        origin: &mojito_types::origin::PointerOrigin,
+    ) -> Option<bool> {
+        use mojito_types::origin::{Origin, PointerOrigin};
+        if let Some(known) = origin.statically_mutable() {
+            return Some(known);
+        }
+        match origin {
+            PointerOrigin::SelfPlace { .. } => Some(self.self_mutable),
+            PointerOrigin::Param { id, .. } => {
+                let ExprKind::Member { object, .. } = &pointer.kind else {
+                    return None;
+                };
+                if let ExprKind::Identifier(name) = &object.kind
+                    && self.lookup_immutable_origin_binders(name).contains(id)
+                {
+                    return Some(false);
+                }
+                let resolved = self.resolve_receiver_origin_arguments(Origin::Param(*id), object);
+                if self
+                    .origin_place(object)
+                    .is_ok_and(|place| super::origins::origin_rooted_at(&resolved, place.root))
+                {
+                    return None;
+                }
+                self.origin_writably_rooted(&resolved)
+            }
+            PointerOrigin::Place { .. }
+            | PointerOrigin::Static
+            | PointerOrigin::Untracked { .. }
+            | PointerOrigin::UnsafeAny { .. } => None,
+        }
+    }
+
+    /// Reject any pointer dereference on the way to a written place whose
+    /// provenance is not writable, as `check_place` does for a plain
+    /// assignment; a nominal subscript's getter/setter path does not walk
+    /// its receiver chain as a place.
+    pub(super) fn check_pointer_derefs(&self, place: &Expr) -> Result<(), TypeError> {
+        match &place.kind {
+            ExprKind::Index { object, .. }
+            | ExprKind::Slice { object, .. }
+            | ExprKind::MultiIndex { object, .. } => {
+                if let Ty::Pointer { origin, .. } = self.infer(object)? {
+                    return self.check_pointer_write(object, &origin);
+                }
+                self.check_pointer_derefs(object)
+            }
+            ExprKind::Member { object, .. } => self.check_pointer_derefs(object),
+            _ => Ok(()),
+        }
     }
 
     /// Check a primitive subscript's index type. Every receiver but one

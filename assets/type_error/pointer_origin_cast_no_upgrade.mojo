@@ -1,4 +1,4 @@
-# expect: cannot write through a Pointer with an immutable origin
+# expect: write through a Pointer whose origin is immutable
 # `unsafe_origin_cast` rebinds provenance but never upgrades a statically
 # immutable capability: the cast itself is accepted, a write through its
 # result is not.

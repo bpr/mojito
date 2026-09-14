@@ -554,6 +554,8 @@ impl Checker {
                 self.set_storage_origin_demands(name, origin_demands);
                 self.set_aggregate_origins(name, aggregate_origins);
                 self.set_aggregate_field_origins(name, aggregate_field_origins);
+                let immutable_binders = self.construction_immutable_binders(value);
+                self.set_immutable_origin_binders(name, immutable_binders);
                 Ok(())
             }
 
@@ -709,6 +711,8 @@ impl Checker {
                         }
                         self.set_aggregate_origins(name, aggregate_origins);
                         self.set_aggregate_field_origins(name, aggregate_field_origins);
+                        let immutable_binders = self.construction_immutable_binders(value);
+                        self.set_immutable_origin_binders(name, immutable_binders);
                         Ok(())
                     }
                     // Mojito requires `var` to introduce a new binding; a bare
@@ -767,10 +771,18 @@ impl Checker {
                     Vec::new()
                 };
                 let shared_adjustments = self.snapshot_value_adjustments(&shared_argument_sources);
+                let in_place_destination = |error| match error {
+                    TypeError::ImmutableBinding(name) => {
+                        TypeError::ImmutableInPlaceDestination(name)
+                    }
+                    other => other,
+                };
                 let target = if nominal_subscript {
+                    self.check_pointer_derefs(place)
+                        .map_err(in_place_destination)?;
                     self.infer(place)?
                 } else {
-                    self.check_place(place)?
+                    self.check_place(place).map_err(in_place_destination)?
                 };
                 let getter = if nominal_subscript {
                     let contract = self

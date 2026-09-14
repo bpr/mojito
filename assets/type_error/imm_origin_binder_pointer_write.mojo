@@ -1,4 +1,4 @@
-# expect: cannot write through a Pointer with an immutable origin
+# expect: write through a Pointer whose origin is immutable
 # A pointer whose origin fills an `o: ImmOrigin` binder is read-only.
 struct Named[T: AnyType, o: ImmOrigin]:
     var p: Pointer[Self.T, Self.o]

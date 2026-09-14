@@ -1,4 +1,4 @@
-# expect: cannot write through a Pointer with an immutable origin
+# expect: write through a Pointer whose origin is immutable
 # The capability dropped by the conversion is enforced on the result.
 def main():
     var x = 5

@@ -1,4 +1,4 @@
-# expect: cannot write through a Pointer with an immutable origin
+# expect: write through a Pointer whose origin is immutable
 # A bare `ref` parameter propagates caller mutability but cannot assume
 # write permission, so the subtree pointer minted from it is not statically
 # mutable and writes reject.

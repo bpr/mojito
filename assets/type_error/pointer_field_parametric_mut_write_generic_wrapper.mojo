@@ -1,8 +1,6 @@
-# The same parametrically-mutable pointer write reached through a generic
-# wrapper. The `ref`-field spelling lives at
-# assets/extensions/ok/ref_field_parametric_mut_write_generic_wrapper.mojo.
-# A write requirement inherited from a wrapped parametric-origin view propagates
-# through the wrapper method and is discharged at its concrete call site.
+# expect: expression must be mutable for in-place operator destination
+# The wrapped view's `bump` writes in its own generic body, so it rejects
+# there before any call site could discharge it.
 struct View[m: Bool, //, o: Origin[mut=m]]:
     var src: Pointer[List[Int], Self.o]
 
@@ -25,4 +23,3 @@ def main():
     var w = Wrap(View(data))
     w.poke()
     print(data[0])
-# stdout: 8

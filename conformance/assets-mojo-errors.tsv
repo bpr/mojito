@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	328
+# swept-count	337
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -287,11 +287,19 @@ assets/type_error/parameterized_assoc_conformance_arity.mojo	compile-reject	agre
 assets/type_error/parameterized_assoc_self_origin_mismatch.mojo	compile-reject	agree	error: 'Holder' does not implement all requirements for 'HasIter'
 assets/type_error/parametric_static_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/pointer_escape.mojo	compile-reject	agree	error: failed to infer parameter 'origin', specify the parameter or use '_' or '...' to unbind the parameter explicitly
+assets/type_error/pointer_field_bare_origin_immutable_source_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_field_fieldwise_mut_true_immutable_place.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/pointer_field_imm_origin_cast_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/pointer_field_parametric_mut_subscript_write.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
+assets/type_error/pointer_field_parametric_mut_write_generic_wrapper.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
 assets/type_error/pointer_field_store_unbound_origin.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/pointer_field_symbolic_deref_store.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/pointer_field_symbolic_generic_body_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/pointer_field_symbolic_in_place_immutable_source.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
 assets/type_error/pointer_immutable_conversion_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_origin_cast_no_downgrade.mojo	compile-reject	agree	error: invalid call to 'unsafe_origin_cast': value passed to 'target_origin' cannot be converted from 'ImmOrigin' to 'MutOrigin'
 assets/type_error/pointer_origin_cast_no_upgrade.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/pointer_param_symbolic_origin_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_placeholder_immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_placeholder_mutable_forward.mojo	compile-reject	agree	error: invalid call to 'w': value passed to 'q' cannot be converted from 'Pointer[Int, origin]' to 'Pointer[Int, q.origin]'
 assets/type_error/pointer_placeholder_return.mojo	compile-reject	agree	error: 'Pointer[Int, _]' is not concrete, use '[]' to bind missing parameters
@@ -331,6 +339,7 @@ assets/type_error/struct_field_non_deinitable_param.mojo	compile-reject	agree	er
 assets/type_error/struct_field_unqualified_param.mojo	compile-reject	agree	error: unqualified access to struct parameter 'T'; use 'Self.T' instead
 assets/type_error/struct_param_bare_bracket_slot.mojo	compile-reject	agree	error: unqualified access to struct parameter 'length'; use 'Self.length' instead
 assets/type_error/struct_value_param_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Tagged[Extent(Int(2), Int(3))]' value to 'Tagged[Extent(Int(3), Int(2))]'
+assets/type_error/symbolic_origin_pointer_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/trait_comptime_member.mojo	compile-reject	agree	error: 'Box[T]' does not implement all requirements for 'HasElement'
 assets/type_error/transfer_into_mut_parameter.mojo	compile-reject	agree	error: invalid call to 'poke': value passed to mutable argument 't' must be mutable
 assets/type_error/tstring.mojo	compile-reject	agree	error: invalid call to '__make_tstring': an element of 'args' with type 'Opaque' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance

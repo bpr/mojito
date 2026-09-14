@@ -119,7 +119,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `checker/indexing.rs` owns place validation, subscript/index inference and
   assignment (including keyword slices and the `BorrowViewResult` marking for
   view-typed slice results), pointer offset/write checks (the single-place
-  rule and its multi-element interior-domain lift), the positional
+  rule and its multi-element interior-domain lift), the pointer-write
+  capability (`pointer_write_capability`, the per-binding resolution of a
+  symbolic origin binder, also the source of a dereference place's
+  mutability in `origins/actuals.rs`), the positional
   String-slice rejection hint, and member access.
 - `checker/method_calls.rs` (split across
   `method_calls/{mc_infer,selection,statics,builtin_types}.rs`) owns

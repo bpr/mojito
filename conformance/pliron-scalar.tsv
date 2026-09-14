@@ -305,6 +305,7 @@ assets/ok/pointer_empty_deref.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_adapter_from_deref_rebinding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_adapter_from_reborrow.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_adapter_return_from_field.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_field_bare_origin_mutable_source_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_chained_view_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_ctor_from_ref_field.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_ctor_owned_source.mojo	-	ineligible	no-scalar-entry-shape
@@ -312,8 +313,14 @@ assets/ok/pointer_field_ctor_temporary_explicit_init.mojo	-	ineligible	no-scalar
 assets/ok/pointer_field_deref_index.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_drain_mut_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_fieldwise_init_binder.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_field_imm_origin_cast_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_iterator_storage.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_field_mut_origin_plain_self_in_place.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_reborrow_read.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_field_symbolic_origin_mut_parameter_write.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_field_symbolic_origin_mutable_local_write.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_field_symbolic_origin_ref_constructor_write.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_field_symbolic_origin_wrapper_field_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_view_free_function.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_view_method_return.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_view_plain_self.mojo	-	ineligible	no-scalar-entry-shape
@@ -499,8 +506,6 @@ assets/extensions/ok/pointer_field_comprehension_borrowed_named_source.mojo	-	in
 assets/extensions/ok/pointer_field_funarg_call_through_after_last_use.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/pointer_field_nested_def_captured_param_store.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/pointer_field_parametric_mut_iterator_read.mojo	-	ineligible	no-scalar-entry-shape
-assets/extensions/ok/pointer_field_parametric_mut_subscript_write.mojo	-	ineligible	no-scalar-entry-shape
-assets/extensions/ok/pointer_field_parametric_mut_write_generic_wrapper.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/pointer_field_reference_yielding_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/pointer_field_reference_yielding_iteration_named_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/pointer_field_reference_yielding_iteration_parametric_mut.mojo	-	ineligible	no-scalar-entry-shape

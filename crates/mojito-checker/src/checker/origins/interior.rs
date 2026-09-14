@@ -299,6 +299,56 @@ impl Checker {
         }
     }
 
+    /// The origin binders `name`'s construction bound through an
+    /// `ImmOrigin(o)` cast (empty for any other binding).
+    pub(in crate::checker) fn lookup_immutable_origin_binders(
+        &self,
+        name: &str,
+    ) -> Vec<mojito_types::origin::OriginParamId> {
+        self.immutable_origin_binder_scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name).cloned())
+            .unwrap_or_default()
+    }
+
+    /// The origin binders a binding's initializer bound through an
+    /// `ImmOrigin(o)` cast: those its construction recorded, seen through a
+    /// transfer or a named argument.
+    pub(in crate::checker) fn construction_immutable_binders(
+        &self,
+        value: &Expr,
+    ) -> Vec<mojito_types::origin::OriginParamId> {
+        match &value.kind {
+            ExprKind::Transfer(inner) | ExprKind::Named { value: inner, .. } => {
+                self.construction_immutable_binders(inner)
+            }
+            _ => self
+                .construction_immutable_binders
+                .borrow()
+                .get(&value.source_span())
+                .cloned()
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Record the binders `name`'s initializer bound through an `ImmOrigin(o)`
+    /// cast; recorded unconditionally so a re-declaration clears a stale one.
+    pub(in crate::checker) fn set_immutable_origin_binders(
+        &mut self,
+        name: &str,
+        binders: Vec<mojito_types::origin::OriginParamId>,
+    ) {
+        let Some(scope) = self.binding_scope(name) else {
+            return;
+        };
+        if binders.is_empty() {
+            self.immutable_origin_binder_scopes[scope].remove(name);
+        } else {
+            self.immutable_origin_binder_scopes[scope].insert(name.to_string(), binders);
+        }
+    }
+
     /// The explicit origin demands recorded for an annotated local binding
     /// (empty for an un-annotated one or one whose annotation names no
     /// origin), so a reassignment is judged like the declaration.

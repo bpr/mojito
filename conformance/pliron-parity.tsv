@@ -305,6 +305,7 @@ assets/ok/pointer_empty_deref.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_adapter_from_deref_rebinding.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_adapter_from_reborrow.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_adapter_return_from_field.mojo	main	exe-differential	sanitized
+assets/ok/pointer_field_bare_origin_mutable_source_write.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_chained_view_call.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_ctor_from_ref_field.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_ctor_owned_source.mojo	main	exe-differential	sanitized
@@ -312,8 +313,14 @@ assets/ok/pointer_field_ctor_temporary_explicit_init.mojo	main	exe-differential	
 assets/ok/pointer_field_deref_index.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_drain_mut_method.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_fieldwise_init_binder.mojo	main	exe-differential	sanitized
+assets/ok/pointer_field_imm_origin_cast_read.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_iterator_storage.mojo	main	exe-differential	sanitized
+assets/ok/pointer_field_mut_origin_plain_self_in_place.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_reborrow_read.mojo	main	exe-differential	sanitized
+assets/ok/pointer_field_symbolic_origin_mut_parameter_write.mojo	main	exe-differential	sanitized
+assets/ok/pointer_field_symbolic_origin_mutable_local_write.mojo	main	exe-differential	sanitized
+assets/ok/pointer_field_symbolic_origin_ref_constructor_write.mojo	main	exe-differential	sanitized
+assets/ok/pointer_field_symbolic_origin_wrapper_field_write.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_view_free_function.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_view_method_return.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_view_plain_self.mojo	main	exe-differential	sanitized
@@ -499,8 +506,6 @@ assets/extensions/ok/pointer_field_comprehension_borrowed_named_source.mojo	main
 assets/extensions/ok/pointer_field_funarg_call_through_after_last_use.mojo	main	exe-differential	sanitized
 assets/extensions/ok/pointer_field_nested_def_captured_param_store.mojo	main	exe-differential	sanitized
 assets/extensions/ok/pointer_field_parametric_mut_iterator_read.mojo	main	exe-differential	sanitized
-assets/extensions/ok/pointer_field_parametric_mut_subscript_write.mojo	main	exe-differential	sanitized
-assets/extensions/ok/pointer_field_parametric_mut_write_generic_wrapper.mojo	main	exe-differential	sanitized
 assets/extensions/ok/pointer_field_reference_yielding_iteration.mojo	main	exe-differential	sanitized
 assets/extensions/ok/pointer_field_reference_yielding_iteration_named_source.mojo	main	exe-differential	sanitized
 assets/extensions/ok/pointer_field_reference_yielding_iteration_parametric_mut.mojo	main	exe-differential	sanitized

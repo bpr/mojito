@@ -2636,7 +2636,11 @@ runtime handles. Aggregates that store place-origin pointers carry the owner
 loan exactly like reference-valued aggregates. Because an origin-bearing
 pointer designates one checked value rather than an allocation, the checker
 rejects non-zero offsets, pointer arithmetic and comparison, `free()`, writes
-through immutable provenance, and returns that would escape the origin
+through immutable or unresolved symbolic provenance
+(`pointer_write_capability`: a pointer field's `Origin[mut=m]` binder resolves
+through the holder's construction-time origins, and the dereference place
+carries that capability rather than the holder binding's), and returns that
+would escape the origin
 (`returned pointer escapes storage outside its declared origin`). A method may,
 however, return the *dereference* of an origin-bearing pointer field whose origin
 is a struct/callable parameter (`def get(self) -> ref[o] Int: return self.p[0]`):

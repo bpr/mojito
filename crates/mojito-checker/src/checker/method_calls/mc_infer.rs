@@ -886,8 +886,9 @@ impl Checker {
             origin,
         } = &obj_ty
         {
-            return self
-                .infer_pointer_method(&span, method, elem, origin, param_args, args, kwargs);
+            return self.infer_pointer_method(
+                &span, object, method, elem, origin, param_args, args, kwargs,
+            );
         }
         // Compiler-private inline uninit storage (`MaybeUninit`'s field):
         // the write/take/destroy crossing vocabulary.

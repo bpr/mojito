@@ -1517,6 +1517,19 @@ impl Checker {
         let partitioned =
             self.partition_struct_origin_args(name, &info.source_params, param_args)?;
         let param_args: &[mojito_ast::ast::ParamArg] = &partitioned.forwarded;
+        // An `ImmOrigin(o)` argument binds its slot immutably whatever the
+        // source allows; the binding site keeps that fact for writes.
+        let immutable_binders = partitioned
+            .explicit_origins
+            .iter()
+            .filter(|explicit| {
+                explicit.mutability == Some(mojito_types::origin::Mutability::Immutable)
+            })
+            .map(|explicit| explicit.id)
+            .collect::<Vec<_>>();
+        self.construction_immutable_binders
+            .borrow_mut()
+            .insert(span.clone(), immutable_binders);
         if !kwargs.is_empty() && args.is_empty() && kwargs.len() == 1 && kwargs[0].name == "copy" {
             let sig = info
                 .methods

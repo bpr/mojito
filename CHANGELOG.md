@@ -21,6 +21,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A write through a pointer field (or pointer parameter) whose origin binder
+  has symbolic mutability (`Origin[mut=m]`, or a bare `Origin`) is now judged
+  as upstream does. It is rejected inside the generic body, and in
+  non-generic code it is resolved per binding through the holder's
+  construction-time origins, an `ImmOrigin(o)` application included. The
+  dereference of a pointer field takes the pointer's capability rather than
+  the holder binding's, which also lets a plain `self` method write through a
+  `MutOrigin` field with `+=`. The two extension fixtures became `type_error`
+  fixtures, and the old "cannot write through a Pointer with an immutable
+  origin" text is now upstream's "expression must be mutable in assignment".
 - A field moved out of a struct (`p.a^`) must now be written back before
   any other part of the value is used, before the variable is redefined, and
   before the function exits, as upstream. The ownership analysis reports

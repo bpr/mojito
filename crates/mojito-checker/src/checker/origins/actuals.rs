@@ -130,31 +130,35 @@ impl Checker {
             return Ok(reference);
         }
 
-        // Dereferencing a pointer with an abstract provenance (untracked,
-        // unsafe-any, static) supplies that origin rather than a tracked
-        // place: it is what an exact `ref[ImmUntrackedOrigin]` clause binds.
+        // Dereferencing a pointer supplies the pointee with the pointer's
+        // own capability, never the holder binding's. An abstract provenance
+        // (untracked, unsafe-any, static) is the origin itself — what an
+        // exact `ref[ImmUntrackedOrigin]` clause binds — while a tracked one
+        // keeps the holder's place identity for loans.
         if let Some(pointer) = dereferenced_pointer(expr)
             && let Ok(Ty::Pointer { origin, .. }) = self.infer(pointer)
         {
             use mojito_types::origin::PointerOrigin;
-            let abstract_origin = match origin {
-                PointerOrigin::Untracked { mutable } | PointerOrigin::UnsafeAny { mutable } => {
-                    Some((Origin::Untracked { mutable }, mutable))
-                }
-                PointerOrigin::Static => Some((Origin::Static, false)),
-                _ => None,
+            let mutability = match (self.pointer_write_capability(pointer, &origin), &origin) {
+                (Some(true), _) => Mutability::Mutable,
+                (Some(false), _) => Mutability::Immutable,
+                (None, PointerOrigin::Param { id, .. }) => Mutability::Param(*id),
+                (None, _) => Mutability::Immutable,
             };
-            if let Some((origin, mutable)) = abstract_origin {
-                return Ok(RefTy {
-                    referent: Box::new(self.infer(expr)?),
-                    origin,
-                    mutability: if mutable {
-                        Mutability::Mutable
-                    } else {
-                        Mutability::Immutable
-                    },
-                });
-            }
+            let origin = match origin {
+                PointerOrigin::Untracked { mutable } | PointerOrigin::UnsafeAny { mutable } => {
+                    Origin::Untracked { mutable }
+                }
+                PointerOrigin::Static => Origin::Static,
+                PointerOrigin::Place { .. }
+                | PointerOrigin::Param { .. }
+                | PointerOrigin::SelfPlace { .. } => Origin::Place(self.origin_place(expr)?),
+            };
+            return Ok(RefTy {
+                referent: Box::new(self.infer(expr)?),
+                origin,
+                mutability,
+            });
         }
 
         let place = self.origin_place(expr)?;

@@ -14,6 +14,7 @@ impl Checker {
     pub(in crate::checker) fn infer_pointer_method(
         &self,
         span: &SourceSpan,
+        object: &Expr,
         method: &str,
         elem: &Ty,
         origin: &mojito_types::origin::PointerOrigin,
@@ -158,7 +159,7 @@ impl Checker {
                 })
             }
             "unsafe_write" => {
-                self.check_pointer_write(origin)?;
+                self.check_pointer_write(object, origin)?;
                 let (value, copy) = match (args, kwargs) {
                     ([value], []) => (value, false),
                     ([], [keyword]) if keyword.name == "copy" => (&keyword.value, true),
