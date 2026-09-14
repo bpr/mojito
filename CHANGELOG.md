@@ -21,6 +21,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A field moved out of a struct (`p.a^`) must now be written back before
+  any other part of the value is used, before the variable is redefined, and
+  before the function exits, as upstream. The ownership analysis reports
+  upstream's two diagnostics, "value 'p.a' cannot be consumed, because 'p'
+  is used later" and "field 'p.a' destroyed out of the middle of a value,
+  preventing the overall value from being destroyed". A `deinit` parameter's
+  direct fields stay independently movable. The two extension fixtures that
+  pinned the old leniency became rejections, and `DictEntry.reap_value`,
+  `DictEntry.reap_with`, and `Set._take_items` replace the stdlib's field
+  moves out of locals.
+
 - A `for` loop now accepts only current Mojo's iterator protocol, a
   `__next__` that raises `StopIteration`. The bounded protocol, where
   `__len__()` decides whether a non-raising `__next__` is called, was removed

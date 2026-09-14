@@ -141,6 +141,10 @@ struct Set[
         while len(self.items) > 0:
             elt_handler(self.items.pop(0))
 
+    # Consume the set for its element list.
+    def _take_items(deinit self) -> List[Self.T]:
+        return self.items^
+
     # In-place union with `other`.
     def update(mut self, other: Self) where conforms_to(
         Self.T, Deinitable
@@ -154,19 +158,19 @@ struct Set[
         Self.T, Deinitable
     ) and conforms_to(Self.T, Copyable):
         var result = self.intersection(other)
-        self.items = result.items^
+        self.items = result^._take_items()
 
     def difference_update(mut self, other: Self) where conforms_to(
         Self.T, Deinitable
     ) and conforms_to(Self.T, Copyable):
         var result = self.difference(other)
-        self.items = result.items^
+        self.items = result^._take_items()
 
     def symmetric_difference_update(mut self, other: Self) where conforms_to(
         Self.T, Deinitable
     ) and conforms_to(Self.T, Copyable):
         var result = self.symmetric_difference(other)
-        self.items = result.items^
+        self.items = result^._take_items()
 
     def union(self, other: Self) -> Self where conforms_to(
         Self.T, Deinitable

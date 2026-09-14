@@ -41,6 +41,18 @@ struct DictEntry[
         self.key = key^
         self.value = value^
 
+    # Consume the entry for its value; the key is destroyed with the shell.
+    def reap_value(deinit self) -> Self.V where conforms_to(Self.K, Deinitable):
+        return self.value^
+
+    # Consume the entry through a handler that takes both parts.
+    def reap_with(
+        deinit self,
+        elt_handler: def(var key: Self.K, var value: Self.V) capturing[_],
+        /,
+    ):
+        elt_handler(self.key^, self.value^)
+
 # The `items` borrowing view: yields whole-entry references at `element`
 # interior granularity, read-only.
 @fieldwise_init
@@ -336,7 +348,7 @@ struct Dict[
             raise Error("missing key")
         var entry = self.entries.pop(i)
         self._reindex()
-        return entry.value^
+        return entry^.reap_value()
 
     def pop(mut self, key: Self.K, var default: Self.V) -> Self.V where conforms_to(
         Self.K, Deinitable
@@ -346,7 +358,7 @@ struct Dict[
             return default^
         var entry = self.entries.pop(i)
         self._reindex()
-        return entry.value^
+        return entry^.reap_value()
 
     # Remove and return the last-inserted entry (LIFO), raising when empty.
     def popitem(mut self) raises -> DictEntry[Self.K, Self.V, Self.H]:
@@ -401,7 +413,7 @@ struct Dict[
     ):
         while len(self.entries) > 0:
             var entry = self.entries.pop(0)
-            elt_handler(entry.key^, entry.value^)
+            entry^.reap_with(elt_handler)
         self._reset_index()
 
     # Consuming teardown: `clear_with` under a consumed receiver.
@@ -412,7 +424,7 @@ struct Dict[
     ):
         while len(self.entries) > 0:
             var entry = self.entries.pop(0)
-            elt_handler(entry.key^, entry.value^)
+            entry^.reap_with(elt_handler)
 
     def get(self, key: Self.K) -> Optional[Self.V] where conforms_to(Self.V, Copyable):
         var i = self.find_index(key)

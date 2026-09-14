@@ -639,10 +639,11 @@ fn try_except_else_finally() {
 
 #[test]
 fn partial_move_field_read_parity() {
-    // A partial move `p.a^` followed by reads of the moved value and the retained
-    // sibling runs identically on both backends: the field read now lowers to a
+    // A partial move `p.a^` followed by a read of the moved value, the field's
+    // reinitialization, and reads of the retained sibling and the reinitialized
+    // field runs identically on both backends: the field read lowers to a
     // `LoadPlace`, and `^` on a field to a `MovePlace`, preserving the moved value.
-    let src = "@fieldwise_init\nstruct Inner:\n    var id: Int\n\n@fieldwise_init\nstruct Pair:\n    var a: Inner\n    var b: Inner\n\ndef main():\n    var p: Pair = Pair(Inner(1), Inner(2))\n    var x: Inner = p.a^\n    print(x.id)\n    print(p.b.id)\n    p.a = Inner(9)\n    print(p.a.id)\n";
+    let src = "@fieldwise_init\nstruct Inner:\n    var id: Int\n\n@fieldwise_init\nstruct Pair:\n    var a: Inner\n    var b: Inner\n\ndef main():\n    var p: Pair = Pair(Inner(1), Inner(2))\n    var x: Inner = p.a^\n    print(x.id)\n    p.a = Inner(9)\n    print(p.b.id)\n    print(p.a.id)\n";
     assert_eq!(parity(src), "1\n2\n9\n");
 }
 

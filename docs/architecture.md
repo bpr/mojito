@@ -2328,7 +2328,12 @@ Rules:
 - using a `Moved` variable is a use-after-move error
 - merging `Owned` and `Moved` at a join produces `MaybeMoved`
 - using a `MaybeMoved` variable is a conditional-move error
-- moving a field marks that field moved but leaves sibling fields usable
+- moving a field marks that field moved; a later use of any disjoint part of
+  the value is an error until the field is written back
+- a whole redefinition of the variable, or the function's exit, while a field
+  is moved out is an error (the value cannot be destroyed as a whole)
+- a `deinit` parameter's direct fields are independent values: each may be
+  moved out and is destroyed at its own last use
 - reassigning a moved variable or moved field reinitializes it
 
 This is why control-flow lowering happens before ownership analysis. A move

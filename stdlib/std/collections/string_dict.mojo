@@ -138,7 +138,7 @@ struct StringDict[V: Movable](
     ):
         while len(self.entries) > 0:
             var entry = self.entries.pop(0)
-            elt_handler(entry.key^, entry.value^)
+            entry^.reap_with(elt_handler)
 
     def get(self, key: String) -> Optional[Self.V] where conforms_to(
         Self.V, Copyable

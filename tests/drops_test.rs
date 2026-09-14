@@ -74,9 +74,9 @@ fn transferred_value_is_dropped_once_at_destination() {
 #[test]
 fn partially_moved_field_is_dropped_once_at_its_new_owner() {
     // `p.a^` moves one field out to `x`; the moved field is destroyed exactly once
-    // — at `x`'s last use — and dropping the whole `p` skips the moved field (no
-    // double-drop) while still destroying the retained field `b`.
-    let src = "@fieldwise_init\nstruct Inner:\n    var id: Int\n    def __deinit__(deinit self):\n        print(\"del\", self.id)\n\n@fieldwise_init\nstruct Pair:\n    var a: Inner\n    var b: Inner\n\ndef main():\n    var p: Pair = Pair(Inner(1), Inner(2))\n    var x: Inner = p.a^\n    print(\"x =\", x.id)\n    print(\"b =\", p.b.id)\n";
+    // — at `x`'s last use — and the reinitialized field is destroyed with the
+    // rest of `p`.
+    let src = "@fieldwise_init\nstruct Inner:\n    var id: Int\n    def __deinit__(deinit self):\n        print(\"del\", self.id)\n\n@fieldwise_init\nstruct Pair:\n    var a: Inner\n    var b: Inner\n\ndef main():\n    var p: Pair = Pair(Inner(1), Inner(2))\n    var x: Inner = p.a^\n    print(\"x =\", x.id)\n    p.a = Inner(3)\n    print(\"b =\", p.b.id)\n";
     let out = vm(src);
     assert_eq!(
         out.matches("del 1").count(),
@@ -88,18 +88,9 @@ fn partially_moved_field_is_dropped_once_at_its_new_owner() {
         1,
         "retained field dropped once"
     );
-    // `x` (Inner 1) dies after the `print` reading `x.id`; `p`'s retained
-    // field `b` (Inner 2) after the one reading `p.b.id`.
-    assert_eq!(out, "x = 1\ndel 1\nb = 2\ndel 2\n");
-}
-
-#[test]
-fn partial_aggregate_skips_its_whole_destructor_and_drops_residual_fields() {
-    let src = "@fieldwise_init\nstruct Inner:\n    var id: Int\n    def __deinit__(deinit self):\n        print(\"drop inner\", self.id)\n\n@fieldwise_init\nstruct Outer:\n    var first: Inner\n    var second: Inner\n    def __deinit__(deinit self):\n        print(\"drop outer\")\n\ndef main():\n    var outer = Outer(Inner(1), Inner(2))\n    var first = outer.first^\n    print(\"use first\", first.id)\n    print(\"use second\", outer.second.id)\n";
-    let output = vm(src);
-    assert!(!output.contains("drop outer"), "{output}");
-    assert_eq!(output.matches("drop inner 1").count(), 1, "{output}");
-    assert_eq!(output.matches("drop inner 2").count(), 1, "{output}");
+    // `x` (Inner 1) dies after the `print` reading `x.id`; `p` (Inner 3, then
+    // Inner 2) after the one reading `p.b.id`.
+    assert_eq!(out, "x = 1\ndel 1\nb = 2\ndel 3\ndel 2\n");
 }
 
 #[test]

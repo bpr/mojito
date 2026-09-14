@@ -1,8 +1,8 @@
 # An `@explicit_destroy` aggregate whose field is itself linear: the field's
 # named destructor runs from the aggregate's own, a reassignment destroys the
 # field it replaces, and every value reaches an explicit destruction. Moving
-# one field out and abandoning the rest is Mojito-only — see the
-# `partial-field-move-parent-used` conformance case.
+# a field out (`rebuilt.child^.close()`) is legal only because the field is
+# written back before the aggregate is used again.
 @explicit_destroy("close the child")
 struct Child(Deinitable where False):
     var id: Int

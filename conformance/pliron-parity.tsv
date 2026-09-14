@@ -233,6 +233,8 @@ assets/ok/parameterized_assoc_self_origin.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_self_origin_return.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_value.mojo	main	exe-differential	sanitized
 assets/ok/parametric_static_methods.mojo	main	exe-differential	sanitized
+assets/ok/partial_move_mut_parameter_reinit.mojo	main	exe-differential	sanitized
+assets/ok/partial_move_reinit_sibling_use.mojo	main	exe-differential	sanitized
 assets/ok/path_operations.mojo	main	exe-differential	sanitized
 assets/ok/pliron_alloc_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/pliron_builtin_numeric_edges.mojo	main	exe-differential	sanitized
@@ -492,7 +494,6 @@ assets/extensions/ok/origin_placeholder_initialized_local.mojo	main	exe-differen
 assets/extensions/ok/pack_struct_getitem.mojo	main	exe-differential	sanitized
 assets/extensions/ok/parametric_mut_iterator_read.mojo	main	exe-differential	sanitized
 assets/extensions/ok/pliron_closure_drop_order.mojo	main	exe-differential	sanitized
-assets/extensions/ok/pliron_partial_move_drop.mojo	main	exe-differential	sanitized
 assets/extensions/ok/pointer_field_captured_store_local_carrier.mojo	main	exe-differential	sanitized
 assets/extensions/ok/pointer_field_comprehension_borrowed_named_source.mojo	main	exe-differential	sanitized
 assets/extensions/ok/pointer_field_funarg_call_through_after_last_use.mojo	main	exe-differential	sanitized
@@ -548,7 +549,6 @@ assets/ownership_ok/view_live_across_reading_loop.mojo	main	exe-differential	san
 assets/extensions/ownership_ok/interior_dest_rebind_releases_user_store.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/interior_view_consume_before_mutation.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/interior_view_drop_after_mutation.mojo	main	exe-differential	sanitized
-assets/extensions/ownership_ok/partial_move_sibling.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/pointer_field_interior_dest_rebind_releases_user_store.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/pointer_field_transferred_loan_after_last_use.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/subtree_reads_coexist.mojo	main	exe-differential	sanitized

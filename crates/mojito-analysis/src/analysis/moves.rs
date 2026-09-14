@@ -196,6 +196,32 @@ impl Node {
         }
     }
 
+    /// The first field-only sub-place below this node whose value is moved
+    /// (or maybe moved) while the node's own value is not: the hole that a
+    /// whole destruction or redefinition of this value would trip over.
+    /// Sub-places below an index, alternative, or payload key are
+    /// compiler-private storage and are not holes.
+    pub(super) fn field_hole(&self) -> Option<Vec<Key>> {
+        self.moved_below(self.base, None)
+    }
+
+    /// A moved field-only sub-place disjoint from the place at `path`: at
+    /// every node along the path, a field child off the path that is more
+    /// moved than that node. `skip_root` leaves the node itself out, for a
+    /// `deinit` receiver whose direct fields are independent values.
+    pub(super) fn disjoint_moved(&self, path: &[Key], skip_root: bool) -> Option<Vec<Key>> {
+        let (next, rest) = path.split_first()?;
+        if !skip_root && let Some(hole) = self.moved_below(self.base, Some(next)) {
+            return Some(hole);
+        }
+        let child = self.children.get(next)?;
+        child.disjoint_moved(rest, false).map(|sub| {
+            let mut full = vec![next.clone()];
+            full.extend(sub);
+            full
+        })
+    }
+
     /// Mark the place at `path` as wholly moved (clearing its sub-state).
     pub(super) fn do_move(&mut self, path: &[Key]) {
         match path.split_first() {
@@ -239,6 +265,26 @@ impl Node {
             }
         }
     }
+
+    /// The first field child (other than one overlapping `skip`) moved beyond
+    /// `base`, or such a hole deeper under an intact field child.
+    fn moved_below(&self, base: Own, skip: Option<&Key>) -> Option<Vec<Key>> {
+        self.children
+            .iter()
+            .filter(|(key, _)| {
+                matches!(key, Key::Field(_)) && !skip.is_some_and(|skip| keys_overlap(key, skip))
+            })
+            .find_map(|(key, child)| {
+                let sub = if severity(child.base) > severity(base) {
+                    Vec::new()
+                } else {
+                    child.moved_below(child.base, None)?
+                };
+                let mut full = vec![key.clone()];
+                full.extend(sub);
+                Some(full)
+            })
+    }
 }
 
 /// Join two place-trees at a control-flow merge (a per-node dataflow lub). A key
@@ -279,11 +325,11 @@ pub(super) fn successors(term: &MirTerm) -> Vec<usize> {
 }
 
 /// How an instruction touches a place: a whole-value *read* (using the subtree),
-/// or the *structural* parent-check of a field write (the parent must merely be
-/// initialized, not wholly moved — so writing `p.a` is fine when `p.b` is moved).
+/// or a write, whose *structural* check is on the parent (the parent must merely
+/// be initialized, not wholly moved — so reinitializing a moved `p.a` is fine).
 pub(super) enum Touch {
     Read,
-    WriteParent,
+    Write { parent: Vec<Key> },
 }
 
 /// The places an instruction *reads* or structurally touches (for reporting),
@@ -332,24 +378,26 @@ pub(super) fn place_uses(i: &MirInstr) -> Vec<(VarId, Vec<Key>, Touch, Reg)> {
         // selected private Tuple element has the same independent-place
         // semantics. A dynamic-index write keeps the whole chain as the parent.
         MirInstr::Store { place, src } => {
-            let mut path = place_path(place);
+            let path = place_path(place);
+            let mut parent = path.clone();
             if matches!(
                 place.proj.last(),
                 Some(Proj::Field(_) | Proj::ConstIndex(_))
             ) {
-                path.pop(); // drop the final sub-place — check its parent
+                parent.pop(); // drop the final sub-place — check its parent
             }
-            vec![(place.root, path, Touch::WriteParent, *src)]
+            vec![(place.root, path, Touch::Write { parent }, *src)]
         }
         MirInstr::StoreRef { place, reference } => {
-            let mut path = place_path(place);
+            let path = place_path(place);
+            let mut parent = path.clone();
             if matches!(
                 place.proj.last(),
                 Some(Proj::Field(_) | Proj::ConstIndex(_))
             ) {
-                path.pop();
+                parent.pop();
             }
-            vec![(place.root, path, Touch::WriteParent, *reference)]
+            vec![(place.root, path, Touch::Write { parent }, *reference)]
         }
         MirInstr::MultiSet {
             receiver_place,
@@ -360,25 +408,28 @@ pub(super) fn place_uses(i: &MirInstr) -> Vec<(VarId, Vec<Key>, Touch, Reg)> {
             .map(|place| (place.root, place_path(place), Touch::Read, *value))
             .collect(),
         MirInstr::VariantSet { place, value, .. } => {
-            let mut path = place_path(place);
+            let path = place_path(place);
+            let mut parent = path.clone();
             if matches!(place.proj.last(), Some(Proj::Field(_))) {
-                path.pop();
+                parent.pop();
             }
-            vec![(place.root, path, Touch::WriteParent, *value)]
+            vec![(place.root, path, Touch::Write { parent }, *value)]
         }
         MirInstr::VariantSetInitWith { place, factory, .. } => {
-            let mut path = place_path(place);
+            let path = place_path(place);
+            let mut parent = path.clone();
             if matches!(place.proj.last(), Some(Proj::Field(_))) {
-                path.pop();
+                parent.pop();
             }
-            vec![(place.root, path, Touch::WriteParent, *factory)]
+            vec![(place.root, path, Touch::Write { parent }, *factory)]
         }
         MirInstr::VariantReplace { place, value, .. } => {
-            let mut path = place_path(place);
+            let path = place_path(place);
+            let mut parent = path.clone();
             if matches!(place.proj.last(), Some(Proj::Field(_))) {
-                path.pop();
+                parent.pop();
             }
-            vec![(place.root, path, Touch::WriteParent, *value)]
+            vec![(place.root, path, Touch::Write { parent }, *value)]
         }
         // The `for` iterator variable is read (and advanced) — treat as a whole read.
         MirInstr::HasNext { dest, iter, .. }
@@ -477,12 +528,28 @@ fn add_state(target: &mut Option<Vec<Node>>, source: &Option<Vec<Node>>) {
 /// starts from the join of the states at every potentially-raising
 /// instruction of the body, so a value consumed before a raising call is
 /// uninitialized there while one consumed after the last raise is not.
+/// A field moved out of a value must be written back before any other part
+/// of the value is used, before the variable is redefined, and before the
+/// function exits; a `deinit` parameter's direct fields are exempt because
+/// each is destroyed on its own.
 pub(super) fn analyze_moves(f: &MirFunction) -> Result<(), OwnershipError> {
     // The entry starts every variable `Owned` — the checker guarantees definite
     // assignment before use, so this never causes a false negative for our
     // purpose (tracking transfers) and avoids a spurious "uninitialized" lattice.
     let entry: Vec<Node> = vec![Node::owned(); f.n_vars];
-    walk_region(Some(entry), &f.blocks, f, true).map(|_| ())
+    let flow = walk_region(Some(entry), &f.blocks, f, true)?;
+    // Every variable dies at the function's exit, on each channel that
+    // leaves it: a value that gets there with a field moved out cannot be
+    // destroyed as a whole.
+    for state in [&flow.normal, &flow.exits, &flow.raises]
+        .into_iter()
+        .flatten()
+    {
+        for (var, node) in (0..).zip(state) {
+            check_whole_destruction(node, var, f)?;
+        }
+    }
+    Ok(())
 }
 
 /// Walk one region's mini-CFG (a function body or a `try` region) from its
@@ -527,6 +594,9 @@ fn walk_region(
             }
             if report {
                 check_instruction_uses(&state, instr, f)?;
+                if let MirInstr::DefVar { var, .. } = instr {
+                    check_whole_destruction(&state[*var as usize], *var, f)?;
+                }
             }
             apply_effects(&mut state, instr);
             if interior_instruction_directly_raises(instr) {
@@ -704,29 +774,114 @@ fn transfer_block(mut state: Vec<Node>, instrs: &[MirInstr], f: &MirFunction) ->
 }
 
 /// Check one instruction's place uses against the current state, returning
-/// the first violation.
+/// the first violation: a read or write through a moved place, then a use of
+/// a place beside a hole the same value carries. A further move of a sibling
+/// is not a use — it widens the hole, which the end-of-life check reports.
 fn check_instruction_uses(
     state: &[Node],
     instr: &MirInstr,
     f: &MirFunction,
 ) -> Result<(), OwnershipError> {
+    let widens_hole = matches!(
+        instr,
+        MirInstr::MovePlace { .. } | MirInstr::ConsumePlace { .. } | MirInstr::DropPlace { .. }
+    );
     for (root, path, touch, reg) in place_uses(instr) {
         let node = &state[root as usize];
-        let (sev, blame) = match touch {
+        let (sev, blame) = match &touch {
             Touch::Read => node.read(&path),
-            Touch::WriteParent => node.base_at(&path),
+            Touch::Write { parent } => node.base_at(parent),
         };
         if sev != Own::Owned {
-            let span = f.spans.0.get(&reg.0).map_or_else(
-                || mojito_common::token::SourceSpan::new(None, (0, 0)),
-                |(s, _)| s.clone(),
-            );
             let var = place_display(&f.var_names[root as usize], &blame);
             return Err(match sev {
-                Own::Moved => OwnershipError::UseAfterMove { var, span },
-                _ => OwnershipError::ConditionallyMoved { var, span },
+                Own::Moved => OwnershipError::UseAfterMove {
+                    var,
+                    span: use_span(f, reg),
+                },
+                _ => OwnershipError::ConditionallyMoved {
+                    var,
+                    span: use_span(f, reg),
+                },
+            });
+        }
+        if widens_hole {
+            continue;
+        }
+        if let Some(hole) = node.disjoint_moved(&path, is_deinit_root(f, root)) {
+            return Err(OwnershipError::ConsumedFieldUsedLater {
+                field: place_display(&f.var_names[root as usize], &hole),
+                var: f.var_names[root as usize].clone(),
+                span: use_span(f, reg),
             });
         }
     }
     Ok(())
+}
+
+/// The span recorded for a use's register, or an empty span when the
+/// instruction has none.
+fn use_span(f: &MirFunction, reg: Reg) -> mojito_common::token::SourceSpan {
+    f.spans.0.get(&reg.0).map_or_else(
+        || mojito_common::token::SourceSpan::new(None, (0, 0)),
+        |(span, _)| span.clone(),
+    )
+}
+
+/// Whether `var` is a `deinit` parameter, whose direct fields are independent
+/// values: each is destroyed at its own last use, so moving one out leaves
+/// no hole in the receiver, while a move below a direct field still does.
+fn is_deinit_root(f: &MirFunction, var: VarId) -> bool {
+    (var as usize) < f.n_params && f.deinit_params.get(var as usize).copied().unwrap_or(false)
+}
+
+/// Reject a whole destruction or redefinition of `var` while a field of it
+/// (or, for a `deinit` parameter, a field of one of its direct fields) is
+/// moved out and not reinitialized.
+fn check_whole_destruction(node: &Node, var: VarId, f: &MirFunction) -> Result<(), OwnershipError> {
+    let hole = if is_deinit_root(f, var) {
+        node.children.iter().find_map(|(key, child)| {
+            child.field_hole().map(|sub| {
+                let mut full = vec![key.clone()];
+                full.extend(sub);
+                full
+            })
+        })
+    } else {
+        node.field_hole()
+    };
+    hole.map_or(Ok(()), |path| {
+        Err(OwnershipError::FieldDestroyedOutOfTheMiddle {
+            field: place_display(&f.var_names[var as usize], &path),
+            span: partial_move_span(f, var, &path),
+        })
+    })
+}
+
+/// The source span of the transfer that moved `path` out of `var`: the
+/// blamed hole's own `^`.
+fn partial_move_span(
+    f: &MirFunction,
+    var: VarId,
+    path: &[Key],
+) -> mojito_common::token::SourceSpan {
+    let mut reg = None;
+    for_each_instr_deep(&f.blocks, &mut |instr| {
+        let moved = match instr {
+            MirInstr::MovePlace { dest, place } => Some((*dest, place)),
+            MirInstr::ConsumePlace { place, marker } => Some((*marker, place)),
+            _ => None,
+        };
+        if reg.is_none()
+            && let Some((candidate, place)) = moved
+            && place.root == var
+            && place_path(place) == path
+        {
+            reg = Some(candidate);
+        }
+    });
+    reg.map_or_else(
+        || mojito_common::token::SourceSpan::new(None, (0, 0)),
+        |reg| use_span(f, reg),
+    )
 }

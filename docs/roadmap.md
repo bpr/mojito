@@ -378,6 +378,31 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     corpus fixtures moved to `assets/extensions/` for them.
     - Model: Opus, plan first. Whether these leave or stay is a stdlib-shape
       decision, not a respelling.
+  - `partial-move-join-imprecision`: a conditional partial move on one
+    branch joined with a whole move on the other is accepted, though the
+    first path reaches the exit with a hole the pin rejects (`field 'p.a'
+    destroyed out of the middle of a value`).
+    - The three-point move lattice joins `a: MaybeMoved` under an intact
+      base with a wholly moved base into a state it cannot tell from
+      intact-or-wholly-moved.
+    - Pinned by `conformance/probes/partial_move_join_imprecision.mojo`.
+    - Model: Opus, plan first. A fourth lattice point, or a per-node
+      "may hold a hole" flag that survives joins, is the lever; the plan
+      picks one.
+  - `field-store-overwrite-drop`: storing into a live droppable field never
+    destroys the replaced value, on the VM and natively, while the pin runs
+    the old value's `__deinit__` at the store.
+    - `var p = Pair(Inner(1), Inner(2)); p.b = Inner(3)` prints no `del 2`.
+    - Pinned by `conformance/probes/field_store_overwrite_drop.mojo`.
+    - Model: Opus, plan first. Drop elaboration has no destruction step for
+      the value a field `Store` replaces; the plan settles where it goes.
+  - `mut-parameter-reassignment-drop`: reassigning a `mut` parameter, or
+    `self` in a `mut self` method, as a whole never destroys the old value,
+    on the VM and natively, while the pin does; a local's reassignment does.
+    - `def reset(mut p: Pair): p = Pair(Inner(7), Inner(8))` prints no
+      `del 1` / `del 2`.
+    - Pinned by `conformance/probes/mut_parameter_reassignment_drop.mojo`.
+    - Model: Opus, plan first.
   - `bare-pack-parameter-in-method`: a method may name its struct's pack
     parameter bare (`Ts.length`, `Ts[i]`), while upstream demands `Self.Ts`
     there (`unqualified access to struct parameter 'Ts'; use 'Self.Ts'
@@ -387,19 +412,6 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     upstream way.
     - Model: Fable. A leniency to withdraw, whose fallout is every stdlib
       and fixture method that names a pack.
-  - `partial-field-move-parent-used`: moving one field out of a struct
-    (`p.a^`) while the parent is used afterwards (`p.b`) is rejected
-    upstream (`value 'p.a' cannot be consumed, because 'p' is used later`)
-    but accepted and tracked field-wise by Mojito. The Mojito behavior is
-    pinned by
-    `tests/drops_test.rs::partially_moved_field_is_dropped_once_at_its_new_owner`,
-    and `assets/extensions/ok/pliron_partial_move_drop.mojo` plus
-    `assets/extensions/ownership_ok/partial_move_sibling.mojo` are the two
-    corpus fixtures. The pin's rule is wider than the entry's title: it
-    refuses *any* field move out of a struct (`field 'p.a' destroyed out of
-    the middle of a value`), used parent or not.
-    - Model: Fable. Ownership goes from field-wise to whole-parent, which
-      changes what the analysis tracks rather than what it spells.
   - `symbolic-origin-pointer-write`: a write through a pointer field whose
     origin binder has symbolic mutability (`Origin[mut=m]`, or a bare
     `Origin`) is accepted however the binder was bound, while upstream

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	315
+# swept-count	328
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -61,7 +61,20 @@ assets/ownership_error/method_on_moved.mojo	compile-reject	agree	error: use of u
 assets/ownership_error/move_in_loop.mojo	compile-reject	agree	error: use of uninitialized value 'a'
 assets/ownership_error/origin_delegated_parameter_receiver_source_mutation.mojo	runs	subset	the pin runs it; Mojito rejects: conflicts with live reference
 assets/ownership_error/pack_struct_use_after_move.mojo	compile-reject	agree	error: use of uninitialized value 'p'
+assets/ownership_error/partial_move_branch_sibling_read.mojo	compile-reject	agree	error: value 'c.first' cannot be consumed, because 'c' is used later
+assets/ownership_error/partial_move_conditional_sibling_use.mojo	compile-reject	agree	error: value 'p.a' cannot be consumed, because 'p' is used later
+assets/ownership_error/partial_move_deinit_nested_hole.mojo	compile-reject	agree	error: field 'self.p.a' destroyed out of the middle of a value, preventing the overall value from being destroyed
+assets/ownership_error/partial_move_deinit_nested_sibling_use.mojo	compile-reject	agree	error: value 'self.p.a' cannot be consumed, because 'self' is used later
+assets/ownership_error/partial_move_early_return_hole.mojo	compile-reject	agree	error: value 'p.a' cannot be consumed, because 'p' is used later
 assets/ownership_error/partial_move_field_use.mojo	compile-reject	agree	error: use of uninitialized value 'p.a.id'
+assets/ownership_error/partial_move_hole_at_exit.mojo	compile-reject	agree	error: field 'p.a' destroyed out of the middle of a value, preventing the overall value from being destroyed
+assets/ownership_error/partial_move_loop_redefinition.mojo	compile-reject	agree	error: field 'p.a' destroyed out of the middle of a value, preventing the overall value from being destroyed
+assets/ownership_error/partial_move_mut_parameter_hole.mojo	compile-reject	agree	error: 'p.a' is uninitialized at the implicit return from this function
+assets/ownership_error/partial_move_parent_used.mojo	compile-reject	agree	error: value 'p.a' cannot be consumed, because 'p' is used later
+assets/ownership_error/partial_move_raise_path_hole.mojo	compile-reject	agree	error: value 'p.a' cannot be consumed, because 'p' is used later
+assets/ownership_error/partial_move_sibling_write.mojo	compile-reject	agree	error: value 'p.a' cannot be consumed, because it is used later
+assets/ownership_error/partial_move_var_parameter.mojo	compile-reject	agree	error: field 'p.a' destroyed out of the middle of a value, preventing the overall value from being destroyed
+assets/ownership_error/partial_move_whole_reassign.mojo	compile-reject	agree	error: field 'p.a' destroyed out of the middle of a value, preventing the overall value from being destroyed
 assets/ownership_error/pointer_field_iterator_source_mutation.mojo	runs	subset	the pin runs it; Mojito rejects: conflicts with live reference
 assets/ownership_error/pointer_to_owner_twice_then_mutation.mojo	runs	subset	the pin runs it; Mojito rejects: conflicts with live reference
 assets/ownership_error/pointer_to_ref_second_write_rejected.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference

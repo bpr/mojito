@@ -726,16 +726,19 @@ fn use_after_move_through_a_place_write() {
 const PAIR: &str = "@fieldwise_init\nstruct Inner:\n    var id: Int\n\n@fieldwise_init\nstruct Pair:\n    var a: Inner\n    var b: Inner\n\n";
 
 #[test]
-fn partial_move_leaves_sibling_usable() {
-    // Moving `p.a` out leaves `p.b` initialized and usable — field-sensitivity.
+fn partial_move_then_sibling_use_is_rejected() {
+    // Moving `p.a` out and reading `p.b` before writing `p.a` back leaves `p`
+    // with a hole it cannot be destroyed through, as upstream.
     let src = format!(
         "{PAIR}def main():\n    var p: Pair = Pair(Inner(1), Inner(2))\n    var x: Inner = p.a^\n    print(x.id)\n    print(p.b.id)\n"
     );
-    assert!(
-        own(&src).is_ok(),
-        "sibling use after partial move: {:?}",
-        own(&src)
-    );
+    match own(&src) {
+        Err(OwnershipError::ConsumedFieldUsedLater { field, var, .. }) => {
+            assert_eq!(field, "p.a");
+            assert_eq!(var, "p");
+        }
+        other => panic!("expected ConsumedFieldUsedLater of p.a, got {other:?}"),
+    }
 }
 
 #[test]
@@ -797,6 +800,80 @@ fn moving_a_field_twice_is_use_after_move() {
         own(&src),
         Err(OwnershipError::UseAfterMove { .. })
     ));
+}
+
+#[test]
+fn partial_move_hole_at_exit_is_rejected() {
+    let src = format!(
+        "{PAIR}def main():\n    var p = Pair(Inner(1), Inner(2))\n    var x = p.a^\n    print(x.id)\n"
+    );
+    match own(&src) {
+        Err(OwnershipError::FieldDestroyedOutOfTheMiddle { field, .. }) => {
+            assert_eq!(field, "p.a");
+        }
+        other => panic!("expected FieldDestroyedOutOfTheMiddle of p.a, got {other:?}"),
+    }
+}
+
+#[test]
+fn partial_move_then_whole_redefinition_is_rejected() {
+    let src = format!(
+        "{PAIR}def main():\n    var p = Pair(Inner(1), Inner(2))\n    var x = p.a^\n    print(x.id)\n    p = Pair(Inner(3), Inner(4))\n    print(p.a.id)\n"
+    );
+    match own(&src) {
+        Err(OwnershipError::FieldDestroyedOutOfTheMiddle { field, .. }) => {
+            assert_eq!(field, "p.a");
+        }
+        other => panic!("expected FieldDestroyedOutOfTheMiddle of p.a, got {other:?}"),
+    }
+}
+
+#[test]
+fn partial_move_sibling_write_is_rejected() {
+    let src = format!(
+        "{PAIR}def main():\n    var p = Pair(Inner(1), Inner(2))\n    var x = p.a^\n    p.b = Inner(3)\n"
+    );
+    assert!(
+        matches!(
+            own(&src),
+            Err(OwnershipError::ConsumedFieldUsedLater { .. })
+        ),
+        "{:?}",
+        own(&src)
+    );
+}
+
+#[test]
+fn deinit_receiver_direct_field_move_leaves_siblings_usable() {
+    // A `deinit` receiver's direct fields are independent values: moving one
+    // out leaves no hole in the receiver.
+    let src = format!(
+        "{PAIR}struct Outer:\n    var a: Inner\n    var b: Inner\n    def __init__(out self):\n        self.a = Inner(1)\n        self.b = Inner(2)\n    def take_b(deinit self) -> Inner:\n        var b = self.b^\n        print(self.a.id)\n        return b^\n\ndef main():\n    var o = Outer()\n    var b = o^.take_b()\n    print(b.id)\n"
+    );
+    assert!(own(&src).is_ok(), "{:?}", own(&src));
+}
+
+#[test]
+fn deinit_receiver_nested_field_move_is_rejected() {
+    // A move below a direct field is an ordinary hole in that field's value.
+    let src = format!(
+        "{PAIR}struct Outer:\n    var p: Pair\n    def __init__(out self, var p: Pair):\n        self.p = p^\n    def __deinit__(deinit self):\n        var x = self.p.a^\n        print(\"deinit\", x.id, self.p.b.id)\n\ndef main():\n    var o = Outer(Pair(Inner(1), Inner(2)))\n"
+    );
+    match own(&src) {
+        Err(OwnershipError::ConsumedFieldUsedLater { field, var, .. }) => {
+            assert_eq!(field, "self.p.a");
+            assert_eq!(var, "self");
+        }
+        other => panic!("expected ConsumedFieldUsedLater of self.p.a, got {other:?}"),
+    }
+}
+
+#[test]
+fn mut_parameter_reinit_after_partial_move_is_ok() {
+    let src = format!(
+        "{PAIR}def fix(mut p: Pair):\n    var x = p.a^\n    print(x.id)\n    p.a = Inner(7)\n\ndef main():\n    var p = Pair(Inner(1), Inner(2))\n    fix(p)\n    print(p.a.id, p.b.id)\n"
+    );
+    assert!(own(&src).is_ok(), "{:?}", own(&src));
 }
 
 #[test]

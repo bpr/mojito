@@ -188,7 +188,7 @@ transferred-param-loan-returns	run	assets/origin_ok/transferred_param_loan_retur
 callable-struct-transfer-after-last-use	run	assets/ok/callable_struct_transfer_after_last_use.mojo
 copyable-iterator-reference-aggregate	run	assets/ok/copyable_iterator_reference_aggregate.mojo
 explicit-destroy-partial-fields	run	assets/ok/explicit_destroy_partial_fields.mojo
-partial-field-move-parent-used	mojito-only	conformance/fixtures/partial_field_move_parent_used.mojo
+partial-field-move-parent-used	reject	assets/ownership_error/partial_move_parent_used.mojo
 symbolic-origin-pointer-write	mojito-only	conformance/fixtures/symbolic_origin_pointer_write.mojo
 simd-subscript-indexer	reject	assets/type_error/simd_subscript_indexer.mojo
 reborrows	run	conformance/fixtures/reborrows.mojo

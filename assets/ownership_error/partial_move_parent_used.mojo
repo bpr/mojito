@@ -1,7 +1,7 @@
-# Moving one field out of a struct (`p.a^`) while the parent is still used
-# afterwards (`p.b`): the pinned Mojo rejects the transfer ("value 'p.a'
-# cannot be consumed, because 'p' is used later"); Mojito tracks the moved
-# field and destroys the retained one on its own.
+# expect: value 'p.a' cannot be consumed, because 'p' is used later
+# Moving one field out (`p.a^`) and reading a sibling (`p.b`) later leaves
+# the whole value with a hole it cannot be destroyed through; upstream
+# rejects it too.
 @fieldwise_init
 struct Inner:
     var id: Int

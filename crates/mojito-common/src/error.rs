@@ -814,6 +814,21 @@ pub enum OwnershipError {
         var: String,
         span: crate::token::SourceSpan,
     },
+    /// A field was moved out of a value (`p.a^`) and a disjoint part of the
+    /// same value (`p.b`) is read or written later, before the field is
+    /// reinitialized.
+    ConsumedFieldUsedLater {
+        field: String,
+        var: String,
+        span: crate::token::SourceSpan,
+    },
+    /// A value reaches its end of life — a whole redefinition, or the
+    /// function's exit — with a field moved out and not reinitialized, so
+    /// the whole value cannot be destroyed.
+    FieldDestroyedOutOfTheMiddle {
+        field: String,
+        span: crate::token::SourceSpan,
+    },
     /// An owner place was accessed incompatibly while a local reference loan to
     /// overlapping storage remained live.
     LoanConflict {
@@ -841,6 +856,15 @@ impl fmt::Display for OwnershipError {
             Self::UseAfterMove { var, .. } | Self::ConditionallyMoved { var, .. } => write!(
                 f,
                 "use of uninitialized value '{var}'\nnote: '{var}' declared here"
+            ),
+            Self::ConsumedFieldUsedLater { field, var, .. } => write!(
+                f,
+                "value '{field}' cannot be consumed, because '{var}' is used later"
+            ),
+            Self::FieldDestroyedOutOfTheMiddle { field, .. } => write!(
+                f,
+                "field '{field}' destroyed out of the middle of a value, \
+                 preventing the overall value from being destroyed"
             ),
             Self::LoanConflict { place, loan, .. } => write!(
                 f,
@@ -870,6 +894,8 @@ impl OwnershipError {
             Self::InvalidInput(_) => crate::token::DUMMY_SPAN,
             Self::UseAfterMove { span, .. }
             | Self::ConditionallyMoved { span, .. }
+            | Self::ConsumedFieldUsedLater { span, .. }
+            | Self::FieldDestroyedOutOfTheMiddle { span, .. }
             | Self::LoanConflict { span, .. }
             | Self::InvalidatedInteriorReference { span, .. } => span.span,
         }
@@ -880,6 +906,8 @@ impl OwnershipError {
             Self::InvalidInput(_) => None,
             Self::UseAfterMove { span, .. }
             | Self::ConditionallyMoved { span, .. }
+            | Self::ConsumedFieldUsedLater { span, .. }
+            | Self::FieldDestroyedOutOfTheMiddle { span, .. }
             | Self::LoanConflict { span, .. }
             | Self::InvalidatedInteriorReference { span, .. } => span.source.as_deref(),
         }
