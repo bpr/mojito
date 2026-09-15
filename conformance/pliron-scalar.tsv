@@ -93,6 +93,8 @@ assets/ok/exceptions.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/explicit_destroy_partial_fields.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/explicit_transfer_convention.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/external_call_write_stdout.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/field_store_overwrite_drop.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/field_store_overwrite_drop_shapes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/file_descriptor_stdout_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/file_handle_roundtrip.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/forward_struct_reference_iterator.mojo	-	ineligible	no-scalar-entry-shape

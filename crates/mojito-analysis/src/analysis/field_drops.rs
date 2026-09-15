@@ -125,13 +125,6 @@ fn deinit_root(
     })
 }
 
-/// Whether destroying a field of this type can do observable work (run a
-/// destructor, release storage). Scalars, pointers, and references die
-/// silently, so they need no instruction.
-const fn field_needs_drop(ty: &Ty) -> bool {
-    may_alias_owned_storage(ty) || matches!(ty, Ty::Func { .. } | Ty::Error)
-}
-
 /// The top-level per-block field live-in sets, bounding `EscapeJump` targets.
 fn top_level_field_liveness(blocks: &[MirBlock], root: &DeinitRoot) -> Vec<FieldSet> {
     let empty: Vec<FieldSet> = vec![FieldSet::new(); blocks.len()];

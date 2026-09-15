@@ -813,8 +813,10 @@ pub enum MirInstr {
     /// Destroy one projected field of an aggregate now — running the field
     /// value's own destructor — and tombstone it, leaving the rest of the
     /// aggregate live. Drop elaboration emits this for a `deinit`
-    /// parameter's direct fields, each at its own last use; the receiver's
-    /// later `ConsumeVar` skips the tombstoned fields.
+    /// parameter's direct fields, each at its own last use (the receiver's
+    /// later `ConsumeVar` skips the tombstoned fields), and immediately
+    /// before a `Store` that overwrites an initialized droppable sub-place,
+    /// so the replaced value is destroyed at the assignment.
     DropPlace {
         place: MirPlace,
     },

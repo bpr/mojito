@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A store into a field now destroys the value it replaces at the store, as in
+  the pinned Mojo: `p.b = Inner(3)` runs the old value's `__deinit__` before
+  the write, on the VM and natively, whether the field is reached from a
+  local, a `mut self` receiver, a `mut` parameter, or a nested field chain. A
+  constructor's first store into an `out self` field only initializes it and a
+  second destroys the first, and a field moved out on some paths is destroyed
+  only where it still holds a value. Two `assets/ok` fixtures verified against
+  the pin replace the probe (exe ratchet 548 → 550), and the
+  `field-store-overwrite-drop` ledger row is closed. A store through a pointer
+  dereference (`q[] = Inner(2)`) still skips the destruction (new
+  `pointer-deref-store-overwrite-drop` row).
+
 - A returned view no longer widens a field's origin to its holder's, as in
   the pinned Mojo: `return` judges a struct's origin tail against the return
   annotation resolved over the body's own places, so `-> View[origin_of(self)]`

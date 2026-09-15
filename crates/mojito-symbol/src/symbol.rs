@@ -828,6 +828,20 @@ pub fn init_overload_struct(symbol: &str) -> Option<&str> {
     rest.starts_with(OV_SEP).then_some(struct_name)
 }
 
+/// Whether `symbol` names a lifecycle initializer, whose receiver is `out self`.
+///
+/// Recognizes `Type.__init__`, `Type.__copyinit__`, and `Type.__moveinit__`,
+/// bare or with a `$`-mangled overload or specialization suffix.
+pub fn is_initializer_symbol(symbol: &str) -> bool {
+    [".__init__", ".__copyinit__", ".__moveinit__"]
+        .iter()
+        .any(|initializer| {
+            symbol
+                .rsplit_once(initializer)
+                .is_some_and(|(_, rest)| rest.is_empty() || rest.starts_with('$'))
+        })
+}
+
 /// Which identity a mangled type spelling serves. Overload keys spell a
 /// minted Tuple instance bare (its elements are baked into the symbol, and
 /// the declaration annotation carries no arguments); a generic instance name

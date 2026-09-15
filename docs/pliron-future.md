@@ -219,9 +219,13 @@ its own roadmap entry in §2.
 
 ## Recommendation: incremental, and not first
 
-Existing defects come first. The native-backend and parity work in
-[`docs/roadmap.md`](roadmap.md) §1 and §2 is a prerequisite for any of this:
-a pivot evaluated against a backend with known miscompiles cannot be judged.
+Existing lifecycle and place defects come first, but not all of
+[`docs/roadmap.md`](roadmap.md) §1 and §2, since §2 reopens at every re-pin.
+§3 opens with a numbered list of the entries that gate it: the
+drop-elaboration and MIR place-shape defects the Stage A1 slice must model,
+and the native miscompile in that slice's own shape. A pivot evaluated against a backend with
+known miscompiles cannot be judged. The rest of §1 and §2 is orthogonal to
+steps 1 and 2 below and can interleave with them.
 
 1. **Fix the check order inside the current architecture.** Type-check
    `comptime if`/`for` bodies symbolically and reject what upstream rejects.

@@ -142,14 +142,28 @@ impl FnLowering<'_> {
     /// `DropPlace`: destroy one depth-1 field of an aggregate variable under
     /// its leaf presence flag (the VM's tombstone), so the receiver's later
     /// `ConsumeVar`/exit backstop skips it. The entry-block flag allocation
-    /// tracks every `DropPlace` place, so a missing flag is a lowering bug.
+    /// tracks every depth-1 `DropPlace` place. A nested or reference-rooted
+    /// place has no flag: drop elaboration emits one only where the place is
+    /// statically initialized (a store about to overwrite it), so it drops
+    /// unguarded at its address.
     pub(super) fn lower_drop_place(
         &mut self,
         ctx: &mut Context,
         place: &MirPlace,
     ) -> Result<(), PlironError> {
-        let Some(position) = self.leaf_position(place) else {
-            return Err(self.unsupported("field drop of a non-leaf place".into(), None));
+        let flagged = self.leaf_position(place).and_then(|position| {
+            self.leaf_flags
+                .get(&place.root)
+                .and_then(|leaves| leaves.get(&position))
+                .map(|flag| (position, *flag))
+        });
+        let Some((position, flag)) = flagged else {
+            let (address, ty) = self.place_address(ctx, place, Reg(0))?;
+            return if self.needs_drop(&ty) {
+                self.emit_drop_value(ctx, address, &ty, false)
+            } else {
+                Ok(())
+            };
         };
         let LowerTy::Aggregate { ty, .. } = self.var_lower_ty(place.root)? else {
             return Ok(());
@@ -166,14 +180,6 @@ impl FnLowering<'_> {
         if !self.needs_drop(&element) {
             return Ok(());
         }
-        let Some(flag) = self
-            .leaf_flags
-            .get(&place.root)
-            .and_then(|leaves| leaves.get(&position))
-            .copied()
-        else {
-            return Err(self.unsupported("field drop without a leaf flag".into(), None));
-        };
         let composed = self
             .layout
             .struct_layout(&element_tys)

@@ -11,6 +11,7 @@ mojito-checked = { path = "../mojito-checked" }
 mojito-common = { path = "../mojito-common" }
 mojito-hir = { path = "../mojito-hir" }
 mojito-mir = { path = "../mojito-mir" }
+mojito-symbol = { path = "../mojito-symbol" }
 mojito-types = { path = "../mojito-types" }
 
 [lints]

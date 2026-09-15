@@ -22,9 +22,11 @@ first, then Fable. Where a
 strict dependency forces a different order, the entry says so.
 
 Sections 1 to 3 are ordered by what the Pliron direction in
-[`docs/pliron-future.md`](pliron-future.md) depends on: the existing native and
-parity defects first, then the front-end groundwork a Pliron-centered
-architecture would need.
+[`docs/pliron-future.md`](pliron-future.md) depends on. Section 3 does not wait
+for sections 1 and 2 to empty, since section 2 reopens at every re-pin. It
+waits only for the numbered prerequisite list at its head, which is taken
+first, ahead of the sort order in sections 1 and 2. The rest of sections 1
+and 2 can interleave with section 3.
 
 ## Ordered Work
 
@@ -58,6 +60,7 @@ whatever its model, because it batches every change that needs a new
   - Bisect the `var` field-move of the copy-lifecycle value inside the
     generic constructor against the owned-temp marking in
     `crates/mojito-pliron/src/lower/calls.rs`.
+  - Section 3 prerequisite 4 of 4.
   - Model: Fable. The lever is a guess rather than a known site, and the
     bug sits where monomorphized constructors, copy lifecycle, and native
     temporary ownership meet.
@@ -68,6 +71,7 @@ whatever its model, because it batches every change that needs a new
   projection requires checked indexed storage`) for every element type.
   - Copy the element out, mutate it, and write it back (`xs[i] = e`), or
     mutate through a `mut` parameter, which works.
+  - Section 3 prerequisite 3 of 4.
   - Model: Fable. A dynamic element projection that is written through
     crosses the checker, MIR places, the verifier, ownership and drop
     elaboration, and both backends.
@@ -188,19 +192,6 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     `is_numeric` predicates.
   - Model: Opus, plan first.
 
-- [ ] **A variadic struct's type arguments are not inferred from its
-  constructor**
-
-  Problem: `Pair((1, True))` for `struct Pair[*Ts](...)` with
-  `var storage: Tuple[*Self.Ts]` runs at the pin, while Mojito requires
-  `Pair[Int, Bool](...)`
-  (`assets/type_error/pack_struct_needs_explicit_args.mojo`, the other
-  `divergence` row).
-  - Monomorphization (`crates/mojito-comptime/src/comptime/mono.rs`) runs
-    before type checking, so argument types are only syntactically known
-    there; inference needs a checker-owned instantiation instead.
-  - Model: Opus, plan first.
-
 - [ ] **Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
   any order)*
 
@@ -262,24 +253,6 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     - Model: Opus, plan first. The anchor's statement-end keep-alive is what
       every other call argument relies on, so shortening it for unpacking
       needs its fallout checked first.
-  - `pack-element-type-narrowing`: inside a folded `comptime if Self.Ts[i]
-    == T` branch Mojito treats the pack element `self.storage[i]` as a `T`,
-    so a `ref[origin_of(self)] T` accessor returns it and an `==` against a
-    `T` argument type-checks. Upstream keeps the element at its dependent
-    pack type and demands `rebind[T](...)`, which Mojito does not
-    implement; it also rejects a reference into `self.storage` returned
-    under `origin_of(self)`. `stdlib/std/builtin/tuple.mojo`'s
-    `__contains__` relies on the same narrowing. Pinned by
-    `conformance/fixtures/pack_element_type_narrowing.mojo`
-    (`pack-element-type-narrowing`); `assets/extensions/ok/pack_struct_getitem.mojo`
-    is the corpus fixture, which also needs the explicit
-    `p.__getitem__[k]()` spelling Mojito has no method form for. The same
-    subscript sugar is the pin's complaint about the error fixture
-    `assets/type_error/pack_struct_runtime_getitem_index.mojo`, its `ledgered`
-    row in `conformance/assets-mojo-errors.tsv`.
-    - Model: Opus, plan first. Closing it means implementing `rebind` and
-      then requiring it, so the plan decides whether `rebind` lands first
-      or the two land together.
   - `trivially-movable-stdlib-types`: `IsTriviallyMovable[String]`,
     `IsTriviallyMovable[List[Int]]`, and the `MaybeUninit` conformances
     that follow from them are `False` on Mojito and `True` upstream,
@@ -399,19 +372,24 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     - Model: Opus, plan first. A fourth lattice point, or a per-node
       "may hold a hole" flag that survives joins, is the lever; the plan
       picks one.
-  - `field-store-overwrite-drop`: storing into a live droppable field never
-    destroys the replaced value, on the VM and natively, while the pin runs
-    the old value's `__deinit__` at the store.
-    - `var p = Pair(Inner(1), Inner(2)); p.b = Inner(3)` prints no `del 2`.
-    - Pinned by `conformance/probes/field_store_overwrite_drop.mojo`.
-    - Model: Opus, plan first. Drop elaboration has no destruction step for
-      the value a field `Store` replaces; the plan settles where it goes.
+  - `pointer-deref-store-overwrite-drop`: a store through a pointer
+    dereference never destroys the replaced value, on the VM and natively,
+    while the pin runs the old value's `__deinit__` at the store.
+    - `var q = Pointer(to=b); q[] = Inner(2)` prints no `del 1`.
+    - A store into a static field or element place does destroy the value it
+      replaces (`crates/mojito-analysis/src/analysis/store_drops.rs`); this
+      store writes the pointee as a whole.
+    - Pinned by `conformance/probes/pointer_deref_store_overwrite_drop.mojo`.
+    - Model: Opus, plan first. The pointee's initialization is not tracked
+      through the pointer, so the plan decides when it is known to hold a
+      value.
   - `mut-parameter-reassignment-drop`: reassigning a `mut` parameter, or
     `self` in a `mut self` method, as a whole never destroys the old value,
     on the VM and natively, while the pin does; a local's reassignment does.
     - `def reset(mut p: Pair): p = Pair(Inner(7), Inner(8))` prints no
       `del 1` / `del 2`.
     - Pinned by `conformance/probes/mut_parameter_reassignment_drop.mojo`.
+    - Section 3 prerequisite 1 of 4.
     - Model: Opus, plan first.
   - `assign-plain-span-argument-over-list`: `xs = rebuild(Span(xs))` runs
     upstream (`1`) and is rejected in Mojito with "access to 'xs' conflicts
@@ -442,6 +420,7 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
       a field store through a plain pointer local (`q[].v = 9`) both run;
       only the field projection below a pointer-field index fails.
     - Pinned by `conformance/probes/pointer_field_deref_field_store.mojo`.
+    - Section 3 prerequisite 2 of 4.
     - Model: Opus, plan first. Whether the VM's place writer or the MIR
       place shape (`root.src[0].v`) is at fault is not yet known.
   - `ref-field-return-origin-widening`: a view struct that stores its source
@@ -540,21 +519,6 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
   Five divergences are retained on purpose and re-probed rather than fixed;
   they are listed in [`docs/non-goals.md`](non-goals.md).
 
-- [ ] A `def`'s own type pack cannot be queried in a runtime position:
-  `return 1 + Us.length` fails with "Undefined variable 'Us'", while the
-  pinned Mojo runs it.
-  - A free `def count[*Us](var *extra: *Us)` and a method-own pack on any
-    struct fail the same way. A compile-time position (`comptime for i in
-    range(Us.length)`) works, and so does a variadic struct's own pack
-    (`Self.Ts.length`) in a runtime position.
-  - Only `generate_struct_spec` binds a pack into the substitutions that
-    `fold_pack_typelist_use` (`comptime/rewrite.rs`) reads during
-    materialization; `def` specialization never does.
-  - Pinned by `conformance/fixtures/pack_length_runtime_position.mojo`
-    (`pack-length-runtime-position`, `mojo-only`).
-  - Model: Opus, plan first. Deliberately last in this section: native
-    backend work comes first.
-
 ### 3. Front-End Groundwork For A Pliron-Centered Architecture
 
 The assessment is [`docs/pliron-future.md`](pliron-future.md): Pliron cannot
@@ -562,7 +526,29 @@ give Mojito Mojo's shape on its own, because Mojo type-checks parametric code
 before instantiating it while Mojito elaborates first and checks the clones.
 These tasks fix that order. Each one pays off by itself, the first closes a
 conformance divergence, and together they are what a later Pliron pivot would
-need. Start them only once sections 1 and 2 are clear.
+need.
+
+**Prerequisites.** Take these four entries from sections 1 and 2 first, in this
+order, then start this section. The rest of sections 1 and 2 does not block
+it. Each prerequisite fixes lifecycle order or a MIR place shape that the Pliron
+proof below must model and is judged on, so fixing it afterwards would move
+the target under the proof. When one closes, delete it here too.
+
+1. `mut-parameter-reassignment-drop` (section 2 ledger): reassigning a `mut`
+   parameter or `self` never destroys the old value. It is the whole-value
+   twin of the store destruction step drop elaboration already has for
+   fields (`crates/mojito-analysis/src/analysis/store_drops.rs`).
+2. `pointer-field-deref-field-store` (section 2 ledger): `p.src[].v = 9`
+   fails at the VM. It settles the place shape of a field below a pointer
+   dereference.
+3. **No field writes through a `List` subscript** (section 1): `xs[i].field =
+   v` fails MIR verification. It reuses the place shape from 2 and the field
+   store destruction step.
+4. **Native generic-holder temporaries with heap-owning implicitly copyable
+   fields read freed memory** (section 1). It is last because native lowering
+   should target the MIR that 1 to 3 settle, and the Pliron proof's own slice
+   (a generic struct, a move, drops on every edge, run natively) has exactly
+   this shape.
 
 - [ ] **A type error in an untaken `comptime if` branch is never reported**
 
@@ -581,17 +567,57 @@ need. Start them only once sections 1 and 2 are clear.
     behavior, so it changes with this task.
   - Land the two probes under `conformance/probes/` first.
   - Known fallout, from the `comptime if` sweep recorded in
-    [`docs/pliron-future.md`](pliron-future.md): two fixtures put a deliberate
-    type error in the untaken branch as a compile-time assertion
-    (`assets/ok/generic_ctfe_value_param.mojo`,
-    `assets/ok/generic_ctfe_associated_value.mojo`).
-  - Two more sites rely on the guard narrowing a method's `T` to the element
-    type: `assets/ok/variadic_method_type_params.mojo` (`get`,
-    `count_matching`) and `stdlib/std/builtin/tuple.mojo`
-    (`__contains__`).
+    [`docs/pliron-future.md`](pliron-future.md): two sites rely on the guard
+    narrowing a type parameter to a pack element. They are
+    `conformance/fixtures/pack_element_type_narrowing.mojo` (`get`,
+    `count_matching`) and `stdlib/std/builtin/tuple.mojo` (`__contains__`).
   - Upstream spells that shape `rebind[Ts[i]](value)`, which Mojito does not
-    implement (`Undefined variable 'rebind'`), so this task needs `rebind` or
-    an equivalent before those two sites can be respelled.
+    implement (`Undefined variable 'rebind'`). This task implements `rebind`
+    and respells both sites.
+  - That also closes the `pack-element-type-narrowing` divergence
+    (`conformance/cases.tsv`, `mojito-only`). Inside a folded `comptime if
+    Self.Ts[i] == T` branch Mojito treats `self.storage[i]` as a `T`, so a
+    `ref[origin_of(self)] T` accessor returns it and an `==` against a `T`
+    argument type-checks.
+  - Upstream keeps the element at its dependent pack type, and it also
+    rejects a reference into `self.storage` returned under `origin_of(self)`.
+  - `assets/extensions/ok/pack_struct_getitem.mojo` is that divergence's
+    corpus fixture. It also needs the explicit `p.__getitem__[k]()` spelling,
+    since Mojito has no method form for the subscript sugar.
+  - The same sugar is the pin's complaint about
+    `assets/type_error/pack_struct_runtime_getitem_index.mojo`, its `ledgered`
+    row in `conformance/assets-mojo-errors.tsv`.
+
+- [ ] **A variadic struct's type arguments are not inferred from its
+  constructor**
+
+  Problem: `Pair((1, True))` for `struct Pair[*Ts](...)` with
+  `var storage: Tuple[*Self.Ts]` runs at the pin, while Mojito requires
+  `Pair[Int, Bool](...)`
+  (`assets/type_error/pack_struct_needs_explicit_args.mojo`, a `divergence`
+  row of `conformance/assets-mojo-errors.tsv`).
+  - Monomorphization (`crates/mojito-comptime/src/comptime/mono.rs`) runs
+    before type checking, so argument types are only syntactically known
+    there.
+  - Inference needs a checker-owned instantiation, which the task above
+    introduces. That is why it follows it.
+
+- [ ] **A `def`'s own type pack cannot be queried in a runtime position**
+
+  Problem: `return 1 + Us.length` fails with "Undefined variable 'Us'", while
+  the pinned Mojo runs it.
+  - A free `def count[*Us](var *extra: *Us)` and a method-own pack on any
+    struct fail the same way.
+  - A compile-time position (`comptime for i in range(Us.length)`) works, and
+    so does a variadic struct's own pack (`Self.Ts.length`) in a runtime
+    position.
+  - Only `generate_struct_spec` binds a pack into the substitutions that
+    `fold_pack_typelist_use` (`comptime/rewrite.rs`) reads during
+    materialization. `def` specialization never does.
+  - It follows the check-order task because that task restructures `def`
+    specialization.
+  - Pinned by `conformance/fixtures/pack_length_runtime_position.mojo`
+    (`pack-length-runtime-position`, `mojo-only`).
 
 - [ ] **Parameter expressions have no symbolic form**
 
@@ -603,6 +629,9 @@ need. Start them only once sections 1 and 2 are clear.
     decides equality by canonicalization rather than evaluation.
   - Shape the representation like a Pliron attribute, uniqued and
     canonicalized, so a later dialect move is a re-homing and not a redesign.
+  - The plan accounts for section 2's runtime `DType` value and `Float16`
+    entries, which touch the same `Dtype`/`CtValue` representation, whichever
+    lands first.
 
 - [ ] **The Pliron pivot has no falsifiable proof yet**
 

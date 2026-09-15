@@ -414,3 +414,11 @@ pub(super) fn is_droppable_root(f: &MirFunction, v: VarId) -> bool {
     // collections, free the caller's allocation).
     f.var_names.get(vi).is_none_or(|name| name != "self")
 }
+
+/// Whether destroying a field of this type can do observable work (run a
+/// destructor, release storage). Scalars, pointers, and references die
+/// silently, so they need no instruction.
+pub(super) const fn field_needs_drop(ty: &mojito_types::types::Ty) -> bool {
+    use mojito_types::types::Ty;
+    may_alias_owned_storage(ty) || matches!(ty, Ty::Func { .. } | Ty::Error)
+}

@@ -2878,6 +2878,24 @@ loan, are moved below depth one, or need no destructor work are left to the
 `ConsumeVar`. A field read only inside a loop dies after the loop; the pinned
 Mojo destroys it at entry (recorded as an `output-diff` row).
 
+A store into a field destroys the value it replaces at the store, as Mojo's
+assignment does. A whole-variable reassignment needs nothing extra (the old
+value dies at its last use before the redefining `DefVar`), but a field is not
+a variable, so a pass ahead of the variable-granular elaboration
+(`analysis/store_drops.rs`) splices a `DropPlace` immediately before each
+`Store` into a static field or constant-index element of droppable type whose
+subtree is initialized there. It replays the move checker's place-tree flow
+(`observe_move_states`) from a different entry: parameters initialized, every
+other slot uninitialized, and an initializer's `out self` receiver with each
+declared field uninitialized, so a constructor's first store into a field
+destroys nothing and a second destroys the first. A field wholly moved out is
+reinitialized without a drop; a depth-one field moved on only some paths drops
+under the VM's tombstone and the native leaf flag. The `DropPlace` touches the
+same root at the same position as its `Store`, so liveness, loans, and the
+variable pass are unchanged by it. On the VM it follows a reference root (a
+`mut` receiver or parameter) into the caller's storage; natively a nested or
+reference-rooted place drops unguarded at its address.
+
 Types whose `Deinitable` conformance is explicitly unavailable, such
 as `Deinitable where False`, are excluded from this automatic path.
 A declared conditional `Movable` conformance is likewise effective:

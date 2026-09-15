@@ -123,6 +123,26 @@ impl Node {
         }
     }
 
+    /// An uninitialized place: one not yet defined, or wholly moved out.
+    pub(super) const fn moved() -> Self {
+        Self {
+            base: Own::Moved,
+            children: BTreeMap::new(),
+        }
+    }
+
+    /// A value whose storage exists but whose named fields are all
+    /// uninitialized, as an initializer's `out self` receiver enters its body.
+    pub(super) fn with_uninitialized_fields(fields: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            base: Own::Owned,
+            children: fields
+                .into_iter()
+                .map(|field| (Key::Field(field), Self::moved()))
+                .collect(),
+        }
+    }
+
     /// Severity of *reading the whole subtree* at this node, paired with the
     /// relative path of the worst offender (for a precise diagnostic): the worst
     /// of its own base (path `[]`) and every descendant's whole severity — a
@@ -537,7 +557,14 @@ pub(super) fn analyze_moves(f: &MirFunction) -> Result<(), OwnershipError> {
     // assignment before use, so this never causes a false negative for our
     // purpose (tracking transfers) and avoids a spurious "uninitialized" lattice.
     let entry: Vec<Node> = vec![Node::owned(); f.n_vars];
-    let flow = walk_region(Some(entry), &f.blocks, f, true)?;
+    let mut check = |state: &[Node], instr: &MirInstr| -> Result<(), OwnershipError> {
+        check_instruction_uses(state, instr, f)?;
+        if let MirInstr::DefVar { var, .. } = instr {
+            check_whole_destruction(&state[*var as usize], *var, f)?;
+        }
+        Ok(())
+    };
+    let flow = walk_region(Some(entry), &f.blocks, f, Some(&mut check))?;
     // Every variable dies at the function's exit, on each channel that
     // leaves it: a value that gets there with a field moved out cannot be
     // destroyed as a whole.
@@ -552,16 +579,37 @@ pub(super) fn analyze_moves(f: &MirFunction) -> Result<(), OwnershipError> {
     Ok(())
 }
 
+/// Replay one function body's move states from `entry`, handing `observer`
+/// the state that reaches each instruction, before its effects, exactly once.
+/// A `finally` body is observed from the join of every channel entering it.
+pub(super) fn observe_move_states(
+    f: &MirFunction,
+    entry: Vec<Node>,
+    observer: &mut impl FnMut(&[Node], &MirInstr),
+) -> Result<(), OwnershipError> {
+    let mut observe = |state: &[Node], instr: &MirInstr| -> Result<(), OwnershipError> {
+        observer(state, instr);
+        Ok(())
+    };
+    walk_region(Some(entry), &f.blocks, f, Some(&mut observe)).map(|_| ())
+}
+
+/// The observer type of a replay that observes nothing (a fixpoint pass).
+type NoObserver = fn(&[Node], &MirInstr) -> Result<(), OwnershipError>;
+
 /// Walk one region's mini-CFG (a function body or a `try` region) from its
 /// entry state: reach the per-block fixpoint, then replay each reachable
-/// block, reporting every place use against the current state when `report`
-/// is set. Nested `try`s recurse through [`walk_try`].
-fn walk_region(
+/// block, handing every instruction and the state reaching it to `observer`
+/// when one is given. Nested `try`s recurse through [`walk_try`].
+fn walk_region<O>(
     entry: Option<Vec<Node>>,
     blocks: &[MirBlock],
     f: &MirFunction,
-    report: bool,
-) -> Result<MoveFlow, OwnershipError> {
+    mut observer: Option<&mut O>,
+) -> Result<MoveFlow, OwnershipError>
+where
+    O: FnMut(&[Node], &MirInstr) -> Result<(), OwnershipError>,
+{
     let Some(entry) = entry else {
         return Ok(MoveFlow::unreachable());
     };
@@ -581,7 +629,12 @@ fn walk_region(
         let mut reachable = true;
         for (i, instr) in block.instrs.iter().enumerate() {
             if let MirInstr::Try { .. } = instr {
-                let nested = walk_try(std::mem::take(&mut state), instr, f, report)?;
+                let nested = walk_try(
+                    std::mem::take(&mut state),
+                    instr,
+                    f,
+                    observer.as_deref_mut(),
+                )?;
                 add_state(&mut flow.raises, &nested.raises);
                 add_state(&mut flow.exits, &nested.exits);
                 if let Some(normal) = nested.normal {
@@ -592,11 +645,8 @@ fn walk_region(
                 }
                 continue;
             }
-            if report {
-                check_instruction_uses(&state, instr, f)?;
-                if let MirInstr::DefVar { var, .. } = instr {
-                    check_whole_destruction(&state[*var as usize], *var, f)?;
-                }
+            if let Some(observer) = observer.as_deref_mut() {
+                observer(&state, instr)?;
             }
             apply_effects(&mut state, instr);
             if interior_instruction_directly_raises(instr) {
@@ -635,12 +685,15 @@ fn raise_seed(state: &[Node], next: Option<&MirInstr>) -> Vec<Node> {
 /// body's normal completion, the handler from the body's raise points, and
 /// `finally` from every channel (checked once from their join; its own
 /// channels compose per entering channel, as the runtime runs it).
-fn walk_try(
+fn walk_try<O>(
     entry: Vec<Node>,
     instr: &MirInstr,
     f: &MirFunction,
-    report: bool,
-) -> Result<MoveFlow, OwnershipError> {
+    mut observer: Option<&mut O>,
+) -> Result<MoveFlow, OwnershipError>
+where
+    O: FnMut(&[Node], &MirInstr) -> Result<(), OwnershipError>,
+{
     let MirInstr::Try {
         body,
         handler,
@@ -655,12 +708,12 @@ fn walk_try(
             exits: None,
         });
     };
-    let body_flow = walk_region(Some(entry), body, f, report)?;
+    let body_flow = walk_region(Some(entry), body, f, observer.as_deref_mut())?;
     let mut normal = None;
     let mut raises = None;
     let mut exits = body_flow.exits.clone();
     if let Some(orelse) = orelse {
-        let else_flow = walk_region(body_flow.normal.clone(), orelse, f, report)?;
+        let else_flow = walk_region(body_flow.normal.clone(), orelse, f, observer.as_deref_mut())?;
         add_state(&mut normal, &else_flow.normal);
         add_state(&mut raises, &else_flow.raises);
         add_state(&mut exits, &else_flow.exits);
@@ -668,7 +721,12 @@ fn walk_try(
         add_state(&mut normal, &body_flow.normal);
     }
     if let Some((_, handler)) = handler {
-        let handler_flow = walk_region(body_flow.raises.clone(), handler, f, report)?;
+        let handler_flow = walk_region(
+            body_flow.raises.clone(),
+            handler,
+            f,
+            observer.as_deref_mut(),
+        )?;
         add_state(&mut normal, &handler_flow.normal);
         add_state(&mut raises, &handler_flow.raises);
         add_state(&mut exits, &handler_flow.exits);
@@ -682,15 +740,15 @@ fn walk_try(
             exits,
         });
     };
-    if report {
+    if let Some(observer) = observer {
         let mut all = normal.clone();
         add_state(&mut all, &raises);
         add_state(&mut all, &exits);
-        walk_region(all, finalbody, f, true)?;
+        walk_region(all, finalbody, f, Some(observer))?;
     }
-    let normal_final = walk_region(normal, finalbody, f, false)?;
-    let raising_final = walk_region(raises, finalbody, f, false)?;
-    let exiting_final = walk_region(exits, finalbody, f, false)?;
+    let normal_final = walk_region(normal, finalbody, f, None::<&mut O>)?;
+    let raising_final = walk_region(raises, finalbody, f, None::<&mut O>)?;
+    let exiting_final = walk_region(exits, finalbody, f, None::<&mut O>)?;
     let mut raises = raising_final.normal;
     add_state(&mut raises, &normal_final.raises);
     add_state(&mut raises, &raising_final.raises);
@@ -764,7 +822,7 @@ fn region_in_states(
 fn transfer_block(mut state: Vec<Node>, instrs: &[MirInstr], f: &MirFunction) -> Option<Vec<Node>> {
     for instr in instrs {
         if let MirInstr::Try { .. } = instr {
-            let nested = walk_try(state, instr, f, false).ok()?;
+            let nested = walk_try(state, instr, f, None::<&mut NoObserver>).ok()?;
             state = nested.normal?;
         } else {
             apply_effects(&mut state, instr);

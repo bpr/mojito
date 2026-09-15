@@ -1876,11 +1876,20 @@ impl VmBackend {
                     }
                 }
             }
-            // A `deinit` parameter's field dying at its own last use: the
-            // field's whole-value destruction, leaving a tombstone the
-            // receiver's later `ConsumeVar` skips.
+            // A field's whole-value destruction, leaving a tombstone: a
+            // `deinit` parameter's field dying at its own last use (the
+            // receiver's later `ConsumeVar` skips it), or the value a store
+            // is about to overwrite. A `mut` receiver or parameter root is a
+            // reference into the caller's storage.
             MirInstr::DropPlace { place } => {
-                let value = std::mem::replace(nav_mut(vars, regs, place)?, Value::Moved);
+                let reference = self.extend_reference(&vars[place.root as usize], place, regs)?;
+                let value = if let Some(reference) = reference {
+                    let old = self.read_reference(&reference, frame_id, vars)?;
+                    self.write_reference(&reference, frame_id, vars, Value::Moved)?;
+                    old
+                } else {
+                    std::mem::replace(nav_mut(vars, regs, place)?, Value::Moved)
+                };
                 self.drop_value(prog, value)?;
             }
             MirInstr::Unsupported(what) => {

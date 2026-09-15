@@ -36,6 +36,8 @@ use register_loans::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use scan::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use store_drops::*;
 
 pub fn check_ownership_checked(
     program: &mojito_checked::checked::CheckedProgram,
@@ -139,17 +141,19 @@ impl CalleeRefParams<'_> {
 
 // --- Liveness + ASAP drop elaboration ---------------------------------------
 
-/// Elaborate ASAP destruction across a whole program: after each variable's
-/// last use, splice a `DropVar`.
+/// Elaborate ASAP destruction across a whole program: before each store that
+/// overwrites an initialized droppable field, splice a `DropPlace`; after each
+/// variable's last use, splice a `DropVar`.
 ///
 /// Applied by the VM before execution so a struct's `__deinit__` fires at the
-/// value's last use (not at scope end).
+/// value's last use (not at scope end), and a replaced field's at the store.
 pub fn elaborate_drops_program(prog: MirProgram) -> MirProgram {
     MirProgram {
         functions: prog
             .functions
             .into_iter()
-            .map(|(name, f)| {
+            .map(|(name, mut f)| {
+                elaborate_store_drops(&mut f, &name, &prog.declarations.structs);
                 // Module-scope (`__toplevel__`) variables live until program end, so
                 // they are not ASAP-dropped — that also keeps their final values
                 // intact for the CLI/`bindings()` global dump (a `DropVar` would
@@ -176,6 +180,7 @@ mod loans;
 mod moves;
 mod register_loans;
 mod scan;
+mod store_drops;
 
 #[cfg(test)]
 mod constant_tuple_place_tests {
