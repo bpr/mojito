@@ -22,6 +22,8 @@ pub(super) fn ty_equivalent(a: &Ty, b: &Ty) -> bool {
                 && a_args.len() == b_args.len()
                 && a_args.iter().zip(b_args).all(|(a, b)| match (a, b) {
                     (TyArg::Ty(a), TyArg::Ty(b)) => ty_equivalent(a, b),
+                    // The origin tail erases from the runtime ABI.
+                    (TyArg::Origin(_), TyArg::Origin(_)) => true,
                     _ => a == b,
                 })
         }

@@ -33,6 +33,7 @@ impl Decoder {
         match &value.kind {
             ValueKind::Atom(tag) if tag == "origin_self" => Some(Origin::SelfParam),
             ValueKind::Atom(tag) if tag == "origin_static" => Some(Origin::Static),
+            ValueKind::Atom(tag) if tag == "origin_unbound" => Some(Origin::Unbound),
             ValueKind::Positional(tag, inner) => match tag.as_str() {
                 "origin_param" => self.uint32(inner).map(|v| Origin::Param(OriginParamId(v))),
                 "origin_union" => {

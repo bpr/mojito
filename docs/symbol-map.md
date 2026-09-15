@@ -192,12 +192,26 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   positions and by the checker where trait names are extracted from
   expressions.
 - `checker/origins.rs` (split across `origins/{actuals,binders,construct,
-  transfer,solve,sig,subst,interior,ref_params,result_alias}.rs`) owns
-  origin/reference-handle derivation, constructor origin binding
+  exclusivity,transfer,solve,sig,subst,interior,ref_params,result_alias}.rs`)
+  owns origin/reference-handle derivation, constructor origin binding
   (`origins/construct.rs`:
-  `bind_constructor_origins` binds a struct's origin binder from a
-  `Pointer[Self.T, Self.origin]` argument and checks an explicitly applied
-  origin; `substitute_pointer_origin_params` rewrites the parameter types),
+  `bind_constructor_origins` and `bind_fieldwise_origins` bind a struct's
+  origin binders from a `Pointer[Self.T, Self.origin]` argument, a
+  `ref [Self.origin]` argument, or a struct-typed argument carrying the binder
+  in its origin tail, check an explicitly applied origin, and return
+  `ConstructorOriginBindings`, whose `substitute` rewrites the parameter types
+  and whose `bind_tail` fills the constructed value's origin tail
+  (`constructed_type`); `bind_callee_origins` does the same for a free
+  callee's own binders), the argument exclusivity rule
+  (`origins/exclusivity.rs`: `check_argument_origin_exclusivity` judges every
+  pair of arguments — receiver included — by their own places and the origins
+  their declared parameter types carry, reporting upstream's
+  `AliasingArguments`), the return-tail abstraction
+  (`origins/solve.rs`: `abstract_return_origin_tails` maps a returned struct's
+  tail rooted at the receiver or a parameter to the signature origin the
+  declared return names), the call-result tail (`origins/actuals.rs`:
+  `bind_call_result_tail` writes the `call_result_origins` a view-returning
+  call resolved into the result's origin tail),
   the annotation-demand verdict for locals (`check_storage_origin_demands`,
   replayed on reassignment from the per-binding
   `storage_origin_demand_scopes` table),

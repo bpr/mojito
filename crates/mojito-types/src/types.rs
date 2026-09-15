@@ -199,7 +199,13 @@ pub enum Ty {
     Dependent(DependentType),
     /// `Self` inside a trait method requirement.
     SelfType,
-    /// A nominal struct type, named, with its parameter arguments.
+    /// A nominal struct type, named, with its parameter arguments: one
+    /// `TyArg::Ty`/`TyArg::Val` per declared type or value parameter, in
+    /// declaration order, followed by the **origin tail** — one
+    /// `TyArg::Origin` per explicit `Origin`/`OriginSet` parameter, in source
+    /// order. The tail is part of the checked identity (`P[origin_of(xs)]` and
+    /// `P[origin_of(ys)]` are different types, as upstream) and erases from
+    /// the runtime ABI: mangling, layout, and MIR verification ignore it.
     Struct(String, Vec<TyArg>),
     /// A SIMD vector type `SIMD[DType.<dtype>, width]`.
     Simd {
@@ -480,30 +486,34 @@ pub fn unqualified_type_name(ty: &Ty) -> String {
                 });
             // A specialization suffix (`Name$...`) is never part of the name.
             let base = base.split('$').next().unwrap_or(base);
-            if args.is_empty() {
-                base.to_string()
-            } else {
-                let arguments = args
-                    .iter()
-                    .map(|argument| match argument {
-                        TyArg::Ty(ty) => unqualified_type_name(ty),
-                        // A bound type pack (`TypeNames[Int, String]`) spells
-                        // its element types.
-                        TyArg::Val(CtValue::Tuple(values))
-                            if values.iter().all(|value| matches!(value, CtValue::Type(_))) =>
-                        {
+            // The origin tail erases from the runtime ABI, so it is no part
+            // of an instance name (diagnostics that show origins render
+            // them separately).
+            let arguments = args
+                .iter()
+                .filter_map(|argument| match argument {
+                    TyArg::Ty(ty) => Some(unqualified_type_name(ty)),
+                    // A bound type pack (`TypeNames[Int, String]`) spells
+                    // its element types.
+                    TyArg::Val(CtValue::Tuple(values))
+                        if values.iter().all(|value| matches!(value, CtValue::Type(_))) =>
+                    {
+                        Some(
                             values
                                 .iter()
                                 .map(unqualified_value_argument)
                                 .collect::<Vec<_>>()
-                                .join(", ")
-                        }
-                        TyArg::Val(value) => unqualified_value_argument(value),
-                        other @ TyArg::Origin(_) => other.to_string(),
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("{base}[{arguments}]")
+                                .join(", "),
+                        )
+                    }
+                    TyArg::Val(value) => Some(unqualified_value_argument(value)),
+                    TyArg::Origin(_) => None,
+                })
+                .collect::<Vec<_>>();
+            if arguments.is_empty() {
+                base.to_string()
+            } else {
+                format!("{base}[{}]", arguments.join(", "))
             }
         }
         Ty::Variant(alternatives) => format!(
@@ -1016,6 +1026,7 @@ impl fmt::Display for Ty {
                                         crate::origin::Origin::Union(_) => {
                                             write!(f, "origin-union")?;
                                         }
+                                        crate::origin::Origin::Unbound => write!(f, "_")?,
                                     }
                                 }
                             }
@@ -1161,9 +1172,17 @@ impl fmt::Display for Ty {
                     return write!(f, "String");
                 }
                 write!(f, "{name}")?;
-                if !args.is_empty() {
+                // The origin tail is checked identity, not part of the
+                // printed spelling (specialization symbols and reflection
+                // read this text; diagnostics that show origins render them
+                // through the checker, which knows the places' names).
+                let mut shown = args
+                    .iter()
+                    .filter(|argument| !matches!(argument, TyArg::Origin(_)))
+                    .peekable();
+                if shown.peek().is_some() {
                     write!(f, "[")?;
-                    for (i, a) in args.iter().enumerate() {
+                    for (i, a) in shown.enumerate() {
                         if i > 0 {
                             write!(f, ", ")?;
                         }
@@ -1194,6 +1213,44 @@ fn nominal_type_arguments<'a>(ty: &'a Ty, expected: &str) -> Option<Vec<&'a Ty>>
             TyArg::Val(_) | TyArg::Origin(_) => None,
         })
         .collect()
+}
+
+/// The type with every struct origin-tail entry reset to `Origin::Unbound`.
+///
+/// Origins erase from every generated clone and from the runtime ABI, so the
+/// instantiation records the checker hands the elaborator carry none: a place
+/// origin names a per-check owner, which would make the same instantiation
+/// look new on every discovery round.
+pub fn erase_origin_arguments(ty: &Ty) -> Ty {
+    let recur = |ty: &Ty| erase_origin_arguments(ty);
+    match ty {
+        Ty::Struct(name, arguments) => Ty::Struct(
+            name.clone(),
+            arguments
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(inner) => TyArg::Ty(recur(inner)),
+                    TyArg::Val(value) => TyArg::Val(value.clone()),
+                    TyArg::Origin(_) => TyArg::Origin(crate::origin::Origin::Unbound),
+                })
+                .collect(),
+        ),
+        Ty::Tuple(elements) => Ty::Tuple(elements.iter().map(recur).collect()),
+        Ty::RuntimePack(elements) => Ty::RuntimePack(elements.iter().map(recur).collect()),
+        Ty::Variant(alternatives) => Ty::Variant(alternatives.iter().map(recur).collect()),
+        Ty::ComptimeList(element) => Ty::ComptimeList(Box::new(recur(element))),
+        Ty::VariadicPack(element) => Ty::VariadicPack(Box::new(recur(element))),
+        Ty::Pointer { element, origin } => Ty::Pointer {
+            element: Box::new(recur(element)),
+            origin: origin.clone(),
+        },
+        Ty::Ref(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = Box::new(recur(&reference.referent));
+            Ty::Ref(reference)
+        }
+        other => other.clone(),
+    }
 }
 
 /// The checker's value-coercion predicate, shared with MIR verification so the
@@ -1328,6 +1385,9 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
                 && aargs.iter().zip(bargs).all(|(a, b)| match (a, b) {
                     (TyArg::Ty(a), TyArg::Ty(b)) => coerces(a, b),
                     (TyArg::Val(a), TyArg::Val(b)) => a == b,
+                    // The origin tail is part of the struct's identity: an
+                    // unbound slot infers, a bound one must match.
+                    (TyArg::Origin(a), TyArg::Origin(b)) => a.coerces_to(b),
                     _ => false,
                 })
         }

@@ -1,6 +1,8 @@
-# A callable struct over an origin-carrying element type. Mojito erases the
-# origin parameter and lets the collection and the box reach one call; the pin
-# needs the origin bound and then rejects the call as aliasing.
+# expect: 'RefBox[_]' is not concrete
+# A callable conformance whose parameter types omit an origin slot
+# (`def(mut List[RefBox], RefBox)`) is not concrete either; binding the
+# origin then meets the argument exclusivity rule
+# (`receiver_carried_origin_alias.mojo`).
 @fieldwise_init
 struct RefBox[origin: Origin[mut=True]]:
     var value: Pointer[List[Int], Self.origin]

@@ -35,11 +35,21 @@ pub(in crate::checker) struct ExplicitStructOrigin {
 }
 
 /// A struct application's compile-time arguments with the origin slots
-/// partitioned out (validated and erased): `forwarded` is exactly what the
-/// origin-erased binder sees.
+/// partitioned out: `forwarded` is exactly what the origin-erased binder
+/// sees, `explicit_origins` the validated origin arguments, and `tail` the
+/// application's origin tail — one origin per slot, `Origin::Unbound` where
+/// the application left the slot to inference.
 pub(super) struct PartitionedStructArgs {
     pub(super) forwarded: Vec<mojito_ast::ast::ParamArg>,
     pub(super) explicit_origins: Vec<ExplicitStructOrigin>,
+    pub(super) tail: Vec<mojito_types::origin::Origin>,
+}
+
+impl PartitionedStructArgs {
+    /// The tail as struct type arguments, to append after the binder prefix.
+    pub(super) fn tail_arguments(&self) -> impl Iterator<Item = TyArg> + '_ {
+        self.tail.iter().cloned().map(TyArg::Origin)
+    }
 }
 
 impl Checker {
@@ -65,8 +75,20 @@ impl Checker {
         }
     }
 
-    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn resolve_ty_from_anno(&self, ty: &SourceType) -> Result<Ty, TypeError> {
+        // Nesting depth: the outermost application of an annotation may leave
+        // its origin slots to inference where its position allows; an
+        // application nested as a type argument (`List[RefBox]`) is not
+        // concrete without them, as at the pin.
+        let depth = self.annotation_depth.get();
+        self.annotation_depth.set(depth + 1);
+        let resolved = self.resolve_ty_from_anno_at_depth(ty);
+        self.annotation_depth.set(depth);
+        resolved
+    }
+
+    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
+    fn resolve_ty_from_anno_at_depth(&self, ty: &SourceType) -> Result<Ty, TypeError> {
         Ok(match ty {
             SourceType::Int => Ty::Int,
             SourceType::UInt => Ty::UInt,
@@ -465,7 +487,7 @@ impl Checker {
                 // struct's parameters concretely: `Self.T` is `Int` while
                 // checking `Optional[Int]`'s clones.
                 if let Some(Ty::Struct(_, arguments)) = &self.self_ty
-                    && arguments.len() == self.self_decls.len()
+                    && arguments.len() >= self.self_decls.len()
                     && let Some(index) = self
                         .self_decls
                         .iter()
@@ -692,11 +714,11 @@ impl Checker {
     /// Resolve a struct application's explicit compile-time arguments,
     /// accepting origin arguments in the slots the declaration's raw
     /// parameter list spells (`decls` erases Origin parameters, so
-    /// `resolve_use_params` alone cannot see them). Origin arguments are
-    /// validated and erased — struct identity stays origin-free — and the
-    /// remaining arguments forward unchanged. For compatibility, an
-    /// application supplying exactly the non-origin explicit count omits the
-    /// origin slots entirely.
+    /// `resolve_use_params` alone cannot see them). The resolved arguments
+    /// are the binder prefix followed by the origin tail: origin arguments
+    /// are part of the struct's checked identity, and a slot the application
+    /// leaves to inference is `Origin::Unbound`. An application supplying
+    /// exactly the non-origin explicit count omits the origin slots entirely.
     pub(super) fn resolve_struct_use_args(
         &self,
         name: &str,
@@ -707,7 +729,10 @@ impl Checker {
         actuals: &[Ty],
     ) -> Result<(HashMap<String, Ty>, Vec<TyArg>), TypeError> {
         let partitioned = self.partition_struct_origin_args(name, source_params, args)?;
-        self.resolve_use_params(name, decls, &partitioned.forwarded, patterns, actuals)
+        let (subst, mut tyargs) =
+            self.resolve_use_params(name, decls, &partitioned.forwarded, patterns, actuals)?;
+        tyargs.extend(partitioned.tail_arguments());
+        Ok((subst, tyargs))
     }
 
     /// Partition a struct application's explicit compile-time arguments into
@@ -715,9 +740,9 @@ impl Checker {
     /// arguments the origin-erased binder sees (see
     /// [`Self::resolve_struct_use_args`], the annotation-side consumer; the
     /// constructor-call funnel in `infer_construction` is the other). Each
-    /// resolvable origin argument is validated against its slot and erased,
-    /// and returned so a constructor call can check the arguments binding
-    /// that slot against it.
+    /// resolvable origin argument is validated against its slot, becomes the
+    /// slot's tail entry, and is returned so a constructor call can check the
+    /// arguments binding that slot against it.
     pub(super) fn partition_struct_origin_args(
         &self,
         name: &str,
@@ -749,7 +774,8 @@ impl Checker {
         args: &[mojito_ast::ast::ParamArg],
     ) -> Result<PartitionedStructArgs, TypeError> {
         use mojito_ast::ast::ParamArg;
-        let is_origin = |p: &mojito_ast::ast::TypeParam| matches!(p.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet");
+        use mojito_types::origin::Origin;
+        let is_origin = super::is_origin_type_param;
         let slot_id = |param: &mojito_ast::ast::TypeParam| {
             mojito_types::origin::OriginParamId(
                 source_params
@@ -758,14 +784,44 @@ impl Checker {
                     .expect("explicit parameter comes from the source list") as u32,
             )
         };
-        let forward_all = || PartitionedStructArgs {
-            forwarded: args.to_vec(),
-            explicit_origins: Vec::new(),
-        };
         let explicit: Vec<&mojito_ast::ast::TypeParam> =
             source_params.iter().filter(|p| !p.infer_only).collect();
         let origin_slots = explicit.iter().filter(|p| is_origin(p)).count();
-        let strict = self.strict_storage_annotation.get();
+        // The tail in slot order: each slot's explicit origin, or unbound.
+        let tail_of = |explicit_origins: &[ExplicitStructOrigin]| -> Vec<Origin> {
+            explicit
+                .iter()
+                .filter(|param| is_origin(param))
+                .map(|param| {
+                    let id = slot_id(param);
+                    explicit_origins
+                        .iter()
+                        .find(|origin| origin.id == id)
+                        .map_or(Origin::Unbound, |origin| origin.origin.clone())
+                })
+                .collect()
+        };
+        let forward_all = || PartitionedStructArgs {
+            forwarded: args.to_vec(),
+            explicit_origins: Vec::new(),
+            tail: vec![Origin::Unbound; origin_slots],
+        };
+        // A struct applied as a type argument of another application
+        // (`List[RefBox]`, `List[RefBox[_]]`) must bind its origin slots in
+        // every position, as at the pin; only the outermost application may
+        // leave them to inference. A compiler-generated declaration rebinds
+        // already-checked spellings and keeps its context's leniency.
+        let generated = self.generated_declaration.get()
+            || self
+                .self_ty
+                .as_ref()
+                .is_some_and(|ty| matches!(ty, Ty::Struct(name, _) if name.contains('$')));
+        let nested = self.annotation_depth.get() > 1 && !generated;
+        let strict = if nested {
+            super::StorageStrictness::Full
+        } else {
+            self.strict_storage_annotation.get()
+        };
         // A storage annotation must bind explicit origin slots. A bare name
         // is not concrete unless an initializer can infer the whole
         // parameter list (`AllowBare`); a partial application names the
@@ -861,9 +917,11 @@ impl Checker {
                 .filter(|(param, _)| !is_origin(param))
                 .map(|(_, argument)| argument.clone())
                 .collect();
+            let tail = tail_of(&explicit_origins);
             return Ok(PartitionedStructArgs {
                 forwarded,
                 explicit_origins,
+                tail,
             });
         }
         // Keyword spellings: extract named origin arguments wherever they
@@ -909,9 +967,11 @@ impl Checker {
                 param: omitted.name.clone(),
             });
         }
+        let tail = tail_of(&explicit_origins);
         Ok(PartitionedStructArgs {
             forwarded,
             explicit_origins,
+            tail,
         })
     }
 
@@ -941,7 +1001,9 @@ impl Checker {
         annotation: &mojito_ast::ast::SourceType,
     ) -> Result<Ty, TypeError> {
         let saved = self.signature_origin_leniency.replace(true);
+        let generated = self.generated_declaration.replace(true);
         let result = self.resolve_storage_annotation(annotation, super::StorageStrictness::Off);
+        self.generated_declaration.set(generated);
         self.signature_origin_leniency.set(saved);
         result
     }
@@ -1833,7 +1895,7 @@ impl Checker {
                     if matches!(self.self_param_ct_value(param), Some(CtValue::Param(_))) =>
                 {
                     if let Some(Ty::Struct(_, arguments)) = &self.self_ty
-                        && arguments.len() == self.self_decls.len()
+                        && arguments.len() >= self.self_decls.len()
                         && let Some(index) = self
                             .self_decls
                             .iter()
@@ -2373,6 +2435,141 @@ impl Checker {
         Ok(Some(semantic.into_iter().map(TyArg::Ty).collect()))
     }
 
+    /// Upstream's spelling of a checked type in a diagnostic, with each struct
+    /// origin argument rendered as `origin_of(<place>)` through the names in
+    /// scope (`P[origin_of(xs)]`), `Self.o`-style binders as `origin#N`, and an
+    /// unbound slot as `_`.
+    pub(super) fn display_ty_with_origin_names(&self, ty: &Ty) -> String {
+        use mojito_types::origin::{Origin, OriginSeg};
+        let origin_text = |origin: &Origin| -> String {
+            match origin {
+                Origin::Place(place) => {
+                    let mut text = self
+                        .owner_name(place.root)
+                        .map_or_else(|| format!("#{}", place.root.0), str::to_string);
+                    for segment in &place.path {
+                        match segment {
+                            OriginSeg::Field(name) => {
+                                text.push('.');
+                                text.push_str(name);
+                            }
+                            OriginSeg::AnyIndex => text.push_str("[_]"),
+                            OriginSeg::Interior(tag) => {
+                                text.push_str("._get_owned_interior[\"");
+                                text.push_str(tag);
+                                text.push_str("\"]");
+                            }
+                            OriginSeg::Subtree => {}
+                        }
+                    }
+                    format!("origin_of({text})")
+                }
+                // The enclosing struct's own binder spells as its name
+                // (`RefBox[origin]`), as upstream prints it.
+                Origin::Param(id) => self
+                    .self_ty
+                    .as_ref()
+                    .and_then(|ty| match ty {
+                        Ty::Struct(name, _) => self.structs.get(name),
+                        _ => None,
+                    })
+                    .and_then(|info| info.source_params.get(id.0 as usize))
+                    .map_or_else(|| origin.to_string(), |param| param.name.clone()),
+                other => other.to_string(),
+            }
+        };
+        match ty {
+            Ty::Struct(name, args) if !args.is_empty() => {
+                let base = mojito_types::types::unqualified_type_name(&Ty::Struct(
+                    name.clone(),
+                    Vec::new(),
+                ));
+                let arguments = args
+                    .iter()
+                    .map(|argument| match argument {
+                        TyArg::Ty(ty) => self.display_ty_with_origin_names(ty),
+                        TyArg::Val(value) => value.to_string(),
+                        TyArg::Origin(origin) => origin_text(origin),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{base}[{arguments}]")
+            }
+            other => mojito_types::types::unqualified_type_name(other),
+        }
+    }
+
+    /// The annotated type of an initialized local with the origin slots its
+    /// annotation left to inference bound from the initializer's type
+    /// (`var p: P = P(Pointer(to=xs))` declares a `P[origin_of(xs)]`, as
+    /// upstream infers it), recursing through type arguments.
+    pub(super) fn bind_unbound_tails(declared: &Ty, found: &Ty) -> Ty {
+        match (declared, found) {
+            (Ty::Struct(name, declared_args), Ty::Struct(found_name, found_args))
+                if name == found_name && declared_args.len() == found_args.len() =>
+            {
+                Ty::Struct(
+                    name.clone(),
+                    declared_args
+                        .iter()
+                        .zip(found_args)
+                        .map(|(declared, found)| match (declared, found) {
+                            (TyArg::Ty(declared), TyArg::Ty(found)) => {
+                                TyArg::Ty(Self::bind_unbound_tails(declared, found))
+                            }
+                            (
+                                TyArg::Origin(mojito_types::origin::Origin::Unbound),
+                                TyArg::Origin(_),
+                            ) => found.clone(),
+                            _ => declared.clone(),
+                        })
+                        .collect(),
+                )
+            }
+            _ => declared.clone(),
+        }
+    }
+
+    /// The upstream-worded rejection of a struct value flowing into a
+    /// destination of the same struct whose origin arguments differ (`p =
+    /// P(Pointer(to=ys))` over `P[origin_of(xs)]`); `None` when the two
+    /// differ in anything but their origin tails.
+    pub(super) fn struct_origin_mismatch(&self, found: &Ty, expected: &Ty) -> Option<TypeError> {
+        let (Ty::Struct(found_name, found_args), Ty::Struct(expected_name, expected_args)) =
+            (found, expected)
+        else {
+            return None;
+        };
+        if found_name != expected_name || found_args.len() != expected_args.len() {
+            return None;
+        }
+        let only_tails_differ =
+            found_args
+                .iter()
+                .zip(expected_args)
+                .all(|(found, expected)| match (found, expected) {
+                    (TyArg::Origin(_), TyArg::Origin(_)) => true,
+                    _ => found == expected,
+                });
+        only_tails_differ.then(|| TypeError::OriginIdentityMismatch {
+            found: self.display_ty_with_origin_names(found),
+            expected: self.display_ty_with_origin_names(expected),
+        })
+    }
+
+    /// The instance type of a registered struct without type or value
+    /// parameters whose origin slots are all left to inference — the
+    /// checker-synthesized spelling of a bare `StringSpan` parameter.
+    pub(super) fn unbound_struct_instance(&self, name: &str) -> Ty {
+        let tail = self.structs.get(name).map_or_else(Vec::new, |info| {
+            info.origin_slots()
+                .iter()
+                .map(|_| TyArg::Origin(mojito_types::origin::Origin::Unbound))
+                .collect()
+        });
+        self.struct_instance_type(name, tail)
+    }
+
     /// Construct the checked identity of an ordinary struct or of a concrete
     /// erased specialization whose source parameters have become fixed facts.
     pub(super) fn struct_instance_type(&self, name: &str, arguments: Vec<TyArg>) -> Ty {
@@ -2385,7 +2582,7 @@ impl Checker {
     }
 
     /// The struct's own instance type as `Self` resolves to inside its methods:
-    /// `Ty::Struct(name, decls.map(param_as_arg))` — the same value the checker
+    /// `Ty::Struct(name, info.self_arguments())` — the same value the checker
     /// installs as `self_ty` during registration, so a `self`-typed parameter's
     /// resolved type is equal to it. Used to canonicalize overload keys back to
     /// `Self` (see [`method_lowered_name`]). `None` when `name` is not a
@@ -2398,10 +2595,7 @@ impl Checker {
             return None;
         }
         let info = self.structs.get(name)?;
-        Some(Ty::Struct(
-            name.to_string(),
-            info.decls.iter().map(param_as_arg).collect(),
-        ))
+        Some(Ty::Struct(name.to_string(), info.self_arguments()))
     }
 
     /// Resolve the alternatives of `Variant[T1, ..., Tn]`.  Alternative order

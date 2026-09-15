@@ -361,6 +361,17 @@ impl Checker {
             .find_map(|scope| scope.get(name).copied())
     }
 
+    /// The source name of an owner in scope (the inverse of
+    /// [`Self::lookup_owner`]), for diagnostics that spell an origin as
+    /// upstream's `origin_of(name)`.
+    pub(super) fn owner_name(&self, owner: mojito_types::origin::OwnerId) -> Option<&str> {
+        self.owner_scopes.iter().rev().find_map(|scope| {
+            scope
+                .iter()
+                .find_map(|(name, candidate)| (*candidate == owner).then_some(name.as_str()))
+        })
+    }
+
     pub(super) fn record_statement_binding(&self, statement: &Stmt, name: &str) {
         if let Some(owner) = self.lookup_owner(name) {
             self.statement_bindings

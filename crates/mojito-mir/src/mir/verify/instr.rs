@@ -383,7 +383,7 @@ pub(super) fn verify_instruction(
         }
         MirInstr::CopyValue { dest, value } => {
             if let (Some(found), Some(expected)) = (reg_ty(value), reg_ty(dest))
-                && found != expected
+                && !types_compatible(found, expected)
             {
                 errors.push(format!(
                     "{prefix}: copied value has type {found}, destination has type {expected}"

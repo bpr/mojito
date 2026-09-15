@@ -444,6 +444,23 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     - Pinned by `conformance/probes/pointer_field_deref_field_store.mojo`.
     - Model: Opus, plan first. Whether the VM's place writer or the MIR
       place shape (`root.src[0].v`) is at fault is not yet known.
+  - `return-origin-widening`: a method returning a view over one of its
+    receiver's fields under a declared `-> View[origin_of(self)]` is accepted
+    in Mojito and rejected by the pin.
+    - `def view(ref self) -> View[origin_of(self)]: return View(Pointer(to=self.items))`
+      passes here; the pin says `cannot implicitly convert
+      'View[origin_of(self.items)]' value to 'View[origin_of(self)]'`.
+    - The return check abstracts a struct origin tail rooted at the receiver
+      to the declared `origin_of(self)` (`abstract_return_origin_tails`,
+      `checker/origins/solve.rs`) so the bundled containers' `__iter__`
+      bodies type-check; the pin wants the exact origin spelled.
+    - Pinned by `assets/extensions/ok/pointer_field_view_for_temporary.mojo`,
+      `pointer_field_view_ref_yield.mojo`, and the two
+      `*_wrapper_iterator_protocol.mojo` fixtures, which stay extensions for
+      it.
+    - Model: Opus, plan first. The lever is one abstraction site, but every
+      bundled container `__iter__`/`keys()` body that borrows a field moves
+      with it.
   - `string-subscript-element`: `s[0]` on a `String` yields a character
     upstream and an `Int` in Mojito
     (`assets/ok/nominal_string_indexing.mojo`, `h` against `104`). Two
@@ -454,24 +471,6 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     (`assets/ok/type_names_applied_elements.mojo`).
     - Model: Fable. The subscript's element type is a declaration change in
       the stdlib's `String`, and the other two are texts to match.
-  - `erased-origin-parameter`: `List[RefBox]` leaves a struct's origin
-    parameter unbound, so one collection holds carriers over any origin. The
-    pin demands a concrete origin and rejects `RefBox[_]` as an element too,
-    and its exclusivity rule then refuses to pass such a collection and a
-    carrier over the same origin to one call — which is why
-    `origin-carrying-callable-struct`, `parametric-callable-argument`, and
-    the four `cross-origin-*` shapes have no upstream spelling at all. Nine
-    corpus fixtures moved to `assets/extensions/` for it
-    (`pointer_field_*`, among them the `View`/`KeyIter` iterators whose
-    `[o]` value will not convert to `[origin_of(self)]`), and five more were
-    respelled to bind the origin.
-    - A view local rebound to a view over another origin (`p =
-      P(Pointer(to=ys))` after `P(Pointer(to=xs))`) is accepted for the
-      same reason; the pin rejects it with `cannot implicitly convert
-      'P[origin_of(ys)]' value to 'P[origin_of(xs)]'`. Pinned by
-      `conformance/probes/rebound_view_origin_identity.mojo`.
-    - Model: Fable. Origin arguments must survive checked identity, and the
-      exclusivity rule is a new analysis rather than a spelling.
   - `int-true-division`: `Int / Int` is true division into `Float64` in
     Mojito; the pin truncates back to `Int` and divides only an `IntLiteral`
     pair into a float. An `output-diff` row, not a rejection, so it is not on

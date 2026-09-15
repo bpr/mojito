@@ -62,12 +62,29 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     }
     // A bare `Struct(name, [])` is the established erased spelling for a
     // receiver or synthesized construction of any instantiation of `name`.
+    // Otherwise the origin tail erases from the runtime ABI like a pointer
+    // origin: the checker owns origin identity, so two instantiations that
+    // differ only in their origin arguments are one type here.
     if let (Ty::Struct(found_name, found_args), Ty::Struct(expected_name, expected_args)) =
         (found, expected)
         && found_name == expected_name
-        && (found_args.is_empty() || expected_args.is_empty())
     {
-        return true;
+        if found_args.is_empty() || expected_args.is_empty() {
+            return true;
+        }
+        if found_args.len() == expected_args.len()
+            && found_args
+                .iter()
+                .zip(expected_args)
+                .all(|(found, expected)| match (found, expected) {
+                    (TyArg::Ty(found), TyArg::Ty(expected)) => types_compatible(found, expected),
+                    (TyArg::Val(found), TyArg::Val(expected)) => found == expected,
+                    (TyArg::Origin(_), TyArg::Origin(_)) => true,
+                    _ => false,
+                })
+        {
+            return true;
+        }
     }
     // A contextual selection narrows an overload set to one member.
     if let Ty::Overload(members) = found {

@@ -1317,7 +1317,11 @@ impl Elab<'_> {
             return None;
         };
         let mut vals = Vec::new();
-        let mut cursor = arguments.iter();
+        // The checker's origin tail has no elaborator slot: origins erase from
+        // every clone.
+        let mut cursor = arguments
+            .iter()
+            .filter(|argument| !matches!(argument, TyArg::Origin(_)));
         for parameter in type_params {
             // Origin/OriginSet binders have no checker declaration slot.
             if matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
@@ -1746,8 +1750,10 @@ fn bind_spec_param_args<'t>(
 
 /// Whether a type is a closed instance argument: a scalar, or a struct
 /// application whose type arguments are closed. Anything else — a type
-/// parameter, an associated or dependent type, an origin-carrying view — keeps
-/// the erased path (conservative: no clone is minted for it).
+/// parameter, an associated or dependent type — keeps the erased path
+/// (conservative: no clone is minted for it). An origin tail never opens an
+/// instance: origins erase from the runtime ABI, so every origin-differing
+/// instance shares one clone.
 fn closed_instance_argument(ty: &Ty) -> bool {
     match ty {
         Ty::Int
@@ -1760,7 +1766,7 @@ fn closed_instance_argument(ty: &Ty) -> bool {
         Ty::Struct(_, arguments) => arguments.iter().all(|argument| match argument {
             TyArg::Ty(ty) => closed_instance_argument(ty),
             TyArg::Val(value) => !matches!(value, CtValue::Param(_)),
-            TyArg::Origin(_) => false,
+            TyArg::Origin(_) => true,
         }),
         _ => false,
     }

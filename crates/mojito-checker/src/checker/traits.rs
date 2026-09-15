@@ -415,7 +415,7 @@ impl Checker {
         let generated_tuple = name.starts_with("Tuple$") || name.contains("$Tuple$");
         let self_ty = Ty::Struct(
             name.to_string(),
-            fixed_arguments.unwrap_or_else(|| decls.iter().map(param_as_arg).collect()),
+            fixed_arguments.unwrap_or_else(|| info.self_arguments()),
         );
         let saved = SavedStructScope {
             forward_types: std::mem::replace(
@@ -561,6 +561,10 @@ impl Checker {
         let mut field_tys: Vec<(String, Ty)> = Vec::new();
         let mut field_origin_arguments = HashMap::new();
         let self_display = self.self_ty.as_ref().map(std::string::ToString::to_string);
+        // A generated specialization's annotations rebind checked types, so
+        // a nested origin slot they leave unbound is not a concreteness error.
+        self.generated_declaration
+            .set(declaration.name.contains('$'));
         for (field_index, f) in declaration.fields.iter().enumerate() {
             if field_tys.iter().any(|(n, _)| n == &f.name) {
                 return Err(TypeError::Redeclaration(f.name.clone()));
@@ -673,6 +677,7 @@ impl Checker {
         declaration: &StructDeclaration<'_>,
     ) -> Result<(), TypeError> {
         let name = declaration.name;
+        self.generated_declaration.set(name.contains('$'));
         for (method_index, m) in declaration.methods.iter().enumerate() {
             let method_name = lifecycle_method_name(m);
             // A template shell registers the signatures that resolve
@@ -2482,7 +2487,7 @@ impl Checker {
                     // payload field answers for the concrete element.
                     !user_defeats
                         && info.fields.iter().all(|(_, field_ty)| {
-                            let field_ty = substitute_at(field_ty, &info.decls, args);
+                            let field_ty = substitute_at(field_ty, info, args);
                             self.trivial_lifecycle(kind, &field_ty, visiting)
                         })
                 });
@@ -2758,10 +2763,7 @@ impl Checker {
         // method, callable on a `Some[Writer]` receiver.
         if method == "write_string" && argc == 1 && bounds.iter().any(|b| b == "Writer") {
             let mut signature = MethodSig::intrinsic(
-                vec![Ty::Struct(
-                    mojito_types::types::STDLIB_STRING_SPAN_STRUCT.to_string(),
-                    Vec::new(),
-                )],
+                vec![self.unbound_struct_instance(mojito_types::types::STDLIB_STRING_SPAN_STRUCT)],
                 Ty::None,
             );
             signature.self_convention = Some(ArgConvention::Mut);

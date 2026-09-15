@@ -131,7 +131,7 @@ impl Checker {
                     field: field.clone(),
                 });
             };
-            receiver_ty = substitute(field_ty, &struct_subst(&info.decls, arguments));
+            receiver_ty = substitute_at(field_ty, info, arguments);
         }
         let Ty::Struct(callee_struct, receiver_args) = &receiver_ty else {
             return Err(TypeError::Unsupported(
@@ -195,9 +195,10 @@ impl Checker {
         // additionally rejects mutating the carrier while the reference
         // lives).
         let receiver_fallback = parameter_rooted.then_some(&receiver);
+        let receiver_tail = info.tail_origin_bindings(receiver_args);
         let origin = map_delegated_sig_origin(
             &callee_ref.origin,
-            receiver_args,
+            &receiver_tail,
             &receiver,
             &correspondences,
             caller_binder.as_ref(),
@@ -244,7 +245,7 @@ impl Checker {
             }
             Origin::Untracked { mutable } => Some(*mutable),
             Origin::Static => Some(false),
-            Origin::Param(_) | Origin::SelfParam => None,
+            Origin::Param(_) | Origin::SelfParam | Origin::Unbound => None,
         }
     }
 

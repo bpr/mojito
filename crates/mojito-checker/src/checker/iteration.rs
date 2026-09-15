@@ -702,6 +702,7 @@ impl Checker {
                 reference,
                 referent.clone(),
                 &semantic_arguments,
+                &info.tail_origin_bindings(receiver_arguments),
                 signature.self_convention == Some(mojito_ast::ast::ArgConvention::Mut),
             )
         });
@@ -805,11 +806,12 @@ fn instantiate_iterator_reference(
     signature: &mojito_types::origin::RefSig,
     referent: Ty,
     arguments: &[TyArg],
+    receiver_tail: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
     mutable_receiver: bool,
 ) -> mojito_types::origin::RefTy {
     use mojito_types::origin::{Mutability, RefTy, SigMutability};
 
-    let origin = crate::checker::origins::instantiate_sig_origin(&signature.origin, arguments);
+    let origin = crate::checker::origins::instantiate_sig_origin(&signature.origin, receiver_tail);
     let mutability = match signature.mutability {
         SigMutability::Immutable => Mutability::Immutable,
         SigMutability::Mutable => Mutability::Mutable,

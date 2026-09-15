@@ -1751,7 +1751,11 @@ impl Elab<'_> {
     ) -> Option<(Vec<CtValue>, Vec<MethodBinding>)> {
         let mut values = Vec::new();
         let mut bindings = Vec::new();
-        let mut cursor = arguments.iter();
+        // The checker's origin tail has no elaborator slot: origins erase from
+        // every clone.
+        let mut cursor = arguments
+            .iter()
+            .filter(|argument| !matches!(argument, TyArg::Origin(_)));
         for parameter in type_params {
             if matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
                 || parameter.is_origin_mutability_binder(type_params)

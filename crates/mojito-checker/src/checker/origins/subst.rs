@@ -137,71 +137,55 @@ pub(in crate::checker) fn project_origin(
 
 /// Instantiate a callee's declared signature origin against a receiver's
 /// concrete struct type arguments (`TyArg::Origin` entries are retained in
-/// struct args): `Self_` maps to the receiver itself, `Bound(Param(i))` to
-/// the receiver's i-th origin argument (with a single-origin fallback), and
-/// projections/unions recurse. Shared by the iteration protocol and the
+/// origin tail, keyed by binder): `Self_` maps to the receiver itself,
+/// `Bound(Param(i))` to the origin the receiver's tail binds for binder `i`,
+/// and projections/unions recurse. Shared by the iteration protocol and the
 /// delegated-call expression-origin resolution.
 pub(in crate::checker) fn instantiate_sig_origin(
     signature: &mojito_types::origin::SigOrigin,
-    arguments: &[TyArg],
+    tail: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
 ) -> mojito_types::origin::Origin {
     use mojito_types::origin::{Origin, OriginParamId, SigOrigin};
 
     match signature {
         SigOrigin::Self_ | SigOrigin::Infer => Origin::SelfParam,
         SigOrigin::Param(index) => Origin::Param(OriginParamId(*index as u32)),
-        SigOrigin::Bound(origin) => instantiate_bound_origin(origin, arguments),
+        SigOrigin::Bound(origin) => instantiate_bound_origin(origin, tail),
         SigOrigin::Static => Origin::Static,
         SigOrigin::Untracked { mutable } | SigOrigin::UnsafeAny { mutable } => {
             Origin::Untracked { mutable: *mutable }
         }
         SigOrigin::Projected(base, path) => {
-            project_origin(instantiate_sig_origin(base, arguments), path)
+            project_origin(instantiate_sig_origin(base, tail), path)
         }
         SigOrigin::Union(members) => Origin::union(
             members
                 .iter()
-                .map(|member| instantiate_sig_origin(member, arguments)),
+                .map(|member| instantiate_sig_origin(member, tail)),
         ),
     }
 }
 
 /// See [`instantiate_sig_origin`]: resolve a bound origin's parameters against
-/// the receiver's origin arguments, leaving unresolvable parameters symbolic.
+/// the receiver's origin tail, leaving unresolvable parameters symbolic.
 pub(in crate::checker) fn instantiate_bound_origin(
     origin: &mojito_types::origin::Origin,
-    arguments: &[TyArg],
+    tail: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
 ) -> mojito_types::origin::Origin {
     use mojito_types::origin::Origin;
 
     match origin {
-        Origin::Param(parameter) => struct_origin_argument(arguments, parameter.0 as usize)
-            .unwrap_or(Origin::Param(*parameter)),
+        Origin::Param(parameter) => match tail.get(parameter) {
+            Some(bound) if !matches!(bound, Origin::Unbound) => bound.clone(),
+            _ => Origin::Param(*parameter),
+        },
         Origin::Union(members) => Origin::union(
             members
                 .iter()
-                .map(|member| instantiate_bound_origin(member, arguments)),
+                .map(|member| instantiate_bound_origin(member, tail)),
         ),
         _ => origin.clone(),
     }
-}
-
-/// The origin argument at `index` in a struct's type arguments, falling back
-/// to the unique origin argument when the index does not line up (origin
-/// params are erased from the explicit decl list, so indices can shift).
-pub(in crate::checker) fn struct_origin_argument(
-    arguments: &[TyArg],
-    index: usize,
-) -> Option<mojito_types::origin::Origin> {
-    if let Some(TyArg::Origin(origin)) = arguments.get(index) {
-        return Some(origin.clone());
-    }
-    let mut origins = arguments.iter().filter_map(|argument| match argument {
-        TyArg::Origin(origin) => Some(origin),
-        TyArg::Ty(_) | TyArg::Val(_) => None,
-    });
-    let only = origins.next()?.clone();
-    origins.next().is_none().then_some(only)
 }
 
 /// Map a delegated callee's declared ref-return origin into the delegating
@@ -215,7 +199,7 @@ pub(in crate::checker) fn struct_origin_argument(
 /// `delegated_call_ref_sig`).
 pub(in crate::checker) fn map_delegated_sig_origin(
     callee: &mojito_types::origin::SigOrigin,
-    receiver_args: &[TyArg],
+    receiver_tail: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
     receiver: &mojito_types::origin::SigOrigin,
     correspondences: &[(u32, u32)],
     caller_binder: Option<&mojito_types::origin::Origin>,
@@ -225,16 +209,18 @@ pub(in crate::checker) fn map_delegated_sig_origin(
 
     pub(super) fn map_bound(
         origin: &Origin,
-        receiver_args: &[TyArg],
+        receiver_tail: &HashMap<mojito_types::origin::OriginParamId, Origin>,
         correspondences: &[(u32, u32)],
         caller_binder: Option<&Origin>,
     ) -> Result<Origin, TypeError> {
         match origin {
-            Origin::Param(parameter) => struct_origin_argument(receiver_args, parameter.0 as usize)
+            Origin::Param(parameter) => receiver_tail
+                .get(parameter)
+                .filter(|bound| !matches!(bound, Origin::Unbound))
+                .cloned()
                 // The field application's recorded binder correspondence
                 // (`var iter: EntryIter[Self.o2]` maps EntryIter's binder to
-                // `o2`) — origin arguments erase from checked identity, so
-                // this record resolves what the type arguments cannot.
+                // `o2`) resolves a tail the receiver type left symbolic.
                 .or_else(|| {
                     correspondences
                         .iter()
@@ -254,7 +240,7 @@ pub(in crate::checker) fn map_delegated_sig_origin(
             Origin::Union(members) => Ok(Origin::union(
                 members
                     .iter()
-                    .map(|member| map_bound(member, receiver_args, correspondences, caller_binder))
+                    .map(|member| map_bound(member, receiver_tail, correspondences, caller_binder))
                     .collect::<Result<Vec<_>, _>>()?,
             )),
             other => Ok(other.clone()),
@@ -264,7 +250,7 @@ pub(in crate::checker) fn map_delegated_sig_origin(
     match callee {
         SigOrigin::Self_ => Ok(receiver.clone()),
         SigOrigin::Bound(origin) => {
-            match map_bound(origin, receiver_args, correspondences, caller_binder) {
+            match map_bound(origin, receiver_tail, correspondences, caller_binder) {
                 Ok(bound) => Ok(SigOrigin::Bound(bound)),
                 Err(error) => receiver_fallback.cloned().ok_or(error),
             }
@@ -275,7 +261,7 @@ pub(in crate::checker) fn map_delegated_sig_origin(
         SigOrigin::Projected(base, path) => Ok(SigOrigin::Projected(
             Box::new(map_delegated_sig_origin(
                 base,
-                receiver_args,
+                receiver_tail,
                 receiver,
                 correspondences,
                 caller_binder,
@@ -289,7 +275,7 @@ pub(in crate::checker) fn map_delegated_sig_origin(
                 .map(|member| {
                     map_delegated_sig_origin(
                         member,
-                        receiver_args,
+                        receiver_tail,
                         receiver,
                         correspondences,
                         caller_binder,
@@ -437,6 +423,49 @@ pub(in crate::checker) fn substitute_pointer_origin_params(
                 .map(|element| substitute_pointer_origin_params(element, bindings))
                 .collect(),
         ),
+        other => other.clone(),
+    }
+}
+
+/// Replace each struct origin-tail argument `Origin::Param(id)` that `bindings`
+/// binds with the bound origin, recursing through struct arguments, tuples,
+/// pointer elements, and reference referents. Pointer and reference origins
+/// themselves are left alone: those bind through
+/// [`substitute_pointer_origin_params`] and the reference solver.
+pub(in crate::checker) fn substitute_struct_origin_tails(
+    ty: &Ty,
+    bindings: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
+) -> Ty {
+    if bindings.is_empty() {
+        return ty.clone();
+    }
+    let recur = |ty: &Ty| substitute_struct_origin_tails(ty, bindings);
+    match ty {
+        Ty::Struct(name, arguments) => Ty::Struct(
+            name.clone(),
+            arguments
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(ty) => TyArg::Ty(recur(ty)),
+                    TyArg::Origin(origin) => {
+                        TyArg::Origin(substitute_origin_params(origin.clone(), &|id| {
+                            bindings.get(&id).cloned()
+                        }))
+                    }
+                    TyArg::Val(_) => argument.clone(),
+                })
+                .collect(),
+        ),
+        Ty::Pointer { element, origin } => Ty::Pointer {
+            element: Box::new(recur(element)),
+            origin: origin.clone(),
+        },
+        Ty::Ref(reference) => Ty::Ref(mojito_types::origin::RefTy {
+            referent: Box::new(recur(&reference.referent)),
+            origin: reference.origin.clone(),
+            mutability: reference.mutability,
+        }),
+        Ty::Tuple(elements) => Ty::Tuple(elements.iter().map(recur).collect()),
         other => other.clone(),
     }
 }

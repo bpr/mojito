@@ -1081,9 +1081,23 @@ fn source_type_from_ty_with_origins(
                             .map(ParamArg::Type)
                     }
                     TyArg::Val(value) => value.materialize((0, 0)).map(ParamArg::Value),
-                    // Origin arguments have no source-syntax reconstruction yet;
-                    // origin-parameterized types are not monomorphized in this slice.
-                    TyArg::Origin(_) => None,
+                    // An origin tail entry spells as the binder it names when
+                    // the clone has one in scope, else as upstream's `_`
+                    // placeholder: a concrete place has no source spelling,
+                    // and the slot infers again at the clone's own use sites.
+                    TyArg::Origin(origin) => {
+                        let spelling = match origin {
+                            mojito_types::origin::Origin::Param(id) => origin_names
+                                .get(id)
+                                .cloned()
+                                .unwrap_or_else(|| "_".to_string()),
+                            _ => "_".to_string(),
+                        };
+                        Some(ParamArg::Value(Expr::new(
+                            ExprKind::Identifier(spelling),
+                            (0, 0),
+                        )))
+                    }
                 })
                 .collect::<Option<Vec<_>>>()?,
         ),

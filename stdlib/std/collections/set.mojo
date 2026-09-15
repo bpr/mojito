@@ -10,11 +10,11 @@ struct _SetIter[
     iterable_mut: Bool, //,
     T: Hashable & Equatable & Movable,
     iterable_origin: Origin[mut=iterable_mut],
-](Iterator where conforms_to(T, Copyable)):
+](Copyable, Iterator where conforms_to(T, Copyable)):
     comptime Element = Self.T
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = _SetIter[Self.T, iterable_origin]
+    ] = Self
 
     var src: ref[iterable_origin] List[Self.T]
     var index: Int
@@ -26,8 +26,7 @@ struct _SetIter[
     # The iterator iterates itself (upstream's `IteratorType = Self`): a
     # stored iterator drives a loop directly.
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
-        ref source = self.src
-        return _SetIter[Self.T](source, self.index)
+        return self.copy()
 
     # Element yields are read-only regardless of the set's mutability:
     # writing through an element reference would corrupt the hash and

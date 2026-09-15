@@ -239,16 +239,16 @@ impl Checker {
             let receiver_params: Vec<Ty> = sig
                 .params
                 .iter()
-                .map(|t| substitute_at(t, &info.decls, &tyargs))
+                .map(|t| substitute_at(t, info, &tyargs))
                 .collect();
             let receiver_variadic = sig
                 .variadic
                 .as_ref()
-                .map(|ty| substitute_at(ty, &info.decls, &tyargs));
+                .map(|ty| substitute_at(ty, info, &tyargs));
             let receiver_kw_variadic = sig
                 .kw_variadic
                 .as_ref()
-                .map(|ty| substitute_at(ty, &info.decls, &tyargs));
+                .map(|ty| substitute_at(ty, info, &tyargs));
             let Ok((params, variadic, kw_variadic, method_subst, mut method_arguments)) = self
                 .instantiate_method_generics(
                     &format!("{sname}.{method}"),
@@ -306,15 +306,12 @@ impl Checker {
                     keyword_element: kw_variadic.clone(),
                     conventions: sig.conventions.clone(),
                     self_convention: sig.self_convention,
-                    return_type: substitute(
-                        &substitute_at(&sig.ret, &info.decls, &tyargs),
-                        &method_subst,
-                    ),
+                    return_type: substitute(&substitute_at(&sig.ret, info, &tyargs), &method_subst),
                     result_adapter: None,
                     raises: sig.raises,
                     error: sig.error.as_ref().map(|error| {
                         Box::new(substitute(
-                            &substitute_at(error, &info.decls, &tyargs),
+                            &substitute_at(error, info, &tyargs),
                             &method_subst,
                         ))
                     }),
@@ -341,6 +338,7 @@ impl Checker {
                     parameter_names: sig.names.clone(),
                     view_return_interior: sig.view_return_interior.clone(),
                     view_return: sig.view_return.clone(),
+                    declared_params: sig.params.clone(),
                 });
             }
         }
@@ -477,6 +475,7 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
+        let mut declared = selected.declared_params.clone();
         if let Some((sig, _)) = candidate_sigs
             .iter()
             .find(|(_, params)| *params == selected.param_types)
@@ -493,7 +492,7 @@ impl Checker {
                 bound_slots.push((index, expression, &selected.param_types[index]));
                 arg_tys.push(self.infer(expression)?);
             }
-            self.bind_constructor_origins(
+            let bindings = self.bind_constructor_origins(
                 sname,
                 method,
                 source_params,
@@ -502,6 +501,10 @@ impl Checker {
                 &arg_tys,
                 explicit_origins,
             )?;
+            declared = declared
+                .iter()
+                .map(|parameter| bindings.substitute(parameter))
+                .collect();
             self.record_constructor_reference_borrows(&span, &selected.ref_params, &selected.slots);
         }
         // `mut`/`ref` arguments keep their caller places and alias-check as
@@ -540,6 +543,16 @@ impl Checker {
             &selected.slots,
             &effective_conventions,
             &copied_reads,
+            args,
+            kwargs,
+        )?;
+        self.check_argument_origin_exclusivity(
+            method,
+            None,
+            &selected.parameter_names,
+            &effective_conventions,
+            &declared,
+            &selected.slots,
             args,
             kwargs,
         )?;

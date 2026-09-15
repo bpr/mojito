@@ -52,7 +52,8 @@ impl Checker {
                             mojito_types::origin::Origin::Param(_)
                             | mojito_types::origin::Origin::SelfParam
                             | mojito_types::origin::Origin::Static
-                            | mojito_types::origin::Origin::Untracked { .. } => {}
+                            | mojito_types::origin::Origin::Untracked { .. }
+                            | mojito_types::origin::Origin::Unbound => {}
                         }
                     }
 
@@ -215,6 +216,33 @@ impl Checker {
             }
             other => other,
         }
+    }
+
+    /// A view-returning call's result type with the origin slots its contract
+    /// resolved at this call (`call_result_origins`) written into the struct's
+    /// origin tail: `h.view()` over `-> View[origin_of(self)]` is a
+    /// `View[origin_of(h)]` at the call site. A slot the contract did not
+    /// resolve keeps its declared entry.
+    pub(in crate::checker) fn bind_call_result_tail(&self, span: &SourceSpan, ty: Ty) -> Ty {
+        let Ty::Struct(name, mut arguments) = ty else {
+            return ty;
+        };
+        let recorded = self.call_result_origins.borrow();
+        let (Some(slots), Some(info)) = (recorded.get(span), self.structs.get(&name)) else {
+            return Ty::Struct(name, arguments);
+        };
+        let origin_slots = info.origin_slots();
+        for (slot, origin, _) in slots {
+            let Some(position) = origin_slots.iter().position(|(id, _)| id == slot) else {
+                continue;
+            };
+            if let Some(argument @ TyArg::Origin(_)) =
+                arguments.get_mut(info.decls.len() + position)
+            {
+                *argument = TyArg::Origin(origin.clone());
+            }
+        }
+        Ty::Struct(name, arguments)
     }
 
     /// Resolve a view-returning call's [`ViewReturnOrigin`] contract against
@@ -421,7 +449,8 @@ impl Checker {
                 Origin::Param(_)
                 | Origin::SelfParam
                 | Origin::Static
-                | Origin::Untracked { .. } => true,
+                | Origin::Untracked { .. }
+                | Origin::Unbound => true,
             }
         }
         match &expr.kind {
@@ -497,7 +526,10 @@ impl Checker {
                     .iter()
                     .find(|signature| signature.ref_return.is_some())?;
                 let declared = signature.ref_return.as_ref()?;
-                let mut origin = instantiate_sig_origin(&declared.origin, &arguments);
+                let mut origin = instantiate_sig_origin(
+                    &declared.origin,
+                    &info.tail_origin_bindings(&arguments),
+                );
                 // Origin arguments erase from struct type identity, so the
                 // callee's origin binder usually stays symbolic in its own
                 // namespace; remap it through the field application's
@@ -568,12 +600,19 @@ impl Checker {
         origin: mojito_types::origin::Origin,
         object: &Expr,
     ) -> mojito_types::origin::Origin {
-        let Ok(Ty::Struct(name, _)) = self.infer(object) else {
+        let Ok(Ty::Struct(name, arguments)) = self.infer(object) else {
             return origin;
         };
         let Some(info) = self.structs.get(&name) else {
             return origin;
         };
+        // The receiver type's own origin tail binds the struct's binders
+        // directly: a constructed value names the place it borrows, and a
+        // receiver typed by the enclosing struct's binder (`self.src` of type
+        // `Span[T, Self.iterable_origin]`) names that binder. An unbound slot,
+        // or a call result's not-yet-resolved `origin_of(self)`, falls back to
+        // the aggregate's construction-time facts.
+        let tail = info.tail_origin_bindings(&arguments);
         let field_origins = self.aggregate_field_origins(object);
         let flat = self.aggregate_origins(object);
         // The concrete origin(s) the receiver's field carrying origin parameter
@@ -581,6 +620,15 @@ impl Checker {
         // back to the flat receiver origins for a single-origin-param struct).
         let concrete =
             |id: mojito_types::origin::OriginParamId| -> Option<mojito_types::origin::Origin> {
+                if let Some(bound) = tail.get(&id)
+                    && !matches!(
+                        bound,
+                        mojito_types::origin::Origin::Unbound
+                            | mojito_types::origin::Origin::SelfParam
+                    )
+                {
+                    return Some(bound.clone());
+                }
                 let mut retained: Vec<mojito_types::origin::Origin> = Vec::new();
                 for (field, ty) in &info.fields {
                     // A direct ref/pointer field names its binder in its checked

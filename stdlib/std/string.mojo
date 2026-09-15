@@ -1390,7 +1390,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     comptime Element = StringSpan[Self.origin]
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = _GraphemeIter[iterable_origin]
+    ] = _GraphemeIter[Self.origin]
 
     var _data: Pointer[Byte, Self.origin._get_owned_interior["bytes"]]
     var _size: Int
@@ -1429,7 +1429,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     # Equality is bytewise against another view or an owned String (upstream's
     # `__eq__` overloads); the operator selects by the right operand's type,
     # and a literal converts to `String`.
-    def __eq__(self, rhs: Self) -> Bool:
+    def __eq__(self, rhs: StringSpan) -> Bool:
         if self._size != rhs._size:
             return False
         var i = 0
@@ -1450,7 +1450,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         return True
 
     # Upstream declares `__ne__` for views only (no `String` overload).
-    def __ne__(self, rhs: Self) -> Bool:
+    def __ne__(self, rhs: StringSpan) -> Bool:
         return not (self == rhs)
 
     def __contains__(self, substr: StringSpan) -> Bool:

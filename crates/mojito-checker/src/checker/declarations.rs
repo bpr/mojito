@@ -1266,8 +1266,12 @@ impl Checker {
             self.resolving_parameter_annotation.set(true);
             self.bare_string_literal_parameter
                 .set(is_string_literal_annotation(&p.ty));
+            let generated = self.generated_declaration.get();
+            self.generated_declaration
+                .set(generated || m.name.contains('$'));
             let resolved =
                 self.resolve_storage_annotation(&p.ty, super::StorageStrictness::AllowBare);
+            self.generated_declaration.set(generated);
             self.bare_string_literal_parameter.set(false);
             self.resolving_parameter_annotation.set(false);
             let mut pty = resolved?;
@@ -1604,62 +1608,7 @@ impl Checker {
             .borrow_mut()
             .insert(span.clone(), immutable_binders);
         if !kwargs.is_empty() && args.is_empty() && kwargs.len() == 1 && kwargs[0].name == "copy" {
-            let sig = info
-                .methods
-                .get("__copyinit__")
-                .and_then(|sigs| sigs.iter().find(|sig| sig.params.len() == 1));
-            if sig.is_none() {
-                if !info.conforms.iter().any(|conformance| {
-                    matches!(conformance.as_str(), "Copyable" | "ImplicitlyCopyable")
-                }) {
-                    return Err(TypeError::BadCall {
-                        func: name.to_string(),
-                        reason: "no matching copy constructor".to_string(),
-                    });
-                }
-                let arg_ty = self.infer(&kwargs[0].value)?;
-                return match &arg_ty {
-                    Ty::Struct(actual, _) if actual == name => Ok(arg_ty),
-                    _ => Err(TypeError::TypeMismatch {
-                        expected: name.to_string(),
-                        found: arg_ty.to_string(),
-                        context: format!("argument 'copy' to '{name}.__init__'"),
-                    }),
-                };
-            }
-            let params = sig
-                .expect("explicit copy constructor was resolved")
-                .params
-                .clone();
-            let decls = info.decls.clone();
-            let arg_ty = self.infer(&kwargs[0].value)?;
-            let (subst, tyargs) = self.resolve_use_params(
-                name,
-                &decls,
-                param_args,
-                &params,
-                std::slice::from_ref(&arg_ty),
-            )?;
-            let expected = if let Some(parameter) = params.first() {
-                substitute_assoc(
-                    parameter,
-                    &AssocBindings {
-                        types: subst,
-                        values: solved_value_bindings(&decls, &tyargs),
-                        origins: HashMap::new(),
-                    },
-                )
-            } else {
-                self.struct_instance_type(name, tyargs.clone())
-            };
-            if !coerces(&arg_ty, &expected) {
-                return Err(TypeError::TypeMismatch {
-                    expected: expected.to_string(),
-                    found: arg_ty.to_string(),
-                    context: format!("argument 'copy' to '{name}.__init__'"),
-                });
-            }
-            return Ok(self.struct_instance_type(name, tyargs));
+            return self.infer_copy_construction(name, info, param_args, kwargs, &partitioned);
         }
         // A hand-written `def __init__(out self, …)` is the constructor: check the
         // call arguments against its parameters (the `self` receiver is implicit).
@@ -1696,7 +1645,7 @@ impl Checker {
                     // A `Pointer` parameter over the struct's own origin
                     // binder binds that binder from its argument before
                     // scoring.
-                    let params = match self.bind_constructor_pointer_params(
+                    let (params, origin_bindings) = match self.bind_constructor_pointer_params(
                         name,
                         sig,
                         params,
@@ -1704,7 +1653,7 @@ impl Checker {
                         args,
                         kwargs,
                     )? {
-                        Ok(params) => params,
+                        Ok(bound) => bound,
                         Err(failure) => {
                             origin_failure = failure.or_else(|| origin_failure.take());
                             continue;
@@ -1728,7 +1677,12 @@ impl Checker {
                             keyword_element: kw_variadic,
                             conventions: sig.conventions.clone(),
                             self_convention: sig.self_convention,
-                            return_type: self.struct_instance_type(name, Vec::new()),
+                            return_type: self.constructed_type(
+                                name,
+                                Vec::new(),
+                                &partitioned.tail,
+                                &origin_bindings,
+                            ),
                             result_adapter: None,
                             raises: sig.raises,
                             error: sig.error.clone(),
@@ -1751,6 +1705,7 @@ impl Checker {
                             parameter_names: sig.names.clone(),
                             view_return_interior: sig.view_return_interior.clone(),
                             view_return: Vec::new(),
+                            declared_params: sig.params.clone(),
                         });
                     }
                 }
@@ -1842,7 +1797,7 @@ impl Checker {
                         kind,
                     )?;
                 }
-                return Ok(self.struct_instance_type(name, Vec::new()));
+                return Ok(selected.return_type);
             }
             if sigs.len() == 1 && kwargs.is_empty() && sigs[0].variadic.is_none() {
                 let sig = &sigs[0];
@@ -1873,10 +1828,7 @@ impl Checker {
                 self.record_constructor_instantiation(span, name, sig, &subst);
                 self.record_struct_instantiation(name, &tyargs, span.source.as_deref());
                 for (i, (aty, pty)) in arg_tys.iter().zip(&params).enumerate() {
-                    let expected = substitute_pointer_origin_params(
-                        &substitute(pty, &subst),
-                        &pointer_origins,
-                    );
+                    let expected = pointer_origins.substitute(&substitute(pty, &subst));
                     if coerces(aty, &expected) {
                         // A literal argument materializes to the solved
                         // parameter type exactly as it does for a non-generic
@@ -1916,7 +1868,12 @@ impl Checker {
                     kwargs,
                 )?;
                 self.record_constructor_reference_borrows(span, &sig.ref_params, &slots);
-                return Ok(self.struct_instance_type(name, tyargs));
+                return Ok(self.constructed_type(
+                    name,
+                    tyargs,
+                    &partitioned.tail,
+                    &pointer_origins,
+                ));
             }
             let decls = info.decls.clone();
             let overloaded = sigs.len() > 1;
@@ -2019,10 +1976,8 @@ impl Checker {
                     let mut conversions = Vec::new();
                     let mut materializations = Vec::new();
                     for (index, (aty, pty)) in arg_tys.iter().zip(&patterns).enumerate() {
-                        let expected = substitute_pointer_origin_params(
-                            &substitute_assoc(pty, &bindings),
-                            &pointer_origins,
-                        );
+                        let expected =
+                            pointer_origins.substitute(&substitute_assoc(pty, &bindings));
                         if coerces(aty, &expected) {
                             if *aty != expected {
                                 score += 1;
@@ -2055,6 +2010,7 @@ impl Checker {
                             matched.slots,
                             matched.positional_overflow,
                             subst,
+                            pointer_origins,
                         ));
                     }
                 }
@@ -2085,8 +2041,17 @@ impl Checker {
                         reason: "ambiguous overloaded constructor call".to_string(),
                     });
                 }
-                let (_, sig, tyargs, conversions, materializations, slots, overflow, mut subst) =
-                    best_matches.remove(0);
+                let (
+                    _,
+                    sig,
+                    tyargs,
+                    conversions,
+                    materializations,
+                    slots,
+                    overflow,
+                    mut subst,
+                    pointer_origins,
+                ) = best_matches.remove(0);
                 unify_through_callable_bounds(&sig.decls, &mut subst)?;
                 self.record_struct_instantiation(name, &tyargs, span.source.as_deref());
                 // Rebuild the packed bound used during scoring: regular slots in
@@ -2157,7 +2122,12 @@ impl Checker {
                     kwargs,
                 )?;
                 self.record_constructor_reference_borrows(span, &sig.ref_params, &slots);
-                return Ok(self.struct_instance_type(name, tyargs));
+                return Ok(self.constructed_type(
+                    name,
+                    tyargs,
+                    &partitioned.tail,
+                    &pointer_origins,
+                ));
             }
             return Err(TypeError::BadCall {
                 func: name.to_string(),
@@ -2213,17 +2183,20 @@ impl Checker {
                 }
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let source_params = info.source_params.clone();
-        let (subst, tyargs) = self.resolve_struct_use_args(
+        // The origin slots were partitioned out of `param_args` above; the
+        // field types bind the struct's origin binders from the arguments.
+        let (subst, tyargs) =
+            self.resolve_use_params(name, &decls, param_args, &field_tys, &arg_tys)?;
+        let origin_bindings = self.bind_fieldwise_origins(
             name,
-            &decls,
-            &source_params,
-            param_args,
-            &field_tys,
+            &info.source_params,
+            &info.fields,
+            args,
             &arg_tys,
+            &partitioned.explicit_origins,
         )?;
         for (i, (aty, fty)) in arg_tys.iter().zip(&field_tys).enumerate() {
-            let expected = substitute(fty, &subst);
+            let expected = origin_bindings.substitute(&substitute(fty, &subst));
             if Self::storage_value_coerces(aty, &expected) {
                 self.record_literal_materializations(&args[i], aty, &expected)?;
             } else if !self.record_constructor_conversion(&args[i], aty, &expected)? {
@@ -2243,7 +2216,7 @@ impl Checker {
             // position.
             self.check_consuming(&args[i], aty, &format!("field {} of '{}'", i + 1, name))?;
         }
-        Ok(self.struct_instance_type(name, tyargs))
+        Ok(self.constructed_type(name, tyargs, &partitioned.tail, &origin_bindings))
     }
 
     /// Resolve a generic use site's parameters, returning a type-parameter
@@ -2616,6 +2589,83 @@ impl Checker {
         Ok((subst, tyargs))
     }
 
+    /// `P(copy=other)`: the explicit copy constructor when the struct declares
+    /// one, else the synthesized `Copyable` copy; the result keeps the
+    /// source's origin tail.
+    fn infer_copy_construction(
+        &self,
+        name: &str,
+        info: &StructInfo,
+        param_args: &[mojito_ast::ast::ParamArg],
+        kwargs: &[mojito_ast::ast::KwArg],
+        partitioned: &super::type_resolution::PartitionedStructArgs,
+    ) -> Result<Ty, TypeError> {
+        let sig = info
+            .methods
+            .get("__copyinit__")
+            .and_then(|sigs| sigs.iter().find(|sig| sig.params.len() == 1));
+        if sig.is_none() {
+            if !info.conforms.iter().any(|conformance| {
+                matches!(conformance.as_str(), "Copyable" | "ImplicitlyCopyable")
+            }) {
+                return Err(TypeError::BadCall {
+                    func: name.to_string(),
+                    reason: "no matching copy constructor".to_string(),
+                });
+            }
+            let arg_ty = self.infer(&kwargs[0].value)?;
+            return match &arg_ty {
+                Ty::Struct(actual, _) if actual == name => Ok(arg_ty),
+                _ => Err(TypeError::TypeMismatch {
+                    expected: name.to_string(),
+                    found: arg_ty.to_string(),
+                    context: format!("argument 'copy' to '{name}.__init__'"),
+                }),
+            };
+        }
+        let params = sig
+            .expect("explicit copy constructor was resolved")
+            .params
+            .clone();
+        let decls = info.decls.clone();
+        let arg_ty = self.infer(&kwargs[0].value)?;
+        let (subst, tyargs) = self.resolve_use_params(
+            name,
+            &decls,
+            param_args,
+            &params,
+            std::slice::from_ref(&arg_ty),
+        )?;
+        let expected = if let Some(parameter) = params.first() {
+            substitute_assoc(
+                parameter,
+                &AssocBindings {
+                    types: subst,
+                    values: solved_value_bindings(&decls, &tyargs),
+                    origins: HashMap::new(),
+                },
+            )
+        } else {
+            self.struct_instance_type(name, tyargs.clone())
+        };
+        if !coerces(&arg_ty, &expected) {
+            return Err(TypeError::TypeMismatch {
+                expected: expected.to_string(),
+                found: arg_ty.to_string(),
+                context: format!("argument 'copy' to '{name}.__init__'"),
+            });
+        }
+        // A copy keeps the source's origin tail.
+        let mut arguments = tyargs;
+        match &arg_ty {
+            Ty::Struct(actual, actual_arguments) if actual == name => {
+                arguments.extend_from_slice(info.origin_tail(actual_arguments));
+            }
+            _ => arguments.extend(partitioned.tail_arguments()),
+        }
+        Ok(self.struct_instance_type(name, arguments))
+    }
+
     /// Bind a hand-written constructor's struct origin binders named by its
     /// `Pointer[T, Self.o]` parameters from the call's arguments, as the
     /// fieldwise and generic paths do, and substitute the bound provenance
@@ -2630,23 +2680,36 @@ impl Checker {
         explicit: &[super::type_resolution::ExplicitStructOrigin],
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
-    ) -> Result<Result<Vec<Ty>, Option<TypeError>>, TypeError> {
+    ) -> Result<BoundConstructorParams, TypeError> {
         let source_params = self
             .structs
             .get(name)
             .map(|info| info.source_params.as_slice())
             .unwrap_or_default();
-        let origin_pointer = |parameter: &Ty| {
-            matches!(
-                parameter,
+        // A parameter naming one of the struct's own origin binders: a
+        // pointer or reference over it, or a struct carrying it in its tail.
+        let names_origin_binder = |parameter: &Ty| {
+            mojito_types::types::mentions(parameter, &|candidate| match candidate {
                 Ty::Pointer {
                     origin: mojito_types::origin::PointerOrigin::Param { .. },
                     ..
+                } => true,
+                Ty::Ref(reference) => {
+                    matches!(reference.origin, mojito_types::origin::Origin::Param(_))
                 }
-            )
+                Ty::Struct(_, arguments) => arguments.iter().any(|argument| {
+                    matches!(
+                        argument,
+                        TyArg::Origin(mojito_types::origin::Origin::Param(_))
+                    )
+                }),
+                _ => false,
+            })
         };
-        if !params.iter().any(origin_pointer) {
-            return Ok(Ok(params));
+        if !params.iter().any(names_origin_binder)
+            && sig.origin_binders.iter().flatten().count() == 0
+        {
+            return Ok(Ok((params, ConstructorOriginBindings::default())));
         }
         let keyword_names: Vec<&str> = kwargs.iter().map(|k| k.name.as_str()).collect();
         let Ok(matched) = mojito_ast::call::match_call_slots(
@@ -2666,10 +2729,10 @@ impl Checker {
         let mut bound_slots: Vec<(usize, &Expr, &Ty)> = Vec::new();
         let mut arg_tys: Vec<Ty> = Vec::new();
         for (index, slot) in matched.slots.iter().enumerate() {
-            let Some(pattern) = params
-                .get(index)
-                .filter(|parameter| origin_pointer(parameter))
-            else {
+            let Some(pattern) = params.get(index).filter(|parameter| {
+                names_origin_binder(parameter)
+                    || matches!(sig.origin_binders.get(index), Some(Some(_)))
+            }) else {
                 continue;
             };
             let expression = match slot {
@@ -2680,7 +2743,7 @@ impl Checker {
             arg_tys.push(self.infer(expression)?);
             bound_slots.push((index, expression, pattern));
         }
-        let pointer_origins = match self.bind_constructor_origins(
+        let bindings = match self.bind_constructor_origins(
             name,
             "__init__",
             source_params,
@@ -2692,9 +2755,15 @@ impl Checker {
             Ok(bindings) => bindings,
             Err(error) => return Ok(Err(Some(error))),
         };
-        Ok(Ok(params
+        let params = params
             .iter()
-            .map(|parameter| substitute_pointer_origin_params(parameter, &pointer_origins))
-            .collect()))
+            .map(|parameter| bindings.substitute(parameter))
+            .collect();
+        Ok(Ok((params, bindings)))
     }
 }
+
+/// A constructor candidate's parameter types with the struct's origin binders
+/// bound from the arguments, or the origin-binding failure that rejected the
+/// candidate (`None` when the arguments simply did not match its slots).
+type BoundConstructorParams = Result<(Vec<Ty>, ConstructorOriginBindings), Option<TypeError>>;

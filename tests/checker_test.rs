@@ -5405,6 +5405,109 @@ fn storage_annotations_require_bound_origin_slots() {
 }
 
 #[test]
+fn struct_origin_arguments_are_part_of_checked_identity() {
+    // A view local bound over one origin cannot be rebound to a view over
+    // another (upstream: `cannot implicitly convert 'P[origin_of(ys)]' value
+    // to 'P[origin_of(xs)]'`), whether the local is inferred or annotated bare,
+    // and a call result carries the origin its contract binds at the call.
+    let view = "@fieldwise_init\nstruct P[m: Bool, //, o: Origin[mut=m]]:\n    var src: Pointer[List[Int], Self.o]\n\n";
+    for local in ["var p = P(Pointer(to=xs))", "var p: P = P(Pointer(to=xs))"] {
+        let error = err(&format!(
+            "{view}def main():\n    var xs = List[Int]()\n    var ys = List[Int]()\n    {local}\n    p = P(Pointer(to=ys))\n"
+        ));
+        assert!(
+            matches!(&error, TypeError::OriginIdentityMismatch { found, expected }
+                if found == "P[origin_of(ys)]" && expected == "P[origin_of(xs)]"),
+            "got {error:?}"
+        );
+    }
+    let same = format!(
+        "{view}def main():\n    var xs = List[Int]()\n    var p = P(Pointer(to=xs))\n    p = P(Pointer(to=xs))\n"
+    );
+    ok(&same);
+    let call_result = format!(
+        "{view}struct Box:\n    var items: List[Int]\n\n    def __init__(out self):\n        self.items = List[Int]()\n\n    def view(ref self) -> P[origin_of(self)]:\n        return P(Pointer(to=self.items))\n\ndef main():\n    var b = Box()\n    var c = Box()\n    var v = b.view()\n    v = c.view()\n"
+    );
+    assert!(
+        matches!(err(&call_result), TypeError::OriginIdentityMismatch { found, expected }
+            if found == "P[origin_of(c)]" && expected == "P[origin_of(b)]"),
+        "got {:?}",
+        err(&call_result)
+    );
+}
+
+#[test]
+fn struct_binder_origin_is_rigid_inside_its_methods() {
+    // A field typed `RefBox[Self.origin]` takes no box over another origin;
+    // the struct's own binder spells by name, as upstream prints it.
+    let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: Pointer[List[Int], Self.origin]\n\n@fieldwise_init\nstruct Carrier[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n\n    def restash(mut self, mut other: List[Int]):\n        self.slot = RefBox(Pointer(to=other))\n\ndef main():\n    pass\n";
+    assert!(
+        matches!(err(src), TypeError::OriginIdentityMismatch { found, expected }
+            if found == "RefBox[origin_of(other)]" && expected == "RefBox[origin]"),
+        "got {:?}",
+        err(src)
+    );
+}
+
+#[test]
+fn nested_origin_slotted_type_argument_must_bind_its_slot() {
+    // Only the outermost application of a parameter or initialized-local
+    // annotation infers an omitted origin slot; `List[Holder]` and
+    // `List[Holder[_]]` are not concrete anywhere, as at the pin.
+    let holder = "@fieldwise_init\nstruct Holder[m: Bool, //, o: Origin[mut=m]]:\n    var value: Pointer[List[Int], Self.o]\n\n";
+    for spelling in ["List[Holder]", "List[Holder[_]]"] {
+        let error = err(&format!(
+            "{holder}def stash(mut sink: {spelling}):\n    pass\n\ndef main():\n    pass\n"
+        ));
+        assert!(
+            matches!(&error, TypeError::NotConcrete(name) if name == "Holder"),
+            "{spelling}: got {error:?}"
+        );
+    }
+    ok(&format!(
+        "{holder}def main():\n    var xs = List[Int]()\n    var sink = List[Holder[origin_of(xs)]]()\n    sink.append(Holder(Pointer(to=xs)))\n    print(len(sink))\n"
+    ));
+}
+
+#[test]
+fn argument_exclusivity_judges_carried_origins() {
+    // Two parameters naming one origin binder, a `mut` place against a
+    // carried origin, and a `mut self` whose binder is bound to the same
+    // storage all reject with upstream's text; a generic `T` names no origin.
+    let boxed = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: Pointer[List[Int], Self.origin]\n\n";
+    let stash = format!(
+        "{boxed}def stash[o: Origin[mut=True]](mut sink: List[RefBox[o]], var box: RefBox[o]):\n    sink.append(box^)\n\ndef main():\n    var local = List[Int]()\n    ref view = local\n    var sink = List[RefBox[origin_of(view)]]()\n    stash(sink, RefBox(Pointer(to=view)))\n"
+    );
+    assert!(
+        matches!(err(&stash), TypeError::AliasingArguments { mutable, other, other_mutable: true, callee }
+            if mutable == "sink" && other == "box" && callee == "stash"),
+        "got {:?}",
+        err(&stash)
+    );
+    let own_place = format!(
+        "{boxed}def f[o: Origin[mut=True]](mut xs: List[Int], b: RefBox[o]):\n    xs.append(b.value[][0])\n\ndef main():\n    var xs = List[Int]()\n    f(xs, RefBox(Pointer(to=xs)))\n"
+    );
+    assert!(
+        matches!(err(&own_place), TypeError::AliasingArguments { mutable, other, .. }
+            if mutable == "xs" && other == "b"),
+        "got {:?}",
+        err(&own_place)
+    );
+    let receiver = format!(
+        "{boxed}@fieldwise_init\nstruct Stasher[o: Origin[mut=True]]:\n    var count: Int\n\n    def stash(mut self, mut sink: List[RefBox[Self.o]], var box: RefBox[Self.o]):\n        sink.append(box^)\n\ndef main():\n    var local = List[Int]()\n    ref view = local\n    var s = Stasher[origin_of(view)](0)\n    var sink = List[RefBox[origin_of(view)]]()\n    s.stash(sink, RefBox(Pointer(to=view)))\n"
+    );
+    assert!(
+        matches!(err(&receiver), TypeError::AliasingArguments { mutable, other, .. }
+            if mutable == "self" && other == "sink"),
+        "got {:?}",
+        err(&receiver)
+    );
+    ok(&format!(
+        "{boxed}def main():\n    var local = List[Int]()\n    ref view = local\n    var sink = List[RefBox[origin_of(view)]]()\n    sink.append(RefBox(Pointer(to=view)))\n    print(len(sink))\n"
+    ));
+}
+
+#[test]
 fn omitted_origin_slot_in_a_local_annotation_fails_to_infer() {
     // A partial application that supplies the non-origin arguments but omits
     // an explicit origin slot in a storage annotation names the slot (the

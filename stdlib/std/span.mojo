@@ -55,7 +55,7 @@ struct Span[mut: Bool, //, T: Movable, origin: Origin[mut=mut]](
     comptime Element = Self.T
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = _SpanIter[Self.T, iterable_origin]
+    ] = _SpanIter[Self.T, Self.origin]
 
     var _data: Pointer[Self.T, Self.origin._get_owned_interior["element"]]
     var _size: Int
@@ -92,8 +92,7 @@ struct Span[mut: Bool, //, T: Movable, origin: Origin[mut=mut]](
     # on a mutable source); the iterator borrows the span itself, whose loans
     # keep the underlying List alive.
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
-        ref source = self
-        return _SpanIter[Self.T](source, 0)
+        return _SpanIter(self, 0)
 
     def __getitem__(ref self, index: Int) -> ref[
         Self.origin._get_owned_interior["element"]
@@ -124,21 +123,20 @@ struct Span[mut: Bool, //, T: Movable, origin: Origin[mut=mut]](
 @fieldwise_init
 struct _SpanIter[
     iterable_mut: Bool, //, T: Movable, iterable_origin: Origin[mut=iterable_mut]
-](Iterator where conforms_to(T, Copyable)):
+](Copyable, Iterator where conforms_to(T, Copyable)):
     comptime Element = Self.T
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = _SpanIter[Self.T, iterable_origin]
+    ] = Self
 
-    var src: ref[iterable_origin] Span[Self.T, Self.iterable_origin]
+    var src: Span[Self.T, Self.iterable_origin]
     var index: Int
 
     def __len__(self) -> Int:
         return len(self.src) - self.index
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
-        ref source = self.src
-        return _SpanIter[Self.T](source, self.index)
+        return self.copy()
 
     def __next__(mut self) raises StopIteration -> ref[
         Self.iterable_origin._get_owned_interior["element"]

@@ -160,11 +160,22 @@ pub fn resolve_method_symbol<'a>(
 /// literal representation, so `instance_method_clone_name` refuses a
 /// `StringLiteral` argument before this materialization.
 pub fn materialized_instantiation_argument(argument: &TyArg) -> TyArg {
+    use mojito_types::types::erase_origin_arguments;
     match argument {
         TyArg::Ty(Ty::StringLiteral) => {
             TyArg::Ty(Ty::Struct(STDLIB_STRING_STRUCT.to_string(), Vec::new()))
         }
-        TyArg::Ty(ty) => TyArg::Ty(default_literal(ty)),
+        TyArg::Ty(ty) => TyArg::Ty(erase_origin_arguments(&default_literal(ty))),
+        // A checker-inferred type pack records its element types the same way.
+        TyArg::Val(CtValue::Tuple(elements)) => TyArg::Val(CtValue::Tuple(
+            elements
+                .iter()
+                .map(|element| match element {
+                    CtValue::Type(ty) => CtValue::Type(Box::new(erase_origin_arguments(ty))),
+                    other => other.clone(),
+                })
+                .collect(),
+        )),
         other => other.clone(),
     }
 }
@@ -897,14 +908,20 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         Ty::Struct(name, args) => {
             let mut s = encode_identifier(name);
             for arg in args {
-                s.push('$');
                 match arg {
-                    TyArg::Ty(t) => s.push_str(&ty_raw_in(t, self_ty, mode)),
-                    TyArg::Val(v) => s.push_str(&format!("V{v}")),
-                    // Origins erase from the runtime ABI: every origin argument
-                    // mangles to one marker so origin-differing types share a
-                    // specialization and a lowering, like `Ty::Pointer` origins.
-                    TyArg::Origin(_) => s.push('O'),
+                    TyArg::Ty(t) => {
+                        s.push('$');
+                        s.push_str(&ty_raw_in(t, self_ty, mode));
+                    }
+                    TyArg::Val(v) => {
+                        s.push('$');
+                        s.push_str(&format!("V{v}"));
+                    }
+                    // The origin tail erases from the runtime ABI, exactly as
+                    // the annotation side (`ast_raw`) erases origin arguments:
+                    // origin-differing types share a specialization and a
+                    // lowering, like `Ty::Pointer` origins.
+                    TyArg::Origin(_) => {}
                 }
             }
             s
@@ -1058,15 +1075,14 @@ fn ast_raw(
         Type::Named(name, args) => {
             let mut s = parameter_raw(name, type_bounds);
             for arg in args {
-                // An origin placeholder (`_`/`...`) marks a slot explicitly
-                // inferred and is erased from checked identity; erase it from
-                // the overload spelling too, so `Span[T, _]` and `Span[T]`
-                // declare the same symbol.
-                if matches!(
-                    arg,
-                    ParamArg::Value(value)
-                        if matches!(&value.kind, mojito_ast::ast::ExprKind::Identifier(name) if name == "_" || name == "...")
-                ) {
+                // An origin argument — a placeholder (`_`/`...`), an
+                // `origin_of(...)`/`ImmOrigin(...)`/`MutOrigin(...)` value, a
+                // builtin origin name, or an `Origin`-bound parameter — erases
+                // from the runtime ABI and from the checked spelling
+                // (`ty_raw_in` emits nothing for the origin tail); erase it
+                // from the declaration spelling too, so `Span[T, _]`,
+                // `Span[T, origin_of(xs)]`, and `Span[T]` declare one symbol.
+                if syntactic_origin_argument(arg, type_bounds) {
                     continue;
                 }
                 s.push('$');
@@ -1325,6 +1341,35 @@ fn parameter_raw(name: &str, type_bounds: &HashMap<String, Vec<String>>) -> Stri
         }
     }
     result
+}
+
+/// Whether an annotation argument spells an origin: the `_`/`...` placeholder,
+/// an `origin_of(...)`/`ImmOrigin(...)`/`MutOrigin(...)` value, a builtin
+/// origin name, or a parameter the signature binds by `Origin`/`OriginSet`.
+fn syntactic_origin_argument(arg: &ParamArg, type_bounds: &HashMap<String, Vec<String>>) -> bool {
+    let ParamArg::Value(value) = arg else {
+        return false;
+    };
+    match &value.kind {
+        ExprKind::Identifier(name) => {
+            matches!(
+                name.as_str(),
+                "_" | "..."
+                    | "ImmStaticOrigin"
+                    | "ImmUntrackedOrigin"
+                    | "ImmUnsafeAnyOrigin"
+                    | "MutUnsafeAnyOrigin"
+                    | "MutUntrackedOrigin"
+            ) || matches!(
+                type_bounds.get(name).map(Vec::as_slice),
+                Some([only]) if only == "Origin" || only == "OriginSet"
+            )
+        }
+        ExprKind::Call { name, .. } => {
+            matches!(name.as_str(), "origin_of" | "ImmOrigin" | "MutOrigin")
+        }
+        _ => false,
+    }
 }
 
 /// The mangled spelling of a compile-time value argument in an annotation

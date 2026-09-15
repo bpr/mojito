@@ -477,13 +477,20 @@ impl Checker {
                             found.clone()
                         } else {
                             if !self.record_implicit_conversion(value, &found, &expected)? {
+                                if let Some(mismatch) =
+                                    self.struct_origin_mismatch(&found, &expected)
+                                {
+                                    return Err(mismatch);
+                                }
                                 return Err(TypeError::TypeMismatch {
                                     expected: expected.to_string(),
                                     found: found.to_string(),
                                     context: format!("variable '{name}'"),
                                 });
                             }
-                            expected
+                            // An origin slot the annotation left to inference
+                            // takes the initializer's origin, as upstream.
+                            Self::bind_unbound_tails(&expected, &found)
                         }
                     }
                     // Inferred `var x = e`: declare the value's materialized type.
@@ -700,6 +707,9 @@ impl Checker {
                         // declaration: a view conversion's source place is an
                         // origin of the assigned value.
                         if !self.record_implicit_conversion(value, &found, &target)? {
+                            if let Some(mismatch) = self.struct_origin_mismatch(&found, &target) {
+                                return Err(mismatch);
+                            }
                             return Err(TypeError::TypeMismatch {
                                 expected: target.to_string(),
                                 found: found.to_string(),
@@ -1156,6 +1166,11 @@ impl Checker {
                             let target_ty = self.check_place(target)?;
                             self.record_place_write_invalidation(target.source_span(), target);
                             if !coerces(elem, &target_ty) {
+                                if let Some(mismatch) =
+                                    self.struct_origin_mismatch(elem, &target_ty)
+                                {
+                                    return Err(mismatch);
+                                }
                                 return Err(TypeError::TypeMismatch {
                                     expected: target_ty.to_string(),
                                     found: elem.to_string(),
@@ -1306,6 +1321,9 @@ impl Checker {
                 }
                 let ok = self.record_implicit_conversion(value, &found, &target)?;
                 if !ok {
+                    if let Some(mismatch) = self.struct_origin_mismatch(&found, &target) {
+                        return Err(mismatch);
+                    }
                     return Err(TypeError::TypeMismatch {
                         expected: target.to_string(),
                         found: found.to_string(),
@@ -1708,7 +1726,14 @@ impl Checker {
                     return Err(TypeError::ReturnOutsideFunction);
                 };
                 let found = match expr {
-                    Some(e) => self.infer_with_expected(e, expected, true)?,
+                    // A struct origin tail rooted at the receiver or a
+                    // parameter satisfies the signature origin the return
+                    // type names (`-> View[origin_of(self)]` returning
+                    // `View(Pointer(to=self.items))`).
+                    Some(e) => self.abstract_return_origin_tails(
+                        &self.infer_with_expected(e, expected, true)?,
+                        expected,
+                    ),
                     None if self.named_result_context.last() == Some(&true) => expected.clone(),
                     None => Ty::None,
                 };
@@ -2006,7 +2031,10 @@ impl Checker {
         self.tparams.push(type_scope(&decls));
 
         let signature = (|| {
-            let param_tys = self.param_tys(params)?;
+            let generated = self.generated_declaration.replace(name.contains('$'));
+            let param_tys = self.param_tys(params);
+            self.generated_declaration.set(generated);
+            let param_tys = param_tys?;
             let ret_ty = match (ret_anno, named_result) {
                 (Some(SourceType::Ref { referent, .. }), _) => self.ty_from_anno(referent)?,
                 // A compiler-generated specialization (`$`-mangled) rebinds

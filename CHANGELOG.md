@@ -8,6 +8,26 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A struct's origin arguments are now part of its checked identity, as in
+  the pinned Mojo: `Ty::Struct` carries an origin tail (one entry per explicit
+  `Origin` slot) that constructors bind from their arguments and view-returning
+  calls bind from their return contracts, so rebinding a view local across
+  origins (`p = P(Pointer(to=ys))` over a `P[origin_of(xs)]`), storing a box
+  over another origin into a `RefBox[Self.origin]` field, and holding two
+  receivers' views in one local reject with upstream's `cannot implicitly
+  convert 'P[origin_of(ys)]' value to 'P[origin_of(xs)]'`. An origin-slotted
+  struct nested as a type argument (`List[RefBox]`, `List[RefBox[_]]`) is not
+  concrete in any position. A new argument-exclusivity rule judges the origins
+  a callee's declared parameter types carry (`aliasing values passed mutably
+  to 'sink' argument and passed mutably to 'box' argument in 'stash' call`),
+  while a generic `append` stays accepted. The bundled iterators take
+  upstream's `IteratorType[...] = Self` shape and `StringSpan.__eq__` its bare
+  `rhs: StringSpan` parameter. Eight `assets/type_error` fixtures pin the
+  rules against the pin; twenty-eight extension fixtures that pinned the old
+  leniency are gone (exe ratchet 560 → 548), and the `erased-origin-parameter`
+  ledger row is closed. A returned view's sub-origin still widens to the
+  declared `origin_of(self)` (new `return-origin-widening` row).
+
 - A write through the pointer field of a view a call returns
   (`make(xs).src[][0] = 9`, `h.view().src[][0] = 9`, a local bound from
   either, a field chain below it, and a whole store `make(b).src[] = Box(11)`)

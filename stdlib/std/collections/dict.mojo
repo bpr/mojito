@@ -66,7 +66,7 @@ struct _DictEntryIter[
     comptime Element = DictEntry[Self.K, Self.V, Self.H]
     comptime IteratorType[
         view_mut: Bool, //, view_origin: Origin[mut=view_mut]
-    ] = _DictEntryIter[Self.K, Self.V, Self.H, view_origin]
+    ] = Self
 
     var src: ref[iterable_origin] List[DictEntry[Self.K, Self.V, Self.H]]
     var index: Int
@@ -98,7 +98,7 @@ struct _DictKeyIter[
     comptime Element = Self.K
     comptime IteratorType[
         view_mut: Bool, //, view_origin: Origin[mut=view_mut]
-    ] = _DictKeyIter[Self.K, Self.V, Self.H, view_origin]
+    ] = Self
     comptime dict_entry_iter = _DictEntryIter[Self.K, Self.V, Self.H, Self.iterable_origin]
 
     var iter: Self.dict_entry_iter
@@ -129,7 +129,7 @@ struct _DictValueIter[
     comptime Element = Self.V
     comptime IteratorType[
         view_mut: Bool, //, view_origin: Origin[mut=view_mut]
-    ] = _DictValueIter[Self.K, Self.V, Self.H, view_origin]
+    ] = Self
 
     var iter: _DictEntryIter[Self.K, Self.V, Self.H, Self.iterable_origin]
 
@@ -157,7 +157,7 @@ struct _TakeDictEntryIter[
     comptime Element = DictEntry[Self.K, Self.V, Self.H]
     comptime IteratorType[
         view_mut: Bool, //, view_origin: Origin[mut=view_mut]
-    ] = _TakeDictEntryIter[Self.K, Self.V, Self.H, view_origin]
+    ] = Self
 
     var src: ref[origin] Dict[Self.K, Self.V, Self.H]
 

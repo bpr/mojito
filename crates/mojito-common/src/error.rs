@@ -170,6 +170,15 @@ pub enum TypeError {
         parameter: String,
         callee: String,
     },
+    /// Two arguments of one call (the receiver included) reach overlapping
+    /// caller storage with a mutable path on at least one side, through an
+    /// argument's own place or an origin its declared type carries.
+    AliasingArguments {
+        mutable: String,
+        other: String,
+        other_mutable: bool,
+        callee: String,
+    },
     /// A reference return is rooted in storage not named by its declared origin.
     ReturnsReferenceToLocal,
     /// A store into storage that outlives the frame carries a loan rooted in
@@ -201,6 +210,13 @@ pub enum TypeError {
         expected: String,
         found: String,
         context: String,
+    },
+    /// A struct value whose origin arguments differ from the ones its
+    /// destination names (`p = P(Pointer(to=ys))` over a `P[origin_of(xs)]`
+    /// binding): the origin is part of the struct's identity, as upstream.
+    OriginIdentityMismatch {
+        found: String,
+        expected: String,
     },
     /// An operator applied to operand type(s) it is not defined for.
     BadOperator {
@@ -571,6 +587,21 @@ impl fmt::Display for TypeError {
                 "aliasing values passed mutably to 'self' argument and passed immutably \
                  to '{parameter}' argument in '{callee}' call"
             ),
+            Self::AliasingArguments {
+                mutable,
+                other,
+                other_mutable,
+                callee,
+            } => write!(
+                f,
+                "aliasing values passed mutably to '{mutable}' argument and passed {} \
+                 to '{other}' argument in '{callee}' call",
+                if *other_mutable {
+                    "mutably"
+                } else {
+                    "immutably"
+                }
+            ),
             Self::AssignToUndeclared(name) => {
                 write!(
                     f,
@@ -617,6 +648,12 @@ impl fmt::Display for TypeError {
             Self::ReturnOutsideFunction => write!(f, "'return' outside of a function"),
             Self::BreakOutsideLoop => write!(f, "'break' outside of a loop"),
             Self::ContinueOutsideLoop => write!(f, "'continue' outside of a loop"),
+            Self::OriginIdentityMismatch { found, expected } => {
+                write!(
+                    f,
+                    "cannot implicitly convert '{found}' value to '{expected}'"
+                )
+            }
             Self::TypeMismatch {
                 expected,
                 found,

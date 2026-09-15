@@ -544,6 +544,14 @@ pub struct Checker {
     /// wholly from its initializer (upstream-attested via `StringSlice`);
     /// fields and uninitialized locals may not.
     strict_storage_annotation: std::cell::Cell<StorageStrictness>,
+    /// The nesting depth of the annotation being resolved: `1` at the
+    /// outermost application, more inside its type arguments, where a struct
+    /// must bind its origin slots whatever the annotation position allows.
+    annotation_depth: std::cell::Cell<u32>,
+    /// Whether the annotation being resolved belongs to a compiler-generated
+    /// (`$`-mangled) declaration, whose spellings rebind already-checked types
+    /// and so keep their position's leniency at every nesting depth.
+    generated_declaration: std::cell::Cell<bool>,
     /// While a storage annotation is resolved with
     /// `resolve_storage_annotation_with_origins`, the explicit origin
     /// arguments its outermost struct application supplied (`(slot name,
@@ -763,6 +771,8 @@ impl Checker {
             operation_adjustments: RefCell::new(HashMap::new()),
             parameterized_method_calls: RefCell::new(HashMap::new()),
             strict_storage_annotation: std::cell::Cell::new(StorageStrictness::Off),
+            annotation_depth: std::cell::Cell::new(0),
+            generated_declaration: std::cell::Cell::new(false),
             storage_origin_demands: RefCell::new(None),
             tuple_unpack_plans: RefCell::new(HashMap::new()),
             interior_references: RefCell::new(HashMap::new()),
@@ -1379,7 +1389,9 @@ impl Checker {
         let Some(info) = self.structs.get(name) else {
             return Ok(None);
         };
-        if info.decls.len() != args.len() {
+        // The declared binders form the argument prefix; an origin tail may
+        // follow it.
+        if args.len() < info.decls.len() {
             return Ok(None);
         }
         let subst = struct_subst(&info.decls, args);
@@ -1923,6 +1935,86 @@ struct StructInfo {
     explicit_destructors: HashMap<String, bool>,
 }
 
+impl StructInfo {
+    /// The struct's origin tail slots — every explicit (non-infer-only)
+    /// `Origin`/`OriginSet` source parameter with its full-index binder id, in
+    /// source order. A struct instance's `Ty::Struct` arguments carry one
+    /// `TyArg::Origin` per slot after the `decls`-aligned prefix.
+    fn origin_slots(
+        &self,
+    ) -> Vec<(
+        mojito_types::origin::OriginParamId,
+        &mojito_ast::ast::TypeParam,
+    )> {
+        struct_origin_slots(&self.source_params)
+    }
+
+    /// The arguments of the struct's own `Self` type: each declared parameter
+    /// as itself, then each origin slot as its own binder.
+    fn self_arguments(&self) -> Vec<TyArg> {
+        self_struct_arguments(&self.decls, &self.source_params)
+    }
+
+    /// The origin tail of an instance's arguments (empty for an erased
+    /// spelling that carries none).
+    fn origin_tail<'a>(&self, arguments: &'a [TyArg]) -> &'a [TyArg] {
+        arguments.get(self.decls.len()..).unwrap_or_default()
+    }
+
+    /// The binder-to-origin map an instance's tail binds, for substituting
+    /// the struct's own origin binders (`Self.o`) in member signatures.
+    fn tail_origin_bindings(
+        &self,
+        arguments: &[TyArg],
+    ) -> HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin> {
+        self.origin_slots()
+            .into_iter()
+            .zip(self.origin_tail(arguments))
+            .filter_map(|((id, _), argument)| match argument {
+                TyArg::Origin(origin) => Some((id, origin.clone())),
+                TyArg::Ty(_) | TyArg::Val(_) => None,
+            })
+            .collect()
+    }
+}
+
+/// Whether a struct parameter is an origin slot (`o: Origin[mut=m]`, an
+/// `OriginSet`), which `classify_params` erases from the declared binders.
+fn is_origin_type_param(param: &mojito_ast::ast::TypeParam) -> bool {
+    matches!(param.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
+}
+
+/// See [`StructInfo::origin_slots`].
+fn struct_origin_slots(
+    source_params: &[mojito_ast::ast::TypeParam],
+) -> Vec<(
+    mojito_types::origin::OriginParamId,
+    &mojito_ast::ast::TypeParam,
+)> {
+    source_params
+        .iter()
+        .enumerate()
+        .filter(|(_, param)| !param.infer_only && is_origin_type_param(param))
+        .map(|(index, param)| (mojito_types::origin::OriginParamId(index as u32), param))
+        .collect()
+}
+
+/// See [`StructInfo::self_arguments`].
+fn self_struct_arguments(
+    decls: &[ParamDecl],
+    source_params: &[mojito_ast::ast::TypeParam],
+) -> Vec<TyArg> {
+    decls
+        .iter()
+        .map(param_as_arg)
+        .chain(
+            struct_origin_slots(source_params)
+                .into_iter()
+                .map(|(id, _)| TyArg::Origin(mojito_types::origin::Origin::Param(id))),
+        )
+        .collect()
+}
+
 /// A generic top-level alias (`comptime Alias[params] = Type` or a Bool
 /// proposition). The parameters are classified `ParamDecl`s — trailing `where`
 /// clauses attach to the last one — so each type-bodied application validates
@@ -2067,6 +2159,10 @@ struct MethodCallResolution {
     view_return_interior: Vec<String>,
     /// See [`MethodSig::view_return`].
     view_return: Vec<ViewReturnOrigin>,
+    /// The selected signature's declared parameter types, with type
+    /// parameters abstract: the origins a parameter *names* (as opposed to
+    /// receives through a type argument) drive the argument exclusivity rule.
+    declared_params: Vec<Ty>,
 }
 
 /// One origin slot of a struct-typed view return (`-> P[origin_of(xs)]`):

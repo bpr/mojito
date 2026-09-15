@@ -135,15 +135,20 @@ pub(super) fn unify(
 /// parameters via [`substitute`], value parameters via the receiver's
 /// `TyArg::Val` bindings — `other: Self` on an `Array[Int, 3]` receiver
 /// becomes `Array[Int, 3]`, not `Array[Int, length]`.
-pub(super) fn substitute_at(ty: &Ty, decls: &[ParamDecl], targs: &[TyArg]) -> Ty {
-    substitute_assoc(
+pub(super) fn substitute_at(ty: &Ty, info: &StructInfo, targs: &[TyArg]) -> Ty {
+    let substituted = substitute_assoc(
         ty,
         &AssocBindings {
-            types: struct_subst(decls, targs),
-            values: solved_value_bindings(decls, targs),
+            types: struct_subst(&info.decls, targs),
+            values: solved_value_bindings(&info.decls, targs),
             origins: HashMap::new(),
         },
-    )
+    );
+    // The receiver's origin tail binds the struct's own origin binders in
+    // struct-typed positions (`other: Self`, `-> Self`, a `RefBox[Self.o]`
+    // parameter), so a member instantiated on `P[origin_of(xs)]` names that
+    // origin where its declaration names `Self.o`.
+    substitute_struct_origin_tails(&substituted, &info.tail_origin_bindings(targs))
 }
 
 /// The value-parameter bindings a resolved application implies: each

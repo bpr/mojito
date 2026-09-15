@@ -689,7 +689,7 @@ impl Checker {
                         self.require_error(format!("call to raising function '{name}'"), error)?;
                     }
                     self.record_view_result_borrow(&span, &ret);
-                    Ok(ret)
+                    Ok(self.bind_call_result_tail(&span, ret))
                 }
                 Err(OverloadSelect::NoMatch) => {
                     // The stdlib scalar `range` family: upstream's overloads
@@ -843,6 +843,7 @@ impl Checker {
         self.record_view_result_borrow(&span, &ret);
         self.record_free_call_result_origins(&span, &ty, origin_signatures.first(), args, kwargs);
         self.record_call_parameter_names(&span, &ty);
+        let ret = self.bind_call_result_tail(&span, ret);
         if let Some(error) = error.filter(|ty| *ty != Ty::Never) {
             self.record_call_effect(span, error.clone());
             self.require_error(format!("call to raising function '{name}'"), error)?;
@@ -1205,9 +1206,9 @@ impl Checker {
             matched.positional_overflow,
             matched.keyword_overflow,
         );
-        // A `Pointer` parameter over the callee's own origin binder binds
-        // that binder from its argument before each argument coerces.
-        let params =
+        // The callee's own origin binders bind from the arguments before each
+        // argument coerces; `declared` keeps the type parameters abstract.
+        let (params, declared) =
             self.substitute_callee_pointer_origins(name, &names, params, &slots, args, kwargs)?;
         let mut score = 0;
         for (i, slot) in slots.iter().enumerate() {
@@ -1356,14 +1357,16 @@ impl Checker {
                 )
             })
             .collect::<Result<Vec<_>, TypeError>>()?;
-        super::places::reject_transfer_into_mutable(
+        self.check_free_call_aliasing(
             name,
-            &slots,
+            &names,
             &effective_conventions,
+            &copied_reads,
+            &declared,
+            &slots,
             args,
             kwargs,
         )?;
-        check_call_aliasing(&slots, &effective_conventions, &copied_reads, args, kwargs)?;
         self.borrowed_read_call_places
             .borrow_mut()
             .extend(borrowable_read_arguments(
@@ -1604,14 +1607,16 @@ impl Checker {
                 )
             })
             .collect::<Result<Vec<_>, TypeError>>()?;
-        super::places::reject_transfer_into_mutable(
+        self.check_free_call_aliasing(
             name,
-            &slots,
+            names,
             &effective_conventions,
+            &copied_reads,
+            params,
+            &slots,
             args,
             kwargs,
         )?;
-        check_call_aliasing(&slots, &effective_conventions, &copied_reads, args, kwargs)?;
         self.borrowed_read_call_places
             .borrow_mut()
             .extend(borrowable_read_arguments(
@@ -1735,9 +1740,12 @@ impl Checker {
         }
     }
 
-    /// Bind a callee's own origin binders named by its `Pointer[T, o]`
-    /// parameters from the arguments filling those slots, and substitute the
-    /// bound provenance into `params` before each argument coerces.
+    /// Bind a callee's own origin binders named by its parameters — a
+    /// `Pointer[T, o]`, a `ref[o]` referent, or a struct carrying `o` in its
+    /// origin tail (`List[RefBox[o]]`) — from the arguments filling those
+    /// slots, and substitute the bindings into `params` before each argument
+    /// coerces. Returns the bound parameters and the bound declared spellings
+    /// (type parameters left abstract, for the exclusivity rule).
     fn substitute_callee_pointer_origins(
         &self,
         name: &str,
@@ -1746,16 +1754,28 @@ impl Checker {
         slots: &[ArgSlot],
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
-    ) -> Result<Vec<Ty>, TypeError> {
-        let mut pointer_bound: Vec<(usize, Ty)> = Vec::new();
-        for (index, slot) in slots.iter().enumerate() {
-            if !matches!(
-                params.get(index),
-                Some(Ty::Pointer {
+    ) -> Result<(Vec<Ty>, Vec<Ty>), TypeError> {
+        let names_origin_binder = |parameter: &Ty| {
+            mojito_types::types::mentions(parameter, &|candidate| match candidate {
+                Ty::Pointer {
                     origin: mojito_types::origin::PointerOrigin::Param { .. },
                     ..
-                })
-            ) {
+                } => true,
+                Ty::Ref(reference) => {
+                    matches!(reference.origin, mojito_types::origin::Origin::Param(_))
+                }
+                Ty::Struct(_, arguments) => arguments.iter().any(|argument| {
+                    matches!(
+                        argument,
+                        TyArg::Origin(mojito_types::origin::Origin::Param(_))
+                    )
+                }),
+                _ => false,
+            })
+        };
+        let mut origin_bound: Vec<(usize, Ty)> = Vec::new();
+        for (index, slot) in slots.iter().enumerate() {
+            if !params.get(index).is_some_and(names_origin_binder) {
                 continue;
             }
             let argument = match slot {
@@ -1763,20 +1783,19 @@ impl Checker {
                 ArgSlot::Keyword(position) => &kwargs[*position].value,
                 ArgSlot::Default => continue,
             };
-            pointer_bound.push((index, self.infer(argument)?));
+            origin_bound.push((index, self.infer(argument)?));
         }
-        if pointer_bound.is_empty() {
-            return Ok(params);
+        if origin_bound.is_empty() {
+            let declared = params.clone();
+            return Ok((params, declared));
         }
-        let bound: Vec<(usize, &Ty)> = pointer_bound
+        let bound: Vec<(usize, &Ty)> = origin_bound
             .iter()
             .map(|(index, ty)| (*index, ty))
             .collect();
-        let bindings = Self::bind_callable_pointer_origins(name, names, &params, &bound)?;
-        Ok(params
-            .iter()
-            .map(|parameter| substitute_pointer_origin_params(parameter, &bindings))
-            .collect())
+        let bindings = Self::bind_callee_origins(name, names, &params, &bound)?;
+        let bound = bindings.substitute_all(&params);
+        Ok((bound.clone(), bound))
     }
 }
 

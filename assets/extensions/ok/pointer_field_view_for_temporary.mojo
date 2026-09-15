@@ -1,6 +1,10 @@
 # A pointer-field view returned from an ordinary method drives a for-loop
 # both as a temporary iterable and through a stored binding: the receiver
 # loan flows through GetIter onto the loop iterator.
+# The pin rejects this shape at `view()`: `cannot implicitly convert
+# 'View[origin_of(self.items)]' value to 'View[origin_of(self)]'`. Mojito
+# widens a returned view's sub-origin to the declared receiver origin (the
+# `return-origin-widening` ledger row in docs/roadmap.md).
 from std.iter import Iterator, StopIteration
 
 struct View[
@@ -32,7 +36,7 @@ struct View[
 struct Box:
     comptime ViewType[
         view_mut: Bool, //, view_origin: Origin[mut=view_mut]
-    ] = View
+    ] = View[view_origin]
 
     var items: List[Int]
 

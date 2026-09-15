@@ -178,8 +178,8 @@ advanced-origins	reject	conformance/fixtures/advanced_origins.mojo
 pointer-origin-aggregate	run	conformance/fixtures/pointer_origin_aggregate.mojo
 hidden-unsafe-any-origin	reject	conformance/fixtures/hidden_unsafe_any_origin.mojo
 reference-valued-aggregate	mojito-only	conformance/fixtures/reference_valued_aggregate.mojo
-erased-origin-parameter	mojito-only	conformance/fixtures/erased_origin_parameter.mojo
-origin-carrying-callable-struct	mojito-only	conformance/fixtures/origin_carrying_callable_struct.mojo
+erased-origin-parameter	reject	assets/type_error/erased_origin_parameter.mojo
+origin-carrying-callable-struct	reject	assets/type_error/origin_carrying_callable_struct.mojo
 reference-carrier-collection	run	assets/ok/reference_carrier_collection.mojo
 reference-element-chained-read	run	assets/ok/reference_element_chained_read.mojo
 transferred-carrier-keeps-source-alive	run	assets/ok/transferred_carrier_keeps_source_alive.mojo

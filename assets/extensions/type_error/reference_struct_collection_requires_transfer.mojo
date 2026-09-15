@@ -5,7 +5,7 @@
 struct RefBox[origin: Origin[mut=True]]:
     var value: ref[origin] List[Int]
 
-def stash(mut sink: List[RefBox], box: RefBox):
+def stash[o: Origin[mut=True]](mut sink: List[RefBox[o]], box: RefBox[o]):
     sink.append(box)
 
 def main():

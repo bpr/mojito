@@ -2,6 +2,10 @@
 # holding an origin-applied ref-field entry iterator (monomorphic comptime
 # alias in field position), full raising-iterator protocol, and a for-loop
 # driving the wrapped chain through `keys()`.
+# The pin rejects this shape at `keys()`: `cannot implicitly convert
+# 'KeyIter[origin_of(self.entries)]' value to 'KeyIter[origin_of(self)]'`.
+# Mojito widens a returned view's sub-origin to the declared receiver origin
+# (the `return-origin-widening` ledger row in docs/roadmap.md).
 from std.iter import Iterator, StopIteration
 
 @fieldwise_init
@@ -12,7 +16,7 @@ struct Pair(Copyable, Movable):
 @fieldwise_init
 struct EntryIter[m: Bool, //, o: Origin[mut=m]](Copyable, Iterator):
     comptime Element = Pair
-    comptime IteratorType[vm: Bool, //, vo: Origin[mut=vm]] = EntryIter[vo]
+    comptime IteratorType[vm: Bool, //, vo: Origin[mut=vm]] = Self
 
     var src: ref[o] List[Pair]
     var index: Int
@@ -32,7 +36,7 @@ struct EntryIter[m: Bool, //, o: Origin[mut=m]](Copyable, Iterator):
 @fieldwise_init
 struct KeyIter[m: Bool, //, o: Origin[mut=m]](Copyable, Iterator):
     comptime Element = Int
-    comptime IteratorType[vm: Bool, //, vo: Origin[mut=vm]] = KeyIter[vo]
+    comptime IteratorType[vm: Bool, //, vo: Origin[mut=vm]] = Self
     comptime entry_iter = EntryIter[Self.o]
 
     var iter: Self.entry_iter

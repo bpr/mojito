@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	354
+# swept-count	362
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -135,6 +135,7 @@ assets/type_error/advanced_origins_untracked_local.mojo	compile-reject	agree	err
 assets/type_error/allocation_implicit_drop.mojo	compile-reject	agree	error: 'allocation' abandoned without being explicitly destroyed: An `Allocation` owns heap storage and must be consumed before it goes out of scope. Deallocate it with `dealloc(allocation^)`, or call `unsafe_leak()` to take ownership of the underlying pointer.
 assets/type_error/ambiguous_implicit_conversion.mojo	compile-reject	agree	error: invalid call to 'consume': value passed to 'value' cannot be converted from 'IntLiteral[1]' to 'Number'
 assets/type_error/anytype_no_len.mojo	compile-reject	agree	error: no matching function in call to 'len'
+assets/type_error/argument_origin_exclusivity.mojo	compile-reject	agree	error: aliasing values passed mutably to 'sink' argument and passed mutably to 'box' argument in 'stash' call
 assets/type_error/array_display_length_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/array_display_requires_movable_element.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/array_element_assignment_immutable.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -191,6 +192,7 @@ assets/type_error/element_call_non_callable_element.mojo	compile-reject	agree	er
 assets/type_error/element_call_type_brackets_reject.mojo	compile-reject	agree	error: no matching method in call to '__getitem__'
 assets/type_error/empty_subscript_non_pointer.mojo	compile-reject	agree	error: no matching method in call to '__getitem__'
 assets/type_error/equatable_no_ordering.mojo	compile-reject	agree	error: 'T' does not implement the '__lt__' method
+assets/type_error/erased_origin_parameter.mojo	compile-reject	agree	error: 'RefBox[_]' is not concrete, use '[]' to bind missing parameters
 assets/type_error/explicit_destroy_conditional.mojo	compile-reject	agree	error: 'resource' abandoned without being explicitly destroyed: close the resource
 assets/type_error/explicit_destroy_discard.mojo	compile-reject	agree	error: 'tx' abandoned without being explicitly destroyed: call commit or rollback
 assets/type_error/explicit_destroy_double.mojo	compile-reject	agree	error: use of uninitialized value 'resource'
@@ -262,10 +264,12 @@ assets/type_error/maybe_uninitialized.mojo	compile-reject	agree	error: use of un
 assets/type_error/method_result_pointer_field_read_self_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/mlir_type_unsupported.mojo	compile-reject	agree	error: cannot implicitly convert '__mlir_type.index' value to '__mlir_type.i64' in return value
 assets/type_error/movable_where_false_transfer.mojo	compile-reject	agree	error: cannot transfer value into destination, because 'Pinned' doesn't conform to 'Movable'
+assets/type_error/mut_argument_carried_origin_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'xs' argument and passed mutably to 'b' argument in 'f' call
 assets/type_error/mut_origin_binder_rejects_immutable_pointer.mojo	compile-reject	agree	error: invalid call to 'bump': value passed to 'p' cannot be converted from 'Pointer[Int, origin_of(x)]' to 'Pointer[Int, o]'
 assets/type_error/mut_origin_constructor_rejects_immutable_pointer.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/mut_untracked_origin_local.mojo	compile-reject	agree	error: invalid call to 'mutate_untracked': value passed to 'value' cannot be converted from 'Int' to ref 'Int'
 assets/type_error/nested_def_recursive_reference.mojo	compile-reject	agree	error: recursive references to nested functions are not supported; define 'walk' at file scope
+assets/type_error/nested_omitted_origin_parameter.mojo	compile-reject	agree	error: 'RefBox[_]' is not concrete, use '[]' to bind missing parameters
 assets/type_error/nominal_string_codepoint_arithmetic.mojo	compile-reject	agree	error: invalid call to '__add__': value passed to 'rhs' cannot be converted from 'IntLiteral[1]' to 'StringSpan[rhs.origin]', it depends on an unresolved parameter 'rhs.origin.mut'
 assets/type_error/nominal_string_default_rebind.mojo	compile-reject	agree	error: cannot implicitly convert 'String' value to 'StringLiteral[_]'
 assets/type_error/nominal_string_positional_index.mojo	compile-reject	agree	error: String does not support direct positional indexing like `s[i]` because Mojo strings are UTF-8 encoded, and the same position can mean three different things. Use one of: `s[byte=i]` for a raw UTF-8 byte, `s[codepoint=i]` for a Unicode code point, or `s[grapheme=i]` for a user-visible character (grapheme cluster).
@@ -277,6 +281,7 @@ assets/type_error/optional_legacy_two_arg_constructor.mojo	compile-reject	agree	
 assets/type_error/optional_or_else_consumes_receiver.mojo	compile-reject	agree	error: value of type 'Optional[Res]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/optional_owned_iteration_linear_element.mojo	compile-reject	agree	error: 'opt' abandoned without being explicitly destroyed: type 'Optional' does not conditionally conform to 'Deinitable' for these parameters
 assets/type_error/origin_annotated_reassignment.mojo	compile-reject	agree	error: cannot implicitly convert 'List[Int]' value to 'Span[Int, origin_of(xs)]'
+assets/type_error/origin_carrying_callable_struct.mojo	compile-reject	agree	error: 'RefBox[_]' is not concrete, use '[]' to bind missing parameters
 assets/type_error/origin_cast_from_removed.mojo	compile-reject	agree	error: 'ImmOrigin' value has no attribute 'cast_from'
 assets/type_error/origin_delegated_value_return.mojo	compile-reject	agree	error: value of type 'Int' doesn't have a memory origin in origin specifier
 assets/type_error/origin_placeholder_field.mojo	compile-reject	agree	error: 'Span[Int, _]' is not concrete, use '[]' to bind missing parameters
@@ -332,6 +337,8 @@ assets/type_error/positional_only_by_keyword.mojo	compile-reject	agree	error: in
 assets/type_error/predicate_alias_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/predicate_alias_in_type_position.mojo	compile-reject	agree	error: expected a type, not a value
 assets/type_error/print_unknown_keyword.mojo	compile-reject	agree	error: invalid call to 'print': unexpected keyword argument 'foo'
+assets/type_error/rebound_view_origin_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'P[origin_of(ys)]' value to 'P[origin_of(xs)]'
+assets/type_error/receiver_carried_origin_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed mutably to 'sink' argument in 'stash' call
 assets/type_error/reference_element_append_rejected.mojo	compile-reject	agree	error: expected ']' in call argument list
 assets/type_error/reference_element_handle_replacement_rejected.mojo	compile-reject	agree	error: expected ']' in call argument list
 assets/type_error/reserved_word_function_name.mojo	compile-reject	agree	error: 'del' cannot be used as a function name in this context
@@ -357,6 +364,7 @@ assets/type_error/string_len_ambiguous.mojo	compile-reject	agree	error: `len(Str
 assets/type_error/string_literal_positional_slice_removed.mojo	compile-reject	agree	error: String does not support direct positional slicing like `s[a:b]` because Mojo strings are UTF-8 encoded, and the same range can mean different things. Use `s[byte=a:b]` to slice by raw UTF-8 byte positions, or `s[codepoint=a:b]` to slice by Unicode code points.
 assets/type_error/string_span_len_ambiguous.mojo	compile-reject	agree	error: `len(String/StringSlice)` is not supported because Mojo strings are UTF-8 encoded, so a single length is ambiguous: it could mean the number of UTF-8 bytes, the number of Unicode code points, or the number of user-visible characters (grapheme clusters). Use `s.byte_length()` or `len(s.bytes())` for the number of UTF-8 bytes, `len(s.codepoints())` for Unicode code points, or `len(s.graphemes())` for grapheme clusters.
 assets/type_error/string_span_return_temporary.mojo	compile-reject	agree	error: cannot implicitly convert 'String' value to 'StringSpan[origin_of(self)]'
+assets/type_error/struct_binder_origin_store_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'RefBox[origin_of(other)]' value to 'RefBox[origin]'
 assets/type_error/struct_field_in_bracket_slot.mojo	compile-reject	agree	error: cannot access instance field 'index' without an instance of 'Counter[length]'
 assets/type_error/struct_field_non_deinitable_param.mojo	compile-reject	agree	error: field 'value' has non-'Deinitable' type 'T'
 assets/type_error/struct_field_unqualified_param.mojo	compile-reject	agree	error: unqualified access to struct parameter 'T'; use 'Self.T' instead

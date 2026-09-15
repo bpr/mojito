@@ -1919,6 +1919,7 @@ fn origin(value: &Origin) -> String {
         Origin::Untracked { mutable } => {
             record("origin_untracked", &[("mutable", mutable.to_string())])
         }
+        Origin::Unbound => "origin_unbound".into(),
     }
 }
 fn pointer_origin(value: &PointerOrigin) -> String {

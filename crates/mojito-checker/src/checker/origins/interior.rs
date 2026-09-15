@@ -205,7 +205,8 @@ impl Checker {
             mojito_types::origin::Origin::Param(_)
             | mojito_types::origin::Origin::SelfParam
             | mojito_types::origin::Origin::Static
-            | mojito_types::origin::Origin::Untracked { .. } => {}
+            | mojito_types::origin::Origin::Untracked { .. }
+            | mojito_types::origin::Origin::Unbound => {}
         }
     }
 

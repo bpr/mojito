@@ -34,6 +34,7 @@ type SolvedCallOrigins = (
 mod actuals;
 mod binders;
 mod construct;
+mod exclusivity;
 mod interior;
 mod ref_params;
 mod result_alias;
@@ -42,5 +43,6 @@ mod solve;
 mod subst;
 mod transfer;
 
+pub(in crate::checker) use construct::ConstructorOriginBindings;
 pub(in crate::checker) use sig::*;
 pub(in crate::checker) use subst::*;

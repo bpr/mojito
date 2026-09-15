@@ -52,6 +52,23 @@ pub struct OriginPlace {
     pub path: Vec<OriginSeg>,
 }
 
+impl OriginPlace {
+    /// The place with its `_subtree` projections removed: the storage
+    /// identity a subtree pointer refines rather than changes.
+    #[must_use]
+    pub fn without_subtree(&self) -> Self {
+        Self {
+            root: self.root,
+            path: self
+                .path
+                .iter()
+                .filter(|segment| !matches!(segment, OriginSeg::Subtree))
+                .cloned()
+                .collect(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 /// Canonical checked description of storage a reference may designate.
 pub enum Origin {
@@ -68,6 +85,38 @@ pub enum Origin {
     Untracked {
         mutable: bool,
     },
+    /// A struct origin slot the use site infers and this type leaves unbound
+    /// (upstream's `_`/`...` placeholder, or an omitted slot where the
+    /// annotation position permits omission). Any origin coerces into it; it
+    /// coerces into nothing concrete and designates no storage.
+    Unbound,
+}
+
+impl Origin {
+    /// Whether a struct origin argument `self` satisfies the slot `expected`
+    /// when a struct type coerces into another: an unbound slot accepts any
+    /// origin, a struct binder or a concrete place demands identity, and an
+    /// untracked or union slot accepts what lies within it.
+    pub fn coerces_to(&self, expected: &Self) -> bool {
+        if matches!(expected, Self::Unbound) || self == expected {
+            return true;
+        }
+        match expected {
+            // A subtree projection refines the loan domain a pointer covers,
+            // not the storage's identity.
+            Self::Place(expected_place) => matches!(
+                self,
+                Self::Place(place) if place.without_subtree() == expected_place.without_subtree()
+            ),
+            Self::Unbound | Self::Param(_) | Self::SelfParam | Self::Static => false,
+            Self::Untracked { .. } => !matches!(self, Self::Unbound),
+            Self::Union(members) => match self {
+                Self::Unbound => false,
+                Self::Union(actual) => actual.iter().all(|member| member.coerces_to(expected)),
+                _ => members.iter().any(|member| self.coerces_to(member)),
+            },
+        }
+    }
 }
 
 impl std::fmt::Display for Origin {
@@ -75,6 +124,7 @@ impl std::fmt::Display for Origin {
         match self {
             Self::Param(id) => write!(f, "origin#{}", id.0),
             Self::SelfParam => write!(f, "origin_of(self)"),
+            Self::Unbound => write!(f, "_"),
             Self::Place(place) => {
                 write!(f, "origin_of(#{}", place.root.0)?;
                 for segment in &place.path {
@@ -608,6 +658,7 @@ fn cmp_origin(left: &Origin, right: &Origin) -> Ordering {
             Origin::Untracked { .. } => 3,
             Origin::Union(_) => 4,
             Origin::SelfParam => 5,
+            Origin::Unbound => 6,
         }
     }
     tag(left)

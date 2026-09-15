@@ -231,6 +231,7 @@ impl Checker {
                         parameter_names: Vec::new(),
                         view_return_interior: Vec::new(),
                         view_return: Vec::new(),
+                        declared_params: Vec::new(),
                     });
                 }
             }
@@ -922,16 +923,16 @@ impl Checker {
                             let receiver_params: Vec<Ty> = sig
                                 .params
                                 .iter()
-                                .map(|t| substitute_at(t, &info.decls, targs))
+                                .map(|t| substitute_at(t, info, targs))
                                 .collect();
                             let receiver_variadic = sig
                                 .variadic
                                 .as_ref()
-                                .map(|ty| substitute_at(ty, &info.decls, targs));
+                                .map(|ty| substitute_at(ty, info, targs));
                             let receiver_kw_variadic = sig
                                 .kw_variadic
                                 .as_ref()
-                                .map(|ty| substitute_at(ty, &info.decls, targs));
+                                .map(|ty| substitute_at(ty, info, targs));
                             let Ok((
                                 params,
                                 variadic,
@@ -1000,14 +1001,14 @@ impl Checker {
                                     conventions: sig.conventions.clone(),
                                     self_convention: sig.self_convention,
                                     return_type: substitute(
-                                        &substitute_at(&sig.ret, &info.decls, targs),
+                                        &substitute_at(&sig.ret, info, targs),
                                         &method_subst,
                                     ),
                                     result_adapter: None,
                                     raises: sig.raises,
                                     error: sig.error.as_ref().map(|error| {
                                         Box::new(substitute(
-                                            &substitute_at(error, &info.decls, targs),
+                                            &substitute_at(error, info, targs),
                                             &method_subst,
                                         ))
                                     }),
@@ -1041,6 +1042,7 @@ impl Checker {
                                     parameter_names: sig.names.clone(),
                                     view_return_interior: sig.view_return_interior.clone(),
                                     view_return: sig.view_return.clone(),
+                                    declared_params: sig.params.clone(),
                                     param_types: params,
                                     param_decls: sig.decls.clone(),
                                 });
@@ -1201,6 +1203,7 @@ impl Checker {
                         parameter_names: Vec::new(),
                         view_return_interior: Vec::new(),
                         view_return: Vec::new(),
+                        declared_params: Vec::new(),
                     });
                 }
                 select_method_overload(
@@ -1252,6 +1255,7 @@ impl Checker {
                     parameter_names: Vec::new(),
                     view_return_interior: Vec::new(),
                     view_return: Vec::new(),
+                    declared_params: Vec::new(),
                 }))
             }
             // Hashable scalar leaves contribute themselves to the
@@ -1301,6 +1305,7 @@ impl Checker {
                     parameter_names: Vec::new(),
                     view_return_interior: Vec::new(),
                     view_return: Vec::new(),
+                    declared_params: Vec::new(),
                 }))
             }
             // A `Float64`'s fused multiply-add (`k.__fma__(step, start)`, a
@@ -1348,6 +1353,7 @@ impl Checker {
                     parameter_names: Vec::new(),
                     view_return_interior: Vec::new(),
                     view_return: Vec::new(),
+                    declared_params: Vec::new(),
                 }))
             }
             // `x.__floor__()` / `x.__ceildiv__(y)` on a concrete type
@@ -1401,6 +1407,7 @@ impl Checker {
                     parameter_names: Vec::new(),
                     view_return_interior: Vec::new(),
                     view_return: Vec::new(),
+                    declared_params: Vec::new(),
                 }))
             }
             _ => Ok(None),
@@ -1418,7 +1425,7 @@ impl Checker {
                     && let Some((_, field_ty)) =
                         info.fields.iter().find(|(fname, _)| fname == method)
                 {
-                    let field_ty = substitute(field_ty, &struct_subst(&info.decls, targs));
+                    let field_ty = substitute_at(field_ty, info, targs);
                     if callable_contract_ty(&field_ty).is_some() {
                         return self.infer_field_invocation(span, object, &field_ty, args, kwargs);
                     }
@@ -1873,6 +1880,36 @@ impl Checker {
             args,
             kwargs,
         )?;
+        // The receiver's origin tail binds the struct's own binders in the
+        // declared signature (`Self`, `RefBox[Self.o]`); type parameters stay
+        // abstract, so an origin reaching the callee only through a type
+        // argument does not count, as at the pin.
+        let (tail_bindings, self_declared) = match &obj_ty {
+            Ty::Struct(sname, targs) => match self.structs.get(sname) {
+                Some(info) => (
+                    info.tail_origin_bindings(targs),
+                    Ty::Struct(sname.clone(), info.self_arguments()),
+                ),
+                None => (HashMap::new(), obj_ty.clone()),
+            },
+            _ => (HashMap::new(), obj_ty.clone()),
+        };
+        let self_declared = substitute_struct_origin_tails(&self_declared, &tail_bindings);
+        let declared: Vec<Ty> = resolved
+            .declared_params
+            .iter()
+            .map(|parameter| substitute_struct_origin_tails(parameter, &tail_bindings))
+            .collect();
+        self.check_argument_origin_exclusivity(
+            method,
+            Some((object, resolved.self_convention, &self_declared)),
+            &resolved.parameter_names,
+            &effective_conventions,
+            &declared,
+            &resolved.slots,
+            args,
+            kwargs,
+        )?;
         if resolved.self_convention == Some(ArgConvention::Mut) {
             self.check_mutable_receiver_carried_aliases(
                 object,
@@ -2155,6 +2192,7 @@ impl Checker {
                     Some(object),
                 );
             }
+            let return_type = self.bind_call_result_tail(&span, return_type);
             self.call_parameters.borrow_mut().insert(
                 span.clone(),
                 resolved
@@ -2170,7 +2208,7 @@ impl Checker {
                     .collect(),
             );
             self.selected_calls.borrow_mut().insert(
-                span,
+                span.clone(),
                 mojito_checked::checked::CheckedCallContract {
                     target,
                     raises: call_error,
@@ -2194,7 +2232,12 @@ impl Checker {
             );
         }
         Ok(reference_result.map_or_else(
-            || self.rebase_self_place_pointer(resolved.return_type, object),
+            || {
+                self.bind_call_result_tail(
+                    &span,
+                    self.rebase_self_place_pointer(resolved.return_type, object),
+                )
+            },
             |reference| *reference.referent,
         ))
     }

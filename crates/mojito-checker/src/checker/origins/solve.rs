@@ -21,6 +21,23 @@ impl Checker {
             .any(|scope| scope.values().any(|candidate| *candidate == owner))
     }
 
+    /// Abstract the struct origin tails of a returned value to the signature
+    /// origins the declared return type names: a tail rooted at the frame's
+    /// receiver satisfies a declared `origin_of(self)`, and one rooted at a
+    /// parameter satisfies that parameter's declared origin. Every other
+    /// tail entry, and every non-tail part of the type, stays as found, so
+    /// the ordinary return coercion reports what does not fit.
+    pub(in crate::checker) fn abstract_return_origin_tails(&self, found: &Ty, declared: &Ty) -> Ty {
+        let frames = self.transfer_frames.borrow();
+        let Some(frame) = frames.last() else {
+            return found.clone();
+        };
+        let abstracted = |origin: &mojito_types::origin::Origin| {
+            self.abstract_body_origin(origin, &frame.param_owners, frame.self_owner)
+        };
+        abstract_origin_tails(found, declared, &abstracted)
+    }
+
     /// Abstract a body-level origin to a signature-relative origin for a
     /// transfer effect. `None` means no caller-side loan is needed
     /// (static/untracked storage) or the origin is not signature-expressible.
@@ -64,7 +81,7 @@ impl Checker {
                     _ => Some(SigOrigin::union(members)),
                 }
             }
-            Origin::Param(_) | Origin::Static | Origin::Untracked { .. } => None,
+            Origin::Param(_) | Origin::Static | Origin::Untracked { .. } | Origin::Unbound => None,
         }
     }
 
@@ -93,9 +110,11 @@ impl Checker {
             Origin::Union(origins) => origins
                 .iter()
                 .any(|origin| self.aggregate_origin_escapes(origin)),
-            Origin::Param(_) | Origin::SelfParam | Origin::Static | Origin::Untracked { .. } => {
-                false
-            }
+            Origin::Param(_)
+            | Origin::SelfParam
+            | Origin::Static
+            | Origin::Untracked { .. }
+            | Origin::Unbound => false,
         }
     }
 
@@ -435,4 +454,82 @@ fn spelled_origin(expression: &Expr) -> Option<String> {
         }
     }
     place_text(expression).map(|text| format!("origin_of({text})"))
+}
+
+/// See [`Checker::abstract_return_origin_tails`]: walk `found` and
+/// `declared` in parallel, replacing a found tail origin by the declared one
+/// when both abstract to the same signature origin.
+fn abstract_origin_tails(
+    found: &Ty,
+    declared: &Ty,
+    abstracted: &dyn Fn(&mojito_types::origin::Origin) -> Option<mojito_types::origin::SigOrigin>,
+) -> Ty {
+    use mojito_types::origin::{Origin, SigOrigin};
+    let declared_sig = |origin: &Origin| match origin {
+        Origin::SelfParam => Some(SigOrigin::Self_),
+        Origin::Place(_) => abstracted(origin),
+        _ => None,
+    };
+    match (found, declared) {
+        (Ty::Struct(found_name, found_args), Ty::Struct(declared_name, declared_args))
+            if found_name == declared_name && found_args.len() == declared_args.len() =>
+        {
+            Ty::Struct(
+                found_name.clone(),
+                found_args
+                    .iter()
+                    .zip(declared_args)
+                    .map(|(found, declared)| match (found, declared) {
+                        (TyArg::Ty(found), TyArg::Ty(declared)) => {
+                            TyArg::Ty(abstract_origin_tails(found, declared, abstracted))
+                        }
+                        (TyArg::Origin(actual), TyArg::Origin(expected))
+                            if !actual.coerces_to(expected)
+                                && matches!(actual, Origin::Place(_))
+                                && abstracted(actual).is_some()
+                                && abstracted(actual) == declared_sig(expected) =>
+                        {
+                            TyArg::Origin(expected.clone())
+                        }
+                        _ => found.clone(),
+                    })
+                    .collect(),
+            )
+        }
+        (Ty::Tuple(found_elements), Ty::Tuple(declared_elements))
+            if found_elements.len() == declared_elements.len() =>
+        {
+            Ty::Tuple(
+                found_elements
+                    .iter()
+                    .zip(declared_elements)
+                    .map(|(found, declared)| abstract_origin_tails(found, declared, abstracted))
+                    .collect(),
+            )
+        }
+        // The public `Tuple` and its generated specialization symbol compare
+        // by element (see `coerces`); abstract the elements in place.
+        (Ty::Struct(found_name, found_args), _)
+            if let (Some(found_elements), Some(declared_elements)) = (
+                mojito_types::types::tuple_elements(found),
+                mojito_types::types::tuple_elements(declared),
+            ) && found_elements.len() == declared_elements.len() =>
+        {
+            let mut elements = found_elements
+                .iter()
+                .zip(declared_elements)
+                .map(|(found, declared)| abstract_origin_tails(found, declared, abstracted));
+            Ty::Struct(
+                found_name.clone(),
+                found_args
+                    .iter()
+                    .map(|argument| match argument {
+                        TyArg::Ty(_) => elements.next().map_or_else(|| argument.clone(), TyArg::Ty),
+                        TyArg::Val(_) | TyArg::Origin(_) => argument.clone(),
+                    })
+                    .collect(),
+            )
+        }
+        _ => found.clone(),
+    }
 }

@@ -1,3 +1,6 @@
+# The `ref`-field spelling of the ordinary fixture of the same name (a kept
+# Mojito extension, see docs/non-goals.md); the origin slot is bound exactly
+# as there.
 # A transferred loan rooted at a caller-owned parameter place may leave with
 # the returned collection: parameter origins do not escape.
 @fieldwise_init
@@ -5,7 +8,7 @@ struct RefBox[origin: Origin[mut=True]]:
     var value: ref[origin] List[Int]
 
 def fill(mut source: List[Int]) -> List[RefBox[origin_of(source)]]:
-    var sink = List[RefBox]()
+    var sink = List[RefBox[origin_of(source)]]()
     ref view = source
     sink.append(RefBox(view))
     return sink^

@@ -208,7 +208,7 @@ impl ConformanceOracle {
                 // itself cannot be resolved as a single erased type.
                 continue;
             }
-            let self_ty = Ty::Struct(name.clone(), decls.iter().map(param_as_arg).collect());
+            let self_ty = Ty::Struct(name.clone(), self_struct_arguments(&decls, type_params));
             let saved_self_decls = std::mem::replace(&mut checker.self_decls, decls);
             let saved_type_params =
                 std::mem::replace(&mut checker.enclosing_type_params, type_params.clone());

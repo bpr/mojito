@@ -17,11 +17,11 @@ struct _ArrayIter[
     T: AnyType,
     length: Int,
     iterable_origin: Origin[mut=iterable_mut],
-](Iterator where conforms_to(T, Copyable)):
+](Copyable, Iterator where conforms_to(T, Copyable)):
     comptime Element = Self.T
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = _ArrayIter[Self.T, Self.length, iterable_origin]
+    ] = Self
 
     var src: ref[iterable_origin] Array[Self.T, Self.length]
     var index: Int
@@ -32,8 +32,7 @@ struct _ArrayIter[
     # The iterator iterates itself (upstream's `IteratorType = Self`): a
     # stored iterator drives a loop directly.
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
-        ref source = self.src
-        return _ArrayIter(source, self.index)
+        return self.copy()
 
     def __next__(mut self) raises StopIteration -> ref[
         Self.iterable_origin._get_owned_interior["element"]

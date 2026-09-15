@@ -20,11 +20,11 @@ from std.collections.optional import Optional
 @fieldwise_init
 struct _ListIter[
     iterable_mut: Bool, //, T: AnyType, iterable_origin: Origin[mut=iterable_mut]
-](Iterator where conforms_to(T, Copyable)):
+](Copyable, Iterator where conforms_to(T, Copyable)):
     comptime Element = Self.T
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = _ListIter[Self.T, iterable_origin]
+    ] = Self
 
     var src: ref[iterable_origin] List[Self.T]
     var index: Int
@@ -37,8 +37,7 @@ struct _ListIter[
     # The iterator iterates itself (upstream's `IteratorType = Self`): a
     # stored iterator drives a loop directly.
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
-        ref source = self.src
-        return _ListIter[Self.T](source, self.index)
+        return self.copy()
 
     def __next__(mut self) raises StopIteration -> ref[
         Self.iterable_origin._get_owned_interior["element"]
@@ -55,11 +54,11 @@ struct _ListIter[
 @fieldwise_init
 struct _ListReversedIter[
     iterable_mut: Bool, //, T: AnyType, iterable_origin: Origin[mut=iterable_mut]
-](Iterator where conforms_to(T, Copyable)):
+](Copyable, Iterator where conforms_to(T, Copyable)):
     comptime Element = Self.T
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = _ListReversedIter[Self.T, iterable_origin]
+    ] = Self
 
     var src: ref[iterable_origin] List[Self.T]
     var remaining: Int
@@ -68,8 +67,7 @@ struct _ListReversedIter[
         return self.remaining
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
-        ref source = self.src
-        return _ListReversedIter[Self.T](source, self.remaining)
+        return self.copy()
 
     def __next__(mut self) raises StopIteration -> ref[
         Self.iterable_origin._get_owned_interior["element"]

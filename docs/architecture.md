@@ -941,6 +941,20 @@ template. The bundled owned iterator protocol uses the monomorphic
 and the dependent application `Self.IteratorType[origin_of(self)]` parse, check,
 and arity-validate.
 
+A struct's own origin arguments are part of its checked identity: `Ty::Struct`
+carries its declared type and value arguments first and then an **origin tail**,
+one `TyArg::Origin` per explicit `Origin`/`OriginSet` source parameter in source
+order (`P[origin_of(xs)]` and `P[origin_of(ys)]` are different types, as
+upstream). `Origin::Unbound` marks a slot the use site infers (a bare or `_`
+parameter or initialized-local annotation, an alias body); `Origin::Param` in a
+tail is the struct's own binder, rigid inside its methods. `Origin::coerces_to`
+is the tail rule: unbound accepts anything, everything else demands identity or
+containment. The tail erases below the checker exactly like a pointer origin —
+mangling emits nothing for it, MIR verification compares struct prefixes only,
+monomorphization treats origin-differing instances as one, and the checker's
+instantiation records reset it to unbound so a place origin (a per-check owner
+id) never makes an instantiation look new across discovery rounds.
+
 An `origin_of(self)` argument on a trait method's *abstract* signature has no
 bound `self` place, so it lowers to the symbolic `Origin::SelfParam` — the
 `Origin`-level analogue of the signature contract's `SigOrigin::Self_` — which
@@ -950,10 +964,11 @@ mangling marker). A conforming struct then resolves the origin-parameterized
 member concretely, so a requirement returning `Self.IteratorType[origin_of(self)]`
 is satisfiable and conformance succeeds. The borrowed `Iterable` proof protocol
 uses this origin-parameterized member, and the bundled List/Set iterator
-carries its origin as an erased struct parameter (with an infer-only `Bool`
-binding its `mut=`, likewise erased), borrows its source through a `ref`
-field, and yields element references whose mutability the checker resolves
-from the source at each loop site. Concrete List/Set/Dict borrowed iteration
+carries its origin in its origin tail (with an infer-only `Bool` binding its
+`mut=`, which erases), iterates itself through upstream's
+`IteratorType[...] = Self` alias, borrows its source through a `ref` field, and
+yields element references whose mutability the checker resolves from the
+source at each loop site. Concrete List/Set/Dict borrowed iteration
 keeps its checker-attached interior `element` loan; the mapping iterators
 remain snapshot/copy bridges until mapping invalidation lands.
 
@@ -2069,7 +2084,9 @@ the complete source parameter layout: a variadic type/value pack consumes only
 the positional segment available before required suffix parameters, while a
 named Origin may follow the pack and remains on the rewritten call. Origins,
 OriginSets, and callable-value parameters stay symbolic on generated
-specializations instead of shifting the evaluated type/value arguments. An
+specializations instead of shifting the evaluated type/value arguments; a
+checked type's origin tail spells as its binder where the clone has one in
+scope and as upstream's `_` placeholder otherwise. An
 overloaded function value requires an expected `def(...)` type; the checker
 specializes every candidate, retains the unique compatible lowered symbol, and rejects an
 uncontextualized or still-ambiguous set. Mojito can also combine a captured

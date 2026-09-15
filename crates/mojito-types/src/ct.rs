@@ -710,7 +710,13 @@ fn source_type(ty: &Ty, span: Span) -> Option<Type> {
                 .map(|argument| match argument {
                     TyArg::Ty(ty) => Some(ParamArg::Type(source_type(ty, span)?)),
                     TyArg::Val(value) => Some(ParamArg::Value(value.materialize(span)?)),
-                    TyArg::Origin(_) => None,
+                    // An origin tail entry has no source spelling of its own;
+                    // upstream's `_` placeholder leaves the slot to inference
+                    // at the materialized spelling's use.
+                    TyArg::Origin(_) => Some(ParamArg::Value(Expr::new(
+                        ExprKind::Identifier("_".to_string()),
+                        span,
+                    ))),
                 })
                 .collect::<Option<Vec<_>>>()?,
         ),

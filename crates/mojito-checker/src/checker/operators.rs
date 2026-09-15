@@ -310,7 +310,7 @@ impl Checker {
         let dunder_accepts = |dunder: &str| {
             self.struct_dunder_signature_for(&lt, dunder, &[&rt])
                 .is_some_and(|(info, sig, targs)| {
-                    self.value_coerces(&rt, &substitute_at(&sig.params[0], &info.decls, targs))
+                    self.value_coerces(&rt, &substitute_at(&sig.params[0], info, targs))
                 })
         };
         let negated_equality = op == Ne
@@ -337,7 +337,7 @@ impl Checker {
             let overloaded = info.methods.get(dunder).is_some_and(|sigs| sigs.len() > 1);
             let mut operand_ty = rt.clone();
             let mut selected = sig;
-            let param = substitute_at(&sig.params[0], &info.decls, targs);
+            let param = substitute_at(&sig.params[0], info, targs);
             if !self.value_coerces(&rt, &param) {
                 let same_arity = info
                     .methods
@@ -346,7 +346,7 @@ impl Checker {
                     .flatten()
                     .filter(|sig| sig.params.len() == 1);
                 for candidate in same_arity {
-                    let param = substitute_at(&candidate.params[0], &info.decls, targs);
+                    let param = substitute_at(&candidate.params[0], info, targs);
                     if self.implicit_conversion_target(&rt, &param)?.is_some() {
                         self.record_implicit_conversion(right, &rt, &param)?;
                         operand_ty = param;
@@ -433,7 +433,7 @@ impl Checker {
             && let Some((info, sig, targs)) =
                 self.struct_dunder_signature_for(&rt, reflected, &[&lt])
             && let Ty::Struct(rname, _) = &rt
-            && self.value_coerces(&lt, &substitute_at(&sig.params[0], &info.decls, targs))
+            && self.value_coerces(&lt, &substitute_at(&sig.params[0], info, targs))
         {
             let environment: HashMap<String, TyArg> = info
                 .decls

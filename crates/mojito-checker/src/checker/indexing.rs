@@ -2014,8 +2014,9 @@ impl Checker {
                 TypeError::InvariantViolation(format!("struct '{sname}' was not registered"))
             })?;
             if let Some((_, fty)) = info.fields.iter().find(|(n, _)| n == field) {
-                let subst = struct_subst(&info.decls, targs);
-                return Ok(match substitute(fty, &subst) {
+                // The receiver's arguments — origin tail included — bind the
+                // field's declared type (`Cell[Self.o]` on a `Wrap[origin_of(xs)]`).
+                return Ok(match substitute_at(fty, info, targs) {
                     Ty::Ref(reference) => *reference.referent,
                     value => value,
                 });
