@@ -121,8 +121,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   view-typed slice results), pointer offset/write checks (the single-place
   rule and its multi-element interior-domain lift), the pointer-write
   capability (`pointer_write_capability`, the per-binding resolution of a
-  symbolic origin binder, also the source of a dereference place's
-  mutability in `origins/actuals.rs`), the positional
+  symbolic origin binder — through a call result's recorded
+  `call_result_origins` and an `ImmOrigin` cast's field path too — also the
+  source of a dereference place's mutability in `origins/actuals.rs`, where
+  `record_call_result_origins` resolves a callee's `ViewReturnOrigin`
+  contract and `materialize_temporary_holder` gives a call-result holder
+  its hidden slot), the positional
   String-slice rejection hint, and member access.
 - `checker/method_calls.rs` (split across
   `method_calls/{mc_infer,selection,statics,builtin_types}.rs`) owns

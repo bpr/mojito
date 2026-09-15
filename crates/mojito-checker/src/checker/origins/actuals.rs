@@ -105,6 +105,17 @@ impl Checker {
                     path: Vec::new(),
                 })
             }
+            // A call result already materialized as the holder of a
+            // dereferenced pointer field (`make(xs).src[]`) is its hidden
+            // owned slot, exactly like a materialized reference actual.
+            ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
+                if let Some(owner) = self.materialized_temporary_owner(expr) =>
+            {
+                Ok(OriginPlace {
+                    root: owner,
+                    path: Vec::new(),
+                })
+            }
             _ => Err(TypeError::Unsupported(
                 "reference binding to a non-place expression".to_string(),
             )),
@@ -145,6 +156,7 @@ impl Checker {
                 (None, PointerOrigin::Param { id, .. }) => Mutability::Param(*id),
                 (None, _) => Mutability::Immutable,
             };
+            self.materialize_temporary_holder(pointer, mutability == Mutability::Mutable);
             let origin = match origin {
                 PointerOrigin::Untracked { mutable } | PointerOrigin::UnsafeAny { mutable } => {
                     Origin::Untracked { mutable }
@@ -202,6 +214,127 @@ impl Checker {
                 })
             }
             other => other,
+        }
+    }
+
+    /// Resolve a view-returning call's [`ViewReturnOrigin`] contract against
+    /// the call's actual places and record the result's origin slots
+    /// (`call_result_origins`): `make(xs)` over `-> P[origin_of(xs)]` binds
+    /// `P`'s slot to `xs`, `h.view()` over `-> P[origin_of(self.xs)]` to
+    /// `h`. A slot the callee holds immutably is also recorded as an
+    /// immutable binder of the result, so a write through the result's
+    /// pointer field is judged by the callee's capability, as upstream
+    /// judges it. Nothing is recorded for a slot that resolves to no
+    /// concrete place.
+    pub(in crate::checker) fn record_call_result_origins(
+        &self,
+        span: &SourceSpan,
+        contract: &[ViewReturnOrigin],
+        slots: &[ArgSlot],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+        receiver: Option<&Expr>,
+    ) {
+        use mojito_types::origin::{Mutability, Origin, SigMutability};
+        if contract.is_empty() {
+            return;
+        }
+        let actual: Vec<Option<Origin>> = slots
+            .iter()
+            .map(|slot| {
+                let expression = match slot {
+                    ArgSlot::Positional(position) => &args[*position],
+                    ArgSlot::Keyword(position) => &kwargs[*position].value,
+                    ArgSlot::Default => return None,
+                };
+                self.reference_actual(expression)
+                    .ok()
+                    .map(|reference| reference.origin)
+            })
+            .collect();
+        // A receiver place, or a temporary receiver the view-result rule has
+        // already materialized; a temporary is never materialized here, so
+        // the slot's capability stays what its borrower needs.
+        let self_origin = receiver.and_then(|receiver| {
+            self.reference_actual(receiver)
+                .ok()
+                .map(|reference| reference.origin)
+        });
+        let mut resolved = Vec::new();
+        let mut immutable = Vec::new();
+        for ViewReturnOrigin { slot, sig } in contract {
+            let origin = super::subst::substitute_sig_origin_with_self(
+                &sig.origin,
+                &actual,
+                self_origin.clone(),
+            );
+            let origin = match receiver {
+                Some(receiver) => self.resolve_receiver_origin_arguments(origin, receiver),
+                None => origin,
+            };
+            if matches!(&origin, Origin::Union(members) if members.is_empty()) {
+                continue;
+            }
+            let mutability = match sig.mutability {
+                SigMutability::Mutable => Some(Mutability::Mutable),
+                SigMutability::Immutable => Some(Mutability::Immutable),
+                SigMutability::BoolParam(_) | SigMutability::Infer => None,
+            };
+            if mutability == Some(Mutability::Immutable) {
+                immutable.push((Vec::new(), *slot));
+            }
+            resolved.push((*slot, origin, mutability));
+        }
+        if resolved.is_empty() {
+            return;
+        }
+        self.call_result_origins
+            .borrow_mut()
+            .insert(span.clone(), resolved);
+        if !immutable.is_empty() {
+            self.construction_immutable_binders
+                .borrow_mut()
+                .insert(span.clone(), immutable);
+        }
+    }
+
+    /// The hidden owner a call result has been materialized as, if any.
+    pub(in crate::checker) fn materialized_temporary_owner(
+        &self,
+        expr: &Expr,
+    ) -> Option<mojito_types::origin::OwnerId> {
+        self.operation_adjustments
+            .borrow()
+            .get(&expr.source_span())
+            .and_then(|adjustment| {
+                mojito_checked::checked::materialized_borrow_owner(std::slice::from_ref(adjustment))
+            })
+    }
+
+    /// Give the holder of a dereferenced pointer a place when it is a call
+    /// result (`make(xs).src[]`, `h.view().src[]`, through any field chain):
+    /// the view temporary materializes as an anonymous owned binding, so the
+    /// dereference projects off real frame storage and the temporary lives as
+    /// long as the access. A holder that is already a place, or a call whose
+    /// lowering another adjustment owns, is left alone.
+    pub(in crate::checker) fn materialize_temporary_holder(&self, pointer: &Expr, mutable: bool) {
+        let mut root = pointer;
+        loop {
+            root = match &root.kind {
+                ExprKind::Member { object, .. } => object,
+                ExprKind::Index { object, .. } => object,
+                _ => match crate::checker::places::pointer_offset_keyword_subscript(root) {
+                    Some((object, _)) => object,
+                    None => break,
+                },
+            };
+        }
+        if matches!(
+            root.kind,
+            ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
+        ) && matches!(self.infer(root), Ok(Ty::Struct(..)))
+        {
+            let _ = self.materialize_borrow_owner(root, mutable);
         }
     }
 

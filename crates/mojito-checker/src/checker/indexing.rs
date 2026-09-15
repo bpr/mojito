@@ -977,6 +977,7 @@ impl Checker {
                         context: "index".to_string(),
                     });
                 }
+                self.materialize_temporary_holder(object, false);
                 return Ok((**element).clone());
             }
             return Err(TypeError::Unsupported(
@@ -1281,7 +1282,10 @@ impl Checker {
                 );
             }
             return match &obj_ty {
-                Ty::Pointer { element, .. } => Ok((**element).clone()),
+                Ty::Pointer { element, .. } => {
+                    self.materialize_temporary_holder(object, false);
+                    Ok((**element).clone())
+                }
                 other => Err(TypeError::Unsupported(format!(
                     "an empty subscript ('value[]') is the pointer dereference; \
                      '{other}' is not a pointer"
@@ -1634,6 +1638,7 @@ impl Checker {
             Ty::Simd { dtype, .. } => simd_ty(*dtype, 1),
             Ty::Pointer { element, origin } => {
                 self.check_pointer_offset(origin, index)?;
+                self.materialize_temporary_holder(object, false);
                 (**element).clone()
             }
             _ => return Err(TypeError::NotIndexable(obj_ty.to_string())),
@@ -1706,6 +1711,7 @@ impl Checker {
         pointer: &Expr,
         origin: &mojito_types::origin::PointerOrigin,
     ) -> Result<(), TypeError> {
+        self.materialize_temporary_holder(pointer, true);
         match self.pointer_write_capability(pointer, origin) {
             Some(true) => Ok(()),
             Some(false) => Err(TypeError::ImmutableBinding(
@@ -1739,9 +1745,7 @@ impl Checker {
                 let ExprKind::Member { object, .. } = &pointer.kind else {
                     return None;
                 };
-                if let ExprKind::Identifier(name) = &object.kind
-                    && self.lookup_immutable_origin_binders(name).contains(id)
-                {
+                if self.immutable_origin_binders(object).contains(id) {
                     return Some(false);
                 }
                 let resolved = self.resolve_receiver_origin_arguments(Origin::Param(*id), object);

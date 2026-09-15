@@ -230,6 +230,7 @@ impl Checker {
                         instantiation: None,
                         parameter_names: Vec::new(),
                         view_return_interior: Vec::new(),
+                        view_return: Vec::new(),
                     });
                 }
             }
@@ -1039,6 +1040,7 @@ impl Checker {
                                     instantiation: instantiation.clone(),
                                     parameter_names: sig.names.clone(),
                                     view_return_interior: sig.view_return_interior.clone(),
+                                    view_return: sig.view_return.clone(),
                                     param_types: params,
                                     param_decls: sig.decls.clone(),
                                 });
@@ -1198,6 +1200,7 @@ impl Checker {
                         instantiation: None,
                         parameter_names: Vec::new(),
                         view_return_interior: Vec::new(),
+                        view_return: Vec::new(),
                     });
                 }
                 select_method_overload(
@@ -1248,6 +1251,7 @@ impl Checker {
                     instantiation: None,
                     parameter_names: Vec::new(),
                     view_return_interior: Vec::new(),
+                    view_return: Vec::new(),
                 }))
             }
             // Hashable scalar leaves contribute themselves to the
@@ -1296,6 +1300,7 @@ impl Checker {
                     instantiation: None,
                     parameter_names: Vec::new(),
                     view_return_interior: Vec::new(),
+                    view_return: Vec::new(),
                 }))
             }
             // A `Float64`'s fused multiply-add (`k.__fma__(step, start)`, a
@@ -1342,6 +1347,7 @@ impl Checker {
                     instantiation: None,
                     parameter_names: Vec::new(),
                     view_return_interior: Vec::new(),
+                    view_return: Vec::new(),
                 }))
             }
             // `x.__floor__()` / `x.__ceildiv__(y)` on a concrete type
@@ -1394,6 +1400,7 @@ impl Checker {
                     instantiation: None,
                     parameter_names: Vec::new(),
                     view_return_interior: Vec::new(),
+                    view_return: Vec::new(),
                 }))
             }
             _ => Ok(None),
@@ -2139,6 +2146,14 @@ impl Checker {
                 {
                     let _ = self.materialize_borrow_owner(object, resolved.mutates_receiver);
                 }
+                self.record_call_result_origins(
+                    &span,
+                    &resolved.view_return,
+                    &resolved.slots,
+                    args,
+                    kwargs,
+                    Some(object),
+                );
             }
             self.call_parameters.borrow_mut().insert(
                 span.clone(),

@@ -158,6 +158,7 @@ assets/type_error/bad_operator.mojo	compile-reject	agree	error: no matching meth
 assets/type_error/bare_move_initializer.mojo	compile-reject	agree	error: 'move' argument must be passed as 'deinit'
 assets/type_error/bare_reference_list_parameter.mojo	compile-reject	agree	error: cannot declare 'Int' without a contextual type from its initializer
 assets/type_error/boolable_required_for_bool.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/call_result_pointer_field_immutable_source_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/captured_origin_specialization_rejected.mojo	compile-reject	agree	error: member method closures are not supported; add '()' to call '__call__'
 assets/type_error/capturing_closure_plain_def_param.mojo	compile-reject	agree	error: invalid call to '__call__': value cannot be converted from type value '$0' to an instance of '$0'; did you mean to instantiate '$0'?
 assets/type_error/capturing_field_rejected.mojo	compile-reject	agree	error: function type missing required origin set parameter
@@ -258,6 +259,7 @@ assets/type_error/maybe_uninit_copy_nontrivial.mojo	compile-reject	agree	error: 
 assets/type_error/maybe_uninit_deinit_requires_deinitable.mojo	compile-reject	agree	error: invalid call to 'unsafe_deinit': violated constraint
 assets/type_error/maybe_uninit_write_nontrivial.mojo	compile-reject	agree	error: invalid call to 'write': violated constraint
 assets/type_error/maybe_uninitialized.mojo	compile-reject	agree	error: use of uninitialized value 'value'
+assets/type_error/method_result_pointer_field_read_self_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/mlir_type_unsupported.mojo	compile-reject	agree	error: cannot implicitly convert '__mlir_type.index' value to '__mlir_type.i64' in return value
 assets/type_error/movable_where_false_transfer.mojo	compile-reject	agree	error: cannot transfer value into destination, because 'Pinned' doesn't conform to 'Movable'
 assets/type_error/mut_origin_binder_rejects_immutable_pointer.mojo	compile-reject	agree	error: invalid call to 'bump': value passed to 'p' cannot be converted from 'Pointer[Int, origin_of(x)]' to 'Pointer[Int, o]'
@@ -308,6 +310,7 @@ assets/type_error/parametric_static_arity.mojo	compile-reject	agree	error: unexp
 assets/type_error/pointer_escape.mojo	compile-reject	agree	error: failed to infer parameter 'origin', specify the parameter or use '_' or '...' to unbind the parameter explicitly
 assets/type_error/pointer_field_bare_origin_immutable_source_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_field_fieldwise_mut_true_immutable_place.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/pointer_field_imm_origin_cast_nested_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_field_imm_origin_cast_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_field_parametric_mut_subscript_write.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
 assets/type_error/pointer_field_parametric_mut_write_generic_wrapper.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination

@@ -1986,6 +1986,16 @@ impl Flatten<'_> {
                     self.emit(MirInstr::LoadPlace { dest: d, place });
                     return d;
                 }
+                // A pointer field of a call result the checker materialized
+                // (`make(b).src[]`) dereferences through the temporary's
+                // hidden slot, so the viewed storage outlives the read.
+                if self.rooted_at_materialized_temporary(object)
+                    && let Some(place) = self.lower_projected_reference_place(e)
+                {
+                    let d = self.fresh(span(e), Some(place.root));
+                    self.emit(MirInstr::LoadPlace { dest: d, place });
+                    return d;
+                }
                 if self.is_origin_bearing_pointer(object) {
                     let reference = self.expr(object);
                     let d = self.fresh(span(e), None);

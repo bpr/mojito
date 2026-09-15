@@ -447,6 +447,11 @@ impl Checker {
             ExprKind::Call {
                 name, args, kwargs, ..
             } => {
+                // A view-returning call carries exactly the origins its
+                // return contract bound to the call's places.
+                if let Some(bound) = self.call_result_bound_origins(expression) {
+                    return bound;
+                }
                 // A checked pointer construction retains exactly its source
                 // place; the checker recorded the decision when it typed the
                 // call, so shadowed `UnsafePointer` names cannot match here.
@@ -573,6 +578,11 @@ impl Checker {
                 Vec::new()
             }
             ExprKind::Invoke { args, kwargs, .. } | ExprKind::MethodCall { args, kwargs, .. } => {
+                // A view-returning call carries exactly the origins its
+                // return contract bound to the call's places.
+                if let Some(bound) = self.call_result_bound_origins(expression) {
+                    return bound;
+                }
                 // An `unsafe_origin_cast` result carries exactly its rebound target
                 // origin, recorded by the checker when it typed the cast.
                 if let Some(mojito_checked::checked::SemanticAdjustment::PointerOriginCast {
@@ -643,6 +653,24 @@ impl Checker {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// The origins a view-returning call's result carries when its return
+    /// contract bound the returned struct's origin slots at this call
+    /// (`call_result_origins`); `None` for a call that recorded nothing.
+    pub(in crate::checker) fn call_result_bound_origins(
+        &self,
+        expression: &Expr,
+    ) -> Option<Vec<mojito_types::origin::Origin>> {
+        let recorded = self.call_result_origins.borrow();
+        let slots = recorded.get(&expression.source_span())?;
+        let mut origins = Vec::new();
+        for (_, origin, _) in slots {
+            if !origins.contains(origin) {
+                origins.push(origin.clone());
+            }
+        }
+        Some(origins)
     }
 
     /// Project a view-returning call's carried origins through the owned

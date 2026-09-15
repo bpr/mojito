@@ -2197,10 +2197,11 @@ impl Checker {
             return Err(e);
         }
         self.record_statement_binding(stmt, name);
-        self.register_callable_origins(
-            name,
-            callable_origin_signature(type_params, &caller_regular, erased_origin_constraints),
-        );
+        let mut origin_signature =
+            callable_origin_signature(type_params, &caller_regular, erased_origin_constraints);
+        origin_signature.view_return =
+            self.view_return_origins(ret_anno.as_ref(), type_params, &regular, 0, None);
+        self.register_callable_origins(name, origin_signature);
         let capture_policy = if self.function_bases.is_empty() {
             if captures.is_some() {
                 self.tparams.pop();

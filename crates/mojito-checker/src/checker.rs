@@ -324,11 +324,15 @@ pub struct Checker {
     /// origin_of(xs)]`), parallel to the lexical value scopes, so a later
     /// reassignment is judged against the same demand as the declaration.
     storage_origin_demand_scopes: Vec<HashMap<String, Vec<(String, mojito_types::origin::Origin)>>>,
-    /// The origin binders a binding's construction bound through an
-    /// `ImmOrigin(o)` cast (`Cell[ImmOrigin(origin_of(xs))](...)`), parallel
-    /// to the lexical value scopes: the cast drops the source's mutable
-    /// capability, which the construction-time origins alone cannot show.
-    immutable_origin_binder_scopes: Vec<HashMap<String, Vec<mojito_types::origin::OriginParamId>>>,
+    /// The origin binders a binding's construction bound immutably — through
+    /// an `ImmOrigin(o)` cast (`Cell[ImmOrigin(origin_of(xs))](...)`), or by
+    /// a callee's read parameter or receiver in a view it returns — parallel
+    /// to the lexical value scopes, each with the field path below the
+    /// binding at which the cast construction sits (`["cell"]` for
+    /// `Wrap(Cell[ImmOrigin(…)](…))`, empty for the binding's own): the cast
+    /// drops the source's mutable capability, which the construction-time
+    /// origins alone cannot show.
+    immutable_origin_binder_scopes: Vec<HashMap<String, Vec<ImmutableOriginBinder>>>,
     aggregate_field_origin_scopes:
         Vec<HashMap<String, HashMap<String, Vec<mojito_types::origin::Origin>>>>,
     /// Reference-parameter handle types. Parameter expression typing still
@@ -546,11 +550,21 @@ pub struct Checker {
     /// origin)`), so the binding site can judge the initializer against them
     /// after they are erased from the type. `None` = not collecting.
     storage_origin_demands: RefCell<Option<Vec<(String, mojito_types::origin::Origin)>>>,
-    /// Per construction expression, the origin binders its explicit
-    /// application bound through an `ImmOrigin(o)` cast; a `var` binding of
-    /// the construction copies them into `immutable_origin_binder_scopes`.
-    construction_immutable_binders:
-        RefCell<HashMap<SourceSpan, Vec<mojito_types::origin::OriginParamId>>>,
+    /// Per construction or view-returning call expression, the origin
+    /// binders it bound immutably (see `immutable_origin_binder_scopes`),
+    /// nested constructions' included under their field path; a `var`
+    /// binding of the expression copies them into
+    /// `immutable_origin_binder_scopes`.
+    construction_immutable_binders: RefCell<HashMap<SourceSpan, Vec<ImmutableOriginBinder>>>,
+    /// Per view-returning call, the concrete origin each origin slot of the
+    /// returned struct binds (`make(xs)` over `-> P[origin_of(xs)]` binds
+    /// `P`'s slot to `xs`), from the callee's [`ViewReturnOrigin`] contract
+    /// substituted with the call's places, with the callee's capability over
+    /// the place when the contract fixes it. `aggregate_field_origins` and
+    /// `aggregate_origins` read it, so a call result — and a local bound
+    /// from one — resolves a pointer field's symbolic binder exactly as a
+    /// direct construction does.
+    call_result_origins: RefCell<HashMap<SourceSpan, Vec<CallResultOrigin>>>,
     /// Synthetic tuple element reads introduced by unpacking have no source
     /// expression nodes. Retain their checked types and exact generated
     /// accessors on the RHS expression for HIR/MIR lowering.
@@ -695,6 +709,7 @@ impl Checker {
             storage_origin_demand_scopes: vec![HashMap::new()],
             immutable_origin_binder_scopes: vec![HashMap::new()],
             construction_immutable_binders: RefCell::new(HashMap::new()),
+            call_result_origins: RefCell::new(HashMap::new()),
             reference_parameter_scopes: vec![HashMap::new()],
             reference_parameter_binders: HashMap::new(),
             callable_origin_scopes: vec![HashMap::new()],
@@ -1804,6 +1819,9 @@ struct MethodSig {
     /// receiver's origin (`-> StringSpan[origin_of(self)._get_owned_interior["bytes"]]`
     /// is `["bytes"]`), innermost first. Empty for every other return.
     view_return_interior: Vec<String>,
+    /// The origin slots a struct-typed view return binds to the callee's
+    /// places (`-> P[origin_of(self.xs)]`); see [`ViewReturnOrigin`].
+    view_return: Vec<ViewReturnOrigin>,
     implicit: bool,
     /// Origin parameters the body writes through via a parametric-mut ref
     /// field subscript (`self.field[i] = v`). The write is legal only for
@@ -1842,6 +1860,7 @@ impl MethodSig {
             ref_params: vec![None; len],
             ref_return: None,
             view_return_interior: Vec::new(),
+            view_return: Vec::new(),
             implicit: false,
             parametric_origin_writes: Vec::new(),
             origin_binders: vec![None; len],
@@ -2046,7 +2065,36 @@ struct MethodCallResolution {
     parameter_names: Vec<String>,
     /// See [`MethodSig::view_return_interior`].
     view_return_interior: Vec<String>,
+    /// See [`MethodSig::view_return`].
+    view_return: Vec<ViewReturnOrigin>,
 }
+
+/// One origin slot of a struct-typed view return (`-> P[origin_of(xs)]`):
+/// the returned struct's origin parameter and the contract its argument
+/// lowers to, whose mutability is the callee's own capability over that
+/// place (`mut xs` writes, a read parameter or receiver does not). A call
+/// site substitutes its actual places to learn what the result's pointer
+/// fields designate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ViewReturnOrigin {
+    slot: mojito_types::origin::OriginParamId,
+    sig: mojito_types::origin::RefSig,
+}
+
+/// An origin binder a construction bound immutably, with the field path
+/// below the constructed value at which the binding construction sits
+/// (empty for the value's own explicit application).
+type ImmutableOriginBinder = (Vec<String>, mojito_types::origin::OriginParamId);
+
+/// One resolved origin slot of a view-returning call's result: the slot, the
+/// concrete origin it binds at this call, and the callee's capability over
+/// that place when its contract fixes one (`None` stays the caller's place
+/// judgment).
+type CallResultOrigin = (
+    mojito_types::origin::OriginParamId,
+    mojito_types::origin::Origin,
+    Option<mojito_types::origin::Mutability>,
+);
 
 /// One runtime parameter of a selected callee, recorded per call site.
 struct CallParameter {
@@ -2179,6 +2227,8 @@ struct CallableOriginSignature {
     /// metadata, one per trailing `where` clause. They are checked after
     /// call-origin solving recovers the inferred Bool mutability arguments.
     availability: Vec<GenericConstraint>,
+    /// See [`MethodSig::view_return`]; the free-function twin.
+    view_return: Vec<ViewReturnOrigin>,
 }
 
 /// The source-level pieces of a struct declaration passed through checking.

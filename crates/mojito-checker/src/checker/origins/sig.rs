@@ -353,6 +353,110 @@ pub(in crate::checker) fn callable_origin_signature(
         origins,
         source,
         availability,
+        view_return: Vec::new(),
+    }
+}
+
+impl Checker {
+    /// The origin slots a struct-typed return annotation binds to the
+    /// callee's places (`-> P[origin_of(xs)]`, `-> Wrap[origin_of(self.xs)]`),
+    /// one [`ViewReturnOrigin`] per resolvable slot. Each slot's argument
+    /// lowers like a `ref [...]` clause; its mutability is the callee's own
+    /// capability over the named place — a `mut` parameter or `mut self`
+    /// writes, a read parameter or receiver does not — so a call site can
+    /// judge a write through the result's pointer field as upstream does. A
+    /// placeholder slot, or one naming what the signature cannot lower, is
+    /// left symbolic.
+    pub(in crate::checker) fn view_return_origins(
+        &self,
+        ret: Option<&SourceType>,
+        type_params: &[mojito_ast::ast::TypeParam],
+        params: &[&FnParam],
+        struct_params: usize,
+        self_convention: Option<ArgConvention>,
+    ) -> Vec<ViewReturnOrigin> {
+        use mojito_types::origin::{OriginParamId, SigMutability, SigOrigin};
+        let Some(SourceType::Named(name, arguments)) = ret else {
+            return Vec::new();
+        };
+        let Some(info) = self.structs.get(name) else {
+            return Vec::new();
+        };
+        let is_origin =
+            |parameter: &mojito_ast::ast::TypeParam| parameter.bounds.as_slice() == ["Origin"];
+        let explicit: Vec<(usize, &mojito_ast::ast::TypeParam)> = info
+            .source_params
+            .iter()
+            .enumerate()
+            .filter(|(_, parameter)| !parameter.infer_only)
+            .collect();
+        // The capability the callee itself holds over the place a lowered
+        // origin names.
+        let place_mutability = |origin: &SigOrigin| -> Option<SigMutability> {
+            let mut base = origin;
+            while let SigOrigin::Projected(inner, _) = base {
+                base = inner;
+            }
+            let convention = match base {
+                SigOrigin::Self_ => self_convention,
+                SigOrigin::Param(index) => params.get(*index)?.convention,
+                _ => return None,
+            };
+            Some(match convention {
+                Some(ArgConvention::Mut) => SigMutability::Mutable,
+                Some(ArgConvention::Ref) => SigMutability::Infer,
+                _ => SigMutability::Immutable,
+            })
+        };
+        let mut slots = Vec::new();
+        let mut positional = explicit.iter();
+        for argument in arguments {
+            let (slot, expression) = match argument {
+                mojito_ast::ast::ParamArg::Named { name, value } => {
+                    let Some((slot, _)) = explicit
+                        .iter()
+                        .find(|(_, parameter)| parameter.name == *name && is_origin(parameter))
+                    else {
+                        continue;
+                    };
+                    match value.as_ref() {
+                        mojito_ast::ast::ParamArg::Value(expression) => (*slot, expression),
+                        _ => continue,
+                    }
+                }
+                mojito_ast::ast::ParamArg::Value(expression) => {
+                    let Some((slot, parameter)) = positional.next() else {
+                        break;
+                    };
+                    if !is_origin(parameter) {
+                        continue;
+                    }
+                    (*slot, expression)
+                }
+                mojito_ast::ast::ParamArg::Type(_) => {
+                    positional.next();
+                    continue;
+                }
+            };
+            if matches!(&expression.kind, ExprKind::Identifier(name) if name == "_" || name == "...")
+            {
+                continue;
+            }
+            let spec: mojito_ast::ast::OriginSpec = vec![expression.clone()];
+            let Ok(mut sig) = lower_ref_sig(&spec, type_params, params, struct_params) else {
+                continue;
+            };
+            if sig.mutability == SigMutability::Infer
+                && let Some(mutability) = place_mutability(&sig.origin)
+            {
+                sig.mutability = mutability;
+            }
+            slots.push(ViewReturnOrigin {
+                slot: OriginParamId(slot as u32),
+                sig,
+            });
+        }
+        slots
     }
 }
 

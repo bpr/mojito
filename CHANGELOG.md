@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A write through the pointer field of a view a call returns
+  (`make(xs).src[][0] = 9`, `h.view().src[][0] = 9`, a local bound from
+  either, a field chain below it, and a whole store `make(b).src[] = Box(11)`)
+  now follows the pinned Mojo: a struct-typed return annotation's origin
+  slots (`-> P[origin_of(xs)]`) lower to a view-return contract that the call
+  site resolves against its places with the callee's own capability, so a
+  `mut` parameter or `mut self` writes through while a read parameter or
+  receiver rejects with `expression must be mutable in assignment`. The call
+  result holding the dereferenced pointer materializes as a hidden owned slot,
+  which also fixes reads through such a temporary (`print(make(xs).src[][0])`
+  died in the VM). An `ImmOrigin(o)` cast on a nested construction now
+  survives the field chain (`Wrap(Cell[ImmOrigin(…)](…))` rejects at
+  `w.cell.src[][0] = 1`). Six `assets/ok` and three `assets/type_error`
+  fixtures pin the shapes against the pin.
+
 - Materializing a temporary receiver no longer changes what its loan permits.
   The hidden slot a view-returning method's owning temporary is materialized
   into was lent unconditionally mutably, so a second view derived from the

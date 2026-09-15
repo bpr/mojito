@@ -31,6 +31,11 @@ assets/ok/boolable_and_divmod.mojo	main	exe-differential	sanitized
 assets/ok/borrowed_iteration_temporary_source_drop.mojo	main	exe-differential	sanitized
 assets/ok/bound_generic_write_to.mojo	main	exe-differential	sanitized
 assets/ok/builtins_numeric.mojo	main	exe-differential	sanitized
+assets/ok/call_result_pointer_deref_store.mojo	main	exe-differential	sanitized
+assets/ok/call_result_pointer_field_chain_write.mojo	main	exe-differential	sanitized
+assets/ok/call_result_pointer_field_local_write.mojo	main	exe-differential	sanitized
+assets/ok/call_result_pointer_field_read.mojo	main	exe-differential	sanitized
+assets/ok/call_result_pointer_field_write.mojo	main	exe-differential	sanitized
 assets/ok/call_temporary_ref_receiver.mojo	main	exe-differential	sanitized
 assets/ok/callable_element_call_dispatch.mojo	main	exe-differential	sanitized
 assets/ok/callable_struct_element_invocation.mojo	main	exe-differential	sanitized
@@ -162,6 +167,7 @@ assets/ok/maybe_uninit_predicates.mojo	main	exe-differential	sanitized
 assets/ok/maybe_uninit_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/maybe_uninit_write.mojo	main	exe-differential	sanitized
 assets/ok/method_mut_param.mojo	main	exe-differential	sanitized
+assets/ok/method_result_pointer_field_write.mojo	main	exe-differential	sanitized
 assets/ok/method_value_parameter_binding.mojo	main	exe-differential	sanitized
 assets/ok/movable_where_false_explicit_destroy.mojo	main	exe-differential	sanitized
 assets/ok/move_after_last_raise_in_try.mojo	main	exe-differential	sanitized

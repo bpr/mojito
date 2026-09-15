@@ -469,6 +469,7 @@ pack-struct-variadic-init	run	assets/ok/pack_struct_variadic_init.mojo
 pack-struct-writable	run	assets/ok/pack_struct_writable.mojo
 pack-bare-in-struct-header	run	assets/ok/pack_bare_in_struct_header.mojo
 bare-pack-parameter-in-method	reject	assets/type_error/pack_method_body_unqualified.mojo
+pack-length-runtime-position	mojo-only	conformance/fixtures/pack_length_runtime_position.mojo
 pointer-field-adapter-return-from-field	run	assets/ok/pointer_field_adapter_return_from_field.mojo
 ref-param	run	assets/ok/ref_param.mojo
 size-of-builtin	run	assets/ok/size_of_builtin.mojo

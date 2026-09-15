@@ -1067,6 +1067,40 @@ fn imm_origin_cast_binder_rejects_pointer_write() {
 }
 
 #[test]
+fn call_result_pointer_write_is_judged_by_the_callee_binding() {
+    // A view a call returns binds its origin slot through the callee's
+    // return contract (`-> P[origin_of(xs)]`) with the callee's own
+    // capability: a `mut` parameter writes through, a read one rejects
+    // whatever the caller's `var` allows — through the temporary and through
+    // a local bound from it alike.
+    const P: &str = "@fieldwise_init\nstruct P[m: Bool, //, o: Origin[mut=m]]:\n    var src: Pointer[List[Int], Self.o]\n\n";
+    ok(&format!(
+        "{P}def make(mut xs: List[Int]) -> P[origin_of(xs)]:\n    return P(Pointer(to=xs))\n\ndef main():\n    var xs = List[Int]()\n    xs.append(7)\n    make(xs).src[][0] = 9\n    var p = make(xs)\n    p.src[][0] = 10\n    print(xs[0])\n"
+    ));
+    let error = err(&format!(
+        "{P}def make(xs: List[Int]) -> P[origin_of(xs)]:\n    return P(Pointer(to=xs))\n\ndef main():\n    var xs = List[Int]()\n    xs.append(7)\n    make(xs).src[][0] = 9\n"
+    ));
+    assert!(
+        matches!(&error, TypeError::ImmutableBinding(_)),
+        "got {error:?}"
+    );
+}
+
+#[test]
+fn imm_origin_cast_binder_survives_a_field_chain() {
+    // The cast recorded on a nested construction is found under its field:
+    // `w.cell` resolves `Wrap(Cell[ImmOrigin(…)](…))`'s cast, so the write
+    // rejects while the read stays fine.
+    const W: &str = "@fieldwise_init\nstruct Cell[m: Bool, //, o: Origin[mut=m]]:\n    var src: Pointer[List[Int], Self.o]\n\n@fieldwise_init\nstruct Wrap[m: Bool, //, o: Origin[mut=m]]:\n    var cell: Cell[Self.o]\n\ndef main():\n    var xs = List[Int]()\n    xs.append(7)\n    var w = Wrap(Cell[ImmOrigin(origin_of(xs))](Pointer(to=xs)))\n";
+    ok(&format!("{W}    print(w.cell.src[][0])\n"));
+    let error = err(&format!("{W}    w.cell.src[][0] = 1\n"));
+    assert!(
+        matches!(&error, TypeError::ImmutableBinding(_)),
+        "got {error:?}"
+    );
+}
+
+#[test]
 fn struct_declarations_resolve_order_independently() {
     // Signatures (fields, member types, method signatures) register for every
     // top-level struct before any body checks, so same-module declarations may

@@ -611,8 +611,10 @@ impl Flatten<'_> {
         let base_place = |this: &mut Self, base: &Expr| {
             if this.reference_result(base).is_some() {
                 this.materialize_reference_result_place(base)
+            } else if let Some(place) = this.lower_projected_reference_place(base) {
+                Some(place)
             } else {
-                this.lower_projected_reference_place(base)
+                this.materialized_temporary_base_place(base)
             }
         };
         match &expression.kind {
@@ -1032,6 +1034,43 @@ impl Flatten<'_> {
             place: place.clone(),
         });
         (read, Some(place))
+    }
+
+    /// Whether a field/dereference chain roots at a call result the checker
+    /// materialized as a pointer-field holder.
+    pub(super) fn rooted_at_materialized_temporary(&self, expression: &Expr) -> bool {
+        let mut root = expression;
+        loop {
+            root = match &root.kind {
+                ExprKind::Member { object, .. } | ExprKind::Index { object, .. } => object,
+                _ => match pointer_keyword_subscript(root) {
+                    Some((object, _)) => object,
+                    None => break,
+                },
+            };
+        }
+        matches!(
+            root.kind,
+            ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
+        ) && mojito_checked::checked::materialized_borrow_owner(&self.checked_adjustments(root))
+            .is_some()
+    }
+
+    /// The place of a call result the checker materialized as the holder of
+    /// a dereferenced pointer field (`make(xs).src[][0] = 9`,
+    /// `h.view().src[]`): its hidden owned slot, whose loans keep the viewed
+    /// storage alive while the projection chain reads or writes through it.
+    /// Any other call result is a value, not a place.
+    pub(super) fn materialized_temporary_base_place(&mut self, base: &Expr) -> Option<MirPlace> {
+        if !matches!(
+            base.kind,
+            ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
+        ) {
+            return None;
+        }
+        let owner =
+            mojito_checked::checked::materialized_borrow_owner(&self.checked_adjustments(base))?;
+        self.materialize_borrow_source(base, owner).1
     }
 
     /// Retain storage for any callable place. Nominal callable receivers use it

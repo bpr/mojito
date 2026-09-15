@@ -619,6 +619,12 @@ impl Flatten<'_> {
                 p
             }
             other => {
+                // A borrowing view a call returns is a place only as the base
+                // of a projection into its borrowed storage
+                // (`make(b).src[] = Box(11)`).
+                if let Some(place) = self.materialized_temporary_base_place(e) {
+                    return place;
+                }
                 self.emit(MirInstr::Unsupported(format!(
                     "invalid assignment place reached MIR lowering: {other:?}"
                 )));

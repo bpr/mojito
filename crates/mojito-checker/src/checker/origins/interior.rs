@@ -299,12 +299,54 @@ impl Checker {
         }
     }
 
-    /// The origin binders `name`'s construction bound through an
-    /// `ImmOrigin(o)` cast (empty for any other binding).
+    /// Origins retained by each direct field of a view-returning call's
+    /// result, from the slots its return contract bound at this call
+    /// (`call_result_origins`): a field carrying a bound slot — a
+    /// `Pointer[T, Self.o]`/`ref[Self.o]` field, or a struct-typed field whose
+    /// origin application forwards it — retains that slot's origin. Empty for
+    /// a call that recorded nothing.
+    pub(in crate::checker) fn call_result_field_origins(
+        &self,
+        expression: &Expr,
+    ) -> HashMap<String, Vec<mojito_types::origin::Origin>> {
+        let recorded = self
+            .call_result_origins
+            .borrow()
+            .get(&expression.source_span())
+            .cloned();
+        let Some(slots) = recorded else {
+            return HashMap::new();
+        };
+        let Ok(Ty::Struct(name, _)) = self.infer(expression) else {
+            return HashMap::new();
+        };
+        let Some(info) = self.structs.get(&name) else {
+            return HashMap::new();
+        };
+        let mut result: HashMap<String, Vec<mojito_types::origin::Origin>> = HashMap::new();
+        for (field, ty) in &info.fields {
+            for (slot, origin, _) in &slots {
+                let carries = super::field_carries_origin_param(ty, *slot)
+                    || info.field_origin_arguments.get(field).is_some_and(|pairs| {
+                        pairs.iter().any(|(_, enclosing)| *enclosing == slot.0)
+                    });
+                if carries {
+                    let origins = result.entry(field.clone()).or_default();
+                    if !origins.contains(origin) {
+                        origins.push(origin.clone());
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    /// The origin binders `name`'s initializer bound immutably, each under
+    /// its field path (empty for any other binding).
     pub(in crate::checker) fn lookup_immutable_origin_binders(
         &self,
         name: &str,
-    ) -> Vec<mojito_types::origin::OriginParamId> {
+    ) -> Vec<ImmutableOriginBinder> {
         self.immutable_origin_binder_scopes
             .iter()
             .rev()
@@ -312,13 +354,13 @@ impl Checker {
             .unwrap_or_default()
     }
 
-    /// The origin binders a binding's initializer bound through an
-    /// `ImmOrigin(o)` cast: those its construction recorded, seen through a
-    /// transfer or a named argument.
+    /// The origin binders a value expression bound immutably: those its
+    /// construction or view-returning call recorded, seen through a transfer
+    /// or a named argument.
     pub(in crate::checker) fn construction_immutable_binders(
         &self,
         value: &Expr,
-    ) -> Vec<mojito_types::origin::OriginParamId> {
+    ) -> Vec<ImmutableOriginBinder> {
         match &value.kind {
             ExprKind::Transfer(inner) | ExprKind::Named { value: inner, .. } => {
                 self.construction_immutable_binders(inner)
@@ -332,12 +374,54 @@ impl Checker {
         }
     }
 
-    /// Record the binders `name`'s initializer bound through an `ImmOrigin(o)`
-    /// cast; recorded unconditionally so a re-declaration clears a stale one.
+    /// The origin binders the value `holder` designates bound immutably, at
+    /// the holder itself (an empty path): a binding's recorded casts, a
+    /// construction's or view-returning call's own, and through a field
+    /// chain the casts recorded under that field (`w.cell` finds `Wrap`'s
+    /// `(["cell"], o)`).
+    pub(in crate::checker) fn immutable_origin_binders(
+        &self,
+        holder: &Expr,
+    ) -> Vec<mojito_types::origin::OriginParamId> {
+        self.recorded_immutable_origin_binders(holder)
+            .into_iter()
+            .filter_map(|(path, id)| path.is_empty().then_some(id))
+            .collect()
+    }
+
+    /// The immutable origin binders recorded for the value `holder`
+    /// designates, with their field paths below it: a binding's, a
+    /// construction's or view-returning call's own, and through a field
+    /// chain those recorded under that field.
+    pub(in crate::checker) fn recorded_immutable_origin_binders(
+        &self,
+        holder: &Expr,
+    ) -> Vec<ImmutableOriginBinder> {
+        match &holder.kind {
+            ExprKind::Identifier(name) => self.lookup_immutable_origin_binders(name),
+            ExprKind::Transfer(inner) | ExprKind::Named { value: inner, .. } => {
+                self.recorded_immutable_origin_binders(inner)
+            }
+            ExprKind::Member { object, field } => self
+                .recorded_immutable_origin_binders(object)
+                .into_iter()
+                .filter_map(|(mut path, id)| {
+                    (path.first().is_some_and(|head| head == field)).then(|| {
+                        path.remove(0);
+                        (path, id)
+                    })
+                })
+                .collect(),
+            _ => self.construction_immutable_binders(holder),
+        }
+    }
+
+    /// Record the binders `name`'s initializer bound immutably; recorded
+    /// unconditionally so a re-declaration clears a stale one.
     pub(in crate::checker) fn set_immutable_origin_binders(
         &mut self,
         name: &str,
-        binders: Vec<mojito_types::origin::OriginParamId>,
+        binders: Vec<ImmutableOriginBinder>,
     ) {
         let Some(scope) = self.binding_scope(name) else {
             return;
@@ -439,11 +523,14 @@ impl Checker {
                 }
                 result
             }
+            ExprKind::MethodCall { .. } | ExprKind::Invoke { .. } => {
+                self.call_result_field_origins(expression)
+            }
             ExprKind::Call {
                 name, args, kwargs, ..
             } => {
                 let Some(info) = self.structs.get(name) else {
-                    return HashMap::new();
+                    return self.call_result_field_origins(expression);
                 };
                 let fields = info.fields.clone();
                 let mut result = HashMap::new();

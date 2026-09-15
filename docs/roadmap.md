@@ -435,21 +435,15 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     - Pinned by `conformance/probes/tuple_unpack_named_place_copies.mojo`.
     - Model: Opus, plan first. The lever is the ImplicitCopy funnel, but the
       MIR and VM fallout of copying at the unpack is not enumerated.
-  - `call-result-pointer-field-write`: a write through the pointer field of
-    a view a call returns (`make(xs).src[][0] = 9`) is rejected as a
-    symbolic-origin write, while the pin runs it.
-    - A symbolic `Origin[mut=m]` binder resolves through a named binding's
-      construction-time origins; a call result has none, so the write is
-      judged as if in the generic body. Before that rejection the program
-      died in MIR (`selected subscript reference receiver has no retained
-      caller place`).
-    - A nested `ImmOrigin(o)` application has the mirror gap: the cast is
-      kept per identifier binding, so `w.cell.src[][0] = 1` through
-      `Wrap(Cell[ImmOrigin(origin_of(xs))](…))` still writes.
-    - Pinned by `conformance/probes/call_result_pointer_field_write.mojo`.
-    - Model: Fable. The bindings must flow from a callee's return contract
-      and through field chains, and the MIR retained-place gap sits beneath
-      the first shape.
+  - `pointer-field-deref-field-store`: a field store through the
+    dereferenced pointer field of a view (`p.src[].v = 9`) fails at the VM
+    with "cannot index ref", while the pin runs it.
+    - A whole store through the same dereference (`p.src[] = Box(11)`) and
+      a field store through a plain pointer local (`q[].v = 9`) both run;
+      only the field projection below a pointer-field index fails.
+    - Pinned by `conformance/probes/pointer_field_deref_field_store.mojo`.
+    - Model: Opus, plan first. Whether the VM's place writer or the MIR
+      place shape (`root.src[0].v`) is at fault is not yet known.
   - `string-subscript-element`: `s[0]` on a `String` yields a character
     upstream and an `Int` in Mojito
     (`assets/ok/nominal_string_indexing.mojo`, `h` against `104`). Two
@@ -547,6 +541,21 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
 
   Five divergences are retained on purpose and re-probed rather than fixed;
   they are listed in [`docs/non-goals.md`](non-goals.md).
+
+- [ ] A `def`'s own type pack cannot be queried in a runtime position:
+  `return 1 + Us.length` fails with "Undefined variable 'Us'", while the
+  pinned Mojo runs it.
+  - A free `def count[*Us](var *extra: *Us)` and a method-own pack on any
+    struct fail the same way. A compile-time position (`comptime for i in
+    range(Us.length)`) works, and so does a variadic struct's own pack
+    (`Self.Ts.length`) in a runtime position.
+  - Only `generate_struct_spec` binds a pack into the substitutions that
+    `fold_pack_typelist_use` (`comptime/rewrite.rs`) reads during
+    materialization; `def` specialization never does.
+  - Pinned by `conformance/fixtures/pack_length_runtime_position.mojo`
+    (`pack-length-runtime-position`, `mojo-only`).
+  - Model: Opus, plan first. Deliberately last in this section: native
+    backend work comes first.
 
 ### 3. Front-End Groundwork For A Pliron-Centered Architecture
 

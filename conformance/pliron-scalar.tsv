@@ -31,6 +31,11 @@ assets/ok/boolable_and_divmod.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/borrowed_iteration_temporary_source_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bound_generic_write_to.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/builtins_numeric.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/call_result_pointer_deref_store.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/call_result_pointer_field_chain_write.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/call_result_pointer_field_local_write.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/call_result_pointer_field_read.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/call_result_pointer_field_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/call_temporary_ref_receiver.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/callable_element_call_dispatch.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/callable_struct_element_invocation.mojo	-	ineligible	no-scalar-entry-shape
@@ -162,6 +167,7 @@ assets/ok/maybe_uninit_predicates.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/maybe_uninit_roundtrip.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/maybe_uninit_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_mut_param.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/method_result_pointer_field_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_value_parameter_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/movable_where_false_explicit_destroy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/move_after_last_raise_in_try.mojo	-	ineligible	no-scalar-entry-shape

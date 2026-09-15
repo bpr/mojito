@@ -392,6 +392,13 @@ impl Checker {
                 _ => None,
             },
             view_return_interior: view_return_interior_tags(method.ret.as_ref()),
+            view_return: self.view_return_origins(
+                method.ret.as_ref(),
+                &self.enclosing_type_params,
+                &regular_params,
+                self.enclosing_struct_type_params.get(),
+                method.self_convention,
+            ),
             implicit: method
                 .decorators
                 .iter()
@@ -1461,6 +1468,63 @@ impl Checker {
         }
     }
 
+    /// The immutable origin binders a construction's struct-typed arguments
+    /// recorded, each under the field it initializes (`Wrap(Cell[ImmOrigin(o)](…))`
+    /// gives `(["cell"], o)`): a fieldwise initializer's arguments land in
+    /// declaration order, and a handwritten `__init__` conventionally forwards
+    /// a same-named parameter into each field, as `aggregate_field_origins`
+    /// assumes too.
+    fn nested_immutable_binders(
+        &self,
+        info: &StructInfo,
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Vec<ImmutableOriginBinder> {
+        let field_argument = |field: &str, position: usize| {
+            args.get(position).or_else(|| {
+                kwargs
+                    .iter()
+                    .find(|argument| argument.name == field)
+                    .map(|argument| &argument.value)
+            })
+        };
+        let mut nested = Vec::new();
+        for (field, ty) in &info.fields {
+            if !matches!(ty, Ty::Struct(..)) {
+                continue;
+            }
+            let position = if info.fieldwise_init {
+                info.fields.iter().position(|(name, _)| name == field)
+            } else {
+                info.methods.get("__init__").and_then(|signatures| {
+                    signatures
+                        .iter()
+                        .find(|signature| signature.params.len() >= args.len())
+                        .and_then(|signature| signature.names.iter().position(|name| name == field))
+                })
+            };
+            let Some(argument) = position.and_then(|position| field_argument(field, position))
+            else {
+                continue;
+            };
+            // The argument's own construction records its casts when it is
+            // typed, which the outer construction's argument typing has not
+            // yet done at this point.
+            if self.infer(argument).is_err() {
+                continue;
+            }
+            nested.extend(
+                self.recorded_immutable_origin_binders(argument)
+                    .into_iter()
+                    .map(|(mut path, id)| {
+                        path.insert(0, field.clone());
+                        (path, id)
+                    }),
+            );
+        }
+        nested
+    }
+
     /// Record a generic constructor's resolved compile-time arguments for
     /// per-call specialization and, once its clone exists on the struct,
     /// retarget the construction to it (`Variant$…​.__init__$y3:Int`).
@@ -1525,15 +1589,17 @@ impl Checker {
             self.partition_struct_origin_args(name, &info.source_params, param_args)?;
         let param_args: &[mojito_ast::ast::ParamArg] = &partitioned.forwarded;
         // An `ImmOrigin(o)` argument binds its slot immutably whatever the
-        // source allows; the binding site keeps that fact for writes.
-        let immutable_binders = partitioned
+        // source allows; the binding site keeps that fact for writes, and a
+        // nested construction's casts ride along under their field.
+        let mut immutable_binders = partitioned
             .explicit_origins
             .iter()
             .filter(|explicit| {
                 explicit.mutability == Some(mojito_types::origin::Mutability::Immutable)
             })
-            .map(|explicit| explicit.id)
+            .map(|explicit| (Vec::new(), explicit.id))
             .collect::<Vec<_>>();
+        immutable_binders.extend(self.nested_immutable_binders(info, args, kwargs));
         self.construction_immutable_binders
             .borrow_mut()
             .insert(span.clone(), immutable_binders);
@@ -1684,6 +1750,7 @@ impl Checker {
                             instantiation,
                             parameter_names: sig.names.clone(),
                             view_return_interior: sig.view_return_interior.clone(),
+                            view_return: Vec::new(),
                         });
                     }
                 }

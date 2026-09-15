@@ -2638,8 +2638,12 @@ pointer designates one checked value rather than an allocation, the checker
 rejects non-zero offsets, pointer arithmetic and comparison, `free()`, writes
 through immutable or unresolved symbolic provenance
 (`pointer_write_capability`: a pointer field's `Origin[mut=m]` binder resolves
-through the holder's construction-time origins, and the dereference place
-carries that capability rather than the holder binding's), and returns that
+through the holder's construction-time origins — for a call result, the
+origins its callee's view-return contract (`ViewReturnOrigin`, resolved into
+`call_result_origins` at the call) bound with the callee's own capability —
+and the dereference place carries that capability rather than the holder
+binding's; a call result holding the dereferenced pointer materializes as an
+anonymous owned slot, `materialize_temporary_holder`), and returns that
 would escape the origin
 (`returned pointer escapes storage outside its declared origin`). A method may,
 however, return the *dereference* of an origin-bearing pointer field whose origin

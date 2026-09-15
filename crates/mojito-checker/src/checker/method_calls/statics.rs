@@ -340,6 +340,7 @@ impl Checker {
                     instantiation: instantiation.clone(),
                     parameter_names: sig.names.clone(),
                     view_return_interior: sig.view_return_interior.clone(),
+                    view_return: sig.view_return.clone(),
                 });
             }
         }

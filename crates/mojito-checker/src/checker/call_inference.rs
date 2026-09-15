@@ -676,6 +676,13 @@ impl Checker {
                             args,
                             &span,
                         )?;
+                        self.record_free_call_result_origins(
+                            &span,
+                            &prepared,
+                            origin_signatures.get(index),
+                            args,
+                            kwargs,
+                        );
                     }
                     if let Some(error) = error.filter(|ty| *ty != Ty::Never) {
                         self.record_call_effect(span.clone(), error.clone());
@@ -834,6 +841,7 @@ impl Checker {
                 .insert(span.clone(), target);
         }
         self.record_view_result_borrow(&span, &ret);
+        self.record_free_call_result_origins(&span, &ty, origin_signatures.first(), args, kwargs);
         self.record_call_parameter_names(&span, &ty);
         if let Some(error) = error.filter(|ty| *ty != Ty::Never) {
             self.record_call_effect(span, error.clone());
@@ -893,6 +901,72 @@ impl Checker {
                     },
                 );
         }
+    }
+
+    /// Resolve a free call's view-return contract (the selected overload's
+    /// `CallableOriginSignature::view_return`) against its arguments and
+    /// record the result's origin slots; see `record_call_result_origins`.
+    /// The slots are matched exactly as the call typing matched them.
+    fn record_free_call_result_origins(
+        &self,
+        span: &SourceSpan,
+        callee: &Ty,
+        signature: Option<&super::CallableOriginSignature>,
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) {
+        let Some(signature) = signature.filter(|signature| !signature.view_return.is_empty())
+        else {
+            return;
+        };
+        let (Ty::Func {
+            names,
+            required,
+            variadic,
+            kw_variadic,
+            positional_only,
+            keyword_only,
+            ..
+        }
+        | Ty::GenericFunc {
+            names,
+            required,
+            variadic,
+            kw_variadic,
+            positional_only,
+            keyword_only,
+            ..
+        }) = callee
+        else {
+            return;
+        };
+        let kw_names: Vec<&str> = kwargs
+            .iter()
+            .filter(|argument| !argument.is_forwarded())
+            .map(|argument| argument.name.as_str())
+            .collect();
+        let Ok(matched) = match_call_slots(
+            names,
+            required,
+            *positional_only,
+            *keyword_only,
+            args.len(),
+            &kw_names,
+            CallVariadics {
+                positional: variadic.is_some(),
+                keyword: kw_variadic.is_some(),
+            },
+        ) else {
+            return;
+        };
+        self.record_call_result_origins(
+            span,
+            &signature.view_return,
+            &matched.slots,
+            args,
+            kwargs,
+            None,
+        );
     }
 
     /// Type the bare element-call spelling — `objs[0](3)`, `a.b[i](x)`,
