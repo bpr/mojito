@@ -184,5 +184,6 @@ struct StringDict[V: Movable](
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)] where conforms_to(
         Self.V, Copyable
     ):
-        ref source = self.entries
-        return _DictKeyIter(_DictEntryIter(source, 0))
+        return _DictKeyIter(
+            _DictEntryIter(Pointer(to=self.entries).unsafe_origin_cast[origin_of(self)](), 0)
+        )

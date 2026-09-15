@@ -16,12 +16,12 @@ struct _SetIter[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
     ] = Self
 
-    var src: ref[iterable_origin] List[Self.T]
+    var src: Pointer[List[Self.T], Self.iterable_origin]
     var index: Int
 
     # Optimization hint / compatibility API; exhaustion is StopIteration.
     def __len__(self) -> Int:
-        return len(self.src) - self.index
+        return len(self.src[]) - self.index
 
     # The iterator iterates itself (upstream's `IteratorType = Self`): a
     # stored iterator drives a loop directly.
@@ -34,11 +34,11 @@ struct _SetIter[
     def __next__(mut self) raises StopIteration -> ref[
         ImmOrigin(Self.iterable_origin._get_owned_interior["element"])
     ] Self.T where conforms_to(Self.T, Copyable):
-        if self.index >= len(self.src):
+        if self.index >= len(self.src[]):
             raise StopIteration()
         var r = self.index
         self.index += 1
-        return self.src[r]
+        return self.src[][r]
 
 struct Set[
     T: Hashable & Equatable & Movable, H: Hasher = default_hasher
@@ -292,9 +292,12 @@ struct Set[
     ):
         # Construct the borrowed iterator directly: an explicit
         # `self.items.__iter__()` call is ambiguous between the borrowed and
-        # owned List overloads.
-        ref source = self.items
-        return _SetIter[Self.T](source, 0)
+        # owned List overloads. The items list is the set's private backing
+        # storage, so the view borrows the whole set, as upstream's
+        # `Pointer(to=self)` does.
+        return _SetIter[Self.T](
+            Pointer(to=self.items).unsafe_origin_cast[origin_of(self)](), 0
+        )
 
     def __iter__(var self) -> _ListOwnedIter[Self.T] where conforms_to(
         Self.T, Deinitable

@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A returned view no longer widens a field's origin to its holder's, as in
+  the pinned Mojo: `return` judges a struct's origin tail against the return
+  annotation resolved over the body's own places, so `-> View[origin_of(self)]`
+  returning a view over `self.items`, and a free function's `-> View[origin_of(b)]`
+  returning one over `b.items`, reject with upstream's "cannot implicitly
+  convert 'View[origin_of(self.items)]' value to 'View[origin_of(self)]'",
+  while the exact `-> View[origin_of(self.items)]` spelling is accepted. The
+  bundled `Dict`, `Set`, and `StringDict` iterators hold a `Pointer` to their
+  backing list rebound to the whole container's origin, as upstream's do.
+  Three `assets/type_error` fixtures pin the rule against the pin, and three
+  former extension fixtures move to `assets/ok`; the
+  `return-origin-widening` ledger row is closed. A view stored in a direct
+  `ref` field still widens (new `ref-field-return-origin-widening` row).
+
 - A struct's origin arguments are now part of its checked identity, as in
   the pinned Mojo: `Ty::Struct` carries an origin tail (one entry per explicit
   `Origin` slot) that constructors bind from their arguments and view-returning

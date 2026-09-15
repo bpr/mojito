@@ -337,11 +337,14 @@ assets/ok/pointer_field_symbolic_origin_mut_parameter_write.mojo	-	ineligible	no
 assets/ok/pointer_field_symbolic_origin_mutable_local_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_symbolic_origin_ref_constructor_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_symbolic_origin_wrapper_field_write.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_field_view_for_temporary.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_view_free_function.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_view_method_return.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_view_plain_self.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_view_read_parameter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_field_view_ref_yield.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_view_returned.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_field_wrapper_iterator_protocol.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_immutable_conversion.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_origin_cast_upgrade_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_origin_constructors.mojo	-	ineligible	no-scalar-entry-shape
@@ -518,9 +521,6 @@ assets/extensions/ok/pointer_field_parametric_mut_iterator_read.mojo	-	ineligibl
 assets/extensions/ok/pointer_field_reference_yielding_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/pointer_field_reference_yielding_iteration_named_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/pointer_field_reference_yielding_iteration_parametric_mut.mojo	-	ineligible	no-scalar-entry-shape
-assets/extensions/ok/pointer_field_view_for_temporary.mojo	-	ineligible	no-scalar-entry-shape
-assets/extensions/ok/pointer_field_view_ref_yield.mojo	-	ineligible	no-scalar-entry-shape
-assets/extensions/ok/pointer_field_wrapper_iterator_protocol.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_adapter_from_reborrow.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_adapter_return_from_field.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_chained_view_call.mojo	-	ineligible	no-scalar-entry-shape

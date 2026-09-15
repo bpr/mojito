@@ -680,6 +680,11 @@ pub struct Checker {
     /// `Bool` (see `SemanticAdjustment::Truthiness`).
     truthiness_conditions: RefCell<HashSet<SourceSpan>>,
     return_ref_contracts: Vec<Option<ReturnRefContract>>,
+    /// The enclosing body's value-return annotation, re-resolved over the
+    /// body's own places to judge a returned struct's origin tail, flagged
+    /// when it belongs to a compiler-generated (`$`-mangled) specialization;
+    /// `None` for a reference return.
+    return_annotations: Vec<Option<(mojito_ast::ast::SourceType, bool)>>,
     named_result_context: Vec<bool>,
     raising_context: Vec<Option<Ty>>,
     handled_raise_depth: usize,
@@ -808,6 +813,7 @@ impl Checker {
             implicitly_copied_consuming_receivers: RefCell::new(HashSet::new()),
             truthiness_conditions: RefCell::new(HashSet::new()),
             return_ref_contracts: Vec::new(),
+            return_annotations: Vec::new(),
             named_result_context: Vec::new(),
             raising_context: Vec::new(),
             handled_raise_depth: 0,

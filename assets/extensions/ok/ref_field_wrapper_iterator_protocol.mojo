@@ -1,11 +1,9 @@
 # The upstream dict-iterator adapter shape end-to-end: a wrapper iterator
 # holding an origin-applied ref-field entry iterator (monomorphic comptime
 # alias in field position), full raising-iterator protocol, and a for-loop
-# driving the wrapped chain through `keys()`.
-# The pin rejects this shape at `keys()`: `cannot implicitly convert
-# 'KeyIter[origin_of(self.entries)]' value to 'KeyIter[origin_of(self)]'`.
-# Mojito widens a returned view's sub-origin to the declared receiver origin
-# (the `return-origin-widening` ledger row in docs/roadmap.md).
+# driving the wrapped chain through `keys()`, whose view carries the borrowed
+# field's own origin (`origin_of(self.entries)`).
+# The pin rejects the direct `ref` struct field (a kept extension).
 from std.iter import Iterator, StopIteration
 
 @fieldwise_init
@@ -47,12 +45,7 @@ struct KeyIter[m: Bool, //, o: Origin[mut=m]](Copyable, Iterator):
     def __next__(mut self) raises StopIteration -> Int:
         return self.iter.__next__().key
 
-struct Table(Iterable):
-    comptime Element = Int
-    comptime IteratorType[
-        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = KeyIter[iterable_origin]
-
+struct Table:
     var entries: List[Pair]
 
     def __init__(out self):
@@ -60,10 +53,7 @@ struct Table(Iterable):
         self.entries.append(Pair(1, 10))
         self.entries.append(Pair(2, 20))
 
-    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
-        return self.keys()
-
-    def keys(ref self) -> Self.IteratorType[origin_of(self)]:
+    def keys(ref self) -> KeyIter[origin_of(self.entries)]:
         ref source = self.entries
         return KeyIter(EntryIter(source, 0))
 

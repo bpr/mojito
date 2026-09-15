@@ -21,21 +21,87 @@ impl Checker {
             .any(|scope| scope.values().any(|candidate| *candidate == owner))
     }
 
-    /// Abstract the struct origin tails of a returned value to the signature
-    /// origins the declared return type names: a tail rooted at the frame's
-    /// receiver satisfies a declared `origin_of(self)`, and one rooted at a
-    /// parameter satisfies that parameter's declared origin. Every other
-    /// tail entry, and every non-tail part of the type, stays as found, so
-    /// the ordinary return coercion reports what does not fit.
-    pub(in crate::checker) fn abstract_return_origin_tails(&self, found: &Ty, declared: &Ty) -> Ty {
+    /// Judge the struct origin tails of a returned value against the
+    /// enclosing body's return annotation resolved over the body's own
+    /// places, where `origin_of(self.items)` names the receiver's field and
+    /// not, as in the signature, the whole receiver. A tail that fits takes
+    /// the declared signature origin, so the ordinary return coercion sees
+    /// the signature's spelling; one that does not is rejected with
+    /// upstream's text. Every non-tail part of the type stays as found.
+    pub(in crate::checker) fn reconcile_return_origin_tails(
+        &self,
+        found: &Ty,
+        declared: &Ty,
+    ) -> Result<Ty, TypeError> {
+        use mojito_types::origin::{Origin, OriginSeg};
+        let Some(Some((annotation, generated))) = self.return_annotations.last() else {
+            return Ok(found.clone());
+        };
+        let resolved = if *generated {
+            self.resolve_generated_return_annotation(annotation)
+        } else {
+            self.resolve_return_annotation(annotation)
+        };
+        let Ok(bound) = resolved else {
+            return Ok(found.clone());
+        };
         let frames = self.transfer_frames.borrow();
-        let Some(frame) = frames.last() else {
-            return found.clone();
+        let frame = frames.last();
+        // A found tail fits the bound one when it coerces, or when both name
+        // the same receiver or parameter storage itself — one symbolically,
+        // the other as its place, or the bound through the storage's owned
+        // interior regions. A projection onto a field never fits a wider
+        // bound.
+        let self_owner = frame.and_then(|frame| frame.self_owner);
+        let is_param_owner = |root| frame.is_some_and(|frame| frame.param_owners.contains(&root));
+        let interior_only = |place: &mojito_types::origin::OriginPlace| {
+            place
+                .path
+                .iter()
+                .all(|segment| matches!(segment, OriginSeg::Interior(_) | OriginSeg::Subtree))
         };
-        let abstracted = |origin: &mojito_types::origin::Origin| {
-            self.abstract_body_origin(origin, &frame.param_owners, frame.self_owner)
+        let fits = |actual: &Origin, bound: &Origin| {
+            actual.coerces_to(bound)
+                || match (actual, bound) {
+                    (Origin::Place(place), Origin::SelfParam) => {
+                        interior_only(place) && self_owner == Some(place.root)
+                    }
+                    (Origin::Place(place), Origin::Param(_)) => {
+                        interior_only(place) && is_param_owner(place.root)
+                    }
+                    (Origin::Place(place), Origin::Place(bound)) => {
+                        interior_only(place) && bound.root == place.root && interior_only(bound)
+                    }
+                    (Origin::SelfParam, Origin::Place(bound)) => {
+                        interior_only(bound) && self_owner == Some(bound.root)
+                    }
+                    (Origin::Param(_), Origin::Place(bound)) => {
+                        interior_only(bound) && is_param_owner(bound.root)
+                    }
+                    _ => false,
+                }
         };
-        abstract_origin_tails(found, declared, &abstracted)
+        let mut mismatch = false;
+        let reconciled = reconcile_origin_tails(found, declared, &bound, &fits, &mut mismatch);
+        if mismatch {
+            return Err(TypeError::OriginIdentityMismatch {
+                found: self.display_ty_with_origin_names(found),
+                expected: self.display_ty_with_origin_names(&bound),
+            });
+        }
+        Ok(reconciled)
+    }
+
+    /// The return annotation a body's `return` re-resolves — a value return,
+    /// not a reference return — flagged when it is the rebound annotation of
+    /// a compiler-generated (`$`-mangled) specialization.
+    pub(in crate::checker) fn body_return_annotation(
+        annotation: Option<&mojito_ast::ast::SourceType>,
+        name: &str,
+    ) -> Option<(mojito_ast::ast::SourceType, bool)> {
+        annotation
+            .filter(|annotation| !matches!(annotation, mojito_ast::ast::SourceType::Ref { .. }))
+            .map(|annotation| (annotation.clone(), name.contains('$')))
     }
 
     /// Abstract a body-level origin to a signature-relative origin for a
@@ -456,69 +522,96 @@ fn spelled_origin(expression: &Expr) -> Option<String> {
     place_text(expression).map(|text| format!("origin_of({text})"))
 }
 
-/// See [`Checker::abstract_return_origin_tails`]: walk `found` and
-/// `declared` in parallel, replacing a found tail origin by the declared one
-/// when both abstract to the same signature origin.
-fn abstract_origin_tails(
+/// See [`Checker::reconcile_return_origin_tails`]: walk `found`, `declared`,
+/// and the body-resolved `bound` in parallel. A found tail origin that
+/// `fits` the bound one takes the declared origin, a tail still left to
+/// inference stays as found, and any other tail sets `mismatch`.
+fn reconcile_origin_tails(
     found: &Ty,
     declared: &Ty,
-    abstracted: &dyn Fn(&mojito_types::origin::Origin) -> Option<mojito_types::origin::SigOrigin>,
+    bound: &Ty,
+    fits: &dyn Fn(&mojito_types::origin::Origin, &mojito_types::origin::Origin) -> bool,
+    mismatch: &mut bool,
 ) -> Ty {
-    use mojito_types::origin::{Origin, SigOrigin};
-    let declared_sig = |origin: &Origin| match origin {
-        Origin::SelfParam => Some(SigOrigin::Self_),
-        Origin::Place(_) => abstracted(origin),
-        _ => None,
-    };
-    match (found, declared) {
-        (Ty::Struct(found_name, found_args), Ty::Struct(declared_name, declared_args))
-            if found_name == declared_name && found_args.len() == declared_args.len() =>
+    use mojito_types::origin::Origin;
+    match (found, declared, bound) {
+        (
+            Ty::Struct(found_name, found_args),
+            Ty::Struct(declared_name, declared_args),
+            Ty::Struct(bound_name, bound_args),
+        ) if found_name == declared_name
+            && declared_name == bound_name
+            && found_args.len() == declared_args.len()
+            && declared_args.len() == bound_args.len() =>
         {
             Ty::Struct(
                 found_name.clone(),
                 found_args
                     .iter()
                     .zip(declared_args)
-                    .map(|(found, declared)| match (found, declared) {
-                        (TyArg::Ty(found), TyArg::Ty(declared)) => {
-                            TyArg::Ty(abstract_origin_tails(found, declared, abstracted))
-                        }
-                        (TyArg::Origin(actual), TyArg::Origin(expected))
-                            if !actual.coerces_to(expected)
-                                && matches!(actual, Origin::Place(_))
-                                && abstracted(actual).is_some()
-                                && abstracted(actual) == declared_sig(expected) =>
-                        {
-                            TyArg::Origin(expected.clone())
-                        }
-                        _ => found.clone(),
-                    })
+                    .zip(bound_args)
+                    .map(
+                        |((found, declared), bound)| match (found, declared, bound) {
+                            (TyArg::Ty(found), TyArg::Ty(declared), TyArg::Ty(bound)) => TyArg::Ty(
+                                reconcile_origin_tails(found, declared, bound, fits, mismatch),
+                            ),
+                            (
+                                TyArg::Origin(Origin::Unbound),
+                                TyArg::Origin(_),
+                                TyArg::Origin(_),
+                            ) => found.clone(),
+                            (
+                                TyArg::Origin(actual),
+                                TyArg::Origin(expected),
+                                TyArg::Origin(bound),
+                            ) => {
+                                if fits(actual, bound) {
+                                    TyArg::Origin(expected.clone())
+                                } else {
+                                    *mismatch |= body_place_origin(actual);
+                                    found.clone()
+                                }
+                            }
+                            _ => found.clone(),
+                        },
+                    )
                     .collect(),
             )
         }
-        (Ty::Tuple(found_elements), Ty::Tuple(declared_elements))
-            if found_elements.len() == declared_elements.len() =>
+        (Ty::Tuple(found_elements), Ty::Tuple(declared_elements), Ty::Tuple(bound_elements))
+            if found_elements.len() == declared_elements.len()
+                && declared_elements.len() == bound_elements.len() =>
         {
             Ty::Tuple(
                 found_elements
                     .iter()
                     .zip(declared_elements)
-                    .map(|(found, declared)| abstract_origin_tails(found, declared, abstracted))
+                    .zip(bound_elements)
+                    .map(|((found, declared), bound)| {
+                        reconcile_origin_tails(found, declared, bound, fits, mismatch)
+                    })
                     .collect(),
             )
         }
         // The public `Tuple` and its generated specialization symbol compare
-        // by element (see `coerces`); abstract the elements in place.
-        (Ty::Struct(found_name, found_args), _)
-            if let (Some(found_elements), Some(declared_elements)) = (
+        // by element (see `coerces`); reconcile the elements in place.
+        (Ty::Struct(found_name, found_args), _, _)
+            if let (Some(found_elements), Some(declared_elements), Some(bound_elements)) = (
                 mojito_types::types::tuple_elements(found),
                 mojito_types::types::tuple_elements(declared),
-            ) && found_elements.len() == declared_elements.len() =>
+                mojito_types::types::tuple_elements(bound),
+            ) && found_elements.len() == declared_elements.len()
+                && declared_elements.len() == bound_elements.len() =>
         {
-            let mut elements = found_elements
+            let reconciled: Vec<Ty> = found_elements
                 .iter()
                 .zip(declared_elements)
-                .map(|(found, declared)| abstract_origin_tails(found, declared, abstracted));
+                .zip(bound_elements)
+                .map(|((found, declared), bound)| {
+                    reconcile_origin_tails(found, declared, bound, fits, mismatch)
+                })
+                .collect();
+            let mut elements = reconciled.into_iter();
             Ty::Struct(
                 found_name.clone(),
                 found_args
@@ -531,5 +624,17 @@ fn abstract_origin_tails(
             )
         }
         _ => found.clone(),
+    }
+}
+
+/// Whether a found tail names the body's own storage — a place, or a union
+/// of places — rather than a symbolic origin left from a callee's signature,
+/// which the return annotation cannot judge.
+fn body_place_origin(origin: &mojito_types::origin::Origin) -> bool {
+    use mojito_types::origin::Origin;
+    match origin {
+        Origin::Place(_) => true,
+        Origin::Union(members) => members.iter().all(body_place_origin),
+        _ => false,
     }
 }

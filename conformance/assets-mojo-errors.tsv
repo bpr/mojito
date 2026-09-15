@@ -342,6 +342,9 @@ assets/type_error/receiver_carried_origin_alias.mojo	compile-reject	agree	error:
 assets/type_error/reference_element_append_rejected.mojo	compile-reject	agree	error: expected ']' in call argument list
 assets/type_error/reference_element_handle_replacement_rejected.mojo	compile-reject	agree	error: expected ']' in call argument list
 assets/type_error/reserved_word_function_name.mojo	compile-reject	agree	error: 'del' cannot be used as a function name in this context
+assets/type_error/return_origin_widening_field_view.mojo	compile-reject	agree	error: cannot implicitly convert 'View[origin_of(self.items)]' value to 'View[origin_of(self)]'
+assets/type_error/return_origin_widening_parameter_field.mojo	compile-reject	agree	error: cannot implicitly convert 'View[origin_of(b.items)]' value to 'View[origin_of(b)]'
+assets/type_error/return_origin_widening_wrapper_adapter.mojo	compile-reject	agree	error: cannot implicitly convert 'KeyIter[origin_of(self.entries)]' value to 'KeyIter[origin_of(self)]'
 assets/type_error/scalar_range_float_needs_step.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/scalar_range_mixed_dtypes.mojo	compile-reject	agree	error: no matching function in call to 'range'
 assets/type_error/set_clear_with_bad_handler.mojo	compile-reject	agree	error: invalid call to 'clear_with': value passed to 'destroy_func' cannot be converted from 'def `lambda_0(a: Int, b: Int) thin -> None' to 'T'

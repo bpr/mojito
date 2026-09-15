@@ -444,23 +444,22 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     - Pinned by `conformance/probes/pointer_field_deref_field_store.mojo`.
     - Model: Opus, plan first. Whether the VM's place writer or the MIR
       place shape (`root.src[0].v`) is at fault is not yet known.
-  - `return-origin-widening`: a method returning a view over one of its
-    receiver's fields under a declared `-> View[origin_of(self)]` is accepted
-    in Mojito and rejected by the pin.
-    - `def view(ref self) -> View[origin_of(self)]: return View(Pointer(to=self.items))`
-      passes here; the pin says `cannot implicitly convert
-      'View[origin_of(self.items)]' value to 'View[origin_of(self)]'`.
-    - The return check abstracts a struct origin tail rooted at the receiver
-      to the declared `origin_of(self)` (`abstract_return_origin_tails`,
-      `checker/origins/solve.rs`) so the bundled containers' `__iter__`
-      bodies type-check; the pin wants the exact origin spelled.
-    - Pinned by `assets/extensions/ok/pointer_field_view_for_temporary.mojo`,
-      `pointer_field_view_ref_yield.mojo`, and the two
-      `*_wrapper_iterator_protocol.mojo` fixtures, which stay extensions for
-      it.
-    - Model: Opus, plan first. The lever is one abstraction site, but every
-      bundled container `__iter__`/`keys()` body that borrows a field moves
-      with it.
+  - `ref-field-return-origin-widening`: a view struct that stores its source
+    in a direct `ref` field still widens a returned field view to a declared
+    `origin_of(self)`.
+    - `def view(ref self) -> View[origin_of(self)]` returning
+      `View(source, 0)` over `ref source = self.items` passes when `View`
+      holds `ref[o] List[Int]`.
+    - The `Pointer`-field twin rejects with upstream's "cannot implicitly
+      convert 'View[origin_of(self.items)]' value to 'View[origin_of(self)]'"
+      (`assets/type_error/return_origin_widening_field_view.mojo`).
+    - Why the tail escapes `reconcile_return_origin_tails`
+      (`checker/origins/solve.rs`) is not yet known; the likely lever is the
+      tail the `ref`-field constructor binds.
+    - Pinned by `assets/extensions/ok/ref_field_view_for_temporary.mojo`,
+      `ref_field_view_ref_yield.mojo`, `ref_field_view_method_return.mojo`,
+      `ref_field_drain_mut_method.mojo`, and `ref_field_chained_view_call.mojo`.
+    - Model: Opus. The rule already exists; the gap is one constructor path.
   - `string-subscript-element`: `s[0]` on a `String` yields a character
     upstream and an `Int` in Mojito
     (`assets/ok/nominal_string_indexing.mojo`, `h` against `104`). Two

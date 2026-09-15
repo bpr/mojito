@@ -4,8 +4,8 @@
 # bucket (the low bits of the entry's cached `H` hash; the bucket count is
 # always a power of two) to entry positions, doubling when the load factor
 # reaches one. The
-# iterators borrow the entries list and yield references at `element`
-# interior granularity, so mutation during iteration is rejected;
+# iterators borrow the whole dictionary through a pointer to its entries list
+# and yield references at `element` interior granularity;
 # `keys`/`values`/`items` return self-iterable, non-indexable borrowing
 # views without `len`, matching upstream's view surface (value/entry yields
 # are read-only — a conservative subset of upstream's mut-following value
@@ -68,7 +68,7 @@ struct _DictEntryIter[
         view_mut: Bool, //, view_origin: Origin[mut=view_mut]
     ] = Self
 
-    var src: ref[iterable_origin] List[DictEntry[Self.K, Self.V, Self.H]]
+    var src: Pointer[List[DictEntry[Self.K, Self.V, Self.H]], Self.iterable_origin]
     var index: Int
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
@@ -79,11 +79,11 @@ struct _DictEntryIter[
     ] DictEntry[Self.K, Self.V, Self.H] where conforms_to(
         Self.K, Copyable
     ) and conforms_to(Self.V, Copyable):
-        if self.index >= len(self.src):
+        if self.index >= len(self.src[]):
             raise StopIteration()
         var r = self.index
         self.index += 1
-        return self.src[r]
+        return self.src[][r]
 
 # The `keys` borrowing view wraps the entry iterator, as upstream: key
 # iteration delegates entry stepping to the wrapped `_DictEntryIter`.
@@ -452,26 +452,26 @@ struct Dict[
     def keys(ref self) -> Self.IteratorType[origin_of(self)] where conforms_to(
         Self.K, Copyable
     ) and conforms_to(Self.V, Copyable):
-        ref source = self.entries
-        return _DictKeyIter(_DictEntryIter(source, 0))
+        return _DictKeyIter(self.items())
 
     def values(ref self) -> Self.ValuesIterType[origin_of(self)] where conforms_to(
         Self.K, Copyable
     ) and conforms_to(Self.V, Copyable):
-        ref source = self.entries
-        return _DictValueIter(_DictEntryIter(source, 0))
+        return _DictValueIter(self.items())
 
+    # The entries list is the dictionary's private backing storage: the view
+    # borrows the whole dictionary, as upstream's `Pointer(to=self)` does.
     def items(ref self) -> Self.ItemsIterType[origin_of(self)] where conforms_to(
         Self.K, Copyable
     ) and conforms_to(Self.V, Copyable):
-        ref source = self.entries
-        return _DictEntryIter[Self.K, Self.V, Self.H](source, 0)
+        return _DictEntryIter[Self.K, Self.V, Self.H](
+            Pointer(to=self.entries).unsafe_origin_cast[origin_of(self)](), 0
+        )
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)] where conforms_to(
         Self.K, Copyable
     ) and conforms_to(Self.V, Copyable):
-        ref source = self.entries
-        return _DictKeyIter(_DictEntryIter(source, 0))
+        return _DictKeyIter(self.items())
 
     def __bool__(self) -> Bool:
         return len(self.entries) > 0

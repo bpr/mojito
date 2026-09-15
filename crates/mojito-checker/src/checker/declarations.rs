@@ -1396,12 +1396,15 @@ impl Checker {
                 }),
             )
         }));
+        self.return_annotations
+            .push(Self::body_return_annotation(m.ret.as_ref(), &m.name));
         // A method body is a function scope for nested closures just as a
         // top-level `def` body is. In particular, an explicit capture list on a
         // method-local function may name `self`, parameters, and method locals.
         self.function_bases.push(self.scopes.len() - 1);
         let result = self.check_block(&m.body, Some(ret_ty), false);
         self.function_bases.pop();
+        self.return_annotations.pop();
         self.return_ref_contracts.pop();
         self.raise_observation_frames.borrow_mut().pop();
         if let Some(frame) = self.transfer_frames.borrow_mut().pop() {

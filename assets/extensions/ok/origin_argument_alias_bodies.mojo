@@ -46,7 +46,7 @@ struct Box:
         self.items = List[Int]()
         self.items.append(21)
 
-    def pane(ref self) -> Self.PaneType[origin_of(self)]:
+    def pane(ref self) -> Self.PaneType[origin_of(self.items)]:
         ref source = self.items
         return Pane(source, 0)
 

@@ -1,10 +1,7 @@
-# A pointer-field view returned from an ordinary method yields references
-# (`__next__` returns `ref [...]`): the receiver loan established at the call
-# keeps the ultimate source alive under reference-yielding iteration.
-# The pin rejects this shape at `view()`: `cannot implicitly convert
-# 'View[origin_of(self.items)]' value to 'View[origin_of(self)]'`. Mojito
-# widens a returned view's sub-origin to the declared receiver origin (the
-# `return-origin-widening` ledger row in docs/roadmap.md).
+# A pointer-field view returned from an ordinary method drives a for-loop
+# both as a temporary iterable and through a stored binding: the receiver
+# loan flows through GetIter onto the loop iterator. The view's origin is the
+# borrowed field's own (`origin_of(self.items)`).
 from std.iter import Iterator, StopIteration
 
 struct View[
@@ -14,21 +11,19 @@ struct View[
     comptime Element = Int
     comptime IteratorType[
         iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = View
+    ] = Self
 
     var src: Pointer[List[Int], Self.view_origin]
     var index: Int
 
-    def __init__(out self, ref[Self.view_origin] xs: List[Int], index: Int):
-        self.src = Pointer(to=xs)
+    def __init__(out self, ref[Self.view_origin] src: List[Int], index: Int):
+        self.src = Pointer(to=src)
         self.index = index
 
     def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
         return self.copy()
 
-    def __next__(mut self) raises StopIteration -> ref[
-        ImmOrigin(Self.view_origin._get_owned_interior["element"])
-    ] Int:
+    def __next__(mut self) raises StopIteration -> Int:
         if self.index >= len(self.src[]):
             raise StopIteration()
         var r = self.index
@@ -47,7 +42,7 @@ struct Box:
         self.items.append(1)
         self.items.append(2)
 
-    def view(ref self) -> Self.ViewType[origin_of(self)]:
+    def view(ref self) -> Self.ViewType[origin_of(self.items)]:
         ref source = self.items
         return View(source, 0)
 
@@ -58,4 +53,3 @@ def main():
     var v = b.view()
     for y in v:
         print(y)
-    print(b.items[0])

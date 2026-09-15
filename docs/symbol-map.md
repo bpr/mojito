@@ -206,10 +206,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`origins/exclusivity.rs`: `check_argument_origin_exclusivity` judges every
   pair of arguments — receiver included — by their own places and the origins
   their declared parameter types carry, reporting upstream's
-  `AliasingArguments`), the return-tail abstraction
-  (`origins/solve.rs`: `abstract_return_origin_tails` maps a returned struct's
-  tail rooted at the receiver or a parameter to the signature origin the
-  declared return names), the call-result tail (`origins/actuals.rs`:
+  `AliasingArguments`), the return-tail check
+  (`origins/solve.rs`: `reconcile_return_origin_tails` judges a returned
+  struct's origin tail against the body's `return_annotations` entry resolved
+  over the body's own places, so `origin_of(self.items)` stays a field, and
+  rewrites a fitting tail to the signature origin the declared return names),
+  the call-result tail (`origins/actuals.rs`:
   `bind_call_result_tail` writes the `call_result_origins` a view-returning
   call resolved into the result's origin tail),
   the annotation-demand verdict for locals (`check_storage_origin_demands`,

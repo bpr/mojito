@@ -1726,14 +1726,15 @@ impl Checker {
                     return Err(TypeError::ReturnOutsideFunction);
                 };
                 let found = match expr {
-                    // A struct origin tail rooted at the receiver or a
-                    // parameter satisfies the signature origin the return
-                    // type names (`-> View[origin_of(self)]` returning
-                    // `View(Pointer(to=self.items))`).
-                    Some(e) => self.abstract_return_origin_tails(
+                    // A struct origin tail is judged against the return
+                    // annotation resolved over the body's own places
+                    // (`-> View[origin_of(self.items)]` takes a view over
+                    // `self.items`, not one over `self`) and then carries
+                    // the signature's spelling of that origin.
+                    Some(e) => self.reconcile_return_origin_tails(
                         &self.infer_with_expected(e, expected, true)?,
                         expected,
-                    ),
+                    )?,
                     None if self.named_result_context.last() == Some(&true) => expected.clone(),
                     None => Ty::None,
                 };
@@ -1837,11 +1838,13 @@ impl Checker {
                     return Err(TypeError::ClosureEscape);
                 }
                 if !compatible {
-                    return Err(TypeError::TypeMismatch {
-                        expected: expected.to_string(),
-                        found: found.to_string(),
-                        context: "return".to_string(),
-                    });
+                    return Err(self
+                        .struct_origin_mismatch(&found, expected)
+                        .unwrap_or_else(|| TypeError::TypeMismatch {
+                            expected: expected.to_string(),
+                            found: found.to_string(),
+                            context: "return".to_string(),
+                        }));
                 }
                 Ok(())
             }
@@ -2498,9 +2501,12 @@ impl Checker {
                 .push((self.handled_raise_depth, false));
             self.return_ref_contracts
                 .push(ref_return.map(|signature| (signature, owners, None)));
+            self.return_annotations
+                .push(Self::body_return_annotation(ret_anno.as_ref(), name));
             self.named_result_context.push(named_result.is_some());
             result = self.check_block(body, Some(&ret_ty), false);
             self.named_result_context.pop();
+            self.return_annotations.pop();
             self.return_ref_contracts.pop();
             self.raise_observation_frames.borrow_mut().pop();
             if let Some(frame) = self.transfer_frames.borrow_mut().pop() {
