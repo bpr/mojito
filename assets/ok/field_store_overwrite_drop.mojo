@@ -1,15 +1,6 @@
-# Question: storing into a live droppable field.
-# Upstream (`1.1.0.dev2026082605`) destroys the replaced value at the
-# store: `del 2`, then `del 1` and `del 3` when `p` dies after its last
-# use, then `after`.
-#
-# Mojito today never destroys Inner 2 on the VM: `del 1`, `del 3`,
-# `after`. Drop elaboration emits no destruction of the value a field
-# `Store` replaces.
-#
-# On the fix: promote this file to `assets/ok/field_store_overwrite_drop.mojo`
-# with its manifest rows, and delete the `field-store-overwrite-drop`
-# ledger row in docs/roadmap.md.
+# A store into an initialized droppable field destroys the value it replaces
+# at the store, as the pinned Mojo does: `del 2` at `p.b = Inner(3)`, then
+# `del 1` and `del 3` when `p` dies after its last use, then `after`.
 @fieldwise_init
 struct Inner:
     var id: Int

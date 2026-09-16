@@ -1,17 +1,19 @@
-//! Store-overwrite destruction: a `Store` into an initialized droppable
-//! sub-place destroys the value it replaces first, as Mojo's assignment does.
-//! A whole-variable reassignment needs no instruction of its own (the old
-//! value dies at its last use before the redefining `DefVar`), but a field
-//! is not a variable, so its old value gets a `DropPlace` right before the
-//! write.
+//! Store-overwrite destruction: a write into an initialized droppable place
+//! destroys the value it replaces first, as Mojo's assignment does. A whole
+//! variable's reassignment needs no instruction of its own (the old value dies
+//! at its last use before the redefining `DefVar`), but two writes have no
+//! such `DefVar` and so get a `DropPlace` right before them: a field, which is
+//! not a variable, and a whole place written *through a reference*, whose old
+//! value lives in the caller's storage or another slot.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_mir::mir::MirStructDeclaration;
 use mojito_types::types::Ty;
 
-/// Splice a `DropPlace` before every `Store` that overwrites an initialized
-/// droppable field or constant-index element of function `name`. Parameters
+/// Splice a `DropPlace` before every write in function `name` that overwrites
+/// an initialized droppable place: a `Store` into a field or constant-index
+/// element, and a whole-place write through a reference handle. Parameters
 /// arrive initialized and every other slot starts uninitialized, except an
 /// initializer's `out self` receiver: its storage exists but each declared
 /// field is uninitialized until its first store, so a constructor's first
@@ -35,12 +37,11 @@ pub(super) fn elaborate_store_drops(
     if let Some(receiver) = receiver {
         entry[0] = receiver;
     }
-    let mut overwrites: HashSet<*const MirInstr> = HashSet::new();
+    let handles = make_ref_places(&f.blocks);
+    let mut overwrites: HashMap<*const MirInstr, MirPlace> = HashMap::new();
     let observed = observe_move_states(f, entry, &mut |state, instr| {
-        if let MirInstr::Store { place, .. } = instr
-            && overwrites_initialized(state, place, uninitialized_receiver)
-        {
-            overwrites.insert(std::ptr::from_ref(instr));
+        if let Some(place) = replaced_place(instr, state, f, &handles, uninitialized_receiver) {
+            overwrites.insert(std::ptr::from_ref(instr), place.clone());
         }
     });
     if observed.is_ok() && !overwrites.is_empty() {
@@ -78,6 +79,31 @@ fn initializer_receiver_entry(
     Some(fields.map_or_else(Node::moved, Node::with_uninitialized_fields))
 }
 
+/// The place an overwriting write destroys before replacing it, if any: a
+/// `Store` into a field or element, a `Store` through a place pointer or a
+/// whole-variable `ref` binding, or a `WriteRef` through a `mut` parameter or
+/// `mut self` receiver — whose place is the one its `MakeRef` handle names,
+/// since the instruction itself carries only the register.
+fn replaced_place<'a>(
+    instr: &'a MirInstr,
+    state: &[Node],
+    f: &MirFunction,
+    handles: &'a HashMap<u32, MirPlace>,
+    uninitialized_receiver: bool,
+) -> Option<&'a MirPlace> {
+    match instr {
+        MirInstr::Store { place, .. } => {
+            (overwrites_initialized(state, place, uninitialized_receiver)
+                || overwrites_through_reference(state, place, f))
+            .then_some(place)
+        }
+        MirInstr::WriteRef { reference, .. } => handles
+            .get(&reference.0)
+            .filter(|place| overwrites_through_reference(state, place, f)),
+        _ => None,
+    }
+}
+
 /// Whether a store into `place` replaces a value that must be destroyed: a
 /// static field or element of droppable type whose whole subtree is
 /// initialized. A depth-1 place of a local root that is only maybe moved also
@@ -113,17 +139,78 @@ fn overwrites_initialized(state: &[Node], place: &MirPlace, uninitialized_receiv
     }
 }
 
-/// Rebuild `blocks`, inserting a `DropPlace` before each marked `Store`,
+/// Whether a whole-place write through a reference replaces a value that must
+/// be destroyed. Such a write has no redefining `DefVar` to end the old
+/// value's live range: the value lives in the caller's storage (a `mut`
+/// parameter or `mut self` receiver writes through its own handle) or in
+/// another slot (a place pointer's pointee, a whole-variable `ref` binding).
+/// Only an intact subtree qualifies — dropping a partially moved value whole
+/// would free a hole, which the native lowering has no leaf flag to guard.
+fn overwrites_through_reference(state: &[Node], place: &MirPlace, f: &MirFunction) -> bool {
+    let Some(through) = place.through.filter(|_| place.proj.is_empty()) else {
+        return false;
+    };
+    let root = place.root as usize;
+    let reference_root = through != place.root
+        || (root < f.n_params && f.ref_params.get(root).copied().unwrap_or(false));
+    reference_root
+        && place
+            .ty
+            .as_ref()
+            .is_some_and(|ty| !matches!(ty, Ty::Ref(_)) && field_needs_drop(ty))
+        && matches!(state[root].read(&[]).0, Own::Owned)
+}
+
+/// Every `MakeRef` handle's place, keyed by its destination register: a
+/// `WriteRef` names only that register, so the place it writes is recovered
+/// here. A register is defined once per function, so one map covers every
+/// block, `try` regions included.
+fn make_ref_places(blocks: &[MirBlock]) -> HashMap<u32, MirPlace> {
+    let mut handles = HashMap::new();
+    collect_make_refs(blocks, &mut handles);
+    handles
+}
+
+fn collect_make_refs(blocks: &[MirBlock], handles: &mut HashMap<u32, MirPlace>) {
+    for block in blocks {
+        for instr in &block.instrs {
+            match instr {
+                MirInstr::MakeRef { dest, place } => {
+                    handles.insert(dest.0, place.clone());
+                }
+                MirInstr::Try {
+                    body,
+                    handler,
+                    orelse,
+                    finalbody,
+                    ..
+                } => {
+                    collect_make_refs(body, handles);
+                    if let Some((_, blocks)) = handler.as_ref() {
+                        collect_make_refs(blocks, handles);
+                    }
+                    for blocks in orelse.as_deref().into_iter().chain(finalbody.as_deref()) {
+                        collect_make_refs(blocks, handles);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Rebuild `blocks`, inserting each marked write's `DropPlace` before it,
 /// recursing into `try` regions.
-fn splice_blocks(blocks: &[MirBlock], overwrites: &HashSet<*const MirInstr>) -> Vec<MirBlock> {
+fn splice_blocks(
+    blocks: &[MirBlock],
+    overwrites: &HashMap<*const MirInstr, MirPlace>,
+) -> Vec<MirBlock> {
     blocks
         .iter()
         .map(|block| {
             let mut instrs = Vec::with_capacity(block.instrs.len());
             for instr in &block.instrs {
-                if let MirInstr::Store { place, .. } = instr
-                    && overwrites.contains(&std::ptr::from_ref(instr))
-                {
+                if let Some(place) = overwrites.get(&std::ptr::from_ref(instr)) {
                     instrs.push(MirInstr::DropPlace {
                         place: place.clone(),
                     });
@@ -138,7 +225,10 @@ fn splice_blocks(blocks: &[MirBlock], overwrites: &HashSet<*const MirInstr>) -> 
         .collect()
 }
 
-fn splice_instruction(instr: &MirInstr, overwrites: &HashSet<*const MirInstr>) -> MirInstr {
+fn splice_instruction(
+    instr: &MirInstr,
+    overwrites: &HashMap<*const MirInstr, MirPlace>,
+) -> MirInstr {
     match instr {
         MirInstr::Try {
             body,

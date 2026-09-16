@@ -174,6 +174,8 @@ assets/ok/method_value_parameter_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/movable_where_false_explicit_destroy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/move_after_last_raise_in_try.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mut_owned_params.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/mut_parameter_reassignment_drop.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/mut_parameter_reassignment_drop_shapes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mut_pointer_parameter_reassign.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mut_ref_writeback.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/named_shared_views.mojo	-	ineligible	no-scalar-entry-shape
@@ -319,6 +321,7 @@ assets/ok/pliron_wrap_int_arith.mojo	compute	differential	ret=Int
 assets/ok/pliron_wrap_pow.mojo	compute	differential	ret=Int
 assets/ok/pliron_wrap_uint_arith.mojo	compute	differential	ret=UInt
 assets/ok/pointer_bound_copy.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_deref_store_overwrite_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_empty_deref.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_adapter_from_deref_rebinding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_adapter_from_reborrow.mojo	-	ineligible	no-scalar-entry-shape

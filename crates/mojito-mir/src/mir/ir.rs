@@ -955,8 +955,8 @@ pub struct MirFunction {
     /// elaboration lowers its teardown to `ConsumeVar` instead of `DropVar`.
     pub deinit_params: Vec<bool>,
     /// Whether each parameter is a `mut`/`ref` **reference** (its final value is
-    /// written back to the caller). `self` (handled via a method's `recv_place`) is
-    /// always `false` here. Same order as the params.
+    /// written back to the caller). Same order as the params, `self` included:
+    /// a `mut self` receiver is parameter 0 and is flagged here.
     pub ref_params: Vec<bool>,
     pub returns_reference: bool,
     /// Checked type of each variable slot, as far as lowering recorded one.

@@ -2884,7 +2884,16 @@ value dies at its last use before the redefining `DefVar`), but a field is not
 a variable, so a pass ahead of the variable-granular elaboration
 (`analysis/store_drops.rs`) splices a `DropPlace` immediately before each
 `Store` into a static field or constant-index element of droppable type whose
-subtree is initialized there. It replays the move checker's place-tree flow
+subtree is initialized there. A whole place written *through a reference* has
+no redefining `DefVar` either — its old value is the caller's or another
+slot's — so the same pass drops it first: a `WriteRef` through the handle a
+`mut` parameter or `mut self` receiver makes of itself, and a `Store` through
+a place pointer (`q[] = v`) or a whole-variable `ref` binding. A `WriteRef`
+names only its handle register, so the place comes from the `MakeRef` that
+defined it. Such a write qualifies only where the whole subtree is intact:
+dropping a partially moved value whole would free a hole, and a reference-
+rooted place has no leaf flag to guard it natively (reassigning a partially
+moved value is a checker error in any case). It replays the move checker's place-tree flow
 (`observe_move_states`) from a different entry: parameters initialized, every
 other slot uninitialized, and an initializer's `out self` receiver with each
 declared field uninitialized, so a constructor's first store into a field

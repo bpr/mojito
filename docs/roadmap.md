@@ -60,7 +60,7 @@ whatever its model, because it batches every change that needs a new
   - Bisect the `var` field-move of the copy-lifecycle value inside the
     generic constructor against the owned-temp marking in
     `crates/mojito-pliron/src/lower/calls.rs`.
-  - Section 3 prerequisite 4 of 4.
+  - Section 3 prerequisite 3 of 3.
   - Model: Fable. The lever is a guess rather than a known site, and the
     bug sits where monomorphized constructors, copy lifecycle, and native
     temporary ownership meet.
@@ -71,7 +71,7 @@ whatever its model, because it batches every change that needs a new
   projection requires checked indexed storage`) for every element type.
   - Copy the element out, mutate it, and write it back (`xs[i] = e`), or
     mutate through a `mut` parameter, which works.
-  - Section 3 prerequisite 3 of 4.
+  - Section 3 prerequisite 2 of 3.
   - Model: Fable. A dynamic element projection that is written through
     crosses the checker, MIR places, the verifier, ownership and drop
     elaboration, and both backends.
@@ -372,25 +372,6 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     - Model: Opus, plan first. A fourth lattice point, or a per-node
       "may hold a hole" flag that survives joins, is the lever; the plan
       picks one.
-  - `pointer-deref-store-overwrite-drop`: a store through a pointer
-    dereference never destroys the replaced value, on the VM and natively,
-    while the pin runs the old value's `__deinit__` at the store.
-    - `var q = Pointer(to=b); q[] = Inner(2)` prints no `del 1`.
-    - A store into a static field or element place does destroy the value it
-      replaces (`crates/mojito-analysis/src/analysis/store_drops.rs`); this
-      store writes the pointee as a whole.
-    - Pinned by `conformance/probes/pointer_deref_store_overwrite_drop.mojo`.
-    - Model: Opus, plan first. The pointee's initialization is not tracked
-      through the pointer, so the plan decides when it is known to hold a
-      value.
-  - `mut-parameter-reassignment-drop`: reassigning a `mut` parameter, or
-    `self` in a `mut self` method, as a whole never destroys the old value,
-    on the VM and natively, while the pin does; a local's reassignment does.
-    - `def reset(mut p: Pair): p = Pair(Inner(7), Inner(8))` prints no
-      `del 1` / `del 2`.
-    - Pinned by `conformance/probes/mut_parameter_reassignment_drop.mojo`.
-    - Section 3 prerequisite 1 of 4.
-    - Model: Opus, plan first.
   - `assign-plain-span-argument-over-list`: `xs = rebuild(Span(xs))` runs
     upstream (`1`) and is rejected in Mojito with "access to 'xs' conflicts
     with live reference 'xs'".
@@ -420,7 +401,7 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
       a field store through a plain pointer local (`q[].v = 9`) both run;
       only the field projection below a pointer-field index fails.
     - Pinned by `conformance/probes/pointer_field_deref_field_store.mojo`.
-    - Section 3 prerequisite 2 of 4.
+    - Section 3 prerequisite 1 of 3.
     - Model: Opus, plan first. Whether the VM's place writer or the MIR
       place shape (`root.src[0].v`) is at fault is not yet known.
   - `ref-field-return-origin-widening`: a view struct that stores its source
@@ -528,25 +509,21 @@ These tasks fix that order. Each one pays off by itself, the first closes a
 conformance divergence, and together they are what a later Pliron pivot would
 need.
 
-**Prerequisites.** Take these four entries from sections 1 and 2 first, in this
+**Prerequisites.** Take these three entries from sections 1 and 2 first, in this
 order, then start this section. The rest of sections 1 and 2 does not block
 it. Each prerequisite fixes lifecycle order or a MIR place shape that the Pliron
 proof below must model and is judged on, so fixing it afterwards would move
 the target under the proof. When one closes, delete it here too.
 
-1. `mut-parameter-reassignment-drop` (section 2 ledger): reassigning a `mut`
-   parameter or `self` never destroys the old value. It is the whole-value
-   twin of the store destruction step drop elaboration already has for
-   fields (`crates/mojito-analysis/src/analysis/store_drops.rs`).
-2. `pointer-field-deref-field-store` (section 2 ledger): `p.src[].v = 9`
+1. `pointer-field-deref-field-store` (section 2 ledger): `p.src[].v = 9`
    fails at the VM. It settles the place shape of a field below a pointer
    dereference.
-3. **No field writes through a `List` subscript** (section 1): `xs[i].field =
-   v` fails MIR verification. It reuses the place shape from 2 and the field
+2. **No field writes through a `List` subscript** (section 1): `xs[i].field =
+   v` fails MIR verification. It reuses the place shape from 1 and the field
    store destruction step.
-4. **Native generic-holder temporaries with heap-owning implicitly copyable
+3. **Native generic-holder temporaries with heap-owning implicitly copyable
    fields read freed memory** (section 1). It is last because native lowering
-   should target the MIR that 1 to 3 settle, and the Pliron proof's own slice
+   should target the MIR that 1 and 2 settle, and the Pliron proof's own slice
    (a generic struct, a move, drops on every edge, run natively) has exactly
    this shape.
 

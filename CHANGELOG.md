@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A whole value written through a reference now destroys the value it
+  replaces, as in the pinned Mojo: reassigning a `mut` parameter or `self` in
+  a `mut self` method runs the caller's old value's `__deinit__` at the
+  assignment, and so does a store through a place pointer (`q[] = Inner(2)`)
+  or a whole-variable `ref` binding, on the VM and natively. Such a write has
+  no redefining `DefVar` to end the old value's live range, so drop
+  elaboration splices a `DropPlace` before it — only where the whole subtree
+  is intact, since a partially moved value cannot be dropped whole. Three
+  `assets/ok` fixtures verified against the pin replace the two probes (exe
+  ratchet 550 → 553), closing the `mut-parameter-reassignment-drop` and
+  `pointer-deref-store-overwrite-drop` ledger rows and the first of section
+  3's four prerequisites.
+
 - A store into a field now destroys the value it replaces at the store, as in
   the pinned Mojo: `p.b = Inner(3)` runs the old value's `__deinit__` before
   the write, on the VM and natively, whether the field is reached from a
@@ -16,9 +29,7 @@ to evolve under the `0.x` compatibility rules.
   second destroys the first, and a field moved out on some paths is destroyed
   only where it still holds a value. Two `assets/ok` fixtures verified against
   the pin replace the probe (exe ratchet 548 → 550), and the
-  `field-store-overwrite-drop` ledger row is closed. A store through a pointer
-  dereference (`q[] = Inner(2)`) still skips the destruction (new
-  `pointer-deref-store-overwrite-drop` row).
+  `field-store-overwrite-drop` ledger row is closed.
 
 - A returned view no longer widens a field's origin to its holder's, as in
   the pinned Mojo: `return` judges a struct's origin tail against the return

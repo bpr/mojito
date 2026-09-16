@@ -44,6 +44,15 @@ fn del_runs_at_last_use_not_scope_end() {
 }
 
 #[test]
+fn mut_self_reassignment_destroys_the_replaced_value() {
+    // `self = Holder(2)` writes through the receiver's own handle into the
+    // caller's storage, so no redefining `DefVar` ends the old value's live
+    // range; the store-overwrite pass destroys it at the assignment.
+    let src = "@fieldwise_init\nstruct Inner(Movable):\n    var id: Int\n    def __deinit__(deinit self):\n        print(\"del\", self.id)\n\nstruct Holder(Movable):\n    var item: Inner\n\n    def __init__(out self, id: Int):\n        self.item = Inner(id)\n\n    def reset(mut self, id: Int):\n        self = Holder(id)\n\ndef main():\n    var h = Holder(1)\n    h.reset(2)\n    print(\"after\", h.item.id)\n";
+    assert_eq!(vm(src), "del 1\nafter 2\ndel 2\n");
+}
+
+#[test]
 fn each_value_dropped_at_its_own_last_use() {
     // Two independently-used values are each destroyed at their own last use, so
     // the teardown is interleaved with the body — not batched at the end.
