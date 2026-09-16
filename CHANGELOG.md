@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A field store below a `List` subscript (`xs[i].field = v`, `xs[i].n += 1`,
+  `h.items[i].inner.n = v`, `xs[i][j].n = v`) now runs on both backends
+  instead of failing MIR verification with "dynamic element projection
+  requires checked indexed storage": the assignment target is lowered like a
+  `ref` binding, evaluating the selected reference-returning `__getitem__`
+  once into a hidden `ref` handle and storing through it, so a replaced
+  droppable field is destroyed at the store as in the pinned Mojo.
 - A whole value written through a reference now destroys the value it
   replaces, as in the pinned Mojo: reassigning a `mut` parameter or `self` in
   a `mut self` method runs the caller's old value's `__deinit__` at the

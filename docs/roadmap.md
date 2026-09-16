@@ -57,24 +57,20 @@ whatever its model, because it batches every change that needs a new
   - This keeps `Dict[Optional[Int], _]` VM-only:
     `conformance/fixtures/optional_dict_keys.mojo` stays out of
     `assets/ok`.
+  - Smallest repro, no heap field needed: `xs.append(Tracked(1))` with a
+    `__deinit__` that prints destroys the moved temporary a second time
+    natively (`del 1` twice; the pin and the VM print it once), and a list
+    literal `[Tracked(1)]` does the same. It keeps the droppable-field twin
+    of the closed `List` subscript field-store row VM-only:
+    `conformance/fixtures/list_subscript_field_store_drop.mojo` stays out
+    of `assets/ok`.
   - Bisect the `var` field-move of the copy-lifecycle value inside the
     generic constructor against the owned-temp marking in
     `crates/mojito-pliron/src/lower/calls.rs`.
-  - Section 3 prerequisite 2 of 2.
+  - The last section 3 prerequisite.
   - Model: Fable. The lever is a guess rather than a known site, and the
     bug sits where monomorphized constructors, copy lifecycle, and native
     temporary ownership meet.
-
-- [ ] **Front end: no field writes through a `List` subscript**
-
-  Problem: `xs[i].field = v` fails MIR verification (`dynamic element
-  projection requires checked indexed storage`) for every element type.
-  - Copy the element out, mutate it, and write it back (`xs[i] = e`), or
-    mutate through a `mut` parameter, which works.
-  - Section 3 prerequisite 1 of 2.
-  - Model: Fable. A dynamic element projection that is written through
-    crosses the checker, MIR places, the verifier, ownership and drop
-    elaboration, and both backends.
 
 - [ ] **Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
@@ -499,20 +495,16 @@ These tasks fix that order. Each one pays off by itself, the first closes a
 conformance divergence, and together they are what a later Pliron pivot would
 need.
 
-**Prerequisites.** Take these two entries from section 1 first, in this
-order, then start this section. The rest of sections 1 and 2 does not block
-it. Each prerequisite fixes lifecycle order or a MIR place shape that the Pliron
-proof below must model and is judged on, so fixing it afterwards would move
-the target under the proof. When one closes, delete it here too.
+**Prerequisite.** Take this entry from section 1 first, then start this
+section. The rest of sections 1 and 2 does not block it. It fixes a native
+lifecycle order that the Pliron proof below must model and is judged on, so
+fixing it afterwards would move the target under the proof. When it closes,
+delete it here too.
 
-1. **No field writes through a `List` subscript**: `xs[i].field = v` fails MIR
-   verification. It reuses the place shape settled by the closed
-   `pointer-field-deref-field-store` row — a field below a dereference — and
-   the field store destruction step.
-2. **Native generic-holder temporaries with heap-owning implicitly copyable
-   fields read freed memory**. It is last because native lowering should
-   target the MIR that 1 settles, and the Pliron proof's own slice (a generic
-   struct, a move, drops on every edge, run natively) has exactly this shape.
+1. **Native generic-holder temporaries with heap-owning implicitly copyable
+   fields read freed memory**. The MIR place shapes the proof targets are
+   settled, and the Pliron proof's own slice (a generic struct, a move, drops
+   on every edge, run natively) has exactly this shape.
 
 - [ ] **A type error in an untaken `comptime if` branch is never reported**
 

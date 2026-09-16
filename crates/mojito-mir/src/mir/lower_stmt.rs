@@ -2232,7 +2232,12 @@ impl Flatten<'_> {
                     }
                 }
                 self.emit_interior_invalidations(place, None);
-                let p = self.place(place);
+                // A projection below a nominal reference-returning accessor
+                // (`xs[i].field`) is rooted in that accessor's materialized
+                // handle, never in raw nominal storage.
+                let p = self
+                    .lower_projected_reference_place(place)
+                    .unwrap_or_else(|| self.place(place));
                 let stores_reference = matches!(p.ty, Some(Ty::Ref(_)))
                     && self.checked_adjustments(value).iter().any(|adjustment| {
                         matches!(
@@ -2403,7 +2408,9 @@ impl Flatten<'_> {
                         value: res,
                     });
                 } else {
-                    let p = self.place(place);
+                    let p = self
+                        .lower_projected_reference_place(place)
+                        .unwrap_or_else(|| self.place(place));
                     let cur = self.fresh(span(place), None);
                     self.emit(MirInstr::LoadPlace {
                         dest: cur,
@@ -2629,7 +2636,9 @@ impl Flatten<'_> {
                             });
                         }
                     } else {
-                        let place = self.place(target);
+                        let place = self
+                            .lower_projected_reference_place(target)
+                            .unwrap_or_else(|| self.place(target));
                         self.emit_interior_invalidations(target, Some(place.root));
                         self.emit(MirInstr::Store { place, src: elem });
                     }

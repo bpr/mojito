@@ -177,8 +177,8 @@ verification happens. In-session verification must take seconds, not hours:
 - New `assets/ok` fixtures: add their manifest rows by hand (parity:
   `exe-differential`/`sanitized` when the native run matches; scalar:
   `ineligible`/`no-scalar-entry-shape` unless the fixture has a scalar
-  `compute` entry) and bump the exe ratchet in `tests/pliron_backend_test.rs`
-  by the row count; do not run the regeneration.
+  `compute` entry) and bump the exe ratchet in `tests/heavy/main.rs`
+  (`differential == N`) by the row count; do not run the regeneration.
 - CLI: `cargo run -- <lex|parse|check|own|run> [FILE]`
 - Module roots: repeat `--module-path PATH` / `-I PATH`; use `--stdlib PATH`
   to replace the bundled standard-library root.

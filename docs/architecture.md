@@ -1734,11 +1734,13 @@ pack element a distinct ownership path without changing nominal collection
 subscript dispatch.
 
 When an accessor returns a reference used immediately as another receiver or
-place, lowering evaluates it once into a hidden `Ty::Ref` local. `DefVar` stores
-the handle and `EstablishLoans` retains its owner generation; the derived place
-names that local in `through`. Later chained loads, projections, and calls
-therefore preserve provenance without rerunning the accessor or treating its
-referent as owner storage.
+place — including the target of a field store or augmented assignment
+(`xs[i].field = v`) — lowering evaluates it once into a hidden `Ty::Ref`
+local. `DefVar` stores the handle and `EstablishLoans` retains its owner
+generation; the derived place names that local in `through`. Later chained
+loads, projections, stores, and calls therefore preserve provenance without
+rerunning the accessor or treating its referent as owner storage; a nominal
+subscript never becomes a raw `Index` projection on the collection.
 
 Every register is typed. Expression results record their checked type as they
 lower; synthetic registers (handles, markers, short-circuit and iterator

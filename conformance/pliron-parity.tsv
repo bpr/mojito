@@ -159,6 +159,8 @@ assets/ok/list_anytype_element.mojo	main	exe-differential	sanitized
 assets/ok/list_contiguous_slice_strict.mojo	main	exe-differential	sanitized
 assets/ok/list_methods_growth.mojo	main	exe-differential	sanitized
 assets/ok/list_strided_slice_normalizes.mojo	main	exe-differential	sanitized
+assets/ok/list_subscript_field_store.mojo	main	exe-differential	sanitized
+assets/ok/list_subscript_field_store_shapes.mojo	main	exe-differential	sanitized
 assets/ok/list_unsafe_ptr_multi_element.mojo	main	exe-differential	sanitized
 assets/ok/list_unsafe_uninit_length.mojo	main	exe-differential	sanitized
 assets/ok/live_pointer_ref_argument.mojo	main	exe-differential	sanitized
