@@ -566,6 +566,9 @@ impl FnLowering<'_> {
             Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements
                 .iter()
                 .any(|element| self.has_nested_lifecycle(element, method)),
+            Ty::Variant(alternatives) => alternatives
+                .iter()
+                .any(|alternative| self.has_nested_lifecycle(alternative, method)),
             _ => false,
         }
     }

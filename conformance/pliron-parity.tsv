@@ -160,6 +160,7 @@ assets/ok/list_contiguous_slice_strict.mojo	main	exe-differential	sanitized
 assets/ok/list_methods_growth.mojo	main	exe-differential	sanitized
 assets/ok/list_strided_slice_normalizes.mojo	main	exe-differential	sanitized
 assets/ok/list_subscript_field_store.mojo	main	exe-differential	sanitized
+assets/ok/list_subscript_field_store_drop.mojo	main	exe-differential	sanitized
 assets/ok/list_subscript_field_store_shapes.mojo	main	exe-differential	sanitized
 assets/ok/list_unsafe_ptr_multi_element.mojo	main	exe-differential	sanitized
 assets/ok/list_unsafe_uninit_length.mojo	main	exe-differential	sanitized
@@ -181,8 +182,10 @@ assets/ok/mut_parameter_reassignment_drop_shapes.mojo	main	exe-differential	sani
 assets/ok/mut_pointer_parameter_reassign.mojo	main	exe-differential	sanitized
 assets/ok/mut_ref_writeback.mojo	main	exe-differential	sanitized
 assets/ok/named_shared_views.mojo	main	exe-differential	sanitized
+assets/ok/native_borrowed_reads.mojo	main	exe-differential	sanitized
 assets/ok/nested.mojo	main	exe-differential	sanitized
 assets/ok/nested_comprehensions.mojo	main	exe-differential	sanitized
+assets/ok/nested_copy_lifecycle.mojo	main	exe-differential	sanitized
 assets/ok/nested_index_store.mojo	main	exe-differential	sanitized
 assets/ok/nested_recursive_call.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_affix.mojo	main	exe-differential	sanitized
@@ -220,6 +223,7 @@ assets/ok/nominal_string_unicode_case.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_writer.mojo	main	exe-differential	sanitized
 assets/ok/number_and_string_literals.mojo	main	exe-differential	sanitized
 assets/ok/numeric_operation_traits.mojo	main	exe-differential	sanitized
+assets/ok/optional_dict_keys.mojo	main	exe-differential	sanitized
 assets/ok/optional_is_none.mojo	main	exe-differential	sanitized
 assets/ok/optional_owning_api.mojo	main	exe-differential	sanitized
 assets/ok/optional_raising_subscript.mojo	main	exe-differential	sanitized

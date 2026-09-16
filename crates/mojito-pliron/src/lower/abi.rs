@@ -7,7 +7,8 @@ use super::*;
 impl FnLowering<'_> {
     /// The bound operand value of one argument at its expected lowered type.
     /// A consuming (`owned`) parameter takes ownership — an owned temporary
-    /// passed there transfers to the callee, which destroys it.
+    /// passed there transfers to the callee, which destroys it, so a register
+    /// that merely aliases a variable's storage can never reach one.
     pub(super) fn arg_value(
         &mut self,
         ctx: &mut Context,
@@ -17,6 +18,11 @@ impl FnLowering<'_> {
         dest: Reg,
     ) -> Result<Value, PlironError> {
         if owned {
+            if self.aliased_load_regs.contains(&reg.0) {
+                return Err(
+                    self.unsupported_reg("owning use of a place-aliased register".into(), dest)
+                );
+            }
             self.owned_temps.remove(&reg.0);
         }
         match expected {
@@ -57,9 +63,8 @@ impl FnLowering<'_> {
     }
 
     /// Bind an immutable aggregate argument directly to its checked caller
-    /// place. MIR's preceding `LoadPlace` is scaffolding for the VM value
-    /// model; cloning it natively would run `__copyinit__` in addition to the
-    /// call's own copy boundary.
+    /// place, or to the place behind its `LoadPlace` when the checker retained
+    /// none: a borrowed argument never runs a copy lifecycle.
     pub(super) fn place_backed_arg_value(
         &mut self,
         ctx: &mut Context,
@@ -342,10 +347,10 @@ impl FnLowering<'_> {
     }
 
     /// Load the value at `address` with checked type `ty` into `dest`:
-    /// scalars load directly; aggregates copy out into fresh storage — the
-    /// VM's clone-on-read place semantics. A heap-owning aggregate clones
-    /// deeply (a byte copy would alias buffers both owners release), and a
-    /// releasable clone is an owned temporary.
+    /// scalars load directly; an aggregate whose consumers are not all
+    /// borrowing (see `collect_aliased_load_regs`) copies out into fresh
+    /// storage — a clone for a value with copy work of its own, otherwise a
+    /// byte copy.
     pub(super) fn load_from(
         &mut self,
         ctx: &mut Context,
@@ -360,21 +365,10 @@ impl FnLowering<'_> {
                 self.define(ctx, dest, load.get_operation(), load.get_result(ctx))
             }
             LowerTy::Aggregate { ty, layout } => {
-                if self.has_lifecycle_method(&ty, "__copyinit__")
-                    || self.has_nested_lifecycle(&ty, "__copyinit__")
-                {
+                if self.clone_needs_work(&ty) {
                     return self.copy_aggregate(ctx, dest, &ty, layout, address);
                 }
                 let storage = self.value_storage(ctx, &ty, layout);
-                if self.owns_heap(&ty) {
-                    self.fork_value_into(ctx, storage, &ty, layout, address, dest)?;
-                    self.reg_values.insert(dest.0, storage);
-                    // The fork's own allocations are exactly its duplicated
-                    // String/Error buffers, which the invisible-release rule
-                    // frees regardless of user copy constructors.
-                    self.mark_owned_temp(dest, (*ty).clone())?;
-                    return Ok(());
-                }
                 self.copy_value(ctx, storage, address, &ty, layout, dest);
                 self.reg_values.insert(dest.0, storage);
                 Ok(())

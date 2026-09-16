@@ -858,6 +858,7 @@ impl Checker {
             && let Some(result) = self.struct_dunder(&arg_ty, dunder, &[])
         {
             require_dunder_ret(result?, expected, dunder)?;
+            self.borrow_nominal_place_argument(&args[0], &arg_ty);
             // A raising conversion dunder (`String.__int__() raises`) makes
             // the conversion a raising call.
             if let Some((_, sig, _)) = self.struct_dunder_signature_for(&arg_ty, dunder, &[])

@@ -136,118 +136,69 @@ pub fn collect_projected_move_places<'m>(
     }
 }
 
-pub fn collect_aliased_receiver_regs(
+/// The `LoadPlace` results that alias their place instead of materializing a
+/// copy: an aggregate register whose every consumer borrows it. MIR's
+/// aggregate load is a shallow read whose owner stays live through every
+/// consumer, so the address is valid wherever the register is read; a
+/// callable is excluded because its owner is retained for one hop only. Any
+/// owning or unclassified consumer keeps the copy — the conservative side is
+/// an extra copy, never two owners of one buffer.
+pub fn collect_aliased_load_regs(
     function: &MirFunction,
     declarations: &HashMap<String, MirFunctionDeclaration>,
 ) -> HashSet<u32> {
-    pub(super) fn visit(
-        function: &MirFunction,
+    fn visit(
         blocks: &[MirBlock],
         declarations: &HashMap<String, MirFunctionDeclaration>,
-        output: &mut HashSet<u32>,
+        owning: &mut HashSet<u32>,
     ) {
         for block in blocks {
             for instruction in &block.instrs {
-                match instruction {
-                    MirInstr::Call {
-                        func,
-                        args,
-                        kwargs,
-                        arg_places,
-                        kwarg_places,
-                        ..
-                    } => {
-                        if let Some(declaration) = declarations.get(&func.0) {
-                            for (index, (reg, _place)) in args.iter().zip(arg_places).enumerate() {
-                                let borrowed = !matches!(
-                                    declaration.param_conventions.get(index).copied().flatten(),
-                                    Some(
-                                        mojito_ast::ast::ArgConvention::Var
-                                            | mojito_ast::ast::ArgConvention::Deinit
-                                    )
-                                );
-                                let aggregate =
-                                    function.reg_types.get(&reg.0).is_some_and(is_aggregate_ty);
-                                if borrowed && aggregate {
-                                    output.insert(reg.0);
-                                }
-                            }
-                            for ((name, reg), _place) in kwargs.iter().zip(kwarg_places) {
-                                let Some(index) = declaration
-                                    .param_names
-                                    .iter()
-                                    .position(|parameter| parameter == name)
-                                else {
-                                    continue;
-                                };
-                                let borrowed = !matches!(
-                                    declaration.param_conventions.get(index).copied().flatten(),
-                                    Some(
-                                        mojito_ast::ast::ArgConvention::Var
-                                            | mojito_ast::ast::ArgConvention::Deinit
-                                    )
-                                );
-                                let aggregate =
-                                    function.reg_types.get(&reg.0).is_some_and(is_aggregate_ty);
-                                if borrowed && aggregate {
-                                    output.insert(reg.0);
-                                }
-                            }
-                        }
-                        // `Type(copy=place)` is the explicit copy-constructor
-                        // boundary. Its borrowed source must stay a place;
-                        // cloning the scaffolding LoadPlace would run the
-                        // user copy constructor once before the constructor
-                        // runs it again.
-                        for ((name, reg), place) in kwargs.iter().zip(kwarg_places) {
-                            if name == "copy" && place.is_some() {
-                                output.insert(reg.0);
-                            }
-                        }
+                let borrowed = borrowed_operands(instruction, declarations);
+                let mut operands = Vec::new();
+                mojito_mir::mir::verify::instruction_operand_regs(instruction, &mut operands);
+                owning.extend(
+                    operands
+                        .iter()
+                        .map(|reg| reg.0)
+                        .filter(|reg| !borrowed.contains(reg)),
+                );
+                if let MirInstr::Try {
+                    body,
+                    handler,
+                    orelse,
+                    finalbody,
+                    ..
+                } = instruction
+                {
+                    visit(body, declarations, owning);
+                    if let Some((_, blocks)) = handler {
+                        visit(blocks, declarations, owning);
                     }
-                    MirInstr::MethodCall {
-                        recv,
-                        resolved: Some(resolved),
-                        recv_place: Some(_),
-                        ..
-                    } if declarations.get(resolved).is_some_and(|declaration| {
-                        !matches!(
-                            declaration.receiver_convention,
-                            Some(mojito_ast::ast::ArgConvention::Var)
-                        )
-                    }) =>
-                    {
-                        output.insert(recv.0);
+                    if let Some(blocks) = orelse {
+                        visit(blocks, declarations, owning);
                     }
-                    MirInstr::Try {
-                        body,
-                        handler,
-                        orelse,
-                        finalbody,
-                        ..
-                    } => {
-                        visit(function, body, declarations, output);
-                        if let Some((_, blocks)) = handler {
-                            visit(function, blocks, declarations, output);
-                        }
-                        if let Some(blocks) = orelse {
-                            visit(function, blocks, declarations, output);
-                        }
-                        if let Some(blocks) = finalbody {
-                            visit(function, blocks, declarations, output);
-                        }
+                    if let Some(blocks) = finalbody {
+                        visit(blocks, declarations, owning);
                     }
-                    _ => {}
                 }
             }
+            owning.extend(terminator_regs(&block.term).iter().map(|reg| reg.0));
         }
     }
 
-    let mut output = HashSet::new();
-    visit(function, &function.blocks, declarations, &mut output);
-    let loaded = collect_loaded_places(&function.blocks);
-    output.retain(|reg| loaded.contains_key(reg));
-    output
+    let mut owning = HashSet::new();
+    visit(&function.blocks, declarations, &mut owning);
+    collect_loaded_places(&function.blocks)
+        .into_keys()
+        .filter(|reg| !owning.contains(reg))
+        .filter(|reg| {
+            function
+                .reg_types
+                .get(reg)
+                .is_some_and(|ty| is_aggregate_ty(ty) && !matches!(ty, Ty::Func { .. }))
+        })
+        .collect()
 }
 
 pub fn collect_loaded_places(blocks: &[MirBlock]) -> HashMap<u32, MirPlace> {
@@ -651,5 +602,178 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::Next { .. } => "Next",
         MirInstr::TryNext { .. } => "TryNext",
         MirInstr::Unsupported(_) => "Unsupported",
+    }
+}
+
+/// The operand registers `instruction` only borrows: read receivers and
+/// non-consuming argument slots of declared callees, the operands of the
+/// value-reading builtins, and the bases of field, variant and subscript
+/// reads. Every other operand position takes, moves, stores or mutates its
+/// register.
+fn borrowed_operands(
+    instruction: &MirInstr,
+    declarations: &HashMap<String, MirFunctionDeclaration>,
+) -> Vec<u32> {
+    match instruction {
+        MirInstr::CopyValue { value, .. }
+        | MirInstr::GetField { base: value, .. }
+        | MirInstr::VariantIs { variant: value, .. }
+        | MirInstr::VariantGet { variant: value, .. } => vec![value.0],
+        MirInstr::Index {
+            base,
+            base_place,
+            call,
+            ..
+        } => match call {
+            None => vec![base.0],
+            Some(call) if receiver_borrows(call.receiver_convention, base_place.is_some()) => {
+                vec![base.0]
+            }
+            Some(_) => Vec::new(),
+        },
+        MirInstr::Slice {
+            object,
+            object_place,
+            call: Some(call),
+            ..
+        }
+        | MirInstr::MultiIndex {
+            object,
+            object_place,
+            call: Some(call),
+            ..
+        } if receiver_borrows(call.receiver_convention, object_place.is_some()) => {
+            vec![object.0]
+        }
+        MirInstr::MultiSet {
+            receiver,
+            receiver_place,
+            call,
+            ..
+        } if receiver_borrows(call.receiver_convention, receiver_place.is_some()) => {
+            vec![receiver.0]
+        }
+        MirInstr::MethodCall {
+            recv,
+            resolved: Some(resolved),
+            recv_place,
+            args,
+            kwargs,
+            ..
+        } => {
+            let Some(declaration) = declarations.get(resolved) else {
+                return Vec::new();
+            };
+            if declaration.variadic.is_some() || declaration.kw_variadic.is_some() {
+                return Vec::new();
+            }
+            let mut borrowed = borrowed_slots(declaration, args, kwargs);
+            if receiver_borrows(declaration.receiver_convention, recv_place.is_some()) {
+                borrowed.push(recv.0);
+            }
+            borrowed
+        }
+        MirInstr::MethodCall {
+            resolved: None,
+            method,
+            args,
+            ..
+        } if matches!(method.as_str(), "write" | "write_string") => {
+            args.iter().map(|reg| reg.0).collect()
+        }
+        MirInstr::Call {
+            func,
+            args,
+            kwargs,
+            kwarg_places,
+            ..
+        } => {
+            let mut borrowed = match declarations.get(&func.0) {
+                Some(declaration)
+                    if declaration.variadic.is_none() && declaration.kw_variadic.is_none() =>
+                {
+                    borrowed_slots(declaration, args, kwargs)
+                }
+                Some(_) => Vec::new(),
+                None if matches!(
+                    func.0.as_str(),
+                    "print"
+                        | "String"
+                        | "repr"
+                        | "len"
+                        | "abs"
+                        | "round"
+                        | "Int"
+                        | "Float64"
+                        | "Bool"
+                ) =>
+                {
+                    args.iter()
+                        .chain(kwargs.iter().map(|(_, reg)| reg))
+                        .map(|reg| reg.0)
+                        .collect()
+                }
+                None => Vec::new(),
+            };
+            // `Type(copy=place)` is the explicit copy-constructor boundary:
+            // the constructor itself runs the copy lifecycle on the borrowed
+            // source.
+            borrowed.extend(
+                kwargs
+                    .iter()
+                    .zip(kwarg_places)
+                    .filter(|((name, _), place)| name == "copy" && place.is_some())
+                    .map(|((_, reg), _)| reg.0),
+            );
+            borrowed
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// The positional and keyword arguments bound to non-consuming slots of
+/// `declaration`. `param_conventions` covers the explicit parameters only,
+/// so positional index `i` is slot `i`.
+fn borrowed_slots(
+    declaration: &MirFunctionDeclaration,
+    args: &[Reg],
+    kwargs: &[(String, Reg)],
+) -> Vec<u32> {
+    let slot_borrows = |index: usize| {
+        !matches!(
+            declaration.param_conventions.get(index).copied().flatten(),
+            Some(mojito_ast::ast::ArgConvention::Var | mojito_ast::ast::ArgConvention::Deinit)
+        )
+    };
+    let positional = args
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| slot_borrows(*index))
+        .map(|(_, reg)| reg.0);
+    let keyword = kwargs.iter().filter_map(|(name, reg)| {
+        declaration
+            .param_names
+            .iter()
+            .position(|parameter| parameter == name)
+            .filter(|index| slot_borrows(*index))
+            .map(|_| reg.0)
+    });
+    positional.chain(keyword).collect()
+}
+
+/// Whether a receiver of `convention` only borrows its register. A `mut` or
+/// `deinit` receiver borrows through its retained place (the call addresses
+/// the place directly); without one it takes a copy that the write-back or
+/// the destructor consumes.
+const fn receiver_borrows(
+    convention: Option<mojito_ast::ast::ArgConvention>,
+    has_place: bool,
+) -> bool {
+    match convention {
+        Some(mojito_ast::ast::ArgConvention::Var | mojito_ast::ast::ArgConvention::Out) => false,
+        Some(mojito_ast::ast::ArgConvention::Mut | mojito_ast::ast::ArgConvention::Deinit) => {
+            has_place
+        }
+        _ => true,
     }
 }

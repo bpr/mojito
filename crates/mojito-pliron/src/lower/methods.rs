@@ -187,11 +187,10 @@ impl FnLowering<'_> {
             ));
         }
         let recv_owned = owned.first().copied().unwrap_or(false);
-        // A `mut`/`ref` receiver with a known place passes the caller's
-        // storage address directly (write-through) — copy-in/copy-out would
-        // point an escaping interior pointer at the copy. A `read`/`deinit`
-        // receiver (or a placeless temporary) keeps the VM's clone-on-read
-        // copy.
+        // A receiver with a known place passes the caller's storage address
+        // directly (write-through) — copy-in/copy-out would point an escaping
+        // interior pointer at the copy. A placeless receiver register is
+        // either an aliased load (its address) or an owned temporary.
         let receiver_alias = recv_place.is_some() && matches!(params[0], LowerTy::Aggregate { .. });
         let recv_value = if receiver_alias {
             let place = recv_place.expect("aliased receivers have a place").clone();
@@ -280,6 +279,7 @@ impl FnLowering<'_> {
         // write the receiver back; a missing place means a discarded
         // temporary receiver.
         let write_back = !receiver_alias
+            && !self.aliased_load_regs.contains(&recv.0)
             && match self.func.reg_types.get(&recv.0) {
                 Some(Ty::Struct(struct_name, _)) => {
                     let is_mut = self

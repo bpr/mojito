@@ -244,13 +244,9 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    /// An owned copy of an aggregate — the VM's `clone_value`: the nominal
-    /// String copies through the native bridge (the stdlib byte loop needs
-    /// machinery outside this stage), a struct's compiled `__copyinit__` runs
-    /// when it defines one, and otherwise a byte copy applies (exact for
-    /// every type whose transitive fields carry no user copy constructor; a
-    /// nested-only `__copyinit__` rejects rather than diverge from the VM's
-    /// recursive clone).
+    /// An owned copy of an aggregate — the VM's `clone_value` in fresh
+    /// storage, registered as an owned temporary when the clone did more than
+    /// copy bytes.
     pub(super) fn copy_aggregate(
         &mut self,
         ctx: &mut Context,
@@ -259,100 +255,22 @@ impl FnLowering<'_> {
         layout: Layout,
         src_ptr: Value,
     ) -> Result<(), PlironError> {
-        if let Ty::Struct(name, _) = ty
-            && mojito_symbol::symbol::is_stdlib_string_struct(name)
-        {
-            // The stdlib copy constructor: a fresh `cap`-byte allocation with
-            // `size` bytes copied and `size`/`cap` preserved.
-            let storage = self.entry_alloca(ctx, layout.size, layout.align);
-            let (src_data, src_size) = self.string_parts(ctx, src_ptr, dest);
-            let src_cap = self.string_cap(ctx, src_ptr, dest);
-            let new_data = self.emit_alloc(ctx, src_cap, 1, dest);
-            self.mem_copy_dynamic(ctx, new_data, src_data, src_size, dest);
-            self.store_string_fields(ctx, storage, new_data, src_size, src_cap, dest);
-            self.reg_values.insert(dest.0, storage);
-            self.mark_owned_temp(dest, ty.clone())?;
-            return Ok(());
-        }
-        if matches!(ty, Ty::Error) {
-            // The VM's clone of an error duplicates its message, so the copy
-            // outlives the original's drop.
-            let storage = self.entry_alloca(ctx, layout.size, layout.align);
-            let (src_data, src_size) = self.string_parts(ctx, src_ptr, dest);
-            let new_data = self.emit_alloc(ctx, src_size, 1, dest);
-            self.mem_copy_dynamic(ctx, new_data, src_data, src_size, dest);
-            self.store_string_fields(ctx, storage, new_data, src_size, src_size, dest);
-            self.reg_values.insert(dest.0, storage);
-            self.mark_owned_temp(dest, ty.clone())?;
-            return Ok(());
-        }
         let storage = self.value_storage(ctx, ty, layout);
-        if let Ty::Struct(name, _) = ty
-            && self
-                .declarations
-                .contains_key(&format!("{name}.__copyinit__"))
-        {
-            let copyinit = format!("{name}.__copyinit__");
-            let Some(signature) = self.signatures.get(&copyinit) else {
-                return Err(self.unsupported_reg(format!("copy via uncompiled `{copyinit}`"), dest));
-            };
-            if signature.outcome.is_some() {
-                return Err(
-                    self.unsupported_reg(format!("raising copy constructor `{copyinit}`"), dest)
-                );
-            }
-            let callee: Identifier = signature
-                .mangled
-                .as_str()
-                .try_into()
-                .expect("mangled names are identifier-safe");
-            let func_ty = signature.func_ty;
-            // `__copyinit__(out self, copy: Self)`: dest storage, then source.
-            let call = CallOp::new(
-                ctx,
-                CallOpCallable::Direct(callee),
-                func_ty,
-                vec![storage, src_ptr],
-            );
-            self.append(ctx, call.get_operation(), Some(dest));
-            // A copy constructor may have allocated; release what the
-            // invisible rule understands (String buffers) or, for a stdlib
-            // collection copy, its own compiled destructor chain.
-            if self.releasable(ty) || self.stdlib_deinit_temp(ty) || self.needs_drop(ty) {
-                self.mark_owned_temp(dest, ty.clone())?;
-            }
-        } else if self.has_nested_lifecycle(ty, "__copyinit__") {
+        if self.clone_needs_work(ty) {
             self.fork_value_into(ctx, storage, ty, layout, src_ptr, dest)?;
             self.reg_values.insert(dest.0, storage);
-            if self.releasable(ty) || self.stdlib_deinit_temp(ty) || self.needs_drop(ty) {
-                self.mark_owned_temp(dest, ty.clone())?;
-            }
-            return Ok(());
-        } else if self.owns_heap(ty) {
-            // Drop elaboration may destroy the owning variable immediately
-            // after its last use — before this temporary is read — so
-            // aliasing its buffers is not an option under real frees: fork
-            // the copy and release it after its own last use (the VM's
-            // arena-shared plain clone, made explicit).
-            self.fork_value_into(ctx, storage, ty, layout, src_ptr, dest)?;
-            self.reg_values.insert(dest.0, storage);
-            self.mark_owned_temp(dest, ty.clone())?;
-            return Ok(());
-        } else {
-            // A byte copy of a heap-less value carries everything it needs.
-            self.copy_value(ctx, storage, src_ptr, ty, layout, dest);
+            return self.mark_owned_temp(dest, ty.clone());
         }
+        self.copy_value(ctx, storage, src_ptr, ty, layout, dest);
         self.reg_values.insert(dest.0, storage);
         Ok(())
     }
 
-    /// Fork the value at `src_ptr` into `dst`: a byte copy whose
-    /// String/Error components are re-duplicated so each copy owns its own
-    /// buffers — the native analog of the VM's arena-shared plain clone
-    /// (whose aliasing is invisible because the arena never reclaims). User
-    /// copy constructors never run here; the VM's plain clone does not run
-    /// them either. Values owning raw pointer storage cannot fork bufferwise
-    /// and reject contextually.
+    /// Clone the value at `src_ptr` into `dst` — the VM's `clone_value`: a
+    /// struct with a compiled `__copyinit__` runs it, the nominal String and
+    /// the built-in error duplicate their buffers, and any other aggregate is
+    /// a byte copy whose fields with copy work of their own are then cloned in
+    /// place, recursively. The caller owns `dst`; nothing is registered here.
     pub(super) fn fork_value_into(
         &mut self,
         ctx: &mut Context,
@@ -379,38 +297,13 @@ impl FnLowering<'_> {
             self.store_string_fields(ctx, dst, new_data, src_size, src_size, span);
             return Ok(());
         }
-        // A structural clone of a stdlib owning collection must use its
-        // compiled copy constructor so element ownership is duplicated. Do
-        // not generalize this to user structs: their observable
-        // `__copyinit__` belongs only to an explicit CopyValue boundary.
-        if self.stdlib_deinit_temp(ty)
-            && let Ty::Struct(name, _) = ty
+        if let Ty::Struct(name, _) = ty
             && self
                 .declarations
                 .contains_key(&format!("{name}.__copyinit__"))
         {
-            let copyinit = format!("{name}.__copyinit__");
-            let signature = self.signatures.get(&copyinit).ok_or_else(|| {
-                self.unsupported_reg(format!("copy via uncompiled `{copyinit}`"), span)
-            })?;
-            if signature.outcome.is_some() {
-                return Err(
-                    self.unsupported_reg(format!("raising copy constructor `{copyinit}`"), span)
-                );
-            }
-            let callee: Identifier = signature
-                .mangled
-                .as_str()
-                .try_into()
-                .expect("mangled names are identifier-safe");
-            let call = CallOp::new(
-                ctx,
-                CallOpCallable::Direct(callee),
-                signature.func_ty,
-                vec![dst, src_ptr],
-            );
-            self.append(ctx, call.get_operation(), Some(span));
-            return Ok(());
+            let name = name.clone();
+            return self.emit_copyinit_call(ctx, &name, dst, src_ptr, span);
         }
         if let Ty::Variant(alternatives) = ty {
             self.mem_copy(ctx, dst, src_ptr, layout.size, span);
@@ -427,7 +320,7 @@ impl FnLowering<'_> {
             continuation.insert_at_back(region, ctx);
             let mut next = self.current.expect("Variant fork has a current block");
             for (index, alternative) in alternatives.iter().enumerate() {
-                if !self.owns_heap(alternative) {
+                if !self.clone_needs_work(alternative) {
                     continue;
                 }
                 self.current = Some(next);
@@ -490,7 +383,7 @@ impl FnLowering<'_> {
         };
         self.mem_copy(ctx, dst, src_ptr, layout.size, span);
         for (element, offset) in elements {
-            if !self.owns_heap(&element) {
+            if !self.clone_needs_work(&element) {
                 continue;
             }
             let element_layout = self.layout.layout_of(&element).map_err(|error| {
@@ -501,5 +394,45 @@ impl FnLowering<'_> {
             self.fork_value_into(ctx, dst_field, &element, element_layout, src_field, span)?;
         }
         Ok(())
+    }
+
+    /// Run `name`'s compiled `__copyinit__(out self, copy: Self)` from `src`
+    /// into `dst`.
+    pub(super) fn emit_copyinit_call(
+        &mut self,
+        ctx: &mut Context,
+        name: &str,
+        dst: Value,
+        src: Value,
+        span: Reg,
+    ) -> Result<(), PlironError> {
+        let copyinit = format!("{name}.__copyinit__");
+        let Some(signature) = self.signatures.get(&copyinit) else {
+            return Err(self.unsupported_reg(format!("copy via uncompiled `{copyinit}`"), span));
+        };
+        if signature.outcome.is_some() {
+            return Err(
+                self.unsupported_reg(format!("raising copy constructor `{copyinit}`"), span)
+            );
+        }
+        let callee: Identifier = signature
+            .mangled
+            .as_str()
+            .try_into()
+            .expect("mangled names are identifier-safe");
+        let call = CallOp::new(
+            ctx,
+            CallOpCallable::Direct(callee),
+            signature.func_ty,
+            vec![dst, src],
+        );
+        self.append(ctx, call.get_operation(), Some(span));
+        Ok(())
+    }
+
+    /// Whether cloning a `ty` value does more than copy its bytes: it owns a
+    /// buffer, or it or a transitive field has a copy constructor.
+    pub(super) fn clone_needs_work(&self, ty: &Ty) -> bool {
+        self.owns_heap(ty) || self.has_nested_lifecycle(ty, "__copyinit__")
     }
 }

@@ -165,6 +165,7 @@ impl FnLowering<'_> {
         // `mut self` receivers without an aliased place write the modified
         // receiver back — the `lower_method_call` contract.
         let write_back = !receiver_alias
+            && !self.aliased_load_regs.contains(&recv.0)
             && match self.func.reg_types.get(&recv.0) {
                 Some(Ty::Struct(struct_name, _)) => self
                     .struct_decls

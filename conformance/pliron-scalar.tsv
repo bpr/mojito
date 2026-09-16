@@ -160,6 +160,7 @@ assets/ok/list_contiguous_slice_strict.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_methods_growth.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_strided_slice_normalizes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_subscript_field_store.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/list_subscript_field_store_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_subscript_field_store_shapes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_unsafe_ptr_multi_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_unsafe_uninit_length.mojo	-	ineligible	no-scalar-entry-shape
@@ -181,8 +182,10 @@ assets/ok/mut_parameter_reassignment_drop_shapes.mojo	-	ineligible	no-scalar-ent
 assets/ok/mut_pointer_parameter_reassign.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mut_ref_writeback.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/named_shared_views.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/native_borrowed_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_comprehensions.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/nested_copy_lifecycle.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_index_store.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_recursive_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nominal_string_affix.mojo	-	ineligible	no-scalar-entry-shape
@@ -220,6 +223,7 @@ assets/ok/nominal_string_unicode_case.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nominal_string_writer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/number_and_string_literals.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/numeric_operation_traits.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/optional_dict_keys.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/optional_is_none.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/optional_owning_api.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/optional_raising_subscript.mojo	-	ineligible	no-scalar-entry-shape

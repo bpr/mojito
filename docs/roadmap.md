@@ -23,10 +23,8 @@ strict dependency forces a different order, the entry says so.
 
 Sections 1 to 3 are ordered by what the Pliron direction in
 [`docs/pliron-future.md`](pliron-future.md) depends on. Section 3 does not wait
-for sections 1 and 2 to empty, since section 2 reopens at every re-pin. It
-waits only for the numbered prerequisite list at its head, which is taken
-first, ahead of the sort order in sections 1 and 2. The rest of sections 1
-and 2 can interleave with section 3.
+for sections 1 and 2 to empty, since section 2 reopens at every re-pin; the
+sections can interleave.
 
 ## Ordered Work
 
@@ -48,29 +46,25 @@ whatever its model, because it batches every change that needs a new
     fires at every field initialization, so the plan's job is to bound the
     overload-resolution and fixture fallout before the edit.
 
-- [ ] **Native generic-holder temporaries with heap-owning implicitly
-  copyable fields read freed memory**
+- [ ] **Operator operands and the bundled `hash` body take lifecycle copies**
 
-  Problem: `GenericHolder[Box](Box(5))`, or Dict's
-  `DictEntry[Optional[Int], V]` appended to a `List`, reads freed memory
-  natively while the VM is correct.
-  - This keeps `Dict[Optional[Int], _]` VM-only:
-    `conformance/fixtures/optional_dict_keys.mojo` stays out of
-    `assets/ok`.
-  - Smallest repro, no heap field needed: `xs.append(Tracked(1))` with a
-    `__deinit__` that prints destroys the moved temporary a second time
-    natively (`del 1` twice; the pin and the VM print it once), and a list
-    literal `[Tracked(1)]` does the same. It keeps the droppable-field twin
-    of the closed `List` subscript field-store row VM-only:
-    `conformance/fixtures/list_subscript_field_store_drop.mojo` stays out
-    of `assets/ok`.
-  - Bisect the `var` field-move of the copy-lifecycle value inside the
-    generic constructor against the owned-temp marking in
-    `crates/mojito-pliron/src/lower/calls.rs`.
-  - The last section 3 prerequisite.
-  - Model: Fable. The lever is a guess rather than a known site, and the
-    bug sits where monomorphized constructors, copy lifecycle, and native
-    temporary ownership meet.
+  Problem: `b == c` on a struct whose copy constructor prints prints
+  `copy` for each operand, and `hash(b)` prints it twice, on both backends.
+  - Upstream's `__eq__(self, other: Self)` and `__hash__` borrow their
+    operands; nothing is copied.
+  - A named binary-operator operand lowers as a `var.use` copy: the
+    checker's `borrow_nominal_place_argument` mark, which `len`, `print`
+    and the conversion builtins record, is missing on the operator path.
+  - `hash(b)` borrows at the call site; the copies happen inside the
+    bundled generic `hash[T: Hashable, ...](value: T)` body in
+    `stdlib/std/hashlib/hash.mojo`, so that body (or the `T`-typed
+    parameter read it makes) is the second lever.
+  - Probe first: a `Box` owning a `List[Int]` with a printing
+    `__init__(out self, *, copy: Self)`, compared `==` and hashed,
+    verified against the pin.
+  - Model: Opus, plan first. One recording site plus one stdlib body, but
+    the plan bounds the fixture fallout of any `__eq__` that relied on the
+    copy.
 
 - [ ] **Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
@@ -494,17 +488,6 @@ before instantiating it while Mojito elaborates first and checks the clones.
 These tasks fix that order. Each one pays off by itself, the first closes a
 conformance divergence, and together they are what a later Pliron pivot would
 need.
-
-**Prerequisite.** Take this entry from section 1 first, then start this
-section. The rest of sections 1 and 2 does not block it. It fixes a native
-lifecycle order that the Pliron proof below must model and is judged on, so
-fixing it afterwards would move the target under the proof. When it closes,
-delete it here too.
-
-1. **Native generic-holder temporaries with heap-owning implicitly copyable
-   fields read freed memory**. The MIR place shapes the proof targets are
-   settled, and the Pliron proof's own slice (a generic struct, a move, drops
-   on every edge, run natively) has exactly this shape.
 
 - [ ] **A type error in an untaken `comptime if` branch is never reported**
 

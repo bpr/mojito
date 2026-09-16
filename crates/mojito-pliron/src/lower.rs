@@ -242,7 +242,7 @@ pub fn lower_body(
         print_sink: None,
         partially_moved: HashSet::new(),
         leaf_flags: HashMap::new(),
-        aliased_receiver_regs: collect_aliased_receiver_regs(func, env.declarations),
+        aliased_load_regs: collect_aliased_load_regs(func, env.declarations),
         loaded_places: collect_loaded_places(&func.blocks),
         pointer_slot_refs: HashSet::new(),
         initialized_vars: HashSet::new(),
@@ -455,13 +455,13 @@ struct FnLowering<'a> {
     /// destroy exactly the surviving leaves and suppress the whole-value
     /// destructor when any tracked leaf is absent.
     leaf_flags: HashMap<u32, std::collections::BTreeMap<usize, Value>>,
-    /// Receiver registers whose method call uses a retained caller place.
-    /// Their preceding `LoadPlace` is semantic scaffolding; materializing an
-    /// owned clone would create an extra lifecycle object the call ignores.
-    aliased_receiver_regs: HashSet<u32>,
-    /// Original places behind `LoadPlace` scaffolding. Immutable aggregate
-    /// calls can borrow these directly even when the checker did not retain
-    /// an explicit `arg_place` on the call contract.
+    /// `LoadPlace` results whose every consumer borrows them: the register
+    /// holds its place's address and no copy lifecycle runs (MIR's aggregate
+    /// load is a shallow read; `CopyValue` is the copy boundary).
+    aliased_load_regs: HashSet<u32>,
+    /// Original places behind every `LoadPlace`. Immutable aggregate calls
+    /// can borrow these directly even when the checker did not retain an
+    /// explicit `arg_place` on the call contract.
     loaded_places: HashMap<u32, MirPlace>,
     /// `MakeRef` results that address pointer-typed storage: a value access
     /// through such a handle first loads the stored pointer (the VM's

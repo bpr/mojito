@@ -239,8 +239,9 @@ impl FnLowering<'_> {
             MirInstr::UseVar { dest, var, mode } => self.lower_use_var(ctx, *dest, *var, *mode),
             MirInstr::DefVar { var, src, .. } => self.lower_def_var(ctx, *var, *src),
             MirInstr::LoadPlace { dest, place } => {
-                if self.aliased_receiver_regs.contains(&dest.0) {
-                    self.erased.insert(dest.0);
+                if self.aliased_load_regs.contains(&dest.0) {
+                    let address = self.aliased_receiver_address(ctx, place, *dest)?;
+                    self.reg_values.insert(dest.0, address);
                     return Ok(());
                 }
                 let (address, ty) = self.place_address(ctx, place, *dest)?;

@@ -1,8 +1,6 @@
 # A droppable field replaced through a `List` subscript is destroyed at the
 # store (`del 1` at `xs[0].tag = Tracked(2)`), and so is one below a nested
-# field chain, exactly as the pinned Mojo prints. (Kept out of assets/ok: the
-# native backend still destroys the droppable temporary `List.append` moves in
-# a second time — see the section 3 prerequisite in the roadmap.)
+# field chain, exactly as the pinned Mojo prints.
 @fieldwise_init
 struct Tracked(Copyable, Movable):
     var id: Int

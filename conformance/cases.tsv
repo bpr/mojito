@@ -315,8 +315,10 @@ contiguous-slice-not-equatable	reject	assets/type_error/contiguous_slice_not_equ
 slice-descriptor-kinds	mojito-only	conformance/fixtures/slice_descriptor_kinds.mojo
 keyword-slice-subscripts	run	assets/ok/keyword_slice_subscripts.mojo
 optional-value-protocols	run	assets/ok/optional_value_protocols.mojo
-optional-dict-keys	run	conformance/fixtures/optional_dict_keys.mojo
-list-subscript-field-store-drop	run	conformance/fixtures/list_subscript_field_store_drop.mojo
+optional-dict-keys	run	assets/ok/optional_dict_keys.mojo
+list-subscript-field-store-drop	run	assets/ok/list_subscript_field_store_drop.mojo
+native-borrowed-reads	run	assets/ok/native_borrowed_reads.mojo
+nested-copy-lifecycle	run	assets/ok/nested_copy_lifecycle.mojo
 optional-equatable-requires-element	reject	assets/type_error/optional_equatable_requires_element.mojo
 optional-or-else-consumes-receiver	reject	assets/type_error/optional_or_else_consumes_receiver.mojo
 optional-is-none	run	assets/ok/optional_is_none.mojo
