@@ -69,9 +69,10 @@ impl ArgumentAccess {
 }
 
 impl Checker {
-    /// The within-call aliasing rules of a free call in order: the syntactic
-    /// place rule (`check_call_aliasing`), then this module's carried-origin
-    /// rule.
+    /// The within-call aliasing rules of a free call in order: a transferred
+    /// value cannot bind a `mut`/`ref` slot (`reject_transfer_into_mutable`),
+    /// then the syntactic place rule (`check_call_aliasing`), then this
+    /// module's carried-origin rule.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::checker) fn check_free_call_aliasing(
         &self,
@@ -84,6 +85,13 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<(), TypeError> {
+        crate::checker::places::reject_transfer_into_mutable(
+            callee,
+            slots,
+            conventions,
+            args,
+            kwargs,
+        )?;
         crate::checker::places::check_call_aliasing(
             slots,
             conventions,

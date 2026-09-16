@@ -601,6 +601,12 @@ impl Elab<'_> {
                 .next()
                 .expect("evaluated parameter count checked above");
             let binding = decl.name().trim_start_matches('*').to_string();
+            if decl.name().starts_with('*') {
+                env.insert(
+                    super::elab::pack_binding_marker(&binding),
+                    CtValue::Bool(true),
+                );
+            }
             env.insert(binding.clone(), v.clone());
             match &decl {
                 ParamDecl::Value { name, .. } => {
@@ -1388,6 +1394,12 @@ impl Elab<'_> {
                             ))
                         })?;
                     overload.body = materialize_block(elaborated, &subs, &self.struct_names);
+                    // The erased parameter's type positions in the body
+                    // (`rebind[T](...)`) bake out like a per-call clone's.
+                    substitute_type_bindings_in_block(
+                        &mut overload.body,
+                        &HashMap::from([(parameter_name.clone(), source_type)]),
+                    );
                     elaborated_methods.push(overload);
                 }
                 continue;

@@ -153,7 +153,10 @@ impl Elab<'_> {
                 }
             }
             StmtKind::ComptimeFor { var, iter, body } => {
-                if !matches!(&iter.kind, ExprKind::Call { name, .. } if name == "range")
+                let is_pack = matches!(&iter.kind, ExprKind::Identifier(name)
+                    if env.contains_key(&pack_binding_marker(name)));
+                if !is_pack
+                    && !matches!(&iter.kind, ExprKind::Call { name, .. } if name == "range")
                     && let CtValue::Tuple(elements) = self.eval(iter, env)?
                 {
                     return Err(ComptimeError::NotIterable(tuple_type_spelling(&elements)));
@@ -816,6 +819,16 @@ impl Elab<'_> {
         }
         self.eval(&assoc.value, &env)
     }
+}
+
+/// The environment key marking `binding` as a specialized variadic pack.
+///
+/// A pack binds as a compile-time tuple, but unlike a tuple value it is
+/// iterable (`comptime for value in values`, as upstream's `VariadicList`),
+/// so `comptime for` consults this marker before rejecting a tuple source.
+/// The `$` keeps it apart from every source identifier.
+pub(super) fn pack_binding_marker(binding: &str) -> String {
+    format!("$pack${binding}")
 }
 
 /// Whether an elaboration error names the enclosing struct's `Self` or one

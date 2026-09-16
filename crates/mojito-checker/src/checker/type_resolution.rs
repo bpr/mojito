@@ -313,10 +313,14 @@ impl Checker {
                 }
                 // Upstream compatibility alias: `StringSlice` resolves to the
                 // canonical `StringSpan` view (never emitted; diagnostics and
-                // display always spell `StringSpan`).
+                // display always spell `StringSpan`). Resolved at the same
+                // nesting depth, so a bare `StringSlice` parameter keeps the
+                // origin inference a bare `StringSpan` gets.
                 if name == "StringSlice" && self.structs.contains_key("StringSpan") {
-                    return self
-                        .ty_from_anno(&SourceType::Named("StringSpan".to_string(), args.clone()));
+                    return self.resolve_ty_from_anno_at_depth(&SourceType::Named(
+                        "StringSpan".to_string(),
+                        args.clone(),
+                    ));
                 }
                 if name == "StringLiteral" && args.is_empty() {
                     return self.bare_string_literal();
@@ -1855,7 +1859,18 @@ impl Checker {
                         }
                         return Ok(TyArg::Val(CtValue::Param(name.clone())));
                     }
-                    let value = self.eval_associated_ct(expr, &HashMap::new())?;
+                    // Source validation types before the elaborator folds a
+                    // value argument it alone can evaluate (a vector
+                    // constructor keying `AHasher[SIMD[DType.uint64, 4](0)]`);
+                    // the application stays symbolic in that argument, and
+                    // the executable check sees the folded value.
+                    let value = match self.eval_associated_ct(expr, &HashMap::new()) {
+                        Ok(value) => value,
+                        Err(_) if self.source_validation => {
+                            return Ok(TyArg::Val(CtValue::Param(name.clone())));
+                        }
+                        Err(error) => return Err(error),
+                    };
                     let actual =
                         self.ct_value_ty(&value, ty)
                             .ok_or_else(|| TypeError::TypeMismatch {
@@ -2723,10 +2738,11 @@ impl Checker {
     /// If `name` is a generic type parameter currently in scope, return its
     /// complete checked type-parameter fact.
     pub(super) fn lookup_tparam(&self, name: &str) -> Option<Ty> {
-        self.tparams
+        self.local_type_aliases
             .iter()
             .rev()
             .find_map(|scope| scope.get(name))
+            .or_else(|| self.tparams.iter().rev().find_map(|scope| scope.get(name)))
             .cloned()
     }
 }

@@ -45,6 +45,7 @@ The post-parse pipeline is:
 ```text
 Vec<Stmt>
   -> module link
+  -> source validation
   -> comptime elaboration
   -> check
   -> HIR CFG
@@ -88,6 +89,9 @@ parsed AST
    |
    v
 module linker
+   |
+   v
+source validation (every comptime arm, parameters symbolic)
    |
    v
 comptime elaborator
@@ -387,9 +391,12 @@ Module:
 crates/mojito-comptime/src/comptime.rs
 ```
 
-Entry point:
+Entry points:
 
 ```rust
+comptime::prepare(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError>
+checker::validate_comptime_templates(prepared: &[Stmt]) -> Result<(), TypeError>
+comptime::elaborate_prepared(prepared: Vec<Stmt>, …requests) -> Result<Elaborated, ComptimeError>
 comptime::elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError>
 ```
 
@@ -397,6 +404,27 @@ comptime::elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError>
 elaborator rewrites compile-time constructs into ordinary AST so the checker,
 HIR, MIR, and VM do not need to carry special `comptime if` or `comptime for`
 semantics.
+
+**Source validation comes first.** `prepare` normalizes declarations
+without selecting an arm, unrolling a loop, stubbing a template, or minting a
+clone (pack qualification, the synthesized `copy`/`__hash__` methods, the
+SIMD-keyed method desugar, SIMD alias-bound folding). The checker then
+validates the prepared source (`validate_comptime_templates`,
+`checker/comptime_validation.rs`): every function or method body holding a
+`comptime if`/`comptime for` is checked once with its declaration's
+parameters left symbolic — each condition typed as a compile-time `Bool`
+(a generic constraint over the parameters in scope, a concrete conformance,
+or a `Bool` value), each arm and loop body in its own scope, no arm assumed
+selected — so a type error in an untaken arm rejects as upstream rejects it,
+a guard such as `T == Int` narrows nothing, and an unused template still
+checks. Bodies without such constructs are declared but left to the
+executable check; bodies keyed on a variadic pack, a `DType`, or a
+vector-typed value parameter register as template shells and keep their
+per-instantiation check (`docs/roadmap.md` §3). Validation produces no
+checked facts: its checker is discarded, and `Compiler::compile_linked`
+runs it once on the prepared program that every discovery round then
+re-elaborates. `comptime::elaborate`, the composed-stage seam, runs the
+same three steps.
 
 Compile-time values are represented by:
 
@@ -416,11 +444,10 @@ The implemented forms are:
   the compile-time environment, and keeps a folded declaration whose value is a
   literal.
 - `comptime if`: evaluates each condition as a compile-time `Bool` and keeps
-  only the selected branch. Dropped branches disappear before type checking,
-  which lets them contain code that would be invalid for the selected
-  specialization. Upstream instead type-checks every branch symbolically and
-  rejects such code, so this is a divergence (`docs/roadmap.md` §3, the
-  untaken `comptime if` branch task) rather than a settled design.
+  only the selected branch. The dropped branches were already checked by
+  source validation, so elimination hides no type error; a dropped branch's
+  compile-time evaluation failure (a `comptime k = 1 // 0` there) is not
+  an error, as upstream.
 - `comptime for`: evaluates the iterable as either `range(...)` or a
   compile-time tuple/list, substitutes the loop variable with a literal, and
   splices a fresh elaborated copy of the loop body for each element. A

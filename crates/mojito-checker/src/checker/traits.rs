@@ -390,6 +390,7 @@ impl Checker {
                 fieldwise_init: declaration.fieldwise_init,
                 explicit_destroy_message,
                 explicit_destructors,
+                template_shell: declaration.template_shell,
             },
         );
         Ok(())
@@ -454,6 +455,13 @@ impl Checker {
         declaration: &StructDeclaration<'_>,
     ) -> Result<(), TypeError> {
         let name = declaration.name;
+        // A template shell has no members to resolve: its fields depend on the
+        // pack, and it exists only to type symbolic applications. (Under
+        // source validation the shell still carries its source where
+        // clauses, which check only per specialization too.)
+        if declaration.template_shell {
+            return Ok(());
+        }
         if !declaration.where_clauses.is_empty() {
             let has_constraint_binder = self
                 .structs
@@ -497,11 +505,6 @@ impl Checker {
                 },
                 updated_decls,
             );
-        }
-        // A template shell has no members to resolve: its fields depend on the
-        // pack, and it exists only to type symbolic applications.
-        if declaration.template_shell {
-            return Ok(());
         }
         let (_, saved) = self.enter_struct_scope(declaration)?;
         let resolved = self.resolve_struct_member_types(declaration);
@@ -834,6 +837,15 @@ impl Checker {
         // concrete specialization does both.
         if declaration.template_shell {
             return Ok(());
+        }
+        // Source validation checks only the method bodies holding
+        // compile-time control flow; conformance and the other bodies are
+        // the executable pass's.
+        if self.source_validation {
+            let (self_ty, saved) = self.enter_struct_scope(declaration)?;
+            let result = self.validate_comptime_method_bodies(declaration, &self_ty);
+            self.exit_struct_scope(saved);
+            return result;
         }
         self.reject_value_field_self_containment(declaration.name)?;
         let (self_ty, saved) = self.enter_struct_scope(declaration)?;

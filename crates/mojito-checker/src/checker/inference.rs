@@ -390,7 +390,9 @@ impl Checker {
                 member,
             });
         }
-        let result = self.infer_impl(expr);
+        let result = self
+            .infer_impl(expr)
+            .and_then(|ty| self.apply_rebind_target(expr, ty));
         if let Ok(ty) = &result {
             if matches!(
                 ty,
@@ -850,6 +852,19 @@ impl Checker {
                 // first-class/escaping values merely because their compile-time
                 // arguments are explicit.
                 if let ExprKind::Member { object, field } = &callee.kind {
+                    // `p.__getitem__[k]()` on a specialized variadic struct
+                    // names the accessor the subscript sugar unrolled per
+                    // index; the explicit spelling selects the same one.
+                    if let Some(accessor) = self
+                        .dependent_index_accessor_method(object, field, param_args, args, kwargs)?
+                    {
+                        return self.infer_method_call(
+                            expr.source_span(),
+                            object,
+                            &accessor,
+                            MethodCallArguments::parameterized(&[], &[], &[]),
+                        );
+                    }
                     match self.infer_method_call(
                         expr.source_span(),
                         object,

@@ -62,16 +62,27 @@ impl Checker {
                 if matches!(argument.kind, ExprKind::Transfer(_)) {
                     return None;
                 }
-                self.carried_argument_origins(argument)
+                if !self
+                    .carried_argument_origins(argument)
                     .iter()
                     .any(|origin| origin_overlaps_place(origin, &receiver))
-                    .then(|| TypeError::AliasingMutableReceiverArgument {
-                        parameter: parameter_names
-                            .get(index)
-                            .cloned()
-                            .unwrap_or_else(|| format!("arg{index}")),
-                        callee: method.to_string(),
-                    })
+                {
+                    return None;
+                }
+                // An argument that is itself a call borrowing the receiver's
+                // interior through its own argument (`xs[0] = keep(xs[0].rstrip())`)
+                // is reported at that inner call, as upstream reports it.
+                Some(
+                    self.check_result_aliases(&receiver, argument, false)
+                        .err()
+                        .unwrap_or_else(|| TypeError::AliasingMutableReceiverArgument {
+                            parameter: parameter_names
+                                .get(index)
+                                .cloned()
+                                .unwrap_or_else(|| format!("arg{index}")),
+                            callee: method.to_string(),
+                        }),
+                )
             })
             .map_or(Ok(()), Err)
     }
@@ -79,7 +90,10 @@ impl Checker {
     /// The origins an argument's value carries. A view returned by a method
     /// on an element place (`xs[1].rstrip()`) borrows the owned interior below
     /// that element.
-    fn carried_argument_origins(&self, expression: &Expr) -> Vec<mojito_types::origin::Origin> {
+    pub(in crate::checker) fn carried_argument_origins(
+        &self,
+        expression: &Expr,
+    ) -> Vec<mojito_types::origin::Origin> {
         let origins = self.aggregate_origins(expression);
         if origins.is_empty()
             && let ExprKind::MethodCall { object, .. } = &expression.kind

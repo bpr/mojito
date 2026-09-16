@@ -8,8 +8,10 @@
 //! - **`comptime NAME = expr`** — evaluated at compile time (a compile-time value is
 //!   required; the elaborator is the validator). Recorded in a compile-time
 //!   environment; the statement is kept as an ordinary binding.
-//! - **`comptime if`** — keeps only the taken branch; the others are dropped before
-//!   type-checking.
+//! - **`comptime if`** — keeps only the taken branch. Every branch was already
+//!   checked by source validation (`mojito_checker::checker::validate_comptime_templates`,
+//!   run by [`elaborate`] and the compiler driver on the [`prepare`]d program),
+//!   so dropping the others hides no type error.
 //! - **`comptime for`** — unrolls over a compile-time `range(...)` or a compile-time
 //!   tuple/list, substituting the loop variable with its literal in each body copy;
 //!   a **fuel quota** bounds the work.
@@ -24,9 +26,9 @@
 //!   parameters feed a `comptime if`/`comptime for` cannot be elaborated early (the
 //!   parameter value is only known per call). Such a def is kept as a *template*;
 //!   a monomorphization pass then specializes it per distinct value argument,
-//!   resolving the comptime construct so only the *selected* branch is type-checked
-//!   (`f[0]` and `f[1]` take different branches, and a type error in a dropped
-//!   branch is never seen).
+//!   resolving the comptime construct so only the *selected* branch reaches the
+//!   executable check (`f[0]` and `f[1]` take different branches; the dropped
+//!   branch was validated symbolically first).
 //!
 //! Compile-time values are the shared [`CtValue`](mojito_types::ct::CtValue) universe:
 //! runtime-materializable `Int`/`Bool`/`String`/`Tuple`/`List`, plus
@@ -426,6 +428,9 @@ pub enum ComptimeError {
     GenericBound(Box<GenericBoundError>),
     /// A fully specialized declaration's trailing `where` predicate was false.
     Constraint(String),
+    /// Source validation rejected a compile-time control-flow construct
+    /// before any arm was selected: a checker diagnostic, reported verbatim.
+    Type(mojito_common::error::TypeError),
     /// A variadic struct member spelled the struct's own pack bare, where
     /// upstream requires `Self.Ts`; the message is upstream's diagnostic, the
     /// same text the checker reports for a non-pack parameter.
@@ -513,6 +518,7 @@ impl std::fmt::Display for ComptimeError {
             Self::Constraint(message) => {
                 write!(f, "compile-time constraint failed: {message}")
             }
+            Self::Type(error) => write!(f, "{error}"),
             Self::QuotaExceeded => {
                 write!(f, "compile-time execution exceeded the step quota ({FUEL})")
             }
@@ -521,9 +527,33 @@ impl std::fmt::Display for ComptimeError {
 }
 
 /// Elaborate all compile-time constructs in a program, returning an ordinary AST.
+///
+/// The composed-stage seam: prepares the program, validates every
+/// compile-time control-flow construct with the declarations' parameters
+/// symbolic (a rejection is [`ComptimeError::Type`]), and only then selects
+/// arms and unrolls loops — the same contract the compiler driver enforces.
 pub fn elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
-    elaborate_with_requests(program, &[], &[], &[], &[], &[], &[])
-        .map(|elaborated| elaborated.program)
+    let prepared = prepare(program)?;
+    mojito_checker::checker::validate_comptime_templates(&prepared).map_err(ComptimeError::Type)?;
+    elaborate_prepared(&prepared, &[], &[], &[], &[], &[], &[]).map(|elaborated| elaborated.program)
+}
+
+/// Prepare a linked program for source validation and elaboration: qualify
+/// struct packs, synthesize the derived `copy`/`__hash__` methods, desugar
+/// SIMD-keyed methods, and fold SIMD alias bounds.
+///
+/// These rewrites normalize declarations without selecting a `comptime if`
+/// arm, unrolling a loop, stubbing a template body, or minting a clone, so
+/// the result still carries every source body the validator must see. The
+/// driver prepares once and re-elaborates the prepared program each
+/// discovery round.
+pub fn prepare(mut program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
+    pack_qualification::qualify_struct_packs(&mut program)?;
+    synthesize_copyable_copy(&mut program);
+    synthesize_hashable_hash(&mut program);
+    desugar_simd_keyed_methods(&mut program);
+    fold_simd_alias_bounds(&mut program);
+    Ok(program)
 }
 
 /// An elaborated program plus the generic-struct instances the specializer
@@ -578,13 +608,15 @@ pub fn pack_generic_template_names(program: &[Stmt]) -> HashSet<String> {
     collect_pack_generic_templates(program)
 }
 
-/// Elaborate a program while materializing checker-discovered public `Tuple`
-/// and `TString` specializations and inferred bound-generic applications.
+/// Elaborate a [`prepare`]d, validated program while materializing
+/// checker-discovered public `Tuple` and `TString` specializations and
+/// inferred bound-generic applications.
 ///
-/// This is a crate-internal staging seam: ordinary callers use [`elaborate`],
-/// and the compiler's discovery loop supplies requests here.
-pub fn elaborate_with_requests(
-    mut program: Vec<Stmt>,
+/// This is the already-validated route: ordinary callers use [`elaborate`],
+/// and the compiler's discovery loop — which validates the prepared program
+/// once — supplies requests here each round.
+pub fn elaborate_prepared(
+    program: &[Stmt],
     tuple_requests: &[TupleSpecializationRequest],
     tstring_requests: &[TStringSpecializationRequest],
     def_requests: &[DefSpecializationRequest],
@@ -607,14 +639,9 @@ pub fn elaborate_with_requests(
             .or_default()
             .push(request.arguments().to_vec());
     }
-    pack_qualification::qualify_struct_packs(&mut program)?;
-    synthesize_copyable_copy(&mut program);
-    synthesize_hashable_hash(&mut program);
-    desugar_simd_keyed_methods(&mut program);
-    fold_simd_alias_bounds(&mut program);
     // Every `Hasher` conformer's `_update_with_simd` is cloned per hashed
     // vector type: the closed width-1 set eagerly, wider vectors on demand.
-    for statement in &program {
+    for statement in program {
         for request in hasher_leaf_requests(statement, hash_leaf_types) {
             method_requests_by_owner
                 .entry(request.owner().to_string())
@@ -623,7 +650,7 @@ pub fn elaborate_with_requests(
         }
     }
     let conformance =
-        mojito_checker::checker::ConformanceOracle::from_program(&program).map_err(|error| {
+        mojito_checker::checker::ConformanceOracle::from_program(program).map_err(|error| {
             ComptimeError::NotComptime(format!(
                 "could not build the specialization conformance oracle: {error}"
             ))
@@ -654,12 +681,12 @@ pub fn elaborate_with_requests(
         .into_iter()
         .map(|(key, ty)| (ty, key))
         .collect();
-    let bound_generics = collect_bound_generic_templates(&program);
-    let pack_generics = collect_pack_generic_templates(&program);
+    let bound_generics = collect_bound_generic_templates(program);
+    let pack_generics = collect_pack_generic_templates(program);
     let elab = Elab {
-        program: &program,
-        fns: collect_fns(&program),
-        structs: collect_structs(&program),
+        program,
+        fns: collect_fns(program),
+        structs: collect_structs(program),
         struct_names: program
             .iter()
             .filter_map(|statement| match &statement.kind {
@@ -667,7 +694,7 @@ pub fn elaborate_with_requests(
                 _ => None,
             })
             .collect(),
-        specializable: collect_specializable(&program, &bound_generics),
+        specializable: collect_specializable(program, &bound_generics),
         bound_generics,
         pack_generics,
         method_requests: method_requests_by_owner,
@@ -683,7 +710,7 @@ pub fn elaborate_with_requests(
         generic_aliases: RefCell::new(HashMap::new()),
     };
     let mut env = HashMap::new();
-    let mut elaborated = elab.block(&program, &mut env, false)?;
+    let mut elaborated = elab.block(program, &mut env, false)?;
     // A module constant declared after its use crosses here.
     let consts = elab.top_consts.borrow().clone();
     elab.fold_runtime_crossings(&mut elaborated, &consts)?;
@@ -2063,6 +2090,29 @@ mod vm_bridge_tests {
             source
         );
     }
+}
+
+/// The request-driven elaboration of an unprepared program, for the unit
+/// tests below: prepare, then elaborate.
+#[cfg(test)]
+fn elaborate_with_requests(
+    program: Vec<Stmt>,
+    tuple_requests: &[TupleSpecializationRequest],
+    tstring_requests: &[TStringSpecializationRequest],
+    def_requests: &[DefSpecializationRequest],
+    method_requests: &[MethodSpecializationRequest],
+    struct_requests: &[StructInstanceRequest],
+    hash_leaf_types: &[Ty],
+) -> Result<Elaborated, ComptimeError> {
+    elaborate_prepared(
+        &prepare(program)?,
+        tuple_requests,
+        tstring_requests,
+        def_requests,
+        method_requests,
+        struct_requests,
+        hash_leaf_types,
+    )
 }
 
 #[cfg(test)]

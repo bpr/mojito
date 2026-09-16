@@ -102,6 +102,9 @@ impl Checker {
         self.immutable_origin_binder_scopes.push(HashMap::new());
         self.reference_parameter_scopes.push(HashMap::new());
         self.callable_origin_scopes.push(HashMap::new());
+        self.local_type_aliases.push(HashMap::new());
+        self.local_comptime_values.push(HashMap::new());
+        self.comptime_loop_bindings.push(HashSet::new());
     }
 
     pub(super) fn pop_scope(&mut self) {
@@ -120,6 +123,18 @@ impl Checker {
         self.immutable_origin_binder_scopes.pop();
         self.reference_parameter_scopes.pop();
         self.callable_origin_scopes.pop();
+        self.local_type_aliases.pop();
+        self.local_comptime_values.pop();
+        self.comptime_loop_bindings.pop();
+    }
+
+    /// Whether `name` is a `comptime for` variable of an enclosing validated
+    /// body — a compile-time constant, not runtime storage.
+    pub(super) fn is_comptime_loop_binding(&self, name: &str) -> bool {
+        self.comptime_loop_bindings
+            .iter()
+            .rev()
+            .any(|scope| scope.contains(name))
     }
 
     pub(super) fn is_binding_mutable(&self, name: &str) -> bool {
@@ -215,10 +230,11 @@ impl Checker {
         let Some(scope) = self.binding_scope(name) else {
             return Ok(());
         };
-        // Module globals are not captures. For a value crossing more than one
-        // nested-function boundary, every intervening environment must forward
-        // it: an inner `{value}` cannot tunnel through a middle `{}`.
-        if scope == 0 {
+        // Module globals are not captures, and neither is a `comptime for`
+        // variable (a literal once unrolled). For a value crossing more than
+        // one nested-function boundary, every intervening environment must
+        // forward it: an inner `{value}` cannot tunnel through a middle `{}`.
+        if scope == 0 || self.is_comptime_loop_binding(name) {
             return Ok(());
         }
         for policy in contexts

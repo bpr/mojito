@@ -249,6 +249,8 @@ assets/ok/owned_iteration_iterator_owned_type.mojo	-	ineligible	no-scalar-entry-
 assets/ok/owned_pointer_api.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ownership_marker_traits.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_bare_in_struct_header.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pack_element_rebind.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pack_struct_getitem.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_element_temporaries.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_pair.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_variadic_init.mojo	-	ineligible	no-scalar-entry-shape
@@ -526,7 +528,6 @@ assets/extensions/ok/origin_delegated_multi_binder.mojo	-	ineligible	no-scalar-e
 assets/extensions/ok/origin_delegated_multi_binder_alias_field.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/origin_delegated_parameter_receiver.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/origin_placeholder_initialized_local.mojo	-	ineligible	no-scalar-entry-shape
-assets/extensions/ok/pack_struct_getitem.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/parametric_mut_iterator_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/pliron_closure_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/pointer_field_comprehension_borrowed_named_source.mojo	-	ineligible	no-scalar-entry-shape

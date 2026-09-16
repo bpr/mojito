@@ -280,7 +280,7 @@ impl Checker {
         // linked production programs have registered nominal declarations and
         // must resolve their ordinary `__iter__`/`__next__` contracts below.
         if let Ty::Struct(name, _) = ty
-            && !self.structs.contains_key(name)
+            && self.is_abstract_struct(name)
         {
             if mojito_types::types::is_range_type(ty) {
                 return Ok(builtin(Ty::Int));

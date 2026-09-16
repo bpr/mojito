@@ -154,7 +154,7 @@ fn checked_declarations_preserve_shadowed_function_and_unused_capture_identities
 
 #[test]
 fn checked_boundary_rekeys_cloned_source_provenance_by_occurrence() {
-    let source = "def outer[n: Int]():\n    comptime for value in (1, True):\n        if True:\n            var x = value\n            def show() {x}:\n                print(x)\n            show()\n\ndef main():\n    outer[0]()\n";
+    let source = "def outer[n: Int]():\n    comptime t = (1, True)\n    comptime for i in range(2):\n        if True:\n            var x = t[i]\n            def show() {x}:\n                print(x)\n            show()\n\ndef main():\n    outer[0]()\n";
     let parsed = parse(source).expect("parse");
     let elaborated = mojito::elaborate(parsed).expect("elaborate");
     let checked = check_program(&elaborated).expect("check");
@@ -611,7 +611,11 @@ fn rejects_assignment_of_wrong_type() {
 
 #[test]
 fn rejects_assigning_a_closure() {
-    let e = err("def f() -> Int:\n    return 1\n\ndef g() -> Int:\n    return 2\n\nf = g\n");
+    // A capture-free nested `def` is a thin function value and binds like any
+    // other value; reassigning the binding to a capturing closure rejects.
+    let e = err(
+        "def outer():\n    var n = 1\n    def f() -> Int:\n        return 1\n    var h = f\n    def g() {n} -> Int:\n        return n\n    h = g\n",
+    );
     assert_eq!(e, TypeError::ClosureEscape);
 }
 
@@ -2570,7 +2574,9 @@ fn inferred_var_rejects_wrong_later_use() {
 
 #[test]
 fn rejects_inferred_var_of_a_closure() {
-    let e = err("def outer():\n    def inner() -> Int:\n        return 1\n    var f = inner\n");
+    let e = err(
+        "def outer():\n    var n = 1\n    def inner() {n} -> Int:\n        return n\n    var f = inner\n",
+    );
     assert_eq!(e, TypeError::ClosureEscape);
 }
 
@@ -3726,10 +3732,18 @@ fn checks_reference_aggregate_permissions_initialization_and_escape() {
         check_source("struct Hidden:\n    var value: ref[MutUnsafeAnyOrigin] Int\n"),
         Err(TypeError::Unsupported(message)) if message.contains("UnsafeAnyOrigin")
     ));
-    assert!(check_source(
-        "@fieldwise_init\nstruct RefTuple[origin: Origin[mut=True]]:\n    var values: Tuple[ref[origin] Int, ref[origin] Int]\n\ndef main():\n    var left = 1\n    var right = 2\n    ref a = left\n    ref b = right\n    var pair = RefTuple((a, b))\n    print(pair.values[0], pair.values[1])\n"
-    )
-    .is_ok());
+    // Both tuple elements bind the one `origin` slot, so they must borrow
+    // the same place; two places bind conflicting origins.
+    let ref_tuple = check_source(
+        "@fieldwise_init\nstruct RefTuple[origin: Origin[mut=False]]:\n    var values: Tuple[ref[origin] Int, ref[origin] Int]\n\ndef main():\n    var left = 1\n    ref a = left\n    ref b = left\n    var pair = RefTuple((a, b))\n    print(pair.values[0], pair.values[1])\n",
+    );
+    assert!(ref_tuple.is_ok(), "{ref_tuple:?}");
+    assert!(matches!(
+        check_source(
+            "@fieldwise_init\nstruct RefTuple[origin: Origin[mut=False]]:\n    var values: Tuple[ref[origin] Int, ref[origin] Int]\n\ndef main():\n    var left = 1\n    var right = 2\n    ref a = left\n    ref b = right\n    var pair = RefTuple((a, b))\n    print(pair.values[0], pair.values[1])\n",
+        ),
+        Err(TypeError::BadCall { reason, .. }) if reason.contains("conflicting origins")
+    ));
     assert!(check_source(
         "@fieldwise_init\nstruct RefList[origin: Origin[mut=True]]:\n    var values: List[ref[origin] Int]\n\ndef main():\n    var left = 1\n    var right = 2\n    ref a = left\n    ref b = right\n    var pair = RefList([a, b])\n    pair.values[1] += 1\n    print(right)\n"
     )
@@ -5356,11 +5370,17 @@ fn stores_into_outliving_storage_reject_frame_local_loans() {
 }
 
 #[test]
-fn stores_of_parameter_rooted_loans_into_self_stay_accepted() {
-    // An origin that outlives the frame (a caller-owned parameter place) may
-    // be stored outward; only frame-local roots escape.
+fn stores_of_parameter_rooted_loans_into_self_reject_by_origin_identity() {
+    // A parameter-rooted loan does not escape the frame, but a box over the
+    // parameter's origin is not a `RefBox[Self.origin]`: the store rejects on
+    // origin identity, as at the pin, before the escape rule is consulted.
     let src = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n    def rebind_to(mut self, mut source: List[Int]):\n        ref alias = source\n        self.slot = RefBox(alias)\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var other: List[Int] = [5]\n    holder.rebind_to(other)\n";
-    assert!(check(&parse(src).expect("parse")).is_ok());
+    let error = check(&parse(src).expect("parse")).expect_err("origin identity");
+    assert!(
+        matches!(&error, TypeError::OriginIdentityMismatch { found, expected }
+            if found == "RefBox[origin_of(source)]" && expected == "RefBox[origin]"),
+        "got {error:?}"
+    );
 }
 
 #[test]
@@ -5426,11 +5446,11 @@ fn struct_origin_arguments_are_part_of_checked_identity() {
     );
     ok(&same);
     let call_result = format!(
-        "{view}struct Box:\n    var items: List[Int]\n\n    def __init__(out self):\n        self.items = List[Int]()\n\n    def view(ref self) -> P[origin_of(self)]:\n        return P(Pointer(to=self.items))\n\ndef main():\n    var b = Box()\n    var c = Box()\n    var v = b.view()\n    v = c.view()\n"
+        "{view}struct Box:\n    var items: List[Int]\n\n    def __init__(out self):\n        self.items = List[Int]()\n\n    def view(ref self) -> P[origin_of(self.items)]:\n        return P(Pointer(to=self.items))\n\ndef main():\n    var b = Box()\n    var c = Box()\n    var v = b.view()\n    v = c.view()\n"
     );
     assert!(
         matches!(err(&call_result), TypeError::OriginIdentityMismatch { found, expected }
-            if found == "P[origin_of(c)]" && expected == "P[origin_of(b)]"),
+            if found == "P[origin_of(c.items)]" && expected == "P[origin_of(b.items)]"),
         "got {:?}",
         err(&call_result)
     );

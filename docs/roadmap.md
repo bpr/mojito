@@ -485,61 +485,28 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
 The assessment is [`docs/pliron-future.md`](pliron-future.md): Pliron cannot
 give Mojito Mojo's shape on its own, because Mojo type-checks parametric code
 before instantiating it while Mojito elaborates first and checks the clones.
-These tasks fix that order. Each one pays off by itself, the first closes a
-conformance divergence, and together they are what a later Pliron pivot would
-need.
+These tasks fix that order. The first step landed as source validation
+(`checker/comptime_validation.rs`): every `comptime if` arm and `comptime for`
+body is checked with the declaration's parameters symbolic before elaboration
+selects, and `rebind[Dest](value)` is implemented. Each task pays off by
+itself, and together they are what a later Pliron pivot would need.
 
-- [ ] **A type error in an untaken `comptime if` branch is never reported**
+Unlike sections 1 and 2, this section is sorted in **dependency order**: each
+entry names what it depends on, and an entry with no dependency sits as early
+as its size allows. The **Model:** bullet carries the complexity estimate and
+says whether the entry can be done as-is or must be planned first.
 
-  Problem: elaboration drops the untaken branch before the checker runs, so
-  Mojito executes programs the pinned Mojo rejects.
-  - Upstream rejects `var x: Int = "hello"` in the untaken branch with `cannot
-    implicitly convert 'StringLiteral["hello"]' value to 'Int'`.
-  - Upstream also rejects `x.nonexistent()` on a `T: Copyable` parameter in an
-    untaken branch. Mojito runs both programs.
-  - Upstream type-checks a generic body symbolically before instantiating it
-    ("Type check + Generate IR before instantiating", LLVM Dev Meeting 2025).
-  - The fix is to check every branch with its parameters left symbolic and
-    select afterwards. The lever is `comptime::elaborate` running ahead of
-    `checker::check_program`.
-  - `docs/architecture.md` §Stage 2 documents the dropped branch as intended
-    behavior, so it changes with this task.
-  - Land the two probes under `conformance/probes/` first.
-  - Known fallout, from the `comptime if` sweep recorded in
-    [`docs/pliron-future.md`](pliron-future.md): two sites rely on the guard
-    narrowing a type parameter to a pack element. They are
-    `conformance/fixtures/pack_element_type_narrowing.mojo` (`get`,
-    `count_matching`) and `stdlib/std/builtin/tuple.mojo` (`__contains__`).
-  - Upstream spells that shape `rebind[Ts[i]](value)`, which Mojito does not
-    implement (`Undefined variable 'rebind'`). This task implements `rebind`
-    and respells both sites.
-  - That also closes the `pack-element-type-narrowing` divergence
-    (`conformance/cases.tsv`, `mojito-only`). Inside a folded `comptime if
-    Self.Ts[i] == T` branch Mojito treats `self.storage[i]` as a `T`, so a
-    `ref[origin_of(self)] T` accessor returns it and an `==` against a `T`
-    argument type-checks.
-  - Upstream keeps the element at its dependent pack type, and it also
-    rejects a reference into `self.storage` returned under `origin_of(self)`.
-  - `assets/extensions/ok/pack_struct_getitem.mojo` is that divergence's
-    corpus fixture. It also needs the explicit `p.__getitem__[k]()` spelling,
-    since Mojito has no method form for the subscript sugar.
-  - The same sugar is the pin's complaint about
-    `assets/type_error/pack_struct_runtime_getitem_index.mojo`, its `ledgered`
-    row in `conformance/assets-mojo-errors.tsv`.
+- [ ] **`rebind` cannot be an augmented-assignment target**
 
-- [ ] **A variadic struct's type arguments are not inferred from its
-  constructor**
-
-  Problem: `Pair((1, True))` for `struct Pair[*Ts](...)` with
-  `var storage: Tuple[*Self.Ts]` runs at the pin, while Mojito requires
-  `Pair[Int, Bool](...)`
-  (`assets/type_error/pack_struct_needs_explicit_args.mojo`, a `divergence`
-  row of `conformance/assets-mojo-errors.tsv`).
-  - Monomorphization (`crates/mojito-comptime/src/comptime/mono.rs`) runs
-    before type checking, so argument types are only syntactically known
-    there.
-  - Inference needs a checker-owned instantiation, which the task above
-    introduces. That is why it follows it.
+  Problem: `rebind[Int](x) += 1` on a `mut x: T` runs at the pin (prints
+  `4` after `bump(v)`), while Mojito's parser rejects a call as an augmented
+  assignment target.
+  - Once parsed, nothing else is missing: the checker erases the call before
+    checking, so the target is the operand `x` itself.
+  - The parser's place-target rule is the only lever
+    (`crates/mojito-parser/src/parser/stmts.rs`).
+  - Depends on nothing.
+  - Model: Opus, as-is. One parser rule and one fixture.
 
 - [ ] **A `def`'s own type pack cannot be queried in a runtime position**
 
@@ -553,17 +520,52 @@ need.
   - Only `generate_struct_spec` binds a pack into the substitutions that
     `fold_pack_typelist_use` (`comptime/rewrite.rs`) reads during
     materialization. `def` specialization never does.
-  - It follows the check-order task because that task restructures `def`
-    specialization.
   - Pinned by `conformance/fixtures/pack_length_runtime_position.mojo`
     (`pack-length-runtime-position`, `mojo-only`).
+  - Depends on nothing. It stays in the elaborator, so it does not wait for
+    the symbolic pack work below.
+  - Model: Opus, plan first. The binding site is known, but the plan must
+    enumerate the clone paths that share it (free `def`, method-own pack,
+    nested forwarding) and the materialization rewrite each one runs.
+
+- [ ] **A pack-keyed template body is not validated symbolically**
+
+  Problem: source validation checks a `comptime if` arm only where the
+  checker can bind the declaration's parameters; a body keyed on a variadic
+  pack (a variadic struct's methods, a method-own or free `*Ts`) still checks
+  only per instantiation, so an untaken arm there is still never reported.
+  - `conformance/fixtures/pack_element_type_narrowing.mojo`
+    (`pack-element-type-narrowing`, `mojito-only`) pins the visible half:
+    inside a folded `comptime if Self.Ts[i] == T` arm Mojito still reads
+    `self.storage[i]` as a `T`, where upstream keeps `Ts.values[i]` and
+    demands `rebind[T](...)`. `assets/ok/pack_element_rebind.mojo` is the
+    spelling both compilers accept.
+  - The lever is an opaque pack element in the checker: `Self.Ts[i]` under a
+    symbolic index becomes a `Ty::Param` whose bounds are the pack's declared
+    bound plus the enclosing method's `conforms_to(Self.Ts.values, …)` /
+    `all_conforms_to` assumptions. `check_def_inner`'s `opaque_params` is the
+    existing precedent for one such element.
+  - The template-shell boundary to lift is `concrete_only_struct` /
+    `concrete_only_def` in `checker/comptime_validation.rs`, and the
+    per-instantiation stub path in the elaborator stays as the executable
+    route.
+  - Every stdlib pack body passes through it: `Tuple`'s comparison, hashing,
+    and writing methods, `Variant`'s `isa`/`unsafe_get` on
+    `__VariantStorage[*Self.Ts]`, `TString.write_to`, and
+    `FormatStruct.params`/`fields`. Those bodies are the acceptance list.
+  - Depends on nothing. Unblocks constructor inference below.
+  - Model: Fable, plan first. A new type form, conformance assumptions taken
+    from where clauses, and builtin storage operations over a symbolic pack
+    span the checker; the plan's job is to keep the stdlib compiling at every
+    step.
 
 - [ ] **Parameter expressions have no symbolic form**
 
   Problem: `CtValue` carries concrete values plus an opaque symbolic `Param`,
   so two parameter expressions can only be compared by making them concrete.
   - `SIMD[dt, n + 1]` and `SIMD[dt, 1 + n]` cannot be judged equal today.
-  - Symbolic branch checking needs this, and so does any parametric IR.
+  - Symbolic branch checking over a `DType` or vector width needs this, and
+    so does any parametric IR.
   - Upstream stores parameter expressions as uniqued typed attributes and
     decides equality by canonicalization rather than evaluation.
   - Shape the representation like a Pliron attribute, uniqued and
@@ -571,6 +573,53 @@ need.
   - The plan accounts for section 2's runtime `DType` value and `Float16`
     entries, which touch the same `Dtype`/`CtValue` representation, whichever
     lands first.
+  - Depends on nothing. It gates the `DType`/vector validation entry and the
+    Pliron parametric layer.
+  - Model: Fable, plan first. A representation change under `CtValue`,
+    `CtExpr`, the checker's constraint evaluation, and the elaborator's
+    evaluator, with no single lever. Astra for the plan if it is to be shaped
+    as the attribute layer of a future dialect rather than as a checker-only
+    normal form.
+
+- [ ] **A `DType`- or vector-keyed template body is not validated symbolically**
+
+  Problem: a body keyed on a `DType` parameter or a vector-typed value
+  parameter checks only per instantiation, because `Ty::Simd` holds a
+  concrete element type and width, so an untaken arm there is still never
+  reported.
+  - The same boundary hides a second gap: a validated body that applies a
+    `DType`-keyed struct (`Vec[DType.float64](...)`) reaches the template
+    shell where the elaborator would have minted the instance.
+  - The lever is a symbolic element type and width on `Ty::Simd`, and the
+    scalar-range family (`std/range.mojo`) plus the SIMD-keyed stdlib
+    methods are the fallout; `dtype_keyed`/`concrete_only_def` mark the
+    boundary today.
+  - Depends on the symbolic parameter-expression form above (a width is a
+    parameter expression) and on the pack-keyed entry's opaque-element
+    machinery.
+  - Model: Fable, plan first. Changes the SIMD type's contract across the
+    checker, the elaborator's width folding, and native lowering's vector
+    types.
+
+- [ ] **A variadic struct's type arguments are not inferred from its
+  constructor**
+
+  Problem: `Pair((1, True))` for `struct Pair[*Ts](...)` with
+  `var storage: Tuple[*Self.Ts]` runs at the pin, while Mojito requires
+  `Pair[Int, Bool](...)`
+  (`assets/type_error/pack_struct_needs_explicit_args.mojo`, a `divergence`
+  row of `conformance/assets-mojo-errors.tsv`).
+  - Monomorphization (`crates/mojito-comptime/src/comptime/mono.rs`) runs
+    before type checking, so argument types are only syntactically known
+    there.
+  - Inference needs a checker-owned instantiation: the checker must type the
+    template's constructor symbolically and unify `*Ts` against the
+    argument types, then request the instance the way it already requests
+    inferred bound-generic clones.
+  - Depends on the pack-keyed validation entry (the template must type
+    symbolically before its constructor can be unified against).
+  - Model: Fable, plan first. Moves one instantiation decision from the
+    elaborator to the checker and touches the discovery loop's request kinds.
 
 - [ ] **The Pliron pivot has no falsifiable proof yet**
 
@@ -583,6 +632,12 @@ need.
   - Decide from the measurements: continue to A2, or record the rejection in
     [`docs/non-goals.md`](non-goals.md).
   - This is the decision point for MIR-as-a-dialect, not a commitment to it.
+  - Depends on the symbolic parameter-expression form above, which is the
+    parametric layer [`docs/pliron-future.md`](pliron-future.md) found missing
+    from the pivot plan's dialect design. Last in this section.
+  - Model: Astra for the plan and the measurement design (the broadest scope
+    in this document: it reopens the waist and the dialect policy), Fable to
+    build and measure the A1 slice once planned.
 
 ### 4. Grow The CPU Standard Library *(demand-first)*
 
@@ -614,6 +669,16 @@ need.
        S[Int, length], found S[Int, 3]`). `associated_type_from_base`
        substitutes type parameters only; parameterized aliases substitute
        both.
+     - A string element of a compile-time tuple indexed under a `comptime
+       for` (`comptime t = (1, "s")`; `comptime for i in range(2)`) breaks
+       inside a list display: `first([t[i], t[i]], t[i])` fails MIR
+       verification with `register r19 has no checked type`, and `var v =
+       t[i]` followed by `first([v, v], v)` with `binding of StringLiteral
+       to a slot of type String`. The `Int`/`Bool` twin runs; the
+       materialized element keeps its literal type where the display's
+       element type has already materialized `String`. Two `var`
+       declarations across unrolled iterations also collide (`'v' is already
+       declared in this scope`) unless each body opens a block.
 
   2. **Monomorphization coverage and cost** — where the erased path still
      stands in for an instance clone, and what minting costs.
@@ -938,6 +1003,9 @@ Every entry is written for a human reader who has not seen the code.
 - Those two sections are sorted by that estimate — Opus as-is, then Opus plan
   first, then Fable — at both the checkbox and the bullet level. A strict dependency that forces another
   order is stated in the entry that carries it.
+- Section 3 carries the same **Model:** bullet but is sorted in dependency
+  order, each entry naming what it depends on; Astra is named where the plan
+  itself is the broad-scope problem.
 
 ## Working Rule
 

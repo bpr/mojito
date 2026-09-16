@@ -498,7 +498,10 @@ pub(super) fn dependent_index_accessor_family(
 
 /// View a statement as a struct declaration, for the order-independent
 /// declaration pre-passes and the source-order walk alike.
-pub(super) fn struct_declaration(stmt: &Stmt) -> Option<StructDeclaration<'_>> {
+/// The declaration view of a struct statement. `shell` marks a template
+/// that checks only per specialization as a shell — source validation's
+/// counterpart of the elaborator's own shell marking.
+pub(super) fn struct_declaration(stmt: &Stmt, shell: bool) -> Option<StructDeclaration<'_>> {
     let StmtKind::Struct {
         name,
         type_params,
@@ -528,9 +531,16 @@ pub(super) fn struct_declaration(stmt: &Stmt) -> Option<StructDeclaration<'_>> {
         associated,
         methods,
         fieldwise_init: *fieldwise_init,
-        template_shell: *template_shell,
+        template_shell: *template_shell || shell,
         decorators,
     })
+}
+
+/// Whether a struct declares a variadic parameter pack (`struct S[*Ts]`).
+pub(super) fn is_variadic_template(type_params: &[mojito_ast::ast::TypeParam]) -> bool {
+    type_params
+        .iter()
+        .any(|parameter| parameter.name.starts_with('*'))
 }
 
 /// Merge a callable's committed transfer effects into a function type taken

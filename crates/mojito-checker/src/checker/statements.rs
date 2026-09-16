@@ -65,7 +65,16 @@ impl Checker {
             }
         }
         for statement in stmts {
-            let Some(declaration) = struct_declaration(statement) else {
+            // Source validation sees a type-parameter default still spelled
+            // as the alias it names (`H: Hasher = default_hasher`), which the
+            // elaborator would have substituted; registering module-level
+            // aliases in source order beside the shells lets a shell resolve
+            // an earlier alias and an alias body an earlier shell.
+            if self.source_validation {
+                self.register_module_alias(statement)?;
+            }
+            let Some(declaration) = struct_declaration(statement, self.validation_shell(statement))
+            else {
                 continue;
             };
             self.check_struct_shell(&declaration)?;
@@ -96,36 +105,13 @@ impl Checker {
         drop(phase);
         let phase = timing::span("declarations.aliases");
         for statement in stmts {
-            let StmtKind::Comptime {
-                name,
-                type_params,
-                ty,
-                where_clauses,
-                value,
-            } = &statement.kind
-            else {
-                continue;
-            };
-            if type_params.is_empty()
-                && !matches!(
-                    value.kind,
-                    ExprKind::Identifier(_) | ExprKind::TypeApply { .. } | ExprKind::TypeValue(_)
-                )
-            {
-                continue;
-            }
-            self.check_generic_comptime_alias(
-                name,
-                type_params,
-                ty.as_ref(),
-                where_clauses,
-                value,
-            )?;
+            self.register_module_alias(statement)?;
         }
         drop(phase);
         let phase = timing::span("declarations.types");
         for statement in stmts {
-            let Some(declaration) = struct_declaration(statement) else {
+            let Some(declaration) = struct_declaration(statement, self.validation_shell(statement))
+            else {
                 continue;
             };
             self.check_struct_types(&declaration)?;
@@ -133,7 +119,8 @@ impl Checker {
         drop(phase);
         let phase = timing::span("declarations.signatures");
         for statement in stmts {
-            let Some(declaration) = struct_declaration(statement) else {
+            let Some(declaration) = struct_declaration(statement, self.validation_shell(statement))
+            else {
                 continue;
             };
             self.check_struct_method_signatures(&declaration)?;
@@ -145,6 +132,52 @@ impl Checker {
         let result = self.check_block(stmts, None, false);
         drop(phase);
         result
+    }
+
+    /// Whether source validation registers a struct statement as a template
+    /// shell: one that checks only per specialization.
+    fn validation_shell(&self, statement: &Stmt) -> bool {
+        self.source_validation
+            && matches!(&statement.kind, StmtKind::Struct { type_params, .. }
+                if concrete_only_struct(type_params, &|bound| self.declared_structs.contains(bound)))
+    }
+
+    /// Register a module-level `comptime` alias declaration — a generic
+    /// alias, or a constant whose body is a type expression — ahead of the
+    /// declarations that may name it. Any other statement, and an alias
+    /// already registered, is left alone.
+    fn register_module_alias(&mut self, statement: &Stmt) -> Result<(), TypeError> {
+        let StmtKind::Comptime {
+            name,
+            type_params,
+            ty,
+            where_clauses,
+            value,
+        } = &statement.kind
+        else {
+            return Ok(());
+        };
+        if self.comptime_aliases.contains_key(name) {
+            return Ok(());
+        }
+        // A single-argument type application parses as a subscript
+        // (`AHasher[SIMD[DType.uint64, 4](0)]`); the elaborator folds such an
+        // alias before the executable check, so only source validation
+        // registers the subscript shape, and only over a declared struct.
+        let subscript_application = self.source_validation
+            && matches!(&value.kind, ExprKind::Index { object, .. }
+                if matches!(&object.kind, ExprKind::Identifier(base)
+                    if self.declared_structs.contains(base)));
+        if type_params.is_empty()
+            && !subscript_application
+            && !matches!(
+                value.kind,
+                ExprKind::Identifier(_) | ExprKind::TypeApply { .. } | ExprKind::TypeValue(_)
+            )
+        {
+            return Ok(());
+        }
+        self.check_generic_comptime_alias(name, type_params, ty.as_ref(), where_clauses, value)
     }
 
     /// Check the statements of a block in the current scope. `ret` is the
@@ -174,6 +207,59 @@ impl Checker {
         let result = self.check_block(stmts, ret, in_loop);
         self.pop_scope();
         result
+    }
+
+    /// Check an `if`/`elif`/`else` chain, or under source validation a
+    /// `comptime if` chain (`comptime`), every arm in its own scope.
+    ///
+    /// Definite initialization follows only reachable exits when a condition
+    /// is a `Bool` literal: every source branch is still checked, but
+    /// `if True: x = ...` establishes a function-scoped implicit binding just
+    /// as an unconditional assignment does. Any other condition retains both
+    /// the taken and the fallthrough possibilities — for a `comptime if` the
+    /// selection is the elaborator's, so no arm is assumed here.
+    pub(super) fn check_conditional(
+        &mut self,
+        branches: &[(Expr, Vec<Stmt>)],
+        orelse: Option<&[Stmt]>,
+        ret: Option<&Ty>,
+        in_loop: bool,
+        comptime: bool,
+    ) -> Result<(), TypeError> {
+        let before = self.uninitialized.borrow().clone();
+        let mut exits = Vec::new();
+        let mut fallthrough_reachable = true;
+        for (cond, body) in branches {
+            (*self.uninitialized.borrow_mut()).clone_from(&before);
+            if comptime {
+                self.check_comptime_condition(cond)?;
+            } else {
+                self.register_named_bindings(cond)?;
+                self.expect_bool(cond, "if condition")?;
+            }
+            self.check_scoped_block(body, ret, in_loop)?;
+            let condition = match &cond.kind {
+                ExprKind::Bool(value) => Some(*value),
+                _ => None,
+            };
+            if fallthrough_reachable && condition != Some(false) {
+                exits.push(self.uninitialized.borrow().clone());
+            }
+            if condition == Some(true) {
+                fallthrough_reachable = false;
+            }
+        }
+        if let Some(body) = orelse {
+            *self.uninitialized.borrow_mut() = before;
+            self.check_scoped_block(body, ret, in_loop)?;
+            if fallthrough_reachable {
+                exits.push(self.uninitialized.borrow().clone());
+            }
+        } else if fallthrough_reachable {
+            exits.push(before);
+        }
+        *self.uninitialized.borrow_mut() = exits.into_iter().flatten().collect::<HashSet<_>>();
+        Ok(())
     }
 
     /// Select the in-place dunder (`__iadd__`, …) for `receiver OP= value` on a
@@ -360,6 +446,10 @@ impl Checker {
                         self.materialized_reference_actual(value)?
                     }
                 };
+                // An erased `rebind` retypes the referent the binding views.
+                let mut reference = reference;
+                reference.referent =
+                    Box::new(self.apply_rebind_target(value, (*reference.referent).clone())?);
                 let mutable = reference.mutability == mojito_types::origin::Mutability::Mutable;
                 // A reference to an ordinary projection below a named owned
                 // interior (for example `dict[key].field`) carries the full
@@ -1375,7 +1465,7 @@ impl Checker {
                     associated,
                     methods,
                     fieldwise_init: *fieldwise_init,
-                    template_shell: *template_shell,
+                    template_shell: *template_shell || self.validation_shell(stmt),
                     decorators,
                 };
                 if self.predeclared_structs.remove(name) {
@@ -1405,14 +1495,23 @@ impl Checker {
                 where_clauses,
                 value,
             } => {
-                if !type_params.is_empty()
-                    || self.comptime_aliases.contains_key(name)
-                    || matches!(
-                        value.kind,
-                        ExprKind::Identifier(_)
-                            | ExprKind::TypeApply { .. }
-                            | ExprKind::TypeValue(_)
-                    )
+                // A function-local binding under source validation: the
+                // elaborator substitutes a type alias and consumes a
+                // compile-time-only value before the executable check, so
+                // the validator binds them itself.
+                let local_validation = self.source_validation && type_params.is_empty();
+                if local_validation && self.bind_local_comptime(stmt, name, ty.as_ref(), value)? {
+                    return Ok(());
+                }
+                if !local_validation
+                    && (!type_params.is_empty()
+                        || self.comptime_aliases.contains_key(name)
+                        || matches!(
+                            value.kind,
+                            ExprKind::Identifier(_)
+                                | ExprKind::TypeApply { .. }
+                                | ExprKind::TypeValue(_)
+                        ))
                 {
                     // Top-level aliases were registered by `check_program`'s
                     // pre-pass; re-walking the same statement is not a
@@ -1458,50 +1557,21 @@ impl Checker {
                 Ok(())
             }
 
-            // `comptime if` / `comptime for` parse and are grammar-documented, but
-            // compile-time branch selection / loop unrolling is deferred — flagged
-            // here, like the other syntax-first parse-only constructs.
+            // Compile-time control flow reaches the checker only under source
+            // validation, where every arm is checked with the declaration's
+            // parameters symbolic; the executable check sees the elaborated
+            // selection, so a surviving construct is an elaboration defect.
+            StmtKind::ComptimeIf { branches, orelse } if self.source_validation => {
+                self.check_conditional(branches, orelse.as_deref(), ret, in_loop, true)
+            }
+            StmtKind::ComptimeFor { var, iter, body } if self.source_validation => {
+                self.check_comptime_for(var, iter, body, ret, in_loop)
+            }
             StmtKind::ComptimeIf { .. } => Err(TypeError::Unsupported("comptime if".to_string())),
             StmtKind::ComptimeFor { .. } => Err(TypeError::Unsupported("comptime for".to_string())),
 
             StmtKind::If { branches, orelse } => {
-                let before = self.uninitialized.borrow().clone();
-                let mut exits = Vec::new();
-                // Definite initialization follows only reachable exits when a
-                // condition is a compile-time Bool literal. We still check every
-                // source branch for type errors, but `if True: x = ...` establishes
-                // a function-scoped implicit binding just as an unconditional
-                // assignment does. Unknown conditions retain both the taken and
-                // fallthrough possibilities.
-                let mut fallthrough_reachable = true;
-                for (cond, body) in branches {
-                    (*self.uninitialized.borrow_mut()).clone_from(&before);
-                    self.register_named_bindings(cond)?;
-                    self.expect_bool(cond, "if condition")?;
-                    self.check_scoped_block(body, ret, in_loop)?;
-                    let condition = match &cond.kind {
-                        ExprKind::Bool(value) => Some(*value),
-                        _ => None,
-                    };
-                    if fallthrough_reachable && condition != Some(false) {
-                        exits.push(self.uninitialized.borrow().clone());
-                    }
-                    if condition == Some(true) {
-                        fallthrough_reachable = false;
-                    }
-                }
-                if let Some(body) = orelse {
-                    *self.uninitialized.borrow_mut() = before;
-                    self.check_scoped_block(body, ret, in_loop)?;
-                    if fallthrough_reachable {
-                        exits.push(self.uninitialized.borrow().clone());
-                    }
-                } else if fallthrough_reachable {
-                    exits.push(before);
-                }
-                *self.uninitialized.borrow_mut() =
-                    exits.into_iter().flatten().collect::<HashSet<_>>();
-                Ok(())
+                self.check_conditional(branches, orelse.as_deref(), ret, in_loop, false)
             }
 
             StmtKind::While { cond, body, orelse } => {
@@ -1876,6 +1946,12 @@ impl Checker {
     /// exactly as a method's do (`enclosing_origin_param`), indexed after any
     /// enclosing struct and method binders.
     pub(super) fn check_def(&mut self, stmt: &Stmt, lambda: bool) -> Result<(), TypeError> {
+        // A module-level function that checks only per specialization is
+        // the executable pass's alone: source validation cannot resolve its
+        // signature symbolically, and the elaborator retargets every call.
+        if self.source_validation && self.function_bases.is_empty() && concrete_only_def(stmt) {
+            return Ok(());
+        }
         let StmtKind::Def { type_params, .. } = &stmt.kind else {
             return self.check_def_inner(stmt, lambda);
         };
@@ -1985,6 +2061,13 @@ impl Checker {
             ));
         }
         let named_result = out_params.first().copied();
+        // Source validation checks a module-level body only when it holds
+        // compile-time control flow; every other module-level body is
+        // declared here and checked by the executable pass. A nested body
+        // is always checked with its enclosing validated body.
+        let check_body = !self.source_validation
+            || !self.function_bases.is_empty()
+            || (block_has_comptime(body) && !is_variadic_template(type_params));
         if named_result.is_some() && ret_anno.is_some() {
             return Err(TypeError::Unsupported(
                 "a function cannot declare both a named result and '->' return type".to_string(),
@@ -2504,7 +2587,9 @@ impl Checker {
             self.return_annotations
                 .push(Self::body_return_annotation(ret_anno.as_ref(), name));
             self.named_result_context.push(named_result.is_some());
-            result = self.check_block(body, Some(&ret_ty), false);
+            if check_body {
+                result = self.check_block(body, Some(&ret_ty), false);
+            }
             self.named_result_context.pop();
             self.return_annotations.pop();
             self.return_ref_contracts.pop();
@@ -2526,6 +2611,7 @@ impl Checker {
         // A function with a non-`None` return type must return on every
         // path (falling off the end would yield `None`).
         if result.is_ok()
+            && check_body
             && named_result.is_none()
             && ret_ty != Ty::None
             && !definitely_returns(body)
@@ -2533,6 +2619,7 @@ impl Checker {
             result = Err(TypeError::MissingReturn(name.clone()));
         }
         if result.is_ok()
+            && check_body
             && let Some(named_result) = named_result
             && !definitely_initializes_named_result(body, &named_result.name)
         {

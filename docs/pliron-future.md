@@ -83,8 +83,10 @@ Upstream reports `cannot implicitly convert 'StringLiteral["hello"]' value to
 `T: Copyable` parameter and a `flag: Bool` that selects the other branch;
 upstream reports `'T' value has no attribute 'nonexistent'`. Mojito runs both.
 
-So Mojito accepts invalid Mojo today, which breaks `AGENTS.md` invariant 1. The
-divergence is now recorded in [`docs/roadmap.md`](roadmap.md) §2 and its fix is
+So Mojito accepted invalid Mojo, which broke `AGENTS.md` invariant 1. Resolved
+2026-09-16 by source validation (`checker/comptime_validation.rs`,
+`docs/architecture.md` §Stage 2): both probes now reject with the
+diagnostics above; the pack-keyed remainder is [`docs/roadmap.md`](roadmap.md)
 §3.
 
 - **Cause.** `comptime::elaborate` runs before the checker, and dropping untaken
@@ -204,8 +206,11 @@ The narrowing rule was probed directly:
 | `comptime if T == Int: return x + 1` | rejected, `'T' does not implement the '__add__' method` | runs, prints 4 |
 | `comptime if T == Int: return rebind[Int](x) + 1` | runs, prints 4 | rejected, `Undefined variable 'rebind'` |
 
-So upstream's fix for the shape is `rebind`, which Mojito does not implement,
-and upstream's own `Tuple.__contains__` uses it.
+So upstream's fix for the shape is `rebind`, which Mojito now implements
+(`checker/rebind.rs`); the bundled `Tuple.__contains__` and
+`assets/ok/pack_element_rebind.mojo` use it. The implicit narrowing itself is
+still accepted, because a variadic template's bodies are not yet validated
+symbolically (`docs/roadmap.md` §3).
 
 Everything else is safe. The remaining branches return same-typed literals,
 write to a `Writer`, or are the `comptime if …: pass` specialization markers in

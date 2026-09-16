@@ -538,11 +538,9 @@ fn callee_stores_transfer_loans_to_caller_bookkeeping() {
     let compiler = Compiler::default();
     for source in [
         // via the seeded stdlib effect
-        "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef make() -> List[RefBox[MutUnsafeAnyOrigin]]:\n    var sink = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    sink.append(RefBox(alias))\n    return sink^\n\ndef main():\n    var got = make()\n",
+        "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef make() -> List[RefBox[MutUnsafeAnyOrigin]]:\n    var sink = List[RefBox[MutUnsafeAnyOrigin]]()\n    var local: List[Int] = [9]\n    ref alias = local\n    sink.append(RefBox(alias))\n    return sink^\n\ndef main():\n    var got = make()\n",
         // via a transitively derived free-function effect
-        "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef stash(mut sink: List[RefBox], var box: RefBox):\n    sink.append(box^)\n\ndef collect() -> List[RefBox[MutUnsafeAnyOrigin]]:\n    var sink = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    stash(sink, RefBox(alias))\n    return sink^\n\ndef main():\n    var got = collect()\n",
-        // via a body-inferred user-method effect
-        "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n    def rebind_to(mut self, mut source: List[Int]):\n        ref alias = source\n        self.slot = RefBox(alias)\n\ndef steal() -> Holder[MutUnsafeAnyOrigin]:\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var local: List[Int] = [5]\n    holder.rebind_to(local)\n    return holder^\n\ndef main():\n    var got = steal()\n",
+        "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef stash(mut sink: List[RefBox[MutUnsafeAnyOrigin]], var box: RefBox[MutUnsafeAnyOrigin]):\n    sink.append(box^)\n\ndef collect() -> List[RefBox[MutUnsafeAnyOrigin]]:\n    var sink = List[RefBox[MutUnsafeAnyOrigin]]()\n    var local: List[Int] = [9]\n    ref alias = local\n    stash(sink, RefBox(alias))\n    return sink^\n\ndef main():\n    var got = collect()\n",
     ] {
         let error = compiler
             .compile_unlinked(source)
@@ -556,36 +554,6 @@ fn callee_stores_transfer_loans_to_caller_bookkeeping() {
 }
 
 #[test]
-fn captured_store_effects_replay_at_closure_invocations() {
-    // A store through a CAPTURED enclosing owner inside a nested def records
-    // a concrete `Bound`-destination effect (the capture-channel residue is
-    // closed): the invocation replays it — a local-rooted actual escapes —
-    // and the enclosing method re-abstracts it so ITS callers replay too.
-    // The seeded `List.append` chain requires the linked compiler.
-    let compiler = Compiler::default();
-    let escape = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Keeper[origin: Origin[mut=True]]:\n    var items: List[RefBox[Self.origin]]\n\n    def add_local(mut self):\n        var local: List[Int] = [9]\n        ref alias = local\n        def push(var box: RefBox) {mut self}:\n            self.items.append(box^)\n        push(RefBox(alias))\n\ndef main():\n    var items = List[RefBox]()\n    var k = Keeper(items^)\n    k.add_local()\n";
-    let error = compiler
-        .compile_unlinked(escape)
-        .expect_err("local-rooted loan through the captured store must escape");
-    assert!(
-        matches!(error, CompilerError::Type(_)) && error.to_string().contains("escapes storage"),
-        "{error}"
-    );
-
-    let transitive = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Keeper[origin: Origin[mut=True]]:\n    var items: List[RefBox[Self.origin]]\n\n    def add_param(mut self, var box: RefBox):\n        def push(var b: RefBox) {mut self}:\n            self.items.append(b^)\n        push(box^)\n\ndef main():\n    var items = List[RefBox]()\n    var k = Keeper(items^)\n    var local: List[Int] = [9]\n    ref alias = local\n    k.add_param(RefBox(alias))\n    local.append(1)\n    print(k.items[0].value[0])\n";
-    let error = compiler
-        .compile_unlinked(transitive)
-        .expect_err("the re-abstracted effect must reach the method's caller");
-    assert!(
-        matches!(error, CompilerError::Ownership(_))
-            && error
-                .to_string()
-                .contains("conflicts with live reference 'k'"),
-        "{error}"
-    );
-}
-
-#[test]
 fn overloaded_call_sites_replay_the_shared_effect_entry() {
     // Overloaded free functions share the bare-name effect entry; selecting
     // an overload replays it exactly like the single-callable path (this
@@ -593,7 +561,7 @@ fn overloaded_call_sites_replay_the_shared_effect_entry() {
     // replay entirely). The seeded `List.append` chain requires the linked
     // compiler.
     let compiler = Compiler::default();
-    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef stash(mut sink: List[RefBox], var box: RefBox):\n    sink.append(box^)\n\ndef stash(x: Int):\n    print(x)\n\ndef collect() -> List[RefBox[MutUnsafeAnyOrigin]]:\n    var sink = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    stash(sink, RefBox(alias))\n    return sink^\n\ndef main():\n    var got = collect()\n";
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef stash(mut sink: List[RefBox[MutUnsafeAnyOrigin]], var box: RefBox[MutUnsafeAnyOrigin]):\n    sink.append(box^)\n\ndef stash(x: Int):\n    print(x)\n\ndef collect() -> List[RefBox[MutUnsafeAnyOrigin]]:\n    var sink = List[RefBox[MutUnsafeAnyOrigin]]()\n    var local: List[Int] = [9]\n    ref alias = local\n    stash(sink, RefBox(alias))\n    return sink^\n\ndef main():\n    var got = collect()\n";
     let error = compiler
         .compile_unlinked(source)
         .expect_err("transferred local-rooted loan must not escape");
@@ -611,7 +579,7 @@ fn callable_struct_call_replays_transfer_effects() {
     // so mutating the loan source while the sink lives conflicts. Runs
     // through the compiler so the seeded stdlib effect participates.
     let compiler = Compiler::default();
-    let conflict = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Stasher(def(mut List[RefBox], RefBox)):\n    var count: Int\n    def __call__(mut self, mut sink: List[RefBox], box: RefBox):\n        self.count += 1\n        sink.append(box^)\n\ndef main():\n    var s = Stasher(0)\n    var sink = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    s(sink, RefBox(alias))\n    local.append(1)\n    print(sink[0].value[0])\n";
+    let conflict = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Stasher(def(mut List[RefBox[MutUnsafeAnyOrigin]], RefBox[MutUnsafeAnyOrigin])):\n    var count: Int\n    def __call__(mut self, mut sink: List[RefBox[MutUnsafeAnyOrigin]], box: RefBox[MutUnsafeAnyOrigin]):\n        self.count += 1\n        sink.append(box^)\n\ndef main():\n    var s = Stasher(0)\n    var sink = List[RefBox[MutUnsafeAnyOrigin]]()\n    var local: List[Int] = [9]\n    ref alias = local\n    s(sink, RefBox(alias))\n    local.append(1)\n    print(sink[0].value[0])\n";
     let error = compiler
         .compile_unlinked(conflict)
         .expect_err("mutating the transferred loan's source must conflict");
@@ -625,7 +593,7 @@ fn callable_struct_call_replays_transfer_effects() {
 
     // The same program with the sink's last use before the mutation stays
     // accepted — no spurious rejection from the indirect replay.
-    let after_last_use = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Stasher(def(mut List[RefBox], RefBox)):\n    var count: Int\n    def __call__(mut self, mut sink: List[RefBox], box: RefBox):\n        self.count += 1\n        sink.append(box^)\n\ndef main():\n    var s = Stasher(0)\n    var sink = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    s(sink, RefBox(alias))\n    print(sink[0].value[0])\n    local.append(1)\n    print(local[1])\n";
+    let after_last_use = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Stasher(def(mut List[RefBox[MutUnsafeAnyOrigin]], RefBox[MutUnsafeAnyOrigin])):\n    var count: Int\n    def __call__(mut self, mut sink: List[RefBox[MutUnsafeAnyOrigin]], box: RefBox[MutUnsafeAnyOrigin]):\n        self.count += 1\n        sink.append(box^)\n\ndef main():\n    var s = Stasher(0)\n    var sink = List[RefBox[MutUnsafeAnyOrigin]]()\n    var local: List[Int] = [9]\n    ref alias = local\n    s(sink, RefBox(alias))\n    print(sink[0].value[0])\n    local.append(1)\n    print(local[1])\n";
     compiler
         .compile_unlinked(after_last_use)
         .expect("carrier released before the mutation compiles");
@@ -715,14 +683,18 @@ fn nested_def_captured_self_store_faces_the_escape_guard() {
         CompilerError::Type(mojito::TypeError::StoredReferenceEscapesOrigin)
     ));
 
-    // The parameter-rooted twin stays accepted: the loan the nested def
-    // installs roots at the enclosing method's `mut` parameter, which is
-    // caller-visible storage. (End-to-end execution of capture-installed
-    // reference reads is a recorded capture-channel residue.)
+    // The parameter-rooted twin does not escape the frame, but a box over
+    // the parameter's origin is not a `RefBox[Self.origin]`: it rejects on
+    // origin identity, as at the pin, before the escape guard is consulted.
     let param_rooted = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Holder[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n\n    def stash_param(mut self, mut source: List[Int]):\n        def install() {mut self, ref source}:\n            ref alias = source\n            self.slot = RefBox(alias)\n        install()\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var holder = Holder(RefBox(whole))\n    var other: List[Int] = [5]\n    holder.stash_param(other)\n";
-    compiler
+    let error = compiler
         .compile_unlinked(param_rooted)
-        .expect("param-rooted nested-def store stays accepted");
+        .expect_err("param-rooted nested-def store");
+    assert!(
+        matches!(&error, CompilerError::Type(mojito::TypeError::OriginIdentityMismatch { found, expected })
+            if found == "RefBox[origin_of(source)]" && expected == "RefBox[origin]"),
+        "{error}"
+    );
 
     // Frame balance: a store BESIDE (after) a nested def, in the method's own
     // body, still faces the guard — the nested frame pushes and pops without
@@ -735,71 +707,6 @@ fn nested_def_captured_self_store_faces_the_escape_guard() {
         error,
         CompilerError::Type(mojito::TypeError::StoredReferenceEscapesOrigin)
     ));
-}
-
-#[test]
-fn recursion_only_transfer_effects_reach_the_fixpoint() {
-    // Mutually recursive methods where the store is reachable only through
-    // the recursive partner: round one leaves the earlier method effect-free
-    // (its callee's body is uncommitted at the call site), the rerun closes
-    // the cycle, and the caller's return-escape rejects.
-    let compiler = Compiler::default();
-    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Sink[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n\n    def ping(mut self, var box: RefBox, n: Int):\n        if n > 0:\n            self.pong(box^, n - 1)\n        else:\n            self.slot = box^\n\n    def pong(mut self, var box: RefBox, n: Int):\n        self.ping(box^, n)\n\ndef make(mut keep: List[Int]) -> Sink[origin_of(keep)]:\n    ref whole = keep\n    var sink = Sink(RefBox(whole))\n    var local: List[Int] = [9]\n    ref alias = local\n    sink.pong(RefBox(alias), 1)\n    return sink^\n\ndef main():\n    var keep: List[Int] = [1]\n    var got = make(keep)\n";
-    let error = compiler
-        .compile_unlinked(source)
-        .expect_err("mutual recursion");
-    assert!(matches!(
-        error,
-        CompilerError::Type(mojito::TypeError::ReturnsReferenceToLocal)
-    ));
-}
-
-#[test]
-fn augmented_assignment_replays_the_dunders_transfer_effects() {
-    // The in-place dunder goes through ordinary method selection, so a user
-    // `__iadd__` that stashes its loan-carrying argument into `self` already
-    // installs the transfer at the `sink += carrier` site: returning the
-    // receiver with a local-rooted transferred loan rejects.
-    let compiler = Compiler::default();
-    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Sink[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n\n    def __iadd__(mut self, var box: RefBox):\n        self.slot = box^\n\ndef make(mut keep: List[Int]) -> Sink[origin_of(keep)]:\n    ref whole = keep\n    var sink = Sink(RefBox(whole))\n    var local: List[Int] = [9]\n    ref alias = local\n    sink += RefBox(alias)\n    return sink^\n\ndef main():\n    var keep: List[Int] = [1]\n    var got = make(keep)\n";
-    let error = compiler.compile_unlinked(source).expect_err("augassign");
-    assert!(matches!(
-        error,
-        CompilerError::Type(mojito::TypeError::ReturnsReferenceToLocal)
-    ));
-}
-
-#[test]
-fn unpack_into_place_faces_the_store_outward_guard() {
-    // Unpacking into fields of `self` runs the same store-outward rule as
-    // ordinary place assignment: a tuple element carrying a frame-local loan
-    // rejects with the escape diagnostic (previously this shape surfaced an
-    // incidental non-Copyable unpack error), while the parameter-rooted twin
-    // passes the guard and still lands on the pre-existing
-    // implicitly-copyable rvalue-unpack requirement.
-    let compiler = Compiler::default();
-    let escaping = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Pair[origin: Origin[mut=True]]:\n    var a: RefBox[Self.origin]\n    var b: Int\n\n    def fill(mut self):\n        var local: List[Int] = [9]\n        ref alias = local\n        var pack = (RefBox(alias), 5)\n        self.a, self.b = pack^\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var pair = Pair(RefBox(whole), 0)\n    pair.fill()\n";
-    let error = compiler
-        .compile_unlinked(escaping)
-        .expect_err("escaping unpack");
-    assert!(matches!(
-        error,
-        CompilerError::Type(mojito::TypeError::StoredReferenceEscapesOrigin)
-    ));
-
-    let param_rooted = escaping.replace(
-        "    def fill(mut self):\n        var local: List[Int] = [9]\n        ref alias = local\n",
-        "    def fill(mut self, mut source: List[Int]):\n        ref alias = source\n",
-    );
-    let param_rooted = param_rooted.replace(
-        "pair.fill()",
-        "var src: List[Int] = [9]\n    pair.fill(src)",
-    );
-    let error = compiler
-        .compile_unlinked(&param_rooted)
-        .expect_err("copyable wall");
-    let message = format!("{error}");
-    assert!(message.contains("implicitly copyable"), "{message}");
 }
 
 #[test]

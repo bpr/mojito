@@ -6,6 +6,69 @@
 use super::*;
 
 impl Checker {
+    /// The unrolled accessor an explicit `p.__getitem__[k]()` /
+    /// `p.__getitem_param__[k]()` on a specialized variadic struct selects:
+    /// the per-index place accessor, or its value twin for an rvalue
+    /// receiver, exactly as the subscript sugar `p[k]` resolves. `None` when
+    /// the call is not that spelling.
+    pub(super) fn dependent_index_accessor_method(
+        &self,
+        object: &Expr,
+        field: &str,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Result<Option<String>, TypeError> {
+        if !matches!(field, "__getitem__" | "__getitem_param__")
+            || !args.is_empty()
+            || !kwargs.is_empty()
+        {
+            return Ok(None);
+        }
+        let Ty::Struct(name, _) = self.infer(object)? else {
+            return Ok(None);
+        };
+        let Some(family) = self
+            .structs
+            .get(&name)
+            .and_then(dependent_index_accessor_family)
+        else {
+            return Ok(None);
+        };
+        let [mojito_ast::ast::ParamArg::Value(index)] = param_args else {
+            return Err(TypeError::WrongTypeArgCount {
+                name: field.to_string(),
+                expected: 1,
+                got: param_args.len(),
+            });
+        };
+        let context = format!("variadic struct '{name}' subscript");
+        let exact = self.eval_ct(index).map_err(|_| TypeError::TypeMismatch {
+            expected: "a compile-time Int index".to_string(),
+            found: "a runtime value".to_string(),
+            context: context.clone(),
+        })?;
+        let k = exact
+            .to_i64()
+            .filter(|k| {
+                *k >= 0
+                    && self.structs.get(&name).is_some_and(|info| {
+                        info.methods.contains_key(&format!("{}${k}", family.place))
+                    })
+            })
+            .ok_or_else(|| TypeError::TypeMismatch {
+                expected: "a pack index within the element count".to_string(),
+                found: exact.to_string(),
+                context,
+            })?;
+        let accessor = if is_place_expr(object) {
+            format!("{}${k}", family.place)
+        } else {
+            format!("{}${k}", family.value)
+        };
+        Ok(Some(accessor))
+    }
+
     /// Validate an assignment **place** and return the type stored there. A place
     /// is a chain of field (`.x`) and index (`[i]`) accesses over a root that
     /// must be a mutable location: any variable, or `self` in a `mut self`
@@ -1546,7 +1609,7 @@ impl Checker {
             });
         }
         if let Ty::Struct(name, _) = &obj_ty
-            && !self.structs.contains_key(name)
+            && self.is_abstract_struct(name)
         {
             // A discovery-round abstract scalar range subscripts by Int to
             // its scalar element; the fixpoint rewrite registers the

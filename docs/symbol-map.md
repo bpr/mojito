@@ -116,7 +116,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   expression span (the comprehension pattern); `ast::lambdas_in_expr`/
   `lambdas_in_stmt` are the shared lambda-discovery walkers used by the
   checker, `checked.rs`, and `mir/nested.rs`.
-- `checker/indexing.rs` owns place validation, subscript/index inference and
+- `checker/indexing.rs` owns place validation, subscript/index inference
+  (`dependent_index_accessor_method` routes an explicit `p.__getitem__[k]()`
+  to the accessor the subscript sugar unrolled) and
   assignment (including keyword slices and the `BorrowViewResult` marking for
   view-typed slice results), pointer offset/write checks (the single-place
   rule and its multi-element interior-domain lift), the pointer-write
@@ -243,7 +245,22 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `infer_method_call`: a read argument whose value borrows the receiver's
   storage, `s += s.rstrip()`, is rejected).
 - `checker/scopes.rs` owns lexical scope, binding declaration/mutability, and
-  nested-def capture-access checks.
+  nested-def capture-access checks (a `comptime for` variable of a validated
+  body captures nothing).
+- `checker/comptime_validation.rs` owns source validation of compile-time
+  control flow: `validate_comptime_templates` (in `checker.rs`) runs a
+  discarded checker in `source_validation` mode over the prepared program,
+  where `check_comptime_condition` types a `comptime if` condition (a
+  generic constraint, a concrete `conforms_to`, or a `Bool` value),
+  `check_comptime_for` checks a loop body under its element type,
+  `bind_local_comptime` binds function-local `comptime` aliases and
+  compile-time-only values, and `concrete_only_struct`/`concrete_only_def`
+  draw the per-instantiation boundary (template shells).
+- `checker/rebind.rs` owns `rebind[Dest](value)`: `erase_rebinds` replaces
+  each well-formed call by its operand before checking and records the
+  retyping in `Checker.rebind_targets`; `apply_rebind_target` (from
+  `infer` and the `ref` binding) takes `Dest` on faith under validation and
+  demands equality once instantiated.
 - `checker/constraints.rs` owns compile-time evaluation and generic-constraint
   compilation/evaluation. `compile_where_clause` retains an optional source
   diagnostic around the semantic constraint compiled by
@@ -418,7 +435,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (descriptors, directory streams, the `errno` allocation, the environment
   overlay) and the per-callee marshaling between VM values and Rust's
   standard library.
-- `comptime.rs` owns the `Elab` elaboration driver (`block`/`stmt`), type
+- `comptime.rs` owns the staged entry points (`prepare` normalizes
+  declarations without selecting or cloning, `elaborate_prepared` is the
+  already-validated request-driven route the driver re-elaborates each
+  discovery round, `elaborate` composes prepare → validate → elaborate for
+  the stage seam), the `Elab` elaboration driver (`block`/`stmt`), type
   resolution, the template classifications (`bound_generic_template_names`,
   `pack_generic_template_names` — type-pack defs whose non-evident calls
   specialize from checker-recorded instantiations, `pack_template_stub` in
@@ -493,7 +514,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 |---|---|---|
 | Syntax or AST shape | [`grammar.md`](grammar.md), `parser.rs`, `ast.rs` | Parser tests, `frontend.md`, feature matrix. |
 | Argument binding | `call.rs` | Checker/VM adapters and call-parity tests. |
-| A read-only AST walk | `mojito-ast/visit.rs` | `comptime/pack_qualification.rs`, the first visitor. |
+| An AST walk (read-only `Visitor`, in-place `MutVisitor`) | `mojito-ast/visit.rs` | `comptime/pack_qualification.rs`, `ast::stamp_source`, `checker/rebind.rs`. |
 | Overload identity | `symbol.rs` | Checker selection, MIR declarations, symbol/rejection tests. |
 | Type rules | `checker.rs` or focused checker child | `CheckedProgram`, negative checker tests. |
 | Ownership/destruction | `analysis.rs` and its `analysis/` submodules | MIR place/use forms, ownership and drop tests. |

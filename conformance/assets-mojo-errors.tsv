@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	362
+# swept-count	371
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -298,14 +298,14 @@ assets/type_error/owned_pack_iteration_linear_break.mojo	compile-reject	agree	er
 assets/type_error/owned_pointer_linear_pointee_must_be_consumed.mojo	compile-reject	agree	error: 'leaked' abandoned without being explicitly destroyed: Use `into_inner()` (for a `Movable` `T`) or `unsafe_take_allocation()` to consume an `OwnedPointer` whose element type is not `Deinitable`
 assets/type_error/owned_pointer_take_is_renamed.mojo	compile-reject	agree	error: 'OwnedPointer[Int]' value has no attribute 'take'
 assets/type_error/pack_alias_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
-assets/type_error/pack_bound_violation.mojo	compile-reject	agreeerror: 'Pair' parameter 'Ts' has 'Copyable & Deinitable' type, but value has type 'AnyStruct[NoCopy]'
+assets/type_error/pack_bound_violation.mojo	compile-reject	agree	error: 'Pair' parameter 'Ts' has 'Copyable & Deinitable' type, but value has type 'AnyStruct[NoCopy]'
 assets/type_error/pack_field_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
 assets/type_error/pack_init_spread_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
 assets/type_error/pack_method_body_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
 assets/type_error/pack_method_where_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
 assets/type_error/pack_struct_init_arity.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/pack_struct_needs_explicit_args.mojo	runs	divergence	the pin runs it; Mojito rejects: variadic struct 'Pair' requires explicit compile-time type arguments
-assets/type_error/pack_struct_runtime_getitem_index.mojo	compile-reject	ledgered	error: invalid call to '__getitem__': unexpected argument
+assets/type_error/pack_struct_runtime_getitem_index.mojo	compile-reject	agree	error: invalid call to '__getitem__': cannot use a dynamic value in a parameter list
 assets/type_error/pack_struct_runtime_index.mojo	compile-reject	agree	error: invalid call to '__getitem_param__': cannot use a dynamic value in a parameter list
 assets/type_error/parameter_closure_immutable_capture_write.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
 assets/type_error/parameterized_assoc_arity.mojo	compile-reject	agree	error: failed to infer parameter 'b', specify the parameter or use '_' or '...' to unbind the parameter explicitly
@@ -389,6 +389,8 @@ assets/type_error/typelist_bad_predicate.mojo	compile-reject	agree	error: invali
 assets/type_error/typelist_index_out_of_range.mojo	runs	subset	the pin runs it;Mojito rejects: out of range
 assets/type_error/typelist_size_removed_alias.mojo	compile-reject	agree	error: 'TypeList[Int, Bool]' value has no attribute 'size'
 assets/type_error/uninit_storage_compiler_private.mojo	compile-reject	agree	error: use of unknown declaration '__UninitStorage'
+assets/type_error/untaken_comptime_if_generic_member.mojo	compile-reject	agree	error: 'T' value has no attribute 'nonexistent'
+assets/type_error/untaken_comptime_if_type_error.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["hello"]' value to 'Int'
 assets/type_error/untracked_pointer_field_tracked_argument.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/var_less_introduction.mojo	runs	subset	the pin runs it; Mojito rejects: var count
 assets/type_error/variadic_constructor_element_mismatch.mojo	compile-reject	agree	error: no matching function in initialization

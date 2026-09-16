@@ -299,6 +299,17 @@ impl Checker {
                     return self.infer_uninit_storage_construction(span, param_args, args);
                 }
                 "print" => return self.infer_print(args, kwargs),
+                // A well-formed `rebind` was erased before checking; one
+                // that reaches here is malformed.
+                "rebind" => return Err(Self::rebind_shape_error(param_args, args)),
+                // The runtime crossings the elaborator folds before the
+                // executable check; only source validation types them.
+                "materialize" if self.source_validation && args.is_empty() => {
+                    return self.infer_materialize_crossing(param_args);
+                }
+                "comptime" if self.source_validation && args.len() == 1 => {
+                    return self.infer(&args[0]);
+                }
                 // `SIMD[DType.bool, N](fill=b)`: a mask's splat takes its one
                 // lane by keyword.
                 "SIMD" if !kwargs.is_empty() => {

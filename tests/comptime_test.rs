@@ -1,7 +1,8 @@
 //! Compile-time elaboration (`comptime if` / `comptime for`). Each test runs the
-//! real pipeline stage order — parse → **elaborate** → check → VM — so it exercises
-//! the phase-distinction semantics: unselected branches are dropped before checking,
-//! and `comptime for` unrolls with the loop variable substituted as a literal.
+//! real pipeline stage order — parse → **validate** → **elaborate** → check → VM —
+//! so it exercises the phase-distinction semantics: every arm is checked with
+//! the declaration's parameters symbolic before elaboration selects one, and
+//! `comptime for` unrolls with the loop variable substituted as a literal.
 
 use mojito::{Compiler, CtValue, Ty, elaborate, parse};
 
@@ -83,11 +84,76 @@ fn comptime_if_selects_a_branch() {
 }
 
 #[test]
-fn comptime_if_drops_unselected_branch_before_checking() {
-    // The `else` branch has a type error, but it is dropped by elaboration, so the
-    // program still type-checks and runs — the key metaprogramming property.
+fn comptime_if_checks_the_unselected_branch_before_elaboration() {
+    // Every arm is checked before elaboration selects one, as the pinned
+    // Mojo does: a type error in the `else` arm rejects the program even
+    // though `FLAG == 1` selects the `if` arm.
     let src = "comptime FLAG = 1\n\ndef main():\n    comptime if FLAG == 1:\n        print(\"ok\")\n    else:\n        var bad: Int = \"not an int\"\n        print(bad)\n";
-    assert_eq!(run(src).unwrap(), "ok\n");
+    let err = run(src).unwrap_err();
+    assert!(err.contains("expected Int, found StringLiteral"), "{err}");
+    // The same program with a valid `else` arm still runs only the selected arm.
+    let valid = "comptime FLAG = 1\n\ndef main():\n    comptime if FLAG == 1:\n        print(\"ok\")\n    else:\n        print(\"other\")\n";
+    assert_eq!(run(valid).unwrap(), "ok\n");
+}
+
+#[test]
+fn comptime_if_arms_of_a_template_check_with_symbolic_parameters() {
+    // A member the bound does not declare is rejected in an untaken arm of a
+    // generic template, and so is an unused template's invalid arm.
+    let member = "def g[T: Copyable, flag: Bool](x: T) -> String:\n    comptime if flag:\n        return \"ok\"\n    else:\n        x.nonexistent()\n        return \"bad\"\n\ndef main():\n    print(g[Int, True](1))\n";
+    let err = run(member).unwrap_err();
+    assert!(
+        err.contains("type 'T' has no method 'nonexistent'"),
+        "{err}"
+    );
+    let unused = "def unused[n: Int]() -> Int:\n    comptime if n == 0:\n        return 1\n    else:\n        var x: Int = \"hello\"\n        return x\n\ndef main():\n    print(2)\n";
+    let err = run(unused).unwrap_err();
+    assert!(err.contains("expected Int, found StringLiteral"), "{err}");
+    // A guard does not narrow the parameter: `T == Int` grants no `__add__`.
+    let narrowing = "def f[T: Copyable](x: T) -> Int:\n    comptime if T == Int:\n        return x + 1\n    return 0\n\ndef main():\n    print(f[Int](3))\n";
+    let err = run(narrowing).unwrap_err();
+    assert!(err.contains("'+' is not defined for T"), "{err}");
+}
+
+#[test]
+fn comptime_if_arms_are_block_scoped_and_dead_arms_have_no_effect() {
+    // A binding declared in an arm is not visible after the conditional, as
+    // upstream scopes it; a valid untaken arm produces no output.
+    let scoped = "def main():\n    comptime if True:\n        var x = 1\n    print(x)\n";
+    let err = run(scoped).unwrap_err();
+    assert!(err.contains("Undefined variable 'x'"), "{err}");
+    let dead = "def shout():\n    print(\"never\")\n\ndef f[n: Int]() -> Int:\n    comptime if n == 0:\n        return 1\n    else:\n        shout()\n        return 2\n\ndef main():\n    print(f[0]())\n";
+    assert_eq!(run(dead).unwrap(), "1\n");
+    // A dead arm's compile-time evaluation failure is not a type error.
+    let dead_eval = "def f[n: Int]() -> Int:\n    comptime if n == 0:\n        return 1\n    else:\n        comptime k = 1 // 0\n        return k\n\ndef main():\n    print(f[0]())\n";
+    assert_eq!(run(dead_eval).unwrap(), "1\n");
+}
+
+#[test]
+fn rebind_retypes_its_operand_and_checks_the_instantiation() {
+    // `rebind[Dest](value)` types as `Dest` while the operand is symbolic and
+    // is an identity once instantiated; a mismatched instantiation and a
+    // transferred operand are rejected.
+    let src = "def f[T: Copyable](x: T) -> Int:\n    comptime if T == Int:\n        return rebind[Int](x) + 1\n    return 0\n\ndef main():\n    print(f[Int](3))\n";
+    assert_eq!(run(src).unwrap(), "4\n");
+    let reference = "def f[T: Copyable](ref x: T) -> Int:\n    comptime if T == Int:\n        ref y = rebind[Int](x)\n        return y + 1\n    return 0\n\ndef main():\n    var v = 3\n    print(f[Int](v))\n";
+    assert_eq!(run(reference).unwrap(), "4\n");
+    let wrong_use = "def f[T: Copyable](x: T) -> Int:\n    comptime if T == Int:\n        return rebind[String](x) + 1\n    return 0\n\ndef main():\n    print(f[Int](3))\n";
+    let err = run(wrong_use).unwrap_err();
+    assert!(err.contains("expected String, found Int"), "{err}");
+    let mismatch =
+        "def main():\n    var x: Int = 3\n    var y = rebind[Float64](x)\n    print(y)\n";
+    let err = run(mismatch).unwrap_err();
+    assert!(
+        err.contains("rebind: the input type does not match the result type"),
+        "{err}"
+    );
+    let transfer = "struct Tracked(Movable):\n    var n: Int\n    def __init__(out self, n: Int):\n        self.n = n\n\ndef take[T: Movable](var x: T):\n    comptime if T == Tracked:\n        var t = rebind[Tracked](x^)\n        print(t.n)\n\ndef main():\n    take[Tracked](Tracked(1))\n";
+    let err = run(transfer).unwrap_err();
+    assert!(
+        err.contains("rebind takes its operand by reference"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -146,14 +212,15 @@ fn comptime_for_iterates_a_heterogeneous_tuple() {
 
 #[test]
 fn cloned_comptime_bodies_keep_distinct_checked_occurrence_facts() {
-    let src = "def outer[n: Int]():\n    comptime for value in (1, True):\n        if True:\n            var x = value\n            def show() {x}:\n                print(x)\n            show()\n\ndef main():\n    outer[0]()\n";
+    let src = "def outer[n: Int]():\n    comptime t = (1, True)\n    comptime for i in range(2):\n        if True:\n            var x = t[i]\n            def show() {x}:\n                print(x)\n            show()\n\ndef main():\n    outer[0]()\n";
     assert_eq!(run(src).unwrap(), "1\nTrue\n");
 }
 
 #[test]
-fn comptime_for_over_a_tuple_of_strings() {
-    // The codex-direction milestone: iterate a compile-time tuple of strings.
-    let src = "comptime states = (\"empty\", \"occupied\", \"deleted\")\n\ndef main():\n    comptime for state in states:\n        print(state)\n";
+fn comptime_for_over_a_list_of_strings() {
+    // Iterate a compile-time list of strings; a compile-time Tuple has no
+    // `__iter__` and rejects (`assets/type_error/comptime_for_tuple.mojo`).
+    let src = "comptime states = [\"empty\", \"occupied\", \"deleted\"]\n\ndef main():\n    comptime for state in states:\n        print(state)\n";
     assert_eq!(run(src).unwrap(), "empty\noccupied\ndeleted\n");
 }
 
@@ -799,7 +866,7 @@ fn value_struct_specialization_validates_a_diagnostic_where_clause() {
 
 #[test]
 fn variadic_struct_specialization_folds_a_diagnostic_where_clause() {
-    let template = "@fieldwise_init\nstruct CopyPack[*Ts: AnyType] where (conforms_to(Ts.values, Copyable), \"pack elements must be Copyable\"):\n    var values: Tuple[*Ts]\n\n";
+    let template = "@fieldwise_init\nstruct CopyPack[*Ts: AnyType] where (conforms_to(Ts.values, Copyable), \"pack elements must be Copyable\"):\n    var values: Tuple[*Self.Ts]\n\n";
     assert_eq!(
         run(&format!(
             "{template}def main():\n    var value = CopyPack[Int, Bool]((1, True))\n    print(value.values[0])\n"
@@ -1055,7 +1122,7 @@ fn conflicting_unrolled_inferred_calls_keep_the_abstract_path() {
     // Two `comptime for` copies share one source occurrence with different
     // inferred instantiations; both stay on the retained template's erased
     // dispatch and still run.
-    let src = "def ident[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    comptime for i in (1, \"s\"):\n        print(ident(i))\n";
+    let src = "def ident[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    comptime t = (1, \"s\")\n    comptime for i in range(2):\n        print(ident(t[i]))\n";
     assert_eq!(run(src).unwrap(), "1\ns\n");
 }
 
@@ -1147,7 +1214,7 @@ fn conditional_conformance_refines_a_comptime_alias_body() {
     let iter = "from std.iter import Iterable, Iterator, StopIteration\n\nstruct MyIter[T: Copyable & Movable, o: Origin[mut=False]](Iterator, Copyable, Movable):\n    comptime Element = Self.T\n    var src: Pointer[Self.T, Self.o]\n    var done: Bool\n\n    def __init__(out self, ref[Self.o] src: Self.T):\n        self.src = Pointer(to=src)\n        self.done = False\n\n    def __next__(mut self) raises StopIteration -> Self.T:\n        if self.done:\n            raise StopIteration()\n        self.done = True\n        return self.src[].copy()\n\n";
     let alias = "    comptime IteratorType[\n        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]\n    ] = MyIter[Self.T, iterable_origin]\n";
     let src = format!(
-        "{iter}struct Bag[T: Movable & Deinitable](Iterable where conforms_to(T, Copyable), Movable):\n    comptime Element = Self.T\n{alias}    var v: Self.T\n\n    def __init__(out self, var v: Self.T):\n        self.v = v^\n\n    def __iter__(ref self) -> Self.IteratorType[origin_of(self)] where conforms_to(Self.T, Copyable):\n        return MyIter(self.v)\n\ndef main():\n    var b = Bag(7)\n    for x in b:\n        print(x)\n"
+        "{iter}struct Bag[T: Movable & Deinitable](Iterable where conforms_to(T, Copyable), Movable):\n    comptime Element = Self.T\n{alias}    var v: Self.T\n\n    def __init__(out self, var v: Self.T):\n        self.v = v^\n\n    def __iter__(ref self) -> Self.IteratorType[origin_of(self.v)] where conforms_to(Self.T, Copyable):\n        return MyIter(self.v)\n\ndef main():\n    var b = Bag(7)\n    for x in b:\n        print(x)\n"
     );
     assert_eq!(run(&src).unwrap(), "7\n");
     let negative = format!(

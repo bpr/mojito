@@ -591,3 +591,508 @@ fn walk_optional_block<V: Visitor>(visitor: &mut V, statements: Option<&[Stmt]>)
         walk_block(visitor, statements);
     }
 }
+
+/// Callbacks for an in-place walk. Every method has a no-op default.
+///
+/// A statement is reported before its children; an expression after its
+/// children, so a visitor may replace a node once its subtree has been
+/// visited (erasing a wrapper call keeps the operand's own provenance).
+pub trait MutVisitor {
+    /// A statement, reported before its children.
+    fn visit_stmt_mut(&mut self, _statement: &mut Stmt) {}
+
+    /// An expression, reported after its children.
+    fn visit_expr_mut(&mut self, _expr: &mut Expr) {}
+}
+
+/// Walk every statement, expression, and annotation of a block in place.
+pub fn walk_block_mut<V: MutVisitor>(visitor: &mut V, statements: &mut [Stmt]) {
+    for statement in statements {
+        walk_stmt_mut(visitor, statement);
+    }
+}
+
+/// Walk one statement in place, its nested blocks, annotations, and
+/// declarations included.
+pub fn walk_stmt_mut<V: MutVisitor>(visitor: &mut V, statement: &mut Stmt) {
+    visitor.visit_stmt_mut(statement);
+    match &mut statement.kind {
+        StmtKind::VarDecl { ty, value, .. } => {
+            if let Some(ty) = ty {
+                walk_type_mut(visitor, ty);
+            }
+            walk_expr_mut(visitor, value);
+        }
+        StmtKind::RefDecl { value, .. }
+        | StmtKind::Assign { value, .. }
+        | StmtKind::Raise(value)
+        | StmtKind::Return(Some(value))
+        | StmtKind::Expr(value) => walk_expr_mut(visitor, value),
+        StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
+            walk_expr_mut(visitor, place);
+            walk_expr_mut(visitor, value);
+        }
+        StmtKind::Comptime {
+            type_params,
+            ty,
+            where_clauses,
+            value,
+            ..
+        } => {
+            walk_type_params_mut(visitor, type_params);
+            if let Some(ty) = ty {
+                walk_type_mut(visitor, ty);
+            }
+            for condition in where_clauses {
+                walk_expr_mut(visitor, condition);
+            }
+            walk_expr_mut(visitor, value);
+        }
+        StmtKind::Unpack { targets, value, .. } => {
+            for target in targets {
+                walk_expr_mut(visitor, target);
+            }
+            walk_expr_mut(visitor, value);
+        }
+        StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
+            for (condition, block) in branches {
+                walk_expr_mut(visitor, condition);
+                walk_block_mut(visitor, block);
+            }
+            if let Some(block) = orelse {
+                walk_block_mut(visitor, block);
+            }
+        }
+        StmtKind::While { cond, body, orelse } => {
+            walk_expr_mut(visitor, cond);
+            walk_block_mut(visitor, body);
+            if let Some(body) = orelse {
+                walk_block_mut(visitor, body);
+            }
+        }
+        StmtKind::For { iter, body, .. } | StmtKind::ComptimeFor { iter, body, .. } => {
+            walk_expr_mut(visitor, iter);
+            walk_block_mut(visitor, body);
+        }
+        StmtKind::With { items, body } => {
+            for item in items {
+                walk_expr_mut(visitor, &mut item.context);
+            }
+            walk_block_mut(visitor, body);
+        }
+        StmtKind::Try {
+            body,
+            except,
+            orelse,
+            finalbody,
+        } => {
+            walk_block_mut(visitor, body);
+            if let Some((_, block)) = except {
+                walk_block_mut(visitor, block);
+            }
+            if let Some(block) = orelse {
+                walk_block_mut(visitor, block);
+            }
+            if let Some(block) = finalbody {
+                walk_block_mut(visitor, block);
+            }
+        }
+        StmtKind::Def {
+            type_params,
+            params,
+            raises_type,
+            ret,
+            where_clauses,
+            body,
+            decorators,
+            ..
+        } => {
+            walk_type_params_mut(visitor, type_params);
+            for param in params {
+                walk_fn_param_mut(visitor, param);
+            }
+            if let Some(error) = raises_type {
+                walk_type_mut(visitor, error);
+            }
+            if let Some(ret) = ret {
+                walk_type_mut(visitor, ret);
+            }
+            for condition in where_clauses {
+                walk_expr_mut(visitor, condition);
+            }
+            walk_decorators_mut(visitor, decorators);
+            walk_block_mut(visitor, body);
+        }
+        StmtKind::Struct {
+            type_params,
+            callable_conformance,
+            conformance_conditions,
+            fields,
+            associated,
+            methods,
+            decorators,
+            where_clauses,
+            ..
+        } => {
+            walk_type_params_mut(visitor, type_params);
+            if let Some(callable) = callable_conformance {
+                walk_type_mut(visitor, callable);
+            }
+            for condition in where_clauses {
+                walk_expr_mut(visitor, condition);
+            }
+            for (_, condition) in conformance_conditions {
+                walk_expr_mut(visitor, condition);
+            }
+            for field in fields {
+                walk_type_mut(visitor, &mut field.ty);
+            }
+            for member in associated {
+                walk_type_params_mut(visitor, &mut member.params);
+                if let Some(ty) = &mut member.ty {
+                    walk_type_mut(visitor, ty);
+                }
+                for condition in &mut member.where_clauses {
+                    walk_expr_mut(visitor, condition);
+                }
+                walk_expr_mut(visitor, &mut member.value);
+            }
+            walk_decorators_mut(visitor, decorators);
+            for method in methods {
+                walk_type_params_mut(visitor, &mut method.type_params);
+                if let Some(origins) = &mut method.self_origin {
+                    for origin in origins {
+                        walk_expr_mut(visitor, origin);
+                    }
+                }
+                for param in &mut method.params {
+                    walk_fn_param_mut(visitor, param);
+                }
+                if let Some(error) = &mut method.raises_type {
+                    walk_type_mut(visitor, error);
+                }
+                if let Some(ret) = &mut method.ret {
+                    walk_type_mut(visitor, ret);
+                }
+                for condition in &mut method.where_clauses {
+                    walk_expr_mut(visitor, condition);
+                }
+                walk_decorators_mut(visitor, &mut method.decorators);
+                walk_block_mut(visitor, &mut method.body);
+            }
+        }
+        StmtKind::Trait {
+            methods,
+            comptime_members,
+            ..
+        } => {
+            for method in methods {
+                walk_type_params_mut(visitor, &mut method.type_params);
+                if let Some(origins) = &mut method.self_origin {
+                    for origin in origins {
+                        walk_expr_mut(visitor, origin);
+                    }
+                }
+                for param in &mut method.params {
+                    walk_fn_param_mut(visitor, param);
+                }
+                if let Some(error) = &mut method.raises_type {
+                    walk_type_mut(visitor, error);
+                }
+                if let Some(ret) = &mut method.ret {
+                    walk_type_mut(visitor, ret);
+                }
+                for condition in &mut method.where_clauses {
+                    walk_expr_mut(visitor, condition);
+                }
+                if let Some(body) = &mut method.default_body {
+                    walk_block_mut(visitor, body);
+                }
+            }
+            for member in comptime_members {
+                walk_type_params_mut(visitor, &mut member.params);
+                walk_type_mut(visitor, &mut member.ty);
+                for condition in &mut member.where_clauses {
+                    walk_expr_mut(visitor, condition);
+                }
+            }
+        }
+        StmtKind::Return(None)
+        | StmtKind::Import { .. }
+        | StmtKind::FromImport { .. }
+        | StmtKind::Pass
+        | StmtKind::Break
+        | StmtKind::Continue => {}
+    }
+}
+
+/// Walk one expression in place, children first.
+pub fn walk_expr_mut<V: MutVisitor>(visitor: &mut V, expr: &mut Expr) {
+    match &mut expr.kind {
+        ExprKind::Prefix(_, value) | ExprKind::Transfer(value) | ExprKind::Spread(value) => {
+            walk_expr_mut(visitor, value);
+        }
+        ExprKind::Infix(_, left, right)
+        | ExprKind::Index {
+            object: left,
+            index: right,
+        } => {
+            walk_expr_mut(visitor, left);
+            walk_expr_mut(visitor, right);
+        }
+        ExprKind::Call {
+            param_args,
+            args,
+            kwargs,
+            ..
+        } => {
+            walk_param_args_mut(visitor, param_args);
+            for arg in args {
+                walk_expr_mut(visitor, arg);
+            }
+            for arg in kwargs {
+                walk_expr_mut(visitor, &mut arg.value);
+            }
+        }
+        ExprKind::Invoke {
+            callee,
+            param_args,
+            args,
+            kwargs,
+        } => {
+            walk_expr_mut(visitor, callee);
+            walk_param_args_mut(visitor, param_args);
+            for arg in args {
+                walk_expr_mut(visitor, arg);
+            }
+            for arg in kwargs {
+                walk_expr_mut(visitor, &mut arg.value);
+            }
+        }
+        ExprKind::Member { object, .. } => walk_expr_mut(visitor, object),
+        ExprKind::MethodCall {
+            object,
+            args,
+            kwargs,
+            ..
+        } => {
+            walk_expr_mut(visitor, object);
+            for arg in args {
+                walk_expr_mut(visitor, arg);
+            }
+            for arg in kwargs {
+                walk_expr_mut(visitor, &mut arg.value);
+            }
+        }
+        ExprKind::TypeApply { args, .. } => walk_param_args_mut(visitor, args),
+        ExprKind::ListLit(values) | ExprKind::TupleLit(values) => {
+            for value in values {
+                walk_expr_mut(visitor, value);
+            }
+        }
+        ExprKind::BraceLit(entries) => {
+            for (key, value) in entries {
+                walk_expr_mut(visitor, key);
+                if let Some(value) = value {
+                    walk_expr_mut(visitor, value);
+                }
+            }
+        }
+        ExprKind::Comprehension {
+            key,
+            value,
+            clauses,
+            ..
+        } => {
+            if let Some(key) = key {
+                walk_expr_mut(visitor, key);
+            }
+            walk_expr_mut(visitor, value);
+            for clause in clauses {
+                match clause {
+                    ComprehensionClause::For { iter, .. } => walk_expr_mut(visitor, iter),
+                    ComprehensionClause::If(condition) => walk_expr_mut(visitor, condition),
+                }
+            }
+        }
+        ExprKind::Named { value, .. } => walk_expr_mut(visitor, value),
+        ExprKind::IfExpr {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            walk_expr_mut(visitor, cond);
+            walk_expr_mut(visitor, then_branch);
+            walk_expr_mut(visitor, else_branch);
+        }
+        ExprKind::Compare { first, rest } => {
+            walk_expr_mut(visitor, first);
+            for (_, value) in rest {
+                walk_expr_mut(visitor, value);
+            }
+        }
+        ExprKind::Slice {
+            object,
+            lower,
+            upper,
+            step,
+            ..
+        } => {
+            walk_expr_mut(visitor, object);
+            for value in [lower, upper, step].into_iter().flatten() {
+                walk_expr_mut(visitor, value);
+            }
+        }
+        ExprKind::MultiIndex { object, args } => {
+            walk_expr_mut(visitor, object);
+            for argument in args {
+                match argument {
+                    SubscriptArg::Index(value) | SubscriptArg::Keyword { value, .. } => {
+                        walk_expr_mut(visitor, value);
+                    }
+                    SubscriptArg::Slice {
+                        lower, upper, step, ..
+                    }
+                    | SubscriptArg::KeywordSlice {
+                        lower, upper, step, ..
+                    } => {
+                        for value in [lower, upper, step].into_iter().flatten() {
+                            walk_expr_mut(visitor, value);
+                        }
+                    }
+                }
+            }
+        }
+        ExprKind::TString { parts, .. } => {
+            for part in parts {
+                if let TStringPart::Expr(value) = part {
+                    walk_expr_mut(visitor, value);
+                }
+            }
+        }
+        ExprKind::TypeValue(ty) => walk_type_mut(visitor, ty),
+        ExprKind::Lambda { def } => walk_stmt_mut(visitor, def),
+        ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::Bool(_)
+        | ExprKind::Str(_)
+        | ExprKind::None
+        | ExprKind::Uninitialized
+        | ExprKind::EmptySubscript
+        | ExprKind::Identifier(_) => {}
+    }
+    visitor.visit_expr_mut(expr);
+}
+
+/// Walk a type annotation's embedded expressions and nested types in place.
+pub fn walk_type_mut<V: MutVisitor>(visitor: &mut V, ty: &mut Type) {
+    match ty {
+        Type::Named(_, args) => walk_param_args_mut(visitor, args),
+        Type::Assoc { base, args, .. } => {
+            walk_type_mut(visitor, base);
+            walk_param_args_mut(visitor, args);
+        }
+        Type::IndexedProjection { base, index } => {
+            walk_type_mut(visitor, base);
+            walk_expr_mut(visitor, index);
+        }
+        Type::Ref { referent, origin } => {
+            walk_type_mut(visitor, referent);
+            if let Some(origins) = origin {
+                for expression in origins {
+                    walk_expr_mut(visitor, expression);
+                }
+            }
+        }
+        Type::Func {
+            type_params,
+            params,
+            ret,
+            capturing,
+            raises_type,
+            where_clauses,
+            ..
+        } => {
+            walk_type_params_mut(visitor, type_params);
+            for param in params {
+                walk_type_mut(visitor, &mut param.ty);
+                if let Some(origins) = &mut param.origin {
+                    for expression in origins {
+                        walk_expr_mut(visitor, expression);
+                    }
+                }
+            }
+            walk_type_mut(visitor, ret);
+            for clause in where_clauses {
+                walk_expr_mut(visitor, clause);
+            }
+            if let Some(origins) = capturing {
+                for expression in origins {
+                    walk_expr_mut(visitor, expression);
+                }
+            }
+            if let Some(error) = raises_type {
+                walk_type_mut(visitor, error);
+            }
+        }
+        Type::Int
+        | Type::UInt
+        | Type::Bool
+        | Type::StringLiteral
+        | Type::Float64
+        | Type::None
+        | Type::SelfParam(_)
+        | Type::SelfType
+        | Type::MaterializedCallable(_) => {}
+    }
+}
+
+fn walk_param_args_mut<V: MutVisitor>(visitor: &mut V, args: &mut [ParamArg]) {
+    for arg in args {
+        match arg {
+            ParamArg::Type(ty) => walk_type_mut(visitor, ty),
+            ParamArg::Value(value) => walk_expr_mut(visitor, value),
+            ParamArg::Named { value, .. } => {
+                walk_param_args_mut(visitor, std::slice::from_mut(value));
+            }
+        }
+    }
+}
+
+fn walk_type_params_mut<V: MutVisitor>(visitor: &mut V, params: &mut [TypeParam]) {
+    for param in params {
+        if let Some(ty) = &mut param.value_type {
+            walk_type_mut(visitor, ty);
+        }
+        if let Some(ty) = &mut param.callable_bound {
+            walk_type_mut(visitor, ty);
+        }
+        if let Some(value) = &mut param.origin_mutability {
+            walk_expr_mut(visitor, value);
+        }
+        if let Some(value) = &mut param.default {
+            walk_expr_mut(visitor, value);
+        }
+        for condition in &mut param.constraints {
+            walk_expr_mut(visitor, condition);
+        }
+    }
+}
+
+fn walk_fn_param_mut<V: MutVisitor>(visitor: &mut V, param: &mut FnParam) {
+    walk_type_mut(visitor, &mut param.ty);
+    if let Some(value) = &mut param.default {
+        walk_expr_mut(visitor, value);
+    }
+}
+
+fn walk_decorators_mut<V: MutVisitor>(visitor: &mut V, decorators: &mut [Decorator]) {
+    for decorator in decorators {
+        for arg in &mut decorator.args {
+            walk_expr_mut(visitor, arg);
+        }
+        for arg in &mut decorator.kwargs {
+            walk_expr_mut(visitor, &mut arg.value);
+        }
+    }
+}

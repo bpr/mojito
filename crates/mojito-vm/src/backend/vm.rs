@@ -1796,12 +1796,15 @@ mod input_override_tests {
             .expect("first injected line");
         assert_eq!(first, Value::Str("World".to_string()));
 
-        // The buffer is exhausted: EOF reads back as the empty string, the
-        // same as builtin_input on closed stdin.
+        // The buffer is exhausted: EOF raises, the same as builtin_input on
+        // closed stdin and as upstream's `input()`.
         let second = vm
             .input_from_override(Value::Str("Again: ".to_string()))
-            .expect("EOF read");
-        assert_eq!(second, Value::Str(String::new()));
+            .expect_err("EOF raises");
+        assert!(
+            matches!(&second, RuntimeError::Raised(Value::Error(message)) if message == "EOF"),
+            "{second:?}"
+        );
 
         // Prompts land in the captured output byte-for-byte (no newline),
         // matching a native executable writing prompts to stdout.

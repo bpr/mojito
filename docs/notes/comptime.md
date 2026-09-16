@@ -763,7 +763,11 @@ and interpreting the existing AST under the same fuel quota.
 
 ## Phase 6: Delayed Generic Body Checking For `comptime if`
 
-Status: implemented
+Status: implemented; superseded on 2026-09-16 by source validation
+(`docs/architecture.md` §Stage 2): every arm is now checked with the
+parameters symbolic before elaboration selects one, as upstream does, so the
+"both branches must type-check" pattern below is the rule, and `rebind[T]`
+is the spelling that lets a guarded arm use the narrowed type.
 
 ### Goal
 

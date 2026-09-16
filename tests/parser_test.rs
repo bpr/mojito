@@ -2161,7 +2161,7 @@ fn keeps_the_qualified_pack_spread_apart_from_the_bare_one() {
     };
     assert!(
         matches!(&value.kind, ExprKind::Call { name, param_args, .. }
-            if name == "Tuple" && param_args == &[spread.clone()]),
+            if name == "Tuple" && param_args == std::slice::from_ref(&spread)),
         "got {value:?}"
     );
 }

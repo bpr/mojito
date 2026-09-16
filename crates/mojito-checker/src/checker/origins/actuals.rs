@@ -275,6 +275,18 @@ impl Checker {
                     ArgSlot::Keyword(position) => &kwargs[*position].value,
                     ArgSlot::Default => return None,
                 };
+                // A view value that is not a place (`id_view(s.rstrip())`'s
+                // argument) binds the origins it carries — the owned interior
+                // below `s`, not a temporary — so the result keeps borrowing
+                // what the argument borrowed.
+                if !crate::checker::places::is_place_expr(expression) {
+                    let carried = self.carried_argument_origins(expression);
+                    match carried.len() {
+                        0 => {}
+                        1 => return carried.into_iter().next(),
+                        _ => return Some(Origin::Union(carried)),
+                    }
+                }
                 self.reference_actual(expression)
                     .ok()
                     .map(|reference| reference.origin)
@@ -301,6 +313,13 @@ impl Checker {
                 None => origin,
             };
             if matches!(&origin, Origin::Union(members) if members.is_empty()) {
+                continue;
+            }
+            // An origin parameter bound only through a struct argument's
+            // origin tail (`id_view[o](v: StringSpan[o]) -> StringSpan[o]`)
+            // has no slot actual to substitute: the result carries what its
+            // arguments carry, so the contract records nothing for it.
+            if mentions_origin_param(&origin) {
                 continue;
             }
             let mutability = match sig.mutability {
@@ -705,5 +724,15 @@ fn dereferenced_pointer(expression: &Expr) -> Option<&Expr> {
         ExprKind::Index { object, .. } => Some(object),
         _ => crate::checker::places::pointer_offset_keyword_subscript(expression)
             .map(|(object, _)| object),
+    }
+}
+
+/// Whether a substituted origin still names a signature origin parameter.
+fn mentions_origin_param(origin: &mojito_types::origin::Origin) -> bool {
+    use mojito_types::origin::Origin;
+    match origin {
+        Origin::Param(_) => true,
+        Origin::Union(members) => members.iter().any(mentions_origin_param),
+        _ => false,
     }
 }

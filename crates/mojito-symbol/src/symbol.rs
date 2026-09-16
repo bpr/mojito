@@ -165,7 +165,9 @@ pub fn materialized_instantiation_argument(argument: &TyArg) -> TyArg {
         TyArg::Ty(Ty::StringLiteral) => {
             TyArg::Ty(Ty::Struct(STDLIB_STRING_STRUCT.to_string(), Vec::new()))
         }
-        TyArg::Ty(ty) => TyArg::Ty(erase_origin_arguments(&default_literal(ty))),
+        TyArg::Ty(ty) => TyArg::Ty(erase_origin_arguments(&erase_capture_environment(
+            &default_literal(ty),
+        ))),
         // A checker-inferred type pack records its element types the same way.
         TyArg::Val(CtValue::Tuple(elements)) => TyArg::Val(CtValue::Tuple(
             elements
@@ -866,8 +868,14 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
     // (`Self`, `Pair`, or `List[Self.T]` inside `List`). The declaration side
     // does the same (see `ast_raw`), so both agree on one key for a same-arity
     // overload's self-typed parameter and the checker-recorded callee names the
-    // real MIR function.
-    if self_ty == Some(ty) {
+    // real MIR function. Origins erase from callable identity, so a `sep:
+    // StringSpan` parameter inside `StringSpan` is `Self` whatever origin tail
+    // the receiver carries.
+    if self_ty.is_some_and(|self_ty| {
+        self_ty == ty
+            || mojito_types::types::erase_origin_arguments(self_ty)
+                == mojito_types::types::erase_origin_arguments(ty)
+    }) {
         return "Self".to_string();
     }
     match ty {
@@ -1344,6 +1352,23 @@ fn sanitize(raw: &str) -> String {
     raw.chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '$' })
         .collect()
+}
+
+/// A callable-typed instantiation argument with its capture environment
+/// erased. A callable-bounded parameter contributes nothing to a clone's
+/// name, and a concrete capture set names per-check owners, which would make
+/// the same instantiation look new on every discovery round.
+fn erase_capture_environment(ty: &Ty) -> Ty {
+    use mojito_types::origin::CallableEnvironment;
+    let mut erased = ty.clone();
+    if let Ty::Func {
+        environment: environment @ CallableEnvironment::Capturing(_),
+        ..
+    } = &mut erased
+    {
+        *environment = CallableEnvironment::Default;
+    }
+    erased
 }
 
 fn parameter_raw(name: &str, type_bounds: &HashMap<String, Vec<String>>) -> String {

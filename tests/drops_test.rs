@@ -255,7 +255,7 @@ fn borrowed_parameter_is_not_dropped_by_the_callee() {
 
 #[test]
 fn rebinding_reference_aggregate_releases_each_owner_generation_once() {
-    let src = "@fieldwise_init\nstruct Owner:\n    var n: Int\n    def __deinit__(deinit self):\n        print(\"drop\", self.n)\n\n@fieldwise_init\nstruct Borrowed[origin: Origin[mut=True]]:\n    var ptr: UnsafePointer[Owner, Self.origin]\n\ndef main():\n    var x = Owner(1)\n    var y = Owner(2)\n    var box = Borrowed(UnsafePointer(to=x))\n    print(box.ptr[0].n)\n    box = Borrowed(UnsafePointer(to=y))\n    print(\"rebound\")\n    print(box.ptr[0].n)\n";
+    let src = "@fieldwise_init\nstruct Owner:\n    var n: Int\n    def __deinit__(deinit self):\n        print(\"drop\", self.n)\n\n@fieldwise_init\nstruct Borrowed[origin: Origin[mut=True]]:\n    var ptr: UnsafePointer[Owner, Self.origin]\n\ndef main():\n    var x = Owner(1)\n    var y = Owner(2)\n    var box: Borrowed[MutUnsafeAnyOrigin] = Borrowed(UnsafePointer(to=x))\n    print(box.ptr[0].n)\n    box = Borrowed(UnsafePointer(to=y))\n    print(\"rebound\")\n    print(box.ptr[0].n)\n";
     assert_eq!(vm(src), "1\ndrop 1\nrebound\n2\ndrop 2\n");
 }
 
@@ -267,7 +267,7 @@ fn runtime_reference_owner_drops_after_the_consuming_call() {
 
 #[test]
 fn branch_rebinding_reference_aggregate_does_not_double_drop_owners() {
-    let src = "@fieldwise_init\nstruct Owner:\n    var n: Int\n    def __deinit__(deinit self):\n        print(\"drop\", self.n)\n\n@fieldwise_init\nstruct Borrowed[origin: Origin[mut=True]]:\n    var ptr: UnsafePointer[Owner, Self.origin]\n\ndef run(flag: Bool):\n    var x = Owner(1)\n    var y = Owner(2)\n    var box = Borrowed(UnsafePointer(to=x))\n    if flag:\n        box = Borrowed(UnsafePointer(to=y))\n    print(box.ptr[0].n)\n\ndef main():\n    run(True)\n    run(False)\n";
+    let src = "@fieldwise_init\nstruct Owner:\n    var n: Int\n    def __deinit__(deinit self):\n        print(\"drop\", self.n)\n\n@fieldwise_init\nstruct Borrowed[origin: Origin[mut=True]]:\n    var ptr: UnsafePointer[Owner, Self.origin]\n\ndef run(flag: Bool):\n    var x = Owner(1)\n    var y = Owner(2)\n    var box: Borrowed[MutUnsafeAnyOrigin] = Borrowed(UnsafePointer(to=x))\n    if flag:\n        box = Borrowed(UnsafePointer(to=y))\n    print(box.ptr[0].n)\n\ndef main():\n    run(True)\n    run(False)\n";
     let output = vm(src);
     assert_eq!(output, "drop 1\n2\ndrop 2\ndrop 2\n1\ndrop 1\n");
     assert_eq!(

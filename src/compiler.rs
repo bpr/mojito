@@ -6,8 +6,9 @@ use crate::checked::CheckedProgram;
 use crate::comptime::{
     ComptimeError, DefSpecializationRequest, Elaborated, MethodSpecializationRequest,
     StructInstanceRequest, TStringSpecializationRequest, TupleSpecializationRequest,
-    TupleTransformRequest, bound_generic_template_names, elaborate_with_requests,
-    pack_generic_template_names, tuple_materialized_callables, variadic_struct_template_names,
+    TupleTransformRequest, bound_generic_template_names, elaborate_prepared,
+    pack_generic_template_names, prepare, tuple_materialized_callables,
+    variadic_struct_template_names,
 };
 use crate::ct::CtValue;
 use crate::error::{OwnershipError, ParseError, TypeError};
@@ -239,13 +240,24 @@ impl Compiler {
         let mut conflicted = std::collections::HashSet::new();
         let mut last_new_callee = String::from("Tuple");
         let _compile = timing::span("compile");
+        // Source validation runs once, on the prepared program every
+        // discovery round re-elaborates: each `comptime if` arm and
+        // `comptime for` body is checked with its declaration's parameters
+        // symbolic before elaboration selects, so an untaken arm's type
+        // error is reported as the pinned Mojo reports it. The rounds below
+        // only ever re-elaborate already validated source.
+        let prepared = {
+            let _prepare = timing::span("prepare");
+            prepare(linked.to_vec()).map_err(CompilerError::Comptime)?
+        };
+        crate::checker::validate_comptime_templates(&prepared).map_err(CompilerError::Type)?;
         let mut checked = {
             let Elaborated {
                 program: discovery,
                 instances: minted,
             } = {
                 let _elaborate = timing::span("discovery.initial.elaborate");
-                elaborate_with_requests(linked.to_vec(), &[], &[], &[], &[], &[], &[])
+                elaborate_prepared(&prepared, &[], &[], &[], &[], &[], &[])
                     .map_err(CompilerError::Comptime)?
             };
             struct_requests.extend(minted);
@@ -353,8 +365,8 @@ impl Compiler {
                 instances: minted,
             } = {
                 let _elaborate = timing::span("elaborate");
-                elaborate_with_requests(
-                    linked.to_vec(),
+                elaborate_prepared(
+                    &prepared,
                     &tuple_requests,
                     &tstring_requests,
                     &def_requests,

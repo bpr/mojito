@@ -103,8 +103,9 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
 3. `Compiler` owns the production pipeline:
 
    ```text
-   source -> lex -> parse -> link -> comptime elaboration -> CheckedProgram
-          -> HIR CFG -> MIR -> ownership/liveness -> drop elaboration -> VM
+   source -> lex -> parse -> link -> source validation -> comptime elaboration
+          -> CheckedProgram -> HIR CFG -> MIR -> ownership/liveness
+          -> drop elaboration -> VM
    ```
 
 4. `CheckedProgram` is the semantic handoff. Later phases consume checked facts;

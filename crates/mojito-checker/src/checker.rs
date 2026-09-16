@@ -23,6 +23,8 @@ use builtins::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use calls::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use comptime_validation::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use declarations::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use generics::*;
@@ -35,6 +37,8 @@ use origins::*;
 use overload_support::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use places::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use rebind::*;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -68,6 +72,31 @@ pub fn check(stmts: &[Stmt]) -> Result<(), TypeError> {
 /// Type-check and retain the semantic facts consumed by lowering/backends.
 pub fn check_program(stmts: &[Stmt]) -> Result<mojito_checked::checked::CheckedProgram, TypeError> {
     check_program_with_materialized_callables(stmts, &HashMap::new())
+}
+
+/// Validate every compile-time control-flow construct of a prepared source
+/// program before elaboration selects an arm or unrolls a loop.
+///
+/// Each function or method body containing a `comptime if`/`comptime for`
+/// is checked once with its declaration's parameters left symbolic: every
+/// condition must be a compile-time `Bool`, every arm and loop body is
+/// checked in its own scope, and no arm is ever dropped unchecked. Bodies
+/// without such constructs are declared (so the validated bodies can call
+/// them) but not checked here — the executable check covers them.
+///
+/// Validation produces no checked facts: the checker it runs is discarded,
+/// so nothing recorded for an untaken arm can reach lowering. Bodies that
+/// only check concretely — a variadic template shell's, or one keyed on a
+/// `DType`/vector value parameter — keep their per-instantiation check.
+pub fn validate_comptime_templates(stmts: &[Stmt]) -> Result<(), TypeError> {
+    let _validate = timing::span("comptime_validation");
+    let mut expanded = expand_trait_defaults(stmts)?;
+    mojito_ast::ast::rekey_syntax(&mut expanded);
+    let rebind_targets = erase_rebinds(&mut expanded);
+    let mut checker = Checker::new();
+    checker.source_validation = true;
+    checker.rebind_targets = rebind_targets;
+    checker.check_program(&expanded)
 }
 
 /// Check compiler-generated Tuple declarations with the exact callable types
@@ -109,6 +138,7 @@ pub fn check_program_with_materialized_callables(
         let _rekey = timing::span("syntax_rekey");
         mojito_ast::ast::rekey_syntax(&mut expanded);
     }
+    let rebind_targets = erase_rebinds(&mut expanded);
     let mut transfer_seed: HashMap<String, Vec<mojito_checked::checked::TransferEffect>> =
         HashMap::new();
     let mut call_through_seed: HashMap<String, Vec<mojito_checked::checked::CallThroughEffect>> =
@@ -121,6 +151,7 @@ pub fn check_program_with_materialized_callables(
             std::mem::take(&mut transfer_seed),
             std::mem::take(&mut call_through_seed),
         );
+        checker.rebind_targets.clone_from(&rebind_targets);
         {
             let _check = timing::span("check_program");
             checker.check_program(&expanded)?;
@@ -418,6 +449,27 @@ pub struct Checker {
     /// and can make an otherwise identical return type fail to match. The
     /// facts refine capability queries only while that method body is checked.
     assumed_conformances: Vec<HashSet<(String, String)>>,
+    /// Source-validation mode (`validate_comptime_templates`): compile-time
+    /// control flow is checked with every arm visited and the declaration's
+    /// parameters symbolic, and a module-level function or method body
+    /// without such a construct is declared but not checked.
+    source_validation: bool,
+    /// Per-scope function-local `comptime NAME = <type>` aliases bound while
+    /// validating a body (the elaborator substitutes them before the
+    /// executable check ever runs). Consulted ahead of `tparams`.
+    local_type_aliases: Vec<HashMap<String, Ty>>,
+    /// Per-scope function-local `comptime NAME = <compile-time value>`
+    /// bindings the checker cannot type as a runtime value (a `TypeList`
+    /// construction); a compile-time position inlines the defining
+    /// expression in their place.
+    local_comptime_values: Vec<HashMap<String, Expr>>,
+    /// The retyping each erased `rebind[Dest](value)` call left at its
+    /// operand's span (see `rebind.rs`).
+    rebind_targets: HashMap<SourceSpan, mojito_ast::ast::ParamArg>,
+    /// Per-scope `comptime for` variables bound while validating a body.
+    /// The elaborator substitutes each as a literal, so a nested function
+    /// or lambda reading one captures nothing.
+    comptime_loop_bindings: Vec<HashSet<String>>,
     enclosing_type_params: Vec<mojito_ast::ast::TypeParam>,
     /// The `Ty` denoted by a bare `Self` while checking a struct's members (the
     /// struct type) or a trait's requirements (`Ty::SelfType`). `None` elsewhere.
@@ -743,6 +795,11 @@ impl Checker {
             tparams: Vec::new(),
             self_decls: Vec::new(),
             assumed_conformances: Vec::new(),
+            source_validation: false,
+            local_type_aliases: vec![HashMap::new()],
+            local_comptime_values: vec![HashMap::new()],
+            rebind_targets: HashMap::new(),
+            comptime_loop_bindings: vec![HashSet::new()],
             enclosing_type_params: Vec::new(),
             self_ty: None,
             trait_self_comptime: Vec::new(),
@@ -1939,6 +1996,9 @@ struct StructInfo {
     fieldwise_init: bool,
     explicit_destroy_message: Option<String>,
     explicit_destructors: HashMap<String, bool>,
+    /// Registered from a template shell (see `StmtKind::Struct::template_shell`):
+    /// no member types, and only the symbolically resolvable signatures.
+    template_shell: bool,
 }
 
 impl StructInfo {
@@ -2394,6 +2454,10 @@ type SplitCallableSpecialization = (
 );
 
 mod places;
+
+mod comptime_validation;
+
+mod rebind;
 
 mod generics;
 

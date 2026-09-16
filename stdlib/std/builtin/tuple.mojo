@@ -101,7 +101,7 @@ struct Tuple[*Ts: Movable](
     def __contains__[T: Equatable](self, value: T) -> Bool:
         comptime for i in range(len(Self.Ts)):
             comptime if T == Self.Ts[i]:
-                if self.storage[i] == value:
+                if rebind[T](self.storage[i]) == value:
                     return True
         return False
 

@@ -97,6 +97,7 @@ impl ConformanceOracle {
                     fieldwise_init: *fieldwise_init,
                     explicit_destroy_message: None,
                     explicit_destructors: HashMap::new(),
+                    template_shell: false,
                 },
             );
             Ok(())

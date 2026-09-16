@@ -1698,7 +1698,7 @@ fn nested_call_transfer_installs_loans_on_the_carrier() {
     // its direct call through `CallIndirect`; the call site still installs
     // the transferred loan on the carrier's root after the call, exactly
     // like the direct free-call path.
-    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef main():\n    var sink = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    def stash(mut s: List[RefBox], box: RefBox):\n        s.append(box^)\n    stash(sink, RefBox(alias))\n    print(sink[0].value[0])\n";
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef main():\n    var sink = List[RefBox[MutUnsafeAnyOrigin]]()\n    var local: List[Int] = [9]\n    ref alias = local\n    def stash(mut s: List[RefBox[MutUnsafeAnyOrigin]], box: RefBox[MutUnsafeAnyOrigin]):\n        s.append(box^)\n    stash(sink, RefBox(alias))\n    print(sink[0].value[0])\n";
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
@@ -1747,7 +1747,7 @@ fn captured_owner_transfer_installs_loans_in_the_owning_frame() {
     // effect; invoking it in the frame that owns the storage resolves the
     // owner through the lowering's owner-variable map and installs the
     // transferred loan there.
-    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Carrier[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var sink = Carrier(RefBox(whole))\n    var local: List[Int] = [9]\n    def push() {mut sink, mut local}:\n        ref alias = local\n        sink.slot = RefBox(alias)\n    push()\n    print(len(keep))\n";
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Carrier[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var sink: Carrier[MutUnsafeAnyOrigin] = Carrier(RefBox(whole))\n    var local: List[Int] = [9]\n    def push() {mut sink, mut local}:\n        ref alias = local\n        sink.slot = RefBox(alias)\n    push()\n    print(len(keep))\n";
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
@@ -1789,7 +1789,7 @@ fn interior_destination_transfers_carry_their_domain() {
     // the root generation stay). The `List[RefBox]` instance's `append`
     // clone exposes the element storage, so the recorded domain descends
     // from `t.a` into it.
-    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Two[origin: Origin[mut=True]]:\n    var a: List[RefBox[Self.origin]]\n    var b: List[Int]\n\ndef main():\n    var a = List[RefBox]()\n    var t = Two(a^, [1])\n    var local: List[Int] = [9]\n    ref alias = local\n    t.a.append(RefBox(alias))\n    print(t.b[0])\n";
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Two[origin: Origin[mut=True]]:\n    var a: List[RefBox[Self.origin]]\n    var b: List[Int]\n\ndef main():\n    var a = List[RefBox[MutUnsafeAnyOrigin]]()\n    var t = Two(a^, [1])\n    var local: List[Int] = [9]\n    ref alias = local\n    t.a.append(RefBox(alias))\n    print(t.b[0])\n";
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
@@ -1831,7 +1831,7 @@ fn nested_call_transfer_to_an_enclosing_parameter_defers_to_the_caller() {
     // A transfer destination rooted at the enclosing function's own parameter
     // is not installed locally — the derived transitive effect installs it at
     // the caller, where the storage actually lives.
-    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef outer(mut sink: List[RefBox], box: RefBox):\n    def stash(mut s: List[RefBox], b: RefBox):\n        s.append(b^)\n    stash(sink, box)\n\ndef main():\n    var sink = List[RefBox]()\n    var local: List[Int] = [9]\n    ref alias = local\n    outer(sink, RefBox(alias))\n    print(sink[0].value[0])\n";
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef outer(mut sink: List[RefBox[MutUnsafeAnyOrigin]], box: RefBox[MutUnsafeAnyOrigin]):\n    def stash(mut s: List[RefBox[MutUnsafeAnyOrigin]], b: RefBox[MutUnsafeAnyOrigin]):\n        s.append(b^)\n    stash(sink, box)\n\ndef main():\n    var sink = List[RefBox[MutUnsafeAnyOrigin]]()\n    var local: List[Int] = [9]\n    ref alias = local\n    outer(sink, RefBox(alias))\n    print(sink[0].value[0])\n";
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
@@ -3470,7 +3470,7 @@ fn conflicting_unrolled_occurrences_stay_on_the_abstract_path() {
     // incompatible instantiations; the discovery loop drops the occurrence and
     // both calls keep the retained template's erased path.
     let mir = compiled_mir(
-        "def ident[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    comptime for i in (1, \"s\"):\n        print(ident(i))\n",
+        "def ident[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    comptime t = (1, \"s\")\n    comptime for i in range(2):\n        print(ident(t[i]))\n",
     );
     let names = function_names(&mir);
     assert!(names.contains(&"ident"), "{names:?}");
@@ -3490,7 +3490,7 @@ fn conflict_retained_template_keeps_dispatch_and_adapter_under_the_compiler() {
     // over-monomorphizes or abstract checking of retained templates breaks,
     // this pin notices.
     let mir = compiled_mir(
-        "from std.iter import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item.copy()\n    return default.copy()\n\ndef main():\n    comptime for i in (1, \"s\"):\n        print(first([i, i], i))\n",
+        "from std.iter import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item.copy()\n    return default.copy()\n\ndef main():\n    comptime t = (1, True)\n    comptime for i in range(2):\n        print(first([t[i], t[i]], t[i]))\n",
     );
     let names = function_names(&mir);
     assert!(names.contains(&"first"), "{names:?}");

@@ -351,6 +351,14 @@ impl Checker {
                 self.ty_value_from_name(name, &args)?
                     .ok_or_else(|| TypeError::NotComptime(name.clone()))
             }
+            // `DType.int`: a compile-time element-type value, as it appears
+            // in a `dtype: DType` argument (`_StridedRange[DType.int]`).
+            ExprKind::Member { object, field }
+                if matches!(&object.kind, ExprKind::Identifier(name) if name == "DType")
+                    && let Some(dtype) = Dtype::from_name(field) =>
+            {
+                Ok(CtValue::Dtype(dtype))
+            }
             ExprKind::Member { object, field } => {
                 if let ExprKind::Identifier(s) = &object.kind
                     && s == "Self"
@@ -940,7 +948,10 @@ impl Checker {
     /// parameter, or the concrete constructor
     /// (`TypeList.of[Trait=..., T1, ..., Tn]()`) whose element types resolve
     /// immediately.
-    fn typelist_receiver(&self, expr: &Expr) -> Result<Option<TypeListReceiver>, TypeError> {
+    pub(super) fn typelist_receiver(
+        &self,
+        expr: &Expr,
+    ) -> Result<Option<TypeListReceiver>, TypeError> {
         let enclosing_pack = |name: &str| {
             self.enclosing_type_params
                 .iter()
@@ -1252,10 +1263,24 @@ impl Checker {
     }
 
     pub(super) fn constraint_operand(&self, expr: &Expr) -> Result<ConstraintOperand, TypeError> {
-        // `TypeList[Ts.values]().length` is an Int operand (the removed
-        // `size` alias rejects like any unknown member).
+        // `TypeList[Ts.values]().length`, or `len(...)` of the same `Sized`
+        // list, is an Int operand (the removed `size` alias rejects like any
+        // unknown member).
+        let length_receiver = match &expr.kind {
+            ExprKind::Member { object, field } if field == "length" => Some(&**object),
+            ExprKind::Call { name, args, .. } if name == "len" && args.len() == 1 => Some(&args[0]),
+            _ => None,
+        };
+        // Any other member of a `TypeList` value is unknown, `size` included.
         if let ExprKind::Member { object, field } = &expr.kind
-            && field == "length"
+            && field != "length"
+            && self.typelist_receiver(object)?.is_some()
+        {
+            return Err(TypeError::Unsupported(format!(
+                "compile-time 'TypeList' value has no field '{field}'"
+            )));
+        }
+        if let Some(object) = length_receiver
             && let Some(receiver) = self.typelist_receiver(object)?
         {
             return Ok(match receiver {
@@ -1505,7 +1530,7 @@ fn bound_pack_types(environment: &HashMap<&str, &TyArg>, param: &str) -> Option<
 }
 
 /// A recognized `TypeList` receiver expression in a constraint position.
-enum TypeListReceiver {
+pub(super) enum TypeListReceiver {
     /// The pack adapter `TypeList[Ts.values]()`, naming the pack parameter.
     Pack(String),
     /// The concrete constructor `TypeList.of[...]()`, with resolved elements.

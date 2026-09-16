@@ -380,7 +380,7 @@ impl VmBackend {
     /// `input()` under [`Self::set_input_override`]: append the prompt to the
     /// captured output (a native executable writes prompts to stdout, which the
     /// differential compares byte-for-byte), then serve one line from the
-    /// override buffer — trailing `\n` then `\r` stripped, EOF → `""`.
+    /// override buffer — trailing `\n` then `\r` stripped; EOF raises `EOF`.
     pub(super) fn input_from_override(&mut self, prompt: Value) -> Result<Value, RuntimeError> {
         let Value::Str(prompt) = prompt else {
             return Err(RuntimeError::TypeError(format!(

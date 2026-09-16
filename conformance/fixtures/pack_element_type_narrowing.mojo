@@ -4,10 +4,13 @@
 # accessor returns it and an `==` against a `T` argument type-checks.
 #
 # The pinned Mojo keeps the element at its dependent pack type
-# (`Ts.values[...]`) and demands an explicit `rebind[T](...)`, which Mojito
-# does not implement; it also rejects returning a reference into
-# `self.storage` under `origin_of(self)`. This file therefore runs on Mojito
-# and is rejected upstream (`cases.tsv` row `pack-element-type-narrowing`).
+# (`Ts.values[...]`) and demands an explicit `rebind[T](...)`; it also rejects
+# returning a reference into `self.storage` under `origin_of(self)`. Mojito
+# implements `rebind` (`assets/ok/pack_element_rebind.mojo` is the spelling
+# both compilers accept) but does not yet validate a variadic template's
+# bodies symbolically (`docs/roadmap.md` §3), so this file still runs on
+# Mojito and is rejected upstream (`cases.tsv` row
+# `pack-element-type-narrowing`).
 from std.os import abort
 
 struct Bag[*Ts: Movable](

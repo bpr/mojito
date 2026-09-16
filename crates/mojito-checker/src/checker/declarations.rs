@@ -86,7 +86,9 @@ pub(super) fn stmt_returns(stmt: &Stmt) -> bool {
             kind: ExprKind::Call { name, .. },
             ..
         }) if name == "_mojito_abort" => true,
-        StmtKind::If { branches, orelse } => {
+        // A `comptime if` reaches here only under source validation, where
+        // no arm is assumed selected: every arm must return.
+        StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
             orelse.as_ref().is_some_and(|e| definitely_returns(e))
                 && branches.iter().all(|(_, b)| definitely_returns(b))
         }
@@ -133,7 +135,7 @@ pub(super) fn definitely_initializes_named_result(body: &[Stmt], name: &str) -> 
             }
             StmtKind::Return(Some(_)) | StmtKind::Raise(_) => return true,
             StmtKind::Return(None) => return initialized,
-            StmtKind::If { branches, orelse } => {
+            StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
                 let Some(orelse) = orelse else { continue };
                 if branches
                     .iter()
