@@ -229,6 +229,32 @@ impl VmBackend {
         }
     }
 
+    /// Write a value through the handle a place designates. A `ref`-typed
+    /// place holds *another* handle, and the assignment reaches its referent —
+    /// the store twin of `LoadPlace`'s second dereference — rather than
+    /// overwriting the handle slot. The write can land in another frame's
+    /// storage, so handles inside the written value that root in this frame
+    /// are re-rooted first or they dangle once this frame is disposed.
+    pub(super) fn store_through_handle(
+        &mut self,
+        frame_id: FrameId,
+        place: &MirPlace,
+        handle: Value,
+        mut value: Value,
+        vars: &mut [Value],
+    ) -> Result<(), RuntimeError> {
+        let target = if matches!(place.ty, Some(Ty::Ref(_))) {
+            match self.read_reference(&handle, frame_id, vars)? {
+                inner @ Value::Ref { .. } => inner,
+                _ => handle,
+            }
+        } else {
+            handle
+        };
+        self.canonicalize_value_references(frame_id, vars, &mut value);
+        self.write_reference(&target, frame_id, vars, value)
+    }
+
     /// Store through a caller place that may itself be rooted in — or cross —
     /// a reference handle. Intrinsic mutators and `mut self` write-backs
     /// receive a materialized receiver value, so they update that value and

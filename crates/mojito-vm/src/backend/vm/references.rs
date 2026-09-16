@@ -694,6 +694,29 @@ impl VmBackend {
             projection,
         }))
     }
+
+    /// The reference handle a place designates, if any: the root slot's own
+    /// handle extended with the place's projections, or — for a place that
+    /// only reaches a handle below its root ([`place_crosses_reference`]) — a
+    /// handle composed at the root slot. `None` leaves the place to ordinary
+    /// frame-storage navigation, which cannot interpret a [`Value::Ref`].
+    pub(super) fn place_handle(
+        &self,
+        frame_id: FrameId,
+        place: &MirPlace,
+        registers: &[Value],
+        variables: &[Value],
+    ) -> Result<Option<Value>, RuntimeError> {
+        if let Some(reference) =
+            self.extend_reference(&variables[place.root as usize], place, registers)?
+        {
+            return Ok(Some(reference));
+        }
+        if !place_crosses_reference(place) {
+            return Ok(None);
+        }
+        Self::reference_to_place_parts(frame_id, registers, variables, place).map(Some)
+    }
 }
 
 /// Whether a checked storage type is a single-pointee tracked pointer — a
@@ -705,6 +728,23 @@ pub(super) fn single_pointee_pointer(ty: Option<&Ty>) -> bool {
         ty,
         Some(Ty::Pointer { origin, .. }) if origin.as_origin().is_some() && !origin.multi_element()
     )
+}
+
+/// Whether a place reaches a stored handle *below* its root: a `ref`-typed
+/// field or a single-pointee pointer field along the way (`self.value.items`
+/// through a `ref` field, `p.src[].v` through a `Pointer[Box, o]` field).
+/// Such a place is not raw frame storage — the handle designates storage this
+/// frame may not own — so every access to it routes through the reference
+/// walk, which chases stored handles mid-projection. The final projection's
+/// type is excluded: it names the slot the access lands on, not a step
+/// through it.
+pub(super) fn place_crosses_reference(place: &MirPlace) -> bool {
+    place
+        .projection_tys
+        .iter()
+        .rev()
+        .skip(1)
+        .any(|ty| matches!(ty, Ty::Ref(_)) || single_pointee_pointer(Some(ty)))
 }
 
 /// The reference-projection segments of a MIR place's projections. An index

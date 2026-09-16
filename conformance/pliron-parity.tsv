@@ -331,6 +331,8 @@ assets/ok/pointer_field_chained_view_call.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_ctor_from_ref_field.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_ctor_owned_source.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_ctor_temporary_explicit_init.mojo	main	exe-differential	sanitized
+assets/ok/pointer_field_deref_field_store.mojo	main	exe-differential	sanitized
+assets/ok/pointer_field_deref_field_store_shapes.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_deref_index.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_drain_mut_method.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_fieldwise_init_binder.mojo	main	exe-differential	sanitized

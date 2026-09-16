@@ -394,7 +394,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   split across `impl VmBackend` blocks in the submodules below.
 - `backend/vm/frames.rs` owns call-frame construction and the `drive_frames`
   dispatch loop (`call_frame`/`make_frame`/`prepare_direct_call`).
-- `backend/vm/references.rs` owns runtime reference handle read/write/projection.
+- `backend/vm/references.rs` owns runtime reference handle read/write/projection,
+  including `place_crosses_reference`/`place_handle`, which decide whether a
+  place reaches a stored handle at or below its root and must therefore be
+  accessed through the handle walk rather than frame storage.
 - `backend/vm/exec.rs` owns the `exec_instr` instruction dispatcher and
   `try`-region execution.
 - `backend/vm/calls.rs` turns `CallSlots` into runtime values and frame slots.

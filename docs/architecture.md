@@ -1895,6 +1895,15 @@ subscript receiver, symmetric by design. No consumer needs the register
 retyped (analysis and drops read place types, not the loaded base register),
 so this one-level tolerance is the sanctioned contract rather than a gap.
 
+A place that reaches a stored handle *below* its root — through a `ref`-typed
+field, or a single-pointee pointer field (`p.src[].v`) — is likewise not raw
+frame storage, because the handle designates storage the executing frame may
+not own. Reads, writes and drops of such a place all route through the
+reference walk, which chases stored handles mid-projection and re-roots at the
+storage they designate; frame-place navigation owns only handle-free storage,
+plus a final dynamic index, which is a heap allocation's element or a nominal
+`__setitem__` receiver.
+
 Augmented nominal subscripts cross the checked boundary with call-local
 adaptation and invalidation snapshots. For a value result this includes both
 complete `CheckedCallContract`s plus the computed-result setter slot. MIR
@@ -2902,8 +2911,10 @@ reinitialized without a drop; a depth-one field moved on only some paths drops
 under the VM's tombstone and the native leaf flag. The `DropPlace` touches the
 same root at the same position as its `Store`, so liveness, loans, and the
 variable pass are unchanged by it. On the VM it follows a reference root (a
-`mut` receiver or parameter) into the caller's storage; natively a nested or
-reference-rooted place drops unguarded at its address.
+`mut` receiver or parameter) into the caller's storage, and equally a handle
+the place reaches below its root (the value `p.src[].v = …` replaces lives
+wherever `p.src` points); natively a nested or reference-rooted place drops
+unguarded at its address.
 
 Types whose `Deinitable` conformance is explicitly unavailable, such
 as `Deinitable where False`, are excluded from this automatic path.

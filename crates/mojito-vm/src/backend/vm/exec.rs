@@ -1502,28 +1502,20 @@ impl VmBackend {
             }
             MirInstr::Store { place, src } => {
                 let mut v = regs[src.0 as usize].clone();
-                if let Some(reference) =
+                // A handle at the root (a `mut`/`ref self` receiver) and one
+                // reached below it (`p.src[].v`, through a `ref`-typed or
+                // single-pointee pointer field) both designate storage this
+                // frame may not own, so the write goes through the reference
+                // walk. A final dynamic index is `store_at_place`'s own — a
+                // heap element, or a nominal `__setitem__` receiver — and
+                // keeps that path.
+                let handle = if matches!(place.proj.last(), Some(Proj::Index(_))) {
                     self.extend_reference(&vars[place.root as usize], place, regs)?
-                {
-                    // A `ref`-typed field behind an aliased root holds another
-                    // handle; the assignment writes through it into the
-                    // referent — the store twin of LoadPlace's second
-                    // dereference — never over the handle slot itself.
-                    let target = if matches!(place.ty, Some(Ty::Ref(_))) {
-                        match self.read_reference(&reference, frame_id, vars)? {
-                            handle @ Value::Ref { .. } => handle,
-                            _ => reference,
-                        }
-                    } else {
-                        reference
-                    };
-                    // The write lands through an alias in another frame's
-                    // storage; handles inside the written value that root in
-                    // this frame (a reference-bearing aggregate) must be
-                    // re-rooted at the storage they project through first, or
-                    // they dangle when this frame is disposed.
-                    self.canonicalize_value_references(frame_id, vars, &mut v);
-                    self.write_reference(&target, frame_id, vars, v)?;
+                } else {
+                    self.place_handle(frame_id, place, regs, vars)?
+                };
+                if let Some(handle) = handle {
+                    self.store_through_handle(frame_id, place, handle, v, vars)?;
                 } else if matches!(place.ty, Some(Ty::Ref(_))) {
                     let reference = load_place(vars, regs, place)?;
                     self.canonicalize_value_references(frame_id, vars, &mut v);
@@ -1563,27 +1555,13 @@ impl VmBackend {
                 } else if let Some(v) = self.load_index_dunder(prog, place, regs, vars, frame_id)? {
                     v
                 } else {
-                    // A projection crossing an INTERMEDIATE ref-typed
-                    // segment (`self.value.items` through a `ref`
-                    // field) cannot walk raw storage — route it
-                    // through the reference walk, which chases stored
-                    // handles mid-projection.
-                    // A single-pointee pointer field mid-projection
-                    // (`self.src[]` on `Pointer[List[T], o]` storage)
-                    // stores a handle the same way.
-                    let crosses_reference = place.projection_tys.iter().rev().skip(1).any(|ty| {
-                        matches!(ty, Ty::Ref(_))
-                            || super::references::single_pointee_pointer(Some(ty))
-                    });
-                    if crosses_reference {
-                        let composed = Value::Ref {
-                            frame: frame_id.0,
-                            slot: place.root as usize,
-                            projection: Vec::new(),
-                        };
-                        let composed = self
-                            .extend_reference(&composed, place, regs)?
-                            .expect("a composed root handle extends");
+                    // A place reaching a stored handle below its root
+                    // (`self.value.items` through a `ref` field,
+                    // `self.src[]` on `Pointer[List[T], o]` storage) cannot
+                    // walk raw storage — route it through the reference walk,
+                    // which chases stored handles mid-projection.
+                    if super::references::place_crosses_reference(place) {
+                        let composed = Self::reference_to_place_parts(frame_id, regs, vars, place)?;
                         let value = self.read_reference(&composed, frame_id, vars)?;
                         if matches!(value, Value::Ref { .. })
                             && matches!(place.ty, Some(Ty::Ref(_)))
@@ -1880,9 +1858,11 @@ impl VmBackend {
             // `deinit` parameter's field dying at its own last use (the
             // receiver's later `ConsumeVar` skips it), or the value a store
             // is about to overwrite. A `mut` receiver or parameter root is a
-            // reference into the caller's storage.
+            // reference into the caller's storage, and so is a handle the
+            // place reaches below its root (the value `p.src[].v = …`
+            // replaces lives wherever `p.src` points).
             MirInstr::DropPlace { place } => {
-                let reference = self.extend_reference(&vars[place.root as usize], place, regs)?;
+                let reference = self.place_handle(frame_id, place, regs, vars)?;
                 let value = if let Some(reference) = reference {
                     let old = self.read_reference(&reference, frame_id, vars)?;
                     self.write_reference(&reference, frame_id, vars, Value::Moved)?;
