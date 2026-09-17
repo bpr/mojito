@@ -277,6 +277,18 @@ pub fn instance_method_clone_name(
     Some(mangle(method, &values))
 }
 
+/// The method a per-instantiation or per-call clone was minted from
+/// (`__init__` for `__init__$y3:Int`), or the name itself when it is not a
+/// clone.
+///
+/// A source method name carries no `$`, so the first one starts the baked
+/// values. This is for *source* method names only: a lowered symbol's tails
+/// have their own recognizers ([`is_overload_of`], [`init_overload_struct`],
+/// [`is_initializer_symbol`]).
+pub fn instance_clone_base(method: &str) -> &str {
+    method.split_once('$').map_or(method, |(base, _)| base)
+}
+
 /// Deterministic MIR identity for a concrete generic instance. Origins have
 /// already been erased from `arguments` and therefore cannot split ABI identity.
 pub fn instance_symbol(template: &str, arguments: &[InstanceArg]) -> String {
@@ -769,7 +781,15 @@ pub fn lowered_method_name(
 /// Current Mojo spells the copy constructor as an `__init__` overload with an
 /// `out self, copy: Self` shape, which the whole pipeline models as
 /// `__copyinit__`.
+///
+/// A per-instantiation clone is already minted under its lifecycle name
+/// (`__copyinit__$y3:Int`), and registers and counts as its own method: were
+/// it folded back onto the template's name, it would join the template's
+/// overload set and every by-name lifecycle lookup would miss.
 pub fn lifecycle_method_name(m: &Method) -> &str {
+    if instance_clone_base(&m.name) != m.name {
+        return &m.name;
+    }
     if is_mojo_copy_constructor(m) {
         "__copyinit__"
     } else if is_mojo_move_constructor(m) {
@@ -828,6 +848,22 @@ pub fn is_none_overload(symbol: &str) -> bool {
 pub fn init_overload_struct(symbol: &str) -> Option<&str> {
     let (struct_name, rest) = symbol.rsplit_once(".__init__")?;
     rest.starts_with(OV_SEP).then_some(struct_name)
+}
+
+/// The struct a constructor symbol builds, and the lifecycle name it runs.
+///
+/// A bare `__init__`, its per-instantiation clone (`Box.__init__$y3:Int`), or
+/// either one's signature-qualified overload all answer here.
+///
+/// The copy and move constructors answer here too: a construction that names
+/// one builds its receiver the same way.
+pub fn lifecycle_constructor(symbol: &str) -> Option<(&str, &str)> {
+    [".__init__", ".__copyinit__", ".__moveinit__"]
+        .iter()
+        .find_map(|lifecycle| {
+            let (struct_name, rest) = symbol.rsplit_once(lifecycle)?;
+            (rest.is_empty() || rest.starts_with('$')).then_some((struct_name, &lifecycle[1..]))
+        })
 }
 
 /// Whether `symbol` names a lifecycle initializer, whose receiver is `out self`.
@@ -1343,10 +1379,11 @@ fn eval_comptime_int(expr: &Expr, comptimes: &HashMap<String, i64>) -> Option<i6
     }
 }
 
-/// The separator that marks a signature-qualified overload symbol:
-/// `pick$ov$Int`, `Box.__init__$ov$String`. Never referenced outside this
-/// module.
-const OV_SEP: &str = "$ov$";
+/// The separator that marks a signature-qualified overload symbol.
+///
+/// `pick$ov$Int`, `Box.__init__$ov$String`. The native monomorphizer reads it
+/// to tell such an overload from a per-instantiation clone.
+pub const OV_SEP: &str = "$ov$";
 
 fn sanitize(raw: &str) -> String {
     raw.chars()
@@ -1553,7 +1590,7 @@ fn keyword_only_names(params: &[FnParam], keyword_only: Option<usize>) -> Vec<St
 }
 
 fn is_mojo_move_constructor(m: &Method) -> bool {
-    m.name == "__init__"
+    matches!(instance_clone_base(&m.name), "__init__" | "__moveinit__")
         && m.has_self
         && matches!(m.self_convention, Some(ArgConvention::Out))
         && m.positional_only.is_none()
@@ -1570,7 +1607,7 @@ fn is_mojo_move_constructor(m: &Method) -> bool {
 }
 
 fn is_mojo_copy_constructor(m: &Method) -> bool {
-    m.name == "__init__"
+    matches!(instance_clone_base(&m.name), "__init__" | "__copyinit__")
         && m.has_self
         && matches!(m.self_convention, Some(ArgConvention::Out))
         && m.positional_only.is_none()

@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A generic struct's method may now call a `def` whose `comptime if` keys on
+  its own type parameter, as in the pinned Mojo: `def f(self): show(self.x)`
+  in `struct Box[T]`, inferred or explicit (`show[Self.T](self.x)`), and the
+  same call from a non-generic struct's generic method, no longer fails with
+  "generic 'show' requires compile-time parameter 'T'". Each closed instance
+  reaches the call through its own method clone, on the VM and natively.
+- A generic struct's lifecycle methods now key on the instance: a
+  single-signature `__init__`, a copy or move constructor, and `__deinit__`
+  each mint a per-instantiation clone, and construction, copying, moving and
+  destruction reach it. A `comptime if Self.T` in a constructor or destructor
+  no longer aborts with "unspecialized type-keyed method", and such a body may
+  call a compile-time-keyed `def`. Bundled `List`/`Dict`/`Optional` keep their
+  lifecycle methods on the erased path, as does an overloaded constructor
+  family.
 - A generic `def`'s abstract body may now call a `def` whose `comptime if`
   keys on its own type parameter, as in the pinned Mojo: `def forward[T:
   Copyable](x: T): show(x)`, or `show[T](x)`, no longer fails with "generic

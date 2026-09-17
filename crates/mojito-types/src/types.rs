@@ -1930,6 +1930,25 @@ pub fn canonical_generic_signature(
     (canonical_decls, canonical_params)
 }
 
+/// The substitution mapping a struct's type-parameter names to an instance's
+/// type arguments (`[T] @ [Int]` ⟹ `{T: Int}`), for [`substitute`].
+///
+/// Value parameters and arguments are skipped: they never appear in a type.
+/// Empty for a non-generic struct.
+pub fn struct_argument_substitution(
+    decls: &[ParamDecl],
+    arguments: &[TyArg],
+) -> HashMap<String, Ty> {
+    decls
+        .iter()
+        .zip(arguments)
+        .filter_map(|(decl, argument)| match (decl, argument) {
+            (ParamDecl::Type { name, .. }, TyArg::Ty(ty)) => Some((name.clone(), ty.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Replace every `Ty::Param` in `ty` with its solution from `subst` (leaving an
 /// unsolved parameter untouched). Recurses into struct type arguments.
 #[allow(clippy::implicit_hasher, reason = "TODO: generalize over BuildHasher")]

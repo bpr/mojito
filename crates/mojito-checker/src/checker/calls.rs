@@ -39,6 +39,11 @@ pub(super) fn validate_required_order(
 }
 
 pub(super) fn lifecycle_method_name(m: &Method) -> &str {
+    // A per-instantiation clone is minted under its own lifecycle name and
+    // registers as its own method (`symbol::lifecycle_method_name`).
+    if mojito_symbol::symbol::instance_clone_base(&m.name) != m.name {
+        return &m.name;
+    }
     if is_mojo_copy_constructor(m) {
         "__copyinit__"
     } else if is_mojo_move_constructor(m) {
@@ -49,8 +54,10 @@ pub(super) fn lifecycle_method_name(m: &Method) -> &str {
 }
 
 pub(super) fn is_mojo_move_constructor(m: &Method) -> bool {
-    m.name == "__init__"
-        && m.has_self
+    matches!(
+        mojito_symbol::symbol::instance_clone_base(&m.name),
+        "__init__" | "__moveinit__"
+    ) && m.has_self
         && matches!(m.self_convention, Some(ArgConvention::Out))
         && m.positional_only.is_none()
         && m.keyword_only == Some(0)
@@ -85,8 +92,10 @@ pub(super) fn is_legacy_bare_move_constructor(m: &Method) -> bool {
 }
 
 pub(super) fn is_mojo_copy_constructor(m: &Method) -> bool {
-    m.name == "__init__"
-        && m.has_self
+    matches!(
+        mojito_symbol::symbol::instance_clone_base(&m.name),
+        "__init__" | "__copyinit__"
+    ) && m.has_self
         && matches!(m.self_convention, Some(ArgConvention::Out))
         && m.positional_only.is_none()
         && m.keyword_only == Some(0)

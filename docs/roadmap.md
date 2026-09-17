@@ -7,8 +7,12 @@ in [`CHANGELOG.md`](../CHANGELOG.md), and lasting design invariants in
 [`docs/architecture.md`](architecture.md). Work we have decided *not* to do —
 deferred options, capabilities kept on purpose, and limits that match
 upstream — goes to [`docs/non-goals.md`](non-goals.md). North star:
-self-hosting — prefer the smallest honest language change that unlocks a real
-library pattern, with positive and negative tests.
+self-hosting, and an implementation that resembles Mojo's own as closely as a
+small compiler can — prefer the smallest honest language change that unlocks a
+real library pattern, with positive and negative tests. The architectural
+distance from Mojo is a gap to close in stages
+([`docs/architecture.md`](architecture.md)), not a divergence we have
+accepted.
 
 Sections and their checkboxes are in implementation order; the first unchecked
 box is the default next task. *(recurring)* and *(any order)* sections are
@@ -37,32 +41,34 @@ These tasks fix that order. The first step landed as source validation
 (`checker/comptime_validation.rs`): every `comptime if` arm and `comptime for`
 body is checked with the declaration's parameters symbolic before elaboration
 selects, and `rebind[Dest](value)` is implemented. Each task pays off by
-itself, and together they are what a later Pliron pivot would need.
+itself, and together they are what moving toward Mojo's shape needs.
 
 Unlike sections 2 and 3, this section is sorted in **dependency order**: each
 entry names what it depends on, and an entry with no dependency sits as early
 as its size allows. The **Model:** bullet carries the complexity estimate and
 says whether the entry can be done as-is or must be planned first.
 
-- [ ] **A generic struct's method cannot call a compile-time-keyed `def`**
+- [ ] **A temporary receiver's destructor never runs**
 
-  Problem: in `struct Box[T: Copyable & Deinitable]`, `def f(self):
-  show(self.x)`, where `show` keys a `comptime if` on its own `T`, is
-  accepted by the pin. Mojito reports "generic 'show' requires compile-time
-  parameter 'T'", even for `Box[Int](3).f()`.
-  - The erased template method records `show[Self.T]`, which no discovery
-    request can serve.
-  - An abstract call from a top-level generic `def`'s body is accepted,
-    because that body runs only through an abstract reference, and each such
-    reference is rejected (`Elaborated::unserved_template_uses`).
-  - An erased method body can run: on a bundled struct, at the discovery
-    round cap, and when an instance clone is dropped. So it cannot be
-    treated like a top-level `def`'s body.
-  - A method calling a top-level `def` that reaches such a template is
-    rejected the same way, naming that `def`.
+  Problem: `B(3).show()` destroys the temporary without running `B`'s
+  `__deinit__`, where the pin runs it. Generic and non-generic structs alike,
+  so this is not a clone-dispatch gap.
+  - Found while serving lifecycle clones; the missing line is the temporary's
+    own destruction, not the receiver call.
   - Depends on nothing.
-  - Model: Opus, plan first. The plan must say when an erased method body
-    runs, and how each of those paths reaches a clone.
+  - Model: Fable, as-is.
+
+- [ ] **An overloaded constructor family mints no instance clones**
+
+  Problem: a generic struct declaring two `__init__` signatures keeps both on
+  the erased template, so a `comptime if Self.T` in either one still traps.
+  - A construction selects among the template's signatures, and the clone
+    family's `$ov$` suffixes key on the substituted parameter types, so the
+    two families do not correspond by name.
+  - Serving it needs the checker to pick the clone by matching the
+    substituted signature and to record that clone's lowered name.
+  - Depends on nothing.
+  - Model: Opus, plan first.
 
 - [ ] **A nested generic `def` cannot call a compile-time-keyed `def`**
 
@@ -839,7 +845,24 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
        structs.
      - An instance clone whose walk cannot resolve an application (a
        variadic template over a nested public `Tuple` argument) is dropped
-       to the erased path rather than failing the program.
+       to the erased path rather than failing the program. When such a
+       method can reach a compile-time-keyed stub, an instance the
+       elaborator queued but could not clone rejects the program instead —
+       rejecting one the pin accepts. An instance the checker records no
+       instantiation for at all (a type parameter inferred as the
+       compile-time `StringLiteral`, `Box("a").f()`) is not queued, so it
+       keeps the erased path and aborts at run time.
+     - Bundled templates keep their constructors on the erased path: a
+       `List`/`Dict`/`Optional` instance builds and copies through the
+       template's `__init__`/`__copyinit__`/`__moveinit__`, so a `comptime if
+       Self.T` there would not fold. User structs clone theirs, and every
+       struct's `__deinit__` clone is reached.
+     - An erased body still dispatches by runtime name where no checked
+       static type reaches it: an operator or protocol dunder called from
+       another erased body, a value whose static type is a bare `Ty::Param`,
+       an instance reached only from bundled code, and CTFE, which runs
+       before any clone exists. A compile-time-keyed method reached that way
+       aborts rather than being rejected.
      - Value-parameterized structs get no instance clones, so an erased
        body's `_unqualified_type_name[Self.T]()` spells `T` (`repr([1, 2])`
        prints `Array[T, 2]([Int(1), Int(2)])` where upstream prints the

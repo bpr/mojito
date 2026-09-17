@@ -564,10 +564,14 @@ pub fn prepare(mut program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
 /// recordings of those instances as new work. `unserved_template_uses` are
 /// the references this elaboration left on an abstract path that can reach a
 /// compile-time-keyed template's stub; the driver rejects any that survive
-/// its discovery fixpoint.
+/// its discovery fixpoint. `stub_reaching_structs` are the generic structs
+/// with such a method: an instance of one that the fixpoint discovers too
+/// late to mint clones for would run that method erased, so the driver
+/// reports divergence rather than converging on the erased path.
 pub struct Elaborated {
     pub program: Vec<Stmt>,
     pub instances: Vec<StructInstanceRequest>,
+    pub stub_reaching_structs: HashSet<String>,
     pub unserved_template_uses: Vec<UnservedTemplateUse>,
 }
 
@@ -798,6 +802,7 @@ pub fn elaborate_prepared(
     let Elaborated {
         program: mut result,
         instances,
+        stub_reaching_structs,
         unserved_template_uses,
     } = elab.monomorphize(materialized, tuple_requests, tstring_requests, def_requests)?;
     for statement in &mut result {
@@ -817,10 +822,7 @@ pub fn elaborate_prepared(
                 if method.self_ty.is_some()
                     || per_call_clones.contains(&(name.clone(), method.name.clone()))
                 {
-                    let tag = match &module {
-                        Some(module) => format!("{module}${name}${}", method.name),
-                        None => format!("{name}${}", method.name),
-                    };
+                    let tag = clone_source_tag(module.as_deref(), name, &method.name);
                     mojito_ast::ast::stamp_source(&mut method.body, &tag);
                 }
             }
@@ -834,6 +836,7 @@ pub fn elaborate_prepared(
     Ok(Elaborated {
         program: result,
         instances,
+        stub_reaching_structs,
         unserved_template_uses,
     })
 }
@@ -1562,6 +1565,69 @@ struct TStringTarget {
     elements: Vec<Ty>,
 }
 
+/// The source tag a per-instantiation or per-call method clone's body carries:
+/// the module, the owning struct, and the clone's own name.
+///
+/// Clones reuse their template's spans, so this tag is what keeps span-keyed
+/// checked facts — recorded instantiations above all — separate across
+/// instantiations. A clone is stamped before it is walked, so the walk's own
+/// span-keyed lookups (`def_call_targets` and its siblings) find the
+/// checker's records for that clone rather than the template's.
+fn clone_source_tag(module: Option<&str>, owner: &str, method: &str) -> String {
+    match module {
+        Some(module) => format!("{module}${owner}${method}"),
+        None => format!("{owner}${method}"),
+    }
+}
+
+/// The key [`Mono::abstract_owner`] gives a struct method's erased body.
+/// Neither half can contain a `.`, so [`owner_method`] recovers the method.
+fn method_owner(owner: &str, method: &str) -> String {
+    format!("{owner}.{method}")
+}
+
+/// The method half of a [`method_owner`] key, or `None` for a `def` owner.
+fn owner_method(owner: &str) -> Option<&str> {
+    owner.split_once('.').map(|(_, method)| method)
+}
+
+/// The stub-reaching bodies `body` can run: the callees of the references it
+/// left abstract, and every stub-reaching method its by-name method edges
+/// can dispatch to.
+fn body_callees<'a>(
+    body: &str,
+    stubbed: &HashSet<&'a str>,
+    uses: &'a [AbstractUse],
+    edges: &'a [(String, String)],
+) -> Vec<&'a str> {
+    let called = uses
+        .iter()
+        .filter(|reference| reference.owner.as_deref() == Some(body))
+        .map(|reference| reference.callee.as_str())
+        .filter(|callee| stubbed.contains(callee));
+    let dispatched = edges
+        .iter()
+        .filter(|(owner, _)| owner == body)
+        .flat_map(|(_, method)| {
+            stubbed
+                .iter()
+                .copied()
+                .filter(|reached| owner_method(reached) == Some(method.as_str()))
+        });
+    called.chain(dispatched).collect()
+}
+
+/// What one closed instance of a generic struct mints: its per-instantiation
+/// method clones, its storage types with the parameters baked, and the
+/// methods it withholds — unavailable through a false `where` clause or a
+/// false conditional conformance, so no call reaches their erased bodies.
+#[derive(Default)]
+struct InstanceClones {
+    clones: Vec<mojito_ast::ast::Method>,
+    field_types: Vec<Type>,
+    withheld: HashSet<String>,
+}
+
 /// One reference [`Mono::retain_abstract`] left on a template's abstract
 /// path.
 struct AbstractUse {
@@ -1630,13 +1696,24 @@ struct Mono {
     /// Whether the walk is inside an unstamped bundled stdlib declaration:
     /// instances reached only from there keep the erased path.
     in_bundled: bool,
-    /// The top-level bound-generic `def` whose body the walk is inside, if
-    /// any: that body runs only when a reference to the template stays
-    /// abstract.
+    /// The body the walk is inside when that body runs only on an abstract
+    /// path: a top-level bound-generic `def` by name, or the erased template
+    /// of a struct method as `Struct.method`. A `def`'s body runs only
+    /// through a reference that stays abstract; a method's erased body only
+    /// where [`Elab::unserved_template_uses`]'s table says so.
     abstract_owner: Option<String>,
     /// Every reference left on a bound-generic or compile-time-keyed
     /// template's abstract path, with the body it was made from.
     abstract_uses: Vec<AbstractUse>,
+    /// Stub-reaching methods (`Struct.method`) an instance minted no clone
+    /// for: that instance's calls keep the erased body, whose stub cannot
+    /// run, so the references it holds are reported unserved.
+    unclonable_methods: Vec<String>,
+    /// Method calls made from an abstract body, as (owner, method name). The
+    /// receiver's type is the checker's to solve, so the edge is by name: an
+    /// owner that can call a stub-reaching method of that name reaches a stub
+    /// itself.
+    method_edges: Vec<(String, String)>,
 }
 
 impl Mono {
@@ -1650,6 +1727,15 @@ impl Mono {
             function_value,
             owner: self.abstract_owner.clone(),
         });
+    }
+
+    /// Record that the body being walked can call `method` on a receiver the
+    /// checker types. Only an abstract body needs the edge: a concrete one
+    /// reaches its callee's clone.
+    fn record_method_edge(&mut self, method: &str) {
+        if let Some(owner) = &self.abstract_owner {
+            self.method_edges.push((owner.clone(), method.to_string()));
+        }
     }
 
     /// Bring a declaration's type parameters into the symbolic set for the

@@ -299,7 +299,9 @@ already covers:
 These changes should remain visible without displacing the CPU language work:
 
 - `Atomic[T]` now takes a value type instead of a `DType`. Atomics and
-  concurrency remain outside first-pass parity.
+  concurrency remain outside the current parity pass, but primitive
+  concurrency is expected eventually (`docs/architecture.md`), so this shape
+  is worth tracking.
 - Experimental FP6 encodings are packed storage formats without general
   arithmetic or conversions. Revisit them after ordinary scalar/SIMD parity.
 - `external_call(..., num_fixed_args=N)` runs over Mojito's closed libc callee
@@ -310,7 +312,9 @@ These changes should remain visible without displacing the CPU language work:
 - `size_of` now includes alignment padding. Implement it with observable CPU
   layout/ABI semantics, not by inventing VM-only sizes.
 - Address-space expansion, GPU/MAX package moves, GPU APIs, and Python
-  interoperability remain outside the first-pass subset.
+  interoperability remain outside the current subset. GPU is a stretch goal
+  (`docs/architecture.md`), so these are signals worth keeping visible rather
+  than permanent exclusions.
 - `__generator_type` and coroutine internals are useful signals for possible
   future generators/coroutines, but are not yet a public parity gate. Keep HIR
   and MIR extension points general rather than implementing this internal
@@ -590,5 +594,8 @@ inside this historical ledger means `609afcd0735`, not the rolling dev head.
 | Owned iteration | `for var x in collection^` supports moving non-Copyable elements; collection deletion conformance is conditional on element capabilities. | Consuming collection iteration moves the source and each element, destroys implicitly deletable residual state on early exit, and rejects any abandoning path (early exit, unhandled raising calls, comprehension filters) when linear residual elements would be abandoned, naming their explicit-destroy obligation. The exhausted linear-element iterator is consumed through a `_finish(deinit self)` named destructor selected by the checker — a Mojito-internal bundled convention modeling the linear-types proposal's named destructors (current Mojo has no owned-iteration equivalent to compare against). |
 | Tuple ownership | `Tuple` lifecycle conformances are conditional; `reverse`, `concat`, and `consume_elements` have consuming receivers, and `consume_elements` transfers elements, including non-`ImplicitlyCopyable` values, one at a time to a parameterized closure. Tuple indexing and destructuring do not provide an indexed partial-move place. | The public nominal `Tuple[*Ts]` folds lifecycle conformance per element. A consuming call can implicitly copy a fully `ImplicitlyCopyable` tuple; move-only receivers and `concat` operands require `^`. The dependent `def[index: Int](var element: Ts[index])` handler consumes private pack storage left-to-right, while public indexed transfer remains rejected. |
 
-Python/NumPy additions, GPU changes, and distributed/concurrent facilities remain
-outside Mojito's declared first-pass scope.
+Python/NumPy additions and distributed facilities remain outside Mojito's
+declared scope and are not intended. Concurrent facilities are outside this
+pass, though the most primitive of them are expected eventually, and GPU
+changes are tracked against a stretch goal rather than a permanent exclusion
+(`docs/architecture.md`).

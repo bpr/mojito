@@ -60,7 +60,9 @@ large framework.
 
 mojito is much smaller than real Mojo. Its gaps fall into two different
 categories: language subset work that belongs on the near-term roadmap, and
-larger infrastructure work that may or may not ever be part of this project.
+larger infrastructure work that closing the architectural distance to Mojo
+will eventually require (`docs/architecture.md`), on a longer horizon than any
+one release.
 
 Language deficiencies:
 
@@ -109,18 +111,24 @@ Language deficiencies:
 
 Infrastructure and backend boundaries:
 
-- GPU, concurrency/parallelism, distributed execution, Python interoperability,
-  and MLIR are intentionally outside first-pass parity
+- parallelism, distributed execution, and Python interoperability are outside
+  the current pass; the last two are not intended at all
+- concurrency in its most primitive form is expected eventually, on no
+  schedule yet; GPU is a stretch goal, intended but not near
+- whether MLIR (or any backend IR) becomes an internal compiler layer is a
+  staged question, not a standing exclusion
 - no production optimizer
-- no native code generation yet (Pliron, Cranelift, or a C/C++ source backend)
+- native code generation only through the Pliron backend (Cranelift and a
+  C/C++ source backend remain unimplemented)
 - no real SIMD lowering to machine vector instructions; SIMD values are modeled
   at the VM value level
 - no performance claim beyond "useful as a reference implementation"
 
 The language deficiencies are the ones most likely to shrink as mojito grows.
-The infrastructure deficiencies are larger bets: interesting, but not necessary
-for mojito to be useful as a model implementation of ownership, borrowing,
-ASAP destruction, and a register-VM compiler.
+The infrastructure deficiencies are the larger, slower half of the same goal:
+mojito is already useful as a model implementation of ownership, borrowing,
+ASAP destruction, and a register-VM compiler, and resembling Mojo's own
+implementation is what the remaining work is for.
 
 The goal is honest subset semantics. A feature is usually parsed before it is
 fully supported, and unsupported semantics should fail cleanly instead of
@@ -295,6 +303,9 @@ Longer-term possible directions:
 - deeper comptime specialization and generated declarations
 - an explicitly documented unsafe/unsupported boundary
 
-Direct LLVM or MLIR lowering and eBPF are no longer prioritized backend
-directions. GPU, Python interoperability, and parallel/distributed execution
-are not goals for the first parity pass.
+eBPF is not a prioritized backend direction. Python interoperability and
+parallel/distributed execution are outside the current parity pass and are not
+intended; the most primitive concurrency is expected eventually, and GPU is a
+stretch goal — intended, but not on the immediate horizon. Resembling Mojo's
+own implementation as closely as a small compiler can is a goal in itself,
+approached in stages (`docs/architecture.md`).

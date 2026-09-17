@@ -56,6 +56,8 @@ assets/ok/comptime_hash.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_generic_specialization.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_abstract_body_call.mojo	main	exe-differential	sanitized
+assets/ok/comptime_if_generic_struct_lifecycle.mojo	main	exe-differential	sanitized
+assets/ok/comptime_if_generic_struct_method_call.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_inferred_def.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_inferred_static_method.mojo	main	exe-differential	sanitized
 assets/ok/comptime_lambda_initializer.mojo	main	exe-differential	sanitized

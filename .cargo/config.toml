@@ -5,3 +5,16 @@
 # of letting stdlib growth abort borderline tests.
 [env]
 RUST_MIN_STACK = "16777216"
+
+# Peak memory, not core count, is what bounds a build here: a workspace-wide
+# rustc fan-out over every core has run this machine out of RAM (the overnight
+# gate lost a background build to it). Half the cores keep the fan-out well
+# inside memory; incremental builds, which compile one crate, are unaffected.
+# The LLVM-linking `backend-pliron` build needs less still (`-j 2`).
+[build]
+jobs = 8
+
+# `lld` links the debug binary in a fraction of GNU ld's time and memory, and
+# generates the same code.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]

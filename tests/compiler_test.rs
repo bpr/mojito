@@ -298,6 +298,39 @@ fn inferred_comptime_keyed_def_reached_from_a_function_value_is_rejected() {
 }
 
 #[test]
+fn a_generic_struct_method_calls_a_comptime_keyed_def_through_its_clones() {
+    // `Box[T].f` keys nothing itself, but the `show` it calls does: the
+    // erased template body keeps the call on `show`'s stub, and each closed
+    // instance reaches its own clone of `f`, where `Self.T` is concrete.
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            "def show[T: Copyable](x: T):\n    comptime if T == Int:\n        print(\"int\")\n    else:\n        print(\"other\")\n\nstruct Box[T: Copyable & Deinitable](Deinitable):\n    var x: Self.T\n\n    def __init__(out self, x: Self.T):\n        self.x = x.copy()\n\n    def f(self):\n        show(self.x)\n\ndef main():\n    Box[Int](3).f()\n    Box[Float64](1.5).f()\n",
+            std::path::Path::new("/tmp/mojito_struct_method_comptime_keyed_call.mojo"),
+        )
+        .expect("a generic struct method calling a compile-time-keyed def");
+    let output = compiler.execute(&program).expect("run both instances");
+    assert_eq!(output.output, "int\nother\n");
+}
+
+#[test]
+fn an_unavailable_method_does_not_reject_its_instance() {
+    // `f` reaches `show`'s stub, and `Box[Plain]` mints no clone of it — but
+    // only because its `where` clause is false there, so no call can reach
+    // the erased body either. Withholding a method is not failing to serve
+    // it, and the program the pin accepts must still compile.
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            "def show[T: Copyable](x: T):\n    comptime if T == Int:\n        print(\"int\")\n    else:\n        print(\"other\")\n\n@fieldwise_init\nstruct Plain(Copyable, ImplicitlyCopyable, Movable, Deinitable):\n    var n: Int\n\nstruct Box[T: Copyable & Deinitable](Deinitable):\n    var x: Self.T\n\n    def __init__(out self, x: Self.T):\n        self.x = x.copy()\n\n    def f(self) where conforms_to(Self.T, Writable):\n        show(self.x)\n\ndef main():\n    var b = Box[Plain](Plain(1))\n    print(\"built\")\n",
+            std::path::Path::new("/tmp/mojito_struct_method_unavailable_instance.mojo"),
+        )
+        .expect("an instance that withholds the stub-reaching method");
+    let output = compiler.execute(&program).expect("run the program");
+    assert_eq!(output.output, "built\n");
+}
+
+#[test]
 fn view_temporaries_live_for_their_statement() {
     // A `ref[self]`-returning call chains on a temporary receiver (the
     // temporary is materialized for the statement), a discarded reference

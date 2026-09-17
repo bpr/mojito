@@ -184,12 +184,5 @@ pub(super) fn param_as_arg(decl: &ParamDecl) -> TyArg {
 /// arguments (`[T] @ [Int]` ⟹ `{T: Int}`). Value parameters/arguments are
 /// skipped (they never appear in a type). Empty for a non-generic struct.
 pub(super) fn struct_subst(decls: &[ParamDecl], targs: &[TyArg]) -> HashMap<String, Ty> {
-    decls
-        .iter()
-        .zip(targs)
-        .filter_map(|(d, a)| match (d, a) {
-            (ParamDecl::Type { name, .. }, TyArg::Ty(t)) => Some((name.clone(), t.clone())),
-            _ => None,
-        })
-        .collect()
+    mojito_types::types::struct_argument_substitution(decls, targs)
 }

@@ -234,6 +234,7 @@ impl Elab<'_> {
                 result
             }
             StmtKind::Struct {
+                name,
                 type_params,
                 callable_conformance,
                 conformance_conditions,
@@ -296,7 +297,21 @@ impl Elab<'_> {
                         self.mono_expr(&mut member.value, &member_consts, mono)?;
                     }
                     for m in methods.iter_mut() {
-                        self.mono_method(m, &struct_consts, mono)?;
+                        // An erased method body of a user struct that mints
+                        // clones runs only on the paths
+                        // `Elab::unserved_template_uses` accounts for, so a
+                        // reference it leaves abstract is owned by the method
+                        // rather than unserved. A bundled struct, and a struct
+                        // whose parameters mint no clones, keeps no owner.
+                        let enclosing = mono.abstract_owner.take();
+                        if !mono.in_bundled
+                            && (self.instance_template(name) || !m.type_params.is_empty())
+                        {
+                            mono.abstract_owner = Some(method_owner(name, &m.name));
+                        }
+                        let walked = self.mono_method(m, &struct_consts, mono);
+                        mono.abstract_owner = enclosing;
+                        walked?;
                     }
                     Ok(())
                 })();
@@ -1044,10 +1059,12 @@ impl Elab<'_> {
             ExprKind::Member { object, .. } => self.mono_expr(object, consts, mono),
             ExprKind::MethodCall {
                 object,
+                method,
                 args,
                 kwargs,
                 ..
             } => {
+                mono.record_method_edge(method);
                 self.mono_expr(object, consts, mono)?;
                 for a in args.iter_mut() {
                     self.mono_expr(a, consts, mono)?;

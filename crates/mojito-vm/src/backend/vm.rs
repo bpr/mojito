@@ -330,13 +330,14 @@ impl VmBackend {
         allocation: u64,
         base: i64,
         offset: i64,
+        element: Option<&mojito_types::types::Ty>,
     ) -> Result<(), RuntimeError> {
         let (region, slot) = self.heap_index(allocation, base, offset)?;
         if std::mem::replace(&mut self.heap[region].never_written[slot], false) {
             return Ok(());
         }
         let value = self.heap_take(allocation, base, offset)?;
-        self.drop_value(prog, value)
+        self.drop_typed_value(prog, value, element)
     }
 
     /// Move the payload out of a consumed inline uninit-storage value
@@ -534,17 +535,68 @@ fn instance_dunder_symbol(
     static_ty: Option<&mojito_types::types::Ty>,
     argc: usize,
 ) -> Option<String> {
-    let mut ty = static_ty?;
-    while let mojito_types::types::Ty::Ref(reference) = ty {
-        ty = &reference.referent;
-    }
-    let mojito_types::types::Ty::Struct(_, arguments) = ty else {
+    let mojito_types::types::Ty::Struct(_, arguments) = peel_references(static_ty?) else {
         return None;
     };
     let decls = &prog.structs.get(sname)?.param_decls;
     let clone = mojito_symbol::symbol::instance_method_clone_name(method, decls, arguments)?;
     let symbol = prog.overload_name(&format!("{sname}.{clone}"), argc);
     prog.index_of(&symbol).is_some().then_some(symbol)
+}
+
+/// The lifecycle body a value runs: the per-instantiation clone its checked
+/// static type names (`Box.__deinit__$y3:Int`) when the program declares one,
+/// and the template's erased body otherwise.
+///
+/// A value destroyed, copied, or moved inside an erased body has a symbolic
+/// static type, so it keeps the erased path, as every by-name dispatch does.
+fn lifecycle_symbol(
+    prog: &Prog,
+    sname: &str,
+    lifecycle: &str,
+    static_ty: Option<&mojito_types::types::Ty>,
+    argc: usize,
+) -> String {
+    instance_dunder_symbol(prog, sname, lifecycle, static_ty, argc)
+        .unwrap_or_else(|| format!("{sname}.{lifecycle}"))
+}
+
+/// The static types of a struct value's fields, with the instance's arguments
+/// substituted for the declaration's parameters — the types the fields' own
+/// lifecycle dispatch needs while a whole value is destroyed or copied.
+fn instance_field_types(
+    prog: &Prog,
+    sname: &str,
+    static_ty: Option<&mojito_types::types::Ty>,
+) -> Option<HashMap<String, mojito_types::types::Ty>> {
+    let mojito_types::types::Ty::Struct(_, arguments) = peel_references(static_ty?) else {
+        return None;
+    };
+    let declaration = prog.structs.get(sname)?;
+    let substitution =
+        mojito_types::types::struct_argument_substitution(&declaration.param_decls, arguments);
+    Some(
+        declaration
+            .fields
+            .iter()
+            .map(|(field, ty)| {
+                (
+                    field.clone(),
+                    mojito_types::types::substitute(ty, &substitution),
+                )
+            })
+            .collect(),
+    )
+}
+
+/// A static type with its reference layers removed: a place or parameter
+/// handle describes the same instance as the value behind it.
+fn peel_references(ty: &mojito_types::types::Ty) -> &mojito_types::types::Ty {
+    let mut ty = ty;
+    while let mojito_types::types::Ty::Ref(reference) = ty {
+        ty = &reference.referent;
+    }
+    ty
 }
 
 impl Prog {
@@ -1678,7 +1730,7 @@ mod pointer_storage_tests {
             slot,
             Value::Tuple(vec![Value::Int(1), Value::Int(2)]),
         );
-        vm.heap_destroy(&empty_program(), allocation, offset, 0)
+        vm.heap_destroy(&empty_program(), allocation, offset, 0, None)
             .expect("initialized destroy");
         assert!(vm.heap_read(allocation, offset, 0).is_err());
     }
@@ -1692,10 +1744,10 @@ mod pointer_storage_tests {
         // Never written: a read traps, a destroy is a no-op, a take yields the
         // tombstone once and leaves a taken slot that traps thereafter.
         assert!(vm.heap_read(allocation, offset, 0).is_err());
-        vm.heap_destroy(&empty_program(), allocation, offset, 0)
+        vm.heap_destroy(&empty_program(), allocation, offset, 0, None)
             .expect("destroying a never-written slot is a no-op");
         assert!(
-            vm.heap_destroy(&empty_program(), allocation, offset, 0)
+            vm.heap_destroy(&empty_program(), allocation, offset, 0, None)
                 .is_err()
         );
         assert!(matches!(
@@ -1707,7 +1759,7 @@ mod pointer_storage_tests {
         // Storing the tombstone re-marks the slot; storing a value clears it.
         let (region, slot) = vm.heap_index(allocation, offset, 1).expect("slot");
         vm.heap_store(region, slot, Value::Moved);
-        vm.heap_destroy(&empty_program(), allocation, offset, 1)
+        vm.heap_destroy(&empty_program(), allocation, offset, 1, None)
             .expect("a forwarded never-written slot destroys as a no-op");
         vm.heap_store(region, slot, Value::Int(3));
         assert_eq!(
@@ -1823,6 +1875,7 @@ mod input_override_tests {
 
 mod adapters;
 mod dispatch;
+use dispatch::CallTypes;
 mod invoke;
 mod libc;
 mod values;

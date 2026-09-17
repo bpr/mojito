@@ -1055,7 +1055,7 @@ impl Checker {
             Some(_) => false,
         };
         if is_implicit
-            && (m.name != "__init__"
+            && (mojito_symbol::symbol::instance_clone_base(&m.name) != "__init__"
                 || !m.has_self
                 || m.self_convention != Some(ArgConvention::Out)
                 || m.params.len() != 1
@@ -1107,7 +1107,7 @@ impl Checker {
         // whose bodies assign `self`'s fields. `ref self`, and `out self` elsewhere,
         // stay flagged.
         let is_lifecycle_init = matches!(
-            m.name.as_str(),
+            mojito_symbol::symbol::instance_clone_base(&m.name),
             "__init__" | "__copyinit__" | "__moveinit__"
         );
         let out_init = matches!(m.self_convention, Some(mojito_ast::ast::ArgConvention::Out))
@@ -1325,7 +1325,7 @@ impl Checker {
         let saved = std::mem::replace(&mut self.self_mutable, self_writable);
         let initializing = matches!(m.self_convention, Some(mojito_ast::ast::ArgConvention::Out))
             && matches!(
-                lifecycle_method_name(m),
+                mojito_symbol::symbol::instance_clone_base(lifecycle_method_name(m)),
                 "__init__" | "__copyinit__" | "__moveinit__"
             );
         let saved_initializing = std::mem::replace(&mut self.self_initializing, initializing);
@@ -1541,6 +1541,7 @@ impl Checker {
         &self,
         span: &SourceSpan,
         name: &str,
+        owner_arguments: &[TyArg],
         sig: &MethodSig,
         subst: &HashMap<String, Ty>,
     ) {
@@ -1570,8 +1571,25 @@ impl Checker {
                 arguments: arguments.clone(),
             },
         );
-        if let Some(clone) = self.specialized_method_clone(name, "__init__", &sig.decls, &arguments)
+        // On a generic struct the instance's own values precede the call's in
+        // a clone name, as `per_call_method_clones` mints them: mangling the
+        // call's alone would name another instance's clone.
+        let clone = if self
+            .structs
+            .get(name)
+            .is_some_and(|info| !info.decls.is_empty())
         {
+            self.instance_call_method_clone(
+                name,
+                owner_arguments,
+                "__init__",
+                &sig.decls,
+                &arguments,
+            )
+        } else {
+            self.specialized_method_clone(name, "__init__", &sig.decls, &arguments)
+        };
+        if let Some(clone) = clone {
             self.overload_targets
                 .borrow_mut()
                 .insert(span.clone(), format!("{name}.{clone}"));
@@ -1830,7 +1848,7 @@ impl Checker {
                     &arg_tys,
                     &partitioned.explicit_origins,
                 )?;
-                self.record_constructor_instantiation(span, name, sig, &subst);
+                self.record_constructor_instantiation(span, name, &tyargs, sig, &subst);
                 self.record_struct_instantiation(name, &tyargs, span.source.as_deref());
                 for (i, (aty, pty)) in arg_tys.iter().zip(&params).enumerate() {
                     let expected = pointer_origins.substitute(&substitute(pty, &subst));
@@ -2117,7 +2135,7 @@ impl Checker {
                         .borrow_mut()
                         .insert(span.clone(), target);
                 }
-                self.record_constructor_instantiation(span, name, &sig, &subst);
+                self.record_constructor_instantiation(span, name, &tyargs, &sig, &subst);
                 self.solve_call_origins(
                     &slots,
                     &sig.conventions,

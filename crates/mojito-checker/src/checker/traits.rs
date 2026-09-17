@@ -358,7 +358,10 @@ impl Checker {
             .methods
             .iter()
             .filter(|method| {
-                method.name != "__deinit__" && method.self_convention == Some(ArgConvention::Deinit)
+                // A per-instantiation clone of the destructor (`__deinit__$y3:Int`)
+                // is the same whole-value destructor, not a named one.
+                mojito_symbol::symbol::instance_clone_base(&method.name) != "__deinit__"
+                    && method.self_convention == Some(ArgConvention::Deinit)
             })
             .map(|method| (method.name.clone(), method.raises))
             .collect::<HashMap<_, _>>();

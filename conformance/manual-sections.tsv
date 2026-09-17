@@ -1,5 +1,8 @@
 # Official Mojo manual families used as the inventory boundary; language drift is
 # additionally pinned to Mojo 1.0.0b3.dev2026072505 in parity.tsv.
+# `excluded` marks a family outside the inventory this pass tracks, not a
+# permanent refusal: the `gpu` and `tiletensor` families serve the GPU stretch
+# goal (`docs/architecture.md`), and parity.tsv records that row as `stretch`.
 id	scope	url
 manual-root	first-pass	https://mojolang.org/docs/manual/
 basics	first-pass	https://mojolang.org/docs/manual/basics/

@@ -51,6 +51,7 @@ impl Elab<'_> {
             return Ok(Elaborated {
                 program,
                 instances: Vec::new(),
+                stub_reaching_structs: HashSet::new(),
                 unserved_template_uses: Vec::new(),
             });
         }
@@ -69,6 +70,7 @@ impl Elab<'_> {
         let consts = self.top_consts.borrow().clone();
         let mut mono = Mono::default();
         let mut program = program;
+        self.stamp_per_call_clone_bodies(&mut program);
         let mut module_bindings = HashMap::new();
         for statement in &program {
             if let StmtKind::Def { name, .. } | StmtKind::Struct { name, .. } = &statement.kind {
@@ -275,6 +277,15 @@ impl Elab<'_> {
         }
         mono.in_bundled = false;
         mono.abstract_owner = None;
+        // Which erased method bodies can reach a compile-time-keyed stub is
+        // settled once every template has been walked; the drain below needs
+        // it to tell an instance that must mint such a method's clone from
+        // one that keeps the erased path harmlessly.
+        let stub_reaching: HashSet<String> = self
+            .stub_reaching_bodies(&mono.abstract_uses, &mono.method_edges)
+            .iter()
+            .map(|body| (*body).to_string())
+            .collect();
         // Drain the worklists: specializations, then the per-instantiation
         // method clones (whose bodies may request further specializations
         // and instances), until both are empty.
@@ -283,40 +294,14 @@ impl Elab<'_> {
             let Some((template, values)) = mono.instance_jobs.pop_front() else {
                 break;
             };
-            let Some(StmtKind::Struct { methods, .. }) = program
-                .iter_mut()
-                .find(|statement| {
-                    matches!(&statement.kind, StmtKind::Struct { name, .. } if *name == template)
-                })
-                .map(|statement| &mut statement.kind)
-            else {
-                continue;
-            };
-            let (clones, mut field_types) = self.generate_instance_clones(&template, &values)?;
-            mono.minted_instances.push(StructInstanceRequest::new(
-                template.clone(),
-                values
-                    .iter()
-                    .map(|value| match value {
-                        CtValue::Type(ty) => TyArg::Ty((**ty).clone()),
-                        other => TyArg::Val(other.clone()),
-                    })
-                    .collect(),
-            ));
-            for ty in &mut field_types {
-                self.mono_type(ty, &consts, &mut mono)?;
-            }
-            // A clone whose walk cannot resolve one of its applications (a
-            // variadic template over a nested public `Tuple` argument) is
-            // dropped: the call keeps the erased template rather than
-            // failing the program.
-            let mut kept = Vec::with_capacity(clones.len());
-            for mut clone in clones {
-                if self.mono_method(&mut clone, &consts, &mut mono).is_ok() {
-                    kept.push(clone);
-                }
-            }
-            methods.extend(kept);
+            self.mint_instance_clones(
+                &mut program,
+                &template,
+                &values,
+                &consts,
+                &stub_reaching,
+                &mut mono,
+            )?;
         }
         // Rebuild the program, replacing each template with its specializations at
         // the template's original position. Specializations are emitted in reverse
@@ -384,20 +369,141 @@ impl Elab<'_> {
                 out.extend(specs);
             }
         }
+        let unserved_template_uses = self.unserved_template_uses(
+            &mono.abstract_uses,
+            &mono.method_edges,
+            &mono.unclonable_methods,
+        );
         Ok(Elaborated {
             program: out,
             instances: mono.minted_instances,
-            unserved_template_uses: self.unserved_template_uses(&mono.abstract_uses),
+            stub_reaching_structs: stub_reaching
+                .iter()
+                .filter_map(|body| body.split_once('.'))
+                .map(|(owner, _)| owner.to_string())
+                .collect(),
+            unserved_template_uses,
         })
     }
 
-    /// The abstract references that can run a compile-time-keyed stub.
+    /// Mint one closed instance's method clones onto its template, and
+    /// record the stub-reaching methods it could not serve.
     ///
-    /// Such a stub is reached through a compile-time-keyed template, or
-    /// through a bound-generic `def` whose own body references one of those
-    /// abstractly, transitively. A reference made inside such a body is
-    /// dropped: the body runs only through a reference that is kept.
-    fn unserved_template_uses(&self, uses: &[AbstractUse]) -> Vec<UnservedTemplateUse> {
+    /// An instance whose clones cannot be minted at all keeps the erased path
+    /// for every method; one that withholds a method as unavailable is not
+    /// failing to serve it, because no call can reach that body either.
+    fn mint_instance_clones(
+        &self,
+        program: &mut [Stmt],
+        template: &str,
+        values: &[CtValue],
+        consts: &HashMap<String, CtValue>,
+        stub_reaching: &HashSet<String>,
+        mono: &mut Mono,
+    ) -> Result<(), ComptimeError> {
+        let Some(statement) = program.iter_mut().find(|statement| {
+            matches!(&statement.kind, StmtKind::Struct { name, .. } if name == template)
+        }) else {
+            return Ok(());
+        };
+        let module = statement.module.clone();
+        let StmtKind::Struct { methods, .. } = &mut statement.kind else {
+            return Ok(());
+        };
+        let owed = owed_instance_clones(methods, template, values, stub_reaching);
+        let InstanceClones {
+            clones,
+            mut field_types,
+            withheld,
+        } = self.generate_instance_clones(template, values)?;
+        mono.minted_instances.push(StructInstanceRequest::new(
+            template.to_string(),
+            values
+                .iter()
+                .map(|value| match value {
+                    CtValue::Type(ty) => TyArg::Ty((**ty).clone()),
+                    other => TyArg::Val(other.clone()),
+                })
+                .collect(),
+        ));
+        for ty in &mut field_types {
+            self.mono_type(ty, consts, mono)?;
+        }
+        let kept = self.walk_instance_clones(clones, template, module.as_deref(), consts, mono);
+        for (method, clone) in owed {
+            if !withheld.contains(&method) && !kept.iter().any(|minted| minted.name == clone) {
+                mono.unclonable_methods
+                    .push(super::method_owner(template, &method));
+            }
+        }
+        methods.extend(kept);
+        Ok(())
+    }
+
+    /// Tag the body of every per-call clone minted on a non-generic struct
+    /// during elaboration.
+    ///
+    /// Those clones reuse their template's spans, and are tagged here rather
+    /// than where they are minted because `Elab::block` re-stamps the whole
+    /// statement with its module immediately afterwards.
+    fn stamp_per_call_clone_bodies(&self, program: &mut [Stmt]) {
+        let per_call_clones = self.per_call_clones.borrow();
+        for statement in program {
+            let module = statement.module.clone();
+            let StmtKind::Struct { name, methods, .. } = &mut statement.kind else {
+                continue;
+            };
+            for method in methods.iter_mut() {
+                if per_call_clones.contains(&(name.clone(), method.name.clone())) {
+                    let tag = super::clone_source_tag(module.as_deref(), name, &method.name);
+                    mojito_ast::ast::stamp_source(&mut method.body, &tag);
+                }
+            }
+        }
+    }
+
+    /// Walk each minted clone of one instance, dropping any whose own
+    /// applications do not resolve: that call keeps the erased template
+    /// rather than failing the program.
+    ///
+    /// Every clone is stamped with its own source tag first, so the walk's
+    /// span-keyed lookups find the checker's records for this instantiation
+    /// rather than the template's. A clone that kept its own type parameters
+    /// is still an erased body — every concrete call reaches a per-call clone
+    /// of it — so it owns the references it leaves abstract.
+    fn walk_instance_clones(
+        &self,
+        clones: Vec<Method>,
+        template: &str,
+        module: Option<&str>,
+        consts: &HashMap<String, CtValue>,
+        mono: &mut Mono,
+    ) -> Vec<Method> {
+        let mut kept = Vec::with_capacity(clones.len());
+        for mut clone in clones {
+            let tag = super::clone_source_tag(module, template, &clone.name);
+            mojito_ast::ast::stamp_source(&mut clone.body, &tag);
+            mono.abstract_owner =
+                (!clone.type_params.is_empty()).then(|| super::method_owner(template, &clone.name));
+            let walked = self.mono_method(&mut clone, consts, mono);
+            mono.abstract_owner = None;
+            if walked.is_ok() {
+                kept.push(clone);
+            }
+        }
+        kept
+    }
+
+    /// The bodies that can run a compile-time-keyed stub: the templates
+    /// themselves, plus every abstract body that reaches one — a
+    /// bound-generic `def` referencing such a template, or a struct method
+    /// (`Struct.method`) whose erased body does, transitively through both
+    /// kinds of reference and through the by-name method edges.
+    fn stub_reaching_bodies<'a>(
+        &'a self,
+        uses: &'a [AbstractUse],
+        edges: &'a [(String, String)],
+    ) -> HashSet<&'a str> {
         let mut stubbed: HashSet<&str> =
             self.comptime_generics.iter().map(String::as_str).collect();
         loop {
@@ -405,12 +511,52 @@ impl Elab<'_> {
                 .iter()
                 .filter(|reference| stubbed.contains(reference.callee.as_str()))
                 .filter_map(|reference| reference.owner.as_deref())
+                .chain(edges.iter().filter_map(|(owner, method)| {
+                    stubbed
+                        .iter()
+                        .any(|body| owner_method(body) == Some(method.as_str()))
+                        .then_some(owner.as_str())
+                }))
                 .filter(|owner| !stubbed.contains(owner))
                 .collect();
             if reached.is_empty() {
                 break;
             }
             stubbed.extend(reached);
+        }
+        stubbed
+    }
+
+    /// The abstract references that can run a compile-time-keyed stub.
+    ///
+    /// A reference made inside a stub-reaching body is dropped: that body
+    /// runs only through a reference that is kept, or on one of the erased
+    /// paths `stub_reaching_instance_uses` rejects.
+    fn unserved_template_uses(
+        &self,
+        uses: &[AbstractUse],
+        edges: &[(String, String)],
+        unclonable: &[String],
+    ) -> Vec<UnservedTemplateUse> {
+        let stubbed = self.stub_reaching_bodies(uses, edges);
+        // A method no instance could clone runs erased, and so does every
+        // body it reaches: their references are unserved like a reference
+        // from ordinary code.
+        let mut erased: HashSet<&str> = stubbed
+            .iter()
+            .copied()
+            .filter(|body| unclonable.iter().any(|method| method == body))
+            .collect();
+        loop {
+            let reached: Vec<&str> = erased
+                .iter()
+                .flat_map(|body| body_callees(body, &stubbed, uses, edges))
+                .filter(|body| !erased.contains(body))
+                .collect();
+            if reached.is_empty() {
+                break;
+            }
+            erased.extend(reached);
         }
         let mut unserved: Vec<UnservedTemplateUse> = uses
             .iter()
@@ -419,7 +565,7 @@ impl Elab<'_> {
                     && reference
                         .owner
                         .as_deref()
-                        .is_none_or(|owner| !stubbed.contains(owner))
+                        .is_none_or(|owner| !stubbed.contains(owner) || erased.contains(owner))
             })
             .map(|reference| UnservedTemplateUse {
                 callee: reference.callee.clone(),
@@ -1974,11 +2120,11 @@ impl Elab<'_> {
         &self,
         name: &str,
         values: &[CtValue],
-    ) -> Result<(Vec<Method>, Vec<Type>), ComptimeError> {
+    ) -> Result<InstanceClones, ComptimeError> {
         let Some(template) = self.program.iter().find(|statement| {
             matches!(&statement.kind, StmtKind::Struct { name: template, .. } if template == name)
         }) else {
-            return Ok((Vec::new(), Vec::new()));
+            return Ok(InstanceClones::default());
         };
         let StmtKind::Struct {
             type_params,
@@ -1988,7 +2134,7 @@ impl Elab<'_> {
             ..
         } = &template.kind
         else {
-            return Ok((Vec::new(), Vec::new()));
+            return Ok(InstanceClones::default());
         };
         // The compile-time string keeps the literal runtime representation and
         // materializes `String` at `var` bindings, so a clone body would not
@@ -1998,28 +2144,28 @@ impl Elab<'_> {
             matches!(value, CtValue::Type(ty)
                 if mojito_types::types::contains_string_literal(ty))
         }) {
-            return Ok((Vec::new(), Vec::new()));
+            return Ok(InstanceClones::default());
         }
         // Bind each parameter; an instance whose argument violates a declared
         // bound, or does not round-trip to source syntax, keeps the erased path.
         let mut bindings = Vec::new();
         for (parameter, value) in type_params.iter().zip(values) {
             let CtValue::Type(ty) = value else {
-                return Ok((Vec::new(), Vec::new()));
+                return Ok(InstanceClones::default());
             };
             if parameter
                 .bounds
                 .iter()
                 .any(|bound| self.conformance.require(ty, bound).is_err())
             {
-                return Ok((Vec::new(), Vec::new()));
+                return Ok(InstanceClones::default());
             }
             // See `Elab::ty_mentions_origin_slotted_struct`.
             if self.ty_mentions_origin_slotted_struct(ty) {
-                return Ok((Vec::new(), Vec::new()));
+                return Ok(InstanceClones::default());
             }
             let Some(source) = source_type_from_ty(ty) else {
-                return Ok((Vec::new(), Vec::new()));
+                return Ok(InstanceClones::default());
             };
             bindings.push(MethodBinding {
                 name: parameter.name.clone(),
@@ -2028,7 +2174,7 @@ impl Elab<'_> {
             });
         }
         if bindings.len() != type_params.len() {
-            return Ok((Vec::new(), Vec::new()));
+            return Ok(InstanceClones::default());
         }
         // The instance's storage types, with the parameters baked: closed
         // applications there (`List[DictEntry[String, Int]]`) are instances
@@ -2076,15 +2222,30 @@ impl Elab<'_> {
             .method_requests
             .get(&instance_key)
             .map_or(&[][..], Vec::as_slice);
+        let bundled = mojito_checker::checker::is_bundled_module_source(template.module.as_deref());
+        let constructors = methods
+            .iter()
+            .filter(|method| mojito_symbol::symbol::lifecycle_method_name(method) == "__init__")
+            .count();
+        // The methods this instance withholds rather than fails to clone: an
+        // unavailable method cannot be called on it at all, so its erased body
+        // never runs.
+        let mut withheld: HashSet<String> = HashSet::new();
         let mut clones = Vec::new();
         for method in methods {
             if unavailable.contains(&method.name) {
+                withheld.insert(method.name.clone());
                 continue;
             }
-            if matches!(
-                mojito_symbol::symbol::lifecycle_method_name(method),
-                "__init__" | "__del__" | "__copyinit__" | "__moveinit__"
-            ) {
+            // A bundled template keeps its lifecycle methods on the erased
+            // path, and so does an overloaded constructor family: a
+            // construction picks among the template's signatures, whose
+            // overload symbols the clone family does not share.
+            let lifecycle = mojito_symbol::symbol::lifecycle_method_name(method);
+            if bundled && matches!(lifecycle, "__init__" | "__copyinit__" | "__moveinit__") {
+                continue;
+            }
+            if lifecycle == "__init__" && constructors > 1 {
                 continue;
             }
             clones.extend(self.per_call_method_clones(
@@ -2106,8 +2267,11 @@ impl Elab<'_> {
                 continue;
             }
             // Same-name overloads all clone: they share the mangled name and
-            // stay an overload set on the clone side.
-            let clone_name = mangle(&method.name, values);
+            // stay an overload set on the clone side. A lifecycle method
+            // clones under the name it is registered and dispatched by, so
+            // `__init__(out self, *, copy: Self)` clones as
+            // `__copyinit__$y3:Int`.
+            let clone_name = mangle(lifecycle, values);
             // A `where` clause that is false (or cannot be evaluated) for this
             // instance leaves the method uncloned: the call reports the
             // template's availability failure as today.
@@ -2116,6 +2280,7 @@ impl Elab<'_> {
                 .iter()
                 .all(|predicate| matches!(self.eval(predicate, &env), Ok(CtValue::Bool(true))));
             if !available {
+                withheld.insert(method.name.clone());
                 continue;
             }
             let Ok(mut clone) =
@@ -2136,12 +2301,24 @@ impl Elab<'_> {
                 method.name.clone(),
                 method.has_self,
                 method.self_convention,
+                // Overload identity counts the keyword names and the
+                // positional/keyword boundaries too (`SignatureKey`), so two
+                // keyword-only constructors (`capacity:` and
+                // `unsafe_uninit_length:`) are distinct shapes here as well.
+                method.positional_only,
+                method.keyword_only,
                 method
                     .params
                     .iter()
-                    .map(|parameter| {
+                    .enumerate()
+                    .map(|(index, parameter)| {
+                        let keyword = method
+                            .keyword_only
+                            .is_some_and(|first| index >= first)
+                            .then(|| parameter.name.clone());
                         (
                             parameter.kind,
+                            keyword,
                             mojito_symbol::symbol::TypeKey::from_ast(&parameter.ty),
                         )
                     })
@@ -2156,7 +2333,11 @@ impl Elab<'_> {
             }
         }
         clones.retain(|clone| !collapsed.contains(&clone.name));
-        Ok((clones, field_types))
+        Ok(InstanceClones {
+            clones,
+            field_types,
+            withheld,
+        })
     }
 
     /// Per-call clones of one generic method (`kind[U]`) for every
@@ -2673,6 +2854,30 @@ fn unavailable_method_clause(condition: &Expr) -> Expr {
         ]),
         span,
     )
+}
+
+/// The clone each stub-reaching method of `template` owes one instance: its
+/// source name and the clone name that instance must mint.
+///
+/// A method missing from what the instance actually mints keeps the erased
+/// path there, and that path can reach a compile-time-keyed stub.
+fn owed_instance_clones(
+    methods: &[Method],
+    template: &str,
+    values: &[CtValue],
+    stub_reaching: &HashSet<String>,
+) -> Vec<(String, String)> {
+    methods
+        .iter()
+        .filter(|method| {
+            method.self_ty.is_none()
+                && stub_reaching.contains(&super::method_owner(template, &method.name))
+        })
+        .map(|method| {
+            let lifecycle = mojito_symbol::symbol::lifecycle_method_name(method);
+            (method.name.clone(), mangle(lifecycle, values))
+        })
+        .collect()
 }
 
 /// A type-pack or compile-time-keyed `def` template reduced to its

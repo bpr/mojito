@@ -1,8 +1,9 @@
 //! Execution-backend contract below the verified-MIR waist.
 //!
 //! The register VM is the executable semantic oracle. The prioritized native
-//! backends are LLVM, MLIR, and Pliron (a Rust-native, MLIR-inspired IR
-//! framework whose LLVM dialect emits LLVM IR); Cranelift and eBPF follow them.
+//! backend is Pliron (a Rust-native, MLIR-inspired IR framework whose LLVM
+//! dialect emits LLVM IR), then Cranelift; direct LLVM or MLIR lowering and
+//! eBPF are not prioritized.
 //! Every implementation consumes the same checked program/MIR facts instead of
 //! reconstructing language semantics from source declarations.
 //!
@@ -66,9 +67,9 @@ impl Backend {
 ///
 /// The register VM is the sole executor today; the other names are recognized
 /// seams for future backends behind the verified-MIR waist and refuse
-/// construction until implemented. The variants after `Vm` are listed in
-/// priority order: LLVM, MLIR, and Pliron are the prioritized native targets;
-/// Cranelift and eBPF follow.
+/// construction until implemented. Pliron is the prioritized native target,
+/// then Cranelift; the `Llvm`, `Mlir`, and `Ebpf` seams are recognized names
+/// rather than planned work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendKind {
     Vm,

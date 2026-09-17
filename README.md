@@ -1,9 +1,11 @@
 # mojito
 
 mojito is a small Rust implementation of an evolving subset of
-[Mojo](https://mojolang.org/). It is not Mojo, and it is not trying to
-compete with Mojo's production compiler: it is a compact compiler playground for
-studying the shape of a modern systems programming language compiler. Mojo was
+[Mojo](https://mojolang.org/). It is not Mojo and does not pretend to the
+reach of Mojo's production compiler, but resembling that compiler's own shape
+is a goal it works toward: it is a compact implementation for studying, and
+step by step reproducing, the structure of a modern systems programming
+language compiler. Mojo was
 chosen as a target because it is a rich language, with value semantics,
 ownership/borrowing, ASAP destruction, generics, overloading, and compile-time
 execution — interesting features associated with C++, Rust, and Zig. Those
@@ -15,9 +17,13 @@ unsupported semantics fail cleanly instead of producing a wrong answer.
 ## Project Goals
 
 - Parse all of current Mojo and report syntax errors
-- Approach semantic parity with a single-threaded, CPU-only subset of current
+- Approach semantic parity with a single-threaded, CPU-first subset of current
   Mojo. All mojito programs should be runnable by Mojo, though platform-specific
-  Mojo programs will remain outside the target
+  Mojo programs stay outside the current target. The most primitive concurrency
+  is expected eventually, and GPU is a stretch goal; parallelism, distributed
+  execution, and Python interoperability are not intended
+- Close the architectural distance to Mojo's own implementation, in stages
+  (`docs/architecture.md`)
 - Keep the register VM as the executable semantic oracle while adding a stable
   textual MIR/VM assembly format and, later, native backends — Pliron and
   Cranelift first, with a possible C or C++ backend

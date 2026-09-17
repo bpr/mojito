@@ -174,7 +174,7 @@ impl VmBackend {
                         continue;
                     }
                     Flow::Return { value, cleanup } => {
-                        self.run_cleanup(prog, &cleanup, &mut frame.variables)?;
+                        self.run_cleanup(prog, &cleanup, frame.function, &mut frame.variables)?;
                         // Re-root returned reference handles exactly as the
                         // terminator return path below does: a `return` leaving
                         // a `try` region otherwise carries refs rooted at this
@@ -223,7 +223,7 @@ impl VmBackend {
                     let returned = value
                         .as_ref()
                         .map_or(Value::None, |reg| frame.registers[reg.0 as usize].clone());
-                    self.run_cleanup(prog, cleanup, &mut frame.variables)?;
+                    self.run_cleanup(prog, cleanup, frame.function, &mut frame.variables)?;
                     returned
                 }
                 MirTerm::FallOff | MirTerm::EscapeJump { .. } => Value::None,
@@ -612,7 +612,7 @@ impl VmBackend {
         else {
             return Ok(None);
         };
-        if mojito_symbol::symbol::init_overload_struct(&func.0).is_some() {
+        if mojito_symbol::symbol::lifecycle_constructor(&func.0).is_some() {
             return Ok(None);
         }
         let Some(index) = prog.index_of(&func.0) else {

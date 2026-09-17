@@ -6,5 +6,12 @@
 # edit. The default profile — and the required `scripts/check` gate — still
 # runs everything; never call a step done on quick-profile results alone.
 
+# Every test process links and compiles the bundled prelude, so a run's peak
+# memory is that cost times the number of processes, not the machine's core
+# count. One core-wide fan-out has already cost the overnight gate a killed
+# run; half of them leaves headroom for the corpus binary's heaviest fixtures.
+[profile.default]
+test-threads = 8
+
 [profile.quick]
 default-filter = "not binary(=corpus_test)"

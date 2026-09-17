@@ -194,6 +194,16 @@ required-features = ["backend-pliron"]
 name = "pliron_dist_test"
 required-features = ["backend-pliron"]
 
+# Full debug info costs peak build memory, link time, and a large share of
+# both the debug binary and the target directory, and nothing here reads it:
+# the one debugger-driven tool, `scripts/sample-stacks`, samples the
+# `profiling` profile below. Line tables keep every panic and backtrace
+# naming its file and line; what they drop is variable inspection under a
+# debugger attached to `target/debug/mojito`. Restore `debug = true` here if
+# that is ever needed.
+[profile.dev]
+debug = "line-tables-only"
+
 # Release code with full debug info for sampling profilers (samply/perf):
 # `cargo build --profile profiling` -> target/profiling/mojito.
 [profile.profiling]

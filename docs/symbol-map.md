@@ -457,11 +457,20 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   if`/`for` body, whose inferred calls do the same, gated by
   `omits_required_param` in `comptime/mono.rs`; `template_stub` in
   `comptime/specialize.rs` stands in for either deferred template;
-  `Mono::retain_abstract` records each abstract reference, the specializer's
-  `unserved_template_uses` keeps those that can reach a stub from outside a
-  stub-reaching body as `Elaborated::unserved_template_uses`
-  (`UnservedTemplateUse`), and `unserved_template_parameter` names the
-  parameter for the driver's `reject_unserved_template_calls`), the
+  `Mono::retain_abstract` records each abstract reference and
+  `Mono::record_method_edge` each by-name method call from an abstract body,
+  the specializer's `stub_reaching_bodies` closes both over
+  `Mono::abstract_owner` (a bound-generic `def`, or a struct method as
+  `method_owner`'s `Struct.method`), `unserved_template_uses` keeps the
+  references that can reach a stub from outside a stub-reaching body — plus
+  those of a method no instance could clone (`Mono::unclonable_methods`) — as
+  `Elaborated::unserved_template_uses` (`UnservedTemplateUse`),
+  `Elaborated::stub_reaching_structs` stops the driver's round cap from
+  converging on such an instance, and `unserved_template_parameter` names the
+  parameter for the driver's `reject_unserved_template_calls`;
+  `clone_source_tag` stamps each method clone's body before it is walked, so
+  its span-keyed requests find the checker's records for that
+  instantiation), the
   origin-slot guards (`ty_mentions_origin_slotted_struct` keeps such type
   arguments abstract; `pack_element_source_type` spells erased slots as
   `_`), and the free-function/`Mono` support code; `Elab`'s remaining
@@ -524,7 +533,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (the VM's `instance_dunder_symbol` in `backend/vm.rs` and the native
   monomorphizer's `instance_dunder_target`/`enqueue_display_instance` in
   `native/mono/instances.rs` select clones through it from checked register
-  types).
+  types); `instance_clone_base` recovers a clone's source method name for the
+  exact-name lifecycle gates, and `lifecycle_constructor` recognizes a
+  construction through a clone or an overload. The VM's `lifecycle_symbol`
+  and `instance_field_types` (`backend/vm.rs`) pick an instance's
+  `__init__`/`__copyinit__`/`__moveinit__`/`__deinit__` clone from a checked
+  static type, substituting `types::struct_argument_substitution` into the
+  fields a whole-value drop or copy reaches; the native side names such a
+  clone by its instance (`lifecycle_clone_instance_symbol` in
+  `native/mono/specializer.rs`), which is the symbol Pliron's lowering
+  composes.
 
 ## Change Routing
 

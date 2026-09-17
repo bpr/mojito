@@ -4,6 +4,16 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
+/// The checked types a named call carries: the compile-time value arguments
+/// its callee reifies, its argument types, and the type of the value it
+/// produces — which names the instance a construction builds.
+#[derive(Default)]
+pub(super) struct CallTypes<'a> {
+    pub(super) param_vals: &'a [Option<Value>],
+    pub(super) arg_types: &'a [Option<mojito_types::types::Ty>],
+    pub(super) result_ty: Option<&'a mojito_types::types::Ty>,
+}
+
 impl VmBackend {
     /// Whether a function's result can hold reference handles into its
     /// receiver: it returns a reference directly, or its checked return type
@@ -56,6 +66,37 @@ impl VmBackend {
     /// Internal tuple/compile-time storage recurses through its elements.
     /// Scalars are a no-op.
     pub(super) fn drop_value(&mut self, prog: &Prog, v: Value) -> Result<(), RuntimeError> {
+        self.drop_typed_value(prog, v, None)
+    }
+
+    /// Destroy the residual fields of a consumed aggregate, each with its own
+    /// type from the receiver's instance (a named destructor's receiver, or a
+    /// consumed place).
+    pub(super) fn drop_struct_fields(
+        &mut self,
+        prog: &Prog,
+        name: &str,
+        fields: Vec<(String, Value)>,
+        static_ty: Option<&Ty>,
+    ) -> Result<(), RuntimeError> {
+        let field_types = super::instance_field_types(prog, name, static_ty);
+        for (field, value) in fields {
+            let ty = field_types.as_ref().and_then(|types| types.get(&field));
+            self.drop_typed_value(prog, value, ty)?;
+        }
+        Ok(())
+    }
+
+    /// Destroy a value whose checked static type is known, so a closed
+    /// generic-struct instance runs its own `__deinit__` clone rather than the
+    /// template's erased body. The fields, elements, and payloads reached
+    /// below carry their own substituted types.
+    pub(super) fn drop_typed_value(
+        &mut self,
+        prog: &Prog,
+        v: Value,
+        static_ty: Option<&Ty>,
+    ) -> Result<(), RuntimeError> {
         match v {
             Value::Struct { name, fields, .. } => {
                 // A partial aggregate cannot run its whole-value destructor:
@@ -65,18 +106,21 @@ impl VmBackend {
                 // an intact linear value never reaches an automatic DropVar, so
                 // this rule does not need to reconstruct generic conditional
                 // deletability from the erased runtime struct name.
+                let field_types = super::instance_field_types(prog, &name, static_ty);
+                let field_ty =
+                    |field: &str| field_types.as_ref().and_then(|types| types.get(field));
                 if fields
                     .iter()
                     .any(|(_, value)| matches!(value, Value::Moved))
                 {
-                    for (_, field) in fields {
-                        if !matches!(field, Value::Moved) {
-                            self.drop_value(prog, field)?;
+                    for (field, value) in fields {
+                        if !matches!(value, Value::Moved) {
+                            self.drop_typed_value(prog, value, field_ty(&field))?;
                         }
                     }
                     return Ok(());
                 }
-                let del = format!("{name}.__deinit__");
+                let del = super::lifecycle_symbol(prog, &name, "__deinit__", static_ty, 0);
                 if let Some(idx) = prog.index_of(&del) {
                     self.record_lifecycle(format!("drop {name}"));
                     // `self` is the whole struct, owned by the destructor: its
@@ -90,8 +134,8 @@ impl VmBackend {
                     self.call_function(prog, idx, vec![self_val], &[])?;
                     return Ok(());
                 }
-                for (_, fv) in fields {
-                    self.drop_value(prog, fv)?;
+                for (field, value) in fields {
+                    self.drop_typed_value(prog, value, field_ty(&field))?;
                 }
             }
             Value::ComptimeList(items) => {
@@ -103,11 +147,21 @@ impl VmBackend {
             // destruction order (left-to-right). Public Tuple is the nominal
             // one-field wrapper handled by the struct branch above.
             Value::Tuple(items) => {
-                for item in items {
-                    self.drop_value(prog, item)?;
+                let elements = match static_ty.map(super::peel_references) {
+                    Some(Ty::Tuple(elements)) => elements.as_slice(),
+                    _ => &[],
+                };
+                for (index, item) in items.into_iter().enumerate() {
+                    self.drop_typed_value(prog, item, elements.get(index))?;
                 }
             }
-            Value::Variant { value, .. } => self.drop_value(prog, *value)?,
+            // A variant carries its alternatives, so the live payload's own
+            // type is on the value itself.
+            Value::Variant {
+                alternatives,
+                index,
+                value,
+            } => self.drop_typed_value(prog, *value, alternatives.get(index))?,
             Value::Closure { captures, .. } => {
                 for capture in captures.into_iter().rev() {
                     if capture.owned && !matches!(capture.value, Value::Moved) {
@@ -171,7 +225,7 @@ impl VmBackend {
         {
             return self.construct_via_init(prog, &name, Some(&target), arguments, Vec::new(), &[]);
         }
-        self.call_named(prog, &name, arguments, Vec::new(), &[], &[])
+        self.call_named(prog, &name, arguments, Vec::new(), &CallTypes::default())
     }
 
     /// Normalize an `Indexer` to the VM's signed index representation. Int-like
@@ -202,9 +256,13 @@ impl VmBackend {
         name: &str,
         args: Vec<Value>,
         kwargs: Vec<(String, Value)>,
-        param_vals: &[Option<Value>],
-        arg_types: &[Option<mojito_types::types::Ty>],
+        types: &CallTypes<'_>,
     ) -> Result<Value, RuntimeError> {
+        let CallTypes {
+            param_vals,
+            arg_types,
+            result_ty,
+        } = *types;
         // Built-ins take positional arguments only, and user functions handle
         // keywords through their signatures below. Struct constructors get a
         // narrow exception for Mojo's lifecycle copy constructor (`copy:`).
@@ -217,7 +275,10 @@ impl VmBackend {
                 "vm: keyword arguments to '{name}' are not supported"
             )));
         }
-        if let Some(struct_name) = mojito_symbol::symbol::init_overload_struct(name)
+        // A resolved constructor symbol — an overload, or a closed instance's
+        // own clone (`Box.__init__$y3:Int`) — constructs its struct through
+        // that exact body.
+        if let Some((struct_name, "__init__")) = mojito_symbol::symbol::lifecycle_constructor(name)
             && prog.structs.contains_key(struct_name)
         {
             return self.construct_via_init(
@@ -509,20 +570,37 @@ impl VmBackend {
             // takes precedence over the fieldwise constructor: build an uninitialized
             // `self` skeleton, run `__init__`, and return the initialized value.
             _ if prog.structs.contains_key(name) => {
+                // A closed instance constructs through its own `__init__`
+                // clone when the elaborator minted one, exactly as its
+                // destruction and copying reach theirs.
+                let clone =
+                    super::instance_dunder_symbol(prog, name, "__init__", result_ty, args.len());
+                let constructor = clone.clone().unwrap_or_else(|| {
+                    prog.constructor_name(name, args.len())
+                });
                 if (!args.is_empty() || kwargs.len() != 1 || kwargs[0].0 != "copy")
-                    && prog
-                        .index_of(&prog.constructor_name(name, args.len()))
-                        .is_some()
+                    && prog.index_of(&constructor).is_some()
                 {
-                    return self.construct_via_init(prog, name, None, args, kwargs, param_vals);
+                    return self.construct_via_init(
+                        prog,
+                        name,
+                        clone.as_deref(),
+                        args,
+                        kwargs,
+                        param_vals,
+                    );
                 }
                 if !kwargs.is_empty() {
-                    self.construct_via_copy(prog, name, &args, &kwargs, param_vals)
-                } else if prog
-                    .index_of(&prog.constructor_name(name, args.len()))
-                    .is_some()
-                {
-                    self.construct_via_init(prog, name, None, args, Vec::new(), param_vals)
+                    self.construct_via_copy(prog, name, &args, &kwargs, param_vals, result_ty)
+                } else if prog.index_of(&constructor).is_some() {
+                    self.construct_via_init(
+                        prog,
+                        name,
+                        clone.as_deref(),
+                        args,
+                        Vec::new(),
+                        param_vals,
+                    )
                 } else {
                     construct(&prog.structs[name], name, args, param_vals)
                 }

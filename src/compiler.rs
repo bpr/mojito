@@ -253,12 +253,15 @@ impl Compiler {
         };
         crate::checker::validate_comptime_templates(&prepared).map_err(CompilerError::Type)?;
         // The abstract references of the elaboration `checked` was checked
-        // from.
+        // from, and the generic structs whose erased method bodies can reach
+        // a compile-time-keyed stub.
         let mut unserved_template_uses;
+        let mut stub_reaching_structs;
         let mut checked = {
             let Elaborated {
                 program: discovery,
                 instances: minted,
+                stub_reaching_structs: stub_reaching,
                 unserved_template_uses: unserved,
             } = {
                 let _elaborate = timing::span("discovery.initial.elaborate");
@@ -267,6 +270,7 @@ impl Compiler {
             };
             struct_requests.extend(minted);
             unserved_template_uses = unserved;
+            stub_reaching_structs = stub_reaching;
             if !self.allow_executable_module_scope {
                 validate_module_scope(&discovery).map_err(CompilerError::Type)?;
             }
@@ -342,9 +346,16 @@ impl Compiler {
                 }
             }
             let mut instances_grew = false;
+            // An instance of a struct whose erased method body can reach a
+            // compile-time-keyed stub must mint its clones: keeping the
+            // erased path at the cap below would trap at run time.
+            let mut stub_reaching_instance = None;
             for request in struct_instance_requests(&checked) {
                 if !struct_requests.contains(&request) {
                     last_new_callee = request.template().to_string();
+                    if stub_reaching_structs.contains(request.template()) {
+                        stub_reaching_instance = Some(request.template().to_string());
+                    }
                     struct_requests.push(request);
                     instances_grew = true;
                 }
@@ -361,14 +372,22 @@ impl Compiler {
             }
             // Instance clones only upgrade calls from the erased template, so
             // an instance discovered at the round cap keeps that path rather
-            // than reporting divergence.
+            // than reporting divergence — unless that path can run a
+            // compile-time-keyed stub, which has no body.
             if !grew && round == SPECIALIZATION_ROUNDS {
+                if let Some(template) = stub_reaching_instance {
+                    return Err(CompilerError::SpecializationDivergence {
+                        rounds: SPECIALIZATION_ROUNDS,
+                        callee: template,
+                    });
+                }
                 converged = true;
                 break;
             }
             let Elaborated {
                 program: elaborated,
                 instances: minted,
+                stub_reaching_structs: stub_reaching,
                 unserved_template_uses: unserved,
             } = {
                 let _elaborate = timing::span("elaborate");
@@ -384,6 +403,7 @@ impl Compiler {
                 .map_err(CompilerError::Comptime)?
             };
             unserved_template_uses = unserved;
+            stub_reaching_structs = stub_reaching;
             // Instances the specializer minted on its own (closed applications
             // reached from user code and from other clones) are already
             // served; the checker's recordings of them are not new work.

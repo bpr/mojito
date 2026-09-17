@@ -1,7 +1,9 @@
 # Pliron as Mojito's Compiler IR Framework: Front-End Feasibility
 
 **Status:** assessment recorded 2026-09-11; the dialect-definition section
-added 2026-09-16. Not scheduled work. The scheduled consequences are the
+added 2026-09-16. The goal it serves — an implementation that resembles Mojo's
+own — is settled (`docs/architecture.md`); what stays unscheduled is this
+document's particular staging of it. The scheduled consequences are the
 checkboxes in [`docs/roadmap.md`](roadmap.md) §1.
 
 **Companion document.**
@@ -123,15 +125,18 @@ The parametric layer is the piece that is genuinely missing from both the
 current compiler and the existing plan, and it is exactly what the front-end
 work below produces.
 
-Adopting it reverses decisions the repository has written down. Each has been
-marked as a current rule under review rather than a permanent one:
+Adopting it reverses decisions the repository has written down. Each is
+recorded as the arrangement the code follows today, not as a permanent one —
+the goal is to resemble Mojo's implementation, so these are the rules a stage
+is expected to move:
 
 - The architecture doc's dialect policy: "Do not reproduce the MIR schema as a
   second operation set."
 - `AGENTS.md` invariant 5, which makes MIR the stable waist, and the Start Here
   rule that no backend IR is a required internal layer.
-- `docs/architecture.md` Design Goals: "mojito is not trying to reproduce Mojo's
-  production architecture."
+- `docs/architecture.md` Design Goals, which now record the opposite intent:
+  not reproducing Mojo's production architecture "is now regarded as a mistake
+  that must be corrected".
 - The default-lane isolation test, which forbids Pliron in the default build.
   This one is only policy: Pliron core is pure Rust (slotmap, downcast-rs,
   combine), and only `pliron-llvm` needs LLVM.

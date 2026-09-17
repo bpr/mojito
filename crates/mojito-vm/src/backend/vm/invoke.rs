@@ -217,8 +217,7 @@ impl VmBackend {
                     target,
                     vec![checked_const_value(arg)],
                     vec![],
-                    &[],
-                    &[],
+                    &CallTypes::default(),
                 ),
                 Some(other) => Ok(checked_const_value(other)),
                 None => Err(RuntimeError::Unsupported(format!(

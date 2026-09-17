@@ -43,10 +43,12 @@ policy into Pliron.
 
 The current textual `.mir` contract is preserved through migration and then
 versioned into the canonical textual form of `mojito.core`. Existing artifacts
-continue to load through a compatibility parser. This is deliberately not
+continue to load through a compatibility parser. This stage is not
 Mojo's reported parser-direct-to-MLIR frontend: Mojito retains its AST,
-`CheckedProgram`, and explicit semantic checks because they are useful
-correctness boundaries for this project.
+`CheckedProgram`, and explicit semantic checks, which are useful correctness
+boundaries and are not what this migration is for. Closing that part of the
+distance to Mojo is a later question (`docs/pliron-future.md`), not a settled
+difference.
 
 ## What “like Mojo” does and does not mean
 
@@ -71,8 +73,10 @@ It should not initially mean:
 - exposing arbitrary Pliron syntax in Mojo source;
 - removing `CheckedProgram`, the VM, or source-level semantic checks;
 - depending on LLVM for checking, VM execution, `.mir` parsing, or IR tests;
-- claiming MLIR's GPU/accelerator ecosystem, transform dialect, bufferization,
-  affine/polyhedral stack, vector lowering, or target breadth;
+- claiming MLIR's accelerator ecosystem, transform dialect, bufferization,
+  affine/polyhedral stack, vector lowering, or target breadth within this
+  plan — GPU is a stretch goal pursued on its own schedule, not something
+  this pivot delivers;
 - reproducing every MLIR abstraction before Mojito has a concrete consumer.
 
 ## Evidence and evaluated pins
@@ -325,7 +329,7 @@ Declare the pivot complete only when:
 | LLVM leakage | default build links/discovers LLVM | dependency-tree guard separating `pliron` from `pliron-llvm`. |
 | LLVM dialect gaps | broad local operation patch set | upstream narrow additions; use `mojito.abi` temporarily; fall back to Cranelift from core. |
 | Artifact instability | canonical text changes across Pliron upgrades | own `.mir` syntax/version adapter or pin printer semantics independent of upstream IDs. |
-| False Mojo analogy | architecture expands toward unsupported GPU goals | scope goals explicitly; add hardware dialects only behind demonstrated programs and funding. |
+| False Mojo analogy | architecture expands toward GPU goals ahead of their schedule | scope goals explicitly; add hardware dialects only behind demonstrated programs and funding. |
 
 ## Rejected alternatives
 
@@ -366,8 +370,10 @@ the default build acquires LLVM, or if measured overhead is disproportionate.
 Pliron is up to being **Mojito's** required IR framework, provided Mojito wants
 an extensible Rust-native middle end and accepts ownership of its dialects,
 passes, tooling, and some upstream framework work. It is not currently up to
-being **MLIR in general**, and therefore cannot make Mojito architecturally or
-operationally equivalent to Mojo's MLIR-based heterogeneous stack.
+being **MLIR in general**, so adopting it does not by itself make Mojito
+architecturally or operationally equivalent to Mojo's MLIR-based heterogeneous
+stack — that equivalence is the goal this plan serves in part, not something
+one framework choice delivers.
 
 Option A is feasible because Mojito's scope is narrower and the existing MIR,
 VM, native ABI, and differential corpus provide unusually strong migration

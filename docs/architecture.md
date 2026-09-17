@@ -130,20 +130,30 @@ The architecture prioritizes:
   implementation
 
 mojito does not today reproduce Mojo's production architecture, and that
-exclusion is itself under review (`docs/pliron-future.md`). First-pass
-parity targets single-threaded CPU language semantics and excludes GPU,
-concurrency/parallelism, distributed execution, Python interoperability, any
-requirement that MLIR (or any backend IR — Pliron and Cranelift sit below the
-verified-MIR waist) be the compiler's internal IR layer, legacy `fn`/`owned`
-and other removed source spellings beyond clear rejection diagnostics, and
-escaping closures with the removed `escaping` effect — first-pass closure
-parity targets Mojo's current non-escaping capture-list model. The register VM is
+is now regarded as a mistake that must be corrected (`docs/pliron-future.md`).
+Resembling Mojo's own implementation as closely as a small compiler can is a
+goal, pursued in stages over a long horizon; the arrangements described in
+this document are where the code stands, not an argument that the distance
+from Mojo is right. Whether MLIR — or any backend IR — becomes the compiler's
+internal layer is one of those staged questions
+(`docs/pliron-backend-pivot-plan.md`), no longer a standing exclusion.
+
+What the current pass does not attempt is scope, not architecture: it targets
+single-threaded CPU language semantics and leaves out parallelism, distributed
+execution, Python interoperability, legacy `fn`/`owned` and other removed
+source spellings beyond clear rejection diagnostics, and escaping closures with
+the removed `escaping` effect — closure parity targets Mojo's current
+non-escaping capture-list model. Two of those lines are drawn differently.
+Concurrency in its most primitive form is expected: not tasks or parallel
+execution, but the smallest primitives the language needs, on no schedule yet.
+GPU is a stretch goal: we intend to reach it, but it is not on the immediate
+horizon. Distributed execution and Python interoperability are the ones we do
+not intend to pursue. The register VM is
 the executable specification. A versioned textual MIR/VM assembly form is the
 next representation boundary; the prioritized native backends are the
 Rust-native, MLIR-inspired [Pliron](https://github.com/pliron-org/pliron) (its
 LLVM dialect emits LLVM IR; `docs/roadmap.md` contains the staged adoption and
-fallback plan) and Cranelift, with a C or C++ source backend as a possible addition. Direct
-LLVM or MLIR lowering and eBPF are no longer prioritized.
+fallback plan) and Cranelift, with a C or C++ source backend as a possible addition.
 
 Native-backend work is isolated from the default build as an invariant: the
 default `mojito` build and `scripts/check` resolve no LLVM or Pliron
@@ -477,14 +487,41 @@ such a template survives as a signature-only `template_stub` whose body
 traps, so the discovery check can type the call against it. The stub stays
 in the program for a call from a retained bound-generic body over that body's
 own parameters (`show(x)` or `show[T](x)` in `def forward[T]`), and that call
-lowers to a call of the stub. It never runs. The elaborator lists every
-reference it leaves on an abstract path (`Elaborated::unserved_template_uses`)
-that can reach a stub: a reference to a compile-time-keyed template, or to a
-bound-generic `def` whose own body reaches one, transitively. A reference made
-inside such a body is not listed, because that body runs only through a listed
-reference. At the fixpoint `reject_unserved_template_calls` rejects a listed
-call the checker still records against its template, and any listed
-function-value use, so no accepted program reaches the trap. A **bound-generic** template — a plain
+lowers to a call of the stub. It never runs. A generic struct's
+erased method body is such a body too (`Box[T].f` calling `show(self.x)`): it
+runs only on the paths listed below, so the references it leaves are owned by
+the method (`Struct.method`) rather than unserved. The elaborator lists
+every reference it leaves on an abstract path
+(`Elaborated::unserved_template_uses`) that can reach a stub: a reference to a
+compile-time-keyed template, or to a bound-generic `def` or struct method
+whose own body reaches one, transitively — through a call it left abstract, or
+through a by-name method edge, since the receiver's type is the checker's to
+solve. A reference made inside such a body is not listed, because that body
+runs only through a listed reference. At the fixpoint
+`reject_unserved_template_calls` rejects a listed call the checker still
+records against its template, and any listed function-value use, so no
+accepted program reaches the trap.
+
+Such a method is served, or rejected, on the paths its erased body can run. A
+closed receiver reaches the method's clone, and construction, copying, moving
+and destruction reach the instance's lifecycle clones. An instance the
+elaborator queued but could not clone the method for — a bound violation, an
+argument with no source spelling, a clone whose own walk fails — reports that
+method's references as unserved (`Mono::unclonable_methods`); an instance that
+merely withholds the method, because a `where` clause or a conditional
+conformance makes it unavailable there, does not, since no call can reach that
+body either. An instance the fixpoint discovers at the round cap reports
+`SpecializationDivergence` rather than converging on the erased path
+(`Elaborated::stub_reaching_structs`). A bundled struct's method, and a struct
+whose parameters mint no clones at all (value, callable-bounded, or origin
+binders), keep no owner, so their references stay unserved as before. What is
+left is the erased dispatch no checked static type reaches — an operator or
+protocol dunder called from another erased body, an instance the checker
+records no instantiation for (a type parameter inferred as the compile-time
+`StringLiteral`), and CTFE, which runs before any clone exists — where such a
+method still traps at run time (`docs/roadmap.md`).
+
+A **bound-generic** template — a plain
 trait-bound generic `def` with no comptime constructs and a unique top-level
 name — resolves softly: only an explicit application whose arguments resolve
 concretely monomorphizes, while inferred calls, symbolic arguments, and
@@ -646,9 +683,23 @@ receiver); a method whose `where` clause is false — or unevaluable — for the
 instance, a requirement of a trait whose conditional conformance is false
 for the instance (`Iterator where conforms_to(T, Movable)` withholds
 `__next__` from `_ListOwnedIter[Pinned]`: Mojo instantiates it only through
-the conformance), a constructor or lifecycle method (they carry the
-value-parameter reification the erased path relies on), and an overload
-family that collapses to one shape on the instance stay uncloned. An
+the conformance), and an overload family that collapses to one shape on the
+instance stay uncloned. A user struct's lifecycle methods clone like any
+other, under the name they are registered and dispatched by — a copy
+constructor as `__copyinit__$y3:Int` — and the whole pipeline recovers the
+source name through `symbol::instance_clone_base` at the gates that test for
+one (`out self`, `@implicit`, the copy/move shapes, the named-destructor
+list). Nothing retargets those calls in the checker: the VM selects an
+instance's `__init__`/`__copyinit__`/`__moveinit__`/`__deinit__` clone from
+the checked static type of the value being built, copied, moved or destroyed
+(`Prog::lifecycle_symbol`, with `instance_field_types` carrying the
+substituted field types into a whole-value drop or copy), and the native
+monomorphizer emits such a clone under the instance's plain lifecycle symbol
+(`lifecycle_clone_instance_symbol`), which is what the Pliron lowering
+composes by name. A bundled template's constructors stay on the erased path
+(its `__deinit__` clones, which the elaborator already minted, are now
+reached like any other), and so does an overloaded constructor family, whose
+clones would not share the template's `$ov$` symbols. An
 instantiation whose argument mentions `StringLiteral` mints no clones and
 names none (`instance_method_clone_name`; a method-level type argument
 inferred from a string literal still materializes `String`, as the call

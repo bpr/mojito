@@ -194,25 +194,30 @@ impl<'a> Specializer<'a> {
         // A generic struct's method takes its concrete owner's spelling
         // (`List$mono$TInt.grow`), so lowering's name-composed lifecycle and
         // overload lookups against the instance struct name keep working.
-        let name = if let Some(owner) = &key.owner {
-            let base = mojito_symbol::symbol::retarget_method_symbol(template, owner).ok_or_else(
-                || {
-                    self.error(
-                        Some(template),
-                        format!("owner-bound instance `{template}` is not a method symbol"),
-                    )
-                },
-            )?;
-            if key.arguments.is_empty() {
-                base
+        let name =
+            if let Some(name) = lifecycle_clone_instance_symbol(template, key.owner.as_deref()) {
+                // A per-instantiation lifecycle clone is the instance's lifecycle
+                // body: it takes the plain symbol lowering composes by name
+                // (`Box$mono$TInt.__deinit__`), whichever site enqueues it first.
+                name
+            } else if let Some(owner) = &key.owner {
+                let base = mojito_symbol::symbol::retarget_method_symbol(template, owner)
+                    .ok_or_else(|| {
+                        self.error(
+                            Some(template),
+                            format!("owner-bound instance `{template}` is not a method symbol"),
+                        )
+                    })?;
+                if key.arguments.is_empty() {
+                    base
+                } else {
+                    mojito_symbol::symbol::instance_symbol(&base, &key.arguments)
+                }
+            } else if key.arguments.is_empty() {
+                template.to_string()
             } else {
-                mojito_symbol::symbol::instance_symbol(&base, &key.arguments)
-            }
-        } else if key.arguments.is_empty() {
-            template.to_string()
-        } else {
-            mojito_symbol::symbol::instance_symbol(template, &key.arguments)
-        };
+                mojito_symbol::symbol::instance_symbol(template, &key.arguments)
+            };
         if (name != template && self.functions.contains_key(name.as_str()))
             || self.instances.iter().any(|(_, n)| n == &name)
         {
@@ -588,6 +593,11 @@ impl<'a> Specializer<'a> {
                                 } else {
                                     self.runtime_pack_constructor(&init_base).unwrap_or(init)
                                 };
+                                // A closed instance constructs through its own
+                                // clone, as struct discovery enqueues it.
+                                let init = self
+                                    .instance_dunder_target(function, *dest, "__init__")
+                                    .unwrap_or(init);
                                 if self.functions.contains_key(init.as_str()) {
                                     let (target, bindings, arguments) = self.infer_call(
                                         owner,
@@ -1156,6 +1166,20 @@ impl<'a> Specializer<'a> {
                 {
                     continue;
                 }
+                // A closed instance whose clone of this lifecycle method
+                // exists runs that body, under the template-shaped symbol
+                // lowering composes for the instance.
+                let clone = mojito_symbol::symbol::instance_method_clone_name(
+                    method,
+                    &template.param_decls,
+                    &arguments,
+                )
+                .map(|clone| format!("{template_name}.{clone}"))
+                .filter(|symbol| self.functions.contains_key(symbol.as_str()));
+                if let Some(clone) = clone {
+                    self.enqueue(&clone, bindings.clone(), Vec::new())?;
+                    continue;
+                }
                 let base = format!("{template_name}.{method}");
                 let candidates = self
                     .functions
@@ -1234,4 +1258,29 @@ impl<'a> Specializer<'a> {
             construct: construct.into(),
         }
     }
+}
+
+/// The instance symbol a per-instantiation lifecycle clone is emitted under
+/// (`Box.__deinit__$y3:Int` bound to owner `Box$mono$TInt` becomes
+/// `Box$mono$TInt.__deinit__`), or `None` for any other method.
+///
+/// Lowering composes a struct's lifecycle symbols by name, so the clone must
+/// answer to the plain one; its template is never instantiated for that
+/// instance beside it.
+fn lifecycle_clone_instance_symbol(template: &str, owner: Option<&str>) -> Option<String> {
+    let owner = owner?;
+    let (_, method) = template.rsplit_once('.')?;
+    let base = mojito_symbol::symbol::instance_clone_base(method);
+    if !matches!(
+        base,
+        "__init__" | "__copyinit__" | "__moveinit__" | "__deinit__"
+    ) {
+        return None;
+    }
+    // Only a per-instantiation clone renames. A signature-qualified overload
+    // of the template itself (`Optional.__init__$ov$None`) keeps its own
+    // symbol: its siblings answer to the same base name.
+    let baked = method.strip_prefix(base)?;
+    (!baked.is_empty() && !baked.contains(mojito_symbol::symbol::OV_SEP))
+        .then(|| format!("{owner}.{base}"))
 }
