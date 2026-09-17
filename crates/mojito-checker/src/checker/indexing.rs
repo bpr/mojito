@@ -76,7 +76,10 @@ impl Checker {
     /// rooted at a mutable place (so `foo().x = e` or `self.x` in a read-only
     /// method are rejected). SIMD lane writes are not supported yet.
     pub(super) fn check_place(&self, place: &Expr) -> Result<Ty, TypeError> {
-        let result = self.check_place_impl(place);
+        let result = self.check_place_impl(place).and_then(|ty| {
+            self.check_rebind_place(place, &ty)?;
+            self.apply_rebind_target(place, ty)
+        });
         if let Ok(ty) = &result {
             self.expression_types
                 .borrow_mut()

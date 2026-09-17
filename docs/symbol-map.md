@@ -259,8 +259,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `checker/rebind.rs` owns `rebind[Dest](value)`: `erase_rebinds` replaces
   each well-formed call by its operand before checking and records the
   retyping in `Checker.rebind_targets`; `apply_rebind_target` (from
-  `infer` and the `ref` binding) takes `Dest` on faith under validation and
-  demands equality once instantiated.
+  `infer`, the `ref` binding, and `check_place`) takes `Dest` on faith under
+  validation and demands equality once instantiated; `check_rebind_place`
+  rejects writing through a by-value (`TrivialRegisterPassable`) rebind,
+  outside `$`-mangled clones. The parser admits the call as an
+  augmented-assignment target (`parser/stmts.rs`).
 - `checker/constraints.rs` owns compile-time evaluation and generic-constraint
   compilation/evaluation. `compile_where_clause` retains an optional source
   diagnostic around the semantic constraint compiled by

@@ -496,17 +496,52 @@ entry names what it depends on, and an entry with no dependency sits as early
 as its size allows. The **Model:** bullet carries the complexity estimate and
 says whether the entry can be done as-is or must be planned first.
 
-- [ ] **`rebind` cannot be an augmented-assignment target**
+- [ ] **`rebind` cannot be a plain assignment target**
 
-  Problem: `rebind[Int](x) += 1` on a `mut x: T` runs at the pin (prints
-  `4` after `bump(v)`), while Mojito's parser rejects a call as an augmented
-  assignment target.
-  - Once parsed, nothing else is missing: the checker erases the call before
-    checking, so the target is the operand `x` itself.
-  - The parser's place-target rule is the only lever
-    (`crates/mojito-parser/src/parser/stmts.rs`).
+  Problem: `rebind[Int](x) = 7` on a `mut x: T` runs at the pin (prints `7`),
+  while Mojito's parser rejects a call as an assignment target.
+  - The augmented form already parses (`parse_expr_or_assign` in
+    `crates/mojito-parser/src/parser/stmts.rs`); the `=` arm needs the same
+    `rebind` exception, producing a `SetPlace`.
+  - Check that `SetPlace` reaches `check_place`, which retypes the erased
+    operand and rejects a by-value (`TrivialRegisterPassable`) rebind, as it
+    does for `+=`.
   - Depends on nothing.
   - Model: Opus, as-is. One parser rule and one fixture.
+
+- [ ] **A free `def` whose `comptime if` keys on an inferred type parameter
+  is rejected**
+
+  Problem: `def show[T: Copyable](x: T)` with `comptime if T == Int`, called
+  as `show(3)`, prints `int` at the pin, while Mojito reports "generic 'show'
+  requires compile-time parameter 'T'".
+  - `show[Int](3)` works, and so does an inferred call to a method with the
+    same body (per-call method clones).
+  - The error comes from `resolve_spec_args_for`
+    (`crates/mojito-comptime/src/comptime/mono.rs`): a `def` specialization
+    needs every type argument spelled at the call.
+  - Inference needs the checker's argument types, so the call should become
+    a discovery request, as inferred method clones already do.
+  - Depends on nothing.
+  - Model: Opus, plan first. The plan must show how the method-clone request
+    path extends to free `def`s, and what stands in for the template until
+    the request is served.
+
+- [ ] **`rebind` in a generic body without compile-time control flow is
+  rejected**
+
+  Problem: `def bump[T: Copyable](mut x: T): rebind[Int](x) += 1`, called
+  with an `Int`, runs at the pin (prints `4`), while Mojito reports "the
+  input type does not match the result type: expected Int, found T".
+  - Only bodies holding a `comptime if`/`comptime for` are specialized per
+    instantiation. This body is checked once, generically, where
+    `apply_rebind_target` (`checker/rebind.rs`) demands `T == Int`.
+  - Taking the target on faith in the generic check is not enough. Upstream
+    asserts the equality after instantiation, and bound-generic
+    monomorphization runs below the checker, with no check of its own.
+  - Depends on nothing.
+  - Model: Opus, plan first. The plan must say where the equality is
+    asserted per instantiation.
 
 - [ ] **A `def`'s own type pack cannot be queried in a runtime position**
 
@@ -549,6 +584,10 @@ says whether the entry can be done as-is or must be planned first.
     `concrete_only_def` in `checker/comptime_validation.rs`, and the
     per-instantiation stub path in the elaborator stays as the executable
     route.
+  - The same boundary lets such a body write through a by-value `rebind`.
+    `check_rebind_place` (`checker/rebind.rs`) exempts every `$`-mangled
+    clone, trusting source validation to have judged the template. These
+    templates were never validated.
   - Every stdlib pack body passes through it: `Tuple`'s comparison, hashing,
     and writing methods, `Variant`'s `isa`/`unsafe_get` on
     `__VariantStorage[*Self.Ts]`, `TString.write_to`, and

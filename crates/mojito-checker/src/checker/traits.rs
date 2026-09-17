@@ -2405,6 +2405,28 @@ impl Checker {
         }
     }
 
+    /// Whether `ty` conforms to `TrivialRegisterPassable`: a numeric, `Bool`,
+    /// or SIMD-valued builtin, a struct declaring the conformance, or a
+    /// parameter bounded or assumed by it. The general `conforms_to` answers
+    /// marker traits shallowly, so it cannot be asked.
+    pub(super) fn is_trivial_register_passable(&self, ty: &Ty) -> bool {
+        super::builtins::is_numeric(ty)
+            || *ty == Ty::Bool
+            || super::builtins::simd_valued_ty(ty)
+            || match ty {
+                Ty::Struct(name, args) => {
+                    self.struct_conformance_applies(name, args, "TrivialRegisterPassable")
+                }
+                Ty::Param { bounds, .. } => {
+                    bounds
+                        .iter()
+                        .any(|bound| bound == "TrivialRegisterPassable")
+                        || self.has_assumed_conformance(ty, "TrivialRegisterPassable")
+                }
+                _ => false,
+            }
+    }
+
     /// The `IsTrivially{Movable,Copyable,Deinitable}[T]` predicate: the type
     /// conforms to `TrivialRegisterPassable`, OR the base capability holds AND
     /// the corresponding lifecycle operation is compiler-generated (no user

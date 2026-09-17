@@ -77,6 +77,34 @@ impl Checker {
         Ok(dest)
     }
 
+    /// Reject writing through an erased `rebind` that upstream rebinds by
+    /// value. `rebind` is overloaded on its operand: a
+    /// `TrivialRegisterPassable` operand is rebound by value, any other
+    /// through `ref[src]`, and only the reference is a place. The overload is
+    /// selected once, on the declaration, so a compiler-generated (`$`-mangled)
+    /// specialization keeps the selection source validation made with the
+    /// operand's type still symbolic instead of re-selecting on the concrete
+    /// type it was cloned with.
+    pub(super) fn check_rebind_place(&self, place: &Expr, operand: &Ty) -> Result<(), TypeError> {
+        if !self.rebind_targets.contains_key(&place.source_span())
+            || !self.is_trivial_register_passable(operand)
+        {
+            return Ok(());
+        }
+        let generated_body = !self.source_validation
+            && self
+                .transfer_frames
+                .borrow()
+                .iter()
+                .any(|frame| frame.callable.contains('$'));
+        if generated_body {
+            return Ok(());
+        }
+        Err(TypeError::ImmutableBinding(
+            place_root_name(place).unwrap_or("rebind").to_string(),
+        ))
+    }
+
     /// The rejection for a `rebind` call the eraser left in place.
     pub(super) fn rebind_shape_error(param_args: &[ParamArg], args: &[Expr]) -> TypeError {
         if param_args.len() != 1 {

@@ -1957,6 +1957,21 @@ fn rejects_augmented_assignment_to_non_place() {
     assert!(parser.parse_program().is_err());
 }
 
+#[test]
+fn parses_rebind_as_augmented_assignment_target() {
+    assert!(matches!(
+        &parse("rebind[Int](x) += 1\n")[0].kind,
+        StmtKind::AugAssign {
+            place: Expr {
+                kind: ExprKind::Call { name, .. },
+                ..
+            },
+            op: InfixOp::Add,
+            ..
+        } if name == "rebind"
+    ));
+}
+
 // --- Walrus / named expression ---
 
 #[test]

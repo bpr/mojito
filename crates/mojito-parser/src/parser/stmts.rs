@@ -197,18 +197,20 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             return Ok(stmt);
         }
 
-        // Augmented assignment `target OP= value` (target is a NAME or place).
+        // Augmented assignment `target OP= value` (target is a NAME, a place, or
+        // `rebind[Dest](place)`, which the checker erases to its operand).
         if let Some(op) = self.peek_token()?.and_then(aug_assign_op) {
             self.next_token()?; // consume the `OP=` token
             if !matches!(
-                expr.kind,
+                &expr.kind,
                 ExprKind::Identifier(_)
                     | ExprKind::Member { .. }
                     | ExprKind::Index { .. }
                     | ExprKind::Slice { .. }
                     | ExprKind::MultiIndex { .. }
                     | ExprKind::TypeApply { .. }
-            ) {
+            ) && !matches!(&expr.kind, ExprKind::Call { name, .. } if name == "rebind")
+            {
                 return Err(ParseError::UnexpectedToken(
                     Token::Assign,
                     format!("invalid augmented-assignment target: {:?}", expr.kind),

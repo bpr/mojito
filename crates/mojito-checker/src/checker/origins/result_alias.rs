@@ -308,23 +308,9 @@ impl Checker {
             .any(|origin| origin_in_owned_interior(origin, destination))
     }
 
-    /// A read of this type copies a value that borrows nothing. The general
-    /// `conforms_to` answers marker traits shallowly, so only a declared
-    /// conformance or a parameter bound counts, as in `trivial_lifecycle`.
+    /// A read of this type copies a value that borrows nothing.
     fn is_loan_free_register_passable(&self, ty: &Ty) -> bool {
-        let register_passable = crate::checker::builtins::is_numeric(ty)
-            || *ty == Ty::Bool
-            || crate::checker::builtins::simd_valued_ty(ty)
-            || match ty {
-                Ty::Struct(name, args) => {
-                    self.struct_conformance_applies(name, args, "TrivialRegisterPassable")
-                }
-                Ty::Param { bounds, .. } => bounds
-                    .iter()
-                    .any(|bound| bound == "TrivialRegisterPassable"),
-                _ => false,
-            };
-        register_passable && !self.type_carries_loans(ty)
+        self.is_trivial_register_passable(ty) && !self.type_carries_loans(ty)
     }
 }
 
