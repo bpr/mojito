@@ -44,20 +44,6 @@ entry names what it depends on, and an entry with no dependency sits as early
 as its size allows. The **Model:** bullet carries the complexity estimate and
 says whether the entry can be done as-is or must be planned first.
 
-- [ ] **An inferred call to a compile-time-keyed `@staticmethod` aborts at
-  run time**
-
-  Problem: `S.show(3)` on `@staticmethod def show[T: Copyable](x: T)` with
-  `comptime if T == Int` prints `int` at the pin. Mojito compiles it, then
-  aborts with "S.show: unspecialized type-keyed method".
-  - The same body as an instance method (`s.show(3)`) runs, and so does a
-    free `def` (`assets/ok/comptime_if_inferred_def.mojo`).
-  - The call reaches the `unspecialized_method_stub` trap. No per-call clone
-    is requested for a static receiver, and no fixpoint check rejects the
-    stub call the way `reject_unserved_template_calls` does for free `def`s.
-  - Depends on nothing.
-  - Model: Opus, as-is.
-
 - [ ] **An abstract generic body cannot call a compile-time-keyed `def`**
 
   Problem: `def forward[T: Copyable](x: T): show(x)`, where `show` keys a
@@ -349,6 +335,20 @@ whatever its model, because it batches every change that needs a new
 
 The two checkboxes below, and the bullets inside the two standing ones,
 are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
+
+- [ ] **Explicit type arguments on a static method of a non-parametric
+  struct are rejected**
+
+  Problem: `P.plain[Int](4)` on `@staticmethod def plain[T: Writable](x: T)`
+  prints `1` at the pin, while Mojito reports "Undefined variable 'P'".
+  - Any generic static on a struct without parameters is affected, whether
+    or not its body holds a `comptime if`.
+  - The inferred spelling `P.plain(4)` works.
+  - The explicit spelling parses as `Invoke` over `Member(P, plain)`. The
+    error is raised before the non-parametric static path in
+    `checker/method_calls/mc_infer.rs` sees the call.
+  - Model: Opus, plan first. The plan must first find which pass infers the
+    bare type name as a value.
 
 - [ ] **A call through a `ref` to a callable value is rejected**
 

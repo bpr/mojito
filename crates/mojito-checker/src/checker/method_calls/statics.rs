@@ -403,8 +403,8 @@ impl Checker {
                 )
             };
             if let Some(clone) = clone {
-                return self.infer_struct_static_method(
-                    span,
+                let ty = self.infer_struct_static_method(
+                    span.clone(),
                     sname,
                     struct_targs,
                     &clone,
@@ -415,7 +415,9 @@ impl Checker {
                         parameterized_syntax,
                         preserves_receiver_interiors: false,
                     },
-                );
+                )?;
+                self.record_static_clone_target(span, sname, &clone);
+                return Ok(ty);
             }
         }
         // An explicit receiver instance (`Dict[String, Int].fromkeys(...)`)
@@ -577,6 +579,16 @@ impl Checker {
             self.require_error(format!("call to raising method '{sname}.{method}'"), error)?;
         }
         Ok(selected.return_type)
+    }
+
+    /// Target a static call retargeted to its per-call clone `clone`: the
+    /// clone's sole signature names no target of its own, and the call's
+    /// syntax still names the template.
+    pub(super) fn record_static_clone_target(&self, span: SourceSpan, sname: &str, clone: &str) {
+        self.overload_targets
+            .borrow_mut()
+            .entry(span)
+            .or_insert_with(|| format!("{sname}.{clone}"));
     }
 
     /// Solve a struct's compile-time parameters for a static-method call:

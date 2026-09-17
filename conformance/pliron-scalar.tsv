@@ -56,6 +56,7 @@ assets/ok/comptime_hash.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_generic_specialization.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_inferred_def.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_if_inferred_static_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_lambda_initializer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_shadowed_locals.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_string_value.mojo	-	ineligible	no-scalar-entry-shape

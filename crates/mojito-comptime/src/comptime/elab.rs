@@ -365,14 +365,20 @@ impl Elab<'_> {
                 if !self.is_specializable(stmt) {
                     let requests = self.method_requests.get(name.as_str());
                     for method in &stmt_methods(stmt) {
-                        methods.extend(self.per_call_method_clones(
+                        let clones = self.per_call_method_clones(
                             method,
                             requests.map_or(&[][..], Vec::as_slice),
                             &[],
                             &[],
                             None,
                             env,
-                        ));
+                        );
+                        self.per_call_clones.borrow_mut().extend(
+                            clones
+                                .iter()
+                                .map(|clone| (name.clone(), clone.name.clone())),
+                        );
+                        methods.extend(clones);
                     }
                 }
                 out.push(mk(

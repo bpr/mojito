@@ -507,7 +507,13 @@ the struct's or its own parameters bound. In the checker,
 the heterogeneous `RuntimePack` so each overflow argument scores and converts
 against its own element, and the call retargets through
 `instance_call_method_clone` / `specialized_method_clone` by the composed
-name.
+name. An instance call records that name as its target; a static call,
+whose syntax still names the template, records it through
+`record_static_clone_target`. Every clone's body gets its own source tag
+after the uniform module stamp, so span-keyed facts (including the
+requests of calls inside it) stay separate across a template's clones: an
+instance clone is found by its `self_ty`, a clone on a named owner through
+`Elab::per_call_clones`.
 
 Temporaries borrow for their statement through three anchors. A temporary
 receiver of a `ref[self]`-returning method is materialized like a temporary

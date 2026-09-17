@@ -753,6 +753,7 @@ pub fn elaborate_prepared(
         instance_requests,
         hash_leaf_types: hash_leaf_types.to_vec(),
         pending_struct_instances: RefCell::new(HashMap::new()),
+        per_call_clones: RefCell::new(HashSet::new()),
         conformance,
         tuple_universe,
         tuple_transforms,
@@ -776,15 +777,18 @@ pub fn elaborate_prepared(
             mojito_ast::ast::stamp_source(std::slice::from_mut(statement), &source);
         }
     }
-    // Per-instantiation method clones reuse their template's spans; each
-    // clone's body gets its own source tag after the uniform module stamp
-    // above (the discipline struct specializations follow), keeping
-    // span-keyed checked facts separate across instantiations.
+    // Per-instantiation and per-call method clones reuse their template's
+    // spans; each clone's body gets its own source tag after the uniform
+    // module stamp above (the discipline struct specializations follow),
+    // keeping span-keyed checked facts separate across instantiations.
+    let per_call_clones = elab.per_call_clones.take();
     for statement in &mut result {
         let module = statement.module.clone();
         if let StmtKind::Struct { name, methods, .. } = &mut statement.kind {
             for method in methods.iter_mut() {
-                if method.self_ty.is_some() {
+                if method.self_ty.is_some()
+                    || per_call_clones.contains(&(name.clone(), method.name.clone()))
+                {
                     let tag = match &module {
                         Some(module) => format!("{module}${name}${}", method.name),
                         None => format!("{name}${}", method.name),
@@ -1475,6 +1479,10 @@ struct Elab<'a> {
     /// one specialization identity for every consumer, and monomorphization
     /// mints them alongside the call-site applications.
     pending_struct_instances: RefCell<HashMap<String, (String, Vec<CtValue>)>>,
+    /// Per-call method clones minted on a non-generic struct, as (owner,
+    /// clone name). They carry no receiver type, so source stamping names
+    /// them here rather than by `Method::self_ty`.
+    per_call_clones: RefCell<HashSet<(String, String)>>,
     fuel: Cell<usize>,
     top_consts: RefCell<HashMap<String, CtValue>>,
     /// Module-scope generic `comptime` aliases in declaration order, name →

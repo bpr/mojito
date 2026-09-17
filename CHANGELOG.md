@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An inferred call to a `@staticmethod` whose `comptime if` keys on its own
+  type parameter now runs, as in the pinned Mojo: `S.show(3)` on `def
+  show[T: Copyable](x: T)` prints `int` instead of aborting with
+  "S.show: unspecialized type-keyed method", on the VM and natively. This
+  holds on a parametric owner too (`B[Int].show(3)`, `B.make(1, "s")`). A
+  generic method, static or instance, that calls such a method from two of
+  its own instantiations no longer aborts either.
 - A generic `def` whose `comptime if` keys on an inferred type parameter now
   runs, as in the pinned Mojo: `def show[T: Copyable](x: T)` with `comptime
   if T == Int`, called as `show(3)`, prints `int` instead of failing with

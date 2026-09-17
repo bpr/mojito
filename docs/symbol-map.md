@@ -157,7 +157,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   both method paths and the constructor paths record
   `checked::MethodInstantiation`s and retarget to an existing per-call
   clone through `specialized_method_clone`, whose value list must agree with
-  the specializer's `method_request_values`; the method-call, static, and
+  the specializer's `method_request_values` (a retargeted static names the
+  clone through `record_static_clone_target`); the method-call, static, and
   constructor paths also record every closed generic-struct application
   reached from a non-bundled source (`record_struct_instantiation` →
   `checked::StructInstantiation`) and retarget a closed receiver's call to

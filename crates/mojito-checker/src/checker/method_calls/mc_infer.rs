@@ -227,8 +227,8 @@ impl Checker {
                         param_types: params,
                         param_decls: sig.decls.clone(),
                         parametric_origin_writes: sig.parametric_origin_writes.clone(),
-                        instantiation: None,
-                        parameter_names: Vec::new(),
+                        instantiation: method_instantiation_arguments(sig, &method_arguments),
+                        parameter_names: sig.names.clone(),
                         view_return_interior: Vec::new(),
                         view_return: Vec::new(),
                         declared_params: Vec::new(),
@@ -246,6 +246,43 @@ impl Checker {
                         .to_string(),
                     }
                 })?;
+                // A generic static records its instantiation and retargets
+                // to the per-call clone once minted, as an instance call
+                // does: a compile-time-keyed body only folds bound.
+                if let Some(arguments) = &selected.instantiation {
+                    let source_method = method.split('$').next().unwrap_or(method);
+                    self.method_instantiations.borrow_mut().insert(
+                        span.clone(),
+                        mojito_checked::checked::MethodInstantiation {
+                            owner: sname.clone(),
+                            owner_arguments: Vec::new(),
+                            method: source_method.to_string(),
+                            parameter_names: selected.parameter_names.clone(),
+                            arguments: arguments.clone(),
+                        },
+                    );
+                    if let Some(clone) = self.specialized_method_clone(
+                        sname,
+                        method,
+                        &selected.param_decls,
+                        arguments,
+                    ) {
+                        let ty = self.infer_method_call(
+                            span.clone(),
+                            object,
+                            &clone,
+                            MethodCallArguments {
+                                param_args: &[],
+                                args,
+                                kwargs,
+                                parameterized_syntax,
+                                preserves_receiver_interiors,
+                            },
+                        )?;
+                        self.record_static_clone_target(span, sname, &clone);
+                        return Ok(ty);
+                    }
+                }
                 return self.finish_static_call(
                     span,
                     sname,
