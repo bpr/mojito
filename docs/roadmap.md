@@ -318,14 +318,14 @@ whatever its model, because it batches every change that needs a new
 The two checkboxes below, and the bullets inside the two standing ones,
 are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
 
-- [ ] **A display of capturing lambdas is rejected**
+- [ ] **A call through a `ref` to a callable value is rejected**
 
-  Problem: `[lambda (x: Int) {k} -> Int: x * k]` runs at the pin (prints `6` for
-  `fns[0](2)`), while Mojito rejects a capturing element as a non-storable
-  callable.
-  - Thin function displays already store as `Array[def(...) thin -> R, N]`
-    (`assets/ok/function_value_array_display.mojo`); a capturing element needs
-    closure storage in the array on the VM and natively.
+  Problem: `for f in fns: print(f(5))` and `ref g = fns[0]; print(g(1))` run at
+  the pin over a function display, while Mojito reports "'f' has type ref
+  def(Int) thin -> Int and is not callable".
+  - Both thin and capturing elements are affected.
+  - The indexed call `fns[0](5)` already works through element-call dispatch.
+    A `ref`-typed callee has no such path.
   - Model: Opus, plan first.
 
 - [ ] **A view returned by a method on a `List` element reads freed memory on

@@ -780,18 +780,10 @@ impl Checker {
                             Ty::Ref(reference) => *reference.referent,
                             other => other,
                         };
-                        // Assigning a closure could move it to an outer binding;
-                        // a thin function value captures nothing.
-                        if matches!(
-                            found,
-                            Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_)
-                        ) && !matches!(
-                            found,
-                            Ty::Func {
-                                environment: mojito_types::origin::CallableEnvironment::Thin,
-                                ..
-                            }
-                        ) {
+                        // Assigning a closure, or an aggregate storing one,
+                        // could move it to an outer binding; a thin function
+                        // value captures nothing.
+                        if holds_closure(&found) {
                             return Err(TypeError::ClosureEscape);
                         }
                         // Recorded before the origins are read, as at the
@@ -1901,15 +1893,16 @@ impl Checker {
                 {
                     self.check_consuming(e, &found, "return value")?;
                 }
-                // Returning a callable *value* is an escape; returning a
-                // checked reference to callable storage is not. The latter is
-                // how a nominal Tuple's indexed accessor exposes a function
-                // element while the Tuple owner remains live.
+                // Returning a callable *value*, or an aggregate storing a
+                // closure, is an escape; returning a checked reference to
+                // callable storage is not. The latter is how a nominal Tuple's
+                // indexed accessor exposes a function element while the Tuple
+                // owner remains live.
                 if !returning_reference
-                    && matches!(
+                    && (matches!(
                         found,
                         Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_)
-                    )
+                    ) || holds_closure(&found))
                 {
                     return Err(TypeError::ClosureEscape);
                 }
@@ -2879,6 +2872,26 @@ impl Checker {
 }
 
 const RESERVED_FUNCTION_NAMES: &[&str] = &["class", "del", "match", "yield"];
+
+/// Whether a value of `ty` is, or stores, a closure: a non-thin callable,
+/// directly or as a struct argument, tuple or variant element. A thin
+/// function's signature is not searched, since the value captures nothing
+/// whatever contracts its parameters name.
+fn holds_closure(ty: &Ty) -> bool {
+    match ty {
+        Ty::Func { environment, .. } => {
+            !matches!(environment, mojito_types::origin::CallableEnvironment::Thin)
+        }
+        Ty::GenericFunc { .. } | Ty::Overload(_) => true,
+        Ty::Struct(_, arguments) => arguments.iter().any(|argument| {
+            matches!(argument, mojito_types::types::TyArg::Ty(element) if holds_closure(element))
+        }),
+        Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
+            elements.iter().any(holds_closure)
+        }
+        _ => false,
+    }
+}
 
 /// The source spelling of a dependent pack projection annotation
 /// (`values.Ts[index]`), used as the opaque element's type name inside a

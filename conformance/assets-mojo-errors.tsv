@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	387
+# swept-count	391
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -43,6 +43,7 @@ assets/origin_error/projected_origin_mismatch.mojo	compile-reject	agree	error: c
 assets/origin_error/returned_loan_conflict.mojo	runs	subset	the pin runs it; Mojito rejects a returned loan that conflicts with a live reference
 assets/origin_error/returned_local.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(source)'
 assets/origin_error/returned_pointer_deref_immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/ownership_error/capturing_lambda_display_moved_capture.mojo	compile-reject	agree	error: use of uninitialized value 'label'
 assets/ownership_error/comprehension_interior_invalidation.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference
 assets/ownership_error/conditional_move.mojo	compile-reject	agree	error: use of uninitialized value 'a'
 assets/ownership_error/deinit_receiver_raising_in_try.mojo	compile-reject	agree	error: use of uninitialized value 'o'
@@ -164,6 +165,9 @@ assets/type_error/call_result_pointer_field_immutable_source_write.mojo	compile-
 assets/type_error/captured_origin_specialization_rejected.mojo	compile-reject	agree	error: member method closures are not supported; add '()' to call '__call__'
 assets/type_error/capturing_closure_plain_def_param.mojo	compile-reject	agree	error: invalid call to '__call__': value cannot be converted from type value '$0' to an instance of '$0'; did you mean to instantiate '$0'?
 assets/type_error/capturing_field_rejected.mojo	compile-reject	agree	error: function type missing required origin set parameter
+assets/type_error/capturing_lambda_array_reassignment.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/capturing_lambda_display_distinct_types.mojo	compile-reject	agree	error: value of type 'def(x: Int) -> Int' is not compatible with value of type 'def(x: Int) -> Int'
+assets/type_error/capturing_lambda_display_transferred_uncopyable.mojo	compile-reject	agree	error: value of type 'def(x: Int) -> Int' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/closure_capturing_loop_ref_escapes.mojo	compile-reject	agree	error: cannot implicitly convert 'def() -> Int' value to 'Int'
 assets/type_error/comptime_alias_constraint_message.mojo	compile-reject	agree	error: violated constraint
 assets/type_error/comptime_collection_runtime_use.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Dict[String, Int]' to runtime because it is not 'ImplicitlyCopyable'

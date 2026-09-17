@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A display of one capturing lambda now runs, as in the pinned Mojo: `var fns =
+  [lambda (x: Int) {k} -> Int: x * k]; print(fns[0](2))` prints `6` instead of
+  rejecting the element as a non-storable callable, on the VM and natively.
+  A lambda bound straight into storage now keeps its reference captures
+  borrowed. A `capturing[_]` local over `{k}` used to read a dropped `k`.
+  Two capturing lambdas in one display, a transferred non-copyable capture,
+  and reassigning or returning an aggregate that stores a closure are
+  rejected.
 - `SIMD` types and values now have upstream's `dtype` alias: `Int32.dtype`
   and `s.dtype` on a `SIMD[DType.int16, 4]` print `int32` and `int16`
   instead of failing with "has no field 'dtype'", at run time and in

@@ -1189,19 +1189,7 @@ impl Checker {
             // (notably `List[T]`) still controls contextual materialization.
             ExprKind::ListLit(elems) => {
                 let element = self.infer_list_elem(elems)?;
-                // A display of non-capturing function values stores them as a
-                // fixed-size array of that thin function type, as current
-                // Mojo does; a generic or capturing element is not storable.
-                if !matches!(
-                    &element,
-                    Ty::Func { environment, .. }
-                        if !matches!(environment, mojito_types::origin::CallableEnvironment::Capturing(_))
-                ) {
-                    super::type_resolution::reject_stored_callable_type(
-                        &element,
-                        "a collection display element",
-                    )?;
-                }
+                self.check_callable_display_element(elems, &element)?;
                 if !self.is_movable(&element) {
                     return Err(TypeError::TraitNotSatisfied {
                         param: "T".to_string(),
@@ -2685,6 +2673,76 @@ impl Checker {
             },
         );
         Ok(Ty::Variant(alternatives))
+    }
+
+    /// Whether an uncontextualized display may store its callable element
+    /// type. Thin function values store as a fixed-size array of that thin
+    /// type, as current Mojo does. A capturing closure stores only as the
+    /// display's single lambda expression: every lambda has its own type
+    /// upstream, so no two capturing elements unify, and a named closure
+    /// (a nested def, an annotated local) is not a storable value there. The
+    /// display copies its element, so a transferred capture must itself be
+    /// `ImplicitlyCopyable`.
+    fn check_callable_display_element(
+        &self,
+        elems: &[Expr],
+        element: &Ty,
+    ) -> Result<(), TypeError> {
+        let Ty::Func { environment, .. } = element else {
+            return super::type_resolution::reject_stored_callable_type(
+                element,
+                "a collection display element",
+            );
+        };
+        if !matches!(
+            environment,
+            mojito_types::origin::CallableEnvironment::Capturing(_)
+        ) {
+            return Ok(());
+        }
+        match elems {
+            [single] => {
+                let ExprKind::Lambda { def } = &single.kind else {
+                    return super::type_resolution::reject_stored_callable_type(
+                        element,
+                        "a collection display element",
+                    );
+                };
+                let captures = self.declaration_captures.borrow();
+                let uncopyable = captures.get(&def.source_span()).and_then(|captures| {
+                    captures.iter().find(|capture| {
+                        capture.kind == mojito_ast::ast::CaptureKind::Move
+                            && !self.is_implicitly_copyable(&capture.ty)
+                    })
+                });
+                uncopyable.map_or(Ok(()), |capture| {
+                    Err(TypeError::TraitNotSatisfied {
+                        param: "T".to_string(),
+                        ty: element.to_string(),
+                        trait_name: "ImplicitlyCopyable".to_string(),
+                        reason: Some(format!(
+                            "the closure owns '{}' by transfer, and '{}' cannot be implicitly copied",
+                            capture.name, capture.ty
+                        )),
+                    })
+                })
+            }
+            [_, _, ..]
+                if elems
+                    .iter()
+                    .all(|value| matches!(value.kind, ExprKind::Lambda { .. })) =>
+            {
+                Err(TypeError::TypeMismatch {
+                    expected: "the first element's lambda type".to_string(),
+                    found: "another capturing lambda".to_string(),
+                    context: "list element (each capturing lambda has its own type)".to_string(),
+                })
+            }
+            _ => super::type_resolution::reject_stored_callable_type(
+                element,
+                "a collection display element",
+            ),
+        }
     }
 }
 

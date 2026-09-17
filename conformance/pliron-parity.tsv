@@ -40,6 +40,7 @@ assets/ok/call_temporary_ref_receiver.mojo	main	exe-differential	sanitized
 assets/ok/callable_element_call_dispatch.mojo	main	exe-differential	sanitized
 assets/ok/callable_struct_element_invocation.mojo	main	exe-differential	sanitized
 assets/ok/callable_struct_transfer_after_last_use.mojo	main	exe-differential	sanitized
+assets/ok/capturing_lambda_array_display.mojo	main	exe-differential	sanitized
 assets/ok/chained_comparison.mojo	main	exe-differential	sanitized
 assets/ok/closures.mojo	main	exe-differential	sanitized
 assets/ok/collection_truthiness.mojo	main	exe-differential	sanitized

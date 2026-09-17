@@ -381,6 +381,16 @@ fn rejects_escaping_closure() {
     assert_eq!(e, TypeError::ClosureEscape);
 }
 
+#[test]
+fn rejects_returning_an_array_storing_a_closure() {
+    // The escape is judged through the aggregate: the returned array's
+    // element would outlive the frame holding its environment.
+    let e = err_std(
+        "def make() -> Array[def(x: Int) capturing[_] -> Int, 1]:\n    var i = 2\n    var fns: Array[def(x: Int) capturing[_] -> Int, 1] = [lambda (x: Int) {var i} -> Int: x * i]\n    return fns^\n",
+    );
+    assert_eq!(e, TypeError::ClosureEscape);
+}
+
 // --- Statically enforced Mojo rules ---
 
 #[test]

@@ -501,26 +501,30 @@ impl Flatten<'_> {
                 })
                 .collect();
         }
-        if let ExprKind::Identifier(name) = &expression.kind {
-            if let Some(var) = self.existing_expression_var(name, expression)
-                && let Some(loans) = self.aggregate_loans.get(&var)
-            {
-                return loans.clone();
+        if let ExprKind::Identifier(name) = &expression.kind
+            && let Some(var) = self.existing_expression_var(name, expression)
+            && let Some(loans) = self.aggregate_loans.get(&var)
+        {
+            return loans.clone();
+        }
+        // A capturing closure (a nested def's name or a lambda expression)
+        // flowing into storage loans its REFERENCE captures' owners: the
+        // stored value retains their frame slots, so the owners must stay
+        // alive (and, for `imm`, unmutated) while the storage lives. Direct
+        // nested calls never consult this path, so the loan-free
+        // declaration-to-call capture model is preserved; owned copy/move
+        // captures are self-contained.
+        if matches!(
+            expression.kind,
+            ExprKind::Identifier(_) | ExprKind::Lambda { .. }
+        ) && let Some(info) = self.nested_info(expression)
+        {
+            let mut loans = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            for capture in &info.captures {
+                self.collect_capture_loans(capture, &mut loans, &mut seen);
             }
-            // A capturing closure flowing into storage loans its REFERENCE
-            // captures' owners: the stored value retains their frame slots,
-            // so the owners must stay alive (and, for `imm`, unmutated)
-            // while the storage lives. Direct nested calls never consult
-            // this path, so the loan-free declaration-to-call capture model
-            // is preserved; owned copy/move captures are self-contained.
-            if let Some(info) = self.nested_info(expression) {
-                let mut loans = Vec::new();
-                let mut seen = std::collections::HashSet::new();
-                for capture in &info.captures {
-                    self.collect_capture_loans(capture, &mut loans, &mut seen);
-                }
-                return loans;
-            }
+            return loans;
         }
         match &expression.kind {
             ExprKind::Call { args, kwargs, .. } => {

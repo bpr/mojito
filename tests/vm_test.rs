@@ -712,6 +712,15 @@ fn first_class_owned_closure_uses_its_stored_snapshot() {
 }
 
 #[test]
+fn stored_lambda_reference_capture_keeps_its_owner_alive() {
+    // A lambda bound straight into storage loans its reference captures'
+    // owners, so the captured slot is not ASAP-dropped after its last
+    // direct use.
+    let src = "def main():\n    var k = 3\n    var f: def(x: Int) capturing[_] -> Int = lambda (x: Int) {k} -> Int: x * k\n    print(f(2))\n";
+    assert_eq!(vm(src), "6\n");
+}
+
+#[test]
 fn nested_def_calling_sibling_forwards_its_closure_environment() {
     let src = "def outer() -> Int:\n    var b: Int = 10\n    def helper(x: Int) {b} -> Int:\n        return x + b\n    def caller(y: Int) {helper} -> Int:\n        return helper(y) + 1\n    return caller(5)\n\ndef main():\n    print(outer())\n";
     assert_eq!(parity(src), "16\n");
