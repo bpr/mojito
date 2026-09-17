@@ -236,7 +236,7 @@ pub(super) const fn dtype_bit_width(dtype: Dtype) -> u32 {
     match dtype {
         Dtype::Bool => 1,
         Dtype::Int8 | Dtype::UInt8 => 8,
-        Dtype::Int16 | Dtype::UInt16 => 16,
+        Dtype::Int16 | Dtype::UInt16 | Dtype::Float16 => 16,
         Dtype::Int32 | Dtype::UInt32 | Dtype::Float32 => 32,
         Dtype::Int | Dtype::Int64 | Dtype::UInt64 | Dtype::Float64 => 64,
     }

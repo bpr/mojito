@@ -261,20 +261,7 @@ pub(super) fn desugar_simd_keyed_methods(program: &mut [Stmt]) {
 pub(super) fn eager_hash_leaf_types() -> Vec<Ty> {
     use mojito_ast::ast::Dtype;
     let mut leaves = vec![Ty::Int, Ty::UInt, Ty::Float64];
-    for dtype in [
-        Dtype::Int,
-        Dtype::Int8,
-        Dtype::Int16,
-        Dtype::Int32,
-        Dtype::Int64,
-        Dtype::UInt8,
-        Dtype::UInt16,
-        Dtype::UInt32,
-        Dtype::UInt64,
-        Dtype::Float32,
-        Dtype::Float64,
-        Dtype::Bool,
-    ] {
+    for dtype in Dtype::ALL {
         let leaf = mojito_types::types::canonical_simd_ty(dtype, 1);
         if !leaves.contains(&leaf) {
             leaves.push(leaf);

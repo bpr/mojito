@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+half = { workspace = true }
 num-bigint = { workspace = true }
 num-integer = { workspace = true }
 num-rational = { workspace = true }

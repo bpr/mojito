@@ -576,12 +576,10 @@ pub fn simd_to_bits(target: Dtype, value: &Value) -> Result<Value, RuntimeError>
         }
         SimdLanes::Float(values) => values
             .iter()
-            .map(|lane| {
-                if dtype == Dtype::Float32 {
-                    i128::from((*lane as f32).to_bits())
-                } else {
-                    i128::from(lane.to_bits())
-                }
+            .map(|lane| match dtype {
+                Dtype::Float16 => i128::from(mojito_common::float::f16_bits(*lane)),
+                Dtype::Float32 => i128::from((*lane as f32).to_bits()),
+                _ => i128::from(lane.to_bits()),
             })
             .collect(),
         SimdLanes::Bool(values) => values.iter().map(|lane| i128::from(*lane)).collect(),
@@ -1040,10 +1038,11 @@ pub fn builtin_fma(a: &Value, b: &Value, c: &Value) -> Result<Value, RuntimeErro
                 ..
             },
         ) if a.len() == 1 && b.len() == 1 && c.len() == 1 => {
-            let fused = if *dtype == Dtype::Float32 {
-                f64::from((a[0] as f32).mul_add(b[0] as f32, c[0] as f32))
-            } else {
-                a[0].mul_add(b[0], c[0])
+            let fused = match dtype {
+                Dtype::Float32 => f64::from((a[0] as f32).mul_add(b[0] as f32, c[0] as f32)),
+                // Exact for half precision: wherever the 32-bit product can
+                // decide a tie, it and the sum fit a double's 53 bits.
+                _ => dtype.round_lane(a[0].mul_add(b[0], c[0])),
             };
             Ok(Value::Simd {
                 dtype: *dtype,
@@ -1149,7 +1148,7 @@ pub fn read_simd_lane(dtype: Dtype, lanes: &SimdLanes, i: i64) -> Result<Value, 
 }
 
 /// Write scalar `value` (or a splatting literal) into lane `i`, wrapping to the
-/// element width exactly as construction does (`wrap`/`round_f32`).
+/// element width exactly as construction does (`wrap`/`Dtype::round_lane`).
 pub fn set_simd_lane(
     dtype: Dtype,
     lanes: &mut SimdLanes,
@@ -1231,7 +1230,7 @@ pub fn simd_binop(op: InfixOp, l: &Value, r: &Value) -> Result<Value, RuntimeErr
                 let out: Vec<f64> = xs
                     .iter()
                     .zip(&ys)
-                    .map(|(a, b)| round_lane(dtype, float_arith(op, *a, *b)))
+                    .map(|(a, b)| dtype.round_lane(float_arith(op, *a, *b)))
                     .collect();
                 Ok(Value::Simd {
                     dtype,
@@ -1328,23 +1327,15 @@ pub fn materialize_literal(
             .map(Value::Float64)
             .ok_or_else(|| literal_materialization_error(&value, "Float64")),
         (Value::IntLiteral(value), Ty::Simd { dtype, width: 1 }) if dtype.is_float() => {
-            let lane = if *dtype == Dtype::Float32 {
-                mojito_common::literal::FloatLiteral::from_int(&value)
-                    .to_f32()
-                    .map(|value| value as f64)
-            } else {
-                value.to_f64()
-            }
-            .ok_or_else(|| literal_materialization_error(&value, &format!("{dtype:?}")))?;
+            let lane = dtype
+                .float_literal_lane(&mojito_common::literal::FloatLiteral::from_int(&value))
+                .ok_or_else(|| literal_materialization_error(&value, &format!("{dtype:?}")))?;
             Ok(simd_value(*dtype, SimdLanes::Float(vec![lane])))
         }
         (Value::FloatLiteral(value), Ty::Simd { dtype, width: 1 }) if dtype.is_float() => {
-            let lane = if *dtype == Dtype::Float32 {
-                value.to_f32().map(|value| value as f64)
-            } else {
-                value.to_f64()
-            }
-            .ok_or_else(|| literal_materialization_error(&value, &format!("{dtype:?}")))?;
+            let lane = dtype
+                .float_literal_lane(&value)
+                .ok_or_else(|| literal_materialization_error(&value, &format!("{dtype:?}")))?;
             Ok(simd_value(*dtype, SimdLanes::Float(vec![lane])))
         }
         (Value::IntLiteral(value), Ty::Simd { dtype, width: 1 }) => {
@@ -1627,11 +1618,6 @@ const fn floor_mod(x: i64, y: i64) -> i64 {
     }
 }
 
-/// Round an `f64` to single precision (for `float32` lanes).
-const fn round_f32(x: f64) -> f64 {
-    x as f32 as f64
-}
-
 fn value_to_int_lane(v: &Value, dtype: Dtype) -> Result<i128, RuntimeError> {
     if let Value::IntLiteral(value) = v {
         let (bits, signed) = integer_dtype_bits(dtype).ok_or_else(|| {
@@ -1681,20 +1667,19 @@ fn value_to_float(v: &Value) -> Result<f64, RuntimeError> {
 }
 
 fn value_to_float_lane(v: &Value, dtype: Dtype) -> Result<f64, RuntimeError> {
-    if dtype == Dtype::Float32 {
-        return match v {
-            Value::IntLiteral(value) => mojito_common::literal::FloatLiteral::from_int(value)
-                .to_f32()
-                .map(|value| value as f64)
-                .ok_or_else(|| literal_materialization_error(value, "Float32")),
-            Value::FloatLiteral(value) => value
-                .to_f32()
-                .map(|value| value as f64)
-                .ok_or_else(|| literal_materialization_error(value, "Float32")),
-            other => Ok(round_f32(value_to_float(other)?)),
-        };
+    if !dtype.is_narrow_float() {
+        return value_to_float(v);
     }
-    value_to_float(v)
+    let alias = dtype.scalar_alias().unwrap_or_default();
+    match v {
+        Value::IntLiteral(value) => dtype
+            .float_literal_lane(&mojito_common::literal::FloatLiteral::from_int(value))
+            .ok_or_else(|| literal_materialization_error(value, alias)),
+        Value::FloatLiteral(value) => dtype
+            .float_literal_lane(value)
+            .ok_or_else(|| literal_materialization_error(value, alias)),
+        other => Ok(dtype.round_lane(value_to_float(other)?)),
+    }
 }
 
 /// A scalar value's boolean content, for building a `bool` SIMD lane.
@@ -1768,7 +1753,7 @@ pub const fn integer_dtype_bits(dtype: Dtype) -> Option<(u32, bool)> {
         Dtype::UInt16 => (16, false),
         Dtype::UInt32 => (32, false),
         Dtype::UInt64 => (64, false),
-        Dtype::Float32 | Dtype::Float64 | Dtype::Bool => return None,
+        Dtype::Float16 | Dtype::Float32 | Dtype::Float64 | Dtype::Bool => return None,
     })
 }
 
@@ -1804,27 +1789,13 @@ pub fn simd_cast(target: Dtype, value: &Value) -> Result<Value, RuntimeError> {
     let cast = match (&lanes, target.is_float()) {
         (SimdLanes::Int(v), false) => SimdLanes::Int(v.iter().map(|x| wrap(target, *x)).collect()),
         (SimdLanes::Int(v), true) => {
-            let round = |x: f64| {
-                if target == Dtype::Float32 {
-                    round_f32(x)
-                } else {
-                    x
-                }
-            };
-            SimdLanes::Float(v.iter().map(|x| round(*x as f64)).collect())
+            SimdLanes::Float(v.iter().map(|x| target.round_lane(*x as f64)).collect())
         }
         (SimdLanes::Float(v), false) => {
             SimdLanes::Int(v.iter().map(|x| wrap(target, x.trunc() as i128)).collect())
         }
         (SimdLanes::Float(v), true) => {
-            let round = |x: f64| {
-                if target == Dtype::Float32 {
-                    round_f32(x)
-                } else {
-                    x
-                }
-            };
-            SimdLanes::Float(v.iter().map(|x| round(*x)).collect())
+            SimdLanes::Float(v.iter().map(|x| target.round_lane(*x)).collect())
         }
         (SimdLanes::Bool(_), _) => {
             return Err(RuntimeError::TypeError(
@@ -2021,18 +1992,11 @@ fn simd_reduce(dtype: Dtype, lanes: &SimdLanes, method: &str) -> Result<Value, R
             Ok(simd_value(dtype, SimdLanes::Int(vec![acc])))
         }
         SimdLanes::Float(v) => {
-            let round = |x: f64| {
-                if dtype == Dtype::Float32 {
-                    round_f32(x)
-                } else {
-                    x
-                }
-            };
             let mut acc = v[0];
             for x in &v[1..] {
                 acc = match method {
-                    "reduce_add" => round(acc + x),
-                    "reduce_mul" => round(acc * x),
+                    "reduce_add" => dtype.round_lane(acc + x),
+                    "reduce_mul" => dtype.round_lane(acc * x),
                     "reduce_min" => acc.min(*x),
                     _ => acc.max(*x),
                 };
@@ -2346,15 +2310,6 @@ fn float_op(op: InfixOp, x: f64, y: f64) -> Result<Value, RuntimeError> {
     })
 }
 
-/// Round a float result to its lane precision: `float32` truncates to single
-/// precision, `float64` keeps full `f64`. (Called only for float dtypes.)
-const fn round_lane(dtype: Dtype, x: f64) -> f64 {
-    match dtype {
-        Dtype::Float32 => round_f32(x),
-        _ => x,
-    }
-}
-
 /// A scalar value's integer content, for building an integer SIMD lane.
 fn value_to_int(v: &Value) -> Result<i128, RuntimeError> {
     match v {
@@ -2499,7 +2454,7 @@ const fn wrap(dtype: Dtype, v: i128) -> i128 {
         Dtype::UInt16 => v as u16 as i128,
         Dtype::UInt32 => v as u32 as i128,
         Dtype::UInt64 => v as u64 as i128,
-        Dtype::Float32 | Dtype::Float64 | Dtype::Bool => v,
+        Dtype::Float16 | Dtype::Float32 | Dtype::Float64 | Dtype::Bool => v,
     }
 }
 

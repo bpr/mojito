@@ -110,7 +110,7 @@ impl FnLowering<'_> {
         // Sized integer lanes have no `/` (the checker admits SIMD division
         // on float lanes only); reject as a backstop rather than promote.
         if let ScalarTy::Sized(dtype) = operand_ty
-            && dtype != Dtype::Float32
+            && !dtype.is_narrow_float()
         {
             return Err(self.unsupported_reg(
                 format!("operator `Div` on {} operands", operand_ty.name()),
@@ -119,11 +119,12 @@ impl FnLowering<'_> {
         }
         let lhs = self.reg_value(ctx, a, operand_ty)?;
         let rhs = self.reg_value(ctx, b, operand_ty)?;
-        // `Float32 / Float32` stays a Float32 lane: divide at f64 and round
-        // (`runtime::simd_binop`), unlike the scalar promotions below.
-        if operand_ty == ScalarTy::Sized(Dtype::Float32) {
-            let wide_lhs = self.f32_to_f64(ctx, lhs, dest);
-            let wide_rhs = self.f32_to_f64(ctx, rhs, dest);
+        // `Float32 / Float32` (and `Float16`) stays a narrow lane: divide at
+        // f64 and round (`runtime::simd_binop`), unlike the scalar promotions
+        // below.
+        if let ScalarTy::Sized(dtype) = operand_ty {
+            let wide_lhs = self.widen_float_lane(ctx, lhs, dest);
+            let wide_rhs = self.widen_float_lane(ctx, rhs, dest);
             let div = FDivOp::new_with_fast_math_flags(
                 ctx,
                 wide_lhs,
@@ -131,7 +132,7 @@ impl FnLowering<'_> {
                 FastmathFlagsAttr::default(),
             );
             self.append(ctx, div.get_operation(), Some(dest));
-            let rounded = self.f64_to_f32(ctx, div.get_result(ctx), dest);
+            let rounded = self.round_float_lane(ctx, dtype, div.get_result(ctx), dest);
             self.reg_values.insert(dest.0, rounded);
             return Ok(());
         }
@@ -167,9 +168,9 @@ impl FnLowering<'_> {
         cast.get_result(ctx)
     }
 
-    /// Widen a `Float32` SSA value to its f64 view (exact — the VM stores
-    /// f32 lanes as f64 views).
-    pub(super) fn f32_to_f64(&mut self, ctx: &mut Context, value: Value, dest: Reg) -> Value {
+    /// Widen a narrow float (`Float16`/`Float32`) SSA value to its f64 view
+    /// (exact — the VM stores narrow lanes as f64 views).
+    pub(super) fn widen_float_lane(&mut self, ctx: &mut Context, value: Value, dest: Reg) -> Value {
         let f64_ty: TypeHandle = FP64Type::get(ctx).into();
         let cast = FPExtOp::new(ctx, value, f64_ty);
         cast.set_fast_math_flags(ctx, FastmathFlagsAttr::default());
@@ -177,10 +178,17 @@ impl FnLowering<'_> {
         cast.get_result(ctx)
     }
 
-    /// Round an f64 value to single precision (the VM's `round_f32`).
-    pub(super) fn f64_to_f32(&mut self, ctx: &mut Context, value: Value, dest: Reg) -> Value {
-        let f32_ty: TypeHandle = FP32Type::get(ctx).into();
-        let cast = FPTruncOp::new(ctx, value, f32_ty);
+    /// Round an f64 value to the narrow float lane `dtype`
+    /// (`Dtype::round_lane`).
+    pub(super) fn round_float_lane(
+        &mut self,
+        ctx: &mut Context,
+        dtype: Dtype,
+        value: Value,
+        dest: Reg,
+    ) -> Value {
+        let lane_ty = ScalarTy::Sized(dtype).handle(ctx);
+        let cast = FPTruncOp::new(ctx, value, lane_ty);
         cast.set_fast_math_flags(ctx, FastmathFlagsAttr::default());
         self.append(ctx, cast.get_operation(), Some(dest));
         cast.get_result(ctx)
@@ -295,7 +303,7 @@ impl FnLowering<'_> {
             }
             // Rust f64 comparisons: `!=` is true for NaN operands (UNE), the
             // ordered comparisons are false (`runtime::float_op`).
-            ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float32) => {
+            ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float16 | Dtype::Float32) => {
                 let cmp = self.fcmp(ctx, float_predicate(op), lhs, rhs);
                 self.define(ctx, dest, cmp.get_operation(), cmp.get_result(ctx))
             }

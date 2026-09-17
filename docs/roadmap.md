@@ -180,19 +180,19 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     view-returning method on a subscript, so the plan enumerates that
     fallout first.
 
-- [ ] **`Float16` does not exist, so a `Float16` strided range is rejected**
+- [ ] **`repr` of a sized scalar omits or misstates its type name**
 
-  Problem: `range(Float16(0.5), Float16(2.0), Float16(0.3))` runs at the pin
-  (`0.5`, `0.7998047`, …), while Mojito reports `Undefined variable 'Float16'`.
-  - `Dtype` has no `float16`, so the scalar alias, `DType.float16`, and every
-    `Dtype` match on the VM and native sides are missing, not only `__ceil__`
-    and `__fma__`.
-  - A correct fused result needs half-precision arithmetic (a crate such as
-    `half`) rather than `f64::mul_add`, and display needs the shortest
-    half-precision round trip the pin prints.
-  - Model: Opus, plan first. About sixty `Dtype::Float32` sites across the VM,
-    the native lowering, layout, and CTFE gain a sibling arm, so the plan
-    bounds that fan-out and the display question first.
+  Problem: `repr(Float32(0.5))` and `repr(Int8(3))` print `Float32(0.5)` and
+  `Int8(3)` at the pin, but `0.5` and `3` on the VM, and `Float64(0.5)` and
+  `3` natively.
+  - The VM's `scalar_repr` (`backend/vm/dispatch.rs`) labels only `Int`,
+    `UInt`, and `Float64`, so a `SIMD` width-1 value falls through to its
+    display.
+  - Pliron's `lower_repr_builtin` (`lower/methods.rs`) labels every float
+    scalar `Float64(`, `Float16` and `Float32` included.
+  - The label is the scalar alias (`Dtype::scalar_alias`); the value text
+    stays the float-format divergence the Dragonbox item owns.
+  - Model: Opus, as-is.
 
 - [ ] **Upstream `DType` names with no Mojito dtype are rejected**
 
@@ -202,12 +202,14 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
   `conformance/assets-mojo-errors.tsv`).
   - The names are `uint`, `bfloat16`, `int128`, `uint128`, `int256`,
     `uint256`, the `float4`/`float6`/`float8` families, and `_uint1`/`_uint2`/
-    `_uint4` (`UPSTREAM_ONLY_DTYPE_NAMES` in `mojito-ast`); `float16` has its
-    own checkbox above.
+    `_uint4` (`UPSTREAM_ONLY_DTYPE_NAMES` in `mojito-ast`).
   - Each needs a `Dtype` variant with upstream's code in `Dtype::code`, even
     where no `SIMD` lane of it exists yet, so the value can print and compare.
-  - Depends on the `Float16` checkbox's plan, which bounds the `Dtype` fan-out
-    these variants share.
+  - `Float16` set the pattern for a new lane: extend the table methods in
+    `mojito-ast`, route rounding through `Dtype::round_lane` and
+    `Dtype::float_literal_lane`, and let the build's exhaustiveness errors
+    list the rest. The native lowering matches with wildcards, so its sites
+    need a manual `rg` pass.
   - Model: Opus, plan first.
 
 - [ ] **Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
@@ -632,8 +634,6 @@ says whether the entry can be done as-is or must be planned first.
     decides equality by canonicalization rather than evaluation.
   - Shape the representation like a Pliron attribute, uniqued and
     canonicalized, so a later dialect move is a re-homing and not a redesign.
-  - The plan accounts for section 2's `Float16` entry, which touches the same
-    `Dtype`/`CtValue` representation, whichever lands first.
   - Depends on nothing. It gates the `DType`/vector validation entry and the
     Pliron parametric layer.
   - Model: Fable, plan first. A representation change under `CtValue`,

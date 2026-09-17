@@ -14,6 +14,8 @@ use num_integer::Integer;
 use num_rational::BigRational;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 
+use crate::float::f16;
+
 /// Prevent a short source spelling such as `1e999999999999` or `2 ** huge`
 /// from asking the compiler to allocate an unbounded amount of memory.
 ///
@@ -413,57 +415,16 @@ impl FloatLiteral {
     /// binary64 can double-round values immediately beside an f32 midpoint, so
     /// choose between the cast's neighboring f32 values using exact rational
     /// distances.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a rational literal holds a non-finite component, which the
-    /// lexer cannot produce.
     pub fn to_f32(&self) -> Option<f32> {
-        if self.is_zero() {
-            return Some(if self.negative_zero { -0.0 } else { 0.0 });
-        }
+        self.round_narrow(&BINARY32)
+            .map(|bits| f32::from_bits(bits as u32))
+    }
 
-        let negative = self.value.is_negative();
-        let magnitude = self.value.abs();
-        let overflow_threshold =
-            BigRational::from_integer((BigInt::one() << 128usize) - (BigInt::one() << 103usize));
-        if magnitude >= overflow_threshold {
-            return Some(if negative {
-                f32::NEG_INFINITY
-            } else {
-                f32::INFINITY
-            });
-        }
-
-        let approximation = magnitude.to_f64()? as f32;
-        let mut candidates = Vec::with_capacity(3);
-        if approximation.is_finite() {
-            candidates.push(approximation);
-            candidates.push(f32_next_down(approximation));
-            let next = f32_next_up(approximation);
-            if next.is_finite() {
-                candidates.push(next);
-            }
-        } else {
-            candidates.push(f32::MAX);
-        }
-        candidates.sort_by_key(|value| value.to_bits());
-        candidates.dedup_by_key(|value| value.to_bits());
-
-        let best = candidates.into_iter().min_by(|left, right| {
-            let left_value = BigRational::from_float(*left)
-                .expect("finite f32 has an exact rational representation");
-            let right_value = BigRational::from_float(*right)
-                .expect("finite f32 has an exact rational representation");
-            let left_distance = (&magnitude - left_value).abs();
-            let right_distance = (&magnitude - right_value).abs();
-            left_distance.cmp(&right_distance).then_with(|| {
-                // IEEE roundTiesToEven: bit zero is the low significand bit for
-                // both normal and subnormal finite f32 encodings.
-                (left.to_bits() & 1).cmp(&(right.to_bits() & 1))
-            })
-        })?;
-        Some(if negative { -best } else { best })
+    /// Correctly round an exact literal directly to IEEE binary16, by the same
+    /// neighbor search as [`Self::to_f32`].
+    pub fn to_f16(&self) -> Option<f16> {
+        self.round_narrow(&BINARY16)
+            .map(|bits| f16::from_bits(bits as u16))
     }
 
     const fn from_rational(value: BigRational) -> Self {
@@ -475,6 +436,58 @@ impl FloatLiteral {
 
     fn sign_negative(&self) -> bool {
         self.value.is_negative() || (self.value.is_zero() && self.negative_zero)
+    }
+
+    /// The bit pattern of `format`'s value nearest this literal, ties to even.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a rational literal holds a non-finite component, which the
+    /// lexer cannot produce.
+    fn round_narrow(&self, format: &NarrowFloat) -> Option<u64> {
+        if self.is_zero() {
+            return Some(if self.negative_zero { format.sign } else { 0 });
+        }
+
+        let negative = self.value.is_negative();
+        let magnitude = self.value.abs();
+        if magnitude >= (format.overflow)() {
+            return Some(if negative {
+                format.sign | format.infinity
+            } else {
+                format.infinity
+            });
+        }
+
+        let approximation = (format.from_f64)(magnitude.to_f64()?);
+        let mut candidates = Vec::with_capacity(3);
+        if approximation == format.infinity {
+            candidates.push(format.max_finite);
+        } else {
+            candidates.push(approximation);
+            candidates.push(float_step(approximation, format.sign, false));
+            let next = float_step(approximation, format.sign, true);
+            if next != format.infinity {
+                candidates.push(next);
+            }
+        }
+        candidates.sort_unstable();
+        candidates.dedup();
+
+        let rational = |bits: u64| {
+            BigRational::from_float((format.to_f64)(bits))
+                .expect("finite narrow float has an exact rational representation")
+        };
+        let best = candidates.into_iter().min_by(|left, right| {
+            let left_distance = (&magnitude - rational(*left)).abs();
+            let right_distance = (&magnitude - rational(*right)).abs();
+            left_distance.cmp(&right_distance).then_with(|| {
+                // IEEE roundTiesToEven: bit zero is the low significand bit for
+                // both normal and subnormal finite encodings.
+                (left & 1).cmp(&(right & 1))
+            })
+        })?;
+        Some(if negative { best ^ format.sign } else { best })
     }
 }
 
@@ -490,26 +503,50 @@ impl From<f32> for FloatLiteral {
     }
 }
 
-fn f32_next_up(value: f32) -> f32 {
-    if value.is_nan() || value == f32::INFINITY {
-        return value;
-    }
-    if value == -0.0 {
-        return f32::from_bits(1);
-    }
-    let bits = value.to_bits();
-    f32::from_bits(if value >= 0.0 { bits + 1 } else { bits - 1 })
+/// An IEEE binary format narrower than binary64, described by its bit
+/// patterns so one exact rounding routine serves binary16 and binary32.
+struct NarrowFloat {
+    sign: u64,
+    infinity: u64,
+    max_finite: u64,
+    /// The smallest magnitude that rounds to infinity: the largest finite
+    /// value plus half its unit in the last place.
+    overflow: fn() -> BigRational,
+    from_f64: fn(f64) -> u64,
+    to_f64: fn(u64) -> f64,
 }
 
-fn f32_next_down(value: f32) -> f32 {
-    if value.is_nan() || value == f32::NEG_INFINITY {
-        return value;
+const BINARY32: NarrowFloat = NarrowFloat {
+    sign: 1 << 31,
+    infinity: 0x7f80_0000,
+    max_finite: 0x7f7f_ffff,
+    overflow: || {
+        BigRational::from_integer((BigInt::one() << 128usize) - (BigInt::one() << 103usize))
+    },
+    from_f64: |value| u64::from((value as f32).to_bits()),
+    to_f64: |bits| f64::from(f32::from_bits(bits as u32)),
+};
+
+const BINARY16: NarrowFloat = NarrowFloat {
+    sign: 1 << 15,
+    infinity: 0x7c00,
+    max_finite: 0x7bff,
+    overflow: || BigRational::from_integer(BigInt::from(65520)),
+    from_f64: |value| u64::from(f16::from_f64(value).to_bits()),
+    to_f64: |bits| f16::from_bits(bits as u16).to_f64(),
+};
+
+/// The encoding one step above (`up`) or below a finite encoding of a
+/// sign-magnitude float whose sign bit is `sign`.
+const fn float_step(bits: u64, sign: u64, up: bool) -> u64 {
+    if bits & !sign == 0 {
+        return if up { 1 } else { sign | 1 };
     }
-    if value == 0.0 {
-        return f32::from_bits(0x8000_0001);
+    if (bits & sign != 0) == up {
+        bits - 1
+    } else {
+        bits + 1
     }
-    let bits = value.to_bits();
-    f32::from_bits(if value > 0.0 { bits - 1 } else { bits + 1 })
 }
 
 impl fmt::Debug for FloatLiteral {
@@ -556,6 +593,25 @@ mod tests {
 
         let f64_halfway = FloatLiteral::parse_decimal("9007199254740993.0").unwrap();
         assert_eq!(f64_halfway.to_f64(), Some(9_007_199_254_740_992.0));
+    }
+
+    #[test]
+    fn half_precision_rounding_is_direct_and_ties_to_even() {
+        let f16_of = |text: &str| {
+            FloatLiteral::parse_decimal(text)
+                .unwrap()
+                .to_f16()
+                .unwrap()
+                .to_f64()
+        };
+        assert_eq!(f16_of("0.1"), 0.099_975_585_937_5);
+        assert_eq!(f16_of("0.800048828125"), 0.799_804_687_5);
+        assert_eq!(f16_of("0.80004882812500001"), 0.800_292_968_75);
+        assert_eq!(f16_of("65519.99"), 65504.0);
+        assert_eq!(f16_of("65520.0"), f64::INFINITY);
+        assert_eq!(f16_of("0.000001"), 17.0 * 2f64.powi(-24));
+        let negative_zero = FloatLiteral::parse_decimal("0.0").unwrap().neg();
+        assert!(negative_zero.to_f16().unwrap().is_sign_negative());
     }
 
     #[test]

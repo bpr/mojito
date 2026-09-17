@@ -91,6 +91,7 @@ edition = "2024"
 rust-version = "1.96.1"
 
 [workspace.dependencies]
+half = "2.7.1"
 num-bigint = "0.4.6"
 num-integer = "0.1.46"
 num-rational = "0.4.2"

@@ -618,22 +618,18 @@ impl Checker {
                 "reduce_and" | "reduce_or" if dtype == Dtype::Bool && args.is_empty() => {
                     Ok(Ty::Bool)
                 }
-                // A `Float32`/`Float64` scalar's rounding dunders and its
+                // A float scalar's rounding dunders and its
                 // fused multiply-add (`k.__fma__(step, start)`, a float range
                 // element) are intrinsics at the scalar's own precision.
                 "__floor__" | "__ceil__" | "__trunc__"
                     if width == 1
-                        && matches!(dtype, Dtype::Float32 | Dtype::Float64)
+                        && dtype.is_float()
                         && args.is_empty()
                         && param_args.is_empty() =>
                 {
                     Ok(obj_ty.clone())
                 }
-                "__fma__"
-                    if width == 1
-                        && matches!(dtype, Dtype::Float32 | Dtype::Float64)
-                        && args.len() == 2 =>
-                {
+                "__fma__" if width == 1 && dtype.is_float() && args.len() == 2 => {
                     for argument in args {
                         let found = self.infer(argument)?;
                         if found != obj_ty {

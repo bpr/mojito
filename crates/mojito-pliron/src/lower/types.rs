@@ -80,10 +80,11 @@ impl ScalarTy {
             Self::Bool => IntegerType::get(ctx, 1, Signedness::Signless).into(),
             Self::Ptr => PointerType::get(ctx, 0).into(),
             Self::Dtype => IntegerType::get(ctx, 8, Signedness::Signless).into(),
+            Self::Sized(Dtype::Float16) => FP16Type::get(ctx).into(),
             Self::Sized(Dtype::Float32) => FP32Type::get(ctx).into(),
             Self::Sized(dtype) => {
                 let (bits, _) = mojito_vm::runtime::integer_dtype_bits(dtype)
-                    .expect("of_dtype leaves only sized integers and Float32 in Sized");
+                    .expect("of_dtype leaves only sized integers and narrow floats in Sized");
                 IntegerType::get(ctx, bits, Signedness::Signless).into()
             }
         }

@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `Float16` now exists, as in the pinned Mojo: `range(Float16(0.5),
+  Float16(2.0), Float16(0.3))` runs instead of failing with "Undefined
+  variable 'Float16'", yielding the half-precision fused `k * step + start`
+  values. `Float16`, `SIMD[DType.float16, n]`, and `DType.float16` (code 79,
+  `is_half_float()` True) compute, convert, compare, hash, and report
+  `size_of` 2 bit-identically to the pin on the VM and natively. Values print
+  their exact double view (`0.7998046875`), as `Float32` does, where the pin
+  prints single-precision text (`0.7998047`).
 - `DType` is now a runtime value, as in the pinned Mojo: `var x =
   DType.float32; print(x)` prints `float32` instead of failing with
   "Undefined variable 'DType'". A `DType` passes, returns, defaults, and

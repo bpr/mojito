@@ -53,6 +53,23 @@ impl FnLowering<'_> {
         op.get_result(ctx)
     }
 
+    /// Emit a narrow float lane constant from its exact f64 view (a value
+    /// `Dtype::round_lane` already produced).
+    pub(super) fn narrow_float_constant(
+        &mut self,
+        ctx: &mut Context,
+        dtype: Dtype,
+        value: f64,
+    ) -> Value {
+        if dtype != Dtype::Float16 {
+            return self.f32_constant(ctx, value as f32);
+        }
+        let attr = FPHalfAttr(pliron::utils::apfloat::f64_to_half(value));
+        let op = ConstantOp::new(ctx, Box::new(attr));
+        self.append(ctx, op.get_operation(), None);
+        op.get_result(ctx)
+    }
+
     /// Emit an integer constant at a sized lane width, carrying `value`'s
     /// low `bits` bits.
     pub(super) fn sized_int_constant(
@@ -205,23 +222,29 @@ impl FnLowering<'_> {
                 Ok(self.float_constant(ctx, value))
             }
             // Sized lanes materialize with the VM's exact conversions:
-            // integers wrap at the lane width, `Float32` rounds correctly
+            // integers wrap at the lane width, narrow floats round correctly
             // from the exact literal (never through an f64 intermediate).
-            (PendingLiteral::Int(literal), ScalarTy::Sized(Dtype::Float32)) => {
-                let value = FloatLiteral::from_int(literal).to_f32().ok_or_else(|| {
+            (PendingLiteral::Int(literal), ScalarTy::Sized(dtype)) if dtype.is_narrow_float() => {
+                let value = dtype
+                    .float_literal_lane(&FloatLiteral::from_int(literal))
+                    .ok_or_else(|| {
+                        self.literal_out_of_range(
+                            literal.as_bigint().to_string(),
+                            narrow_float_target(dtype),
+                            span_reg,
+                        )
+                    })?;
+                Ok(self.narrow_float_constant(ctx, dtype, value))
+            }
+            (PendingLiteral::Float(literal), ScalarTy::Sized(dtype)) if dtype.is_narrow_float() => {
+                let value = dtype.float_literal_lane(literal).ok_or_else(|| {
                     self.literal_out_of_range(
-                        literal.as_bigint().to_string(),
-                        "Float32 (f32)",
+                        literal.to_string(),
+                        narrow_float_target(dtype),
                         span_reg,
                     )
                 })?;
-                Ok(self.f32_constant(ctx, value))
-            }
-            (PendingLiteral::Float(literal), ScalarTy::Sized(Dtype::Float32)) => {
-                let value = literal.to_f32().ok_or_else(|| {
-                    self.literal_out_of_range(literal.to_string(), "Float32 (f32)", span_reg)
-                })?;
-                Ok(self.f32_constant(ctx, value))
+                Ok(self.narrow_float_constant(ctx, dtype, value))
             }
             (PendingLiteral::Int(literal), ScalarTy::Sized(dtype)) => {
                 let (bits, signed) =
@@ -350,5 +373,13 @@ impl FnLowering<'_> {
 
     pub(super) fn unsupported_reg(&self, construct: String, dest: Reg) -> PlironError {
         self.unsupported(construct, self.reg_span(dest))
+    }
+}
+
+/// A narrow float lane's name in an out-of-range literal diagnostic.
+const fn narrow_float_target(dtype: Dtype) -> &'static str {
+    match dtype {
+        Dtype::Float16 => "Float16 (f16)",
+        _ => "Float32 (f32)",
     }
 }

@@ -513,7 +513,7 @@ pub enum RetKind {
     /// A width-1 SIMD scalar alias (`Ty::Simd { dtype, width: 1 }`): the
     /// native return is the lane type; the JIT reads it back as the VM's
     /// mathematical lane value (sign/zero-extended integer, f64 view of a
-    /// `Float32`).
+    /// `Float32`; a `Float16` return is refused).
     Sized(mojito_ast::ast::Dtype),
 }
 

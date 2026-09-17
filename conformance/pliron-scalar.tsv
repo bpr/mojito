@@ -100,6 +100,8 @@ assets/ok/field_store_overwrite_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/field_store_overwrite_drop_shapes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/file_descriptor_stdout_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/file_handle_roundtrip.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/float16_display.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/float16_semantics.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/forward_struct_reference_iterator.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/free_function_origin_binders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/func_styles.mojo	-	ineligible	no-scalar-entry-shape

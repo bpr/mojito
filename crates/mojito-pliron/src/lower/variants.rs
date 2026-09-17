@@ -64,15 +64,15 @@ impl FnLowering<'_> {
         let value = self.reg_value(ctx, arg, source)?;
         // A sized operand converts through its mathematical lane value (the
         // VM's `builtin_convert` width-1 arm): integers sign/zero-extend to
-        // i64, a `Float32` converts through its f64 view. The normalized
+        // i64, a narrow float converts through its f64 view. The normalized
         // kind then takes the ordinary scalar conversion arms.
         let (source, value) = match source {
-            ScalarTy::Sized(Dtype::Float32) => {
-                (ScalarTy::Float64, self.f32_to_f64(ctx, value, dest))
+            ScalarTy::Sized(dtype) if dtype.is_narrow_float() => {
+                (ScalarTy::Float64, self.widen_float_lane(ctx, value, dest))
             }
             ScalarTy::Sized(dtype) => {
                 let (_, signed) = mojito_vm::runtime::integer_dtype_bits(dtype)
-                    .expect("Float32 is matched above");
+                    .expect("narrow floats are matched above");
                 let wide = self.sized_to_i64(ctx, value, dtype, dest);
                 (
                     if signed {

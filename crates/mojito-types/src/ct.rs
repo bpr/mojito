@@ -38,19 +38,14 @@ impl CtLane {
                 CtValue::Bool(value) => Some(Self::Bool(*value)),
                 _ => None,
             },
-            Dtype::Float32 | Dtype::Float64 => {
+            Dtype::Float16 | Dtype::Float32 | Dtype::Float64 => {
                 let value = match value {
-                    CtValue::Float(bits) => f64::from_bits(*bits),
-                    CtValue::FloatLiteral(value) => value.to_f64()?,
-                    CtValue::IntLiteral(value) => value.to_f64()?,
-                    CtValue::Int(value) => *value as f64,
-                    CtValue::UInt(value) => *value as f64,
+                    CtValue::Float(bits) => dtype.round_lane(f64::from_bits(*bits)),
+                    CtValue::FloatLiteral(value) => dtype.float_literal_lane(value)?,
+                    CtValue::IntLiteral(value) => dtype.round_lane(value.to_f64()?),
+                    CtValue::Int(value) => dtype.round_lane(*value as f64),
+                    CtValue::UInt(value) => dtype.round_lane(*value as f64),
                     _ => return None,
-                };
-                let value = if dtype == Dtype::Float32 {
-                    value as f32 as f64
-                } else {
-                    value
                 };
                 Some(Self::Float(value.to_bits()))
             }
@@ -81,7 +76,7 @@ pub fn wrap_lane(dtype: mojito_ast::ast::Dtype, value: i128) -> i128 {
         Dtype::UInt16 => i128::from(value as u16),
         Dtype::UInt32 => i128::from(value as u32),
         Dtype::UInt64 => i128::from(value as u64),
-        Dtype::Float32 | Dtype::Float64 | Dtype::Bool => value,
+        Dtype::Float16 | Dtype::Float32 | Dtype::Float64 | Dtype::Bool => value,
     }
 }
 

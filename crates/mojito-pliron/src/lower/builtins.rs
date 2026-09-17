@@ -427,8 +427,9 @@ impl FnLowering<'_> {
     }
 
     /// `__floor__`/`__ceil__`/`__trunc__` on a scalar receiver — the VM's
-    /// `builtin_round_dir`: integers are already whole (identity), Float64
-    /// rounds toward the requested direction.
+    /// `builtin_round_dir`: integers are already whole (identity), floats
+    /// round toward the requested direction. A `Float16` rounds its exact f64
+    /// view, since the half-precision libm entries do not exist.
     pub(super) fn lower_round_dir(
         &mut self,
         ctx: &mut Context,
@@ -463,6 +464,22 @@ impl FnLowering<'_> {
                 self.reg_values.insert(dest.0, result);
                 Ok(())
             }
+            Ty::Simd {
+                dtype: Dtype::Float16,
+                ..
+            } => {
+                let intrinsic = match method {
+                    "__floor__" => "llvm.floor.f64",
+                    "__ceil__" => "llvm.ceil.f64",
+                    _ => "llvm.trunc.f64",
+                };
+                let value = self.reg_value(ctx, recv, ScalarTy::Sized(Dtype::Float16))?;
+                let wide = self.widen_float_lane(ctx, value, dest);
+                let wide = self.float_unary(ctx, intrinsic, wide, dest);
+                let result = self.round_float_lane(ctx, Dtype::Float16, wide, dest);
+                self.reg_values.insert(dest.0, result);
+                Ok(())
+            }
             _ => {
                 let intrinsic = match method {
                     "__floor__" => "llvm.floor.f64",
@@ -478,7 +495,9 @@ impl FnLowering<'_> {
     }
 
     /// `__fma__` on a float scalar receiver — the VM's `builtin_fma`: the
-    /// fused `self * b + c` through `llvm.fma` at the operands' precision.
+    /// fused `self * b + c` through `llvm.fma` at the operands' precision. A
+    /// `Float16` fuses at f64 and rounds once, which is exact for half
+    /// precision (`runtime::builtin_fma`).
     pub(super) fn lower_fma(
         &mut self,
         ctx: &mut Context,
@@ -486,6 +505,22 @@ impl FnLowering<'_> {
         operands: [Reg; 3],
         recv_ty: &Ty,
     ) -> Result<(), PlironError> {
+        if let Ty::Simd {
+            dtype: Dtype::Float16,
+            ..
+        } = recv_ty
+        {
+            let mut values = Vec::with_capacity(operands.len());
+            for operand in operands {
+                let value = self.reg_value(ctx, operand, ScalarTy::Sized(Dtype::Float16))?;
+                values.push(self.widen_float_lane(ctx, value, dest));
+            }
+            let f64_ty: TypeHandle = FP64Type::get(ctx).into();
+            let wide = self.float_intrinsic(ctx, "llvm.fma.f64", f64_ty, values, dest);
+            let result = self.round_float_lane(ctx, Dtype::Float16, wide, dest);
+            self.reg_values.insert(dest.0, result);
+            return Ok(());
+        }
         let (scalar, intrinsic, float_ty): (ScalarTy, &str, TypeHandle) = match recv_ty {
             Ty::Simd {
                 dtype: Dtype::Float32,

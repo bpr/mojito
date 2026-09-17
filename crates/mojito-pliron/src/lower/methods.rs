@@ -396,7 +396,9 @@ impl FnLowering<'_> {
             let label = match scalar {
                 ScalarTy::Int => Some("Int("),
                 ScalarTy::UInt => Some("UInt("),
-                ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float32) => Some("Float64("),
+                ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float16 | Dtype::Float32) => {
+                    Some("Float64(")
+                }
                 _ => None,
             };
             let (source, len) = if let Some(label) = label {
@@ -541,7 +543,13 @@ impl FnLowering<'_> {
                 self.append(ctx, or.get_operation(), Some(dest));
                 or.get_result(ctx)
             }
-            // `is_float8` / `is_half_float`: no Mojito dtype is either.
+            "is_half_float" => {
+                let half = self.dtype_constant(ctx, Dtype::Float16);
+                let is_half = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, code, half);
+                self.append(ctx, is_half.get_operation(), Some(dest));
+                is_half.get_result(ctx)
+            }
+            // `is_float8`: no Mojito dtype is an eight-bit float.
             _ => self.bool_constant(ctx, false),
         };
         self.reg_values.insert(dest.0, result);

@@ -263,9 +263,11 @@ pub enum ParamArg {
     },
 }
 
-/// A SIMD element type — the `<dt>` in `SIMD[DType.<dt>, width]`. mojito
-/// supports the fixed-width integers, `float32`, and `bool` (real Mojo has more:
-/// `float64`, wider integers, low-precision floats).
+/// A SIMD element type — the `<dt>` in `SIMD[DType.<dt>, width]`.
+///
+/// Mojito supports the index and fixed-width integers up to 64 bits,
+/// `float16`, `float32`, `float64`, and `bool`; upstream's other names are
+/// [`UPSTREAM_ONLY_DTYPE_NAMES`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dtype {
     /// Platform-sized signed integer, used by `Int = Scalar[DType.int]`.
@@ -278,6 +280,7 @@ pub enum Dtype {
     UInt16,
     UInt32,
     UInt64,
+    Float16,
     Float32,
     Float64,
     Bool,
@@ -296,6 +299,7 @@ impl Dtype {
             "uint16" => Self::UInt16,
             "uint32" => Self::UInt32,
             "uint64" => Self::UInt64,
+            "float16" => Self::Float16,
             "float32" => Self::Float32,
             "float64" => Self::Float64,
             "bool" => Self::Bool,
@@ -315,13 +319,14 @@ impl Dtype {
             Self::UInt16 => "uint16",
             Self::UInt32 => "uint32",
             Self::UInt64 => "uint64",
+            Self::Float16 => "float16",
             Self::Float32 => "float32",
             Self::Float64 => "float64",
             Self::Bool => "bool",
         }
     }
 
-    /// The scalar-alias spelling (`Int32`, `Float32`, …) that means
+    /// The scalar-alias spelling (`Int32`, `Float16`, …) that means
     /// `SIMD[DType.<self>, 1]`, or `None` for `bool` (which has no alias).
     pub const fn scalar_alias(self) -> Option<&'static str> {
         Some(match self {
@@ -333,6 +338,7 @@ impl Dtype {
             Self::UInt16 => "UInt16",
             Self::UInt32 => "UInt32",
             Self::UInt64 => "UInt64",
+            Self::Float16 => "Float16",
             Self::Float32 => "Float32",
             // `float64` is spelled by the native `Float64` type (with which it is
             // unified), and `bool` by `Bool` — neither is a SIMD *alias* name here.
@@ -356,6 +362,7 @@ impl Dtype {
             Self::UInt16,
             Self::UInt32,
             Self::UInt64,
+            Self::Float16,
             Self::Float32,
         ]
         .into_iter()
@@ -364,7 +371,34 @@ impl Dtype {
 
     /// Whether this dtype's lanes are floating-point.
     pub const fn is_float(self) -> bool {
-        matches!(self, Self::Float32 | Self::Float64)
+        matches!(self, Self::Float16 | Self::Float32 | Self::Float64)
+    }
+
+    /// Whether this is a float lane narrower than `f64`: the VM and the
+    /// native lowering compute it at double precision and round the result
+    /// to the lane.
+    pub const fn is_narrow_float(self) -> bool {
+        matches!(self, Self::Float16 | Self::Float32)
+    }
+
+    /// Round a double-precision result to this float lane (`float16` and
+    /// `float32` round, `float64` is exact).
+    pub fn round_lane(self, value: f64) -> f64 {
+        match self {
+            Self::Float16 => mojito_common::float::round_f16(value),
+            Self::Float32 => f64::from(value as f32),
+            _ => value,
+        }
+    }
+
+    /// An exact float literal correctly rounded to this float lane and
+    /// widened back to `f64`, or `None` when it does not fit a double.
+    pub fn float_literal_lane(self, literal: &mojito_common::literal::FloatLiteral) -> Option<f64> {
+        match self {
+            Self::Float16 => literal.to_f16().map(mojito_common::float::f16::to_f64),
+            Self::Float32 => literal.to_f32().map(f64::from),
+            _ => literal.to_f64(),
+        }
     }
 
     /// Upstream's one-byte `!kgen.dtype` code, whose bits the predicates
@@ -382,13 +416,14 @@ impl Dtype {
             Self::Int32 => 139,
             Self::UInt64 => 140,
             Self::Int64 => 141,
+            Self::Float16 => 79,
             Self::Float32 => 81,
             Self::Float64 => 82,
         }
     }
 
     /// Every dtype, in declaration order.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Int,
         Self::Int8,
         Self::Int16,
@@ -398,6 +433,7 @@ impl Dtype {
         Self::UInt16,
         Self::UInt32,
         Self::UInt64,
+        Self::Float16,
         Self::Float32,
         Self::Float64,
         Self::Bool,
@@ -429,10 +465,10 @@ impl Dtype {
         false
     }
 
-    /// `DType.is_half_float()`: neither `float16` nor `bfloat16` is a
-    /// Mojito dtype.
+    /// `DType.is_half_float()`: `float16` (`bfloat16` is not a Mojito
+    /// dtype).
     pub const fn is_half_float(self) -> bool {
-        false
+        matches!(self, Self::Float16)
     }
 
     /// `DType.is_numeric()`: integral, or a float other than the
@@ -480,9 +516,8 @@ pub const DTYPE_INTEGER_MASK: u8 = 128;
 
 /// `DType.<name>` spellings upstream defines that no Mojito dtype represents;
 /// they reject as unsupported rather than as unknown attributes.
-pub const UPSTREAM_ONLY_DTYPE_NAMES: [&str; 19] = [
+pub const UPSTREAM_ONLY_DTYPE_NAMES: [&str; 18] = [
     "uint",
-    "float16",
     "bfloat16",
     "_uint1",
     "_uint2",
@@ -2249,7 +2284,9 @@ mod tests {
                 Dtype::UInt8 | Dtype::UInt16 | Dtype::UInt32 | Dtype::UInt64 => {
                     [true, false, false, true, true]
                 }
-                Dtype::Float32 | Dtype::Float64 => [false, true, true, false, true],
+                Dtype::Float16 | Dtype::Float32 | Dtype::Float64 => {
+                    [false, true, true, false, true]
+                }
             };
             let actual = [
                 dtype.is_integral(),
@@ -2259,8 +2296,10 @@ mod tests {
                 dtype.is_numeric(),
             ];
             assert_eq!(actual, expected, "{}", dtype.name());
-            assert!(
-                !dtype.is_float8() && !dtype.is_half_float(),
+            assert!(!dtype.is_float8(), "{}", dtype.name());
+            assert_eq!(
+                dtype.is_half_float(),
+                dtype == Dtype::Float16,
                 "{}",
                 dtype.name()
             );

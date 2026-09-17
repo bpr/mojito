@@ -16,12 +16,14 @@
 use std::collections::{HashMap, HashSet};
 
 use pliron::basic_block::BasicBlock;
-use pliron::builtin::attributes::{FPDoubleAttr, FPSingleAttr, IntegerAttr, StringAttr};
+use pliron::builtin::attributes::{
+    FPDoubleAttr, FPHalfAttr, FPSingleAttr, IntegerAttr, StringAttr,
+};
 use pliron::builtin::op_interfaces::{
     CallOpCallable, OneResultInterface, SingleBlockRegionInterface,
 };
 use pliron::builtin::ops::ModuleOp;
-use pliron::builtin::types::{FP32Type, FP64Type, IntegerType, Signedness};
+use pliron::builtin::types::{FP16Type, FP32Type, FP64Type, IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::identifier::Identifier;
 use pliron::location::{Located, Location};
@@ -290,7 +292,8 @@ pub enum ScalarTy {
     Bool,
     Ptr,
     Dtype,
-    /// A sized scalar alias (`Int8`…`Int64`, `UInt8`…`UInt64`, `Float32`).
+    /// A sized scalar alias (`Int8`…`Int64`, `UInt8`…`UInt64`, `Float16`,
+    /// `Float32`).
     /// The `int`, `float64`, and `bool` dtypes canonicalize to the variants
     /// above through [`ScalarTy::of_dtype`] and never appear here.
     Sized(Dtype),

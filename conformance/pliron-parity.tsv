@@ -100,6 +100,8 @@ assets/ok/field_store_overwrite_drop.mojo	main	exe-differential	sanitized
 assets/ok/field_store_overwrite_drop_shapes.mojo	main	exe-differential	sanitized
 assets/ok/file_descriptor_stdout_order.mojo	main	exe-differential	sanitized
 assets/ok/file_handle_roundtrip.mojo	main	exe-differential	sanitized
+assets/ok/float16_display.mojo	main	exe-differential	sanitized
+assets/ok/float16_semantics.mojo	main	exe-differential	sanitized
 assets/ok/forward_struct_reference_iterator.mojo	main	exe-differential	sanitized
 assets/ok/free_function_origin_binders.mojo	main	exe-differential	sanitized
 assets/ok/func_styles.mojo	main	exe-differential	sanitized

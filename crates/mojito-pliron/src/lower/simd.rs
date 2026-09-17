@@ -72,7 +72,7 @@ impl FnLowering<'_> {
         dest: Reg,
     ) -> Result<Value, PlironError> {
         // A literal element folds with the exact conversions (integers wrap
-        // at the lane width, `Float32` rounds from the exact rational).
+        // at the lane width, narrow floats round from the exact rational).
         if let Some(literal) = self.pending_literals.get(&elem.0).cloned() {
             return self.materialize_pending(ctx, &literal, target, dest);
         }
@@ -128,7 +128,7 @@ impl FnLowering<'_> {
 
     /// `SimdCast` (`x.cast[DType.<dt>]()`) — the VM's
     /// `runtime::simd_cast`: int→int rewraps at the new width, int→float
-    /// converts through f64 (`Float32` rounds), float→float widens or
+    /// converts through f64 (narrow lanes round), float→float widens or
     /// rounds, and float→int truncates toward zero saturating at the
     /// 128-bit intermediate before wrapping — saturation must happen at
     /// i128, not the target width, or large magnitudes wrap differently
@@ -226,9 +226,9 @@ impl FnLowering<'_> {
         let target = ScalarTy::of_dtype(dtype);
         Ok(match target {
             ScalarTy::Float64 => self.lane_to_f64(ctx, source, lane, dest)?,
-            ScalarTy::Sized(Dtype::Float32) => {
+            ScalarTy::Sized(narrow) if narrow.is_narrow_float() => {
                 let wide = self.lane_to_f64(ctx, source, lane, dest)?;
-                self.f64_to_f32(ctx, wide, dest)
+                self.round_float_lane(ctx, narrow, wide, dest)
             }
             integer => {
                 let (to_bits, _) = integer
@@ -291,7 +291,7 @@ impl FnLowering<'_> {
     /// One scalar value as a `target` SIMD lane — the VM's lane builders:
     /// integer lanes wrap the source's mathematical value at the lane width
     /// (`value_to_int_lane`; Bool reads as 0/1), float lanes convert through
-    /// f64 with `Float32` rounding (`value_to_float_lane`), bool lanes only
+    /// f64 with narrow-lane rounding (`value_to_float_lane`), bool lanes only
     /// accept Bool. Sources the VM cannot read as the lane's kind reject.
     pub(super) fn convert_lane(
         &mut self,
@@ -310,9 +310,9 @@ impl FnLowering<'_> {
                 }
             }
             ScalarTy::Float64 => self.lane_to_f64(ctx, source, value, dest),
-            ScalarTy::Sized(Dtype::Float32) => {
+            ScalarTy::Sized(narrow) if narrow.is_narrow_float() => {
                 let wide = self.lane_to_f64(ctx, source, value, dest)?;
-                Ok(self.f64_to_f32(ctx, wide, dest))
+                Ok(self.round_float_lane(ctx, narrow, wide, dest))
             }
             integer => {
                 let (to_bits, _) = integer
@@ -344,7 +344,7 @@ impl FnLowering<'_> {
     }
 
     /// One scalar value's floating content as f64 (the VM's
-    /// `value_to_float`): integers convert by signedness, a `Float32` widens
+    /// `value_to_float`): integers convert by signedness, a narrow float widens
     /// to its exact f64 view, Bool and pointers reject.
     pub(super) fn lane_to_f64(
         &mut self,
@@ -355,12 +355,14 @@ impl FnLowering<'_> {
     ) -> Result<Value, PlironError> {
         match source {
             ScalarTy::Float64 => Ok(value),
-            ScalarTy::Sized(Dtype::Float32) => Ok(self.f32_to_f64(ctx, value, dest)),
+            ScalarTy::Sized(dtype) if dtype.is_narrow_float() => {
+                Ok(self.widen_float_lane(ctx, value, dest))
+            }
             ScalarTy::Int => Ok(self.int_to_f64(ctx, value, dest)),
             ScalarTy::UInt => Ok(self.uint_to_f64(ctx, value, dest)),
             ScalarTy::Sized(dtype) => {
                 let (_, signed) = mojito_vm::runtime::integer_dtype_bits(dtype)
-                    .expect("Float32 is matched above");
+                    .expect("narrow floats are matched above");
                 let wide = self.sized_to_i64(ctx, value, dtype, dest);
                 Ok(if signed {
                     self.int_to_f64(ctx, wide, dest)
@@ -434,27 +436,19 @@ impl FnLowering<'_> {
                 };
                 self.lower_simd_binop(ctx, op, dest, recv, args[0], dtype, width)
             }
-            // A `Float32`/`Float64` scalar's rounding dunders and fused
+            // A float scalar's rounding dunders and fused
             // multiply-add (`runtime::builtin_round_dir`/`builtin_fma`).
             "__floor__" | "__ceil__" | "__trunc__"
-                if width == 1
-                    && matches!(dtype, Dtype::Float32 | Dtype::Float64)
-                    && args.is_empty() =>
+                if width == 1 && dtype.is_float() && args.is_empty() =>
             {
                 self.lower_round_dir(ctx, dest, recv, &Ty::Simd { dtype, width: 1 }, method)
             }
-            "__fma__"
-                if width == 1
-                    && matches!(dtype, Dtype::Float32 | Dtype::Float64)
-                    && args.len() == 2 =>
-            {
-                self.lower_fma(
-                    ctx,
-                    dest,
-                    [recv, args[0], args[1]],
-                    &Ty::Simd { dtype, width: 1 },
-                )
-            }
+            "__fma__" if width == 1 && dtype.is_float() && args.len() == 2 => self.lower_fma(
+                ctx,
+                dest,
+                [recv, args[0], args[1]],
+                &Ty::Simd { dtype, width: 1 },
+            ),
             _ => Err(self.unsupported_reg(format!("SIMD method `{method}`"), dest)),
         }
     }
@@ -489,6 +483,45 @@ impl FnLowering<'_> {
         let vector_ty = self.simd_vector_ty(ctx, dtype, width);
         let is_float = lane_ty.int_shape().is_none() && lane_ty != ScalarTy::Bool;
         let value = match method {
+            // Half-precision lanes fold lane by lane at f64, rounding each
+            // step as the VM does: LLVM computes `half` arithmetic through
+            // `float`, which double-rounds a product.
+            "reduce_add" | "reduce_mul" | "reduce_min" | "reduce_max"
+                if dtype == Dtype::Float16 =>
+            {
+                let mut accumulator = self.simd_extract(ctx, vector, 0, dest);
+                for lane in 1..width {
+                    let next = self.simd_extract(ctx, vector, lane, dest);
+                    let wide_accumulator = self.widen_float_lane(ctx, accumulator, dest);
+                    let wide_next = self.widen_float_lane(ctx, next, dest);
+                    let wide = match method {
+                        "reduce_add" => self.simd_float_binop_vectors(
+                            ctx,
+                            InfixOp::Add,
+                            wide_accumulator,
+                            wide_next,
+                            dest,
+                        )?,
+                        "reduce_mul" => self.simd_float_binop_vectors(
+                            ctx,
+                            InfixOp::Mul,
+                            wide_accumulator,
+                            wide_next,
+                            dest,
+                        )?,
+                        _ => self.float_min_max(
+                            ctx,
+                            ScalarTy::Float64,
+                            method == "reduce_min",
+                            wide_accumulator,
+                            wide_next,
+                            dest,
+                        ),
+                    };
+                    accumulator = self.round_float_lane(ctx, dtype, wide, dest);
+                }
+                accumulator
+            }
             "reduce_min" | "reduce_max" if is_float => {
                 let is_min = method == "reduce_min";
                 let mut accumulator = self.simd_extract(ctx, vector, 0, dest);
@@ -575,7 +608,10 @@ impl FnLowering<'_> {
         let lane_ty = ScalarTy::of_dtype(dtype);
         let vector = self.simd_load_vector(ctx, operand, dtype, width, dest)?;
         let result = match (op, lane_ty) {
-            (PrefixOp::Neg, ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float32)) => {
+            (
+                PrefixOp::Neg,
+                ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float16 | Dtype::Float32),
+            ) => {
                 let neg =
                     FNegOp::new_with_fast_math_flags(ctx, vector, FastmathFlagsAttr::default());
                 self.append(ctx, neg.get_operation(), Some(dest));
@@ -630,6 +666,14 @@ impl FnLowering<'_> {
             return Ok(());
         }
         let result = match lane_ty {
+            // Half-precision lanes compute at f64 and round once, like the
+            // scalar lowering (`lower_narrow_float_binop`).
+            ScalarTy::Sized(Dtype::Float16) => {
+                let wide_lhs = self.simd_lanes_to_f64(ctx, lhs, lane_ty, width, dest)?;
+                let wide_rhs = self.simd_lanes_to_f64(ctx, rhs, lane_ty, width, dest)?;
+                let wide = self.simd_float_binop_vectors(ctx, op, wide_lhs, wide_rhs, dest)?;
+                self.simd_round_float_vector(ctx, dtype, wide, width, dest)
+            }
             ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float32) => {
                 self.simd_float_binop_vectors(ctx, op, lhs, rhs, dest)?
             }
@@ -940,9 +984,10 @@ impl FnLowering<'_> {
     }
 
     /// `simd_cast_lane` over a whole vector: integer resizes and int↔float
-    /// conversions are vector casts (`Float32` targets round through f64,
+    /// conversions are vector casts (narrow float targets round through f64,
     /// as the VM does); float→int splits into a guarded vector conversion
-    /// and an exact per-lane fallback (`simd_cast_float_to_int_vector`).
+    /// and an exact per-lane fallback (`simd_cast_float_to_int_vector`), a
+    /// `Float16` source widening to f64 first.
     fn simd_cast_vector(
         &mut self,
         ctx: &mut Context,
@@ -955,13 +1000,9 @@ impl FnLowering<'_> {
         let target = ScalarTy::of_dtype(dtype);
         Ok(match target {
             ScalarTy::Float64 => self.simd_lanes_to_f64(ctx, source, source_ty, width, dest)?,
-            ScalarTy::Sized(Dtype::Float32) => {
+            ScalarTy::Sized(narrow) if narrow.is_narrow_float() => {
                 let wide = self.simd_lanes_to_f64(ctx, source, source_ty, width, dest)?;
-                let f32_vec = self.simd_vector_ty(ctx, Dtype::Float32, width);
-                let cast = FPTruncOp::new(ctx, wide, f32_vec);
-                cast.set_fast_math_flags(ctx, FastmathFlagsAttr::default());
-                self.append(ctx, cast.get_operation(), Some(dest));
-                cast.get_result(ctx)
+                self.simd_round_float_vector(ctx, narrow, wide, width, dest)
             }
             integer => {
                 let (to_bits, _) = integer
@@ -969,6 +1010,17 @@ impl FnLowering<'_> {
                     .expect("bool targets are rejected above");
                 if let Some(from) = source_ty.int_shape() {
                     self.simd_resize_int(ctx, source, from, to_bits, width, dest)
+                } else if source_ty == ScalarTy::Sized(Dtype::Float16) {
+                    let wide = self.simd_lanes_to_f64(ctx, source, source_ty, width, dest)?;
+                    self.simd_cast_float_to_int_vector(
+                        ctx,
+                        wide,
+                        ScalarTy::Float64,
+                        dtype,
+                        to_bits,
+                        width,
+                        dest,
+                    )?
                 } else {
                     self.simd_cast_float_to_int_vector(
                         ctx, source, source_ty, dtype, to_bits, width, dest,
@@ -1136,7 +1188,7 @@ impl FnLowering<'_> {
         let f64_vec = self.simd_vector_ty(ctx, Dtype::Float64, width);
         match source_ty {
             ScalarTy::Float64 => Ok(source),
-            ScalarTy::Sized(Dtype::Float32) => {
+            ScalarTy::Sized(dtype) if dtype.is_narrow_float() => {
                 let cast = FPExtOp::new(ctx, source, f64_vec);
                 cast.set_fast_math_flags(ctx, FastmathFlagsAttr::default());
                 self.append(ctx, cast.get_operation(), Some(dest));
@@ -1219,11 +1271,11 @@ impl FnLowering<'_> {
             }
         };
         let (raw, raw_bits) = match source_ty {
-            ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float32) => {
-                let bits = if source_ty == ScalarTy::Float64 {
-                    64
-                } else {
-                    32
+            ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float16 | Dtype::Float32) => {
+                let bits = match source_ty {
+                    ScalarTy::Float64 => 64,
+                    ScalarTy::Sized(Dtype::Float16) => 16,
+                    _ => 32,
                 };
                 let as_int = int_ty(ctx, bits);
                 let cast = BitcastOp::new(ctx, source, as_int);
@@ -1282,7 +1334,7 @@ impl FnLowering<'_> {
                 self.append(ctx, cmp.get_operation(), Some(dest));
                 cmp.get_result(ctx)
             }
-            ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float32) => {
+            ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float16 | Dtype::Float32) => {
                 let cmp = self.fcmp(ctx, float_predicate(op), lhs, rhs);
                 self.append(ctx, cmp.get_operation(), Some(dest));
                 cmp.get_result(ctx)
@@ -1305,8 +1357,8 @@ impl FnLowering<'_> {
 
     /// Float lanes: IEEE `+ - * /` at the lane width with no fast-math
     /// (`runtime::float_arith`; a `Float32` result computed at f32 equals
-    /// the VM's f64 computation rounded once). A zero divisor flows through
-    /// as inf/NaN lanes.
+    /// the VM's f64 computation rounded once, and `Float16` lanes arrive
+    /// widened). A zero divisor flows through as inf/NaN lanes.
     fn simd_float_binop_vectors(
         &mut self,
         ctx: &mut Context,
@@ -1379,6 +1431,23 @@ impl FnLowering<'_> {
         })
     }
 
+    /// Round an f64 vector to the narrow float lane `dtype`, lane by lane
+    /// (`Dtype::round_lane`).
+    fn simd_round_float_vector(
+        &mut self,
+        ctx: &mut Context,
+        dtype: Dtype,
+        wide: Value,
+        width: usize,
+        dest: Reg,
+    ) -> Value {
+        let lane_vec = self.simd_vector_ty(ctx, dtype, width);
+        let cast = FPTruncOp::new(ctx, wide, lane_vec);
+        cast.set_fast_math_flags(ctx, FastmathFlagsAttr::default());
+        self.append(ctx, cast.get_operation(), Some(dest));
+        cast.get_result(ctx)
+    }
+
     /// `llvm.minnum`/`llvm.maxnum` on two lanes — Rust's `f64::min`/`max`
     /// (the VM's float `reduce_min`/`reduce_max` step): a NaN operand
     /// yields the other operand, so a NaN lane never poisons the fold.
@@ -1408,6 +1477,7 @@ impl FnLowering<'_> {
 /// (`v4i32`, `v8f32`, `v16i1`).
 fn simd_mangle(dtype: Dtype, width: usize) -> String {
     let lane = match dtype {
+        Dtype::Float16 => "f16".to_string(),
         Dtype::Float32 => "f32".to_string(),
         Dtype::Float64 => "f64".to_string(),
         Dtype::Bool => "i1".to_string(),

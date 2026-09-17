@@ -206,11 +206,11 @@ impl std::fmt::Display for LayoutError {
 }
 
 /// The storage layout of one SIMD lane — equally, of the width-1 scalar alias
-/// (`Int8`, `UInt32`, `Float32`, …): the lane's natural width and alignment.
+/// (`Int8`, `UInt32`, `Float16`, …): the lane's natural width and alignment.
 pub const fn lane_layout(dtype: Dtype) -> Layout {
     match dtype {
         Dtype::Int8 | Dtype::UInt8 | Dtype::Bool => Layout::new(1, 1),
-        Dtype::Int16 | Dtype::UInt16 => Layout::new(2, 2),
+        Dtype::Int16 | Dtype::UInt16 | Dtype::Float16 => Layout::new(2, 2),
         Dtype::Int32 | Dtype::UInt32 | Dtype::Float32 => Layout::new(4, 4),
         Dtype::Int | Dtype::Int64 | Dtype::UInt64 | Dtype::Float64 => Layout::new(8, 8),
     }
@@ -276,6 +276,7 @@ mod tests {
         assert_eq!(layout_of(&scalar(Dtype::UInt8)), Ok(Layout::new(1, 1)));
         assert_eq!(layout_of(&scalar(Dtype::Int16)), Ok(Layout::new(2, 2)));
         assert_eq!(layout_of(&scalar(Dtype::UInt16)), Ok(Layout::new(2, 2)));
+        assert_eq!(layout_of(&scalar(Dtype::Float16)), Ok(Layout::new(2, 2)));
         assert_eq!(layout_of(&scalar(Dtype::Int32)), Ok(Layout::new(4, 4)));
         assert_eq!(layout_of(&scalar(Dtype::UInt32)), Ok(Layout::new(4, 4)));
         assert_eq!(layout_of(&scalar(Dtype::Float32)), Ok(Layout::new(4, 4)));

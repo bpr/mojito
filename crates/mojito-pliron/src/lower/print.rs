@@ -234,12 +234,9 @@ impl FnLowering<'_> {
                 let value = self.reg_value(ctx, recv, ScalarTy::Float64)?;
                 self.folded_float(ctx, value, ScalarTy::Float64, dest)
             }
-            Ty::Simd {
-                dtype: Dtype::Float32,
-                width: 1,
-            } => {
-                let value = self.reg_value(ctx, recv, ScalarTy::Sized(Dtype::Float32))?;
-                self.folded_float(ctx, value, ScalarTy::Sized(Dtype::Float32), dest)
+            Ty::Simd { dtype, width: 1 } if dtype.is_narrow_float() => {
+                let value = self.reg_value(ctx, recv, ScalarTy::Sized(*dtype))?;
+                self.folded_float(ctx, value, ScalarTy::Sized(*dtype), dest)
             }
             Ty::Simd { dtype, width } if *width > 1 && dtype.is_float() => {
                 // A float vector folds each lane into a fresh copy.
@@ -329,9 +326,9 @@ impl FnLowering<'_> {
         dest: Reg,
     ) -> Value {
         let zero = match scalar {
-            ScalarTy::Sized(Dtype::Float32) => {
+            ScalarTy::Sized(dtype) if dtype.is_narrow_float() => {
                 let f64_zero = self.float_constant(ctx, 0.0);
-                self.f64_to_f32(ctx, f64_zero, dest)
+                self.round_float_lane(ctx, dtype, f64_zero, dest)
             }
             _ => self.float_constant(ctx, 0.0),
         };
@@ -577,13 +574,15 @@ impl FnLowering<'_> {
             ScalarTy::Int => (mojito_symbol::symbol::INT_DIGITS_SYMBOL, value),
             ScalarTy::UInt => (mojito_symbol::symbol::UINT_DIGITS_SYMBOL, value),
             ScalarTy::Float64 => ("mjrt_fmt_f64", value),
-            // A `Float32` displays as its f64 view (the VM formats the lane's
-            // stored f64 with the same shortest-round-trip rules).
-            ScalarTy::Sized(Dtype::Float32) => ("mjrt_fmt_f64", self.f32_to_f64(ctx, value, dest)),
+            // A narrow float displays as its f64 view (the VM formats the
+            // lane's stored f64 with the same shortest-round-trip rules).
+            ScalarTy::Sized(dtype) if dtype.is_narrow_float() => {
+                ("mjrt_fmt_f64", self.widen_float_lane(ctx, value, dest))
+            }
             // Sized integers display their mathematical value.
             ScalarTy::Sized(dtype) => {
                 let (_, signed) = mojito_vm::runtime::integer_dtype_bits(dtype)
-                    .expect("Float32 is matched above");
+                    .expect("narrow floats are matched above");
                 let wide = self.sized_to_i64(ctx, value, dtype, dest);
                 (
                     if signed {

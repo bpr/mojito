@@ -96,7 +96,9 @@ impl FnLowering<'_> {
             ScalarTy::Float64 => self.lower_float_binop(ctx, op, dest, lhs, rhs),
             ScalarTy::Int => self.lower_int_binop(ctx, op, dest, lhs, rhs),
             ScalarTy::UInt => self.lower_uint_binop(ctx, op, dest, lhs, rhs),
-            ScalarTy::Sized(Dtype::Float32) => self.lower_f32_binop(ctx, op, dest, lhs, rhs),
+            ScalarTy::Sized(dtype) if dtype.is_narrow_float() => {
+                self.lower_narrow_float_binop(ctx, dtype, op, dest, lhs, rhs)
+            }
             ScalarTy::Sized(dtype) => self.lower_sized_int_binop(ctx, op, dest, lhs, rhs, dtype),
             ScalarTy::Ptr | ScalarTy::Dtype => Err(self.unsupported_reg(
                 format!("operator `{op:?}` on {} operands", operand_ty.name()),
@@ -333,21 +335,23 @@ impl FnLowering<'_> {
         }
     }
 
-    /// `Float32` arithmetic: the VM computes each operation at f64 and rounds
-    /// the result to single precision (`round_lane`), so the lowering widens,
-    /// operates at f64, and truncates — never direct f32 arithmetic, whose
-    /// single rounding differs from the VM's double rounding in edge cases.
-    pub(super) fn lower_f32_binop(
+    /// `Float16`/`Float32` arithmetic: the VM computes each operation at f64
+    /// and rounds the result to the lane (`Dtype::round_lane`), so the
+    /// lowering widens, operates at f64, and truncates — never direct narrow
+    /// arithmetic, whose single rounding differs from the VM's double
+    /// rounding in edge cases.
+    pub(super) fn lower_narrow_float_binop(
         &mut self,
         ctx: &mut Context,
+        dtype: Dtype,
         op: InfixOp,
         dest: Reg,
         lhs: Value,
         rhs: Value,
     ) -> Result<(), PlironError> {
         let flags = FastmathFlagsAttr::default;
-        let wide_lhs = self.f32_to_f64(ctx, lhs, dest);
-        let wide_rhs = self.f32_to_f64(ctx, rhs, dest);
+        let wide_lhs = self.widen_float_lane(ctx, lhs, dest);
+        let wide_rhs = self.widen_float_lane(ctx, rhs, dest);
         let wide = match op {
             InfixOp::Add => {
                 let add = FAddOp::new_with_fast_math_flags(ctx, wide_lhs, wide_rhs, flags());
@@ -365,12 +369,16 @@ impl FnLowering<'_> {
                 mul.get_result(ctx)
             }
             other => {
-                return Err(
-                    self.unsupported_reg(format!("operator `{other:?}` on Float32 operands"), dest)
-                );
+                return Err(self.unsupported_reg(
+                    format!(
+                        "operator `{other:?}` on {} operands",
+                        dtype.scalar_alias().unwrap_or_default()
+                    ),
+                    dest,
+                ));
             }
         };
-        let rounded = self.f64_to_f32(ctx, wide, dest);
+        let rounded = self.round_float_lane(ctx, dtype, wide, dest);
         self.reg_values.insert(dest.0, rounded);
         Ok(())
     }

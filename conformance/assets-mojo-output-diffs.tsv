@@ -7,6 +7,7 @@
 # or reordered destructor), one-off.
 fixture	family	divergence
 assets/ok/nominal_string_atof_rounding.mojo	float-format	Mojo writes the exponent sign: 1e+23 where Mojito writes 1e23
+assets/ok/float16_display.mojo	float-format	Float16 renders at single precision upstream (0.7998047), at double precision in Mojito (0.7998046875)
 assets/ok/pliron_float32_semantics.mojo	float-format	Float32 renders at its own precision upstream (0.1), at double precision in Mojito (0.10000000149011612)
 assets/ok/simd_float_div.mojo	float-format	Float32 lanes, same shape as pliron_float32_semantics
 assets/ok/simd_cast_matrix.mojo	float-format	Float32 lanes plus exponent-sign differences

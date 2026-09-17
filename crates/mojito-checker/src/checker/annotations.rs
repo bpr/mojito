@@ -80,7 +80,7 @@ pub(super) const fn int_literal_materializes_to_dtype(dtype: Dtype) -> bool {
         | Dtype::UInt64 => true,
         // Integer and floating literals round during floating materialization;
         // overflow is the corresponding IEEE infinity.
-        Dtype::Float32 | Dtype::Float64 => true,
+        Dtype::Float16 | Dtype::Float32 | Dtype::Float64 => true,
         Dtype::Bool => false,
     }
 }

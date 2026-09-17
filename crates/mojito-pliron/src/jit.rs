@@ -73,6 +73,10 @@ pub fn run_value(
             "JIT entry `{symbol}` returns a pointer; raw addresses have no VM display analog"
         ))),
         // A sized scalar reads back as the VM's mathematical lane value.
+        // Stable Rust has no `f16` to name the native return type.
+        RetKind::Sized(mojito_ast::ast::Dtype::Float16) => Err(jit_error(format!(
+            "JIT entry `{symbol}` returns a Float16; half-precision returns are unreadable"
+        ))),
         RetKind::Sized(mojito_ast::ast::Dtype::Float32) => {
             let function = unsafe { std::mem::transmute::<u64, extern "C" fn() -> f32>(address) };
             Ok(JitValue::Float64(f64::from(function())))

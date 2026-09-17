@@ -236,8 +236,9 @@ impl FnLowering<'_> {
                 )
             }
             // Sized-lane negation: `0 - x` wraps at the lane width for
-            // integers; f32 negation is exact, so no widen/round dance.
-            (PrefixOp::Neg, ScalarTy::Sized(Dtype::Float32)) => {
+            // integers; narrow float negation is exact, so no widen/round
+            // dance.
+            (PrefixOp::Neg, ScalarTy::Sized(dtype)) if dtype.is_narrow_float() => {
                 let neg =
                     FNegOp::new_with_fast_math_flags(ctx, value, FastmathFlagsAttr::default());
                 self.define(ctx, dest, neg.get_operation(), neg.get_result(ctx))

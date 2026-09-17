@@ -222,6 +222,7 @@ fn type_families_reprint_byte_identically() {
                 CtValue::IntLiteral(parse_int_literal("-12345678901234567890").unwrap()),
                 CtValue::FloatLiteral(FloatLiteral::parse_exact("157/50").unwrap()),
                 CtValue::Dtype(Dtype::Float32),
+                CtValue::Dtype(Dtype::Float16),
                 CtValue::Type(Box::new(Ty::Int)),
                 CtValue::Reflected(Box::new(Ty::Bool)),
                 CtValue::Param("N".into()),
@@ -272,6 +273,10 @@ fn type_families_reprint_byte_identically() {
                 Ty::Simd {
                     dtype: Dtype::Float32,
                     width: 4,
+                },
+                Ty::Simd {
+                    dtype: Dtype::Float16,
+                    width: 2,
                 },
                 Ty::ComptimeList(Box::new(Ty::Int)),
                 Ty::RuntimePack(vec![Ty::Int, Ty::Bool]),
