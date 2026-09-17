@@ -12,12 +12,22 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use mojito::mir::lower_program;
-use mojito::{BackendKind, Compiler, TypeError, check, check_program, elaborate, link, parse};
+use mojito::{
+    BackendKind, Compiler, ComptimeError, TypeError, check, check_program, elaborate, link, parse,
+};
 
 /// Parse + elaborate + type-check, returning the checker's verdict.
 fn check_source(source: &str) -> Result<(), TypeError> {
-    let program = parse(source).expect("parse error");
-    let program = elaborate(program).expect("comptime error");
+    check_elaborated(parse(source).expect("parse error"))
+}
+
+/// Elaborate + type-check. Elaboration validates the source first, so a type
+/// error it reports is the verdict.
+fn check_elaborated(program: Vec<mojito::ast::Stmt>) -> Result<(), TypeError> {
+    let program = match elaborate(program) {
+        Err(ComptimeError::Type(error)) => return Err(error),
+        elaborated => elaborated.expect("comptime error"),
+    };
     check(&program)
 }
 
@@ -102,9 +112,7 @@ impl Drop for TempDir {
 }
 
 fn check_linked(entry: &Path) -> Result<(), TypeError> {
-    let program = link(entry).expect("link error");
-    let program = elaborate(program).expect("comptime error");
-    check(&program)
+    check_elaborated(link(entry).expect("link error"))
 }
 
 // =========================================================================

@@ -27,7 +27,7 @@ impl Checker {
                 .expect("inserted above") += 1;
             // A method keyed on its own pack (`def params[*Ts: Writable](self,
             // *args: *Ts)`) checks only per specialization, like a pack def.
-            if !block_has_comptime(&m.body) || is_variadic_template(&m.type_params) {
+            if !validates_body(&m.type_params, &m.body) {
                 continue;
             }
             self.check_method(
@@ -81,6 +81,14 @@ impl Checker {
                 };
                 return self.check_trait_name(trait_name);
             }
+            // An application of an undeclared name (`TriviallyCopyable[Int]`)
+            // is neither a predicate nor a type.
+            ExprKind::TypeApply { name, .. }
+                if mojito_types::types::trivial_predicate_name(name).is_none()
+                    && self.comptime_name_resolves(name).is_err() =>
+            {
+                return Err(TypeError::UnknownType(name.clone()));
+            }
             _ => {}
         }
         let constraint = self
@@ -118,7 +126,7 @@ impl Checker {
         let element = self.comptime_iteration_element(&iter)?;
         let before = self.uninitialized.borrow().clone();
         self.push_scope();
-        if let Some(bindings) = self.comptime_loop_bindings.last_mut() {
+        if let Some(bindings) = self.compile_time_bindings.last_mut() {
             bindings.insert(var.to_string());
         }
         let result = self
@@ -261,6 +269,28 @@ impl Checker {
         self.lookup(name)
             .cloned()
             .ok_or_else(|| TypeError::UndefinedVariable(name.clone()))
+    }
+
+    /// Whether a validation error marks the validator's own blind spot
+    /// rather than a verdict: a constructor, method, or operator of a struct
+    /// registered only as a template shell (a `Tuple`, a variadic or
+    /// `DType`-keyed struct), whose members exist only per specialization.
+    /// The executable check still covers the arm elaboration selects.
+    pub(super) fn is_template_shell_member_error(&self, error: &TypeError) -> bool {
+        let names_shell = |spelling: &str| {
+            let head = spelling.split('[').next().unwrap_or(spelling).trim();
+            self.structs
+                .get(head)
+                .is_some_and(|info| info.template_shell)
+        };
+        match error {
+            TypeError::NoConstructor(name) | TypeError::BadCall { func: name, .. } => {
+                names_shell(name)
+            }
+            TypeError::NoSuchMethod { object_type, .. } => names_shell(object_type),
+            TypeError::BadOperator { operands, .. } => operands.split(" and ").any(names_shell),
+            _ => false,
+        }
     }
 
     /// Whether a nominal type has no checkable declaration here: unregistered
@@ -499,6 +529,14 @@ pub(super) fn concrete_only_def(stmt: &Stmt) -> bool {
     finder.found
 }
 
+/// Whether source validation checks a declaration's body: one holding
+/// compile-time control flow, unless it checks only per instantiation — a
+/// variadic template, or a body reading a reflection handle (`reflect[T]`),
+/// whose field facts only the elaborator evaluates.
+pub(super) fn validates_body(type_params: &[mojito_ast::ast::TypeParam], body: &[Stmt]) -> bool {
+    block_has_comptime(body) && !is_variadic_template(type_params) && !reads_reflection(body)
+}
+
 /// Whether a block holds a `comptime if`/`comptime for` anywhere below it,
 /// nested function bodies included.
 pub(super) fn block_has_comptime(stmts: &[Stmt]) -> bool {
@@ -536,6 +574,26 @@ impl mojito_ast::visit::Visitor for ParamSimdWidthFinder<'_> {
         if let SourceType::Named(name, args) = ty
             && name == "SIMD"
             && self.width_names_param(args)
+        {
+            self.found = true;
+        }
+    }
+}
+
+/// Whether a block names `reflect[...]` anywhere below it.
+fn reads_reflection(stmts: &[Stmt]) -> bool {
+    let mut finder = ReflectionFinder { found: false };
+    mojito_ast::visit::walk_block(&mut finder, stmts);
+    finder.found
+}
+
+struct ReflectionFinder {
+    found: bool,
+}
+
+impl mojito_ast::visit::Visitor for ReflectionFinder {
+    fn visit_expr(&mut self, expr: &Expr) {
+        if matches!(&expr.kind, ExprKind::TypeApply { name, .. } | ExprKind::Call { name, .. } if name == "reflect")
         {
             self.found = true;
         }

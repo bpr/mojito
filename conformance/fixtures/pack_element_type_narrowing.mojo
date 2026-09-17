@@ -8,7 +8,7 @@
 # returning a reference into `self.storage` under `origin_of(self)`. Mojito
 # implements `rebind` (`assets/ok/pack_element_rebind.mojo` is the spelling
 # both compilers accept) but does not yet validate a variadic template's
-# bodies symbolically (`docs/roadmap.md` §3), so this file still runs on
+# bodies symbolically (`docs/roadmap.md` §1), so this file still runs on
 # Mojito and is rejected upstream (`cases.tsv` row
 # `pack-element-type-narrowing`).
 from std.os import abort

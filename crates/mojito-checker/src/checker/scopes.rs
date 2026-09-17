@@ -104,7 +104,7 @@ impl Checker {
         self.callable_origin_scopes.push(HashMap::new());
         self.local_type_aliases.push(HashMap::new());
         self.local_comptime_values.push(HashMap::new());
-        self.comptime_loop_bindings.push(HashSet::new());
+        self.compile_time_bindings.push(HashSet::new());
     }
 
     pub(super) fn pop_scope(&mut self) {
@@ -125,16 +125,16 @@ impl Checker {
         self.callable_origin_scopes.pop();
         self.local_type_aliases.pop();
         self.local_comptime_values.pop();
-        self.comptime_loop_bindings.pop();
+        self.compile_time_bindings.pop();
     }
 
-    /// Whether `name` is a `comptime for` variable of an enclosing validated
-    /// body — a compile-time constant, not runtime storage.
-    pub(super) fn is_comptime_loop_binding(&self, name: &str) -> bool {
-        self.comptime_loop_bindings
-            .iter()
-            .rev()
-            .any(|scope| scope.contains(name))
+    /// Whether the binding `name` resolves to is a compile-time binding of an
+    /// enclosing validated body (a `comptime for` variable or a value
+    /// parameter) — a compile-time constant, not runtime storage.
+    pub(super) fn is_compile_time_binding(&self, name: &str) -> bool {
+        self.binding_scope(name)
+            .and_then(|scope| self.compile_time_bindings.get(scope))
+            .is_some_and(|bindings| bindings.contains(name))
     }
 
     pub(super) fn is_binding_mutable(&self, name: &str) -> bool {
@@ -230,11 +230,11 @@ impl Checker {
         let Some(scope) = self.binding_scope(name) else {
             return Ok(());
         };
-        // Module globals are not captures, and neither is a `comptime for`
-        // variable (a literal once unrolled). For a value crossing more than
+        // Module globals are not captures, and neither is a compile-time
+        // binding (a literal once elaborated). For a value crossing more than
         // one nested-function boundary, every intervening environment must
         // forward it: an inner `{value}` cannot tunnel through a middle `{}`.
-        if scope == 0 || self.is_comptime_loop_binding(name) {
+        if scope == 0 || self.is_compile_time_binding(name) {
             return Ok(());
         }
         for policy in contexts

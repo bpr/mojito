@@ -119,7 +119,7 @@ Current evidence is materially stronger than a toy demonstration:
 | Dimension | Pliron 0.17 | MLIR | Consequence for Mojito |
 |---|---|---|---|
 | Core IR | Rust-native operations, attributes, types, regions, blocks, SSA, interfaces | Mature C++ implementation of the same broad extensible model | Pliron is sufficient for Mojito's post-check IR shape. |
-| Definitions | Rust proc macros and declarative definitions | ODS/TableGen, generated builders/verifiers/docs, declarative rewrites | Pliron is pleasant for Rust integration but has less generation and tooling depth. |
+| Definitions | Rust proc macros and declarative definitions | ODS/TableGen, generated builders/verifiers/docs, declarative rewrites | Pliron is pleasant for Rust integration but has less generation and tooling depth; `docs/pliron-future.md` §Defining the dialects lists the gaps. |
 | Conversion | Pattern/rewrite and dialect conversion exist | Full/partial/analysis conversion, legality targets, type conversion and materialization | Mojito must add a strict legality layer and likely upstream it. |
 | Passes/analysis | Composable passes, cached analyses, invalidation, dominance and liveness | Large mature pass/analysis ecosystem, instrumentation, threading, reproducer tooling | Framework fit is good; ready-made optimization leverage is much smaller. |
 | Dialects | Core/builtin, LLVM, and a small external ecosystem | Extensive standard and target dialect catalog | Mojito must own `mojito.*` and most progressive lowering levels. |

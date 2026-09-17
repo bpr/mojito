@@ -19,11 +19,15 @@ fn err(source: &str) -> TypeError {
 }
 
 /// Link `source` against the bundled standard library (so `String` and the
-/// prelude resolve), elaborate it, and run the type checker.
+/// prelude resolve), elaborate it, and run the type checker. Elaboration
+/// validates the source first, so a type error it reports is the verdict.
 fn check_with_std(source: &str) -> Result<(), TypeError> {
     let linked =
         mojito::link_source(source, std::path::Path::new("checker_test.mojo")).expect("link error");
-    let program = mojito::elaborate(linked).expect("elaborate");
+    let program = match mojito::elaborate(linked) {
+        Err(mojito::ComptimeError::Type(error)) => return Err(error),
+        elaborated => elaborated.expect("elaborate"),
+    };
     check_program(&program).map(|_| ())
 }
 
@@ -154,7 +158,7 @@ fn checked_declarations_preserve_shadowed_function_and_unused_capture_identities
 
 #[test]
 fn checked_boundary_rekeys_cloned_source_provenance_by_occurrence() {
-    let source = "def outer[n: Int]():\n    comptime t = (1, True)\n    comptime for i in range(2):\n        if True:\n            var x = t[i]\n            def show() {x}:\n                print(x)\n            show()\n\ndef main():\n    outer[0]()\n";
+    let source = "def outer[*Ts: ImplicitlyCopyable & Writable & Deinitable](*args: *Ts):\n    comptime for i in range(Ts.length):\n        if True:\n            var x = args[i]\n            def show() {x}:\n                print(x)\n            show()\n\ndef main():\n    outer(1, True)\n";
     let parsed = parse(source).expect("parse");
     let elaborated = mojito::elaborate(parsed).expect("elaborate");
     let checked = check_program(&elaborated).expect("check");

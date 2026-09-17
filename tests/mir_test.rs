@@ -3470,7 +3470,7 @@ fn conflicting_unrolled_occurrences_stay_on_the_abstract_path() {
     // incompatible instantiations; the discovery loop drops the occurrence and
     // both calls keep the retained template's erased path.
     let mir = compiled_mir(
-        "def ident[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    comptime t = (1, \"s\")\n    comptime for i in range(2):\n        print(ident(t[i]))\n",
+        "def ident[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\ndef walk[*Ts: ImplicitlyCopyable & Writable & Deinitable](*args: *Ts):\n    comptime for i in range(Ts.length):\n        print(ident(args[i]))\n\ndef main():\n    walk(1, \"s\")\n",
     );
     let names = function_names(&mir);
     assert!(names.contains(&"ident"), "{names:?}");
@@ -3490,7 +3490,7 @@ fn conflict_retained_template_keeps_dispatch_and_adapter_under_the_compiler() {
     // over-monomorphizes or abstract checking of retained templates breaks,
     // this pin notices.
     let mir = compiled_mir(
-        "from std.iter import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item.copy()\n    return default.copy()\n\ndef main():\n    comptime t = (1, True)\n    comptime for i in range(2):\n        print(first([t[i], t[i]], t[i]))\n",
+        "from std.iter import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item.copy()\n    return default.copy()\n\ndef walk[*Ts: ImplicitlyCopyable & Writable & Deinitable](*args: *Ts):\n    comptime for i in range(Ts.length):\n        print(first([args[i], args[i]], args[i]))\n\ndef main():\n    walk(1, True)\n",
     );
     let names = function_names(&mir);
     assert!(names.contains(&"first"), "{names:?}");

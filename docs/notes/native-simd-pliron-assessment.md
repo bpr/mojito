@@ -41,7 +41,7 @@ vector values and fail verification. The two halves must move together;
 `simd_lowering_emits_vector_code` pins both (a `phi <8 x i32>` for the
 lane-written `prefix`, and no `alloca` or `memcpy` at all in the
 whole-vector-moving `carry`). What remains in memory is the call boundary:
-SIMD still passes by pointer and returns through sret (roadmap §1).
+SIMD still passes by pointer and returns through sret (roadmap §2).
 
 Per operation: construction is `poison` plus `insertelement` per lane (one
 element splats via `shufflevector`); a lane write is a bounds-guarded

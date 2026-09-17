@@ -864,9 +864,9 @@ mod native_abi_cross_checks {
     use expect_test::expect;
     use llvm_sys::core::{
         LLVMArrayType2, LLVMContextCreate, LLVMContextDispose, LLVMDoubleTypeInContext,
-        LLVMFloatTypeInContext, LLVMInt1TypeInContext, LLVMInt8TypeInContext,
-        LLVMInt16TypeInContext, LLVMInt32TypeInContext, LLVMInt64TypeInContext,
-        LLVMPointerTypeInContext, LLVMStructTypeInContext,
+        LLVMFloatTypeInContext, LLVMHalfTypeInContext, LLVMInt1TypeInContext,
+        LLVMInt8TypeInContext, LLVMInt16TypeInContext, LLVMInt32TypeInContext,
+        LLVMInt64TypeInContext, LLVMPointerTypeInContext, LLVMStructTypeInContext,
     };
     use llvm_sys::prelude::{LLVMContextRef, LLVMTypeRef};
     use llvm_sys::target::{
@@ -979,6 +979,7 @@ mod native_abi_cross_checks {
                                 LLVMInt8TypeInContext(self.ctx)
                             }
                             Dtype::Int16 | Dtype::UInt16 => LLVMInt16TypeInContext(self.ctx),
+                            Dtype::Float16 => LLVMHalfTypeInContext(self.ctx),
                             Dtype::Int32 | Dtype::UInt32 => LLVMInt32TypeInContext(self.ctx),
                             Dtype::Float32 => LLVMFloatTypeInContext(self.ctx),
                             Dtype::Int | Dtype::Int64 | Dtype::UInt64 => {

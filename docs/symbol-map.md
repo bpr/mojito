@@ -247,8 +247,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `infer_method_call`: a read argument whose value borrows the receiver's
   storage, `s += s.rstrip()`, is rejected).
 - `checker/scopes.rs` owns lexical scope, binding declaration/mutability, and
-  nested-def capture-access checks (a `comptime for` variable of a validated
-  body captures nothing).
+  nested-def capture-access checks (a compile-time binding of a validated
+  body — a `comptime for` variable or a value parameter — captures nothing).
 - `checker/comptime_validation.rs` owns source validation of compile-time
   control flow: `validate_comptime_templates` (in `checker.rs`) runs a
   discarded checker in `source_validation` mode over the prepared program,
@@ -256,8 +256,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   generic constraint, a concrete `conforms_to`, or a `Bool` value),
   `check_comptime_for` checks a loop body under its element type,
   `bind_local_comptime` binds function-local `comptime` aliases and
-  compile-time-only values, and `concrete_only_struct`/`concrete_only_def`
-  draw the per-instantiation boundary (template shells).
+  compile-time-only values, `concrete_only_struct`/`concrete_only_def` and
+  `validates_body` draw the per-instantiation boundary (template shells,
+  pack templates, reflection readers), and `is_template_shell_member_error`
+  names the errors that end validation without a verdict.
 - `checker/rebind.rs` owns `rebind[Dest](value)`: `erase_rebinds` replaces
   each well-formed call by its operand before checking and records the
   retyping in `Checker.rebind_targets`; `apply_rebind_target` (from

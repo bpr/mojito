@@ -130,6 +130,17 @@ fn comptime_if_arms_are_block_scoped_and_dead_arms_have_no_effect() {
 }
 
 #[test]
+fn comptime_if_arms_use_tuple_members_and_value_parameters() {
+    // A `Tuple` member has no symbolic signature under validation, so the arm
+    // is left to the executable check; a value parameter is a compile-time
+    // binding in a default and in a nested function, not a capture.
+    let tuple = "def f[n: Int]():\n    comptime if n == 0:\n        var inferred = Tuple(1, \"one\")\n        var typed = Tuple[Float64, String](2, \"two\")\n        var pair = (3, True)\n        print(inferred[1], typed[0], pair[1], len(pair), 3 in pair, pair == (3, True))\n\ndef main():\n    f[0]()\n";
+    assert_eq!(run(tuple).unwrap(), "one 2.0 True 2 True True\n");
+    let nested = "def outer[n: Int]() -> Int:\n    comptime if n >= 0:\n        pass\n    def scaled() -> Int:\n        return n * 10\n    return scaled()\n\ndef main():\n    print(outer[2]())\n";
+    assert_eq!(run(nested).unwrap(), "20\n");
+}
+
+#[test]
 fn rebind_retypes_its_operand_and_checks_the_instantiation() {
     // `rebind[Dest](value)` types as `Dest` while the operand is symbolic and
     // is an identity once instantiated; a mismatched instantiation and a
@@ -202,17 +213,17 @@ fn comptime_integer_arithmetic_is_arbitrary_precision() {
 }
 
 #[test]
-fn comptime_for_iterates_a_heterogeneous_tuple() {
-    // The payoff: `t[i]` needs a compile-time-constant index (tuple elements are
-    // heterogeneous), which a runtime `for` can't provide — but `comptime for`
-    // substitutes `i` with a literal, so each `t[i]` type-checks.
-    let src = "def main():\n    var t: Tuple[Int, String, Bool] = (42, \"hi\", True)\n    comptime for i in range(3):\n        print(t[i])\n";
+fn comptime_for_iterates_a_heterogeneous_pack() {
+    // The payoff: `args[i]` needs a compile-time-constant index (pack elements
+    // are heterogeneous), which a runtime `for` can't provide — but `comptime
+    // for` substitutes `i` with a literal, so each `args[i]` type-checks.
+    let src = "def show[*Ts: Writable](*args: *Ts):\n    comptime for i in range(Ts.length):\n        print(args[i])\n\ndef main():\n    show(42, \"hi\", True)\n";
     assert_eq!(run(src).unwrap(), "42\nhi\nTrue\n");
 }
 
 #[test]
 fn cloned_comptime_bodies_keep_distinct_checked_occurrence_facts() {
-    let src = "def outer[n: Int]():\n    comptime t = (1, True)\n    comptime for i in range(2):\n        if True:\n            var x = t[i]\n            def show() {x}:\n                print(x)\n            show()\n\ndef main():\n    outer[0]()\n";
+    let src = "def outer[*Ts: ImplicitlyCopyable & Writable & Deinitable](*args: *Ts):\n    comptime for i in range(Ts.length):\n        if True:\n            var x = args[i]\n            def show() {x}:\n                print(x)\n            show()\n\ndef main():\n    outer(1, True)\n";
     assert_eq!(run(src).unwrap(), "1\nTrue\n");
 }
 
@@ -507,11 +518,12 @@ fn comptime_for_over_a_list_and_string_concat() {
 }
 
 #[test]
-fn comptime_for_enables_compile_time_tuple_indexing() {
-    // Substituting the loop var with a literal makes `t[i]` a compile-time-constant
-    // index — so a heterogeneous tuple can be walked (a runtime `for` can't).
+fn comptime_for_variable_does_not_index_a_runtime_tuple() {
+    // The body is checked once with the loop variable symbolic, as upstream
+    // does, so `t[i]` has no single element type and the walk is rejected.
     let src = "def main():\n    var t: Tuple[Int, String, Bool] = (1, \"two\", True)\n    comptime for i in range(3):\n        print(t[i])\n";
-    assert_eq!(run(src).unwrap(), "1\ntwo\nTrue\n");
+    let err = run(src).unwrap_err();
+    assert!(err.contains("a compile-time Int index"), "{err}");
 }
 
 #[test]
@@ -687,15 +699,6 @@ fn string_value_parameter_rejects_a_value_of_the_wrong_type() {
         error.contains("expected String") && error.contains("found Int"),
         "got {error}"
     );
-}
-
-#[test]
-fn dropped_comptime_if_branch_is_not_checked() {
-    // The `else` branch returns a `String` from an `-> Int` function — a type error
-    // — but only `f[0]` is instantiated, which selects the `if` branch, so the bad
-    // branch is dropped before checking and the program is accepted.
-    let src = "def f[n: Int]() -> Int:\n    comptime if n == 0:\n        return 1\n    else:\n        return \"bad\"\n\ndef main():\n    print(f[0]())\n";
-    assert_eq!(run(src).unwrap(), "1\n");
 }
 
 #[test]
@@ -1119,10 +1122,10 @@ fn bound_generic_template_survives_for_inferred_calls() {
 
 #[test]
 fn conflicting_unrolled_inferred_calls_keep_the_abstract_path() {
-    // Two `comptime for` copies share one source occurrence with different
-    // inferred instantiations; both stay on the retained template's erased
+    // Two `comptime for` copies of a pack walk share one source occurrence
+    // with different inferred instantiations; both stay on the retained template's erased
     // dispatch and still run.
-    let src = "def ident[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    comptime t = (1, \"s\")\n    comptime for i in range(2):\n        print(ident(t[i]))\n";
+    let src = "def ident[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\ndef walk[*Ts: ImplicitlyCopyable & Writable & Deinitable](*args: *Ts):\n    comptime for i in range(Ts.length):\n        print(ident(args[i]))\n\ndef main():\n    walk(1, \"s\")\n";
     assert_eq!(run(src).unwrap(), "1\ns\n");
 }
 
@@ -1166,7 +1169,7 @@ fn pre_rename_trivially_spelling_no_longer_resolves() {
     let src = "def main():\n    comptime if TriviallyCopyable[Int]:\n        print(\"trivial\")\n";
     let error = run(src).expect_err("old spelling must fail");
     assert!(
-        error.contains("'TriviallyCopyable' is not a compile-time type"),
+        error.contains("unknown type 'TriviallyCopyable'"),
         "unexpected error: {error}"
     );
 }

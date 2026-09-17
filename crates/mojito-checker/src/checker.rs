@@ -86,8 +86,12 @@ pub fn check_program(stmts: &[Stmt]) -> Result<mojito_checked::checked::CheckedP
 ///
 /// Validation produces no checked facts: the checker it runs is discarded,
 /// so nothing recorded for an untaken arm can reach lowering. Bodies that
-/// only check concretely — a variadic template shell's, or one keyed on a
-/// `DType`/vector value parameter — keep their per-instantiation check.
+/// only check concretely — a variadic template shell's, one keyed on a
+/// `DType`/vector value parameter, or one reading a reflection handle —
+/// keep their per-instantiation check. A member of a template-shell struct
+/// (`Tuple(1, "one")`, `a == b` over tuples) has no symbolic signature here,
+/// so reaching one ends validation without a verdict and leaves the program
+/// to the executable check.
 pub fn validate_comptime_templates(stmts: &[Stmt]) -> Result<(), TypeError> {
     let _validate = timing::span("comptime_validation");
     let mut expanded = expand_trait_defaults(stmts)?;
@@ -96,7 +100,10 @@ pub fn validate_comptime_templates(stmts: &[Stmt]) -> Result<(), TypeError> {
     let mut checker = Checker::new();
     checker.source_validation = true;
     checker.rebind_targets = rebind_targets;
-    checker.check_program(&expanded)
+    match checker.check_program(&expanded) {
+        Err(error) if checker.is_template_shell_member_error(&error) => Ok(()),
+        result => result,
+    }
 }
 
 /// Check compiler-generated Tuple declarations with the exact callable types
@@ -466,10 +473,11 @@ pub struct Checker {
     /// The retypings the erased `rebind[Dest](value)` calls left behind (see
     /// `rebind.rs`).
     rebind_targets: RebindTargets,
-    /// Per-scope `comptime for` variables bound while validating a body.
-    /// The elaborator substitutes each as a literal, so a nested function
-    /// or lambda reading one captures nothing.
-    comptime_loop_bindings: Vec<HashSet<String>>,
+    /// Per-scope compile-time bindings of a validated body: `comptime for`
+    /// variables and the declaration's value parameters. The elaborator
+    /// substitutes each as a literal, so a nested function or lambda reading
+    /// one captures nothing.
+    compile_time_bindings: Vec<HashSet<String>>,
     enclosing_type_params: Vec<mojito_ast::ast::TypeParam>,
     /// The `Ty` denoted by a bare `Self` while checking a struct's members (the
     /// struct type) or a trait's requirements (`Ty::SelfType`). `None` elsewhere.
@@ -802,7 +810,7 @@ impl Checker {
             local_type_aliases: vec![HashMap::new()],
             local_comptime_values: vec![HashMap::new()],
             rebind_targets: RebindTargets::default(),
-            comptime_loop_bindings: vec![HashSet::new()],
+            compile_time_bindings: vec![HashSet::new()],
             enclosing_type_params: Vec::new(),
             self_ty: None,
             trait_self_comptime: Vec::new(),

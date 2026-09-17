@@ -420,7 +420,7 @@ a guard such as `T == Int` narrows nothing, and an unused template still
 checks. Bodies without such constructs are declared but left to the
 executable check; bodies keyed on a variadic pack, a `DType`, or a
 vector-typed value parameter register as template shells and keep their
-per-instantiation check (`docs/roadmap.md` §3). Validation produces no
+per-instantiation check (`docs/roadmap.md` §1). Validation produces no
 checked facts: its checker is discarded, and `Compiler::compile_linked`
 runs it once on the prepared program that every discovery round then
 re-elaborates. `comptime::elaborate`, the composed-stage seam, runs the

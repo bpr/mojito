@@ -1393,7 +1393,12 @@ impl Elab<'_> {
                                 overload.name
                             ))
                         })?;
-                    overload.body = materialize_block(elaborated, &subs, &self.struct_names);
+                    // The erased parameter shadows a same-named module
+                    // constant; its type positions bake out below.
+                    let mut overload_subs = subs.clone();
+                    overload_subs.remove(&parameter_name);
+                    overload.body =
+                        materialize_block(elaborated, &overload_subs, &self.struct_names);
                     // The erased parameter's type positions in the body
                     // (`rebind[T](...)`) bake out like a per-call clone's.
                     substitute_type_bindings_in_block(

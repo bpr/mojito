@@ -2073,7 +2073,7 @@ impl Checker {
         // is always checked with its enclosing validated body.
         let check_body = !self.source_validation
             || !self.function_bases.is_empty()
-            || (block_has_comptime(body) && !is_variadic_template(type_params));
+            || validates_body(type_params, body);
         if named_result.is_some() && ret_anno.is_some() {
             return Err(TypeError::Unsupported(
                 "a function cannot declare both a named result and '->' return type".to_string(),
@@ -2180,38 +2180,9 @@ impl Checker {
             },
             ret_ty.clone(),
         );
-        // A default value must fit its parameter's type.
-        for (p, pty) in params.iter().zip(&param_tys) {
-            if let Some(d) = &p.default {
-                let dty = match self.infer(d) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        self.tparams.pop();
-                        return Err(e);
-                    }
-                };
-                if !coerces(&dty, pty) {
-                    // Fall back to an `@implicit` converting constructor, like
-                    // the binding and argument positions do (records the ctor
-                    // target so the omitted-arg default materializes it). A
-                    // `None` default for `Optional[T]` resolves here.
-                    match self.record_constructor_conversion(d, &dty, pty) {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            self.tparams.pop();
-                            return Err(TypeError::TypeMismatch {
-                                expected: pty.to_string(),
-                                found: dty.to_string(),
-                                context: format!("default value of '{}'", p.name),
-                            });
-                        }
-                        Err(e) => {
-                            self.tparams.pop();
-                            return Err(e);
-                        }
-                    }
-                }
-            }
+        if let Err(error) = self.check_parameter_defaults(params, &param_tys, &decls) {
+            self.tparams.pop();
+            return Err(error);
         }
 
         // Bind the function in the enclosing scope before checking its
@@ -2455,6 +2426,11 @@ impl Checker {
         // Value parameters are ordinary `Int` locals in the body.
         for d in &decls {
             if let ParamDecl::Value { name, ty, .. } = d {
+                if self.source_validation
+                    && let Some(bindings) = self.compile_time_bindings.last_mut()
+                {
+                    bindings.insert(name.trim_start_matches('*').to_string());
+                }
                 result = self.declare_immutable(
                     name.trim_start_matches('*'),
                     if matches!(d, ParamDecl::Value { variadic: true, .. }) {
@@ -2711,6 +2687,70 @@ impl Checker {
     }
 
     /// Resolve a parameter/field list to its types.
+    /// A default value must fit its parameter's type. Under source validation
+    /// a default may name a compile-time value parameter (`value: Int = n`),
+    /// which specialization folds before the executable check, so the value
+    /// parameters are bound around the defaults as they are in the body.
+    fn check_parameter_defaults(
+        &mut self,
+        params: &[FnParam],
+        param_tys: &[Ty],
+        decls: &[ParamDecl],
+    ) -> Result<(), TypeError> {
+        let bind_values = self.source_validation
+            && decls
+                .iter()
+                .any(|decl| matches!(decl, ParamDecl::Value { .. }));
+        if !bind_values {
+            return self.check_parameter_default_values(params, param_tys);
+        }
+        self.push_scope();
+        let result = decls
+            .iter()
+            .filter_map(|decl| match decl {
+                ParamDecl::Value {
+                    name, ty, variadic, ..
+                } => Some((name, ty, *variadic)),
+                ParamDecl::Type { .. } => None,
+            })
+            .try_for_each(|(name, ty, variadic)| {
+                let ty = if variadic {
+                    Ty::VariadicPack(ty.clone())
+                } else {
+                    (**ty).clone()
+                };
+                self.declare_immutable(name.trim_start_matches('*'), ty)
+            })
+            .and_then(|()| self.check_parameter_default_values(params, param_tys));
+        self.pop_scope();
+        result
+    }
+
+    fn check_parameter_default_values(
+        &self,
+        params: &[FnParam],
+        param_tys: &[Ty],
+    ) -> Result<(), TypeError> {
+        for (p, pty) in params.iter().zip(param_tys) {
+            let Some(d) = &p.default else {
+                continue;
+            };
+            let dty = self.infer(d)?;
+            // Fall back to an `@implicit` converting constructor, like the
+            // binding and argument positions do (records the ctor target so
+            // the omitted-arg default materializes it). A `None` default for
+            // `Optional[T]` resolves here.
+            if !coerces(&dty, pty) && !self.record_constructor_conversion(d, &dty, pty)? {
+                return Err(TypeError::TypeMismatch {
+                    expected: pty.to_string(),
+                    found: dty.to_string(),
+                    context: format!("default value of '{}'", p.name),
+                });
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn param_tys(
         &self,
         params: &[mojito_ast::ast::FnParam],
