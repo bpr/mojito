@@ -177,15 +177,18 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             let stmt = if let ExprKind::Identifier(name) = expr.kind {
                 StmtKind::Assign { name, value }
             } else if matches!(
-                expr.kind,
+                &expr.kind,
                 ExprKind::Member { .. }
                     | ExprKind::Index { .. }
                     | ExprKind::Slice { .. }
                     | ExprKind::MultiIndex { .. }
                     | ExprKind::TypeApply { .. }
-            ) {
-                // A field/index chain — the checker verifies its root is a
-                // mutable variable (or `mut self`) and that the write is valid.
+            ) || matches!(&expr.kind, ExprKind::Call { name, .. } if name == "rebind")
+            {
+                // A field/index chain, or `rebind[Dest](place)`, which the
+                // checker erases to its operand — the checker verifies its
+                // root is a mutable variable (or `mut self`) and that the write
+                // is valid.
                 StmtKind::SetPlace { place: expr, value }
             } else {
                 return Err(ParseError::UnexpectedToken(

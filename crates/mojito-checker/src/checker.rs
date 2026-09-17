@@ -463,9 +463,9 @@ pub struct Checker {
     /// construction); a compile-time position inlines the defining
     /// expression in their place.
     local_comptime_values: Vec<HashMap<String, Expr>>,
-    /// The retyping each erased `rebind[Dest](value)` call left at its
-    /// operand's span (see `rebind.rs`).
-    rebind_targets: HashMap<SourceSpan, mojito_ast::ast::ParamArg>,
+    /// The retypings the erased `rebind[Dest](value)` calls left behind (see
+    /// `rebind.rs`).
+    rebind_targets: RebindTargets,
     /// Per-scope `comptime for` variables bound while validating a body.
     /// The elaborator substitutes each as a literal, so a nested function
     /// or lambda reading one captures nothing.
@@ -798,7 +798,7 @@ impl Checker {
             source_validation: false,
             local_type_aliases: vec![HashMap::new()],
             local_comptime_values: vec![HashMap::new()],
-            rebind_targets: HashMap::new(),
+            rebind_targets: RebindTargets::default(),
             comptime_loop_bindings: vec![HashSet::new()],
             enclosing_type_params: Vec::new(),
             self_ty: None,

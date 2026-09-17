@@ -496,19 +496,6 @@ entry names what it depends on, and an entry with no dependency sits as early
 as its size allows. The **Model:** bullet carries the complexity estimate and
 says whether the entry can be done as-is or must be planned first.
 
-- [ ] **`rebind` cannot be a plain assignment target**
-
-  Problem: `rebind[Int](x) = 7` on a `mut x: T` runs at the pin (prints `7`),
-  while Mojito's parser rejects a call as an assignment target.
-  - The augmented form already parses (`parse_expr_or_assign` in
-    `crates/mojito-parser/src/parser/stmts.rs`); the `=` arm needs the same
-    `rebind` exception, producing a `SetPlace`.
-  - Check that `SetPlace` reaches `check_place`, which retypes the erased
-    operand and rejects a by-value (`TrivialRegisterPassable`) rebind, as it
-    does for `+=`.
-  - Depends on nothing.
-  - Model: Opus, as-is. One parser rule and one fixture.
-
 - [ ] **A free `def` whose `comptime if` keys on an inferred type parameter
   is rejected**
 

@@ -337,6 +337,8 @@ assets/type_error/positional_only_by_keyword.mojo	compile-reject	agree	error: in
 assets/type_error/predicate_alias_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/predicate_alias_in_type_position.mojo	compile-reject	agree	error: expected a type, not a value
 assets/type_error/print_unknown_keyword.mojo	compile-reject	agree	error: invalid call to 'print': unexpected keyword argument 'foo'
+assets/type_error/rebind_register_passable_assignment.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/rebind_register_passable_bound_assignment.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/rebind_register_passable_bound_inplace_destination.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
 assets/type_error/rebind_register_passable_inplace_destination.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
 assets/type_error/rebound_view_origin_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'P[origin_of(ys)]' value to 'P[origin_of(xs)]'

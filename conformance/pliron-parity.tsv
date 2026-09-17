@@ -380,6 +380,7 @@ assets/ok/print_argument_drop_order.mojo	main	exe-differential	sanitized
 assets/ok/print_keywords_file.mojo	main	exe-differential	sanitized
 assets/ok/raise_borrowed_string_parameter.mojo	main	exe-differential	sanitized
 assets/ok/range_zero_step_empty.mojo	main	exe-differential	sanitized
+assets/ok/rebind_assignment.mojo	main	exe-differential	sanitized
 assets/ok/rebind_augmented_assignment.mojo	main	exe-differential	sanitized
 assets/ok/ref_binding_projected_field_offset.mojo	main	exe-differential	sanitized
 assets/ok/ref_binding_temporary_source.mojo	main	exe-differential	sanitized

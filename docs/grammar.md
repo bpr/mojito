@@ -121,11 +121,11 @@ not `NEWLINE`-terminated at this level.
 
 ```
 var_decl: 'var' NAME [':' type] '=' expression   # annotation optional (inferred var)
-assignment: target '=' expression
+assignment: assign_target '=' expression
 unpack_assignment: target (',' target)* ','? '=' expression   # a top-level comma ⇒ tuple unpacking
-augmented_assignment: aug_target aug_op expression
+augmented_assignment: assign_target aug_op expression
 aug_op: '+=' | '-=' | '*=' | '/=' | '//=' | '%=' | '**=' | '&=' | '|=' | '^='
-aug_target: target | 'rebind' '[' type ']' '(' target ')'   # checker erases rebind to its operand
+assign_target: target | 'rebind' '[' type ']' '(' target ')'   # checker erases rebind to its operand
 target: NAME | place
 place: primary ('.' NAME | '[' expression ']')      # a field/index chain (checker: rooted at a variable)
 comptime_stmt: 'comptime' NAME [params_decl] [':' type] where_clause* '=' expression

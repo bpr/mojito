@@ -262,8 +262,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `infer`, the `ref` binding, and `check_place`) takes `Dest` on faith under
   validation and demands equality once instantiated; `check_rebind_place`
   rejects writing through a by-value (`TrivialRegisterPassable`) rebind,
-  outside `$`-mangled clones. The parser admits the call as an
-  augmented-assignment target (`parser/stmts.rs`).
+  outside `$`-mangled clones. The eraser turns `rebind[Dest](x) = value`
+  into the plain `Assign` of `x`, whose retyping `rebind_assignment_target`
+  applies from the `Assign` arm. The parser admits the call as an
+  assignment and augmented-assignment target (`parser/stmts.rs`).
 - `checker/constraints.rs` owns compile-time evaluation and generic-constraint
   compilation/evaluation. `compile_where_clause` retains an optional source
   diagnostic around the semantic constraint compiled by

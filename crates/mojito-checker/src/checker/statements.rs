@@ -702,6 +702,7 @@ impl Checker {
                 } else {
                     self.lookup(name).cloned()
                 };
+                let target = self.rebind_assignment_target(stmt, name, target)?;
                 // A re-assigned binding's type is the expected context, so a
                 // collection display materializes against it (`values = [40]`
                 // stays `List[Int]` for a List-typed variable).

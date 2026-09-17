@@ -1972,6 +1972,22 @@ fn parses_rebind_as_augmented_assignment_target() {
     ));
 }
 
+#[test]
+fn parses_rebind_as_assignment_target() {
+    assert!(matches!(
+        &parse("rebind[Int](x) = 7\n")[0].kind,
+        StmtKind::SetPlace {
+            place: Expr {
+                kind: ExprKind::Call { name, .. },
+                ..
+            },
+            ..
+        } if name == "rebind"
+    ));
+    let mut parser = Parser::new(Lexer::new("f() = 1\n"));
+    assert!(parser.parse_program().is_err());
+}
+
 // --- Walrus / named expression ---
 
 #[test]
