@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A generic `def` whose `comptime if` keys on an inferred type parameter now
+  runs, as in the pinned Mojo: `def show[T: Copyable](x: T)` with `comptime
+  if T == Int`, called as `show(3)`, prints `int` instead of failing with
+  "generic 'show' requires compile-time parameter 'T'", on the VM and
+  natively. Inferred calls from inside other specializations and recursive
+  inferred calls work too. An inferred call whose type stays symbolic, such
+  as one from another generic's abstract body, is still rejected.
 - A display of one capturing lambda now runs, as in the pinned Mojo: `var fns =
   [lambda (x: Int) {k} -> Int: x * k]; print(fns[0](2))` prints `6` instead of
   rejecting the element as a non-storable callable, on the VM and natively.

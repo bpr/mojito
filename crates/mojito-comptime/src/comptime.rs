@@ -608,6 +608,57 @@ pub fn pack_generic_template_names(program: &[Stmt]) -> HashSet<String> {
     collect_pack_generic_templates(program)
 }
 
+/// The top-level compile-time-keyed template names (`def show[T: Copyable](x:
+/// T)` whose body holds a `comptime if`/`comptime for`) of a linked program.
+///
+/// A call that omits a parameter is minted from the checker-recorded
+/// instantiation on the next discovery round; until then the template stands
+/// in as a signature-only stub. A call the fixpoint leaves on that stub is
+/// rejected ([`unserved_template_parameter`]).
+pub fn comptime_generic_template_names(program: &[Stmt]) -> HashSet<String> {
+    collect_comptime_generic_templates(program)
+}
+
+/// The parameter an inferred application of `template` failed to close.
+///
+/// That is the declaration of the first checker argument that is not closed;
+/// `arguments` is the checker's declaration-order list.
+pub fn unserved_template_parameter(
+    program: &[Stmt],
+    template: &str,
+    arguments: &[TyArg],
+    is_closed: &dyn Fn(&TyArg) -> bool,
+) -> String {
+    let parameters = program.iter().find_map(|statement| match &statement.kind {
+        StmtKind::Def {
+            name, type_params, ..
+        } if name == template => Some(type_params),
+        _ => None,
+    });
+    let Some(parameters) = parameters else {
+        return String::new();
+    };
+    let mut cursor = arguments
+        .iter()
+        .filter(|argument| !matches!(argument, TyArg::Origin(_)));
+    let mut first = None;
+    for parameter in parameters {
+        if matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
+            || parameter.is_origin_mutability_binder(parameters)
+        {
+            continue;
+        }
+        first.get_or_insert(parameter);
+        match cursor.next() {
+            Some(argument) if is_closed(argument) => {}
+            _ => return parameter.name.trim_start_matches('*').to_string(),
+        }
+    }
+    first.map_or_else(String::new, |parameter| {
+        parameter.name.trim_start_matches('*').to_string()
+    })
+}
+
 /// Elaborate a [`prepare`]d, validated program while materializing
 /// checker-discovered public `Tuple` and `TString` specializations and
 /// inferred bound-generic applications.
@@ -697,6 +748,7 @@ pub fn elaborate_prepared(
         specializable: collect_specializable(program, &bound_generics),
         bound_generics,
         pack_generics,
+        comptime_generics: collect_comptime_generic_templates(program),
         method_requests: method_requests_by_owner,
         instance_requests,
         hash_leaf_types: hash_leaf_types.to_vec(),
@@ -1386,6 +1438,12 @@ struct Elab<'a> {
     /// deferred call keeps the template as a signature-only stub for the
     /// discovery check.
     pack_generics: HashSet<String>,
+    /// The subset of `specializable` specialized only for its compile-time
+    /// control flow (unique name, no pack, `DType`, or SIMD-width parameter).
+    /// A call that omits a parameter consults the checker-recorded
+    /// instantiation for its occurrence; a deferred call keeps the template as
+    /// a signature-only stub for the discovery check.
+    comptime_generics: HashSet<String>,
     /// Checker-discovered generic-method instantiations on specialized
     /// variadic structs, by owner name: each becomes a per-call clone.
     method_requests: HashMap<String, Vec<MethodSpecializationRequest>>,
@@ -1735,9 +1793,10 @@ fn collect_structs(program: &[Stmt]) -> HashMap<String, CtStruct<'_>> {
 /// Such a construct may depend on the parameters
 /// (e.g. `comptime if is_same_type[T, Int]()`), so it can only be resolved per call
 /// site — each specialization binds the concrete arguments and resolves the
-/// comptime construct, so only the *selected* branch is type-checked. Because the
-/// elaborator does not infer types, such a `def` must be called with explicit
-/// `[...]` arguments.
+/// comptime construct, so only the *selected* branch is type-checked. The
+/// elaborator does not infer types: an inferred call to a type-pack or
+/// compile-time-keyed template is served from the checker's recorded
+/// instantiation, and every other such `def` needs explicit `[...]` arguments.
 fn collect_specializable<'a>(
     program: &'a [Stmt],
     bound_generics: &HashSet<String>,
@@ -1761,6 +1820,18 @@ fn collect_specializable<'a>(
     m
 }
 
+/// How many top-level `def`s share each name: the name-keyed template classes
+/// admit only a unique name, since overload selection is the checker's.
+fn def_name_counts(program: &[Stmt]) -> HashMap<&str, usize> {
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for statement in program {
+        if let StmtKind::Def { name, .. } = &statement.kind {
+            *counts.entry(name.as_str()).or_default() += 1;
+        }
+    }
+    counts
+}
+
 /// Top-level trait-bound generic `def`s with no comptime constructs. These
 /// monomorphize per explicit concrete application like the comptime class, but
 /// resolution is soft — an unresolvable call (inference, symbolic arguments)
@@ -1773,12 +1844,7 @@ fn collect_specializable<'a>(
 /// parameter (see [`pack_generic_template_names`]). Value packs and
 /// overloaded names stay on the syntactic (hard) specialization path.
 fn collect_pack_generic_templates(program: &[Stmt]) -> HashSet<String> {
-    let mut def_counts: HashMap<&str, usize> = HashMap::new();
-    for statement in program {
-        if let StmtKind::Def { name, .. } = &statement.kind {
-            *def_counts.entry(name.as_str()).or_default() += 1;
-        }
-    }
+    let def_counts = def_name_counts(program);
     program
         .iter()
         .filter_map(|statement| {
@@ -1804,13 +1870,42 @@ fn collect_pack_generic_templates(program: &[Stmt]) -> HashSet<String> {
         .collect()
 }
 
+/// Top-level compile-time-keyed templates (see
+/// [`comptime_generic_template_names`]): a uniquely named `def` specializable
+/// only because its body holds compile-time control flow. Packs, `DType`
+/// parameters, and SIMD-width parameters stay on their own paths: their
+/// signatures cannot stand in as a checkable stub.
+fn collect_comptime_generic_templates(program: &[Stmt]) -> HashSet<String> {
+    let def_counts = def_name_counts(program);
+    program
+        .iter()
+        .filter_map(|statement| {
+            let StmtKind::Def {
+                name,
+                type_params,
+                body,
+                ..
+            } = &statement.kind
+            else {
+                return None;
+            };
+            let admitted = def_counts[name.as_str()] == 1
+                && block_has_comptime(body)
+                && !type_params.iter().any(|parameter| {
+                    parameter.name.starts_with('*')
+                        || matches!(parameter.bounds.as_slice(), [only] if only == "DType")
+                })
+                && !def_uses_layout_dependent_param(statement)
+                && type_params
+                    .iter()
+                    .any(|parameter| !retained_specialization_param(parameter, type_params));
+            admitted.then(|| name.clone())
+        })
+        .collect()
+}
+
 fn collect_bound_generic_templates(program: &[Stmt]) -> HashSet<String> {
-    let mut def_counts: HashMap<&str, usize> = HashMap::new();
-    for statement in program {
-        if let StmtKind::Def { name, .. } = &statement.kind {
-            *def_counts.entry(name.as_str()).or_default() += 1;
-        }
-    }
+    let def_counts = def_name_counts(program);
     program
         .iter()
         .filter_map(|statement| {

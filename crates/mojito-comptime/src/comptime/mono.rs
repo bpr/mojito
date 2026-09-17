@@ -961,6 +961,21 @@ impl Elab<'_> {
                                 }
                             }
                         }
+                    } else if self.comptime_generics.contains(name.as_str())
+                        && omits_required_param(self.specializable[name.as_str()], param_args)
+                    {
+                        // An inferred application of a compile-time-keyed
+                        // template: only the checker can solve its arguments,
+                        // so consult the recorded instantiation for this
+                        // occurrence, else keep the template as a stub for the
+                        // discovery check.
+                        let Some((values, kept)) =
+                            self.def_request_target(name, &source_span, param_args, mono)
+                        else {
+                            mono.retained.insert(name.clone());
+                            return Ok(());
+                        };
+                        (values, kept, false)
                     } else {
                         let template = self.specializable[name.as_str()];
                         let whole_pack_abi = top_level_whole_pack_forwarding_call(template, args)?;
@@ -1680,6 +1695,24 @@ impl Elab<'_> {
         }
         Ok((vals, kept_type_args))
     }
+}
+
+/// Whether a call leaves a parameter of `template` that needs an argument
+/// without one: no source argument, no default, not infer-only, and not a
+/// symbolically retained binder. A source list that does not bind at all is
+/// not an omission; it keeps its binding diagnostic.
+fn omits_required_param(template: &Stmt, param_args: &[ParamArg]) -> bool {
+    let StmtKind::Def { type_params, .. } = &template.kind else {
+        return false;
+    };
+    bind_spec_param_args(type_params, param_args, "").is_ok_and(|bound| {
+        type_params.iter().zip(bound).any(|(parameter, arguments)| {
+            arguments.is_empty()
+                && !parameter.infer_only
+                && parameter.default.is_none()
+                && !retained_specialization_param(parameter, type_params)
+        })
+    })
 }
 
 fn consts_without_type_params(

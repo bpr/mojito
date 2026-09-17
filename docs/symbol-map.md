@@ -450,9 +450,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   discovery round, `elaborate` composes prepare → validate → elaborate for
   the stage seam), the `Elab` elaboration driver (`block`/`stmt`), type
   resolution, the template classifications (`bound_generic_template_names`,
-  `pack_generic_template_names` — type-pack defs whose non-evident calls
-  specialize from checker-recorded instantiations, `pack_template_stub` in
-  `comptime/specialize.rs` standing in for a deferred template), the
+  `pack_generic_template_names` for type-pack defs whose non-evident calls
+  specialize from checker-recorded instantiations, and
+  `comptime_generic_template_names` for defs keyed only by a `comptime
+  if`/`for` body, whose inferred calls do the same, gated by
+  `omits_required_param` in `comptime/mono.rs`; `template_stub` in
+  `comptime/specialize.rs` stands in for either deferred template, and
+  `unserved_template_parameter` names the parameter for the driver's
+  `reject_unserved_template_calls`), the
   origin-slot guards (`ty_mentions_origin_slotted_struct` keeps such type
   arguments abstract; `pack_element_source_type` spells erased slots as
   `_`), and the free-function/`Mono` support code; `Elab`'s remaining

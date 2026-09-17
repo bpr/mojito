@@ -260,6 +260,28 @@ fn variant_pack_forwarding_through_a_generic_def_runs() {
 }
 
 #[test]
+fn inferred_comptime_keyed_def_call_left_on_its_stub_is_rejected() {
+    // `show(x)` in `forward`'s own body infers `T := T`, which no discovery
+    // round can serve: the fixpoint rejects that call rather than keeping the
+    // stub that stands in for `show` until a request is served. The closed
+    // call in `main` runs through its clone.
+    let compiler = Compiler::default();
+    let error = compiler
+        .compile_source(
+            "def show[T: Copyable](x: T):\n    comptime if T == Int:\n        print(\"int\")\n\ndef forward[T: Copyable](x: T):\n    show(x)\n\ndef main():\n    show(3)\n",
+            std::path::Path::new("/tmp/mojito_unserved_comptime_keyed_call.mojo"),
+        )
+        .expect_err("an abstract inferred call to a compile-time-keyed def");
+    let CompilerError::Comptime(error) = error else {
+        panic!("expected a compile-time rejection, got {error}");
+    };
+    assert_eq!(
+        error.to_string(),
+        "compile-time call arity: generic 'show' requires compile-time parameter 'T'"
+    );
+}
+
+#[test]
 fn view_temporaries_live_for_their_statement() {
     // A `ref[self]`-returning call chains on a temporary receiver (the
     // temporary is materialized for the statement), a discarded reference

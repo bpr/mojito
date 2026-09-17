@@ -467,7 +467,17 @@ Generic `def` templates monomorphize in two classes sharing one worklist,
 mangling, and clone generator. A **comptime-class** template (a `comptime
 if`/`for` body, or a type pack) must specialize at every reference: resolution
 failure is an error, and the template is replaced by its clones (a dead
-template is dropped unchecked). A **bound-generic** template — a plain
+template is dropped unchecked). Two comptime-class subsets take an inferred
+call through discovery instead: a type pack whose element types are not
+statically evident, and a uniquely named **compile-time-keyed** `def`
+specialized only for its `comptime if`/`for` body (no pack, `DType`, or
+SIMD-width parameter; `comptime_generic_template_names`) called without an
+argument for a required parameter. Until the checker's request is served,
+such a template survives as a signature-only `template_stub` whose body
+traps, so the discovery check can type the call against it. At the fixpoint
+`reject_unserved_template_calls` rejects any call still recorded against a
+compile-time-keyed stub, such as one inferred from an abstract generic body,
+so no accepted program reaches the trap. A **bound-generic** template — a plain
 trait-bound generic `def` with no comptime constructs and a unique top-level
 name — resolves softly: only an explicit application whose arguments resolve
 concretely monomorphizes, while inferred calls, symbolic arguments, and

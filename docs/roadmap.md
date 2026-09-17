@@ -44,23 +44,55 @@ entry names what it depends on, and an entry with no dependency sits as early
 as its size allows. The **Model:** bullet carries the complexity estimate and
 says whether the entry can be done as-is or must be planned first.
 
-- [ ] **A free `def` whose `comptime if` keys on an inferred type parameter
-  is rejected**
+- [ ] **An inferred call to a compile-time-keyed `@staticmethod` aborts at
+  run time**
 
-  Problem: `def show[T: Copyable](x: T)` with `comptime if T == Int`, called
-  as `show(3)`, prints `int` at the pin, while Mojito reports "generic 'show'
-  requires compile-time parameter 'T'".
-  - `show[Int](3)` works, and so does an inferred call to a method with the
-    same body (per-call method clones).
-  - The error comes from `resolve_spec_args_for`
-    (`crates/mojito-comptime/src/comptime/mono.rs`): a `def` specialization
-    needs every type argument spelled at the call.
-  - Inference needs the checker's argument types, so the call should become
-    a discovery request, as inferred method clones already do.
+  Problem: `S.show(3)` on `@staticmethod def show[T: Copyable](x: T)` with
+  `comptime if T == Int` prints `int` at the pin. Mojito compiles it, then
+  aborts with "S.show: unspecialized type-keyed method".
+  - The same body as an instance method (`s.show(3)`) runs, and so does a
+    free `def` (`assets/ok/comptime_if_inferred_def.mojo`).
+  - The call reaches the `unspecialized_method_stub` trap. No per-call clone
+    is requested for a static receiver, and no fixpoint check rejects the
+    stub call the way `reject_unserved_template_calls` does for free `def`s.
   - Depends on nothing.
-  - Model: Opus, plan first. The plan must show how the method-clone request
-    path extends to free `def`s, and what stands in for the template until
-    the request is served.
+  - Model: Opus, as-is.
+
+- [ ] **An abstract generic body cannot call a compile-time-keyed `def`**
+
+  Problem: `def forward[T: Copyable](x: T): show(x)`, where `show` keys a
+  `comptime if` on its own `T`, is accepted by the pin. Mojito reports
+  "generic 'show' requires compile-time parameter 'T'".
+  - This happens even when `forward` is never called. The explicit
+    `show[T](x)` fails too, with "'T' is not a compile-time type".
+  - The inferred call records `show[T]` with `T` symbolic, so no discovery
+    request can serve it. The call is left on `show`'s signature-only stub
+    and rejected at the fixpoint.
+  - Once `forward` is itself specialized (`forward(3)`), its clone's call
+    runs.
+  - The abstract body needs a call that checks against `show`'s signature,
+    with no body to run: each instantiation of `forward` must reach a clone
+    of `show`.
+  - Depends on nothing.
+  - Model: Opus, plan first. The plan must say what an abstract body's call
+    lowers to when the template has no executable abstract form.
+
+- [ ] **An abandoned temporary in a compile-time-keyed body skips the
+  abstract destruction check**
+
+  Problem: in `def outer[T: ImplicitlyCopyable & Writable](x: T)` holding a
+  `comptime if`, `print(pk(x))` for a generic `pk(x: T) -> T` is rejected by
+  the pin: "'(expression temporary)' abandoned without being explicitly
+  destroyed: unhandled explicitly destroyed type 'Writable'". Mojito runs
+  `outer[Int](7)`.
+  - Explicit destruction is checked only per clone, where `T` is concrete.
+    Source validation checks the arm types with `T` symbolic, but not
+    ownership.
+  - A bound-generic body with no `comptime if` already reports this
+    rejection, because it is checked abstractly.
+  - Depends on nothing.
+  - Model: Opus, plan first. The plan must say whether `explicit_destroy`
+    runs on the validator's symbolic bodies or on a separate abstract pass.
 
 - [ ] **`rebind` in a generic body without compile-time control flow is
   rejected**

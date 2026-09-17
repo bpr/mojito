@@ -206,7 +206,10 @@ impl Elab<'_> {
                 }
                 continue;
             }
-            if !self.bound_generics.contains(callee) && !self.pack_generics.contains(callee) {
+            if !self.bound_generics.contains(callee)
+                && !self.pack_generics.contains(callee)
+                && !self.comptime_generics.contains(callee)
+            {
                 continue;
             }
             let Some(template) = self.specializable.get(callee) else {
@@ -350,7 +353,16 @@ impl Elab<'_> {
                 // signature-only stub: the discovery check types the call
                 // against it and records the instantiation the next round
                 // mints; its body only specializes concretely.
-                out.push(pack_template_stub(&stmt));
+                out.push(template_stub(&stmt, "unspecialized type-pack function"));
+            } else if self.comptime_generics.contains(&template_name)
+                && mono.retained.contains(&template_name)
+            {
+                // A compile-time-keyed template with an inferred call stands
+                // in the same way until the checker's request is served.
+                out.push(template_stub(
+                    &stmt,
+                    "unspecialized compile-time-keyed function",
+                ));
             }
             if let Some(mut specs) = generated {
                 specs.reverse();
@@ -2600,10 +2612,12 @@ fn unavailable_method_clause(condition: &Expr) -> Expr {
     )
 }
 
-/// A type-pack `def` template reduced to its signature: the body traps, so
-/// the retained declaration checks (an abort diverges past any return type)
-/// without specializing `args[i]` over an unknown pack.
-pub(super) fn pack_template_stub(template: &Stmt) -> Stmt {
+/// A type-pack or compile-time-keyed `def` template reduced to its
+/// signature: the body traps with `reason`, so the retained declaration
+/// checks (an abort diverges past any return type) without specializing
+/// `args[i]` over an unknown pack or selecting a `comptime if` arm over an
+/// unbound parameter.
+pub(super) fn template_stub(template: &Stmt, reason: &str) -> Stmt {
     let mut stub = template.clone();
     if let StmtKind::Def { name, body, .. } = &mut stub.kind {
         let span = body
@@ -2614,10 +2628,7 @@ pub(super) fn pack_template_stub(template: &Stmt) -> Stmt {
                 ExprKind::Call {
                     name: "_mojito_abort".to_string(),
                     param_args: Vec::new(),
-                    args: vec![Expr::new(
-                        ExprKind::Str(format!("{name}: unspecialized type-pack function")),
-                        span,
-                    )],
+                    args: vec![Expr::new(ExprKind::Str(format!("{name}: {reason}")), span)],
                     kwargs: Vec::new(),
                 },
                 span,
