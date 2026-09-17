@@ -284,6 +284,33 @@ impl Elab<'_> {
                 {
                     return self.eval_typelist_of(param_args, scope);
                 }
+                // `DType.mantissa_width[dtype]()` and its sibling format
+                // queries fold from the dtype table.
+                if matches!(&object.kind, ExprKind::Identifier(name) if name == "DType")
+                    && mojito_ast::ast::DTYPE_FLOAT_QUERIES.contains(&field.as_str())
+                {
+                    let argument = match param_args.as_slice() {
+                        [ParamArg::Value(argument)] => self.eval(argument, scope)?,
+                        // A bracketed `Float64.dtype` parses as an
+                        // associated-member type.
+                        [ParamArg::Type(Type::Assoc { base, name, args })] if args.is_empty() => {
+                            self.associated_value(&self.type_from_anno(base, scope)?, name)?
+                        }
+                        _ => {
+                            return Err(ComptimeError::NotComptime(format!(
+                                "DType.{field} expects one compile-time dtype argument"
+                            )));
+                        }
+                    };
+                    let CtValue::Dtype(dtype) = argument else {
+                        return Err(ComptimeError::NotComptime(format!(
+                            "DType.{field} expects a compile-time dtype argument"
+                        )));
+                    };
+                    return dtype.float_query(field).map(CtValue::Int).ok_or_else(|| {
+                        ComptimeError::Constraint("dtype must be floating point".to_string())
+                    });
+                }
                 let receiver = self.eval(object, scope)?;
                 if receiver.typelist_elements().is_some() {
                     return self.eval_typelist_method(&receiver, field, param_args, scope);

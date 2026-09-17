@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `SIMD` types and values now have upstream's `dtype` alias: `Int32.dtype`
+  and `s.dtype` on a `SIMD[DType.int16, 4]` print `int32` and `int16`
+  instead of failing with "has no field 'dtype'", at run time and in
+  `comptime d = Int32.dtype`, on the VM and natively. A call receiver
+  (`f().dtype`, and likewise `f().length`) still runs. `DType`'s static
+  floating-point queries `mantissa_width`, `max_exponent`, `exponent_width`,
+  and `exponent_bias` answer as the pin does, and reject a non-float dtype.
 - `Float16` now exists, as in the pinned Mojo: `range(Float16(0.5),
   Float16(2.0), Float16(0.3))` runs instead of failing with "Undefined
   variable 'Float16'", yielding the half-precision fused `k * step + start`

@@ -671,6 +671,16 @@ impl Flatten<'_> {
                 args,
                 kwargs,
             } => {
+                if let Some(value) = self.checked_adjustments(e).into_iter().find_map(
+                    |adjustment| match adjustment {
+                        mojito_checked::checked::SemanticAdjustment::DtypeFloatQuery { value } => {
+                            Some(value)
+                        }
+                        _ => None,
+                    },
+                ) {
+                    return self.constant(e, Const::Int(value));
+                }
                 // `pointer.unsafe_origin_cast[...]()` retypes provenance only: the
                 // runtime value is the receiver, unchanged, and the origin
                 // parameter argument never lowers (origins erase).
@@ -1760,26 +1770,29 @@ impl Flatten<'_> {
                 d
             }
             ExprKind::Member { object, field } => {
-                // `v.length` on a SIMD value is the checker-folded lane count.
-                if let Some(mojito_checked::checked::SemanticAdjustment::SimdLength { width }) =
-                    self.checked_adjustments(e).into_iter().find(|adjustment| {
-                        matches!(
-                            adjustment,
-                            mojito_checked::checked::SemanticAdjustment::SimdLength { .. }
-                        )
-                    })
-                {
-                    return self.constant(e, Const::Int(width));
-                }
-                if let Some(mojito_checked::checked::SemanticAdjustment::DtypeConstant { dtype }) =
-                    self.checked_adjustments(e).into_iter().find(|adjustment| {
-                        matches!(
-                            adjustment,
-                            mojito_checked::checked::SemanticAdjustment::DtypeConstant { .. }
-                        )
-                    })
-                {
-                    return self.constant(e, Const::Dtype(dtype));
+                // `v.length` and `v.dtype` on a SIMD value (or `DType.<name>`)
+                // are checker-folded constants.
+                let folded = self
+                    .checked_adjustments(e)
+                    .into_iter()
+                    .find_map(|adjustment| match adjustment {
+                        mojito_checked::checked::SemanticAdjustment::SimdLength { width } => {
+                            Some(Const::Int(width))
+                        }
+                        mojito_checked::checked::SemanticAdjustment::DtypeConstant { dtype } => {
+                            Some(Const::Dtype(dtype))
+                        }
+                        _ => None,
+                    });
+                if let Some(constant) = folded {
+                    // A value receiver (`f().dtype`) still runs; a type operand
+                    // or `DType` itself was never typed as a value.
+                    if !matches!(object.kind, ExprKind::Identifier(_))
+                        && self.checked_ty(object).is_some()
+                    {
+                        self.expr(object);
+                    }
+                    return self.constant(e, constant);
                 }
                 // A pure field chain rooted at a variable (`p.a`, `p.a.b`) lowers to
                 // a `LoadPlace` (a place read) so the ownership analysis sees *which*

@@ -6,7 +6,8 @@ pub use mojito_types::types::splats_to;
 
 impl Checker {
     /// The dtype a SIMD element-type argument names: a `DType.<name>` member,
-    /// or a `comptime` binding of one.
+    /// a `SIMD` type's `dtype` (`Float64.dtype`), or a `comptime` binding of
+    /// one.
     pub(super) fn dtype_from_arg(
         &self,
         arg: &mojito_ast::ast::ParamArg,
@@ -15,11 +16,30 @@ impl Checker {
             kind: ExprKind::Member { object, field },
             ..
         }) = arg
-            && let ExprKind::Identifier(ns) = &object.kind
-            && ns == "DType"
-            && let Some(dtype) = Dtype::from_name(field)
         {
-            return Ok(dtype);
+            if let ExprKind::Identifier(ns) = &object.kind
+                && ns == "DType"
+                && let Some(dtype) = Dtype::from_name(field)
+            {
+                return Ok(dtype);
+            }
+            if field == "dtype"
+                && let Some(dtype) = self.dtype_constant(object, field)
+            {
+                return dtype;
+            }
+        }
+        // A bracketed `Float64.dtype` parses as an associated-member type.
+        if let mojito_ast::ast::ParamArg::Type(SourceType::Assoc { base, name, args }) = arg
+            && name == "dtype"
+            && args.is_empty()
+            && let Some(dtype) = self
+                .ty_from_anno(base)
+                .ok()
+                .as_ref()
+                .and_then(super::indexing::simd_dtype)
+        {
+            return dtype;
         }
         if let mojito_ast::ast::ParamArg::Value(Expr {
             kind: ExprKind::Identifier(name),

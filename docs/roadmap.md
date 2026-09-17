@@ -318,30 +318,6 @@ whatever its model, because it batches every change that needs a new
 The two checkboxes below, and the bullets inside the two standing ones,
 are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
 
-- [ ] **`SIMD` has no `dtype` alias**
-
-  Problem: `Int32.dtype` and `s.dtype` on a `SIMD[DType.int16, 4]` value run at
-  the pin (`int32`, `int16`), while Mojito reports "type 'SIMD[DType.int16, 4]'
-  has no field 'dtype'".
-  - The runtime read belongs beside `v.length` in `infer_member`
-    (`checker/indexing.rs`), folded like `SemanticAdjustment::SimdLength` into
-    the `DType` constant `DtypeConstant` already lowers.
-  - The compile-time read (`comptime d = Int32.dtype`) needs the same member in
-    the elaborator's `associated_value` (`comptime/elab.rs`), which today
-    answers struct types only.
-  - Model: Opus, as-is.
-
-- [ ] **`DType`'s floating-point static queries are missing**
-
-  Problem: `DType.mantissa_width[DType.float32]()`, `max_exponent`,
-  `exponent_width`, and `exponent_bias` run at the pin, while Mojito has no
-  static methods on `DType`.
-  - Each is a pure function of the dtype; the answers belong in the
-    `Dtype` table in `mojito-ast` beside the `is_*` queries, so both the
-    checker's fold and the evaluator read one source.
-  - A non-float dtype is a compile-time assertion failure upstream.
-  - Model: Opus, as-is.
-
 - [ ] **A display of capturing lambdas is rejected**
 
   Problem: `[lambda (x: Int) {k} -> Int: x * k]` runs at the pin (prints `6` for
@@ -442,6 +418,12 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
   - The names are `uint`, `bfloat16`, `int128`, `uint128`, `int256`,
     `uint256`, the `float4`/`float6`/`float8` families, and `_uint1`/`_uint2`/
     `_uint4` (`UPSTREAM_ONLY_DTYPE_NAMES` in `mojito-ast`).
+  - `UInt.dtype` is `DType.uint` and rejects the same way
+    (`assets/type_error/dtype_uint_alias_rejected.mojo`, the `simd_dtype`
+    arms in `checker/indexing.rs` and `associated_value` in
+    `comptime/elab.rs`).
+  - `Dtype::float_query` answers only `float16`/`float32`/`float64`; a new
+    float format adds its row there.
   - Each needs a `Dtype` variant with upstream's code in `Dtype::code`, even
     where no `SIMD` lane of it exists yet, so the value can print and compare.
   - `Float16` set the pattern for a new lane: extend the table methods in

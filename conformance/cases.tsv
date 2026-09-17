@@ -514,3 +514,5 @@ dtype-runtime-value	run	assets/ok/dtype_runtime_value.mojo
 dtype-runtime-surface	run	assets/ok/dtype_runtime_surface.mojo
 dtype-compile-time-values	run	assets/ok/dtype_compile_time_values.mojo
 float16-semantics	run	assets/ok/float16_semantics.mojo
+simd-dtype-alias	run	assets/ok/simd_dtype_alias.mojo
+dtype-float-queries	run	assets/ok/dtype_float_queries.mojo

@@ -2082,6 +2082,16 @@ impl Checker {
             );
             return Ok(Ty::Int);
         }
+        // `v.dtype` is upstream's lane-dtype parameter, folded to a constant.
+        if field == "dtype"
+            && let Some(dtype) = simd_dtype(&obj_ty)
+        {
+            self.operation_adjustments.borrow_mut().insert(
+                span,
+                mojito_checked::checked::SemanticAdjustment::DtypeConstant { dtype: dtype? },
+            );
+            return Ok(Ty::Dtype);
+        }
         if let Ty::Struct(sname, targs) = &obj_ty {
             let info = self.structs.get(sname).ok_or_else(|| {
                 TypeError::InvariantViolation(format!("struct '{sname}' was not registered"))
@@ -2101,14 +2111,24 @@ impl Checker {
         })
     }
 
-    /// `DType.<name>` read as a value, when `DType` names the builtin rather
-    /// than a binding or a struct: the dtype, an unsupported upstream-only
-    /// name, or an unknown member. `None` for any other member expression.
+    /// A dtype constant read as a value: the `dtype` of a `SIMD` type operand
+    /// (`Int32.dtype`), or `DType.<name>` when `DType` names the builtin
+    /// rather than a binding or a struct — the dtype, an unsupported
+    /// upstream-only name, or an unknown member. `None` for any other member
+    /// expression.
     pub(super) fn dtype_constant(
         &self,
         object: &Expr,
         field: &str,
     ) -> Option<Result<mojito_ast::ast::Dtype, TypeError>> {
+        if field == "dtype"
+            && let Some(dtype) = self
+                .member_type_operand(object)
+                .as_ref()
+                .and_then(simd_dtype)
+        {
+            return Some(dtype);
+        }
         let ExprKind::Identifier(name) = &object.kind else {
             return None;
         };
@@ -2125,5 +2145,83 @@ impl Checker {
                 }
             }
         }))
+    }
+
+    /// The type a member's object names when it is a type operand (`Int32`,
+    /// `SIMD[DType.int16, 4]`, `Scalar[DType.int8]`) rather than a value.
+    /// `None` when its root names a binding or it names no type.
+    pub(super) fn member_type_operand(&self, object: &Expr) -> Option<Ty> {
+        let root = match &object.kind {
+            ExprKind::Identifier(name) => Some(name),
+            ExprKind::Index { object, .. } => match &object.kind {
+                ExprKind::Identifier(name) => Some(name),
+                _ => return None,
+            },
+            ExprKind::TypeApply { .. } | ExprKind::TypeValue(_) => None,
+            _ => return None,
+        };
+        if root.is_some_and(|name| name == "Self" || self.lookup(name).is_some()) {
+            return None;
+        }
+        let source = super::constraints::assoc_body_source_type(object).ok()?;
+        self.ty_from_anno(&source).ok()
+    }
+
+    /// The `DType.<method>[dtype]()` floating-point format query `callee`
+    /// names with `param_args`, folded to its answer. `None` for any other
+    /// callee.
+    pub(super) fn dtype_float_query(
+        &self,
+        callee: &Expr,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Option<Result<i64, TypeError>> {
+        let ExprKind::Member { object, field } = &callee.kind else {
+            return None;
+        };
+        if !mojito_ast::ast::DTYPE_FLOAT_QUERIES.contains(&field.as_str())
+            || !matches!(&object.kind, ExprKind::Identifier(name)
+                if name == "DType" && self.lookup(name).is_none() && !self.structs.contains_key(name))
+        {
+            return None;
+        }
+        let func = format!("DType.{field}");
+        let [argument] = param_args else {
+            return Some(Err(TypeError::BadCall {
+                func,
+                reason: format!(
+                    "expects one compile-time dtype argument, got {}",
+                    param_args.len()
+                ),
+            }));
+        };
+        if !args.is_empty() || !kwargs.is_empty() {
+            return Some(Err(TypeError::BadCall {
+                func,
+                reason: "takes no arguments".to_string(),
+            }));
+        }
+        Some(self.dtype_from_arg(argument).and_then(|dtype| {
+            dtype.float_query(field).ok_or_else(|| TypeError::BadCall {
+                func,
+                reason: "constraint failed: dtype must be floating point".to_string(),
+            })
+        }))
+    }
+}
+
+/// The lane dtype a `SIMD` type exposes as `dtype`, where `Int` and `Float64`
+/// are width-1 vectors and `UInt`'s `DType.uint` has no Mojito dtype. `None`
+/// for any other type: a `Bool` or a literal type has no `dtype`.
+pub(super) fn simd_dtype(ty: &Ty) -> Option<Result<mojito_ast::ast::Dtype, TypeError>> {
+    match ty {
+        Ty::Int => Some(Ok(mojito_ast::ast::Dtype::Int)),
+        Ty::Float64 => Some(Ok(mojito_ast::ast::Dtype::Float64)),
+        Ty::Simd { dtype, .. } => Some(Ok(*dtype)),
+        Ty::UInt => Some(Err(TypeError::Unsupported(
+            "DType.uint is not supported yet".to_string(),
+        ))),
+        _ => None,
     }
 }

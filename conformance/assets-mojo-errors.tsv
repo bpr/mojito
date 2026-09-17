@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	384
+# swept-count	387
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -158,6 +158,7 @@ assets/type_error/associated_value_in_type_position.mojo	compile-reject	agree	er
 assets/type_error/bad_operator.mojo	compile-reject	agree	error: no matching method in call to '__add__'
 assets/type_error/bare_move_initializer.mojo	compile-reject	agree	error: 'move' argument must be passed as 'deinit'
 assets/type_error/bare_reference_list_parameter.mojo	compile-reject	agree	error: cannot declare 'Int' without a contextual type from its initializer
+assets/type_error/bool_dtype_rejected.mojo	compile-reject	agree	error: 'Bool' value has no attribute 'dtype'
 assets/type_error/boolable_required_for_bool.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/call_result_pointer_field_immutable_source_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/captured_origin_specialization_rejected.mojo	compile-reject	agree	error: member method closures are not supported; add '()' to call '__call__'
@@ -189,9 +190,11 @@ assets/type_error/dict_view_len_rejected.mojo	compile-reject	agree	error: no mat
 assets/type_error/dtype_compare_int_rejected.mojo	compile-reject	agree	error: invalid call to '__eq__': value passed to 'rhs' cannot be converted from 'IntLiteral[5]' to 'DType'
 assets/type_error/dtype_dynamic_comptime_if_rejected.mojo	compile-reject	agree	error: cannot use a dynamic value in 'comptime if' condition
 assets/type_error/dtype_dynamic_parameter_rejected.mojo	compile-reject	agree	error: cannot use a dynamic value in a parameter list
+assets/type_error/dtype_float_query_non_float_rejected.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/dtype_identity_rejected.mojo	compile-reject	agree	error: 'DType' does not implement the '__is__' method
 assets/type_error/dtype_implicit_bool_rejected.mojo	compile-reject	agree	error: cannot implicitly convert 'DType' value to 'Bool'
 assets/type_error/dtype_ordering_rejected.mojo	compile-reject	agree	error: 'DType' does not implement the '__lt__' method
+assets/type_error/dtype_uint_alias_rejected.mojo	runs	divergence	the pin runs it; Mojito rejects: DType.uint is not supported yet
 assets/type_error/dtype_unknown_member_rejected.mojo	compile-reject	agree	error: 'DType' value has no attribute 'nosuch'
 assets/type_error/dtype_upstream_only_rejected.mojo	runs	divergence	the pin runs it; Mojito rejects: DType.uint128 is not supported yet
 assets/type_error/dtype_value_param_type_arg.mojo	compile-reject	agree	error: invalid call to 'convert': 'convert' parameter 'dt' has 'DType' type, but value has type 'AnyStruct[Int]'

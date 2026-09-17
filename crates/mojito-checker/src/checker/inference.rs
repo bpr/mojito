@@ -839,6 +839,15 @@ impl Checker {
                 args,
                 kwargs,
             } => {
+                if let Some(value) = self.dtype_float_query(callee, param_args, args, kwargs) {
+                    self.operation_adjustments.borrow_mut().insert(
+                        expr.source_span(),
+                        mojito_checked::checked::SemanticAdjustment::DtypeFloatQuery {
+                            value: value?,
+                        },
+                    );
+                    return Ok(Ty::Int);
+                }
                 if let Some(result) = self.infer_variant_storage_invoke(
                     expr.source_span(),
                     callee,

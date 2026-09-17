@@ -619,10 +619,17 @@ pub enum SemanticAdjustment {
     SimdLength {
         width: i64,
     },
-    /// `DType.<name>` read as a runtime value — the checker-resolved dtype,
-    /// lowered as a dtype constant.
+    /// `DType.<name>` read as a runtime value, or the `dtype` of a `SIMD` type
+    /// or value (`Int32.dtype`, `v.dtype`) — the checker-resolved dtype,
+    /// lowered as a dtype constant. A value receiver still lowers for its
+    /// effects.
     DtypeConstant {
         dtype: mojito_ast::ast::Dtype,
+    },
+    /// `DType.mantissa_width[dtype]()` and the other floating-point format
+    /// queries — the checker-resolved answer, lowered as an `Int` constant.
+    DtypeFloatQuery {
+        value: i64,
     },
     /// `v.shuffle[*mask]()`, `v.slice[width, offset=o]()`, and `v.join(w)` —
     /// lane gathers by checker-resolved compile-time indices; the result

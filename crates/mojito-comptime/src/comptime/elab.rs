@@ -788,6 +788,21 @@ impl Elab<'_> {
         base: &Ty,
         member: &str,
     ) -> Result<CtValue, ComptimeError> {
+        // A `SIMD` type's `dtype` parameter; `Int` and `Float64` are width-1
+        // vectors.
+        if member == "dtype" {
+            match base {
+                Ty::Int => return Ok(CtValue::Dtype(mojito_ast::ast::Dtype::Int)),
+                Ty::Float64 => return Ok(CtValue::Dtype(mojito_ast::ast::Dtype::Float64)),
+                Ty::Simd { dtype, .. } => return Ok(CtValue::Dtype(*dtype)),
+                Ty::UInt => {
+                    return Err(ComptimeError::NotComptime(
+                        "DType.uint is not supported yet".to_string(),
+                    ));
+                }
+                _ => {}
+            }
+        }
         let Ty::Struct(name, args) = base else {
             return Err(ComptimeError::NotComptime(format!(
                 "type '{base}' has no compile-time member '{member}'"
