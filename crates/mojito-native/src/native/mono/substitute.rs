@@ -200,6 +200,7 @@ pub(super) fn substitute_value_parameter_reads(
                     match value {
                         CtValue::Int(value) => Const::Int(*value),
                         CtValue::Bool(value) => Const::Bool(*value),
+                        CtValue::Dtype(value) => Const::Dtype(*value),
                         CtValue::Str(value)
                             if matches!(
                                 var_tys.get(var),

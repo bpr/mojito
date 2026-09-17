@@ -220,6 +220,19 @@ impl Flatten<'_> {
             .unwrap_or_default()
     }
 
+    /// Whether `expression` is a checker-resolved `DType.<name>` value, which
+    /// is a constant rather than a field of a `DType` binding.
+    pub(super) fn is_dtype_constant(&self, expression: &Expr) -> bool {
+        self.checked_adjustments(expression)
+            .iter()
+            .any(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::DtypeConstant { .. }
+                )
+            })
+    }
+
     pub(super) fn tuple_unpack_plan(
         &self,
         expression: &Expr,

@@ -246,6 +246,7 @@ pub const fn scalar_copy_ty(ty: &Ty) -> Option<ScalarTy> {
         Ty::UInt => Some(ScalarTy::UInt),
         Ty::Float64 | Ty::FloatLiteral => Some(ScalarTy::Float64),
         Ty::Bool => Some(ScalarTy::Bool),
+        Ty::Dtype => Some(ScalarTy::Dtype),
         Ty::Simd { dtype, width: 1 } => Some(ScalarTy::of_dtype(*dtype)),
         _ => None,
     }
@@ -269,6 +270,7 @@ pub fn scalar_type(
         Ty::UInt => Ok(ScalarTy::UInt),
         Ty::Float64 => Ok(ScalarTy::Float64),
         Ty::Bool => Ok(ScalarTy::Bool),
+        Ty::Dtype => Ok(ScalarTy::Dtype),
         Ty::Simd { dtype, width: 1 } => Ok(ScalarTy::of_dtype(*dtype)),
         Ty::Pointer { .. } | Ty::Ref(_) => Ok(ScalarTy::Ptr),
         other => Err(PlironError {

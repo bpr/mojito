@@ -157,6 +157,8 @@ pub enum Const {
     Bool(bool),
     Str(String),
     Function(String),
+    /// A `DType` value.
+    Dtype(mojito_ast::ast::Dtype),
     None,
 }
 

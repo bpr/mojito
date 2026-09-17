@@ -49,6 +49,9 @@ impl FnLowering<'_> {
         if let Some(Ty::Simd { dtype, width }) = self.func.reg_types.get(&recv.0).cloned() {
             return self.lower_simd_method(ctx, dest, recv, dtype, width as usize, method, args);
         }
+        if matches!(self.func.reg_types.get(&recv.0), Some(Ty::Dtype)) && args.is_empty() {
+            return self.lower_dtype_predicate(ctx, dest, recv, method);
+        }
         // `StringLiteral`'s byte primitives read the descriptor: the interned
         // constant's address and length, or a runtime literal's `(data, len)`.
         if resolved.is_none()
@@ -385,7 +388,11 @@ impl FnLowering<'_> {
         ) && let Some(scalar) = self.concrete_scalar_ty(arg)?
         {
             let value = self.reg_value(ctx, arg, scalar)?;
-            let (source, len) = self.format_scalar(ctx, scalar, value, dest)?;
+            let (source, len) = if scalar == ScalarTy::Dtype {
+                self.dtype_text(ctx, value, true, dest)
+            } else {
+                self.format_scalar(ctx, scalar, value, dest)?
+            };
             let label = match scalar {
                 ScalarTy::Int => Some("Int("),
                 ScalarTy::UInt => Some("UInt("),
@@ -477,6 +484,68 @@ impl FnLowering<'_> {
             ));
         }
         Err(self.unsupported_reg("repr over a non-String value".into(), dest))
+    }
+
+    /// `DType`'s `Bool` queries over the code byte, spelled as upstream's
+    /// mask tests: bit 64 marks a float, bit 128 a sized integer, bit 1 a
+    /// signed type, and `DType.int` is the one unsized integer.
+    fn lower_dtype_predicate(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        recv: Reg,
+        method: &str,
+    ) -> Result<(), PlironError> {
+        if !mojito_ast::ast::DTYPE_PREDICATES.contains(&method) {
+            return Err(self.unsupported_reg(format!("DType method `{method}`"), dest));
+        }
+        let code = self.reg_value(ctx, recv, ScalarTy::Dtype)?;
+        let has_bit = |this: &mut Self, ctx: &mut Context, mask: u8| {
+            let mask = this.sized_int_constant(ctx, Dtype::UInt8, u64::from(mask));
+            let and = AndOp::new(ctx, code, mask);
+            this.append(ctx, and.get_operation(), Some(dest));
+            let zero = this.sized_int_constant(ctx, Dtype::UInt8, 0);
+            let test = ICmpOp::new(ctx, ICmpPredicateAttr::NE, and.get_result(ctx), zero);
+            this.append(ctx, test.get_operation(), Some(dest));
+            test.get_result(ctx)
+        };
+        let float = has_bit(self, ctx, mojito_ast::ast::DTYPE_FLOAT_MASK);
+        let sized_integer = has_bit(self, ctx, mojito_ast::ast::DTYPE_INTEGER_MASK);
+        let signed = has_bit(self, ctx, mojito_ast::ast::DTYPE_SIGNED_MASK);
+        let index = self.dtype_constant(ctx, Dtype::Int);
+        let is_index = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, code, index);
+        self.append(ctx, is_index.get_operation(), Some(dest));
+        let integral = OrOp::new(ctx, is_index.get_result(ctx), sized_integer);
+        self.append(ctx, integral.get_operation(), Some(dest));
+        let integral = integral.get_result(ctx);
+        let result = match method {
+            "is_floating_point" => float,
+            "is_integral" => integral,
+            "is_signed" => {
+                let signed_integral = AndOp::new(ctx, integral, signed);
+                self.append(ctx, signed_integral.get_operation(), Some(dest));
+                let or = OrOp::new(ctx, float, signed_integral.get_result(ctx));
+                self.append(ctx, or.get_operation(), Some(dest));
+                or.get_result(ctx)
+            }
+            "is_unsigned" => {
+                let unsigned = self.bool_constant(ctx, true);
+                let unsigned = XorOp::new(ctx, signed, unsigned);
+                self.append(ctx, unsigned.get_operation(), Some(dest));
+                let and = AndOp::new(ctx, sized_integer, unsigned.get_result(ctx));
+                self.append(ctx, and.get_operation(), Some(dest));
+                and.get_result(ctx)
+            }
+            "is_numeric" => {
+                let or = OrOp::new(ctx, integral, float);
+                self.append(ctx, or.get_operation(), Some(dest));
+                or.get_result(ctx)
+            }
+            // `is_float8` / `is_half_float`: no Mojito dtype is either.
+            _ => self.bool_constant(ctx, false),
+        };
+        self.reg_values.insert(dest.0, result);
+        Ok(())
     }
 
     fn wrap_repr_scalar(

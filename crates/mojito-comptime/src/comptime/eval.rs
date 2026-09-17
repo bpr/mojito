@@ -232,6 +232,10 @@ impl Elab<'_> {
             {
                 match self.eval(object, scope)? {
                     CtValue::Reflected(ty) => self.eval_reflection_method(&ty, method, scope),
+                    // `DType`'s `Bool` queries fold from the dtype table.
+                    CtValue::Dtype(dtype) if let Some(answer) = dtype.predicate(method) => {
+                        Ok(CtValue::Bool(answer))
+                    }
                     receiver => self.comptime_value_method(e, &receiver, method, args, scope),
                 }
             }

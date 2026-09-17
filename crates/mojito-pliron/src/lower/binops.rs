@@ -98,9 +98,10 @@ impl FnLowering<'_> {
             ScalarTy::UInt => self.lower_uint_binop(ctx, op, dest, lhs, rhs),
             ScalarTy::Sized(Dtype::Float32) => self.lower_f32_binop(ctx, op, dest, lhs, rhs),
             ScalarTy::Sized(dtype) => self.lower_sized_int_binop(ctx, op, dest, lhs, rhs, dtype),
-            ScalarTy::Ptr => {
-                Err(self.unsupported_reg(format!("operator `{op:?}` on Pointer operands"), dest))
-            }
+            ScalarTy::Ptr | ScalarTy::Dtype => Err(self.unsupported_reg(
+                format!("operator `{op:?}` on {} operands", operand_ty.name()),
+                dest,
+            )),
         }
     }
 

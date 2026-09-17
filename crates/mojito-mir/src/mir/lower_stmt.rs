@@ -1824,7 +1824,7 @@ impl Flatten<'_> {
                 Some(p)
             }
             ExprKind::Member { object, field } => {
-                if self.is_slice_descriptor(object) {
+                if self.is_slice_descriptor(object) || self.is_dtype_constant(e) {
                     return None;
                 }
                 let mut p = self.simple_place(object)?;
@@ -1862,7 +1862,7 @@ impl Flatten<'_> {
                 Some(self.expression_place_root(root, e))
             }
             ExprKind::Member { object, field } => {
-                if self.is_slice_descriptor(object) {
+                if self.is_slice_descriptor(object) || self.is_dtype_constant(e) {
                     return None;
                 }
                 let mut p = self.pure_field_place(object)?;
@@ -1892,7 +1892,7 @@ impl Flatten<'_> {
                 Some(p)
             }
             ExprKind::Member { object, field } => {
-                if self.is_slice_descriptor(object) {
+                if self.is_slice_descriptor(object) || self.is_dtype_constant(e) {
                     return None;
                 }
                 let mut p = self.try_place(object)?;

@@ -129,6 +129,30 @@ whatever its model, because it batches every change that needs a new
 The two checkboxes below, and the bullets inside the two standing ones,
 are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
 
+- [ ] **`SIMD` has no `dtype` alias**
+
+  Problem: `Int32.dtype` and `s.dtype` on a `SIMD[DType.int16, 4]` value run at
+  the pin (`int32`, `int16`), while Mojito reports "type 'SIMD[DType.int16, 4]'
+  has no field 'dtype'".
+  - The runtime read belongs beside `v.length` in `infer_member`
+    (`checker/indexing.rs`), folded like `SemanticAdjustment::SimdLength` into
+    the `DType` constant `DtypeConstant` already lowers.
+  - The compile-time read (`comptime d = Int32.dtype`) needs the same member in
+    the elaborator's `associated_value` (`comptime/elab.rs`), which today
+    answers struct types only.
+  - Model: Opus, as-is.
+
+- [ ] **`DType`'s floating-point static queries are missing**
+
+  Problem: `DType.mantissa_width[DType.float32]()`, `max_exponent`,
+  `exponent_width`, and `exponent_bias` run at the pin, while Mojito has no
+  static methods on `DType`.
+  - Each is a pure function of the dtype; the answers belong in the
+    `Dtype` table in `mojito-ast` beside the `is_*` queries, so both the
+    checker's fold and the evaluator read one source.
+  - A non-float dtype is a compile-time assertion failure upstream.
+  - Model: Opus, as-is.
+
 - [ ] **A display of capturing lambdas is rejected**
 
   Problem: `[lambda (x: Int) {k} -> Int: x * k]` runs at the pin (prints `6` for
@@ -170,16 +194,20 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     the native lowering, layout, and CTFE gain a sibling arm, so the plan
     bounds that fan-out and the display question first.
 
-- [ ] **A `DType` cannot be a runtime value**
+- [ ] **Upstream `DType` names with no Mojito dtype are rejected**
 
-  Problem: `var x = DType.float32; print(x)` runs at the pin (`float32`), while
-  Mojito reports `Undefined variable 'DType'`
-  (`assets/type_error/dtype_runtime_value_rejected.mojo`, a `divergence` row of
+  Problem: `print(DType.uint128)` runs at the pin (`uint128`), while Mojito
+  reports "DType.uint128 is not supported yet"
+  (`assets/type_error/dtype_upstream_only_rejected.mojo`, a `divergence` row of
   `conformance/assets-mojo-errors.tsv`).
-  - `Ty::Dtype` is compile-time-only today; a runtime value needs a checked
-    value type, MIR constants, VM and native representations, display, `==`,
-    and the `is_integral`/`is_floating_point`/`is_signed`/`is_unsigned`/
-    `is_numeric` predicates.
+  - The names are `uint`, `bfloat16`, `int128`, `uint128`, `int256`,
+    `uint256`, the `float4`/`float6`/`float8` families, and `_uint1`/`_uint2`/
+    `_uint4` (`UPSTREAM_ONLY_DTYPE_NAMES` in `mojito-ast`); `float16` has its
+    own checkbox above.
+  - Each needs a `Dtype` variant with upstream's code in `Dtype::code`, even
+    where no `SIMD` lane of it exists yet, so the value can print and compare.
+  - Depends on the `Float16` checkbox's plan, which bounds the `Dtype` fan-out
+    these variants share.
   - Model: Opus, plan first.
 
 - [ ] **Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
@@ -200,6 +228,14 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
       `AGENTS.md`) into Mojo rather than deriving the algorithm; the plan
       picks the source and pins the shortest-round-trip cases. Only a
       from-scratch derivation would want Fable.
+  - `DType` is a compiler builtin (`Ty::Dtype`, with its `is_*` queries and
+    display in the VM and the native lowering) where upstream's is a stdlib
+    struct over a one-byte code. A bundled `struct DType` needs struct-valued
+    associated `comptime` members (`eval_associated_ct` rejects them), runtime
+    reads of `StructName.NAME`, struct value parameters on defs, and a bridge
+    from a frozen struct value to `Dtype` at every hard-wired `DType` site.
+    - Model: Fable, plan first. Several checker and elaborator capabilities
+      land before the struct can replace the builtin.
 
   Four runtime services are deliberately not on that list; they are in
   [`docs/non-goals.md`](non-goals.md).
@@ -596,9 +632,8 @@ says whether the entry can be done as-is or must be planned first.
     decides equality by canonicalization rather than evaluation.
   - Shape the representation like a Pliron attribute, uniqued and
     canonicalized, so a later dialect move is a re-homing and not a redesign.
-  - The plan accounts for section 2's runtime `DType` value and `Float16`
-    entries, which touch the same `Dtype`/`CtValue` representation, whichever
-    lands first.
+  - The plan accounts for section 2's `Float16` entry, which touches the same
+    `Dtype`/`CtValue` representation, whichever lands first.
   - Depends on nothing. It gates the `DType`/vector validation entry and the
     Pliron parametric layer.
   - Model: Fable, plan first. A representation change under `CtValue`,

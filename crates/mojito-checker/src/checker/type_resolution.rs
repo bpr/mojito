@@ -365,7 +365,7 @@ impl Checker {
                             got: args.len(),
                         });
                     }
-                    return Ok(simd_ty(dtype_from_arg(&args[0])?, 1));
+                    return Ok(simd_ty(self.dtype_from_arg(&args[0])?, 1));
                 }
                 if name == "$pack" {
                     return self.tuple_element_types(args).map(Ty::RuntimePack);
@@ -410,6 +410,9 @@ impl Checker {
                 }
                 if name == "Error" && args.is_empty() {
                     return Ok(Ty::Error);
+                }
+                if name == "DType" && args.is_empty() && !self.structs.contains_key(name) {
+                    return Ok(Ty::Dtype);
                 }
                 // Literal families are lang items: direct `_` holes are solved
                 // from an initializer before ordinary generic-bound checking.
@@ -2673,7 +2676,7 @@ impl Checker {
                 got: args.len(),
             });
         }
-        let dtype = dtype_from_arg(&args[0])?;
+        let dtype = self.dtype_from_arg(&args[0])?;
         let width = if matches!(
             &args[1],
             mojito_ast::ast::ParamArg::Value(Expr { kind: ExprKind::Identifier(name), .. }) if name == "_"

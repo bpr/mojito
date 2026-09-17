@@ -696,6 +696,7 @@ fn source_type(ty: &Ty, span: Span) -> Option<Type> {
         Ty::StringLiteral => Type::StringLiteral,
         Ty::Float64 | Ty::FloatLiteral => Type::Float64,
         Ty::None => Type::None,
+        Ty::Dtype => Type::Named("DType".to_string(), Vec::new()),
         Ty::Simd { dtype, width } => Type::Named(
             "SIMD".to_string(),
             vec![

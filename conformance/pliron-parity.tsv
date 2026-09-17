@@ -80,7 +80,10 @@ assets/ok/dict_upstream_key_value_iteration.mojo	main	exe-differential	sanitized
 assets/ok/dict_views_iteration.mojo	main	exe-differential	sanitized
 assets/ok/discarded_result_destruction.mojo	main	exe-differential	sanitized
 assets/ok/docstrings.mojo	main	exe-differential	sanitized
+assets/ok/dtype_compile_time_values.mojo	main	exe-differential	sanitized
 assets/ok/dtype_default_param.mojo	main	exe-differential	sanitized
+assets/ok/dtype_runtime_surface.mojo	main	exe-differential	sanitized
+assets/ok/dtype_runtime_value.mojo	main	exe-differential	sanitized
 assets/ok/dtype_struct_param.mojo	main	exe-differential	sanitized
 assets/ok/dtype_value_param.mojo	main	exe-differential	sanitized
 assets/ok/dunder_contains.mojo	main	exe-differential	sanitized

@@ -2406,12 +2406,12 @@ impl Checker {
     }
 
     /// Whether `ty` conforms to `TrivialRegisterPassable`: a numeric, `Bool`,
-    /// or SIMD-valued builtin, a struct declaring the conformance, or a
+    /// `DType`, or SIMD-valued builtin, a struct declaring the conformance, or a
     /// parameter bounded or assumed by it. The general `conforms_to` answers
     /// marker traits shallowly, so it cannot be asked.
     pub(super) fn is_trivial_register_passable(&self, ty: &Ty) -> bool {
         super::builtins::is_numeric(ty)
-            || *ty == Ty::Bool
+            || matches!(ty, Ty::Bool | Ty::Dtype)
             || super::builtins::simd_valued_ty(ty)
             || match ty {
                 Ty::Struct(name, args) => {

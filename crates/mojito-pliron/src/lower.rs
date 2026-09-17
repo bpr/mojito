@@ -280,7 +280,8 @@ pub struct Locator {
 /// The scalar value types the backend lowers. `Int` and `UInt` share the
 /// signless i64 representation and differ only in operator selection; `Ptr`
 /// is one opaque target pointer (checked `Pointer` values, origins erased);
-/// `Sized` is a width-1 SIMD scalar alias at its lane width.
+/// `Dtype` is a `DType` value's one-byte upstream code; `Sized` is a width-1
+/// SIMD scalar alias at its lane width.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ScalarTy {
     Int,
@@ -288,6 +289,7 @@ pub enum ScalarTy {
     Float64,
     Bool,
     Ptr,
+    Dtype,
     /// A sized scalar alias (`Int8`…`Int64`, `UInt8`…`UInt64`, `Float32`).
     /// The `int`, `float64`, and `bool` dtypes canonicalize to the variants
     /// above through [`ScalarTy::of_dtype`] and never appear here.

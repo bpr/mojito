@@ -31,6 +31,7 @@ impl Specializer<'_> {
             CtValue::Int(v) => Some(Const::Int(*v)),
             CtValue::UInt(v) => Some(Const::Int(*v as i64)),
             CtValue::Bool(v) => Some(Const::Bool(*v)),
+            CtValue::Dtype(v) => Some(Const::Dtype(*v)),
             _ => None,
         }
     }
@@ -58,8 +59,12 @@ impl Specializer<'_> {
         // A scalar/vector leaf calls the hasher's clone for its own vector
         // type; a literal/Variant receiver reaches the hasher through the
         // nominal `__hash__` bodies enqueued below.
-        if mojito_types::types::simd_shape(receiver).is_some() || matches!(receiver, Ty::Bool) {
-            let clone = mojito_symbol::symbol::simd_update_clone_name(receiver);
+        if mojito_types::types::simd_shape(receiver).is_some()
+            || matches!(receiver, Ty::Bool | Ty::Dtype)
+        {
+            let clone = mojito_symbol::symbol::simd_update_clone_name(
+                &mojito_types::types::hash_leaf_ty(receiver),
+            );
             self.enqueue_nominal_method_instance(owner, &hasher_ty, &clone, 1, &[])?;
         }
         if matches!(receiver, Ty::StringLiteral) {

@@ -4,26 +4,41 @@
 use super::*;
 pub use mojito_types::types::splats_to;
 
-pub(super) fn dtype_from_arg(arg: &mojito_ast::ast::ParamArg) -> Result<Dtype, TypeError> {
-    if let mojito_ast::ast::ParamArg::Value(Expr {
-        kind: ExprKind::Member { object, field },
-        ..
-    }) = arg
-        && let ExprKind::Identifier(ns) = &object.kind
-        && ns == "DType"
-        && let Some(dtype) = Dtype::from_name(field)
-    {
-        return Ok(dtype);
-    }
-    Err(TypeError::BadDtype(match arg {
-        mojito_ast::ast::ParamArg::Value(Expr {
-            kind: ExprKind::Member { field, .. },
+impl Checker {
+    /// The dtype a SIMD element-type argument names: a `DType.<name>` member,
+    /// or a `comptime` binding of one.
+    pub(super) fn dtype_from_arg(
+        &self,
+        arg: &mojito_ast::ast::ParamArg,
+    ) -> Result<Dtype, TypeError> {
+        if let mojito_ast::ast::ParamArg::Value(Expr {
+            kind: ExprKind::Member { object, field },
             ..
-        }) => {
-            format!("DType.{field}")
+        }) = arg
+            && let ExprKind::Identifier(ns) = &object.kind
+            && ns == "DType"
+            && let Some(dtype) = Dtype::from_name(field)
+        {
+            return Ok(dtype);
         }
-        _ => "a non-DType argument".to_string(),
-    }))
+        if let mojito_ast::ast::ParamArg::Value(Expr {
+            kind: ExprKind::Identifier(name),
+            ..
+        }) = arg
+            && let Some(dtype) = self.comptime_dtypes.get(name)
+        {
+            return Ok(*dtype);
+        }
+        Err(TypeError::BadDtype(match arg {
+            mojito_ast::ast::ParamArg::Value(Expr {
+                kind: ExprKind::Member { field, .. },
+                ..
+            }) => {
+                format!("DType.{field}")
+            }
+            _ => "a non-DType argument".to_string(),
+        }))
+    }
 }
 
 /// Whether `ty` may be an **explicit construction** argument for a `dtype`
@@ -83,7 +98,7 @@ pub(super) const fn simd_ty(dtype: Dtype, width: i64) -> Ty {
 pub(super) fn scalar_type_name(name: &str) -> Option<Ty> {
     match name {
         "Int" => Some(Ty::Int),
-        // A `[dtype: DType]` value parameter; compile-time-only.
+        // A `DType` value, and the type of a `[dtype: DType]` value parameter.
         "DType" => Some(Ty::Dtype),
         // The removed `SIMDSize` spelling rejects (upstream removed it 2026-08).
         "SIMDLength" => Some(Ty::Int),

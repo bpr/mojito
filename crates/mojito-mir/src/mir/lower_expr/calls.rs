@@ -510,6 +510,7 @@ impl Flatten<'_> {
             Const::Bool(_) => Some(Ty::Bool),
             Const::Str(_) => Some(Ty::StringLiteral),
             Const::None => Some(Ty::None),
+            Const::Dtype(_) => Some(Ty::Dtype),
             Const::Function(_) => self.checked_ty(e),
         };
         let d = match constant_ty {

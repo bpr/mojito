@@ -510,3 +510,6 @@ span-pointer-construction	run	assets/ok/span_pointer_construction.mojo
 tuple-unpack-call	run	assets/ok/tuple_unpack_call.mojo
 typelist-where-clauses	run	assets/ok/typelist_where_clauses.mojo
 unsafe-pointer-storage	run	assets/ok/unsafe_pointer.mojo
+dtype-runtime-value	run	assets/ok/dtype_runtime_value.mojo
+dtype-runtime-surface	run	assets/ok/dtype_runtime_surface.mojo
+dtype-compile-time-values	run	assets/ok/dtype_compile_time_values.mojo

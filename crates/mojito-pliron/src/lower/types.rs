@@ -79,6 +79,7 @@ impl ScalarTy {
             Self::Float64 => FP64Type::get(ctx).into(),
             Self::Bool => IntegerType::get(ctx, 1, Signedness::Signless).into(),
             Self::Ptr => PointerType::get(ctx, 0).into(),
+            Self::Dtype => IntegerType::get(ctx, 8, Signedness::Signless).into(),
             Self::Sized(Dtype::Float32) => FP32Type::get(ctx).into(),
             Self::Sized(dtype) => {
                 let (bits, _) = mojito_vm::runtime::integer_dtype_bits(dtype)
@@ -95,6 +96,8 @@ impl ScalarTy {
             Self::Float64 => RetKind::F64,
             Self::Bool => RetKind::Bool,
             Self::Ptr => RetKind::Ptr,
+            // The typed JIT harness reads a `DType` return as its code byte.
+            Self::Dtype => RetKind::Sized(Dtype::UInt8),
             Self::Sized(dtype) => RetKind::Sized(dtype),
         }
     }
@@ -106,6 +109,7 @@ impl ScalarTy {
             Self::Float64 => "Float64",
             Self::Bool => "Bool",
             Self::Ptr => "Pointer",
+            Self::Dtype => "DType",
             Self::Sized(dtype) => dtype.scalar_alias().unwrap_or_else(|| dtype.name()),
         }
     }
@@ -130,6 +134,7 @@ pub fn lower_ty(
         Ty::UInt => Ok(LowerTy::Scalar(ScalarTy::UInt)),
         Ty::Float64 => Ok(LowerTy::Scalar(ScalarTy::Float64)),
         Ty::Bool => Ok(LowerTy::Scalar(ScalarTy::Bool)),
+        Ty::Dtype => Ok(LowerTy::Scalar(ScalarTy::Dtype)),
         Ty::Simd { dtype, width: 1 } => Ok(LowerTy::Scalar(ScalarTy::of_dtype(*dtype))),
         // Literal-typed storage holds the default materialized value; a
         // constant that exceeds it rejects at the storage boundary rather

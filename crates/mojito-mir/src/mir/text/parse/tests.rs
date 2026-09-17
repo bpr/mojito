@@ -340,6 +340,7 @@ fn constant_families_reprint_byte_identically() {
         Const::Bool(true),
         Const::Str("line\n\"quoted\"\t\u{7}".into()),
         Const::Function("needs quoting!".into()),
+        Const::Dtype(Dtype::UInt16),
         Const::None,
     ];
     let reg_types = vec![Ty::Int; constants.len()];
@@ -1082,10 +1083,14 @@ fn declaration_metadata_reprints_byte_identically() {
     };
     let other = MirFunctionDeclaration {
         lowered_name: "aaa_first".into(),
-        param_names: vec!["flag".into(), "nothing".into()],
-        param_types: vec![Ty::Bool, Ty::None],
-        defaults: vec![Some(CheckedConst::Bool(true)), Some(CheckedConst::None)],
-        required: vec![false, false],
+        param_names: vec!["flag".into(), "nothing".into(), "dtype".into()],
+        param_types: vec![Ty::Bool, Ty::None, Ty::Dtype],
+        defaults: vec![
+            Some(CheckedConst::Bool(true)),
+            Some(CheckedConst::None),
+            Some(CheckedConst::Dtype(Dtype::Float64)),
+        ],
+        required: vec![false, false, false],
         variadic: None,
         variadic_convention: None,
         variadic_index: None,
@@ -1097,13 +1102,13 @@ fn declaration_metadata_reprints_byte_identically() {
         param_decls: Vec::new(),
         has_receiver: false,
         receiver_convention: None,
-        param_conventions: vec![None, None],
+        param_conventions: vec![None, None, None],
         ret_ty: Ty::None,
         returns_reference: false,
         raises: false,
         error_ty: None,
-        ref_params: vec![false, false],
-        param_writes: vec![false, false],
+        ref_params: vec![false, false, false],
+        param_writes: vec![false, false, false],
     };
     let mut program = program_with(vec![("main".into(), function_with(Vec::new(), Vec::new()))]);
     // Deliberately unsorted: the canonical writer sorts by name, so the

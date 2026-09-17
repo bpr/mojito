@@ -815,6 +815,7 @@ fn runtime_value_as_ct(value: &Value) -> Option<CtValue> {
         Value::IntLiteral(value) => CtValue::IntLiteral(value.clone()),
         Value::FloatLiteral(value) => CtValue::FloatLiteral(value.clone()),
         Value::Bool(value) => CtValue::Bool(*value),
+        Value::Dtype(dtype) => CtValue::Dtype(*dtype),
         Value::Str(value) => CtValue::Str(value.clone()),
         Value::Tuple(values) => CtValue::Tuple(
             values
@@ -886,8 +887,8 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
                 .map(ct_value_as_runtime)
                 .collect::<Option<Vec<_>>>()?,
         ),
-        CtValue::Dtype(_)
-        | CtValue::Struct { .. }
+        CtValue::Dtype(dtype) => Value::Dtype(dtype),
+        CtValue::Struct { .. }
         | CtValue::Dict { .. }
         | CtValue::Set { .. }
         | CtValue::Type(_)
@@ -1624,6 +1625,7 @@ fn const_value(k: &Const) -> Value {
         Const::Bool(b) => Value::Bool(*b),
         Const::Str(s) => Value::Str(s.clone()),
         Const::Function(name) => Value::Function(name.clone()),
+        Const::Dtype(dtype) => Value::Dtype(*dtype),
         Const::None => Value::None,
     }
 }

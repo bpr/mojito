@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `DType` is now a runtime value, as in the pinned Mojo: `var x =
+  DType.float32; print(x)` prints `float32` instead of failing with
+  "Undefined variable 'DType'". A `DType` passes, returns, defaults, and
+  stores in fields and collections; prints its name (`repr` spells
+  `DType.float32`); compares with `==`/`!=`; hashes as upstream's one-byte
+  code; and answers `is_integral`/`is_floating_point`/`is_signed`/
+  `is_unsigned`/`is_numeric` at run time and in `comptime if`, on the VM and
+  natively. A compile-time call returning a `DType` now keys `SIMD[c, n]` and
+  `[dt: DType]` specializations.
 - A field store below a `List` subscript (`xs[i].field = v`, `xs[i].n += 1`,
   `h.items[i].inner.n = v`, `xs[i][j].n = v`) now runs on both backends
   instead of failing MIR verification with "dynamic element projection

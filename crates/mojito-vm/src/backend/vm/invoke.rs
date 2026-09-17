@@ -458,7 +458,7 @@ impl VmBackend {
                             "vm: Hasher implementation has no '{fname}'"
                         ))
                     })?;
-                    let contribution = crate::runtime::fold_negative_zero(recv.clone());
+                    let contribution = crate::runtime::hash_leaf_value(recv.clone());
                     let (_, variables) =
                         self.call_frame(prog, fidx, vec![hasher, contribution], &[])?;
                     let updated = variables.into_iter().next().unwrap_or(Value::None);
@@ -558,6 +558,13 @@ impl VmBackend {
             Value::Simd { dtype, lanes } => {
                 crate::runtime::simd_method(*dtype, lanes, method, &args)
             }
+            Value::Dtype(dtype) => dtype
+                .predicate(method)
+                .filter(|_| args.is_empty())
+                .map(Value::Bool)
+                .ok_or_else(|| {
+                    RuntimeError::Unsupported(format!("vm: DType has no method '{method}'"))
+                }),
             // `Pointer` methods: `free()` releases the allocation (a no-op in
             // the arena model — the arena never reclaims).
             Value::Pointer { allocation, offset } => match method {

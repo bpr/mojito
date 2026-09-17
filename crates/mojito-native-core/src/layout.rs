@@ -94,7 +94,8 @@ impl LayoutCx<'_> {
         }
         match ty {
             Ty::Int | Ty::UInt | Ty::Float64 => Ok(Layout::new(8, 8)),
-            Ty::Bool => Ok(Layout::new(1, 1)),
+            // A `DType` is its one-byte upstream code.
+            Ty::Bool | Ty::Dtype => Ok(Layout::new(1, 1)),
             Ty::None => Ok(Layout::ZERO),
             // The borrowed string-literal descriptor: `{ data: ptr, len: u64 }`
             // (`MjStrDesc` in the runtime contract).
@@ -472,7 +473,6 @@ mod tests {
         for ty in [
             Ty::Never,
             Ty::Infer,
-            Ty::Dtype,
             Ty::SelfType,
             Ty::VariadicPack(Box::new(Ty::Int)),
             Ty::ComptimeList(Box::new(Ty::Int)),

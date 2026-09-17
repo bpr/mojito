@@ -1771,6 +1771,16 @@ impl Flatten<'_> {
                 {
                     return self.constant(e, Const::Int(width));
                 }
+                if let Some(mojito_checked::checked::SemanticAdjustment::DtypeConstant { dtype }) =
+                    self.checked_adjustments(e).into_iter().find(|adjustment| {
+                        matches!(
+                            adjustment,
+                            mojito_checked::checked::SemanticAdjustment::DtypeConstant { .. }
+                        )
+                    })
+                {
+                    return self.constant(e, Const::Dtype(dtype));
+                }
                 // A pure field chain rooted at a variable (`p.a`, `p.a.b`) lowers to
                 // a `LoadPlace` (a place read) so the ownership analysis sees *which*
                 // field is read — enabling field-sensitive partial-move checking

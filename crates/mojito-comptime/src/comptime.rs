@@ -1046,6 +1046,7 @@ fn source_type_from_ty_with_origins(
         Ty::StringLiteral => Type::StringLiteral,
         Ty::Float64 | Ty::FloatLiteral => Type::Float64,
         Ty::None => Type::None,
+        Ty::Dtype => Type::Named("DType".to_string(), Vec::new()),
         callable @ (Ty::Func { .. } | Ty::GenericFunc { .. }) => {
             let (_, key) = materialized_callables
                 .iter()
@@ -1223,7 +1224,8 @@ fn ct_to_vm(value: &CtValue) -> Result<Value, ComptimeError> {
                 lanes,
             })
         }
-        CtValue::Dtype(_) | CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Param(_) => {
+        CtValue::Dtype(dtype) => Ok(Value::Dtype(*dtype)),
+        CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Param(_) => {
             Err(ComptimeError::NotComptime(
                 "type-valued or symbolic values cannot cross into VM CTFE".to_string(),
             ))
@@ -1269,6 +1271,7 @@ fn vm_to_ct(value: Value) -> Result<CtValue, ComptimeError> {
                 SimdLanes::Bool(values) => values.into_iter().map(CtLane::Bool).collect(),
             },
         }),
+        Value::Dtype(dtype) => Ok(CtValue::Dtype(dtype)),
         Value::None => Err(ComptimeError::NotComptime(
             "VM CTFE function returned None; a compile-time value is required".to_string(),
         )),
@@ -1643,7 +1646,7 @@ impl Mono {
 fn scalar_type_name(name: &str) -> Option<Ty> {
     match name {
         "Int" => Some(Ty::Int),
-        // A `[dtype: DType]` value parameter; compile-time-only.
+        // A `DType` value, and the type of a `[dtype: DType]` value parameter.
         "DType" => Some(Ty::Dtype),
         // A SIMD width parameter is a compile-time Int value parameter (the
         // removed `SIMDSize` spelling rejects).
@@ -1885,12 +1888,24 @@ struct SpecRequest<'a> {
     forwarded_pack_types: Option<&'a [Ty]>,
 }
 
+/// A compile-time comparison: numbers by exact value, and `DType`s by
+/// equality only.
 fn compare_numeric_values(
     op: InfixOp,
     left: &CtValue,
     right: &CtValue,
 ) -> Result<bool, ComptimeError> {
     use InfixOp::{Eq, Ge, Gt, Le, Lt, Ne};
+
+    if let (CtValue::Dtype(left), CtValue::Dtype(right)) = (left, right) {
+        return match op {
+            Eq => Ok(left == right),
+            Ne => Ok(left != right),
+            _ => Err(ComptimeError::NotComptime(
+                "'DType' supports only '==' and '!=' comparisons".to_string(),
+            )),
+        };
+    }
 
     let exact = |value: &CtValue| match value {
         CtValue::Int(value) => Some(mojito_common::literal::FloatLiteral::from_int(

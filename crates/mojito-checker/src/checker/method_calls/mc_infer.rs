@@ -353,7 +353,7 @@ impl Checker {
         {
             reject_kwargs(kwargs)?;
             let target = match param_args.first() {
-                Some(argument) => dtype_from_arg(argument)?,
+                Some(argument) => self.dtype_from_arg(argument)?,
                 None => unsigned_dtype_of_width(dtype_bit_width(source)),
             };
             if !matches!(
@@ -376,6 +376,20 @@ impl Checker {
             );
             return Ok(simd_ty(target, width));
         }
+        // `DType`'s `Bool` queries (`is_integral()`, `is_floating_point()`, …),
+        // dispatched by name on both backends.
+        if obj_ty == Ty::Dtype && mojito_ast::ast::DTYPE_PREDICATES.contains(&method) {
+            reject_kwargs(kwargs)?;
+            if !param_args.is_empty() {
+                return Err(TypeError::WrongTypeArgCount {
+                    name: format!("DType.{method}"),
+                    expected: 0,
+                    got: param_args.len(),
+                });
+            }
+            self.builtin_args(&format!("DType.{method}"), 0, args)?;
+            return Ok(Ty::Bool);
+        }
         if let Ty::Simd { dtype, width } = &obj_ty {
             let (dtype, width) = (*dtype, *width);
             reject_kwargs(kwargs)?;
@@ -395,7 +409,7 @@ impl Checker {
                     Ok(obj_ty.clone())
                 }
                 "cast" if param_args.len() == 1 && args.is_empty() => {
-                    let target = dtype_from_arg(&param_args[0])?;
+                    let target = self.dtype_from_arg(&param_args[0])?;
                     // Bool casts are deferred: masks convert through
                     // `select`, and no numeric dtype casts to bool yet.
                     // (Not `NoSuchMethod`, which the Invoke path treats as

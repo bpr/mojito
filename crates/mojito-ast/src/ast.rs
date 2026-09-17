@@ -366,7 +366,141 @@ impl Dtype {
     pub const fn is_float(self) -> bool {
         matches!(self, Self::Float32 | Self::Float64)
     }
+
+    /// Upstream's one-byte `!kgen.dtype` code, whose bits the predicates
+    /// below test: `DTYPE_INTEGER_MASK` marks a sized integer,
+    /// `DTYPE_FLOAT_MASK` a float, and `DTYPE_SIGNED_MASK` signedness.
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Bool => 1,
+            Self::Int => 3,
+            Self::UInt8 => 134,
+            Self::Int8 => 135,
+            Self::UInt16 => 136,
+            Self::Int16 => 137,
+            Self::UInt32 => 138,
+            Self::Int32 => 139,
+            Self::UInt64 => 140,
+            Self::Int64 => 141,
+            Self::Float32 => 81,
+            Self::Float64 => 82,
+        }
+    }
+
+    /// Every dtype, in declaration order.
+    pub const ALL: [Self; 12] = [
+        Self::Int,
+        Self::Int8,
+        Self::Int16,
+        Self::Int32,
+        Self::Int64,
+        Self::UInt8,
+        Self::UInt16,
+        Self::UInt32,
+        Self::UInt64,
+        Self::Float32,
+        Self::Float64,
+        Self::Bool,
+    ];
+
+    /// `DType.is_floating_point()`.
+    pub const fn is_floating_point(self) -> bool {
+        self.matches_mask(DTYPE_FLOAT_MASK)
+    }
+
+    /// `DType.is_integral()`: the index integer or a sized integer.
+    pub const fn is_integral(self) -> bool {
+        matches!(self, Self::Int) || self.matches_mask(DTYPE_INTEGER_MASK)
+    }
+
+    /// `DType.is_signed()`.
+    pub const fn is_signed(self) -> bool {
+        self.is_floating_point() || (self.is_integral() && self.matches_mask(DTYPE_SIGNED_MASK))
+    }
+
+    /// `DType.is_unsigned()`.
+    pub const fn is_unsigned(self) -> bool {
+        self.matches_mask(DTYPE_INTEGER_MASK) && !self.matches_mask(DTYPE_SIGNED_MASK)
+    }
+
+    /// `DType.is_float8()`: none of the eight-bit float formats is a
+    /// Mojito dtype.
+    pub const fn is_float8(self) -> bool {
+        false
+    }
+
+    /// `DType.is_half_float()`: neither `float16` nor `bfloat16` is a
+    /// Mojito dtype.
+    pub const fn is_half_float(self) -> bool {
+        false
+    }
+
+    /// `DType.is_numeric()`: integral, or a float other than the
+    /// non-arithmetic low-precision formats (none of which is a Mojito dtype).
+    pub const fn is_numeric(self) -> bool {
+        self.is_integral() || self.is_floating_point()
+    }
+
+    /// The zero-argument `Bool` predicate `DType.<method>()` names, if any.
+    pub fn predicate(self, method: &str) -> Option<bool> {
+        Some(match method {
+            "is_integral" => self.is_integral(),
+            "is_floating_point" => self.is_floating_point(),
+            "is_signed" => self.is_signed(),
+            "is_unsigned" => self.is_unsigned(),
+            "is_numeric" => self.is_numeric(),
+            "is_float8" => self.is_float8(),
+            "is_half_float" => self.is_half_float(),
+            _ => return None,
+        })
+    }
+
+    const fn matches_mask(self, mask: u8) -> bool {
+        self.code() & mask != 0
+    }
 }
+
+/// The `Bool` predicate methods a `DType` value answers.
+pub const DTYPE_PREDICATES: [&str; 7] = [
+    "is_integral",
+    "is_floating_point",
+    "is_signed",
+    "is_unsigned",
+    "is_numeric",
+    "is_float8",
+    "is_half_float",
+];
+
+/// Upstream's `_mIsSigned` bit of a dtype code.
+pub const DTYPE_SIGNED_MASK: u8 = 1;
+/// Upstream's `_mIsFloat` bit of a dtype code.
+pub const DTYPE_FLOAT_MASK: u8 = 64;
+/// Upstream's `_mIsInteger` bit of a dtype code (sized integers only).
+pub const DTYPE_INTEGER_MASK: u8 = 128;
+
+/// `DType.<name>` spellings upstream defines that no Mojito dtype represents;
+/// they reject as unsupported rather than as unknown attributes.
+pub const UPSTREAM_ONLY_DTYPE_NAMES: [&str; 19] = [
+    "uint",
+    "float16",
+    "bfloat16",
+    "_uint1",
+    "_uint2",
+    "_uint4",
+    "uint128",
+    "int128",
+    "uint256",
+    "int256",
+    "float4_e2m1fn",
+    "float6_e2m3fn",
+    "float6_e3m2fn",
+    "float8_e8m0fnu",
+    "float8_e3m4",
+    "float8_e4m3fn",
+    "float8_e4m3fnuz",
+    "float8_e5m2",
+    "float8_e5m2fnuz",
+];
 
 /// A typed struct field, e.g. `a: Int`. (Function parameters use `FnParam`.)
 #[derive(Debug, Clone, PartialEq)]
@@ -2098,4 +2232,44 @@ pub fn stamp_source(statements: &mut [Stmt], source: &str) {
     }
 
     crate::visit::walk_block_mut(&mut Stamp(source), statements);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Dtype;
+
+    #[test]
+    fn dtype_predicates_follow_upstream_code_masks() {
+        for dtype in Dtype::ALL {
+            let expected = match dtype {
+                Dtype::Bool => [false, false, false, false, false],
+                Dtype::Int | Dtype::Int8 | Dtype::Int16 | Dtype::Int32 | Dtype::Int64 => {
+                    [true, false, true, false, true]
+                }
+                Dtype::UInt8 | Dtype::UInt16 | Dtype::UInt32 | Dtype::UInt64 => {
+                    [true, false, false, true, true]
+                }
+                Dtype::Float32 | Dtype::Float64 => [false, true, true, false, true],
+            };
+            let actual = [
+                dtype.is_integral(),
+                dtype.is_floating_point(),
+                dtype.is_signed(),
+                dtype.is_unsigned(),
+                dtype.is_numeric(),
+            ];
+            assert_eq!(actual, expected, "{}", dtype.name());
+            assert!(
+                !dtype.is_float8() && !dtype.is_half_float(),
+                "{}",
+                dtype.name()
+            );
+            assert_eq!(
+                dtype.is_float(),
+                dtype.is_floating_point(),
+                "{}",
+                dtype.name()
+            );
+        }
+    }
 }

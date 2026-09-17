@@ -2034,6 +2034,13 @@ impl Checker {
                 _ => Err(TypeError::UnknownSelfParam(field.to_string())),
             };
         }
+        if let Some(dtype) = self.dtype_constant(object, field) {
+            self.operation_adjustments.borrow_mut().insert(
+                span,
+                mojito_checked::checked::SemanticAdjustment::DtypeConstant { dtype: dtype? },
+            );
+            return Ok(Ty::Dtype);
+        }
         // `T.size` where `T` is a generic type parameter and a bound trait
         // requires `comptime size: Int`: expression-level access to an associated
         // compile-time value. Type-valued associated members remain type-position
@@ -2092,5 +2099,31 @@ impl Checker {
             object_type: obj_ty.to_string(),
             field: field.to_string(),
         })
+    }
+
+    /// `DType.<name>` read as a value, when `DType` names the builtin rather
+    /// than a binding or a struct: the dtype, an unsupported upstream-only
+    /// name, or an unknown member. `None` for any other member expression.
+    pub(super) fn dtype_constant(
+        &self,
+        object: &Expr,
+        field: &str,
+    ) -> Option<Result<mojito_ast::ast::Dtype, TypeError>> {
+        let ExprKind::Identifier(name) = &object.kind else {
+            return None;
+        };
+        if name != "DType" || self.lookup(name).is_some() || self.structs.contains_key(name) {
+            return None;
+        }
+        Some(mojito_ast::ast::Dtype::from_name(field).ok_or_else(|| {
+            if mojito_ast::ast::UPSTREAM_ONLY_DTYPE_NAMES.contains(&field) {
+                TypeError::Unsupported(format!("DType.{field} is not supported yet"))
+            } else {
+                TypeError::NoSuchField {
+                    object_type: "DType".to_string(),
+                    field: field.to_string(),
+                }
+            }
+        }))
     }
 }

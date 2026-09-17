@@ -214,12 +214,16 @@ impl FnLowering<'_> {
             self.emit_free(ctx, data);
             return Ok(());
         }
-        if mojito_types::types::simd_shape(receiver).is_none() && !matches!(receiver, Ty::Bool) {
+        if mojito_types::types::simd_shape(receiver).is_none()
+            && !matches!(receiver, Ty::Bool | Ty::Dtype)
+        {
             return Err(self.unsupported_reg(format!("hashing a `{receiver}` leaf"), dest));
         }
         let clone = format!(
             "{hasher_name}.{}",
-            mojito_symbol::symbol::simd_update_clone_name(receiver)
+            mojito_symbol::symbol::simd_update_clone_name(&mojito_types::types::hash_leaf_ty(
+                receiver
+            ))
         );
         let target = self.unique_hash_instance(dest, &hasher_name, &clone, false)?;
         let Some(expected) = self.signatures[&target].params.get(1).cloned() else {
@@ -261,6 +265,8 @@ impl FnLowering<'_> {
                 }
                 storage
             }
+            // A `DType` hashes its code byte as a `UInt8`.
+            Ty::Dtype => self.reg_value(ctx, recv, ScalarTy::Dtype)?,
             _ => self.arg_value(ctx, recv, &expected, false, dest)?,
         };
         self.emit_bound_call(ctx, dest, &target, vec![hasher_ptr, operand])
@@ -591,6 +597,7 @@ impl FnLowering<'_> {
             ScalarTy::Ptr => {
                 return Err(self.unsupported_reg("display of a Pointer".into(), dest));
             }
+            ScalarTy::Dtype => return Ok(self.dtype_text(ctx, value, false, dest)),
             ScalarTy::Bool => {
                 let true_global = self.shared.intern_string(ctx, b"True");
                 let false_global = self.shared.intern_string(ctx, b"False");
@@ -630,6 +637,47 @@ impl FnLowering<'_> {
         );
         self.append(ctx, call.get_operation(), Some(dest));
         Ok((scratch, call.get_result(ctx)))
+    }
+
+    /// A `DType`'s display text — its name, or with `repr` its `DType.<name>`
+    /// spelling — as a `(data, len)` pair over interned constants, selected
+    /// by comparing the code against each dtype's.
+    pub(super) fn dtype_text(
+        &mut self,
+        ctx: &mut Context,
+        code: Value,
+        repr: bool,
+        dest: Reg,
+    ) -> (Value, Value) {
+        let text = |dtype: Dtype| {
+            if repr {
+                format!("DType.{}", dtype.name())
+            } else {
+                dtype.name().to_string()
+            }
+        };
+        let [first, rest @ ..] = Dtype::ALL;
+        let first_text = text(first);
+        let global = self.shared.intern_string(ctx, first_text.as_bytes());
+        let mut data = self.global_address(ctx, &global, dest);
+        let mut len = self.uint_constant(ctx, first_text.len() as u64);
+        for dtype in rest {
+            let candidate = text(dtype);
+            let global = self.shared.intern_string(ctx, candidate.as_bytes());
+            let candidate_data = self.global_address(ctx, &global, dest);
+            let candidate_len = self.uint_constant(ctx, candidate.len() as u64);
+            let expected = self.dtype_constant(ctx, dtype);
+            let matches = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, code, expected);
+            self.append(ctx, matches.get_operation(), Some(dest));
+            let matches = matches.get_result(ctx);
+            let selected_data = SelectOp::new(ctx, matches, candidate_data, data);
+            self.append(ctx, selected_data.get_operation(), Some(dest));
+            data = selected_data.get_result(ctx);
+            let selected_len = SelectOp::new(ctx, matches, candidate_len, len);
+            self.append(ctx, selected_len.get_operation(), Some(dest));
+            len = selected_len.get_result(ctx);
+        }
+        (data, len)
     }
 
     /// `Slice(start, end, step)`: each raw bound word prints as an Int when

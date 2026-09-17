@@ -101,7 +101,7 @@ impl FnLowering<'_> {
         b: Reg,
         operand_ty: ScalarTy,
     ) -> Result<(), PlironError> {
-        if matches!(operand_ty, ScalarTy::Bool | ScalarTy::Ptr) {
+        if matches!(operand_ty, ScalarTy::Bool | ScalarTy::Ptr | ScalarTy::Dtype) {
             return Err(self.unsupported_reg(
                 format!("operator `Div` on {} operands", operand_ty.name()),
                 dest,
@@ -145,7 +145,9 @@ impl FnLowering<'_> {
                 self.uint_to_f64(ctx, lhs, dest),
                 self.uint_to_f64(ctx, rhs, dest),
             ),
-            ScalarTy::Bool | ScalarTy::Ptr | ScalarTy::Sized(_) => unreachable!("rejected above"),
+            ScalarTy::Bool | ScalarTy::Ptr | ScalarTy::Dtype | ScalarTy::Sized(_) => {
+                unreachable!("rejected above")
+            }
         };
         let div = FDivOp::new_with_fast_math_flags(ctx, lhs, rhs, FastmathFlagsAttr::default());
         self.define(ctx, dest, div.get_operation(), div.get_result(ctx))
@@ -252,11 +254,13 @@ impl FnLowering<'_> {
         operand_ty: ScalarTy,
     ) -> Result<(), PlironError> {
         match operand_ty {
-            ScalarTy::Bool => {
+            // `DType` compares its code by identity, as upstream's `__eq__`.
+            ScalarTy::Bool | ScalarTy::Dtype => {
                 if !matches!(op, InfixOp::Eq | InfixOp::Ne) {
-                    return Err(
-                        self.unsupported_reg(format!("operator `{op:?}` on Bool operands"), dest)
-                    );
+                    return Err(self.unsupported_reg(
+                        format!("operator `{op:?}` on {} operands", operand_ty.name()),
+                        dest,
+                    ));
                 }
                 let predicate = if matches!(op, InfixOp::Eq) {
                     ICmpPredicateAttr::EQ

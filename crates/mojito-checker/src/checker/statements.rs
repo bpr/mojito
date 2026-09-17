@@ -1546,6 +1546,11 @@ impl Checker {
                 // `Int`. A richer comptime value (tuple/list/string) the `Int` folder
                 // can't evaluate is still an ordinary binding — the elaborator has
                 // already consumed it for any `comptime for`/`comptime if`.
+                if let ExprKind::Member { object, field } = &value.kind
+                    && let Some(dtype) = self.dtype_constant(object, field)
+                {
+                    self.comptime_dtypes.insert(name.clone(), dtype?);
+                }
                 if let Ok(v) = self.eval_ct(value) {
                     self.comptimes.insert(name.clone(), v);
                     self.declare_immutable(name, Ty::IntLiteral)?;

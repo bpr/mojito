@@ -533,6 +533,7 @@ impl FnLowering<'_> {
             CheckedConst::Int(_)
             | CheckedConst::Float(_)
             | CheckedConst::Bool(_)
+            | CheckedConst::Dtype(_)
             | CheckedConst::String(_)
             | CheckedConst::None => match expected {
                 LowerTy::Scalar(scalar) => self.checked_const_value(ctx, default, *scalar, dest),

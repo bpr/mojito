@@ -794,6 +794,7 @@ fn scalar_repr(value: &Value) -> String {
             Value::Float64(literal.to_f64().unwrap_or(f64::NAN))
         ),
         Value::IntLiteral(_) => format!("Int({value})"),
+        Value::Dtype(dtype) => format!("DType.{}", dtype.name()),
         Value::Str(text) => {
             let mut out = String::from("'");
             for ch in text.chars() {

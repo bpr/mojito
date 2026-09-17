@@ -151,6 +151,9 @@ impl FnLowering<'_> {
                 Err(self
                     .unsupported_reg(format!("conversion `{name}` over a Pointer operand"), dest))
             }
+            (ScalarTy::Dtype, _) | (_, ScalarTy::Dtype) => {
+                Err(self.unsupported_reg(format!("conversion `{name}` over a DType operand"), dest))
+            }
             (ScalarTy::Sized(_), _) | (_, ScalarTy::Sized(_)) => {
                 unreachable!("sized sources normalize above; conversion targets are builtins")
             }

@@ -2353,6 +2353,7 @@ fn close_register_types(
                             Const::Bool(_) => Some(Ty::Bool),
                             Const::Str(_) => Some(Ty::StringLiteral),
                             Const::None => Some(Ty::None),
+                            Const::Dtype(_) => Some(Ty::Dtype),
                             // A callable constant's type needs the checked
                             // expression; report rather than reconstruct.
                             Const::Function(_) => None,

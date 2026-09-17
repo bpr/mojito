@@ -26,6 +26,11 @@ impl FnLowering<'_> {
                 self.reg_values.insert(dest.0, constant);
                 Ok(())
             }
+            MirConst::Dtype(dtype) => {
+                let constant = self.dtype_constant(ctx, *dtype);
+                self.reg_values.insert(dest.0, constant);
+                Ok(())
+            }
             MirConst::IntLiteral(literal) => {
                 self.pending_literals
                     .insert(dest.0, PendingLiteral::Int(literal.clone()));

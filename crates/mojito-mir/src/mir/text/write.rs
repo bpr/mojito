@@ -1788,6 +1788,7 @@ fn const_value(value: &Const) -> String {
         Const::Bool(v) => positional("bool", &v.to_string()),
         Const::Str(v) => positional("string", &quote(v)),
         Const::Function(v) => positional("function", &symbol(v)),
+        Const::Dtype(v) => positional("dtype", v.name()),
         Const::None => "none".into(),
     }
 }
@@ -1798,6 +1799,7 @@ fn checked_const(value: &CheckedConst) -> String {
         CheckedConst::Bool(v) => positional("checked_bool", &v.to_string()),
         CheckedConst::String(v) => positional("checked_string", &quote(v)),
         CheckedConst::None => "checked_none".into(),
+        CheckedConst::Dtype(v) => positional("checked_dtype", v.name()),
         CheckedConst::Construct { target, arg } => record(
             "checked_construct",
             &[("target", quote(target)), ("arg", checked_const(arg))],

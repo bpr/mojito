@@ -75,6 +75,11 @@ impl FnLowering<'_> {
         op.get_result(ctx)
     }
 
+    /// Emit a `DType` value: its one-byte upstream code.
+    pub(super) fn dtype_constant(&mut self, ctx: &mut Context, dtype: Dtype) -> Value {
+        self.sized_int_constant(ctx, Dtype::UInt8, u64::from(dtype.code()))
+    }
+
     /// Emit an i1 constant in the current block and return its value.
     pub(super) fn bool_constant(&mut self, ctx: &mut Context, value: bool) -> Value {
         let i1 = IntegerType::get(ctx, 1, Signedness::Signless);
@@ -247,15 +252,16 @@ impl FnLowering<'_> {
                 ),
                 self.reg_span(span_reg),
             )),
-            (PendingLiteral::Int(literal), ScalarTy::Bool | ScalarTy::Ptr) => Err(self
-                .unsupported(
+            (PendingLiteral::Int(literal), ScalarTy::Bool | ScalarTy::Ptr | ScalarTy::Dtype) => {
+                Err(self.unsupported(
                     format!(
                         "integer literal `{}` used as {}",
                         literal.as_bigint(),
                         expected.name()
                     ),
                     self.reg_span(span_reg),
-                )),
+                ))
+            }
         }
     }
 

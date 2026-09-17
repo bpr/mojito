@@ -55,6 +55,8 @@ pub enum Value {
         dtype: Dtype,
         lanes: SimdLanes,
     },
+    /// A `DType` value.
+    Dtype(Dtype),
     /// An `Error` value carrying its message (what `raise` raises).
     Error(String),
     /// A list-shaped compile-time value crossing the narrow VM-CTFE bridge.
@@ -156,6 +158,7 @@ impl PartialEq for Value {
             (Self::IntLiteral(a), Self::IntLiteral(b)) => a == b,
             (Self::FloatLiteral(a), Self::FloatLiteral(b)) => a == b,
             (Self::Bool(a), Self::Bool(b)) => a == b,
+            (Self::Dtype(a), Self::Dtype(b)) => a == b,
             (Self::Str(a), Self::Str(b)) => a == b,
             (
                 Self::Pointer {
@@ -263,6 +266,7 @@ impl fmt::Display for Value {
             Self::IntLiteral(value) => write!(f, "{value}"),
             Self::FloatLiteral(value) => write!(f, "{value}"),
             Self::Bool(b) => write!(f, "{}", if *b { "True" } else { "False" }),
+            Self::Dtype(dtype) => write!(f, "{}", dtype.name()),
             Self::Str(s) => write!(f, "{s}"),
             Self::None => write!(f, "None"),
             Self::Function(name) => write!(f, "<function {name}>"),
@@ -379,6 +383,7 @@ pub fn type_name(value: &Value) -> String {
         Value::IntLiteral(_) => "IntLiteral".to_string(),
         Value::FloatLiteral(_) => "FloatLiteral".to_string(),
         Value::Bool(_) => "Bool".to_string(),
+        Value::Dtype(_) => "DType".to_string(),
         Value::Str(_) => "String".to_string(),
         Value::None => "None".to_string(),
         Value::Function(_) | Value::Closure { .. } => "function".to_string(),
@@ -437,6 +442,7 @@ pub fn values_equal(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
         (Value::UInt(x), Value::UInt(y)) => Ok(x == y),
         (Value::Float64(x), Value::Float64(y)) => Ok(x == y),
         (Value::Bool(x), Value::Bool(y)) => Ok(x == y),
+        (Value::Dtype(x), Value::Dtype(y)) => Ok(x == y),
         (Value::Str(x), Value::Str(y)) => Ok(x == y),
         (Value::None, Value::None) => Ok(true),
         (
@@ -502,16 +508,25 @@ pub const fn hash_leaf_ty(value: &Value) -> Option<Ty> {
         Value::Bool(_) => Ty::Bool,
         Value::Float64(_) | Value::FloatLiteral(_) => Ty::Float64,
         Value::Simd { dtype, lanes } => canonical_simd_ty(*dtype, lanes.width() as i64),
+        // Upstream's `DType.__hash__` hashes its code as a `UInt8`.
+        Value::Dtype(_) => canonical_simd_ty(Dtype::UInt8, 1),
         _ => return None,
     })
 }
 
-/// Fold a floating `-0.0` leaf (or lane) to `0.0` before it reaches a
-/// hasher, as upstream's `SIMD.__hash__` does: the two compare equal, so
-/// they hash alike.
-pub fn fold_negative_zero(value: Value) -> Value {
+/// The value a Hashable leaf contributes to its hasher, typed as `hash_leaf_ty`
+/// names it.
+///
+/// A floating `-0.0` leaf (or lane) folds to `0.0`, as upstream's
+/// `SIMD.__hash__` does (the two compare equal, so they hash alike), and a
+/// `DType` contributes its code.
+pub fn hash_leaf_value(value: Value) -> Value {
     let fold = |x: f64| if x == 0.0 { 0.0 } else { x };
     match value {
+        Value::Dtype(dtype) => Value::Simd {
+            dtype: Dtype::UInt8,
+            lanes: SimdLanes::Int(vec![i128::from(dtype.code())]),
+        },
         Value::Float64(x) => Value::Float64(fold(x)),
         Value::Simd {
             dtype,
@@ -2678,10 +2693,7 @@ mod tests {
                 lanes: SimdLanes::Int(vec![i128::from(1_u64 << 63)]),
             }
         );
-        assert_eq!(
-            fold_negative_zero(Value::Float64(-0.0)),
-            Value::Float64(0.0)
-        );
+        assert_eq!(hash_leaf_value(Value::Float64(-0.0)), Value::Float64(0.0));
         assert_eq!(hash_leaf_ty(&Value::Bool(true)), Some(Ty::Bool));
         assert_eq!(
             hash_leaf_ty(&Value::Simd {

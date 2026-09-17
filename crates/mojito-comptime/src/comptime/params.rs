@@ -156,7 +156,7 @@ pub(super) fn decode_ct_origin_marker(value: &CtValue) -> Option<mojito_types::o
 pub(super) fn ct_value_param_type(name: &str) -> Option<Ty> {
     Some(match name {
         "Int" => Ty::Int,
-        // A `[dtype: DType]` value parameter; compile-time-only.
+        // A `DType` value, and the type of a `[dtype: DType]` value parameter.
         "DType" => Ty::Dtype,
         // A SIMD width parameter is a compile-time Int value parameter (the
         // removed `SIMDSize` spelling rejects).

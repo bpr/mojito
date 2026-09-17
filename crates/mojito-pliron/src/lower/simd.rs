@@ -640,7 +640,7 @@ impl FnLowering<'_> {
             ScalarTy::Int | ScalarTy::UInt | ScalarTy::Sized(_) => {
                 self.sized_int_binop_value(ctx, op, lhs, rhs, dtype, Some(width), dest)?
             }
-            ScalarTy::Ptr => {
+            ScalarTy::Ptr | ScalarTy::Dtype => {
                 return Err(self.unsupported_reg(format!("SIMD binary operator `{op:?}`"), dest));
             }
         };

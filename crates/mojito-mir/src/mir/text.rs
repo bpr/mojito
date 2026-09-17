@@ -414,6 +414,7 @@ pub const fn constant_spelling(constant: &Const) -> &'static str {
         Const::Bool(_) => "bool",
         Const::Str(_) => "string",
         Const::Function(_) => "function",
+        Const::Dtype(_) => "dtype",
         Const::None => "none",
     }
 }

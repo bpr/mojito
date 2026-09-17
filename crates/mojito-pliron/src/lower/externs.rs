@@ -89,7 +89,7 @@ impl FnLowering<'_> {
                 };
                 (self.reg_value(ctx, reg, ScalarTy::Sized(dtype))?, from)
             }
-            Some(ScalarTy::Ptr | ScalarTy::Float64) => {
+            Some(ScalarTy::Ptr | ScalarTy::Float64 | ScalarTy::Dtype) => {
                 return Err(self.unsupported_reg(
                     "non-integer argument at an integer external_call parameter".into(),
                     dest,

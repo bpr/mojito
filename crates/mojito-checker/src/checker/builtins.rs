@@ -12,7 +12,7 @@ pub(super) use mojito_types::types::default_literal;
 /// Whether `ty` is a non-numeric scalar value type — what `==`/`!=` compare once
 /// the numeric cases (handled by `common_numeric`) are out of the way.
 pub(super) const fn is_scalar(ty: &Ty) -> bool {
-    matches!(ty, Ty::Bool | Ty::StringLiteral | Ty::None)
+    matches!(ty, Ty::Bool | Ty::StringLiteral | Ty::None | Ty::Dtype)
 }
 
 /// Whether an opaque type parameter carries a bound that promises equality.
@@ -215,7 +215,13 @@ pub(super) fn math_dunder_bound(method: &str, argc: usize) -> &'static [&'static
 pub(super) const fn builtin_hashable_ty(ty: &Ty) -> bool {
     matches!(
         ty,
-        Ty::Int | Ty::UInt | Ty::Bool | Ty::StringLiteral | Ty::Float64 | Ty::Simd { .. }
+        Ty::Int
+            | Ty::UInt
+            | Ty::Bool
+            | Ty::StringLiteral
+            | Ty::Float64
+            | Ty::Simd { .. }
+            | Ty::Dtype
     )
 }
 
@@ -270,7 +276,7 @@ pub(super) fn require_dunder_ret(ret: Ty, expected: &Ty, name: &str) -> Result<T
 /// `List.remove`/`count`/`index`) — the same scalar set `==`/`!=` accept.
 pub(super) fn is_list_equatable(ty: &Ty) -> bool {
     is_numeric(ty)
-        || matches!(ty, Ty::Bool | Ty::StringLiteral | Ty::None)
+        || matches!(ty, Ty::Bool | Ty::StringLiteral | Ty::None | Ty::Dtype)
         || has_equality_bound(ty)
 }
 
@@ -309,6 +315,7 @@ pub(super) fn is_printable(ty: &Ty) -> bool {
         | Ty::FloatLiteral
         | Ty::Struct(_, _)
         | Ty::Simd { .. }
+        | Ty::Dtype
         | Ty::Error
         | Ty::ComptimeList(_) => true,
         // A tuple prints if every element prints.

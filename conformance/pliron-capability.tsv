@@ -16,7 +16,7 @@ instruction	value.copy	partial	compiled `__copyinit__` only; raising or uncompil
 instruction	ref.write	partial	typed referent registers
 instruction	closure.make	partial	two-word `{invoke, env}` values over per-target thunks with frame-local capture records; owned droppable captures drop through the tombstoning record header; projected move captures and owned captures with a user copy/move constructor reject
 instruction	lifetime.keep_alive	supported	erased
-instruction	const	partial	Int/Float/Bool/Str/None (literals stay pending until materialization) and function references as two-word callable values
+instruction	const	partial	Int/Float/Bool/Str/DType/None (literals stay pending until materialization) and function references as two-word callable values
 instruction	literal.materialize	partial	scalar and width-1 SIMD targets (wrapping, VM-exact) plus exact literal-typed storage; a constant exceeding i64/f64 storage rejects
 instruction	var.use	supported	copy/move/borrow
 instruction	place.move	partial	marks the root partially initialized; later whole-variable drops of it reject
@@ -74,7 +74,7 @@ type	Never	unsupported	uninhabited; no lowering
 type	IntLiteral	partial	pending-literal registers and exact i64 typed storage; a constant exceeding i64 rejects (the VM keeps arbitrary precision)
 type	FloatLiteral	partial	pending-literal registers and f64 typed storage; displaying a runtime value rejects (the VM prints the exact rational)
 type	Infer	unsupported	checker-internal; must not reach verified MIR
-type	DType	unsupported	compile-time only
+type	DType	supported	i8 holding upstream's dtype code; ==/!= and the is_* queries
 type	func	partial	two-word `{invoke, env}` value; the environment record is frame-local
 type	generic_func	unsupported	semantic-only; Stage 5 monomorphization target
 type	overload	unsupported	semantic-only

@@ -111,6 +111,7 @@ JIT execution additionally requires `target == host`.
 | `UInt` | `i64` (signless) | Unsigned operator selection (`udiv`/`urem`/`lshr`, unsigned predicates); **wrapping mod 2^64** for `+ - *` and `**`; same trap rules. |
 | `Bool` | `i1` in SSA | At ABI boundaries (returns read through the JIT, future by-value fields) the storage unit is one byte and producers zero-extend; consumers may rely only on the low bit. Layout is size 1, align 1. |
 | `Float64` | `double` | IEEE 754 binary64, no fast-math flags. `!=` is the **UNE** predicate and every other comparison is ordered — so `NaN != x` is True (`Bool(NaN)` is True via `fcmp une 0.0`) and other NaN comparisons are False. Signed zero follows IEEE (`0.0 == -0.0`; displays keep the sign). `//` and `%` are `floor`-based expansions (`fdiv` + `llvm.floor`, `x - y*floor(x/y)`) with **no zero trap** — infinities and NaN flow through. `**` lowers to `llvm.pow`; cross-libm bit-exactness is an explicit **non-claim** (VM and native may differ in the last ulp on some hosts; fixtures avoid such inputs). |
+| `DType` | `i8` | Holds upstream's one-byte dtype code (`Dtype::code`: `bool` 1, `int` 3, `uint8`…`int64` 134–141, `float32` 81, `float64` 82). Only `==`/`!=` (an `icmp` on the code); the `is_*` queries test the code's masks (64 float, 128 sized integer, 1 signed); display selects interned names; `hash` contributes the code as a `UInt8` lane. Layout is size 1, align 1. No runtime entry sees it. |
 
 Sized integer lanes (`UInt64`, `Int32`, … as width-1 `SIMD`) add `//` and
 `%` with upstream's integer-`SIMD` rule: floor semantics for signed dtypes,
@@ -138,7 +139,7 @@ specialized name). Rules:
   the next offset aligned for it; aggregate alignment is the maximum field
   alignment (at least 1); total size pads to that alignment. No reordering.
 - A zero-sized type has size 0, alignment 1, and forces no padding.
-- Scalars: `Int`/`UInt`/`Float64` are 8/8, `Bool` is 1/1, `None` is a ZST.
+- Scalars: `Int`/`UInt`/`Float64` are 8/8, `Bool` and `DType` are 1/1, `None` is a ZST.
 - `Pointer`/`Ref` are one target pointer (8/8); origins and ownership facts
   erase after validation. A reference adds runtime metadata only when its
   checked type requires it — no checked type does today. Dangling ZST-style

@@ -186,7 +186,14 @@ assets/type_error/def_typed_local_annotation_rejected.mojo	compile-reject	agree	
 assets/type_error/dict_requires_hashable_key.mojo	compile-reject	agree	error: 'Dict' parameter 'K' has 'KeyElement' type, but value has type 'AnyStruct[Key]'
 assets/type_error/dict_view_index_rejected.mojo	compile-reject	agree	error: '_DictKeyIter[Int, Int, AHasher[SIMD[.uint64, 4](0)], origin_of(d)]' is not subscriptable, it does not implement the `__getitem__`/`__setitem__` methods
 assets/type_error/dict_view_len_rejected.mojo	compile-reject	agree	error: no matching function in call to 'len'
-assets/type_error/dtype_runtime_value_rejected.mojo	runs	divergence	the pin runs it; Mojito rejects: Undefined variable 'DType'
+assets/type_error/dtype_compare_int_rejected.mojo	compile-reject	agree	error: invalid call to '__eq__': value passed to 'rhs' cannot be converted from 'IntLiteral[5]' to 'DType'
+assets/type_error/dtype_dynamic_comptime_if_rejected.mojo	compile-reject	agree	error: cannot use a dynamic value in 'comptime if' condition
+assets/type_error/dtype_dynamic_parameter_rejected.mojo	compile-reject	agree	error: cannot use a dynamic value in a parameter list
+assets/type_error/dtype_identity_rejected.mojo	compile-reject	agree	error: 'DType' does not implement the '__is__' method
+assets/type_error/dtype_implicit_bool_rejected.mojo	compile-reject	agree	error: cannot implicitly convert 'DType' value to 'Bool'
+assets/type_error/dtype_ordering_rejected.mojo	compile-reject	agree	error: 'DType' does not implement the '__lt__' method
+assets/type_error/dtype_unknown_member_rejected.mojo	compile-reject	agree	error: 'DType' value has no attribute 'nosuch'
+assets/type_error/dtype_upstream_only_rejected.mojo	runs	divergence	the pin runs it; Mojito rejects: DType.uint128 is not supported yet
 assets/type_error/dtype_value_param_type_arg.mojo	compile-reject	agree	error: invalid call to 'convert': 'convert' parameter 'dt' has 'DType' type, but value has type 'AnyStruct[Int]'
 assets/type_error/element_call_non_callable_element.mojo	compile-reject	agree	error: 'Int' does not implement the '__call__' method
 assets/type_error/element_call_type_brackets_reject.mojo	compile-reject	agree	error: no matching method in call to '__getitem__'

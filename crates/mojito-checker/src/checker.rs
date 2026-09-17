@@ -479,6 +479,9 @@ pub struct Checker {
     trait_self_comptime: Vec<HashMap<String, CtMemberReq>>,
     /// Exact integer constants declared by `comptime NAME = value`.
     comptimes: HashMap<String, mojito_common::literal::IntLiteral>,
+    /// Dtypes declared by `comptime NAME = DType.<name>`, for SIMD element-type
+    /// arguments.
+    comptime_dtypes: HashMap<String, Dtype>,
     /// Generic top-level type aliases declared by `comptime NAME[params] = Type`,
     /// expanded per application during type resolution. See [`ComptimeAlias`].
     comptime_aliases: HashMap<String, ComptimeAlias>,
@@ -804,6 +807,7 @@ impl Checker {
             self_ty: None,
             trait_self_comptime: Vec::new(),
             comptimes: HashMap::new(),
+            comptime_dtypes: HashMap::new(),
             comptime_aliases: HashMap::new(),
             self_mutable: false,
             self_initializing: false,

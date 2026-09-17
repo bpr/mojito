@@ -1276,6 +1276,16 @@ pub const fn canonical_simd_ty(dtype: Dtype, width: i64) -> Ty {
     }
 }
 
+/// The type a Hashable builtin leaf contributes to its hasher as: a `DType`
+/// hashes its code as a `UInt8` (upstream's `DType.__hash__`); every other
+/// leaf hashes as itself.
+pub fn hash_leaf_ty(ty: &Ty) -> Ty {
+    match ty {
+        Ty::Dtype => canonical_simd_ty(Dtype::UInt8, 1),
+        other => other.clone(),
+    }
+}
+
 /// The `(dtype, width)` shape of a SIMD-valued type — the native numeric
 /// scalars are width-1 vectors of their dtype (`UInt` reports `uint64`, its
 /// bit width) — or `None` for a non-SIMD type.

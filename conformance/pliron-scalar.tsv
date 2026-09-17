@@ -80,7 +80,10 @@ assets/ok/dict_upstream_key_value_iteration.mojo	-	ineligible	no-scalar-entry-sh
 assets/ok/dict_views_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/discarded_result_destruction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/docstrings.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/dtype_compile_time_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_default_param.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/dtype_runtime_surface.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/dtype_runtime_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_struct_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_value_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dunder_contains.mojo	-	ineligible	no-scalar-entry-shape

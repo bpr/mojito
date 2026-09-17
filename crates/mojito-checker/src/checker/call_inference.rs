@@ -466,7 +466,7 @@ impl Checker {
                             got: param_args.len(),
                         });
                     }
-                    let dtype = dtype_from_arg(&param_args[0])?;
+                    let dtype = self.dtype_from_arg(&param_args[0])?;
                     self.check_simd_args(dtype, 1, args)?;
                     return Ok(simd_ty(dtype, 1));
                 }

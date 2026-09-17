@@ -118,7 +118,7 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "const",
         CapabilityStatus::Partial,
-        "Int/Float/Bool/Str/None (literals stay pending until materialization) and function references as two-word callable values",
+        "Int/Float/Bool/Str/DType/None (literals stay pending until materialization) and function references as two-word callable values",
     ),
     (
         "literal.materialize",
@@ -390,7 +390,11 @@ pub const TYPE_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         CapabilityStatus::Unsupported,
         "checker-internal; must not reach verified MIR",
     ),
-    ("DType", CapabilityStatus::Unsupported, "compile-time only"),
+    (
+        "DType",
+        CapabilityStatus::Supported,
+        "i8 holding upstream's dtype code; ==/!= and the is_* queries",
+    ),
     (
         "func",
         CapabilityStatus::Partial,

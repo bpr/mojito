@@ -24,6 +24,10 @@ impl Elab<'_> {
         consts: &HashMap<String, CtValue>,
         mono: &mut Mono,
     ) -> Result<(), ComptimeError> {
+        // A local `comptime NAME = DType.<name>` (elaboration folded any
+        // compile-time dtype expression to that spelling) keys the value
+        // arguments of the statements after it (`width[NAME]()`).
+        let mut local_consts: Option<HashMap<String, CtValue>> = None;
         for s in stmts {
             // Declarations bind before their body is visited, preserving
             // recursion while shadowing an outer top-level template.
@@ -33,7 +37,22 @@ impl Elab<'_> {
             {
                 mono.bind_value(name, false);
             }
-            self.mono_stmt(s, consts, mono)?;
+            self.mono_stmt(s, local_consts.as_ref().unwrap_or(consts), mono)?;
+            if let StmtKind::Comptime {
+                name,
+                type_params,
+                value,
+                ..
+            } = &s.kind
+                && type_params.is_empty()
+                && let ExprKind::Member { object, field } = &value.kind
+                && matches!(&object.kind, ExprKind::Identifier(namespace) if namespace == "DType")
+                && let Some(dtype) = mojito_ast::ast::Dtype::from_name(field)
+            {
+                local_consts
+                    .get_or_insert_with(|| consts.clone())
+                    .insert(name.clone(), CtValue::Dtype(dtype));
+            }
             match &s.kind {
                 StmtKind::VarDecl { name, .. }
                 | StmtKind::RefDecl { name, .. }

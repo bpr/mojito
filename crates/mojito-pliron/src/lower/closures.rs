@@ -462,6 +462,11 @@ impl FnLowering<'_> {
                 format!("Bool default argument for a `{}` parameter", other.name()),
                 dest,
             )),
+            (CheckedConst::Dtype(dtype), ScalarTy::Dtype) => Ok(self.dtype_constant(ctx, *dtype)),
+            (CheckedConst::Dtype(_), other) => Err(self.unsupported_reg(
+                format!("DType default argument for a `{}` parameter", other.name()),
+                dest,
+            )),
             (CheckedConst::String(_) | CheckedConst::None, _) => {
                 Err(self.unsupported_reg("non-scalar default argument".into(), dest))
             }
