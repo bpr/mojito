@@ -8,14 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
-- A method called on an owning temporary now destroys that temporary right
-  after the call returns, running its `__deinit__` as the pinned Mojo does:
-  `B(3).show()` prints `deinit 3` after `show 3`, and `print(B(2).get())`
-  destroys the receiver before `print` runs. Chained temporaries, free-function
-  results, and generic structs behave alike, on the VM and natively. A
-  `var`/`deinit` receiver is consumed by the callee and destroyed once. A
-  temporary passed to a read parameter or read for a field still skips its
-  destructor.
+- An owning temporary is now destroyed as soon as its consumer finishes,
+  running its `__deinit__` as the pinned Mojo does, where it was never
+  destroyed before. A method receiver (`B(3).show()`) dies right after the
+  call returns, so `print(B(2).get())` prints `deinit 2` before `2`; an
+  argument at a read parameter (`take(B(2))`, positional or keyword) dies once
+  the callee returns; a temporary read for a field (`print(B(1).x)`,
+  `var n = B(9).name`, `print(B(14).twin().name)`) dies after the instruction
+  consuming the field, an owning field being copied out first. Chained
+  temporaries, free-function results, and generic structs behave alike, on
+  the VM and natively. A `var`/`deinit` receiver or parameter takes the
+  temporary and destroys it once, in the callee. The checker records which
+  arguments a call only borrows (`ReadTemporaryArgument`), so lowering never
+  guesses a callee's conventions.
 - A generic struct's method may now call a `def` whose `comptime if` keys on
   its own type parameter, as in the pinned Mojo: `def f(self): show(self.x)`
   in `struct Box[T]`, inferred or explicit (`show[Self.T](self.x)`), and the

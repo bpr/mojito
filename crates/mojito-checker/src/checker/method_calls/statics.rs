@@ -558,15 +558,7 @@ impl Checker {
             args,
             kwargs,
         )?;
-        self.borrowed_read_call_places.borrow_mut().extend(
-            crate::checker::places::borrowable_read_arguments(
-                &selected.slots,
-                &effective_conventions,
-                args,
-                kwargs,
-                None,
-            ),
-        );
+        self.record_argument_borrows(&selected.slots, &effective_conventions, args, kwargs, None);
         self.record_selected_method_conversions(method, &selected, args, kwargs)?;
         if let Some(target) = selected.lowered_name.clone() {
             self.overload_targets

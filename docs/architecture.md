@@ -2937,6 +2937,21 @@ current Mojo:
   expression continues. A `var`/`deinit` receiver convention binds no slot;
   the callee owns the temporary. A receiver whose result borrows it takes the
   `$mat_r` path above instead, and lives as long as the borrower.
+- An owning temporary at a read parameter (`take(B(2))`) is bound to a
+  hidden `$tmp_arg_r` slot and the call reads that slot, the shape a named
+  local takes there (`bind_temporary_argument`); the loaded register retains
+  the slot through the call, so the `DropVar` follows it. The checker decides
+  which arguments qualify: `read_temporary_arguments` (`checker/places.rs`)
+  marks each non-place argument bound to a read convention with
+  `ReadTemporaryArgument`, so a `var`/`deinit` slot — which moves the
+  temporary into the callee — carries no marker, and MIR never guesses a
+  callee's conventions.
+- A field read off an owning temporary (`print(B(1).x)`, `var n = B(9).name`)
+  binds the temporary to a hidden `$tmp_field_r` slot and loads the projected
+  place (`load_temporary_field`), as `p.x` does off a named local: the load
+  retains the slot through the instruction consuming the field, and a
+  consuming context's `CopyPlaceValue` copies an owning field out before the
+  slot dies. A reference-typed field keeps the register `GetField`.
 - A scalar `LoadPlace` (`t.n` fed to `print`) keeps its owner alive through
   the one instruction consuming the loaded register (the register-loan
   dataflow's single-hop retention), so the owner's `DropVar` follows the call

@@ -298,7 +298,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   checker-only signature rules.
 - `checker/places.rs` owns call-site place classification and alias rejection
   (the pointer keyword subscript `p[unsafe_offset=i]` is a place:
-  `pointer_offset_keyword_subscript`).
+  `pointer_offset_keyword_subscript`), and how a selected call's read
+  parameters bind their arguments (`record_argument_borrows`: the borrowable
+  place reads and the owned temporaries the caller destroys after the call,
+  `read_temporary_arguments`).
 - `checker/generics.rs` owns unification, substitution, and callable/method
   specialization.
 - `checker/declarations.rs` owns parameter classification and method/function

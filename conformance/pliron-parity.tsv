@@ -471,6 +471,7 @@ assets/ok/stropping.mojo	main	exe-differential	sanitized
 assets/ok/struct_value_param_frozen.mojo	main	exe-differential	sanitized
 assets/ok/telemetry.mojo	main	exe-differential	sanitized
 assets/ok/tempfile_mkdtemp.mojo	main	exe-differential	sanitized
+assets/ok/temporary_argument_field_deinit.mojo	main	exe-differential	sanitized
 assets/ok/temporary_receiver_deinit.mojo	main	exe-differential	sanitized
 assets/ok/temporary_receiver_view.mojo	main	exe-differential	sanitized
 assets/ok/ternary.mojo	main	exe-differential	sanitized

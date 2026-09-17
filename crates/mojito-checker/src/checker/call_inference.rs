@@ -537,6 +537,7 @@ impl Checker {
                 let saved_invalidations = self.interior_invalidations.borrow().clone();
                 let saved_call_place_uses = self.call_place_uses.borrow().clone();
                 let saved_borrowed_read_places = self.borrowed_read_call_places.borrow().clone();
+                let saved_read_temporaries = self.read_temporary_arguments.borrow().clone();
                 let saved_copy_place_value_uses = self.copy_place_value_uses.borrow().clone();
                 let saved_consuming_receivers =
                     self.implicitly_copied_consuming_receivers.borrow().clone();
@@ -632,6 +633,7 @@ impl Checker {
                 *self.interior_invalidations.borrow_mut() = saved_invalidations;
                 *self.call_place_uses.borrow_mut() = saved_call_place_uses;
                 *self.borrowed_read_call_places.borrow_mut() = saved_borrowed_read_places;
+                *self.read_temporary_arguments.borrow_mut() = saved_read_temporaries;
                 *self.copy_place_value_uses.borrow_mut() = saved_copy_place_value_uses;
                 *self.implicitly_copied_consuming_receivers.borrow_mut() =
                     saved_consuming_receivers;
@@ -1378,15 +1380,7 @@ impl Checker {
             args,
             kwargs,
         )?;
-        self.borrowed_read_call_places
-            .borrow_mut()
-            .extend(borrowable_read_arguments(
-                &slots,
-                &effective_conventions,
-                args,
-                kwargs,
-                None,
-            ));
+        self.record_argument_borrows(&slots, &effective_conventions, args, kwargs, None);
 
         let result = return_ref
             .map(|mut reference| {
@@ -1628,15 +1622,7 @@ impl Checker {
             args,
             kwargs,
         )?;
-        self.borrowed_read_call_places
-            .borrow_mut()
-            .extend(borrowable_read_arguments(
-                &slots,
-                &effective_conventions,
-                args,
-                kwargs,
-                None,
-            ));
+        self.record_argument_borrows(&slots, &effective_conventions, args, kwargs, None);
         let referent = self.canonicalize_public_tuple_types(resolve(ret)?);
         let result = return_ref
             .map(|mut reference| {

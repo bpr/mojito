@@ -291,6 +291,7 @@ pub fn check_program_with_materialized_callables(
         &checker.copy_place_value_uses.into_inner(),
         &checker.call_place_uses.into_inner(),
         &checker.borrowed_read_call_places.into_inner(),
+        &checker.read_temporary_arguments.into_inner(),
         &checker.implicitly_copied_consuming_receivers.into_inner(),
         &checker.truthiness_conditions.into_inner(),
         checker.declaration_effects.into_inner(),
@@ -735,6 +736,11 @@ pub struct Checker {
     /// exclusive access overlaps within the call. Checker-owned because the
     /// effective conventions and within-call exclusivity are resolved here.
     borrowed_read_call_places: RefCell<HashSet<SourceSpan>>,
+    /// Owned temporaries (non-place arguments) the selected call binds to
+    /// read-convention parameters: the callee borrows them, so the caller
+    /// destroys each once the call returns. Checker-owned because the
+    /// effective conventions are resolved here.
+    read_temporary_arguments: RefCell<HashSet<SourceSpan>>,
     /// Consuming method calls whose place receiver is implicitly copied. Kept
     /// separate from the single operation-adjustment slot so parameterized
     /// method metadata can coexist at the same expression.
@@ -879,6 +885,7 @@ impl Checker {
             copy_place_value_uses: RefCell::new(HashSet::new()),
             call_place_uses: RefCell::new(HashSet::new()),
             borrowed_read_call_places: RefCell::new(HashSet::new()),
+            read_temporary_arguments: RefCell::new(HashSet::new()),
             implicitly_copied_consuming_receivers: RefCell::new(HashSet::new()),
             truthiness_conditions: RefCell::new(HashSet::new()),
             return_ref_contracts: Vec::new(),

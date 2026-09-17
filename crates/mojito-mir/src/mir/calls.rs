@@ -122,6 +122,17 @@ impl Flatten<'_> {
             }
             let value = self.expr(expression);
             self.anchor_temporary_argument(expression, value, &adjustments, converted);
+            if adjustments.iter().any(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::ReadTemporaryArgument
+                )
+            }) {
+                return (
+                    self.bind_temporary_argument(expression, value, &adjustments, converted),
+                    None,
+                );
+            }
             return (value, None);
         }
 
@@ -827,6 +838,110 @@ impl Flatten<'_> {
             binding_ty: Some(ty.clone()),
         });
         (value, Some(MirPlace::root(variable, Some(ty))))
+    }
+
+    /// Read a field (`B(1).x`) off a fresh owned temporary through frame
+    /// storage: bind the temporary to a hidden `$tmp_field_r` slot and load
+    /// the projected place, exactly as `p.x` reads off a named local. The
+    /// load keeps the slot alive through the instructions that consume it
+    /// (`print(B(1).x)` destroys the temporary after `print`), so drop
+    /// elaboration runs the temporary's destructor where the pinned Mojo
+    /// does; a consuming context's checked `CopyPlaceValue` copies an owning
+    /// field out before the slot dies, as it does for a named local's. `None`
+    /// — leaving the register-based `GetField` — when the base is not a
+    /// loan-free call temporary with droppable storage, or the field is a
+    /// reference.
+    pub(super) fn load_temporary_field(
+        &mut self,
+        expression: &Expr,
+        object: &Expr,
+        field: &str,
+    ) -> Option<Reg> {
+        if !matches!(
+            object.kind,
+            ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
+        ) || self.reference_result(object).is_some()
+            || mojito_checked::checked::materialized_borrow_owner(&self.checked_adjustments(object))
+                .is_some()
+        {
+            return None;
+        }
+        let field_ty = self.checked_ty(expression)?;
+        if matches!(field_ty, Ty::Ref(_)) {
+            return None;
+        }
+        let object_ty = self.checked_ty(object).filter(owns_droppable_storage)?;
+        if !self.aggregate_borrows(object).is_empty() {
+            return None;
+        }
+        let value = self.expr(object);
+        let variable = self.var(&format!("$tmp_field_r{}", value.0));
+        self.var_types.insert(variable, object_ty.clone());
+        self.emit(MirInstr::DefVar {
+            var: variable,
+            src: value,
+            binding_ty: Some(object_ty.clone()),
+        });
+        let mut place = MirPlace::root(variable, Some(object_ty));
+        place.project(Proj::Field(field.to_string()), field_ty.clone());
+        let loaded = self.fresh_typed(expression.source_span(), Some(variable), field_ty);
+        self.emit(MirInstr::LoadPlace {
+            dest: loaded,
+            place,
+        });
+        Some(loaded)
+    }
+
+    /// Give a loan-free owned temporary bound to a read parameter
+    /// (`take(B(2))`, or the `String` an implicit conversion builds for
+    /// `take("abc")`) frame storage, as [`Self::lower_method_receiver`] does
+    /// for a receiver: bind it to a hidden `$tmp_arg_r` slot and hand the call
+    /// a shallow read of that slot — the shape a named local takes at a read
+    /// parameter. The loaded register retains the slot through the call, so
+    /// drop elaboration destroys the temporary once the callee returns. A
+    /// temporary that borrows other storage already owns its `$arg_loan_r`
+    /// anchor, a materialized borrow source its `$mat_r` slot, and a value
+    /// without droppable storage needs none: those return `value` unchanged.
+    fn bind_temporary_argument(
+        &mut self,
+        expression: &Expr,
+        value: Reg,
+        adjustments: &[mojito_checked::checked::SemanticAdjustment],
+        converted: bool,
+    ) -> Reg {
+        let fresh_temporary = converted
+            || matches!(
+                expression.kind,
+                ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
+            );
+        if !fresh_temporary
+            || mojito_checked::checked::materialized_borrow_owner(adjustments).is_some()
+            || !self.aggregate_borrows(expression).is_empty()
+        {
+            return value;
+        }
+        let Some(ty) = self
+            .f
+            .reg_types
+            .get(&value.0)
+            .cloned()
+            .filter(owns_droppable_storage)
+        else {
+            return value;
+        };
+        let variable = self.var(&format!("$tmp_arg_r{}", value.0));
+        self.var_types.insert(variable, ty.clone());
+        self.emit(MirInstr::DefVar {
+            var: variable,
+            src: value,
+            binding_ty: Some(ty.clone()),
+        });
+        let read = self.fresh_typed(expression.source_span(), Some(variable), ty.clone());
+        self.emit(MirInstr::LoadPlace {
+            dest: read,
+            place: MirPlace::root(variable, Some(ty)),
+        });
+        read
     }
 
     /// Store a materialized borrow-source temporary in its hidden slot

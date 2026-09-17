@@ -535,6 +535,12 @@ pub enum SemanticAdjustment {
     /// access in the same call intentionally omit this marker — their implicit
     /// copy is what makes the call's exclusivity check pass.
     BorrowReadArgument,
+    /// This actual argument is an owned temporary (a call result, a
+    /// construction, a converted literal) bound to a read-convention
+    /// parameter: the callee borrows it, so the caller destroys it once the
+    /// call returns. A temporary at a `var`/`deinit` slot moves into the
+    /// callee and omits this marker.
+    ReadTemporaryArgument,
     /// Concrete owner accesses performed by a callable environment during this
     /// call. The checker derives these from the selected callable and any
     /// non-escaping callable arguments; MIR translates stable owner identities
@@ -1256,6 +1262,7 @@ impl CheckedProgram {
         copy_place_value_uses: &HashSet<SourceSpan>,
         call_place_uses: &HashSet<SourceSpan>,
         borrowed_read_call_places: &HashSet<SourceSpan>,
+        read_temporary_arguments: &HashSet<SourceSpan>,
         implicitly_copied_consuming_receivers: &HashSet<SourceSpan>,
         truthiness_conditions: &HashSet<SourceSpan>,
         declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
@@ -1288,6 +1295,7 @@ impl CheckedProgram {
             copy_place_value_uses,
             call_place_uses,
             borrowed_read_call_places,
+            read_temporary_arguments,
             implicitly_copied_consuming_receivers,
             truthiness_conditions,
         );
@@ -1468,6 +1476,7 @@ fn build_checked_expressions(
     copy_place_value_uses: &HashSet<SourceSpan>,
     call_place_uses: &HashSet<SourceSpan>,
     borrowed_read_call_places: &HashSet<SourceSpan>,
+    read_temporary_arguments: &HashSet<SourceSpan>,
     implicitly_copied_consuming_receivers: &HashSet<SourceSpan>,
     truthiness_conditions: &HashSet<SourceSpan>,
 ) -> (Vec<CheckedExpr>, HashMap<SourceSpan, Vec<CheckedNodeId>>) {
@@ -1501,6 +1510,7 @@ fn build_checked_expressions(
         copy_place_value_uses: &'a HashSet<SourceSpan>,
         call_place_uses: &'a HashSet<SourceSpan>,
         borrowed_read_call_places: &'a HashSet<SourceSpan>,
+        read_temporary_arguments: &'a HashSet<SourceSpan>,
         implicitly_copied_consuming_receivers: &'a HashSet<SourceSpan>,
         truthiness_conditions: &'a HashSet<SourceSpan>,
     }
@@ -1772,6 +1782,9 @@ fn build_checked_expressions(
             }
             if self.borrowed_read_call_places.contains(&span) {
                 adjustments.push(SemanticAdjustment::BorrowReadArgument);
+            }
+            if self.read_temporary_arguments.contains(&span) {
+                adjustments.push(SemanticAdjustment::ReadTemporaryArgument);
             }
             if self.implicitly_copied_consuming_receivers.contains(&span) {
                 adjustments.push(SemanticAdjustment::ImplicitlyCopyConsumingReceiver);
@@ -2062,6 +2075,7 @@ fn build_checked_expressions(
         copy_place_value_uses,
         call_place_uses,
         borrowed_read_call_places,
+        read_temporary_arguments,
         implicitly_copied_consuming_receivers,
         truthiness_conditions,
     };

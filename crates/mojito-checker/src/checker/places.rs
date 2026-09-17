@@ -23,6 +23,35 @@ pub(super) const fn parameter_is_writable(convention: &Option<ArgConvention>) ->
 /// Whether an expression is a **place** — it names an existing binding (a variable
 /// or a field/index chain rooted at one) rather than producing a fresh value. A
 /// `^` transfer, a call result, a literal, or an operator is *not* a place.
+impl Checker {
+    /// Record how a selected call's read parameters bind their arguments:
+    /// the place arguments it may borrow instead of copying
+    /// ([`borrowable_read_arguments`]) and the owned temporaries it borrows,
+    /// which the caller destroys once the call returns
+    /// ([`read_temporary_arguments`]).
+    pub(super) fn record_argument_borrows(
+        &self,
+        slots: &[ArgSlot],
+        conventions: &[Option<ArgConvention>],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+        receiver: Option<(&Expr, Option<ArgConvention>)>,
+    ) {
+        self.borrowed_read_call_places
+            .borrow_mut()
+            .extend(borrowable_read_arguments(
+                slots,
+                conventions,
+                args,
+                kwargs,
+                receiver,
+            ));
+        self.read_temporary_arguments
+            .borrow_mut()
+            .extend(read_temporary_arguments(slots, conventions, args, kwargs));
+    }
+}
+
 pub(super) fn is_place_expr(e: &Expr) -> bool {
     matches!(
         e.kind,
@@ -162,6 +191,37 @@ pub(super) fn check_receiver_aliasing(
         }
     }
     Ok(())
+}
+
+/// Owned temporaries a call binds to read parameters: a non-place argument
+/// (a call result, a construction, a literal an implicit conversion turns
+/// into a nominal value) whose effective convention is a shared read. The
+/// callee only borrows such a temporary, so the caller destroys it once the
+/// call returns; a `var`/`deinit` slot moves the temporary into the callee,
+/// which destroys it, and records nothing here.
+pub(super) fn read_temporary_arguments(
+    slots: &[ArgSlot],
+    conventions: &[Option<ArgConvention>],
+    args: &[Expr],
+    kwargs: &[mojito_ast::ast::KwArg],
+) -> Vec<SourceSpan> {
+    slots
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| {
+            matches!(
+                conventions.get(*index),
+                Some(None | Some(ArgConvention::Imm))
+            )
+        })
+        .filter_map(|(_, slot)| match slot {
+            ArgSlot::Positional(position) => Some(&args[*position]),
+            ArgSlot::Keyword(position) => Some(&kwargs[*position].value),
+            ArgSlot::Default => None,
+        })
+        .filter(|arg| !is_place_expr(arg) && !matches!(arg.kind, ExprKind::Transfer(_)))
+        .map(Expr::source_span)
+        .collect()
 }
 
 /// Read-convention place arguments a call may bind by borrow instead of the

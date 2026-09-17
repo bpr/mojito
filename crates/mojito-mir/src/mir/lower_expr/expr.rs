@@ -1862,17 +1862,22 @@ impl Flatten<'_> {
                         loaded
                     }
                 } else {
-                    let base = if self.reference_result(object).is_some() {
-                        self.lower_call_receiver(object).0
+                    let d = if let Some(loaded) = self.load_temporary_field(e, object, field) {
+                        loaded
                     } else {
-                        self.expr(object)
+                        let base = if self.reference_result(object).is_some() {
+                            self.lower_call_receiver(object).0
+                        } else {
+                            self.expr(object)
+                        };
+                        let d = self.fresh(span(e), None);
+                        self.emit(MirInstr::GetField {
+                            dest: d,
+                            base,
+                            field: field.clone(),
+                        });
+                        d
                     };
-                    let d = self.fresh(span(e), None);
-                    self.emit(MirInstr::GetField {
-                        dest: d,
-                        base,
-                        field: field.clone(),
-                    });
                     // The same checked value-copy boundary as the place-read
                     // branch above: a field selected for a consuming value
                     // context must run its `__copyinit__` even when the base is
