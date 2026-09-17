@@ -751,7 +751,7 @@ impl Elab<'_> {
                 // A function-value use of a bound generic pins the abstract
                 // template: there is no application to monomorphize against.
                 if mono.resolves_top_template(name) && self.bound_generics.contains(name.as_str()) {
-                    mono.retained.insert(name.clone());
+                    mono.retain_abstract(name, &source_span, true);
                 }
                 Ok(())
             }
@@ -907,7 +907,7 @@ impl Elab<'_> {
                                 {
                                     (values, kept, false)
                                 } else {
-                                    mono.retained.insert(name.clone());
+                                    mono.retain_abstract(name, &source_span, false);
                                     return Ok(());
                                 }
                             }
@@ -972,7 +972,7 @@ impl Elab<'_> {
                         let Some((values, kept)) =
                             self.def_request_target(name, &source_span, param_args, mono)
                         else {
-                            mono.retained.insert(name.clone());
+                            mono.retain_abstract(name, &source_span, false);
                             return Ok(());
                         };
                         (values, kept, false)
@@ -981,7 +981,7 @@ impl Elab<'_> {
                         let whole_pack_abi = top_level_whole_pack_forwarding_call(template, args)?;
                         let forwarded =
                             top_level_forwarded_pack_types(template, name, args, kwargs, mono)?;
-                        let (values, kept) = self.resolve_spec_args_for(
+                        let resolved = self.resolve_spec_args_for(
                             template,
                             name,
                             SpecRequest {
@@ -992,7 +992,29 @@ impl Elab<'_> {
                                 request_site: &request_site,
                                 forwarded_pack_types: forwarded.as_deref(),
                             },
-                        )?;
+                        );
+                        let (values, kept) = match resolved {
+                            // An explicit application of a compile-time-keyed
+                            // template over an enclosing body's own parameters
+                            // (`show[T](x)`) stays on the stub, as an inferred
+                            // one does.
+                            Err(_)
+                                if self.comptime_generics.contains(name.as_str())
+                                    && param_args_mention_any(
+                                        param_args,
+                                        &mono.symbolic_type_params,
+                                    ) =>
+                            {
+                                let Some(target) =
+                                    self.def_request_target(name, &source_span, param_args, mono)
+                                else {
+                                    mono.retain_abstract(name, &source_span, false);
+                                    return Ok(());
+                                };
+                                target
+                            }
+                            resolved => resolved?,
+                        };
                         (values, kept, whole_pack_abi)
                     };
                     let original = name.clone();

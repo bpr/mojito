@@ -42,13 +42,17 @@ impl Elab<'_> {
         tuple_requests: &[TupleSpecializationRequest],
         tstring_requests: &[TStringSpecializationRequest],
         def_requests: &[DefSpecializationRequest],
-    ) -> Result<(Vec<Stmt>, Vec<StructInstanceRequest>), ComptimeError> {
+    ) -> Result<Elaborated, ComptimeError> {
         if self.specializable.is_empty()
             && tuple_requests.is_empty()
             && tstring_requests.is_empty()
             && self.instance_requests.is_empty()
         {
-            return Ok((program, Vec::new()));
+            return Ok(Elaborated {
+                program,
+                instances: Vec::new(),
+                unserved_template_uses: Vec::new(),
+            });
         }
         if !tuple_requests.is_empty() && !self.struct_template("Tuple") {
             return Err(ComptimeError::NotComptime(
@@ -261,9 +265,16 @@ impl Elab<'_> {
             }
             mono.in_bundled =
                 mojito_checker::checker::is_bundled_module_source(stmt.module.as_deref());
+            mono.abstract_owner = match &stmt.kind {
+                StmtKind::Def { name, .. } if self.bound_generics.contains(name) => {
+                    Some(name.clone())
+                }
+                _ => None,
+            };
             self.mono_stmt(stmt, &consts, &mut mono)?;
         }
         mono.in_bundled = false;
+        mono.abstract_owner = None;
         // Drain the worklists: specializations, then the per-instantiation
         // method clones (whose bodies may request further specializations
         // and instances), until both are empty.
@@ -357,8 +368,9 @@ impl Elab<'_> {
             } else if self.comptime_generics.contains(&template_name)
                 && mono.retained.contains(&template_name)
             {
-                // A compile-time-keyed template with an inferred call stands
-                // in the same way until the checker's request is served.
+                // A compile-time-keyed template with a deferred call stands
+                // in the same way: until the checker's request is served, or
+                // for good under a call from an abstract generic body.
                 out.push(template_stub(
                     &stmt,
                     "unspecialized compile-time-keyed function",
@@ -372,7 +384,58 @@ impl Elab<'_> {
                 out.extend(specs);
             }
         }
-        Ok((out, mono.minted_instances))
+        Ok(Elaborated {
+            program: out,
+            instances: mono.minted_instances,
+            unserved_template_uses: self.unserved_template_uses(&mono.abstract_uses),
+        })
+    }
+
+    /// The abstract references that can run a compile-time-keyed stub.
+    ///
+    /// Such a stub is reached through a compile-time-keyed template, or
+    /// through a bound-generic `def` whose own body references one of those
+    /// abstractly, transitively. A reference made inside such a body is
+    /// dropped: the body runs only through a reference that is kept.
+    fn unserved_template_uses(&self, uses: &[AbstractUse]) -> Vec<UnservedTemplateUse> {
+        let mut stubbed: HashSet<&str> =
+            self.comptime_generics.iter().map(String::as_str).collect();
+        loop {
+            let reached: Vec<&str> = uses
+                .iter()
+                .filter(|reference| stubbed.contains(reference.callee.as_str()))
+                .filter_map(|reference| reference.owner.as_deref())
+                .filter(|owner| !stubbed.contains(owner))
+                .collect();
+            if reached.is_empty() {
+                break;
+            }
+            stubbed.extend(reached);
+        }
+        let mut unserved: Vec<UnservedTemplateUse> = uses
+            .iter()
+            .filter(|reference| {
+                stubbed.contains(reference.callee.as_str())
+                    && reference
+                        .owner
+                        .as_deref()
+                        .is_none_or(|owner| !stubbed.contains(owner))
+            })
+            .map(|reference| UnservedTemplateUse {
+                callee: reference.callee.clone(),
+                site: reference.site.clone(),
+                function_value: reference.function_value,
+            })
+            .collect();
+        unserved.sort_by(|left, right| {
+            (&left.site.source, left.site.span, &left.callee).cmp(&(
+                &right.site.source,
+                right.site.span,
+                &right.callee,
+            ))
+        });
+        unserved.dedup();
+        unserved
     }
 
     /// Generate each requested specialization, scanning its body for further

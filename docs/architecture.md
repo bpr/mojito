@@ -474,10 +474,17 @@ specialized only for its `comptime if`/`for` body (no pack, `DType`, or
 SIMD-width parameter; `comptime_generic_template_names`) called without an
 argument for a required parameter. Until the checker's request is served,
 such a template survives as a signature-only `template_stub` whose body
-traps, so the discovery check can type the call against it. At the fixpoint
-`reject_unserved_template_calls` rejects any call still recorded against a
-compile-time-keyed stub, such as one inferred from an abstract generic body,
-so no accepted program reaches the trap. A **bound-generic** template — a plain
+traps, so the discovery check can type the call against it. The stub stays
+in the program for a call from a retained bound-generic body over that body's
+own parameters (`show(x)` or `show[T](x)` in `def forward[T]`), and that call
+lowers to a call of the stub. It never runs. The elaborator lists every
+reference it leaves on an abstract path (`Elaborated::unserved_template_uses`)
+that can reach a stub: a reference to a compile-time-keyed template, or to a
+bound-generic `def` whose own body reaches one, transitively. A reference made
+inside such a body is not listed, because that body runs only through a listed
+reference. At the fixpoint `reject_unserved_template_calls` rejects a listed
+call the checker still records against its template, and any listed
+function-value use, so no accepted program reaches the trap. A **bound-generic** template — a plain
 trait-bound generic `def` with no comptime constructs and a unique top-level
 name — resolves softly: only an explicit application whose arguments resolve
 concretely monomorphizes, while inferred calls, symbolic arguments, and

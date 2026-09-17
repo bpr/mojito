@@ -6,9 +6,9 @@ use crate::checked::CheckedProgram;
 use crate::comptime::{
     ComptimeError, DefSpecializationRequest, Elaborated, MethodSpecializationRequest,
     StructInstanceRequest, TStringSpecializationRequest, TupleSpecializationRequest,
-    TupleTransformRequest, bound_generic_template_names, comptime_generic_template_names,
-    elaborate_prepared, pack_generic_template_names, prepare, tuple_materialized_callables,
-    unserved_template_parameter, variadic_struct_template_names,
+    TupleTransformRequest, UnservedTemplateUse, bound_generic_template_names,
+    comptime_generic_template_names, elaborate_prepared, pack_generic_template_names, prepare,
+    tuple_materialized_callables, unserved_template_parameter, variadic_struct_template_names,
 };
 use crate::ct::CtValue;
 use crate::error::{OwnershipError, ParseError, TypeError};
@@ -218,11 +218,10 @@ impl Compiler {
         // keep their single re-elaboration; ownership and MIR verification run
         // exactly once, on the fixpoint program.
         const SPECIALIZATION_ROUNDS: usize = 5;
-        let comptime_templates = comptime_generic_template_names(linked);
         let templates = {
             let mut templates = bound_generic_template_names(linked);
             templates.extend(pack_generic_template_names(linked));
-            templates.extend(comptime_templates.iter().cloned());
+            templates.extend(comptime_generic_template_names(linked));
             templates
         };
         let range_templates = scalar_range_template_names(linked);
@@ -253,16 +252,21 @@ impl Compiler {
             prepare(linked.to_vec()).map_err(CompilerError::Comptime)?
         };
         crate::checker::validate_comptime_templates(&prepared).map_err(CompilerError::Type)?;
+        // The abstract references of the elaboration `checked` was checked
+        // from.
+        let mut unserved_template_uses;
         let mut checked = {
             let Elaborated {
                 program: discovery,
                 instances: minted,
+                unserved_template_uses: unserved,
             } = {
                 let _elaborate = timing::span("discovery.initial.elaborate");
                 elaborate_prepared(&prepared, &[], &[], &[], &[], &[], &[])
                     .map_err(CompilerError::Comptime)?
             };
             struct_requests.extend(minted);
+            unserved_template_uses = unserved;
             if !self.allow_executable_module_scope {
                 validate_module_scope(&discovery).map_err(CompilerError::Type)?;
             }
@@ -365,6 +369,7 @@ impl Compiler {
             let Elaborated {
                 program: elaborated,
                 instances: minted,
+                unserved_template_uses: unserved,
             } = {
                 let _elaborate = timing::span("elaborate");
                 elaborate_prepared(
@@ -378,6 +383,7 @@ impl Compiler {
                 )
                 .map_err(CompilerError::Comptime)?
             };
+            unserved_template_uses = unserved;
             // Instances the specializer minted on its own (closed applications
             // reached from user code and from other clones) are already
             // served; the checker's recordings of them are not new work.
@@ -402,7 +408,7 @@ impl Compiler {
                 callee: last_new_callee,
             });
         }
-        reject_unserved_template_calls(&checked, linked, &comptime_templates)?;
+        reject_unserved_template_calls(&checked, linked, &unserved_template_uses)?;
         let mir = {
             let _lower = timing::span("mir.lower");
             crate::mir::lower_checked_program(&checked)
@@ -533,48 +539,54 @@ fn tuple_specialization_requests(checked: &CheckedProgram) -> Vec<TupleSpecializ
     requests
 }
 
+/// Reject a reference the discovery fixpoint left on an abstract path that
+/// can run a compile-time-keyed template's stub. A served call names its
+/// clone, so a surviving use (an argument the checker could not close, or a
+/// function-value use of a `def` whose abstract body calls such a template)
+/// would otherwise trap at run time. A call from inside an abstract generic
+/// body is not a use: that body runs only through one.
+fn reject_unserved_template_calls(
+    checked: &CheckedProgram,
+    linked: &[Stmt],
+    uses: &[UnservedTemplateUse],
+) -> Result<(), CompilerError> {
+    let unserved = uses.iter().find_map(|reference| {
+        let instantiation = checked
+            .generic_instantiations()
+            .iter()
+            .find(|(span, instantiation)| {
+                span.source == reference.site.source
+                    && span.span == reference.site.span
+                    && instantiation.callee == reference.callee
+            })
+            .map(|(_, instantiation)| instantiation.arguments.as_slice());
+        match instantiation {
+            Some(arguments) => Some((reference, arguments)),
+            None if reference.function_value => Some((reference, &[][..])),
+            None => None,
+        }
+    });
+    let Some((unserved, arguments)) = unserved else {
+        return Ok(());
+    };
+    let parameter = unserved_template_parameter(
+        linked,
+        &unserved.callee,
+        arguments,
+        &closed_generic_argument,
+    );
+    Err(CompilerError::Comptime(ComptimeError::Arity(format!(
+        "generic '{}' requires compile-time parameter '{parameter}'",
+        unserved.callee
+    ))))
+}
+
 /// The checker-recorded inferred bound-generic instantiations that are closed
 /// (fully concrete) and therefore replayable by elaboration. Conflicting
 /// recordings for one source occurrence — `comptime for` unrolling duplicates
 /// source spans across copies — drop the occurrence: those calls keep the
 /// abstract erased path, which is always correct. The result is sorted so
 /// request seeding, and therefore specialization order, is deterministic.
-/// Reject a call the discovery fixpoint left on a compile-time-keyed
-/// template's stub. A served call names its clone, so a surviving
-/// instantiation of the template itself (an argument the checker could not
-/// close, such as a type parameter of an abstract generic body) would
-/// otherwise trap at run time.
-fn reject_unserved_template_calls(
-    checked: &CheckedProgram,
-    linked: &[Stmt],
-    templates: &std::collections::HashSet<String>,
-) -> Result<(), CompilerError> {
-    let unserved = checked
-        .generic_instantiations()
-        .iter()
-        .filter(|(_, instantiation)| templates.contains(&instantiation.callee))
-        .min_by(|(left, _), (right, _)| {
-            (&left.source, left.span.0, left.span.1).cmp(&(
-                &right.source,
-                right.span.0,
-                right.span.1,
-            ))
-        });
-    let Some((_, instantiation)) = unserved else {
-        return Ok(());
-    };
-    let parameter = unserved_template_parameter(
-        linked,
-        &instantiation.callee,
-        &instantiation.arguments,
-        &closed_generic_argument,
-    );
-    Err(CompilerError::Comptime(ComptimeError::Arity(format!(
-        "generic '{}' requires compile-time parameter '{parameter}'",
-        instantiation.callee
-    ))))
-}
-
 fn def_specialization_requests(
     checked: &CheckedProgram,
     templates: &std::collections::HashSet<String>,

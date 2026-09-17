@@ -561,10 +561,33 @@ pub fn prepare(mut program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
 ///
 /// The instances are the closed applications reached from user code and from
 /// other clones, so the driver's discovery loop does not treat the checker's
-/// recordings of those instances as new work.
+/// recordings of those instances as new work. `unserved_template_uses` are
+/// the references this elaboration left on an abstract path that can reach a
+/// compile-time-keyed template's stub; the driver rejects any that survive
+/// its discovery fixpoint.
 pub struct Elaborated {
     pub program: Vec<Stmt>,
     pub instances: Vec<StructInstanceRequest>,
+    pub unserved_template_uses: Vec<UnservedTemplateUse>,
+}
+
+/// A reference to a template that stays on its abstract path and can run a
+/// compile-time-keyed stub, which has no executable body.
+///
+/// The callee is a compile-time-keyed template, or a bound-generic `def`
+/// whose abstract body reaches one. A reference made inside such a
+/// bound-generic body is not listed: that body runs only through a listed
+/// reference.
+///
+/// A call is abstract only while the checker still records its instantiation
+/// against the template: the checker retargets an inferred call to a clone
+/// that already exists without a request. A function-value use has no
+/// instantiation and always stays abstract.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnservedTemplateUse {
+    pub callee: String,
+    pub site: SourceSpan,
+    pub function_value: bool,
 }
 
 /// The top-level variadic struct template names (`struct S[*Ts: Bound]`) of a
@@ -613,8 +636,10 @@ pub fn pack_generic_template_names(program: &[Stmt]) -> HashSet<String> {
 ///
 /// A call that omits a parameter is minted from the checker-recorded
 /// instantiation on the next discovery round; until then the template stands
-/// in as a signature-only stub. A call the fixpoint leaves on that stub is
-/// rejected ([`unserved_template_parameter`]).
+/// in as a signature-only stub. A call from an abstract generic body over its
+/// own parameters stays on that stub; any other reference that can reach it
+/// at the fixpoint is rejected ([`Elaborated::unserved_template_uses`],
+/// [`unserved_template_parameter`]).
 pub fn comptime_generic_template_names(program: &[Stmt]) -> HashSet<String> {
     collect_comptime_generic_templates(program)
 }
@@ -770,8 +795,11 @@ pub fn elaborate_prepared(
     // Materialize module-level comptime constants into runtime literals.
     let materialized = materialize_block(elaborated, &consts, &elab.struct_names);
     // Monomorphize comptime-dependent generic templates against their call sites.
-    let (mut result, instances) =
-        elab.monomorphize(materialized, tuple_requests, tstring_requests, def_requests)?;
+    let Elaborated {
+        program: mut result,
+        instances,
+        unserved_template_uses,
+    } = elab.monomorphize(materialized, tuple_requests, tstring_requests, def_requests)?;
     for statement in &mut result {
         if let Some(source) = statement.module.clone() {
             mojito_ast::ast::stamp_source(std::slice::from_mut(statement), &source);
@@ -806,6 +834,7 @@ pub fn elaborate_prepared(
     Ok(Elaborated {
         program: result,
         instances,
+        unserved_template_uses,
     })
 }
 
@@ -1533,6 +1562,15 @@ struct TStringTarget {
     elements: Vec<Ty>,
 }
 
+/// One reference [`Mono::retain_abstract`] left on a template's abstract
+/// path.
+struct AbstractUse {
+    callee: String,
+    site: SourceSpan,
+    function_value: bool,
+    owner: Option<String>,
+}
+
 /// The monomorphization worklist and its results.
 #[derive(Default)]
 struct Mono {
@@ -1592,9 +1630,28 @@ struct Mono {
     /// Whether the walk is inside an unstamped bundled stdlib declaration:
     /// instances reached only from there keep the erased path.
     in_bundled: bool,
+    /// The top-level bound-generic `def` whose body the walk is inside, if
+    /// any: that body runs only when a reference to the template stays
+    /// abstract.
+    abstract_owner: Option<String>,
+    /// Every reference left on a bound-generic or compile-time-keyed
+    /// template's abstract path, with the body it was made from.
+    abstract_uses: Vec<AbstractUse>,
 }
 
 impl Mono {
+    /// Leave the call or function-value use of `template` at `site` on its
+    /// abstract path.
+    fn retain_abstract(&mut self, template: &str, site: &SourceSpan, function_value: bool) {
+        self.retained.insert(template.to_string());
+        self.abstract_uses.push(AbstractUse {
+            callee: template.to_string(),
+            site: site.clone(),
+            function_value,
+            owner: self.abstract_owner.clone(),
+        });
+    }
+
     /// Bring a declaration's type parameters into the symbolic set for the
     /// walk of its signature and body; returns the length to truncate back
     /// to afterwards.

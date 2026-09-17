@@ -260,24 +260,40 @@ fn variant_pack_forwarding_through_a_generic_def_runs() {
 }
 
 #[test]
-fn inferred_comptime_keyed_def_call_left_on_its_stub_is_rejected() {
+fn inferred_comptime_keyed_def_call_in_an_abstract_body_is_accepted() {
     // `show(x)` in `forward`'s own body infers `T := T`, which no discovery
-    // round can serve: the fixpoint rejects that call rather than keeping the
-    // stub that stands in for `show` until a request is served. The closed
-    // call in `main` runs through its clone.
+    // round can serve. The call stays on `show`'s stub, but `forward`'s
+    // abstract body runs only through an abstract reference, and there is
+    // none. The closed call in `main` runs through its clone.
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            "def show[T: Copyable](x: T):\n    comptime if T == Int:\n        print(\"int\")\n\ndef forward[T: Copyable](x: T):\n    show(x)\n\ndef main():\n    show(3)\n",
+            std::path::Path::new("/tmp/mojito_abstract_comptime_keyed_call.mojo"),
+        )
+        .expect("an abstract inferred call to a compile-time-keyed def");
+    let output = compiler.execute(&program).expect("run the served call");
+    assert_eq!(output.output, "int\n");
+}
+
+#[test]
+fn inferred_comptime_keyed_def_reached_from_a_function_value_is_rejected() {
+    // Passing `forward` as a function value leaves it on its abstract path,
+    // so its body's call to `show`'s stub could run: the fixpoint rejects
+    // the function-value use rather than trap at run time.
     let compiler = Compiler::default();
     let error = compiler
         .compile_source(
-            "def show[T: Copyable](x: T):\n    comptime if T == Int:\n        print(\"int\")\n\ndef forward[T: Copyable](x: T):\n    show(x)\n\ndef main():\n    show(3)\n",
+            "def show[T: Copyable](x: T):\n    comptime if T == Int:\n        print(\"int\")\n\ndef forward[T: Copyable](x: T):\n    show(x)\n\ndef apply(f: def (Int) -> None, x: Int):\n    f(x)\n\ndef main():\n    apply(forward, 3)\n",
             std::path::Path::new("/tmp/mojito_unserved_comptime_keyed_call.mojo"),
         )
-        .expect_err("an abstract inferred call to a compile-time-keyed def");
+        .expect_err("a function-value use reaching a compile-time-keyed stub");
     let CompilerError::Comptime(error) = error else {
         panic!("expected a compile-time rejection, got {error}");
     };
     assert_eq!(
         error.to_string(),
-        "compile-time call arity: generic 'show' requires compile-time parameter 'T'"
+        "compile-time call arity: generic 'forward' requires compile-time parameter 'T'"
     );
 }
 

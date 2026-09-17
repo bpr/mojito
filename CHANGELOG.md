@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A generic `def`'s abstract body may now call a `def` whose `comptime if`
+  keys on its own type parameter, as in the pinned Mojo: `def forward[T:
+  Copyable](x: T): show(x)`, or `show[T](x)`, no longer fails with "generic
+  'show' requires compile-time parameter 'T'" or "'T' is not a compile-time
+  type", even when `forward` is never called. Callers several levels deep
+  work too, on the VM and natively. Such a call from a generic struct's
+  method, or from a generic `def` nested in non-generic code, is still
+  rejected.
 - An inferred call to a `@staticmethod` whose `comptime if` keys on its own
   type parameter now runs, as in the pinned Mojo: `S.show(3)` on `def
   show[T: Copyable](x: T)` prints `int` instead of aborting with

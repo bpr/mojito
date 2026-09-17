@@ -44,24 +44,37 @@ entry names what it depends on, and an entry with no dependency sits as early
 as its size allows. The **Model:** bullet carries the complexity estimate and
 says whether the entry can be done as-is or must be planned first.
 
-- [ ] **An abstract generic body cannot call a compile-time-keyed `def`**
+- [ ] **A generic struct's method cannot call a compile-time-keyed `def`**
 
-  Problem: `def forward[T: Copyable](x: T): show(x)`, where `show` keys a
-  `comptime if` on its own `T`, is accepted by the pin. Mojito reports
-  "generic 'show' requires compile-time parameter 'T'".
-  - This happens even when `forward` is never called. The explicit
-    `show[T](x)` fails too, with "'T' is not a compile-time type".
-  - The inferred call records `show[T]` with `T` symbolic, so no discovery
-    request can serve it. The call is left on `show`'s signature-only stub
-    and rejected at the fixpoint.
-  - Once `forward` is itself specialized (`forward(3)`), its clone's call
-    runs.
-  - The abstract body needs a call that checks against `show`'s signature,
-    with no body to run: each instantiation of `forward` must reach a clone
-    of `show`.
+  Problem: in `struct Box[T: Copyable & Deinitable]`, `def f(self):
+  show(self.x)`, where `show` keys a `comptime if` on its own `T`, is
+  accepted by the pin. Mojito reports "generic 'show' requires compile-time
+  parameter 'T'", even for `Box[Int](3).f()`.
+  - The erased template method records `show[Self.T]`, which no discovery
+    request can serve.
+  - An abstract call from a top-level generic `def`'s body is accepted,
+    because that body runs only through an abstract reference, and each such
+    reference is rejected (`Elaborated::unserved_template_uses`).
+  - An erased method body can run: on a bundled struct, at the discovery
+    round cap, and when an instance clone is dropped. So it cannot be
+    treated like a top-level `def`'s body.
+  - A method calling a top-level `def` that reaches such a template is
+    rejected the same way, naming that `def`.
   - Depends on nothing.
-  - Model: Opus, plan first. The plan must say what an abstract body's call
-    lowers to when the template has no executable abstract form.
+  - Model: Opus, plan first. The plan must say when an erased method body
+    runs, and how each of those paths reaches a clone.
+
+- [ ] **A nested generic `def` cannot call a compile-time-keyed `def`**
+
+  Problem: `def inner[U: Copyable](y: U): show(y)` nested in `main`, called
+  as `inner(2)`, is accepted by the pin. Mojito reports "generic 'show'
+  requires compile-time parameter 'T'".
+  - Only top-level generic `def`s specialize through discovery, so the nested
+    body's call stays abstract and is rejected at the fixpoint.
+  - A nested `def` inside a top-level generic `def` is fine: it runs only
+    with its enclosing body.
+  - Depends on nothing.
+  - Model: Opus, plan first.
 
 - [ ] **An abandoned temporary in a compile-time-keyed body skips the
   abstract destruction check**
