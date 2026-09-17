@@ -986,7 +986,7 @@ impl Flatten<'_> {
                     {
                         return dest;
                     }
-                    let (recv, recv_place) = self.lower_call_receiver(object);
+                    let (recv, recv_place) = self.lower_method_receiver(e, object);
                     let implicitly_copied_receiver = self.implicitly_copies_consuming_receiver(e);
                     let recv = if implicitly_copied_receiver {
                         self.copy_consuming_receiver(object, recv, recv_place.as_ref())
@@ -1682,7 +1682,7 @@ impl Flatten<'_> {
                 } else {
                     object
                 };
-                let (recv, recv_place) = self.lower_call_receiver(receiver_expr);
+                let (recv, recv_place) = self.lower_method_receiver(e, receiver_expr);
                 let recv = if implicitly_copied_receiver {
                     self.copy_consuming_receiver(receiver_expr, recv, recv_place.as_ref())
                 } else {

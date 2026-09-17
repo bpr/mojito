@@ -48,13 +48,19 @@ entry names what it depends on, and an entry with no dependency sits as early
 as its size allows. The **Model:** bullet carries the complexity estimate and
 says whether the entry can be done as-is or must be planned first.
 
-- [ ] **A temporary receiver's destructor never runs**
+- [ ] **A temporary argument's or field read's destructor never runs**
 
-  Problem: `B(3).show()` destroys the temporary without running `B`'s
-  `__deinit__`, where the pin runs it. Generic and non-generic structs alike,
-  so this is not a clone-dispatch gap.
-  - Found while serving lifecycle clones; the missing line is the temporary's
-    own destruction, not the receiver call.
+  Problem: `take(B(2))` at a read parameter and `print(B(1).x)` finish
+  without running `B`'s `__deinit__`, where the pin runs it once the
+  consuming call returns. Only a method receiver (`B(3).show()`), a discarded
+  result, and an expression statement destroy their temporary today.
+  - The temporary stays a bare register: nothing binds it to a slot the drop
+    pass can see. The receiver fix (`lower_method_receiver`, a hidden
+    `$tmp_recv_r` slot whose last use is the call) is the model.
+  - An argument slot needs the parameter's convention: a `var` parameter
+    takes the temporary, so only a read binding may add a slot. A field read
+    needs the loaded register to carry the slot as its owner, so the
+    temporary lives through the call that consumes the field.
   - Depends on nothing.
   - Model: Fable, as-is.
 

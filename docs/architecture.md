@@ -2930,6 +2930,13 @@ current Mojo:
   result of a non-consuming `__enter__`) is an owned temporary: MIR lowering
   binds it to a hidden `$discard_r` slot that is dead at its definition, so
   its `DropVar` follows the call immediately — before the next statement.
+- An owning temporary receiver of a method (`B(3).show()`, `print(B(2).get())`)
+  is bound to a hidden `$tmp_recv_r` slot whose place the call retains, as a
+  named receiver's is (`lower_method_receiver`): the call is the slot's last
+  use, so the temporary's `DropVar` follows the call, before the enclosing
+  expression continues. A `var`/`deinit` receiver convention binds no slot;
+  the callee owns the temporary. A receiver whose result borrows it takes the
+  `$mat_r` path above instead, and lives as long as the borrower.
 - A scalar `LoadPlace` (`t.n` fed to `print`) keeps its owner alive through
   the one instruction consuming the loaded register (the register-loan
   dataflow's single-hop retention), so the owner's `DropVar` follows the call

@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method called on an owning temporary now destroys that temporary right
+  after the call returns, running its `__deinit__` as the pinned Mojo does:
+  `B(3).show()` prints `deinit 3` after `show 3`, and `print(B(2).get())`
+  destroys the receiver before `print` runs. Chained temporaries, free-function
+  results, and generic structs behave alike, on the VM and natively. A
+  `var`/`deinit` receiver is consumed by the callee and destroyed once. A
+  temporary passed to a read parameter or read for a field still skips its
+  destructor.
 - A generic struct's method may now call a `def` whose `comptime if` keys on
   its own type parameter, as in the pinned Mojo: `def f(self): show(self.x)`
   in `struct Box[T]`, inferred or explicit (`show[Self.T](self.x)`), and the

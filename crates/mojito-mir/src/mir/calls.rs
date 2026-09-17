@@ -776,6 +776,59 @@ impl Flatten<'_> {
         }
     }
 
+    /// [`Self::lower_call_receiver`] for the receiver of method call `call`,
+    /// giving a fresh owned temporary receiver (`B(3).show()`) frame storage:
+    /// the value is bound to a hidden `$tmp_recv_r` slot and the call receives
+    /// that slot's place, exactly as a named receiver retains its own. The
+    /// call is the slot's last use, so drop elaboration destroys the
+    /// temporary right after it returns — upstream's ASAP destruction. A
+    /// `var`/`deinit` receiver convention binds no slot: the callee owns the
+    /// temporary and tears it down itself. A value that owns no droppable
+    /// storage, or one the receiver paths already gave a place, is returned
+    /// unchanged.
+    pub(super) fn lower_method_receiver(
+        &mut self,
+        call: &Expr,
+        receiver: &Expr,
+    ) -> (Reg, Option<MirPlace>) {
+        let (value, place) = self.lower_call_receiver(receiver);
+        if place.is_some()
+            || !matches!(
+                receiver.kind,
+                ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
+            )
+            || self.checked_call_contract(call).is_some_and(|contract| {
+                matches!(
+                    contract.receiver_convention,
+                    Some(
+                        mojito_ast::ast::ArgConvention::Var
+                            | mojito_ast::ast::ArgConvention::Deinit
+                    )
+                )
+            })
+        {
+            return (value, place);
+        }
+        let Some(ty) = self
+            .f
+            .reg_types
+            .get(&value.0)
+            .cloned()
+            .or_else(|| self.checked_ty(receiver))
+            .filter(owns_droppable_storage)
+        else {
+            return (value, None);
+        };
+        let variable = self.var(&format!("$tmp_recv_r{}", value.0));
+        self.var_types.insert(variable, ty.clone());
+        self.emit(MirInstr::DefVar {
+            var: variable,
+            src: value,
+            binding_ty: Some(ty.clone()),
+        });
+        (value, Some(MirPlace::root(variable, Some(ty))))
+    }
+
     /// Store a materialized borrow-source temporary in its hidden slot
     /// (`$mat_r`, registered under the checker-minted owner) and return the
     /// value plus the slot's place: a temporary bound to a `ref [origin]`

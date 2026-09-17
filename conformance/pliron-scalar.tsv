@@ -471,6 +471,7 @@ assets/ok/stropping.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_value_param_frozen.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/telemetry.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tempfile_mkdtemp.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/temporary_receiver_deinit.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/temporary_receiver_view.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ternary.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_default_method.mojo	-	ineligible	no-scalar-entry-shape
