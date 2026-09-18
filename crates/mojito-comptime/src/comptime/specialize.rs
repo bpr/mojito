@@ -411,6 +411,13 @@ impl Elab<'_> {
             return Ok(());
         };
         let owed = owed_instance_clones(methods, template, values, stub_reaching);
+        let constructors = methods
+            .iter()
+            .filter(|method| {
+                method.self_ty.is_none()
+                    && mojito_symbol::symbol::lifecycle_method_name(method) == "__init__"
+            })
+            .count();
         let InstanceClones {
             clones,
             mut field_types,
@@ -429,7 +436,22 @@ impl Elab<'_> {
         for ty in &mut field_types {
             self.mono_type(ty, consts, mono)?;
         }
-        let kept = self.walk_instance_clones(clones, template, module.as_deref(), consts, mono);
+        let mut kept = self.walk_instance_clones(clones, template, module.as_deref(), consts, mono);
+        // A constructor family clones as a unit or not at all. The checker
+        // names the member it selected by matching the substituted signature,
+        // so a family that lost one member would let that constructor's call
+        // reach a sibling's clone. A body that fails to walk is dropped here,
+        // after `generate_instance_clones` has returned, so the count is taken
+        // on what survived.
+        let constructor_clone = mangle("__init__", values);
+        if kept
+            .iter()
+            .filter(|clone| clone.name == constructor_clone)
+            .count()
+            != constructors
+        {
+            kept.retain(|clone| clone.name != constructor_clone);
+        }
         for (method, clone) in owed {
             if !withheld.contains(&method) && !kept.iter().any(|minted| minted.name == clone) {
                 mono.unclonable_methods
@@ -2107,11 +2129,13 @@ impl Elab<'_> {
     /// non-lifecycle method whose `where` clause holds for the instance is
     /// cloned from the original template with the struct's parameters baked
     /// (`get$y3:Int`) and an explicit receiver type, so the checker binds
-    /// `self`/`Self` to the instance. Constructors and the lifecycle methods
-    /// stay on the template: they carry the value-parameter reification the
-    /// erased path relies on. Only a template whose parameters are all plain
-    /// type parameters specializes here; value parameters, retained origin
-    /// binders, and callable-bounded parameters keep the erased path.
+    /// `self`/`Self` to the instance. A user template's lifecycle methods
+    /// clone too, a constructor family as one overload set under the shared
+    /// clone name; a bundled template's stay erased, carrying the
+    /// value-parameter reification that path relies on. Only a template whose
+    /// parameters are all plain type parameters specializes here; value
+    /// parameters, retained origin binders, and callable-bounded parameters
+    /// keep the erased path.
     #[allow(
         clippy::unnecessary_wraps,
         reason = "TODO: drop the Result once callers stop using ?"
@@ -2223,10 +2247,6 @@ impl Elab<'_> {
             .get(&instance_key)
             .map_or(&[][..], Vec::as_slice);
         let bundled = mojito_checker::checker::is_bundled_module_source(template.module.as_deref());
-        let constructors = methods
-            .iter()
-            .filter(|method| mojito_symbol::symbol::lifecycle_method_name(method) == "__init__")
-            .count();
         // The methods this instance withholds rather than fails to clone: an
         // unavailable method cannot be called on it at all, so its erased body
         // never runs.
@@ -2238,14 +2258,10 @@ impl Elab<'_> {
                 continue;
             }
             // A bundled template keeps its lifecycle methods on the erased
-            // path, and so does an overloaded constructor family: a
-            // construction picks among the template's signatures, whose
-            // overload symbols the clone family does not share.
+            // path: its constructors carry the value-parameter reification
+            // the erased path relies on.
             let lifecycle = mojito_symbol::symbol::lifecycle_method_name(method);
             if bundled && matches!(lifecycle, "__init__" | "__copyinit__" | "__moveinit__") {
-                continue;
-            }
-            if lifecycle == "__init__" && constructors > 1 {
                 continue;
             }
             clones.extend(self.per_call_method_clones(
@@ -2267,7 +2283,8 @@ impl Elab<'_> {
                 continue;
             }
             // Same-name overloads all clone: they share the mangled name and
-            // stay an overload set on the clone side. A lifecycle method
+            // stay an overload set on the clone side, constructors included —
+            // the checker names the member it selected. A lifecycle method
             // clones under the name it is registered and dispatched by, so
             // `__init__(out self, *, copy: Self)` clones as
             // `__copyinit__$y3:Int`.

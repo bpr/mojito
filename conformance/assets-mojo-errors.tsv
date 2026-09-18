@@ -96,7 +96,7 @@ assets/parse_error/parameter_closure_capture_list.mojo	compile-reject	agree	erro
 assets/parse_error/read_convention_removed.mojo	compile-reject	agree	error: 'read' was removed; use 'imm'
 assets/parse_error/unified_capture_list_removed.mojo	compile-reject	agree	error: unknown function effect 'unified', expected 'raises', 'capturing', or 'thin'
 assets/runtime_error/allocation_use_after_dealloc.mojo	runs	subset	the pin runs it; Mojito rejects: use after Pointer deallocation
-assets/runtime_error/div_by_zero.mojo	runs	subset	the pin runs it; Mojito traps on integer division by zero
+assets/runtime_error/div_by_zero.mojo	runs	subset	the pin runs it; Mojito traps on integer division or modulo by zero
 assets/runtime_error/file_open_invalid_mode.mojo	trap	agree	invalid mode: "z". Can only be one of: {"r", "w", "rw", "a"}
 assets/runtime_error/file_open_missing.mojo	trap	agree	Failed to open file 'mojito_missing_dir/nothing.txt': No such file or directory
 assets/runtime_error/file_read_closed_handle.mojo	trap	agree	invalid file handle

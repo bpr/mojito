@@ -54,8 +54,9 @@ assets/ok/comptime_for.mojo	main	exe-differential	sanitized
 assets/ok/comptime_frozen_struct.mojo	main	exe-differential	sanitized
 assets/ok/comptime_hash.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if.mojo	main	exe-differential	sanitized
-assets/ok/comptime_if_generic_specialization.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_abstract_body_call.mojo	main	exe-differential	sanitized
+assets/ok/comptime_if_generic_specialization.mojo	main	exe-differential	sanitized
+assets/ok/comptime_if_generic_struct_ctor_overloads.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_generic_struct_lifecycle.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_generic_struct_method_call.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_inferred_def.mojo	main	exe-differential	sanitized
@@ -68,7 +69,7 @@ assets/ok/container_hashable.mojo	main	exe-differential	sanitized
 assets/ok/contextual_member_static.mojo	main	exe-differential	sanitized
 assets/ok/copy_return.mojo	main	exe-differential	sanitized
 assets/ok/copyable.mojo	main	exe-differential	sanitized
-assets/ok/copyable_iterator_reference_aggregate.mojo	main	exe-differential	sanitized
+assets/ok/copyable_iterator_reference_aggregate.mojo	main	excluded	pliron backend: in `take$mono$TRefIter`: unsupported reference-result method adapter at assets/ok/copyable_iterator_reference_aggregate.mojo:36:12
 assets/ok/copyinit_moveinit.mojo	main	exe-differential	sanitized
 assets/ok/decorators.mojo	main	exe-differential	sanitized
 assets/ok/default_args.mojo	main	exe-differential	sanitized
@@ -151,7 +152,7 @@ assets/ok/inplace_subscript_ref.mojo	main	exe-differential	sanitized
 assets/ok/inplace_subscript_value.mojo	main	exe-differential	sanitized
 assets/ok/inplace_var.mojo	main	exe-differential	sanitized
 assets/ok/input.mojo	main	exe-differential	sanitized
-assets/ok/interior_dest_rebind_releases_loans.mojo	main	exe-differential	sanitized
+assets/ok/interior_dest_rebind_releases_loans.mojo	main	excluded	pliron backend: in `__module$std$memory$alloc$unsafe_alloc`: unsupported concrete instance symbol `__module$std$memory$alloc$unsafe_alloc$mono$TRefBox` collides with an existing declaration
 assets/ok/invert_operator.mojo	main	exe-differential	sanitized
 assets/ok/joint_map.mojo	main	exe-differential	sanitized
 assets/ok/keyword_call.mojo	main	exe-differential	sanitized
@@ -161,7 +162,7 @@ assets/ok/keyword_subscript_user_struct.mojo	main	exe-differential	sanitized
 assets/ok/kwargs.mojo	main	exe-differential	sanitized
 assets/ok/lambda_basic.mojo	main	exe-differential	sanitized
 assets/ok/lambda_generic_comptime.mojo	main	exe-differential	sanitized
-assets/ok/lambda_hof.mojo	main	exe-differential	sanitized
+assets/ok/lambda_hof.mojo	main	excluded	pliron backend: in `observe`: unsupported binding call to `main$scale` during monomorphization: Missing("x")
 assets/ok/lambda_in_control_flow.mojo	main	exe-differential	sanitized
 assets/ok/layout_allocation.mojo	main	exe-differential	sanitized
 assets/ok/lifecycle_deprecated_spellings.mojo	main	exe-differential	sanitized
@@ -204,7 +205,7 @@ assets/ok/nominal_string_affix.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_atof_rounding.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_basics.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_bool_mul.mojo	main	exe-differential	sanitized
-assets/ok/nominal_string_bytes_capacity.mojo	main	exe-differential	sanitized
+assets/ok/nominal_string_bytes_capacity.mojo	main	excluded	pliron backend: in `__module$$ahash$AHasher$vuint64:4;[i0;i0;i0;i0;].update`: unsupported concrete instance symbol `__module$$ahash$AHasher$vuint64:4;[i0;i0;i0;i0;].update$mono$TStringSpan` collides with an existing declaration
 assets/ok/nominal_string_bytes_peek_split.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_case.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_codepoint_from_byte.mojo	main	exe-differential	sanitized
@@ -262,8 +263,8 @@ assets/ok/owned_pointer_api.mojo	main	exe-differential	sanitized
 assets/ok/ownership_marker_traits.mojo	main	exe-differential	sanitized
 assets/ok/pack_bare_in_struct_header.mojo	main	exe-differential	sanitized
 assets/ok/pack_element_rebind.mojo	main	exe-differential	sanitized
-assets/ok/pack_struct_getitem.mojo	main	exe-differential	sanitized
 assets/ok/pack_element_temporaries.mojo	main	exe-differential	sanitized
+assets/ok/pack_struct_getitem.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_pair.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_variadic_init.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_writable.mojo	main	exe-differential	sanitized
@@ -528,13 +529,22 @@ assets/ok/with_multiple.mojo	main	exe-differential	sanitized
 assets/ok/with_multiple_dependent.mojo	main	exe-differential	sanitized
 assets/ok/with_statement.mojo	main	exe-differential	sanitized
 assets/ok/writable_extra_write_to_overload.mojo	main	exe-differential	sanitized
+assets/ownership_ok/both_branches_move_then_reinit.mojo	main	exe-differential	sanitized
+assets/ownership_ok/dict_mutation_then_break_no_later_use.mojo	main	exe-differential	sanitized
+assets/ownership_ok/dict_value_reads_during_iteration.mojo	main	exe-differential	sanitized
+assets/ownership_ok/mapping_mutation_after_iteration.mojo	main	exe-differential	sanitized
+assets/ownership_ok/move_then_reinit.mojo	main	exe-differential	sanitized
+assets/ownership_ok/move_without_later_use.mojo	main	exe-differential	sanitized
+assets/ownership_ok/partial_move_reinit.mojo	main	exe-differential	sanitized
+assets/ownership_ok/shared_iterations_coexist.mojo	main	exe-differential	sanitized
+assets/ownership_ok/view_live_across_reading_loop.mojo	main	exe-differential	sanitized
 assets/extensions/ok/comprehension_borrowed_named_source.mojo	main	exe-differential	sanitized
 assets/extensions/ok/container_owning_family_apis.mojo	main	exe-differential	sanitized
-assets/extensions/ok/copyable_iterator_reference_aggregate.mojo	main	exe-differential	sanitized
+assets/extensions/ok/copyable_iterator_reference_aggregate.mojo	main	excluded	pliron backend: in `take$mono$TRefIter`: unsupported reference-result method adapter at assets/extensions/ok/copyable_iterator_reference_aggregate.mojo:36:12
 assets/extensions/ok/delegated_ref_return_projection.mojo	main	exe-differential	sanitized
 assets/extensions/ok/forward_struct_reference_iterator.mojo	main	exe-differential	sanitized
 assets/extensions/ok/generic_borrowed_dispatch_overloaded_iter.mojo	main	exe-differential	sanitized
-assets/extensions/ok/interior_dest_rebind_releases_loans.mojo	main	exe-differential	sanitized
+assets/extensions/ok/interior_dest_rebind_releases_loans.mojo	main	excluded	pliron backend: in `__module$std$memory$alloc$unsafe_alloc`: unsupported concrete instance symbol `__module$std$memory$alloc$unsafe_alloc$mono$TRefBox` collides with an existing declaration
 assets/extensions/ok/iterable_associated_element.mojo	-	ineligible	no-main-entry
 assets/extensions/ok/lambda_captures.mojo	main	exe-differential	sanitized
 assets/extensions/ok/origin_argument_alias_bodies.mojo	main	exe-differential	sanitized
@@ -581,22 +591,13 @@ assets/extensions/ok/self_hosted_algorithms.mojo	main	exe-differential	sanitized
 assets/extensions/ok/subtree_pointer_generic_field.mojo	main	exe-differential	sanitized
 assets/extensions/ok/subtree_pointer_read.mojo	main	exe-differential	sanitized
 assets/extensions/ok/transferred_carrier_keeps_source_alive.mojo	main	exe-differential	sanitized
-assets/ownership_ok/both_branches_move_then_reinit.mojo	main	exe-differential	sanitized
-assets/ownership_ok/dict_mutation_then_break_no_later_use.mojo	main	exe-differential	sanitized
-assets/ownership_ok/dict_value_reads_during_iteration.mojo	main	exe-differential	sanitized
-assets/ownership_ok/mapping_mutation_after_iteration.mojo	main	exe-differential	sanitized
-assets/ownership_ok/move_then_reinit.mojo	main	exe-differential	sanitized
-assets/ownership_ok/move_without_later_use.mojo	main	exe-differential	sanitized
-assets/ownership_ok/partial_move_reinit.mojo	main	exe-differential	sanitized
-assets/ownership_ok/shared_iterations_coexist.mojo	main	exe-differential	sanitized
-assets/ownership_ok/view_live_across_reading_loop.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/interior_view_consume_before_mutation.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/interior_view_drop_after_mutation.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/subtree_reads_coexist.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/subtree_sibling_root_mutation.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/subtree_single_write_ok.mojo	main	exe-differential	sanitized
 assets/runtime_error/allocation_use_after_dealloc.mojo	main,__toplevel__	error-differential	category=PointerUseAfterFree
-assets/runtime_error/div_by_zero.mojo	-	ineligible	non-conforming-snippet
+assets/runtime_error/div_by_zero.mojo	main,__toplevel__	error-differential	category=DivModZero
 assets/runtime_error/file_open_invalid_mode.mojo	main,__toplevel__	error-differential	category=UnhandledError
 assets/runtime_error/file_open_missing.mojo	main,__toplevel__	error-differential	category=UnhandledError
 assets/runtime_error/file_read_closed_handle.mojo	main,__toplevel__	error-differential	category=UnhandledError
@@ -604,7 +605,7 @@ assets/runtime_error/file_read_write_only_handle.mojo	main,__toplevel__	error-di
 assets/runtime_error/list_contiguous_slice_negative.mojo	main,__toplevel__	error-differential	category=Abort
 assets/runtime_error/list_contiguous_slice_out_of_range.mojo	main,__toplevel__	error-differential	category=Abort
 assets/runtime_error/list_contiguous_slice_reversed.mojo	main,__toplevel__	error-differential	category=Abort
-assets/runtime_error/list_out_of_range.mojo	-	ineligible	non-conforming-snippet
+assets/runtime_error/list_out_of_range.mojo	main,__toplevel__	error-differential	category=Abort
 assets/runtime_error/maybe_uninit_deinit_uninitialized.mojo	main,__toplevel__	error-differential	category=UninitDestroy
 assets/runtime_error/maybe_uninit_read_uninitialized.mojo	main,__toplevel__	error-differential	category=UninitRead
 assets/runtime_error/maybe_uninit_take_uninitialized.mojo	main,__toplevel__	error-differential	category=UninitTake

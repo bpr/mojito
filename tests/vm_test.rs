@@ -2036,3 +2036,23 @@ fn unsafe_uninit_length_slots_are_never_written_until_stored() {
     .unwrap_err();
     assert!(escaped.contains("after it was moved"), "{escaped}");
 }
+
+/// A member read on a receiver reached through a *reborrowed* `ref` field
+/// resolves the handle chain.
+///
+/// `Outer.src` is a `ref` field; `ref s = self.src` reborrows it, so
+/// `Inner.src` holds a handle whose target slot holds another handle. The
+/// projection walk chased one hop, and an empty-projection root reads back
+/// unchanged, so the second hop left a `Value::Ref` where the `Field` segment
+/// wanted a struct ("invalid reference projection Field(\"n\") on ref").
+///
+/// The place projection `self.src[i]` masked this: it never needed the
+/// receiver as a value. A plain field read does, which is what blocks strict
+/// bounds in `List.__getitem__` (roadmap `unchecked-list-subscript`).
+#[test]
+fn reborrowed_ref_field_receiver_reads_its_own_member() {
+    let out = parity(
+        "@fieldwise_init\nstruct Cell(Copyable, Movable):\n    var n: Int\n\n    def read(ref self) -> Int:\n        return self.n\n\n@fieldwise_init\nstruct Inner[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] Cell\n\n    def get(self) -> Int:\n        return self.src.read()\n\n@fieldwise_init\nstruct Outer[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] Cell\n\n    def head(self) -> Int:\n        ref s = self.src\n        var e = Inner(s)\n        return e.get()\n\ndef main():\n    var c = Cell(7)\n    ref r = c\n    var h = Outer(r)\n    print(h.head())\n",
+    );
+    assert_eq!(out, "7\n");
+}

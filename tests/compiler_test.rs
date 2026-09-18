@@ -171,6 +171,52 @@ fn generic_struct_instances_get_per_instantiation_method_clones() {
 }
 
 #[test]
+fn overloaded_constructor_family_clones_as_one_overload_set() {
+    // A generic struct's constructors clone together: each signature gets its
+    // own member of the instance's `__init__$y3:Int` family, and the checker
+    // names the member it selected — the clone family's `$ov$` suffixes key on
+    // the substituted parameter types, so they do not correspond by name to
+    // the template's.
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            "struct Box[T: Copyable & Deinitable](Copyable, Movable):\n    var value: Self.T\n\n    def __init__(out self, var value: Self.T):\n        self.value = value^\n\n    def __init__(out self, var value: Self.T, twice: Bool):\n        self.value = value^\n\n    def kind(self) -> String:\n        comptime if Self.T == Int:\n            return String(\"int\")\n        else:\n            return String(\"other\")\n\ndef main():\n    var a = Box[Int](7)\n    var b = Box[Int](8, True)\n    print(a.kind(), b.kind())\n",
+            std::path::Path::new("/tmp/mojito_constructor_family_clones.mojo"),
+        )
+        .expect("compile the constructor family");
+    let clone_family = |name: &&String| name.starts_with("Box.__init__$y3:Int$ov$");
+    let targets = program.checked().overload_targets();
+    let selected: std::collections::BTreeSet<&String> = targets
+        .values()
+        .filter(|target| clone_family(target))
+        .collect();
+    assert_eq!(
+        selected.len(),
+        2,
+        "each construction names its own clone: {targets:?}"
+    );
+    let mir = mojito::mir::lower_checked_program(program.checked());
+    let names: Vec<&String> = mir.functions.iter().map(|(name, _)| name).collect();
+    let defined: std::collections::BTreeSet<&&String> =
+        names.iter().filter(|name| clone_family(name)).collect();
+    assert_eq!(
+        defined.len(),
+        2,
+        "the family lowers as an overload set: {names:?}"
+    );
+    for target in selected {
+        assert!(
+            names.contains(&target),
+            "the selected clone '{target}' is lowered: {names:?}"
+        );
+    }
+    let output = compiler
+        .execute(&program)
+        .expect("run the constructor family");
+    assert_eq!(output.output, "int int\n");
+}
+
+#[test]
 fn instance_clones_serve_operators_display_and_iteration() {
     // Every call shape on a closed generic-struct instance reaches the
     // instance's clone: the `==` dunder target, `len(x)`, `repr(x)` and

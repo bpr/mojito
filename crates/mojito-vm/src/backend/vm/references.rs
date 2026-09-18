@@ -5,6 +5,11 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
+/// How many handle-to-handle hops a projection walk will chase before
+/// treating the chain as cyclic. Reborrows nest as deep as the source does,
+/// which is a handful of frames; this only has to be past that.
+const MAX_REF_HOPS: usize = 64;
+
 impl VmBackend {
     #[allow(
         clippy::unused_self,
@@ -362,9 +367,22 @@ impl VmBackend {
         for segment in projection {
             // A `ref`-typed field mid-projection stores another handle; the
             // remaining segments address its referent — chase the handle
-            // exactly like reference canonicalization does.
-            if let Value::Ref { .. } = &value {
+            // exactly like reference canonicalization does. A reborrow makes
+            // that a *chain*: a handle whose target slot holds another handle
+            // reads back as a handle, since this walk returns an
+            // empty-projection root untouched. Chase to the referent, or a
+            // field read of the receiver behind a `ref` field (`self.size` in
+            // `List.__getitem__`) meets a handle where it expects a struct.
+            let mut hops = 0;
+            while let Value::Ref { .. } = &value {
+                if hops == MAX_REF_HOPS {
+                    return Err(RuntimeError::TypeError(format!(
+                        "vm: reference handle chain exceeded {MAX_REF_HOPS} hops \
+                         resolving projection {projection:?}"
+                    )));
+                }
                 value = self.read_reference(&value, current, current_variables)?;
+                hops += 1;
             }
             value = match (segment, value) {
                 // Declared fields first, then reified value parameters (a

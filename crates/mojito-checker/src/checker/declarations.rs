@@ -1534,6 +1534,57 @@ impl Checker {
         nested
     }
 
+    /// The per-instantiation constructor clone a construction of
+    /// `name[arguments]` runs: the member of the instance's `__init__` clone
+    /// family (`Box.__init__$y3:Int$ov$Int`) whose signature is the selected
+    /// template signature with the instance's arguments substituted. The
+    /// elaborator mints such a family whole or not at all, so the match is
+    /// unique when it exists.
+    ///
+    /// `None` keeps the template target: an instance that mints no family, a
+    /// constructor carrying its own compile-time parameters (which
+    /// `record_constructor_instantiation` retargets to a per-call clone
+    /// instead), or a signature no member matches — a `Self`-typed parameter
+    /// keeps the template spelling on the clone side, so such a constructor
+    /// stays on the erased path.
+    pub(super) fn constructor_clone_target(
+        &self,
+        name: &str,
+        arguments: &[TyArg],
+        sig: &MethodSig,
+        subst: &HashMap<String, Ty>,
+    ) -> Option<String> {
+        if !sig.decls.is_empty() {
+            return None;
+        }
+        let clone = self.instance_method_clone(name, "__init__", arguments)?;
+        let sigs = self.structs.get(name)?.methods.get(&clone)?;
+        // A lone clone is not an overload set: its definition keeps the plain
+        // clone name, so naming a signature suffix here would target a symbol
+        // no lowered function has.
+        if sigs.len() == 1 {
+            return Some(format!("{name}.{clone}"));
+        }
+        let self_ty = self.self_instance_ty(name);
+        let substituted = |ty: &Ty| substitute(ty, subst);
+        let selected = MethodSig {
+            params: sig.params.iter().map(substituted).collect(),
+            variadic: sig.variadic.as_deref().map(substituted).map(Box::new),
+            kw_variadic: sig.kw_variadic.as_deref().map(substituted).map(Box::new),
+            ..sig.clone()
+        };
+        // The lowered name is the comparison: it carries the variadic element
+        // at its declared index and the keyword names, so two members differing
+        // only there stay distinct.
+        let wanted = method_lowered_name(name, &clone, &selected, self_ty.as_ref());
+        let mut matches = sigs
+            .iter()
+            .map(|candidate| method_lowered_name(name, &clone, candidate, self_ty.as_ref()))
+            .filter(|candidate| *candidate == wanted);
+        let target = matches.next()?;
+        matches.next().is_none().then_some(target)
+    }
+
     /// Record a generic constructor's resolved compile-time arguments for
     /// per-call specialization and, once its clone exists on the struct,
     /// retarget the construction to it (`Variant$…​.__init__$y3:Int`).
@@ -1812,7 +1863,20 @@ impl Checker {
                         ArgSlot::Keyword(position) => &kwargs[*position].value,
                         ArgSlot::Default => continue,
                     };
-                    let ty = self.infer(argument)?;
+                    // Contextual, against the slot this argument fills, as
+                    // `record_selected_method_conversions` just typed it.
+                    // Inferring bare here re-records the argument's semantic
+                    // adjustment from scratch, and `operation_adjustments` is
+                    // keyed by span: a display argument that had just resolved
+                    // to its parameter's collection (`ConstructCollection` for
+                    // a `List[Int]` parameter) was overwritten by the display's
+                    // own default (`ConstructArrayLiteral`), so a `var` or
+                    // `deinit` parameter received — and a field then stored —
+                    // an `Array` where a `List` was declared.
+                    let ty = match selected.param_types.get(index) {
+                        Some(expected) => self.infer_with_expected(argument, expected, true)?,
+                        None => self.infer(argument)?,
+                    };
                     self.check_consuming_as(
                         argument,
                         &ty,
@@ -1849,6 +1913,11 @@ impl Checker {
                     &partitioned.explicit_origins,
                 )?;
                 self.record_constructor_instantiation(span, name, &tyargs, sig, &subst);
+                if let Some(target) = self.constructor_clone_target(name, &tyargs, sig, &subst) {
+                    self.overload_targets
+                        .borrow_mut()
+                        .insert(span.clone(), target);
+                }
                 self.record_struct_instantiation(name, &tyargs, span.source.as_deref());
                 for (i, (aty, pty)) in arg_tys.iter().zip(&params).enumerate() {
                     let expected = pointer_origins.substitute(&substitute(pty, &subst));
@@ -2124,13 +2193,21 @@ impl Checker {
                         )?;
                     }
                 }
-                if overloaded {
-                    let target = method_lowered_name(
-                        name,
-                        "__init__",
-                        &sig,
-                        self.self_instance_ty(name).as_ref(),
-                    );
+                // The instance's own constructor clone when it has one, else
+                // the template overload the source spelled.
+                let target = self
+                    .constructor_clone_target(name, &tyargs, &sig, &subst)
+                    .or_else(|| {
+                        overloaded.then(|| {
+                            method_lowered_name(
+                                name,
+                                "__init__",
+                                &sig,
+                                self.self_instance_ty(name).as_ref(),
+                            )
+                        })
+                    });
+                if let Some(target) = target {
                     self.overload_targets
                         .borrow_mut()
                         .insert(span.clone(), target);

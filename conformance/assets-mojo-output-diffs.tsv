@@ -18,8 +18,6 @@ assets/ok/simd_floordiv_mod.mojo	arithmetic	signed floordiv at the type minimum:
 assets/ok/pliron_convert_uint.mojo	arithmetic	Mojo prints 29, Mojito 31
 assets/ok/pliron_scalar_casts.mojo	arithmetic	out-of-range float-to-int casts: Mojo 0, Mojito 44
 assets/ok/pliron_float_pow.mojo	arithmetic	Float64 **: Mojo 1026.0000000000005, Mojito 1026.0
-assets/ok/maybe_uninit_roundtrip.mojo	drop-timing	Mojito never runs one destructor (`deinit 6` is missing)
-assets/ok/pliron_uninit_roundtrip.mojo	drop-timing	Mojito never runs three destructors
 assets/ok/owned_pointer_api.mojo	drop-timing	a destructor runs later in Mojito than upstream
 assets/ok/try_region_drop_timing.mojo	drop-timing	destructors in a try region run later in Mojito than upstream
 assets/ok/nominal_string_indexing.mojo	one-off	String subscript yields a character upstream (h), an Int in Mojito (104)

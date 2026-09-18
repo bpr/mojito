@@ -239,4 +239,62 @@ if [[ -n "$missing" ]]; then
     exit 1
 fi
 
+# The two generated Pliron manifests. Their own sweeps (tests/heavy/) are the
+# oracle for every row's status, but those cost 30-60 minutes and sit outside
+# the overnight gate, so a hand-added row's mistakes stayed invisible for days
+# (gate run 2026-09-18: two rows inserted out of order, and a coverage ratchet
+# under-bumped at 02d2cc9 and carried for four days). These three checks are
+# static, cost milliseconds, and catch exactly that class.
+heavy="$root/tests/heavy/main.rs"
+pliron_rows() { awk -F '\t' '!/^#/ && NF >= 3 { print $1 "\t" $3 }' "$1"; }
+
+# 1. `support::fixture_sources` sorts each directory's file names, so the rows
+#    of one directory must be in byte order. An insertion in the wrong slot
+#    fails the sweep's generated-file assertion and nothing else.
+LC_ALL=C awk -F '\t' '
+    { split($1, parts, "/"); base = parts[length(parts)]
+      dir = substr($1, 1, length($1) - length(base))
+      if (dir == prev_dir && base < prev_base) {
+          print FILENAME ": row out of order: " $1 " must precede " dir prev_base > "/dev/stderr"; bad = 1
+      }
+      prev_dir = dir; prev_base = base }
+    END { exit(bad ? 1 : 0) }
+' <(pliron_rows "$root/conformance/pliron-parity.tsv") \
+  <(pliron_rows "$root/conformance/pliron-scalar.tsv") || exit 1
+
+# 2. Each manifest names every fixture of the folders its sweep walks, once.
+check_inventory() {
+    local manifest="$1"
+    shift
+    local missing
+    missing="$(comm -3 \
+        <(find "$@" -name '*.mojo' | sed "s|^$root/||" | LC_ALL=C sort) \
+        <(pliron_rows "$manifest" | cut -f1 | LC_ALL=C sort))"
+    if [[ -n "$missing" ]]; then
+        echo "${manifest#"$root/"}: rows and fixture inventory disagree" >&2
+        echo "  (left column: no row; right column: no fixture)" >&2
+        sed 's/^/  /' <<<"$missing" >&2
+        exit 1
+    fi
+}
+check_inventory "$root/conformance/pliron-parity.tsv" \
+    "$root/assets/ok" "$root/assets/ownership_ok" "$root/assets/extensions/ok" \
+    "$root/assets/extensions/ownership_ok" "$root/assets/runtime_error"
+check_inventory "$root/conformance/pliron-scalar.tsv" \
+    "$root/assets/ok" "$root/assets/extensions/ok" "$root/assets/runtime_error"
+
+# 3. The parity sweep's coverage ratchets are equalities against the same rows,
+#    so they are arithmetic on the checked-in manifest. Bumping one without the
+#    other is the drift that hid here for four days.
+for pair in "exe-differential:differential" "error-differential:errors"; do
+    status="${pair%%:*}"
+    ratchet_name="${pair##*:}"
+    rows="$(pliron_rows "$root/conformance/pliron-parity.tsv" | awk -F '\t' -v s="$status" '$2 == s' | wc -l)"
+    ratchet="$(grep -oE "${ratchet_name} == [0-9]+" "$heavy" | head -1 | grep -oE '[0-9]+')"
+    if [[ "$rows" != "$ratchet" ]]; then
+        echo "tests/heavy/main.rs: '${ratchet_name} == ${ratchet}' but pliron-parity.tsv has ${rows} ${status} rows" >&2
+        exit 1
+    fi
+done
+
 echo "parity manifest: ok"

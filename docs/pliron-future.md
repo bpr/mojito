@@ -1,7 +1,7 @@
 # Pliron as Mojito's Compiler IR Framework: Front-End Feasibility
 
 **Status:** assessment recorded 2026-09-11; the dialect-definition section
-added 2026-09-16. The goal it serves — an implementation that resembles Mojo's
+added 2026-09-16, its generator recommendation revised 2026-09-17. The goal it serves — an implementation that resembles Mojo's
 own — is settled (`docs/architecture.md`); what stays unscheduled is this
 document's particular staging of it. The scheduled consequences are the
 checkboxes in [`docs/roadmap.md`](roadmap.md) §1.
@@ -385,11 +385,20 @@ Where the note goes wrong:
   declarative forms are missing.
 - **Several API and trait names are wrong.** `op.get_interface::<dyn I>()` is
   `op_cast`, and Pliron has no `Pure` or `Commutative` traits.
-- **Its own crate layout fits Pliron poorly.** It proposes a separate
-  `pliron-tblgen` binary and schema crate. Pliron registers per-item from
-  proc macros and keeps no global schema. A generator that emits
-  `#[pliron_op]` items, or a schema grown inside `pliron-derive`, would work
-  with that model instead of beside it.
+- **Its crate layout was judged a poor fit, and that judgment was wrong.**
+  The 2026-09-16 reading said a separate generator and schema crate would
+  sit beside Pliron's per-item proc-macro registration rather than inside
+  it. Pliron's own history says the per-item model is the cost: open PR
+  #282 (2026-09-17, from the cubecl project) halves macro expansions for a
+  30% incremental-build gain and names rust-analyzer as the motivation,
+  generic `Type`/`Attribute` derives were added and reverted the next day
+  (`71da105`, `c244710`), and the walkers were de-macroed "at the cost of
+  some duplication" (`e514bc5`). A build-time generator that emits plain
+  Rust over Pliron's existing runtime registration (`OpId`,
+  `Dialect::register`, the interface verifier tables) is the fix those
+  signals point at, and the note's `pliron-build` shape is that design.
+  `pliron-pr.md` (repo root, untracked) holds the evidence and the upstream
+  proposal.
 - **Most Mojo names beyond the walkthrough are invented.**
   - The note lists `lit.yield`, `lit.destroy`, `kgen.param.bind`/`get`,
     `kgen.field.*`, `kgen.alloc`, `pop.broadcast`, `pop.extract`/`insert`,
@@ -425,11 +434,28 @@ onto code Mojito already has:
    `#[pliron_attr]` with canonicalization, whether or not it lives in Pliron
    yet. Next comes the parametric layer with its compile-time `if` and `for`,
    then `mojito.core`.
-3. **Grow any declarative layer upstream.** Build it as an extension of
-   `pliron-derive`, proposed to Pliron, in line with the pivot plan's "upstream
-   narrow additions" stance. The first pieces worth having are the ones
-   missing above that every dialect repeats: variadic groups, builders, and
+3. **Grow any declarative layer upstream, as a build-time generator rather
+   than more derive macros.** Propose it to Pliron in line with the pivot
+   plan's "upstream narrow additions" stance, as the answer to Pliron issue
+   #42 and the structural fix behind PR #282 (see the crate-layout bullet
+   above). The shape: a per-dialect definition file parsed into a schema
+   crate independent of code generation, a `build.rs` step that emits
+   deterministic plain Rust into `OUT_DIR` (checked in where a project
+   wants definition changes visible in `git diff`, as Mojito does), and
+   output that targets the same runtime registration the derives use, so
+   both paths coexist during a transition and nothing already written
+   against `#[pliron_op]` is lost. The existing `#[pliron_op(...)]`
+   argument grammar is already the schema, so the first generator accepts
+   the same fields. The first pieces worth generating are the ones missing
+   above that every dialect repeats: variadic groups, builders, and
    declared type constraints. Documentation and descriptors come after.
+   The generator does not touch the `linkme`/`inventory` registration
+   fork, and verifiers, folding, lowering, and the elaborator stay
+   handwritten. Fallback: if the maintainer keeps the derive-only model,
+   the same three pieces as `pliron-derive` extensions. Either way, any
+   attribute Mojito proposes upstream first (the uniqued parameter
+   expression of §1) is written as plain trait code over `uniqued_any`,
+   not as a new macro option.
 
 ## How Mojo's pipeline uses its dialects
 

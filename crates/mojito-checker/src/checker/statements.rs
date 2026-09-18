@@ -782,8 +782,12 @@ impl Checker {
                         };
                         // Assigning a closure, or an aggregate storing one,
                         // could move it to an outer binding; a thin function
-                        // value captures nothing.
-                        if holds_closure(&found) {
+                        // value captures nothing. A named generic or
+                        // overloaded callable is not a first-class value here
+                        // whatever its environment, as at `return`.
+                        if matches!(found, Ty::GenericFunc { .. } | Ty::Overload(_))
+                            || holds_closure(&found)
+                        {
                             return Err(TypeError::ClosureEscape);
                         }
                         // Recorded before the origins are read, as at the
@@ -2873,16 +2877,22 @@ impl Checker {
 
 const RESERVED_FUNCTION_NAMES: &[&str] = &["class", "del", "match", "yield"];
 
-/// Whether a value of `ty` is, or stores, a closure: a non-thin callable,
-/// directly or as a struct argument, tuple or variant element. A thin
-/// function's signature is not searched, since the value captures nothing
+/// Whether a value of `ty` is, or stores, a closure: a callable whose
+/// environment is not `thin`, directly or as a struct argument, tuple or
+/// variant element. A generic `def` that captures nothing is thin exactly as
+/// a plain one is, so `(identity, offset)` stores no closure. A thin
+/// callable's signature is not searched, since the value captures nothing
 /// whatever contracts its parameters name.
+///
+/// This is the storage question alone. Whether a *named* generic or
+/// overloaded callable may be assigned or returned at all is the caller's
+/// rule, spelled at each site.
 fn holds_closure(ty: &Ty) -> bool {
     match ty {
-        Ty::Func { environment, .. } => {
+        Ty::Func { environment, .. } | Ty::GenericFunc { environment, .. } => {
             !matches!(environment, mojito_types::origin::CallableEnvironment::Thin)
         }
-        Ty::GenericFunc { .. } | Ty::Overload(_) => true,
+        Ty::Overload(_) => true,
         Ty::Struct(_, arguments) => arguments.iter().any(|argument| {
             matches!(argument, mojito_types::types::TyArg::Ty(element) if holds_closure(element))
         }),

@@ -1799,13 +1799,9 @@ impl Flatten<'_> {
                 // field is read — enabling field-sensitive partial-move checking
                 // (reading `p.b` after `p.a^` stays legal). A member of a temporary
                 // or an indexed base keeps the register-based `GetField`.
-                let descriptor_field = matches!(
-                    self.checked_ty(object),
-                    Some(Ty::Struct(name, args))
-                        if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice")
-                            && args.is_empty()
-                );
-                if !descriptor_field && let Some(place) = self.pure_field_place(e) {
+                if !self.is_slice_descriptor(object)
+                    && let Some(place) = self.pure_field_place(e)
+                {
                     let place_root = place.root;
                     let place_ty = place.ty.clone();
                     let loaded = self.fresh_typed(

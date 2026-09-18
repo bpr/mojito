@@ -2096,55 +2096,59 @@ fn exact_numeric_op(op: InfixOp, left: ExactNum, right: ExactNum) -> Result<Valu
         Mod, Mul, Ne, NotIn, Or, Pow, Shl, Shr, Sub,
     };
     if let (ExactNum::Int(left), ExactNum::Int(right)) = (&left, &right) {
-        let value =
-            match op {
-                Add => Value::IntLiteral(left.add(right)),
-                Sub => Value::IntLiteral(left.sub(right)),
-                Mul => Value::IntLiteral(left.mul(right)),
-                Div => Value::FloatLiteral(
-                    mojito_common::literal::FloatLiteral::from_int(left)
-                        .div(&mojito_common::literal::FloatLiteral::from_int(right))
-                        .ok_or_else(|| {
-                            RuntimeError::TypeError("integer division by zero".to_string())
-                        })?,
-                ),
-                FloorDiv => Value::IntLiteral(left.floor_div(right).ok_or_else(|| {
-                    RuntimeError::TypeError("integer division by zero".to_string())
-                })?),
-                Mod => Value::IntLiteral(left.floor_mod(right).ok_or_else(|| {
-                    RuntimeError::TypeError("integer modulo by zero".to_string())
-                })?),
-                Pow => Value::IntLiteral(left.pow(right).ok_or_else(|| {
-                    RuntimeError::TypeError(
-                        "integer literal exponent must be a non-negative u32".to_string(),
-                    )
-                })?),
-                Shl => Value::IntLiteral(left.shl(right).ok_or_else(|| {
-                    RuntimeError::TypeError("invalid integer literal shift".to_string())
-                })?),
-                Shr => Value::IntLiteral(left.shr(right).ok_or_else(|| {
-                    RuntimeError::TypeError("invalid integer literal shift".to_string())
-                })?),
-                BitAnd => Value::IntLiteral(left.bitand(right)),
-                BitOr => Value::IntLiteral(left.bitor(right)),
-                BitXor => Value::IntLiteral(left.bitxor(right)),
-                Lt | Le | Gt | Ge | Eq | Ne => {
-                    return Ok(Value::Bool(match op {
-                        Lt => left < right,
-                        Le => left <= right,
-                        Gt => left > right,
-                        Ge => left >= right,
-                        Eq => left == right,
-                        Ne => left != right,
-                        _ => unreachable!(),
-                    }));
-                }
-                MatMul | And | Or | In | NotIn | Is | IsNot => {
-                    return Err(RuntimeError::TypeError(format!(
-                        "operator '{op:?}' is invalid for IntLiteral"
-                    )));
-                }
-            };
+        let value = match op {
+            Add => Value::IntLiteral(left.add(right)),
+            Sub => Value::IntLiteral(left.sub(right)),
+            Mul => Value::IntLiteral(left.mul(right)),
+            // One condition, one message: the exact-literal operands
+            // reach the same zero divisor the runtime `Int` path does
+            // (`int_floor_div`/`int_floor_mod`), and the native backend
+            // traps it under this text. A second spelling here only made
+            // the two disagree.
+            Div => Value::FloatLiteral(
+                mojito_common::literal::FloatLiteral::from_int(left)
+                    .div(&mojito_common::literal::FloatLiteral::from_int(right))
+                    .ok_or_else(|| {
+                        RuntimeError::TypeError("integer division or modulo by zero".to_string())
+                    })?,
+            ),
+            FloorDiv => Value::IntLiteral(left.floor_div(right).ok_or_else(|| {
+                RuntimeError::TypeError("integer division or modulo by zero".to_string())
+            })?),
+            Mod => Value::IntLiteral(left.floor_mod(right).ok_or_else(|| {
+                RuntimeError::TypeError("integer division or modulo by zero".to_string())
+            })?),
+            Pow => Value::IntLiteral(left.pow(right).ok_or_else(|| {
+                RuntimeError::TypeError(
+                    "integer literal exponent must be a non-negative u32".to_string(),
+                )
+            })?),
+            Shl => Value::IntLiteral(left.shl(right).ok_or_else(|| {
+                RuntimeError::TypeError("invalid integer literal shift".to_string())
+            })?),
+            Shr => Value::IntLiteral(left.shr(right).ok_or_else(|| {
+                RuntimeError::TypeError("invalid integer literal shift".to_string())
+            })?),
+            BitAnd => Value::IntLiteral(left.bitand(right)),
+            BitOr => Value::IntLiteral(left.bitor(right)),
+            BitXor => Value::IntLiteral(left.bitxor(right)),
+            Lt | Le | Gt | Ge | Eq | Ne => {
+                return Ok(Value::Bool(match op {
+                    Lt => left < right,
+                    Le => left <= right,
+                    Gt => left > right,
+                    Ge => left >= right,
+                    Eq => left == right,
+                    Ne => left != right,
+                    _ => unreachable!(),
+                }));
+            }
+            MatMul | And | Or | In | NotIn | Is | IsNot => {
+                return Err(RuntimeError::TypeError(format!(
+                    "operator '{op:?}' is invalid for IntLiteral"
+                )));
+            }
+        };
         return Ok(value);
     }
 

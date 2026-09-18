@@ -55,10 +55,20 @@ run_step() {
 run_step check-default env RUSTC_WRAPPER= scripts/check
 run_step check-pliron env RUSTC_WRAPPER= scripts/check-pliron
 
-# The memory-heavy Pliron corpus sweeps (tests/heavy/, scripts/check-pliron-heavy)
-# are deliberately NOT a step here: run beside the rest of the suite they
-# exhausted this machine and the OOM killer took the parity harness on
-# 2026-09-12. Run that lane on its own when the machine is otherwise idle.
+# The memory-heavy Pliron corpus sweeps (tests/heavy/, scripts/check-pliron-heavy).
+# What exhausted this machine on 2026-09-12 was running them *beside* the rest
+# of the suite as sibling nextest processes; `run_step` is sequential and
+# check-pliron-heavy is `--test-threads 1`, so here one sweep at a time has the
+# machine to itself. Measured 2026-09-18: 34 minutes, RSS flat at ~5.1 GB, and
+# `/proc/pressure/memory` at 0.00 throughout.
+#
+# It runs here, directly after the pliron gate, rather than last: it leaves a
+# featured target/debug/mojito behind, and conformance below is what restores
+# the featureless one. It is also the only step that checks the two generated
+# manifests, their coverage ratchets, and the corpus-wide sanitizer lane —
+# nothing above can see a native capability loss. Skipping it for days is how
+# four native exclusions and a stale ratchet went unnoticed until 2026-09-18.
+run_step check-pliron-heavy env RUSTC_WRAPPER= scripts/check-pliron-heavy
 
 # Conformance last: it rebuilds the default-features debug binary itself, so
 # it also restores a featureless target/debug/mojito after the pliron gate.
@@ -110,9 +120,12 @@ run_step assets-mojo-errors scripts/sweep-assets-mojo \
     echo "  whether the row's family still holds before repinning the text."
     echo "  target/assets-mojo-sweep/<run>/ledger.tsv is paste-ready and keeps"
     echo "  the old families; only rows marked ? need a decision."
-    echo "- The corpus sweeps behind conformance/pliron-parity.tsv and"
-    echo "  conformance/pliron-scalar.tsv are not in this run: they are"
-    echo "  memory-heavy and live in scripts/check-pliron-heavy."
+    echo "- check-pliron-heavy regenerates nothing: it asserts the two"
+    echo "  checked-in manifests match a fresh sweep. A failure is either a"
+    echo "  hand-edited row (scripts/check-parity-manifest catches ordering,"
+    echo "  inventory and ratchet drift in seconds) or a real native change."
+    echo "  An 'excluded' row appearing is a capability loss — fix it rather"
+    echo "  than ratcheting the count up; it only ever ratchets down."
     exit "${overall}"
 } | tee "${RESULTS}"
 overall=${PIPESTATUS[0]}

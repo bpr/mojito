@@ -528,12 +528,14 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         .generic_parameters_at(&generic_site)
                         .unwrap_or(&[])
                         .to_vec();
-                    if method_name == "__init__" {
+                    if mojito_symbol::symbol::instance_clone_base(method_name) == "__init__" {
                         // A constructor's compile-time interface is the struct's
                         // parameter list: an explicit `Array[Int, 3](fill=7)`
                         // call supplies the struct arguments, and the VM reifies
                         // the constructed value's `value_params` in this
-                        // declaration order.
+                        // declaration order. A per-instantiation clone keeps
+                        // that interface — the construction that reaches it
+                        // still spells `Box[Int](3)`.
                         let struct_decls = checked
                             .generic_parameters_at(&GenericSite::Struct {
                                 module: s.module.clone(),

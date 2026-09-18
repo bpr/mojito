@@ -173,14 +173,14 @@ impl FnLowering<'_> {
         {
             let ptr = self.reg_ptr(ctx, arg)?;
             let (data, len) = self.string_parts(ctx, ptr, dest);
-            return self.borrow_or_adopt_string(arg, dest, data, len);
+            return self.borrow_or_adopt_string(ctx, arg, dest, data, len);
         }
         // An error value converts to its bare message (the VM's
         // `format_value` over `Value::Error`), borrowed from the error.
         if matches!(self.func.reg_types.get(&arg.0), Some(Ty::Error)) {
             let ptr = self.reg_ptr(ctx, arg)?;
             let (data, len) = self.string_parts(ctx, ptr, dest);
-            return self.borrow_or_adopt_string(arg, dest, data, len);
+            return self.borrow_or_adopt_string(ctx, arg, dest, data, len);
         }
         // A runtime StringLiteral value reads back as a borrowed string.
         if matches!(self.func.reg_types.get(&arg.0), Some(Ty::StringLiteral))
@@ -188,7 +188,7 @@ impl FnLowering<'_> {
         {
             let ptr = self.reg_ptr(ctx, arg)?;
             let (data, len) = self.string_parts(ctx, ptr, dest);
-            return self.borrow_or_adopt_string(arg, dest, data, len);
+            return self.borrow_or_adopt_string(ctx, arg, dest, data, len);
         }
         // A nominal struct converts through its `write_to` conformance over
         // a fresh accumulator — the VM's `format_value` struct arm. The
@@ -252,15 +252,31 @@ impl FnLowering<'_> {
     /// when `arg` is an owned register temporary — released right after this
     /// instruction, its final use — the buffer transfers to `dest` instead
     /// (owned, released after `dest`'s own final use, or stolen by a String
-    /// constructor); otherwise the descriptor stays a borrow.
+    /// constructor).
+    ///
+    /// A register that aliases a *place* copies out instead. MIR types this
+    /// builtin's result as a fresh owned string carrying no loans, so the
+    /// ownership analysis reads the call as the place's last use and drops it
+    /// between this instruction and the constructor that reads the
+    /// descriptor. `String` is the one borrow-classified builtin
+    /// (`support::borrowed_operands`) whose result outlives its call, so it is
+    /// the one that cannot leave the descriptor pointing into that place.
     fn borrow_or_adopt_string(
         &mut self,
+        ctx: &mut Context,
         arg: Reg,
         dest: Reg,
         data: Value,
         len: Value,
     ) -> Result<(), PlironError> {
-        let owned = self.owned_temps.remove(&arg.0).is_some();
+        let mut data = data;
+        let mut owned = self.owned_temps.remove(&arg.0).is_some();
+        if !owned && self.aliased_load_regs.contains(&arg.0) {
+            let copy = self.emit_alloc(ctx, len, 1, dest);
+            self.mem_copy_dynamic(ctx, copy, data, len, dest);
+            data = copy;
+            owned = true;
+        }
         self.str_runtime
             .insert(dest.0, RuntimeStr { data, len, owned });
         if owned {

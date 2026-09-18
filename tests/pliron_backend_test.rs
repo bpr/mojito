@@ -579,6 +579,51 @@ fn print_fixture_exes_match_vm_output() {
     }
 }
 
+/// `String(x)` over a live place copies the bytes rather than aliasing them.
+///
+/// MIR types the stringify builtin's result as a fresh owned string carrying
+/// no loans, so the ownership analysis reads the call as the place's last use
+/// and drops it between the builtin and the `String.__init__$ov$StringLiteral`
+/// that reads the descriptor. `String` is the one borrow-classified builtin
+/// (`lower::support::borrowed_operands`) whose result outlives its call, so a
+/// borrowed descriptor there dangles.
+///
+/// Only a sanitized executable catches this: stdout is correct either way,
+/// because the freed bytes are still intact when the constructor copies them.
+/// The whole-corpus ASan lane that first caught it (`tests/heavy/`) costs
+/// 30-60 minutes and sits outside the overnight gate, so the shape is pinned
+/// here too. `detect_leaks=1` keeps the copy from being the other bug.
+#[test]
+fn string_of_a_dropped_place_copies_its_bytes() {
+    let src = "\
+def main():
+    var s = \"typed literal storage\"
+    print(String(s))
+    var t = String(\"h\") + \"llo\"
+    print(String(t).byte_length())
+";
+    let mut module = native_compile(src, &["main"]);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let exe = dir.path().join("string-place-asan");
+    module
+        .write_executable_sanitized(&exe, OptLevel::O0, DebugInfo::Lines)
+        .unwrap_or_else(|error| panic!("sanitized emission: {error}"));
+    let run = std::process::Command::new(&exe)
+        .env("ASAN_OPTIONS", "detect_leaks=1")
+        .output()
+        .expect("sanitized executable runs");
+    assert!(
+        run.stderr.is_empty(),
+        "sanitizer diagnosed a memory error:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(run.status.code(), Some(0), "sanitized run must succeed");
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "typed literal storage\n4\n"
+    );
+}
+
 /// String literals intern into private `mjstr_<n>` constant-pool globals on
 /// use — deduplicated by content in deterministic first-use order — and the
 /// literal-only `+`/`==` operators fold at compile time (fold-only literals

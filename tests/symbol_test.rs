@@ -322,7 +322,8 @@ fn self_typed_overload_keys_agree_between_declaration_and_call() {
 /// symbol module. A new hand-built overload symbol anywhere else in the
 /// compiler sources (the facade's `src/` or any workspace crate under
 /// `crates/`) reintroduces the checker/MIR/VM drift this module exists to
-/// prevent.
+/// prevent. Comments are exempt: naming an overload symbol in prose documents
+/// what `mojito::symbol` produces, it does not build one.
 #[test]
 fn ov_spelling_appears_only_in_the_symbol_module() {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -349,7 +350,12 @@ fn scan_rs_files(dir: &std::path::Path, offenders: &mut Vec<String>) {
             && path.file_name().is_some_and(|f| f != "symbol.rs")
             && std::fs::read_to_string(&path)
                 .expect("read source file")
-                .contains("$ov$")
+                .lines()
+                .any(|line| {
+                    line.split_once("//")
+                        .map_or(line, |(code, _)| code)
+                        .contains("$ov$")
+                })
         {
             offenders.push(path.display().to_string());
         }

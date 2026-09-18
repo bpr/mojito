@@ -164,6 +164,12 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
   checkbox, its first sentence stating the issue (or that it is not to be
   fixed, and why), then short bullets — never a semicolon-chained paragraph.
   The roadmap's **Entry Style** section is the rule.
+- `commit_msg.txt` (untracked, repo root) is **overwritten** with one new
+  paragraph per task — never appended, no footers. It must never exceed 100
+  words and should usually be far shorter: two sentences saying what the
+  change does and what it fixes. Fixture names, counts, ratchets, symbol
+  names, and residues belong in the docs, not here. The long paragraphs in
+  the committed history are not the model.
 
 ## Commands
 
@@ -185,7 +191,11 @@ verification happens. In-session verification must take seconds, not hours:
   `exe-differential`/`sanitized` when the native run matches; scalar:
   `ineligible`/`no-scalar-entry-shape` unless the fixture has a scalar
   `compute` entry) and bump the exe ratchet in `tests/heavy/main.rs`
-  (`differential == N`) by the row count; do not run the regeneration.
+  (`differential == N`) by the row count; do not run the regeneration. A row
+  goes in its folder's sorted position, since the sweep sorts. Both mistakes
+  — a misplaced row and an under-bumped ratchet — used to surface only in the
+  heavy lane, days later; `scripts/check-parity-manifest` now catches them in
+  the default gate, so run it after hand-editing either manifest.
 - CLI: `cargo run -- <lex|parse|check|own|run> [FILE]`
 - Module roots: repeat `--module-path PATH` / `-I PATH`; use `--stdlib PATH`
   to replace the bundled standard-library root.

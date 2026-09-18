@@ -1501,11 +1501,22 @@ impl Checker {
         match matches.as_slice() {
             [] => Ok(None),
             [sig] => {
-                let target = if constructors.len() == 1 {
-                    name.clone()
-                } else {
-                    method_lowered_name(name, "__init__", sig, self.self_instance_ty(name).as_ref())
-                };
+                // A closed instance converts through its own constructor
+                // clone, exactly as a written construction does.
+                let target = self
+                    .constructor_clone_target(name, args, sig, &subst)
+                    .unwrap_or_else(|| {
+                        if constructors.len() == 1 {
+                            name.clone()
+                        } else {
+                            method_lowered_name(
+                                name,
+                                "__init__",
+                                sig,
+                                self.self_instance_ty(name).as_ref(),
+                            )
+                        }
+                    });
                 let source_borrow = sig
                     .ref_params
                     .first()

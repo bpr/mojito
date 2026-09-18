@@ -849,8 +849,8 @@ impl Flatten<'_> {
     /// does; a consuming context's checked `CopyPlaceValue` copies an owning
     /// field out before the slot dies, as it does for a named local's. `None`
     /// — leaving the register-based `GetField` — when the base is not a
-    /// loan-free call temporary with droppable storage, or the field is a
-    /// reference.
+    /// loan-free call temporary with droppable storage, when the base is a
+    /// slice descriptor, or when the field is a reference.
     pub(super) fn load_temporary_field(
         &mut self,
         expression: &Expr,
@@ -868,6 +868,14 @@ impl Flatten<'_> {
         }
         let field_ty = self.checked_ty(expression)?;
         if matches!(field_ty, Ty::Ref(_)) {
+            return None;
+        }
+        // A slice descriptor's `start`/`end`/`step` are intrinsic bounds on a
+        // `Slice` value, not struct fields: only the register-based `GetField`
+        // mints their nominal `Optional`, so a place read of one has nothing
+        // to navigate. The `Member` place branch in `lower_expr::expr` carves
+        // out the same set, and the two must agree.
+        if self.is_slice_descriptor(object) {
             return None;
         }
         let object_ty = self.checked_ty(object).filter(owns_droppable_storage)?;

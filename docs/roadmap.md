@@ -48,18 +48,6 @@ entry names what it depends on, and an entry with no dependency sits as early
 as its size allows. The **Model:** bullet carries the complexity estimate and
 says whether the entry can be done as-is or must be planned first.
 
-- [ ] **An overloaded constructor family mints no instance clones**
-
-  Problem: a generic struct declaring two `__init__` signatures keeps both on
-  the erased template, so a `comptime if Self.T` in either one still traps.
-  - A construction selects among the template's signatures, and the clone
-    family's `$ov$` suffixes key on the substituted parameter types, so the
-    two families do not correspond by name.
-  - Serving it needs the checker to pick the clone by matching the
-    substituted signature and to record that clone's lowered name.
-  - Depends on nothing.
-  - Model: Opus, plan first.
-
 - [ ] **A nested generic `def` cannot call a compile-time-keyed `def`**
 
   Problem: `def inner[U: Copyable](y: U): show(y)` nested in `main`, called
@@ -436,6 +424,42 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
   - Model: Opus, plan first. The plan names every elaborator path that
     evaluates a retained template body.
 
+- [ ] **Constructing a struct's own type parameter fails in every instance
+  clone**
+
+  Problem: `self.x = Self.T()` in a method of `struct Box[T: Copyable &
+  Deinitable & Defaultable]` is rejected for the instance — "in 'reset'
+  instantiated for 'Box[Float64]': type mismatch for assignment target:
+  expected Float64, found T" — while the pin runs it.
+  - A clone respells `Self.T` in its annotations but not in a construction
+    expression, so the call still types as the template's `T`.
+  - A constructor clone fails the same way, so the shape reaches lifecycle
+    and ordinary bodies alike.
+  - Found while closing the overloaded-constructor-family item; no fixture
+    pins it yet.
+  - Model: Opus, plan first. The plan names the substitution
+    `specialize_method_clone` applies to expressions, not only to
+    annotations.
+
+- [ ] **An exact constructor overload loses to its generic sibling as
+  ambiguous**
+
+  Problem: `Tag[Int](3)` on a struct declaring `__init__(out self, n: Int)`
+  beside `__init__(out self, n: Self.T)` prints `int` at the pin, while
+  Mojito reports "invalid call to 'Tag': ambiguous overloaded constructor
+  call".
+  - Upstream picks the more specific signature. Mojito's construction
+    selection scores the substituted `Self.T` parameter as an equal match
+    (`select_method_overload`, `checker/declarations.rs`).
+  - The preference already exists one level down: a per-call clone of a
+    generic constructor wins over the template it was minted from
+    (`constructor_is_concrete`).
+  - Such a family is also the one shape that collapses on the instance, so
+    its constructor clone family stays withdrawn.
+  - Found while closing the overloaded-constructor-family item; no fixture
+    pins it yet.
+  - Model: Opus, plan first.
+
 - [ ] **`repr` of a sized scalar omits or misstates its type name**
 
   Problem: `repr(Float32(0.5))` and `repr(Int8(3))` print `Float32(0.5)` and
@@ -580,17 +604,38 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
       before Mojito's is changed, and `docs/native-abi.md` already defines
       some of them deliberately (wrapping overflow), so the plan decides
       which are bugs and which are recorded choices.
-  - `destructor-timing-against-the-pin`: four corpus fixtures run the same
-    destructors in a different order, or not at all
-    (`conformance/assets-mojo-output-diffs.tsv`, family `drop-timing`).
-    `assets/ok/maybe_uninit_roundtrip.mojo` never prints `deinit 6` and
-    `assets/ok/pliron_uninit_roundtrip.mojo` misses three deinits, which is a
-    missing destructor rather than a reordered one;
+  - `native-exclusions-returned`: four fixtures the native backend used to
+    compile are now rejected by it, breaking the Stage 5 zero-exclusion
+    result. Each reproduces from a clean `HEAD` build, so none comes from
+    uncommitted work, and the 2026-09-18 regeneration is what surfaced them —
+    `expect_file!` and the `excluded == 0` ratchet had not executed since the
+    ASan failure started panicking the sweep early on 2026-09-14, so nothing
+    was checking these rows.
+    - `assets/ok/lambda_hof.mojo`: "unsupported binding call to `main$scale`
+      during monomorphization: Missing("x")".
+    - `assets/ok/copyable_iterator_reference_aggregate.mojo` and its
+      `assets/extensions/ok` twin: "unsupported reference-result method
+      adapter".
+    - `assets/ok/interior_dest_rebind_releases_loans.mojo` and its twin:
+      `unsafe_alloc$mono$TRefBox` "collides with an existing declaration".
+    - `assets/ok/nominal_string_bytes_capacity.mojo`: the same collision for
+      `AHasher…update$mono$TStringSpan`.
+    - The checked-in manifest claimed `exe-differential` for all six rows
+      throughout this window, so its history dates nothing; bisecting needs a
+      featured build per candidate commit.
+    - Model: Fable. Two of the three symptoms are monomorphization symbol
+      collisions and one is an adapter gap, so this is more likely one
+      instantiation-keying defect than four independent ones.
+  - `destructor-timing-against-the-pin`: two corpus fixtures run the same
+    destructors later than the pin does
+    (`conformance/assets-mojo-output-diffs.tsv`, family `drop-timing`):
     `assets/ok/owned_pointer_api.mojo` and
-    `assets/ok/try_region_drop_timing.mojo` run theirs later than the pin.
-    - Model: Opus, plan first. A missing `deinit` through `MaybeUninit` and a
-      late one in a try region are probably two different defects, and the
-      plan separates them before either is fixed.
+    `assets/ok/try_region_drop_timing.mojo`. The two `MaybeUninit` fixtures
+    that used to skip destructors outright left this list on 2026-09-17, when
+    owning temporaries gained their hidden slots.
+    - Model: Opus, plan first. Both remaining cases are orderings rather than
+      omissions, and the plan establishes where the pin runs each destructor
+      before Mojito's schedule is moved.
   - `pointee-element-reference-return`: a method returning a reference into
     what a `Pointer[T, Self.o]` field borrows names the region with the
     struct's own origin parameter. The pin distinguishes the element

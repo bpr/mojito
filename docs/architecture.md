@@ -689,17 +689,26 @@ other, under the name they are registered and dispatched by — a copy
 constructor as `__copyinit__$y3:Int` — and the whole pipeline recovers the
 source name through `symbol::instance_clone_base` at the gates that test for
 one (`out self`, `@implicit`, the copy/move shapes, the named-destructor
-list). Nothing retargets those calls in the checker: the VM selects an
-instance's `__init__`/`__copyinit__`/`__moveinit__`/`__deinit__` clone from
-the checked static type of the value being built, copied, moved or destroyed
+list). A construction retargets in the checker like any other call, but by
+signature rather than by name, because a constructor family's clones do not
+share the template's `$ov$` symbols: `constructor_clone_target` takes the
+member whose signature is the selected template signature with the instance's
+arguments substituted and records its lowered name, for a written
+construction and for an `@implicit` conversion alike. A family therefore
+clones as one overload set (`__init__$y3:Int$ov$Int` beside
+`__init__$y3:Int$ov$Int$Bool`), minted whole or not at all, and a clone keeps
+the struct's parameter list as its compile-time interface, as the template
+does. Copying, moving and destruction retarget nowhere: the VM selects the
+instance's `__copyinit__`/`__moveinit__`/`__deinit__` clone from the checked
+static type of the value being copied, moved or destroyed
 (`Prog::lifecycle_symbol`, with `instance_field_types` carrying the
 substituted field types into a whole-value drop or copy), and the native
 monomorphizer emits such a clone under the instance's plain lifecycle symbol
 (`lifecycle_clone_instance_symbol`), which is what the Pliron lowering
-composes by name. A bundled template's constructors stay on the erased path
-(its `__deinit__` clones, which the elaborator already minted, are now
-reached like any other), and so does an overloaded constructor family, whose
-clones would not share the template's `$ov$` symbols. An
+composes by name — a signature-qualified constructor clone keeps its own
+symbol there, since its siblings answer to the same base name. A bundled
+template's constructors stay on the erased path (its `__deinit__` clones,
+which the elaborator already minted, are now reached like any other). An
 instantiation whose argument mentions `StringLiteral` mints no clones and
 names none (`instance_method_clone_name`; a method-level type argument
 inferred from a string literal still materializes `String`, as the call

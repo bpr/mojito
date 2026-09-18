@@ -297,9 +297,15 @@ struct List[T: AnyType](
             origin_of(self)._get_owned_interior["element"]
         ]()
 
+    # Strict bounds, as `Span.__getitem__` has. The pinned Mojo aborts here
+    # with an `Assert Error` at every optimization level, and the VM's arena
+    # catches the raw read, but the native backend has no arena: unchecked,
+    # `xs[10]` on a three-element list read out of bounds and returned a value.
     def __getitem__(
         ref self, index: Int
     ) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
+        if index < 0 or index >= self.size:
+            _mojito_abort("List index out of range")
         return self.data[index]
 
     # Internal value accessor for generic library code that needs an owned copy.

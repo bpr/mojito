@@ -597,19 +597,22 @@ mod tests {
 
     #[test]
     fn half_precision_rounding_is_direct_and_ties_to_even() {
+        // Bit patterns, as the f32 neighbour assertions above: each parse
+        // lands on an exact binary16 value, and the encoding says so.
         let f16_of = |text: &str| {
             FloatLiteral::parse_decimal(text)
                 .unwrap()
                 .to_f16()
                 .unwrap()
                 .to_f64()
+                .to_bits()
         };
-        assert_eq!(f16_of("0.1"), 0.099_975_585_937_5);
-        assert_eq!(f16_of("0.800048828125"), 0.799_804_687_5);
-        assert_eq!(f16_of("0.80004882812500001"), 0.800_292_968_75);
-        assert_eq!(f16_of("65519.99"), 65504.0);
-        assert_eq!(f16_of("65520.0"), f64::INFINITY);
-        assert_eq!(f16_of("0.000001"), 17.0 * 2f64.powi(-24));
+        assert_eq!(f16_of("0.1"), 0.099_975_585_937_5f64.to_bits());
+        assert_eq!(f16_of("0.800048828125"), 0.799_804_687_5f64.to_bits());
+        assert_eq!(f16_of("0.80004882812500001"), 0.800_292_968_75f64.to_bits());
+        assert_eq!(f16_of("65519.99"), 65504.0f64.to_bits());
+        assert_eq!(f16_of("65520.0"), f64::INFINITY.to_bits());
+        assert_eq!(f16_of("0.000001"), (17.0 * 2f64.powi(-24)).to_bits());
         let negative_zero = FloatLiteral::parse_decimal("0.0").unwrap().neg();
         assert!(negative_zero.to_f16().unwrap().is_sign_negative());
     }
