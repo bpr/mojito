@@ -377,6 +377,70 @@ fn an_unavailable_method_does_not_reject_its_instance() {
 }
 
 #[test]
+fn a_nested_generic_def_reaches_a_comptime_keyed_clone() {
+    // `inner` keys nothing itself, so nothing used to specialize it and its
+    // `show(y)` stayed on the stub. Reaching a stub now makes it specialize
+    // per call, and each instance's body reaches `show`'s own clone.
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            "def show[T: Copyable](x: T):\n    comptime if T == Int:\n        print(\"int\")\n    else:\n        print(\"other\")\n\ndef main():\n    def inner[U: Copyable](y: U):\n        show(y)\n    inner(2)\n    inner(1.5)\n",
+            std::path::Path::new("/tmp/mojito_nested_comptime_keyed_call.mojo"),
+        )
+        .expect("a nested generic def calling a compile-time-keyed def");
+    let output = compiler.execute(&program).expect("run both instances");
+    assert_eq!(output.output, "int\nother\n");
+}
+
+#[test]
+fn an_inferred_nested_comptime_keyed_def_specializes_per_call() {
+    // The lexical pass resolves a nested call from source syntax alone, so an
+    // inferred `keyed(2)` had no arguments to select an arm with. The
+    // template now stands for the discovery check, which records the
+    // instantiation the next round mints.
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            "def main():\n    def keyed[U: Copyable](y: U):\n        comptime if U == Int:\n            print(\"int\")\n        else:\n            print(\"other\")\n    keyed(2)\n    keyed(True)\n    keyed[Int](7)\n",
+            std::path::Path::new("/tmp/mojito_nested_keyed_def.mojo"),
+        )
+        .expect("an inferred call to a compile-time-keyed nested def");
+    let output = compiler.execute(&program).expect("run every instance");
+    assert_eq!(output.output, "int\nother\nint\n");
+}
+
+#[test]
+fn a_nested_generic_def_in_a_generic_body_reaches_the_clone() {
+    // The enclosing body specializes first, so the nested `def` is registered
+    // and scanned once per clone of `outer` — each with its own source, and
+    // therefore its own recorded instantiation of `show`.
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            "def show[T: Copyable](x: T):\n    comptime if T == Int:\n        print(\"int\")\n    else:\n        print(\"other\")\n\ndef outer[T: Copyable](x: T):\n    def inside[U: Copyable](y: U):\n        show(y)\n    inside(x)\n\ndef main():\n    outer(3)\n    outer(1.5)\n",
+            std::path::Path::new("/tmp/mojito_nested_in_generic_body.mojo"),
+        )
+        .expect("a nested generic def inside a generic def");
+    let output = compiler.execute(&program).expect("run both clones");
+    assert_eq!(output.output, "int\nother\n");
+}
+
+#[test]
+fn a_nested_generic_def_declared_but_never_called_is_accepted() {
+    // Nothing runs the body, so nothing has to reach `show`'s clone: the
+    // template is dead and disappears, as an uncalled top-level one does.
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            "def show[T: Copyable](x: T):\n    comptime if T == Int:\n        print(\"int\")\n\ndef main():\n    def inner[U: Copyable](y: U):\n        show(y)\n    print(\"done\")\n",
+            std::path::Path::new("/tmp/mojito_nested_uncalled.mojo"),
+        )
+        .expect("an uncalled nested generic def reaching a stub");
+    let output = compiler.execute(&program).expect("run the program");
+    assert_eq!(output.output, "done\n");
+}
+
+#[test]
 fn view_temporaries_live_for_their_statement() {
     // A `ref[self]`-returning call chains on a temporary receiver (the
     // temporary is materialized for the statement), a discarded reference

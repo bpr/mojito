@@ -7,6 +7,7 @@
 //! replaced there by only the concrete instances requested in that lexical
 //! context.
 
+use super::specialize::template_stub;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::ParamKind;
@@ -28,6 +29,7 @@ struct NestedTemplate {
     outer_packs: HashMap<String, Vec<Type>>,
 }
 
+#[derive(Clone)]
 struct NestedJob {
     template: NestedTemplateId,
     values: Vec<CtValue>,
@@ -138,6 +140,7 @@ impl RuntimePackEnv {
     }
 }
 
+#[derive(Clone)]
 struct NestedMono {
     parent: String,
     next_template: u32,
@@ -148,10 +151,34 @@ struct NestedMono {
     queue: VecDeque<NestedJob>,
     done: HashSet<String>,
     generated: HashMap<NestedTemplateId, Vec<Stmt>>,
+    /// The bodies top-level monomorphization found could run a
+    /// compile-time-keyed stub. A nested `def` named here specializes even
+    /// when its own body holds no compile-time control flow: its erased body
+    /// could only leave the callee on a stub.
+    stub_reaching: HashSet<String>,
+    /// Templates a call could not resolve. They survive `replace_templates`
+    /// so the discovery check can type the call against them and record the
+    /// instantiation a later round serves.
+    retained: HashSet<NestedTemplateId>,
+    /// Templates a probe scan found such a call for. None of their calls
+    /// resolve this round: an instance minted for a sibling call would be
+    /// the clone the checker retargets the unresolved one to, and the
+    /// instantiation this round must record would never exist.
+    deferred: HashSet<NestedTemplateId>,
+    /// The call sites left on a retained template. A discovery round serves
+    /// them from the instantiation the check records; one the fixpoint never
+    /// serves would run a body no argument selected, so the driver rejects
+    /// it rather than let it reach the stub.
+    unserved: Vec<UnservedTemplateUse>,
 }
 
 impl NestedMono {
-    fn new(parent: String, parameters: &[mojito_ast::ast::FnParam], has_self: bool) -> Self {
+    fn new(
+        parent: String,
+        parameters: &[mojito_ast::ast::FnParam],
+        has_self: bool,
+        stub_reaching: HashSet<String>,
+    ) -> Self {
         let mut root = HashMap::new();
         for parameter in parameters {
             root.insert(parameter.name.clone(), TemplateBinding::Other);
@@ -169,7 +196,22 @@ impl NestedMono {
             queue: VecDeque::new(),
             done: HashSet::new(),
             generated: HashMap::new(),
+            stub_reaching,
+            retained: HashSet::new(),
+            deferred: HashSet::new(),
+            unserved: Vec::new(),
         }
+    }
+
+    /// Keep `template` for the discovery check, and record the call site the
+    /// driver rejects if the fixpoint never serves it.
+    fn retain_call(&mut self, template: NestedTemplateId, site: &SourceSpan) {
+        self.retained.insert(template);
+        self.unserved.push(UnservedTemplateUse {
+            callee: self.templates[&template].marker_name.clone(),
+            site: site.clone().without_syntax(),
+            function_value: false,
+        });
     }
 
     const fn fresh_template(&mut self) -> NestedTemplateId {
@@ -182,7 +224,7 @@ impl NestedMono {
         // `$` cannot occur in a parsed identifier. The concrete parent name
         // already contains any outer-specialization encoding, so this is also
         // the enclosing specialization environment's canonical identity.
-        format!("{}$nested${}${source_name}", self.parent, id.0)
+        format!("{}{NESTED_MARKER_INFIX}{}${source_name}", self.parent, id.0)
     }
 
     fn bind(&mut self, name: &str, binding: TemplateBinding) {
@@ -479,7 +521,15 @@ impl NestedMono {
     }
 
     fn qualify_definition(&mut self, statement: &mut Stmt, definition_depth: usize) {
-        let specializable = definition_depth == 0 && is_specializable_declaration(statement);
+        // A nested `def` whose own body holds no compile-time control flow
+        // still specializes when it can reach a compile-time-keyed stub: the
+        // erased body has no concrete argument to select the callee's arm
+        // with, so only an instance per call can run.
+        let specializable = definition_depth == 0
+            && (is_specializable_declaration(statement)
+                || self
+                    .stub_reaching
+                    .contains(&nested_body_owner(&statement.source_span())));
         let (source_name, id, marker_name) = {
             let StmtKind::Def {
                 name,
@@ -1199,10 +1249,24 @@ impl NestedMono {
                     self.scan_expression(elab, &mut argument.value, runtime_packs)?;
                 }
                 let Some(&template_id) = self.markers.get(name) else {
+                    // A call an instance body makes to a top-level template:
+                    // the instance carries its own source, so the checker
+                    // recorded this occurrence separately and the top-level
+                    // walk minted the clone it names.
+                    if let Some((vals, kept)) =
+                        elab.instance_body_request_target(name, &source_span, param_args)
+                    {
+                        *name = mangle(name, &vals);
+                        *param_args = kept;
+                    }
                     return Ok(());
                 };
+                if self.deferred.contains(&template_id) {
+                    self.retain_call(template_id, &source_span);
+                    return Ok(());
+                }
                 let template = self.templates[&template_id].clone();
-                let site = match source_span.source {
+                let site = match &source_span.source {
                     Some(source) => {
                         format!("{source}:{}..{}", source_span.span.0, source_span.span.1)
                     }
@@ -1215,7 +1279,7 @@ impl NestedMono {
                     kwargs,
                     runtime_packs,
                 )?;
-                let (values, kept_type_args) = elab.resolve_spec_args_for(
+                let resolved = elab.resolve_spec_args_for(
                     &template.syntax,
                     &template.source_name,
                     SpecRequest {
@@ -1226,7 +1290,22 @@ impl NestedMono {
                         request_site: &site,
                         forwarded_pack_types: forwarded.as_deref(),
                     },
-                )?;
+                );
+                // Only the checker can solve an inferred application's
+                // arguments, so an arity failure consults the request this
+                // occurrence recorded before the template is kept for the
+                // discovery check. Every other failure is a real error.
+                let requested = match resolved {
+                    Ok(pair) => Some(pair),
+                    Err(ComptimeError::Arity(_)) => {
+                        elab.nested_request_target(&template, &source_span, param_args)
+                    }
+                    Err(error) => return Err(error),
+                };
+                let Some((values, kept_type_args)) = requested else {
+                    self.retain_call(template_id, &source_span);
+                    return Ok(());
+                };
                 // Current Mojo permits one whole runtime-pack segment after a
                 // fully supplied fixed positional prefix.  Preserve that
                 // segment as the Tuple collector the caller already owns: an
@@ -1491,7 +1570,27 @@ impl NestedMono {
                 _ => None,
             };
             if let Some(template) = marker {
-                if let Some(mut generated) = self.generated.remove(&template) {
+                let generated = self.generated.remove(&template);
+                // A template whose call the checker alone can solve survives
+                // for the discovery check: the check types that call against
+                // it and records the instantiation a later round serves. It
+                // precedes its instances, as a retained top-level template
+                // does. A compile-time-keyed body cannot be checked with its
+                // parameters symbolic, so it stands as a stub.
+                if self.retained.contains(&template) {
+                    let StmtKind::Def { body, .. } = &statement.kind else {
+                        unreachable!("nested templates are functions")
+                    };
+                    output.push(if block_has_comptime(body) {
+                        template_stub(
+                            &statement,
+                            "unspecialized compile-time-keyed nested function",
+                        )
+                    } else {
+                        statement
+                    });
+                }
+                if let Some(mut generated) = generated {
                     generated.reverse();
                     output.extend(generated);
                 }
@@ -1739,17 +1838,78 @@ fn forwarded_source_type_argument(argument: &ParamArg) -> Option<TyArg> {
 }
 
 impl Elab<'_> {
+    /// The compile-time arguments the checker recorded for a nested `def`'s
+    /// call occurrence, as `def_request_target` supplies them for a top-level
+    /// one.
+    ///
+    /// This pass runs after the top-level walk has consumed its seeded
+    /// targets, so it reads the driver's requests directly. A request made
+    /// while the template was still spelled by its source name, and one made
+    /// after it was qualified, both name this template.
+    /// The clone a generated instance body's call to a top-level template
+    /// selects, from the request the checker recorded against that instance's
+    /// own source.
+    ///
+    /// Top-level monomorphization queued the clone when it seeded the
+    /// request, so naming it here cannot leave a call on a stub.
+    fn instance_body_request_target(
+        &self,
+        name: &str,
+        source_span: &SourceSpan,
+        param_args: &[ParamArg],
+    ) -> Option<(Vec<CtValue>, Vec<ParamArg>)> {
+        let request = self
+            .def_requests
+            .get(&source_span.clone().without_syntax())?;
+        if request.callee() != name {
+            return None;
+        }
+        let template = self.specializable.get(name)?;
+        let vals = self.def_request_values(template, request.arguments())?;
+        let kept = self.request_kept_param_args(template, name, param_args, &vals)?;
+        Some((vals, kept))
+    }
+
+    fn nested_request_target(
+        &self,
+        template: &NestedTemplate,
+        source_span: &SourceSpan,
+        param_args: &[ParamArg],
+    ) -> Option<(Vec<CtValue>, Vec<ParamArg>)> {
+        let request = self
+            .def_requests
+            .get(&source_span.clone().without_syntax())?;
+        if request.callee() != template.source_name && request.callee() != template.marker_name {
+            return None;
+        }
+        let vals = self.def_request_values(&template.syntax, request.arguments())?;
+        let kept = self.request_kept_param_args(
+            &template.syntax,
+            &template.source_name,
+            param_args,
+            &vals,
+        )?;
+        Some((vals, kept))
+    }
+
     pub(super) fn monomorphize_nested_program(
         &self,
         program: &mut [Stmt],
-    ) -> Result<(), ComptimeError> {
+    ) -> Result<Vec<UnservedTemplateUse>, ComptimeError> {
+        let mut unserved = Vec::new();
         for statement in program {
             match &mut statement.kind {
                 StmtKind::Def {
                     name, params, body, ..
                 } => {
                     let parent = format!("{name}${}${}", statement.span.0, statement.span.1);
-                    self.monomorphize_nested_body(parent, params, false, body)?;
+                    // A template's own body runs only through a clone of it,
+                    // so a call it cannot resolve is not a use: the clone
+                    // resolves its own copy.
+                    let concrete = !self.specializable.contains_key(name.as_str());
+                    unserved.extend(
+                        self.monomorphize_nested_body(parent, params, false, body, concrete)?,
+                    );
                 }
                 StmtKind::Struct { name, methods, .. } => {
                     for (index, method) in methods.iter_mut().enumerate() {
@@ -1757,18 +1917,23 @@ impl Elab<'_> {
                             "{name}.{}${}${}${index}",
                             method.name, statement.span.0, statement.span.1
                         );
-                        self.monomorphize_nested_body(
+                        // A per-instantiation clone carries its receiver
+                        // type; a method without one is the erased template
+                        // body, which runs only through such a clone.
+                        let concrete = method.self_ty.is_some();
+                        unserved.extend(self.monomorphize_nested_body(
                             parent,
                             &method.params,
                             method.has_self,
                             &mut method.body,
-                        )?;
+                            concrete,
+                        )?);
                     }
                 }
                 _ => {}
             }
         }
-        Ok(())
+        Ok(unserved)
     }
 
     fn monomorphize_nested_body(
@@ -1777,17 +1942,34 @@ impl Elab<'_> {
         parameters: &[mojito_ast::ast::FnParam],
         has_self: bool,
         body: &mut Vec<Stmt>,
-    ) -> Result<(), ComptimeError> {
-        let mut nested = NestedMono::new(parent, parameters, has_self);
+        concrete: bool,
+    ) -> Result<Vec<UnservedTemplateUse>, ComptimeError> {
+        let mut nested = NestedMono::new(
+            parent,
+            parameters,
+            has_self,
+            self.stub_reaching.borrow().clone(),
+        );
         nested.qualify_root(body);
         if nested.templates.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
         let mut packs = RuntimePackEnv::new(runtime_pack_types(parameters));
+        // Probe first: a template one of whose calls only the checker can
+        // solve mints nothing this round, so that no sibling call's instance
+        // becomes the clone the checker retargets the unsolved call to —
+        // which would consume the very instantiation the next round needs.
+        let mut probe = nested.clone();
+        probe.scan_root(self, &mut body.clone(), &mut packs.clone())?;
+        nested.deferred = probe.retained;
         nested.scan_root(self, body, &mut packs)?;
         nested.drain(self)?;
         nested.replace_templates(body);
         debug_assert!(nested.generated.is_empty());
-        Ok(())
+        Ok(if concrete {
+            nested.unserved
+        } else {
+            Vec::new()
+        })
     }
 }

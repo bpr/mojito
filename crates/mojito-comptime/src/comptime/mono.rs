@@ -85,6 +85,7 @@ impl Elab<'_> {
     ) -> Result<(), ComptimeError> {
         // Monomorphization substitutes one concrete parameter environment and
         // rewrites nested calls to their specialized symbols.
+        let declaration_site = s.source_span();
         match &mut s.kind {
             StmtKind::VarDecl { ty, value, .. } => {
                 if let Some(ty) = ty {
@@ -204,6 +205,18 @@ impl Elab<'_> {
                 body,
                 ..
             } => {
+                // A generic `def` declared directly in another body runs only
+                // through the instances the lexical nested pass mints, so it
+                // owns the references its body leaves abstract, as a
+                // top-level bound-generic body does.
+                let nested_generic = mono.def_depth == 1 && !type_params.is_empty();
+                let enclosing_owner = nested_generic
+                    .then(|| {
+                        mono.abstract_owner
+                            .replace(nested_body_owner(&declaration_site))
+                    })
+                    .flatten();
+                mono.def_depth += 1;
                 let inner_consts = consts_without_type_params(consts, type_params);
                 let symbolic_base = mono.push_symbolic_type_params(type_params);
                 let result = (|| {
@@ -231,6 +244,10 @@ impl Elab<'_> {
                     result
                 })();
                 mono.symbolic_type_params.truncate(symbolic_base);
+                mono.def_depth -= 1;
+                if nested_generic {
+                    mono.abstract_owner = enclosing_owner;
+                }
                 result
             }
             StmtKind::Struct {
@@ -455,7 +472,9 @@ impl Elab<'_> {
         for parameter in &m.params {
             mono.bind_parameter(parameter);
         }
+        mono.def_depth += 1;
         let result = self.mono_block_contents(&mut m.body, method_consts, mono);
+        mono.def_depth -= 1;
         mono.pop_function_scope();
         result
     }
@@ -1526,7 +1545,7 @@ impl Elab<'_> {
         clippy::unused_self,
         reason = "TODO: make an associated function or use the receiver"
     )]
-    fn request_kept_param_args(
+    pub(super) fn request_kept_param_args(
         &self,
         template: &Stmt,
         display_name: &str,

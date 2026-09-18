@@ -191,46 +191,7 @@ impl Elab<'_> {
                 });
             }
         }
-        // Checker-discovered inferred bound-generic applications. Seeding only
-        // records each occurrence's target; the Job queues lazily at the
-        // consult hit in `mono_expr`, so a drifted request produces no dead
-        // clone and a never-matched request leaves its template correctly
-        // retained. The compiler already resolved occurrence conflicts, so a
-        // duplicate here keeps the first target (defensive).
-        for request in def_requests {
-            let callee = request.callee();
-            // A scalar-range request targets a DType-value-param struct
-            // template rather than a bound-generic def: record the
-            // constructor-rewrite target consumed by `mono_expr`'s
-            // `range(...)` occurrence. The Job queues lazily at the rewrite,
-            // like the def targets below.
-            if self.struct_template(callee) {
-                if let [TyArg::Val(value @ CtValue::Dtype(_))] = request.arguments() {
-                    mono.range_call_targets
-                        .entry(request.occurrence().clone().without_syntax())
-                        .or_insert_with(|| (callee.to_string(), vec![value.clone()]));
-                }
-                continue;
-            }
-            if !self.bound_generics.contains(callee)
-                && !self.pack_generics.contains(callee)
-                && !self.comptime_generics.contains(callee)
-            {
-                continue;
-            }
-            let Some(template) = self.specializable.get(callee) else {
-                continue;
-            };
-            let Some(vals) = self.def_request_values(template, request.arguments()) else {
-                continue;
-            };
-            mono.def_call_targets
-                .entry(request.occurrence().clone())
-                .or_insert_with(|| DefCallTarget {
-                    template: callee.to_string(),
-                    vals,
-                });
-        }
+        self.seed_def_call_targets(def_requests, &mut mono);
         // Rewrite call sites in every non-template statement, seeding the
         // worklist. A bound-generic template's body is live code whether the
         // template is retained or dropped, so it is scanned like any other
@@ -303,6 +264,17 @@ impl Elab<'_> {
                 &mut mono,
             )?;
         }
+        // The nested pass runs after this walk and registers a nested `def`
+        // whose body is named here, so that its instances reach the clone the
+        // erased body could only leave on a stub. It is computed again after
+        // the drains: a generated clone's own nested `def` is walked there,
+        // and carries a source of its own.
+        self.stub_reaching.replace(
+            self.stub_reaching_bodies(&mono.abstract_uses, &mono.method_edges)
+                .iter()
+                .map(|body| (*body).to_string())
+                .collect(),
+        );
         // Rebuild the program, replacing each template with its specializations at
         // the template's original position. Specializations are emitted in reverse
         // generation order so a callee is defined before its caller (the checker
@@ -384,6 +356,74 @@ impl Elab<'_> {
                 .collect(),
             unserved_template_uses,
         })
+    }
+
+    /// Record the clone each checker-discovered inferred bound-generic
+    /// application selects, for `mono_expr` to consult at that occurrence.
+    ///
+    /// Seeding only records the target; the Job queues lazily at the consult,
+    /// so a drifted request produces no dead clone and a never-matched
+    /// request leaves its template correctly retained. The compiler already
+    /// resolved occurrence conflicts, so a duplicate here keeps the first
+    /// target (defensive).
+    fn seed_def_call_targets(&self, def_requests: &[DefSpecializationRequest], mono: &mut Mono) {
+        for request in def_requests {
+            let callee = request.callee();
+            // A scalar-range request targets a DType-value-param struct
+            // template rather than a bound-generic def: record the
+            // constructor-rewrite target consumed by `mono_expr`'s
+            // `range(...)` occurrence. The Job queues lazily at the rewrite,
+            // like the def targets below.
+            if self.struct_template(callee) {
+                if let [TyArg::Val(value @ CtValue::Dtype(_))] = request.arguments() {
+                    mono.range_call_targets
+                        .entry(request.occurrence().clone().without_syntax())
+                        .or_insert_with(|| (callee.to_string(), vec![value.clone()]));
+                }
+                continue;
+            }
+            if !self.bound_generics.contains(callee)
+                && !self.pack_generics.contains(callee)
+                && !self.comptime_generics.contains(callee)
+            {
+                continue;
+            }
+            let Some(template) = self.specializable.get(callee) else {
+                continue;
+            };
+            let Some(vals) = self.def_request_values(template, request.arguments()) else {
+                continue;
+            };
+            // A call inside a nested instance is rewritten by the lexical
+            // pass, which runs after this walk and cannot queue work of its
+            // own, so its clone is queued here instead of at the consult. The
+            // occurrence names a real call, so a clone minted for a request
+            // whose occurrence has since drifted is dead code rather than a
+            // wrong answer.
+            if request
+                .occurrence()
+                .source
+                .as_deref()
+                .is_some_and(|source| source.contains(NESTED_MARKER_INFIX))
+            {
+                let output_name = mangle(callee, &vals);
+                if mono.done.insert(output_name.clone()) {
+                    mono.queue.push_back(Job {
+                        orig: callee.to_string(),
+                        vals: vals.clone(),
+                        site: format!("a call inside a nested specialization of '{callee}'"),
+                        output_name,
+                        whole_pack_abi: false,
+                    });
+                }
+            }
+            mono.def_call_targets
+                .entry(request.occurrence().clone())
+                .or_insert_with(|| DefCallTarget {
+                    template: callee.to_string(),
+                    vals,
+                });
+        }
     }
 
     /// Mint one closed instance's method clones onto its template, and

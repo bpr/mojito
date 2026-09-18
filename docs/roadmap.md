@@ -48,18 +48,6 @@ entry names what it depends on, and an entry with no dependency sits as early
 as its size allows. The **Model:** bullet carries the complexity estimate and
 says whether the entry can be done as-is or must be planned first.
 
-- [ ] **A nested generic `def` cannot call a compile-time-keyed `def`**
-
-  Problem: `def inner[U: Copyable](y: U): show(y)` nested in `main`, called
-  as `inner(2)`, is accepted by the pin. Mojito reports "generic 'show'
-  requires compile-time parameter 'T'".
-  - Only top-level generic `def`s specialize through discovery, so the nested
-    body's call stays abstract and is rejected at the fixpoint.
-  - A nested `def` inside a top-level generic `def` is fine: it runs only
-    with its enclosing body.
-  - Depends on nothing.
-  - Model: Opus, plan first.
-
 - [ ] **An abandoned temporary in a compile-time-keyed body skips the
   abstract destruction check**
 
@@ -330,8 +318,23 @@ whatever its model, because it batches every change that needs a new
   complete (`docs/mojo-nightly.md`). The next re-pin recreates this
   section's checkbox.
 
-The two checkboxes below, and the bullets inside the two standing ones,
+The three checkboxes below, and the bullets inside the two standing ones,
 are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
+
+- [ ] **A parametric nested `def` named as a value reports its marker**
+
+  Problem: `apply(inner, 3)` and `var g = inner`, for a nested
+  `def inner[U: Copyable]`, report `Undefined variable
+  'main$110$198$nested$0$inner'`. The pin rejects both too, so the verdict is
+  right and only the message is wrong.
+  - The lexical pass renames the declaration to its marker and rewrites every
+    reference to it, then deletes the template it could not instantiate,
+    leaving the renamed value reference dangling.
+  - The pin's texts are "cannot use parametric function as a runtime closure"
+    for the binding and an `invalid call to '__call__'` for the argument.
+  - Pre-existing for a nested `def` the pass already registered; the nested
+    compile-time-keyed work widened the class it reaches.
+  - Model: Opus, as-is.
 
 - [ ] **Explicit type arguments on a static method of a non-parametric
   struct are rejected**
@@ -918,13 +921,14 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
        keep the syntactic element-typing path (`a heterogeneous pack
        specialization needs an expression whose type is statically evident
        before checking` for `take(b, 1)` over a local `b`). Top-level calls
-       consult the checker's instantiation. Lifting it needs four pieces:
-       nested templates live only in `NestedMono` and are deleted by
-       `replace_templates` before the checker sees them, the checker would
-       have to accept a nested variadic shell abstractly,
-       `def_specialization_requests` is top-level only, and
-       `Mono.def_call_targets` must reach `NestedMono::scan_expression`
-       with a `def_request_target` fallback.
+       consult the checker's instantiation. Three of the four pieces this
+       needed now exist for ordinary nested generics: an unresolved template
+       survives `replace_templates` for the discovery check,
+       `def_specialization_requests` harvests a nested callee, and
+       `NestedMono::scan_expression` consults that request. What remains is
+       the checker accepting a nested variadic shell abstractly, and
+       softening the pack diagnostics — only an arity failure defers today,
+       and a pack failure is `PackBound` or `NotComptime`.
      - A user variadic struct application as a pack element
        (`Tuple[TypeNames[Int]]`) keeps the fixed-arity diagnostic. Its
        erased shell has no sound nominal form; the public `Tuple` is the

@@ -61,6 +61,8 @@ assets/ok/comptime_if_generic_struct_lifecycle.mojo	-	ineligible	no-scalar-entry
 assets/ok/comptime_if_generic_struct_method_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_inferred_def.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_inferred_static_method.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_if_nested_def_call.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_if_nested_keyed_def.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_lambda_initializer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_shadowed_locals.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_string_value.mojo	-	ineligible	no-scalar-entry-shape

@@ -463,14 +463,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Mono::retain_abstract` records each abstract reference and
   `Mono::record_method_edge` each by-name method call from an abstract body,
   the specializer's `stub_reaching_bodies` closes both over
-  `Mono::abstract_owner` (a bound-generic `def`, or a struct method as
-  `method_owner`'s `Struct.method`), `unserved_template_uses` keeps the
+  `Mono::abstract_owner` (a bound-generic `def`, a struct method as
+  `method_owner`'s `Struct.method`, or a generic nested `def` as
+  `nested_body_owner`'s declaration site), `unserved_template_uses` keeps the
   references that can reach a stub from outside a stub-reaching body — plus
   those of a method no instance could clone (`Mono::unclonable_methods`) — as
   `Elaborated::unserved_template_uses` (`UnservedTemplateUse`),
   `Elaborated::stub_reaching_structs` stops the driver's round cap from
   converging on such an instance, and `unserved_template_parameter` names the
-  parameter for the driver's `reject_unserved_template_calls`;
+  parameter for the driver's `reject_unserved_template_calls`, which reports
+  a nested callee under `template_display_name`'s source name;
   `clone_source_tag` stamps each method clone's body before it is walked, so
   its span-keyed requests find the checker's records for that
   instantiation), the
@@ -514,6 +516,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `mono.rs` feeds through `instance_template`/`request_instance`; the clone
   carries `ast::Method::self_ty`, which the checker binds `self`/`Self` to
   and records as `AnnotationSite::MethodSelf` for MIR).
+- `comptime/nested.rs` owns the lexically scoped specialization of generic
+  nested functions (`monomorphize_nested_program`, the `NestedMono` registry,
+  its `NESTED_MARKER_INFIX` marker names, and the runtime-pack environment).
+  A nested `def` registers by its own shape or because `Elab::stub_reaching`
+  names its `nested_body_owner` site; a call only the checker can solve takes
+  its arguments from `Elab::nested_request_target`, and otherwise retains its
+  template (`NestedMono::retain_call`, `deferred`) for the discovery check,
+  reporting the site through `Elaborated::unserved_template_uses`. A
+  generated instance's calls to top-level templates are rewritten by
+  `Elab::instance_body_request_target`.
 - `comptime/mono.rs` owns the monomorphizing AST rewrite (`mono_type` and
   friends), struct-specialization argument resolution, and the t-string
   desugar into its `TString` specialization's construction.

@@ -1465,6 +1465,23 @@ when a scope ends. Generated declarations retain defaults, keywords, named
 results, capture lists, effects, and their concrete variadic ABI when nested
 function lowering registers the lifted MIR declaration.
 
+A nested declaration is specializable either by its own shape — compile-time
+control flow, a pack, a `DType` parameter — or because the top-level walk found
+its body able to reach a compile-time-keyed stub, which it reports by the
+nested body's declaration site. Such a body has no concrete argument to select
+the callee's arm with, so only an instance per call can run it. The nested pass
+therefore also joins the discovery fixpoint. A call whose compile-time
+arguments only the checker can solve leaves its template standing — verbatim,
+or as a stub when the body holds compile-time control flow — so the discovery
+check types the call against it and records the instantiation the next round
+serves; a template with any such call mints no instances that round, or an
+instance minted for a sibling call would be the clone the checker retargets the
+unsolved one to, consuming the recording. Calls the fixpoint never serves are
+reported like top-level ones and rejected there. A generated instance's calls
+to top-level templates are rewritten from the requests recorded against that
+instance's own source tag, and the clones they name are queued by the top-level
+walk, which alone can mint them.
+
 Pack forwarding first flattens the one known spread into a virtual positional
 type sequence and runs the shared call-slot matcher; only positional overflow
 becomes the target pack's inferred type list. The spread must follow every fixed

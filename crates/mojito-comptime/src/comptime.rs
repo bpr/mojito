@@ -635,6 +635,14 @@ pub fn pack_generic_template_names(program: &[Stmt]) -> HashSet<String> {
     collect_pack_generic_templates(program)
 }
 
+/// The infix marking a name the lexical nested pass qualified: the enclosing
+/// specialization, this marker, and the nested `def`'s source name.
+///
+/// A declaration and a call spelled this way belong to a nested template the
+/// discovery check can still see, so the driver harvests its instantiation
+/// like a top-level one. `$` cannot occur in a parsed identifier.
+pub const NESTED_MARKER_INFIX: &str = "$nested$";
+
 /// The top-level compile-time-keyed template names (`def show[T: Copyable](x:
 /// T)` whose body holds a `comptime if`/`comptime for`) of a linked program.
 ///
@@ -648,6 +656,16 @@ pub fn comptime_generic_template_names(program: &[Stmt]) -> HashSet<String> {
     collect_comptime_generic_templates(program)
 }
 
+/// The source name a template is reported under: a nested `def` is spelled by
+/// its qualified marker while the discovery check sees it, but a reader knows
+/// it by the name it was written with.
+pub fn template_display_name(template: &str) -> &str {
+    if template.contains(NESTED_MARKER_INFIX) {
+        return template.rsplit_once('$').map_or(template, |(_, name)| name);
+    }
+    template
+}
+
 /// The parameter an inferred application of `template` failed to close.
 ///
 /// That is the declaration of the first checker argument that is not closed;
@@ -658,13 +676,7 @@ pub fn unserved_template_parameter(
     arguments: &[TyArg],
     is_closed: &dyn Fn(&TyArg) -> bool,
 ) -> String {
-    let parameters = program.iter().find_map(|statement| match &statement.kind {
-        StmtKind::Def {
-            name, type_params, ..
-        } if name == template => Some(type_params),
-        _ => None,
-    });
-    let Some(parameters) = parameters else {
+    let Some(parameters) = declaration_type_params(program, template) else {
         return String::new();
     };
     let mut cursor = arguments
@@ -686,6 +698,27 @@ pub fn unserved_template_parameter(
     first.map_or_else(String::new, |parameter| {
         parameter.name.trim_start_matches('*').to_string()
     })
+}
+
+/// The type parameters of the `def` named `template`, at any nesting depth.
+///
+/// A nested `def` is reported by the same diagnostics as a top-level one, and
+/// it is spelled by the name the search is given: its qualified marker while
+/// the discovery check sees it, its source name otherwise.
+fn declaration_type_params<'a>(program: &'a [Stmt], template: &str) -> Option<&'a Vec<TypeParam>> {
+    fn in_block<'a>(block: &'a [Stmt], template: &str) -> Option<&'a Vec<TypeParam>> {
+        block.iter().find_map(|statement| match &statement.kind {
+            StmtKind::Def {
+                name, type_params, ..
+            } if name == template => Some(type_params),
+            StmtKind::Def { body, .. } => in_block(body, template),
+            StmtKind::Struct { methods, .. } => methods
+                .iter()
+                .find_map(|method| in_block(&method.body, template)),
+            _ => None,
+        })
+    }
+    in_block(program, template)
 }
 
 /// Elaborate a [`prepare`]d, validated program while materializing
@@ -783,6 +816,16 @@ pub fn elaborate_prepared(
         hash_leaf_types: hash_leaf_types.to_vec(),
         pending_struct_instances: RefCell::new(HashMap::new()),
         per_call_clones: RefCell::new(HashSet::new()),
+        def_requests: def_requests
+            .iter()
+            .map(|request| {
+                (
+                    request.occurrence().clone().without_syntax(),
+                    request.clone(),
+                )
+            })
+            .collect(),
+        stub_reaching: RefCell::new(HashSet::new()),
         conformance,
         tuple_universe,
         tuple_transforms,
@@ -832,7 +875,8 @@ pub fn elaborate_prepared(
     // specializations and source stamping. At that point every clone carries its
     // concrete outer substitutions, and per-instance source tags will not be
     // overwritten by the uniform module stamp above.
-    elab.monomorphize_nested_program(&mut result)?;
+    let mut unserved_template_uses = unserved_template_uses;
+    unserved_template_uses.extend(elab.monomorphize_nested_program(&mut result)?);
     Ok(Elaborated {
         program: result,
         instances,
@@ -1515,6 +1559,15 @@ struct Elab<'a> {
     /// clone name). They carry no receiver type, so source stamping names
     /// them here rather than by `Method::self_ty`.
     per_call_clones: RefCell<HashSet<(String, String)>>,
+    /// The driver's checker-discovered bound-generic applications by call
+    /// occurrence. Top-level monomorphization consults its own seeded copy;
+    /// the lexical nested pass, which runs after that walk, reads these.
+    def_requests: HashMap<SourceSpan, DefSpecializationRequest>,
+    /// The bodies top-level monomorphization found could run a
+    /// compile-time-keyed stub, including the [`nested_body_owner`] keys of
+    /// nested `def`s. The nested pass registers a nested `def` named here,
+    /// so that its instances reach the callee's clone.
+    stub_reaching: RefCell<HashSet<String>>,
     fuel: Cell<usize>,
     top_consts: RefCell<HashMap<String, CtValue>>,
     /// Module-scope generic `comptime` aliases in declaration order, name →
@@ -1588,7 +1641,29 @@ fn method_owner(owner: &str, method: &str) -> String {
 
 /// The method half of a [`method_owner`] key, or `None` for a `def` owner.
 fn owner_method(owner: &str) -> Option<&str> {
+    if owner.starts_with(NESTED_OWNER_PREFIX) {
+        return None;
+    }
     owner.split_once('.').map(|(_, method)| method)
+}
+
+/// The prefix of a [`nested_body_owner`] key, which a source path's `.` would
+/// otherwise make [`owner_method`] read as a method name.
+const NESTED_OWNER_PREFIX: &str = "$nested-body$";
+
+/// The key [`Mono::abstract_owner`] gives a generic nested `def`'s body.
+///
+/// A nested `def` has no unique name — the same spelling may declare
+/// unrelated helpers in two enclosing bodies — so the key is its declaration
+/// site. The lexical nested pass derives the same key from the template it
+/// registers, so the two passes agree on which bodies specialize.
+fn nested_body_owner(site: &SourceSpan) -> String {
+    format!(
+        "{NESTED_OWNER_PREFIX}{}${}${}",
+        site.source.as_deref().unwrap_or(""),
+        site.span.0,
+        site.span.1
+    )
 }
 
 /// The stub-reaching bodies `body` can run: the callees of the references it
@@ -1697,11 +1772,17 @@ struct Mono {
     /// instances reached only from there keep the erased path.
     in_bundled: bool,
     /// The body the walk is inside when that body runs only on an abstract
-    /// path: a top-level bound-generic `def` by name, or the erased template
-    /// of a struct method as `Struct.method`. A `def`'s body runs only
-    /// through a reference that stays abstract; a method's erased body only
-    /// where [`Elab::unserved_template_uses`]'s table says so.
+    /// path: a top-level bound-generic `def` by name, the erased template of
+    /// a struct method as `Struct.method`, or a generic nested `def` by its
+    /// [`nested_body_owner`] site. A `def`'s body runs only through a
+    /// reference that stays abstract; a method's erased body only where
+    /// [`Elab::unserved_template_uses`]'s table says so; a nested `def`'s
+    /// body only through the instances the lexical nested pass mints.
     abstract_owner: Option<String>,
+    /// How many function bodies enclose the walk. A generic `def` declared
+    /// directly in one (`def_depth == 1` on entry) is what the lexical nested
+    /// pass can specialize, so only that depth owns its abstract references.
+    def_depth: usize,
     /// Every reference left on a bound-generic or compile-time-keyed
     /// template's abstract path, with the body it was made from.
     abstract_uses: Vec<AbstractUse>,
