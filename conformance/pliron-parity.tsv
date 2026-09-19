@@ -55,6 +55,7 @@ assets/ok/comptime_frozen_struct.mojo	main	exe-differential	sanitized
 assets/ok/comptime_hash.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_abstract_body_call.mojo	main	exe-differential	sanitized
+assets/ok/comptime_if_arm_destroy_joins.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_generic_specialization.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_generic_struct_ctor_overloads.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_generic_struct_lifecycle.mojo	main	exe-differential	sanitized

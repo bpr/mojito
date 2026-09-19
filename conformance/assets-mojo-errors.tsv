@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	394
+# swept-count	396
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -175,10 +175,12 @@ assets/type_error/comptime_constants.mojo	compile-reject	agree	error: expression
 assets/type_error/comptime_dict_raising_subscript.mojo	compile-reject	agree	error: cannot call raising function in comptime initializer
 assets/type_error/comptime_dict_result_not_freezable.mojo	runs	subset	the pin runs it; Mojito rejects: cannot cross back from VM CTFE
 assets/type_error/comptime_for_tuple.mojo	compile-reject	agree	error: 'Tuple[String, String, String]' does not implement the '__iter__' method
+assets/type_error/comptime_if_arm_conditional_destroy.mojo	compile-reject	agree	error: 'r' abandoned without being explicitly destroyed: close it
 assets/type_error/comptime_if_instantiated_bad_branch.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["bad"]' value to 'Int'
 assets/type_error/comptime_keyed_abandoned_temporary.mojo	compile-reject	agree	error: '(expression temporary)' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Writable'
 assets/type_error/comptime_list_runtime_use.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Array[Int, Int(3)]' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/comptime_struct_missing_field.mojo	compile-reject	agree	error: 'Extent' value has no attribute 'missing'
+assets/type_error/comptime_with_body_abandoned.mojo	compile-reject	agree	error: 'r' abandoned without being explicitly destroyed: close it
 assets/type_error/contextual_member_no_context.mojo	compile-reject	agree	error: cannot resolve inferred member without a contextual type
 assets/type_error/contextual_member_nonstruct.mojo	compile-reject	agree	error: 'Int' value has no attribute 'red'
 assets/type_error/contextual_member_unknown.mojo	compile-reject	agree	error: 'Color' value has no attribute 'nope'

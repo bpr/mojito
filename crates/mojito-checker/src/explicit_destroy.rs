@@ -70,7 +70,10 @@ pub fn check(
     if types.is_empty() {
         return Ok(());
     }
-    let spans = std::rc::Rc::new(spans);
+    let root = Env {
+        spans: std::rc::Rc::new(spans),
+        ..Env::default()
+    };
     for statement in statements {
         match &statement.kind {
             StmtKind::Def {
@@ -81,7 +84,7 @@ pub fn check(
                 comprehension_bindings,
                 deletability,
                 types,
-                &spans,
+                &root,
             )?,
             StmtKind::Def { .. } => {}
             // A template shell carries signatures only.
@@ -89,7 +92,13 @@ pub fn check(
                 template_shell: true,
                 ..
             } => {}
-            StmtKind::Struct { name, methods, .. } => {
+            StmtKind::Struct {
+                name,
+                type_params,
+                methods,
+                ..
+            } => {
+                let owner = root.function_env(type_params);
                 for (method_index, method) in methods.iter().enumerate() {
                     if !walks_body(scope, &method.type_params, &method.body) {
                         continue;
@@ -125,7 +134,7 @@ pub fn check(
                         comprehension_bindings,
                         deletability,
                         types,
-                        &spans,
+                        owner.function_env(&method.type_params),
                     )?;
                 }
             }
@@ -154,6 +163,11 @@ fn check_expr(
     }
     match &expr.kind {
         ExprKind::Transfer(inner) if env.spans.lent.contains(&expr.source_span()) => {
+            check_expr(inner, env, comprehension_bindings, types)?;
+        }
+        // A transferred temporary (`make(x^)^.close()`) is no place of its
+        // own; the transfers inside it still move theirs.
+        ExprKind::Transfer(inner) if root_id(inner, env).is_none() => {
             check_expr(inner, env, comprehension_bindings, types)?;
         }
         ExprKind::Transfer(inner) => move_root(inner, env, types)?,
@@ -316,9 +330,40 @@ struct Env {
     scopes: Vec<HashMap<String, usize>>,
     vars: Vec<Var>,
     spans: std::rc::Rc<SpanFacts>,
+    /// Names of the compile-time parameters in scope: the enclosing
+    /// declarations' own and the owning struct's.
+    params: std::rc::Rc<HashSet<String>>,
 }
 
 impl Env {
+    /// The entry environment of a declaration nested in this one: no
+    /// bindings, the same span facts, and `type_params` added to the
+    /// parameters in scope.
+    fn function_env(&self, type_params: &[mojito_ast::ast::TypeParam]) -> Self {
+        let mut params = (*self.params).clone();
+        params.extend(
+            type_params
+                .iter()
+                .map(|param| param.name.trim_start_matches('*').to_string()),
+        );
+        Self {
+            spans: std::rc::Rc::clone(&self.spans),
+            params: std::rc::Rc::new(params),
+            ..Self::default()
+        }
+    }
+
+    /// Whether a `comptime if` condition names a parameter in scope, so that
+    /// which arm it selects differs between instantiations.
+    fn is_parametric(&self, condition: &Expr) -> bool {
+        let mut finder = ParamMention {
+            params: &self.params,
+            found: false,
+        };
+        mojito_ast::visit::walk_expr(&mut finder, condition);
+        finder.found
+    }
+
     fn push(&mut self) {
         self.scopes.push(HashMap::new());
     }
@@ -362,16 +407,7 @@ impl Env {
             if !var.obligations.is_empty()
                 && let Some(message) = &var.message
             {
-                if var.explicit_type.as_deref() == Some(LINEAR_TYPE_PARAMETER) {
-                    return Err(TypeError::LinearAbandoned {
-                        var: var.name.clone(),
-                        message: message.clone(),
-                    });
-                }
-                return Err(TypeError::Abandoned {
-                    var: var.name.clone(),
-                    message: message.clone(),
-                });
+                return Err(var.abandoned(message));
             }
         }
         Ok(())
@@ -451,6 +487,23 @@ struct Var {
     moved: HashSet<Vec<String>>,
 }
 
+impl Var {
+    /// The error for leaving this variable's obligations undischarged.
+    fn abandoned(&self, message: &str) -> TypeError {
+        if self.explicit_type.as_deref() == Some(LINEAR_TYPE_PARAMETER) {
+            TypeError::LinearAbandoned {
+                var: self.name.clone(),
+                message: message.to_string(),
+            }
+        } else {
+            TypeError::Abandoned {
+                var: self.name.clone(),
+                message: message.to_string(),
+            }
+        }
+    }
+}
+
 /// Whether `expr` is the compiler's diverging runtime trap call.
 fn is_runtime_trap(expr: &Expr) -> bool {
     matches!(&expr.kind, ExprKind::Call { name, .. } if name == "_mojito_abort")
@@ -471,6 +524,30 @@ fn obligation_place(expr: &Expr, env: &Env) -> Option<(usize, Vec<String>)> {
     }
 }
 
+/// Join the arms of a `comptime if` whose condition names a parameter in
+/// scope. An arm may assume nothing about the instantiation, so the arms join
+/// as the branches of an `if` do, whichever of them the program's
+/// instantiations select. A value destroyed in one arm only is left
+/// conditionally initialized: a later use of it is a use of an uninitialized
+/// value, and with no later use it is abandoned at the end of its scope.
+fn join_parametric(mut exits: Vec<Env>) -> Env {
+    let Some(mut joined) = exits.pop() else {
+        return Env::default();
+    };
+    for other in &exits {
+        for (var, arm) in joined.vars.iter_mut().zip(&other.vars) {
+            if var.message.is_some()
+                && (var.obligations != arm.obligations || var.moved != arm.moved)
+            {
+                var.obligations.extend(arm.obligations.iter().cloned());
+                var.moved.retain(|path| arm.moved.contains(path));
+                var.uninitialized = true;
+            }
+        }
+    }
+    joined
+}
+
 fn join(mut exits: Vec<Env>) -> Result<Env, TypeError> {
     let Some(first) = exits.pop() else {
         return Ok(Env::default());
@@ -481,11 +558,11 @@ fn join(mut exits: Vec<Env>) -> Result<Env, TypeError> {
     Ok(first)
 }
 
-/// Check the branches of an `if`. Every branch runs from the entry
+/// The exits of an `if`'s branches. Every branch runs from the entry
 /// environment, a diverging one contributes no exit, and a missing `else`
 /// contributes the entry environment itself — so a value consumed on one
-/// branch only is conditionally destroyed, which `join` rejects.
-fn check_branches(
+/// branch only is conditionally destroyed.
+fn branch_exits(
     branches: &[(Expr, Vec<Stmt>)],
     orelse: Option<&[Stmt]>,
     env: Env,
@@ -496,7 +573,7 @@ fn check_branches(
     >,
     deletability: &CheckedDeletability,
     types: &HashMap<String, ExplicitDestroyInfo>,
-) -> Result<Env, TypeError> {
+) -> Result<Vec<Env>, TypeError> {
     let mut exits = Vec::new();
     for (condition, body) in branches {
         let mut branch = env.clone();
@@ -529,15 +606,16 @@ fn check_branches(
         }
         None => exits.push(env),
     }
-    join(exits)
+    Ok(exits)
 }
 
-/// Check the arms of a `comptime if`. Exactly one is selected per
-/// instantiation, so they are alternatives rather than branches: each is
-/// checked from the entry environment, and an obligation any one discharges
-/// counts as discharged. That can miss an abandonment the pin reports but can
-/// never reject a program the pin accepts.
-fn check_comptime_alternatives(
+/// Check a `comptime if`. A condition naming a parameter in scope selects a
+/// different arm per instantiation, and the arms join as branches
+/// (`join_parametric`). Any other condition folds to one arm before this
+/// analysis would run on the elaborated body; which one is not known here, so
+/// the arms are alternatives (`join_comptime`), which can miss an abandonment
+/// but never reports one the taken arm does not have.
+fn check_comptime_if(
     branches: &[(Expr, Vec<Stmt>)],
     orelse: Option<&[Stmt]>,
     env: Env,
@@ -549,41 +627,28 @@ fn check_comptime_alternatives(
     deletability: &CheckedDeletability,
     types: &HashMap<String, ExplicitDestroyInfo>,
 ) -> Result<Env, TypeError> {
-    let mut exits = Vec::new();
-    for (condition, body) in branches {
-        let mut arm = env.clone();
-        check_expr(condition, &mut arm, comprehension_bindings, types)?;
-        if let Some(exit) = check_block(
-            body,
-            arm,
-            true,
-            binding_types,
-            comprehension_bindings,
-            deletability,
-            types,
-        )? {
-            exits.push(exit);
-        }
-    }
-    if let Some(body) = orelse
-        && let Some(exit) = check_block(
-            body,
-            env.clone(),
-            true,
-            binding_types,
-            comprehension_bindings,
-            deletability,
-            types,
-        )?
-    {
-        exits.push(exit);
+    let parametric = branches
+        .iter()
+        .any(|(condition, _)| env.is_parametric(condition));
+    let mut exits = branch_exits(
+        branches,
+        orelse,
+        env.clone(),
+        binding_types,
+        comprehension_bindings,
+        deletability,
+        types,
+    )?;
+    if parametric {
+        return Ok(join_parametric(exits));
     }
     exits.push(env);
     Ok(join_comptime(exits))
 }
 
-/// Join the alternatives of a `comptime if`. Elaboration selects exactly one,
-/// so an obligation any alternative discharges is discharged: the result keeps
+/// Join the alternatives of a `comptime if` that folds without the parameters
+/// in scope. Exactly one is taken, in every instantiation alike, so an
+/// obligation any alternative discharges is discharged: the result keeps
 /// only the obligations every alternative kept. The entry environment is the
 /// last exit, so it carries the scope stack and the smallest `vars` arena.
 fn join_comptime(mut exits: Vec<Env>) -> Env {
@@ -602,6 +667,35 @@ fn join_comptime(mut exits: Vec<Env>) -> Env {
         }
     }
     joined
+}
+
+/// Finds a name of a compile-time parameter in scope, in expression or type
+/// position (`T`, `Self.T`, `List[T]`).
+struct ParamMention<'a> {
+    params: &'a HashSet<String>,
+    found: bool,
+}
+
+impl mojito_ast::visit::Visitor for ParamMention<'_> {
+    fn visit_expr(&mut self, expr: &Expr) {
+        self.found |= match &expr.kind {
+            ExprKind::Identifier(name) => self.params.contains(name.trim_start_matches('*')),
+            ExprKind::Member { object, field } => {
+                matches!(&object.kind, ExprKind::Identifier(base) if base == "Self")
+                    && self.params.contains(field)
+            }
+            _ => false,
+        };
+    }
+
+    fn visit_type(&mut self, ty: &SourceType) {
+        self.found |= match ty {
+            SourceType::Named(name, _) | SourceType::SelfParam(name) => {
+                self.params.contains(name.trim_start_matches('*'))
+            }
+            _ => false,
+        };
+    }
 }
 
 fn type_at_path(
@@ -653,12 +747,8 @@ fn check_function<'a>(
     >,
     deletability: &CheckedDeletability,
     types: &HashMap<String, ExplicitDestroyInfo>,
-    spans: &std::rc::Rc<SpanFacts>,
+    mut env: Env,
 ) -> Result<(), TypeError> {
-    let mut env = Env {
-        spans: std::rc::Rc::clone(spans),
-        ..Env::default()
-    };
     env.push();
     for (name, ty, convention, deinitable, linear) in params {
         let explicit = if deinitable {
@@ -816,7 +906,7 @@ fn check_stmt(
             return Ok(None);
         }
         StmtKind::If { branches, orelse } => {
-            env = check_branches(
+            env = join(branch_exits(
                 branches,
                 orelse.as_deref(),
                 env,
@@ -824,10 +914,10 @@ fn check_stmt(
                 comprehension_bindings,
                 deletability,
                 types,
-            )?;
+            )?)?;
         }
         StmtKind::ComptimeIf { branches, orelse } => {
-            env = check_comptime_alternatives(
+            env = check_comptime_if(
                 branches,
                 orelse.as_deref(),
                 env,
@@ -837,11 +927,12 @@ fn check_stmt(
                 types,
             )?;
         }
-        // The loop is unrolled per instantiation and may unroll to nothing, so
-        // the body proves only its own internal obligations.
+        // The loop unrolls per instantiation, possibly to nothing or to
+        // several copies, so its body must leave every outer obligation as it
+        // found it, as a `while` body must.
         StmtKind::ComptimeFor { iter, body, .. } => {
             check_expr(iter, &mut env, comprehension_bindings, types)?;
-            check_block(
+            if let Some(after) = check_block(
                 body,
                 env.clone(),
                 true,
@@ -849,7 +940,9 @@ fn check_stmt(
                 comprehension_bindings,
                 deletability,
                 types,
-            )?;
+            )? {
+                ensure_same(&env, &after)?;
+            }
         }
         StmtKind::While { cond, body, orelse } => {
             check_expr(cond, &mut env, comprehension_bindings, types)?;
@@ -1031,8 +1124,16 @@ fn check_stmt(
                 check_expr(target, &mut env, comprehension_bindings, types)?;
             }
         }
-        StmtKind::RefDecl { value, .. } | StmtKind::Comptime { value, .. } => {
+        StmtKind::RefDecl { value, .. } => {
             check_expr(value, &mut env, comprehension_bindings, types)?;
+        }
+        // A constant computed from a parameter varies with the instantiation
+        // as the parameter does (`comptime k = T == Int`).
+        StmtKind::Comptime { name, value, .. } => {
+            check_expr(value, &mut env, comprehension_bindings, types)?;
+            if env.is_parametric(value) {
+                std::rc::Rc::make_mut(&mut env.params).insert(name.clone());
+            }
         }
         StmtKind::Break | StmtKind::Continue => {
             env.check_current_scope()?;
@@ -1046,7 +1147,7 @@ fn check_stmt(
             comprehension_bindings,
             deletability,
             types,
-            &env.spans,
+            &env,
         )?,
         _ => {}
     }
@@ -1063,9 +1164,15 @@ fn check_def(
     >,
     deletability: &CheckedDeletability,
     types: &HashMap<String, ExplicitDestroyInfo>,
-    spans: &std::rc::Rc<SpanFacts>,
+    outer: &Env,
 ) -> Result<(), TypeError> {
-    let StmtKind::Def { params, body, .. } = &statement.kind else {
+    let StmtKind::Def {
+        type_params,
+        params,
+        body,
+        ..
+    } = &statement.kind
+    else {
         return Ok(());
     };
     let params = params.iter().enumerate().map(|(param, p)| {
@@ -1090,7 +1197,7 @@ fn check_def(
         comprehension_bindings,
         deletability,
         types,
-        spans,
+        outer.function_env(type_params),
     )
 }
 

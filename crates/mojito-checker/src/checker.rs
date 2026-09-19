@@ -106,6 +106,7 @@ pub fn validate_comptime_templates(stmts: &[Stmt]) -> Result<(), TypeError> {
     checker.source_validation = true;
     checker.rebind_targets = rebind_targets;
     let checked = checker.check_program(&expanded).and_then(|()| {
+        with_stmt::splice_with_desugars(&mut expanded, &checker.with_desugars.borrow());
         run_explicit_destroy(
             &checker,
             &expanded,

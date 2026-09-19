@@ -52,27 +52,6 @@ entry names what it depends on, and an entry with no dependency sits as early
 as its size allows. The **Model:** bullet carries the complexity estimate and
 says whether the entry can be done as-is or must be planned first.
 
-- [ ] **A `comptime if`'s arms are joined optimistically by the abstract
-  destruction check**
-
-  Problem: source validation now runs `explicit_destroy` over a
-  compile-time-keyed body, but its `comptime if` arms join as alternatives:
-  a value destroyed in one arm counts as destroyed for every instantiation,
-  so `comptime if T == Int: r^.close()` with no `else` is accepted where
-  every other `T` abandons `r`.
-  - Optimism is the safe direction, not the right one: it can only miss a
-    rejection the pin makes, never invent one. Rejecting instead would need
-    a rule for which arm the check may assume, and that is a language
-    question, not a pass detail.
-  - A `with` statement inside such a body is also skipped, because the
-    desugar is spliced only on the executable path, so the pass sees a
-    `StmtKind::With` it has no arm for.
-  - A `deinit self` method called on a temporary (`pk(x)^.release()`) is not
-    modelled as a consuming position either.
-  - Depends on nothing.
-  - Model: Opus, plan first. The plan must say what an arm is allowed to
-    assume, and check it against the pin.
-
 - [ ] **`rebind` in a generic body without compile-time control flow is
   rejected**
 

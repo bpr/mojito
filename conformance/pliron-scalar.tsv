@@ -55,6 +55,7 @@ assets/ok/comptime_frozen_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_hash.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_abstract_body_call.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_if_arm_destroy_joins.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_generic_specialization.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_generic_struct_ctor_overloads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_generic_struct_lifecycle.mojo	-	ineligible	no-scalar-entry-shape
