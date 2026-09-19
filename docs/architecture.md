@@ -496,15 +496,21 @@ call through discovery instead: a type pack whose element types are not
 statically evident, and a **compile-time-keyed** `def`
 specialized only for its `comptime if`/`for` body or `rebind` (no pack,
 `DType`, or SIMD-width parameter; `comptime_generic_template_names`) called
-without an argument for a required parameter. An overloaded compile-time-keyed
-name is a *family* (`collect_comptime_overload_families`): no call to it is
+without an argument for a required parameter. An overloaded name with a
+compile-time-keyed or type-pack declaration among its overloads is a *family*
+(`collect_overload_families`): no call to it is
 ever resolved syntactically, since explicit `[...]` arguments name type
 arguments rather than an overload and overload selection is the checker's.
 Every call is served from the checker's recorded instantiation, which names
-the selected overload by its runtime parameter names, where two overloads
-share those by their mangled parameter types, and where two share both — a
-variadic parameter is caller-visible but is spelled by neither key — by
-whether the request's own arguments bind the declaration's parameters at all.
+the selected overload by its runtime parameter names, and where two overloads
+share those by their mangled parameter types. A variadic parameter is
+caller-visible but is spelled by neither key, so where two share both the
+request's `symbol::VariadicKey` tells them apart — the `*args` collector's
+position among the regular parameters and its element key, which carries a
+pack's bounds — and last whether the request's own arguments bind the
+declaration's parameters at all. Two type-pack overloads of one name are
+therefore ordinary members of a family, never resolved against the first
+declaration.
 
 A family may mix specialization classes, because the class is a property of a
 *declaration* and not of a name: a keyed `def kind[T](a: T)` beside a type
@@ -2196,7 +2202,11 @@ the checked `kw_variadic` collector rather than flattening it into the ordinary
 parameter vector, so indirect calls preserve structural keyword binding.
 `SignatureKey` likewise stores a distinct keyword-variadic type key; ordinary,
 positional-variadic, and keyword-variadic slots with the same element type
-therefore cannot collide in lowered callable identity. Direct
+therefore cannot collide in lowered callable identity. A free function's
+signature walks its parameters in declaration order on both the definition and
+the call-resolution side, and the names of the parameters after a `*args`
+collector — keyword-only by position — join the key, so `f(a: Int, *rest: Int)`
+and `f(*rest: Int, a: Int)` are two declarations with two symbols. Direct
 overload resolution carries the selected candidate's effect
 alongside its lowered symbol, and an indirect call reads the effect from its
 callable type. Generic substitution includes error types, with a nonraising

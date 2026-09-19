@@ -1864,9 +1864,9 @@ impl Elab<'_> {
         if request.callee() != name {
             return None;
         }
-        // An overloaded compile-time-keyed name is a family: the request's
+        // An overloaded template name is a family: the request's
         // parameter names say which declaration the checker selected.
-        let template = if self.comptime_overload_family(name) {
+        let template = if self.overload_family(name) {
             self.family_declaration(name, request)?.1
         } else {
             *self.specializable.get(name)?

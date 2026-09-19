@@ -43,6 +43,7 @@ removed outright (`MaybeUninit` carries the same `unsafe_*` vocabulary), and
 | `tuple_element_types_public_spelling.mojo` | Does the head keep Tuple's `*Ts` parameter and `element_types` member spellings? (Verified in source at `ae386d1b204`; accepted without warning at `a79fbdf59f2`.) | runs, prints `2` / `7` |
 | `element_call_member_base.mojo` | Does the head dispatch the bare member-base element call `h.items[0](5)` like the confirmed identifier base? (Re-confirmed at `a79fbdf59f2`.) | runs, prints `15` |
 | `element_call_multi_index.mojo` | Does the head dispatch the bare multi-index element call `g[1, 1](10)` through the variadic subscript? (Re-confirmed at `a79fbdf59f2`.) | runs, prints `40` |
+| `pack_overload_string_regular_ambiguity.mojo` | Why is a call ambiguous between `g(a: Int, *rest)` and `g(a: Int, b: String, *rest)` when the same shape with `b: Int` is not? (Observed at `a79fbdf59f2`, 2026-09-19.) | **differs**: the pin rejects (`ambiguous call to 'g'`), Mojito prints `3` — `docs/roadmap.md` §1 |
 
 ## Re-probes of enforced claims
 

@@ -49,7 +49,10 @@ key specialization the way a `comptime if` does, so its assertion is made on
 every instantiation and never against a symbolic parameter. The fourth step
 made the specialization class a property of a declaration rather than of a
 name, so one overloaded name may hold two classes and the checker's recorded
-instantiation says which declaration serves each call. Each task pays off
+instantiation says which declaration serves each call. The fifth step let
+two type-pack declarations share a name: any overloaded name with a template
+among its declarations is a family, and a request also spells the selected
+overload's `*args` collector. Each task pays off
 by itself, and together they are what moving toward Mojo's shape needs.
 
 Unlike sections 2 and 3, this section is sorted in **dependency order**: each
@@ -57,22 +60,22 @@ entry names what it depends on, and an entry with no dependency sits as early
 as its size allows. The **Model:** bullet carries the complexity estimate and
 says whether the entry can be done as-is or must be planned first.
 
-- [ ] **Two type-pack overloads of one name cannot be told apart**
+- [ ] **A variadic overload the pin calls ambiguous is accepted**
 
-  Problem: two `def collect[*Ts](...)` declarations sharing a name leave
-  every call abstract, and the driver rejects it with "requires compile-time
-  parameter".
-  - A request names its overload by the selected signature's runtime
-    parameter names, then its mangled parameter types, then whether the
-    request's arguments bind the declaration's parameters.
-  - A variadic parameter is caller-visible but is spelled by neither key, so
-    two pack declarations tie on all three.
-  - The fix is a faithful spelling of a variadic parameter in the request
-    key, which `Ty::GenericFunc::names` cannot carry: that field is zipped
-    positionally with `params` and `conventions` and reaches MIR naming.
+  Problem: `g(x, s, x)` against `g[*Ts](a: Int, *rest: *Ts)` beside
+  `g[*Ts](a: Int, b: String, *rest: *Ts)` prints `3` in Mojito, while the
+  pinned Mojo reports "ambiguous call to 'g'".
+  - The same shape with `b: Int` is not ambiguous at the pin: it selects the
+    overload that binds `b`, which is the rule `variadic_absorption_rank`
+    (`checker/overload_support.rs`) implements.
+  - Literal and variable arguments behave the same, so the conversion count
+    is not what differs. The regular parameter's type is.
+  - Mojito accepts a program the pin rejects, so this is a divergence, not a
+    safe rejection.
+  - Pinned by `conformance/probes/pack_overload_string_regular_ambiguity.mojo`.
   - Depends on nothing.
-  - Model: Fable, plan first. The plan must say where the variadic spelling
-    lives if not in `names`.
+  - Model: Opus, plan first. The plan must find the pin's rule with more
+    probes before touching the rank.
 
 - [ ] **A compile-time-keyed `def` cannot be passed as a function value**
 

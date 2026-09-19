@@ -274,6 +274,13 @@ assets/ok/ownership_marker_traits.mojo	main	exe-differential	sanitized
 assets/ok/pack_bare_in_struct_header.mojo	main	exe-differential	sanitized
 assets/ok/pack_element_rebind.mojo	main	exe-differential	sanitized
 assets/ok/pack_element_temporaries.mojo	main	exe-differential	sanitized
+assets/ok/pack_overload_arity.mojo	main	exe-differential	sanitized
+assets/ok/pack_overload_beside_keyed.mojo	main	exe-differential	sanitized
+assets/ok/pack_overload_bounds.mojo	main	exe-differential	sanitized
+assets/ok/pack_overload_keyword_only.mojo	main	exe-differential	sanitized
+assets/ok/pack_overload_leading_type.mojo	main	exe-differential	sanitized
+assets/ok/pack_overload_method_arity.mojo	main	exe-differential	sanitized
+assets/ok/pack_overload_variadic_position.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_getitem.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_pair.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_variadic_init.mojo	main	exe-differential	sanitized
@@ -518,6 +525,7 @@ assets/ok/value_params.mojo	main	exe-differential	sanitized
 assets/ok/variable_scoping.mojo	main	exe-differential	sanitized
 assets/ok/variadic_args.mojo	main	exe-differential	sanitized
 assets/ok/variadic_method_type_params.mojo	main	exe-differential	sanitized
+assets/ok/variadic_overload_collector_position.mojo	main	exe-differential	sanitized
 assets/ok/variadic_pack_forwarding_generic_def.mojo	main	exe-differential	sanitized
 assets/ok/variadic_pack_upstream_spellings.mojo	main	exe-differential	sanitized
 assets/ok/variant_deinit_with_linear_payload.mojo	main	exe-differential	sanitized

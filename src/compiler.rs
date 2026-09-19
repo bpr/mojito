@@ -637,7 +637,8 @@ fn def_specialization_requests(
             instantiation.parameter_names.clone(),
             instantiation.parameter_types.clone(),
             instantiation.arguments.clone(),
-        );
+        )
+        .with_variadic(instantiation.variadic.clone());
         let key = request.occurrence().clone();
         if conflicted.contains(&key) {
             continue;

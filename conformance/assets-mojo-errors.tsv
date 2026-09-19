@@ -322,6 +322,7 @@ assets/type_error/pack_field_unqualified.mojo	compile-reject	agree	error: unqual
 assets/type_error/pack_init_spread_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
 assets/type_error/pack_method_body_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
 assets/type_error/pack_method_where_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
+assets/type_error/pack_overload_ambiguous_bounds.mojo	compile-reject	agree	error: ambiguous call to 'show', each candidate requires 1 implicit conversion, disambiguate with an explicit cast
 assets/type_error/pack_struct_init_arity.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/pack_struct_needs_explicit_args.mojo	runs	divergence	the pin runs it; Mojito rejects: variadic struct 'Pair' requires explicit compile-time type arguments
 assets/type_error/pack_struct_runtime_getitem_index.mojo	compile-reject	agree	error: invalid call to '__getitem__': cannot use a dynamic value in a parameter list

@@ -78,6 +78,9 @@ pub(super) struct CallableOverloadMatch {
     pub(super) ret: Ty,
     pub(super) score: usize,
     pub(super) target: String,
+    /// The candidate's index in its overload set. Two templates may share a
+    /// lowered symbol, so the symbol alone does not name the selection.
+    pub(super) index: usize,
     pub(super) error: Option<Ty>,
     /// [`owned_parameters`] of the candidate.
     pub(super) owned: Vec<bool>,
@@ -225,6 +228,10 @@ pub(super) fn symbol_equivalent_params(a: &[Ty], b: &[Ty]) -> bool {
 /// parameter of the same type, so ownership is part of callable identity.
 pub(super) fn same_callable_signature(a: &Ty, b: &Ty) -> bool {
     owned_parameters(a) == owned_parameters(b)
+        && mojito_symbol::symbol::VariadicKey::from_callable(a)
+            .map(|collector| collector.position())
+            == mojito_symbol::symbol::VariadicKey::from_callable(b)
+                .map(|collector| collector.position())
         && match (a, b) {
             (
                 Ty::Func {
@@ -320,6 +327,7 @@ pub(super) fn place_has_index(expr: &Expr) -> bool {
 pub(super) fn callable_lowered_name(name: &str, ty: &Ty) -> Option<String> {
     let (Ty::Func {
         params,
+        names,
         variadic,
         kw_variadic,
         conventions,
@@ -327,6 +335,7 @@ pub(super) fn callable_lowered_name(name: &str, ty: &Ty) -> Option<String> {
     }
     | Ty::GenericFunc {
         params,
+        names,
         variadic,
         kw_variadic,
         conventions,
@@ -335,12 +344,19 @@ pub(super) fn callable_lowered_name(name: &str, ty: &Ty) -> Option<String> {
     else {
         return None;
     };
-    let signature_types: Vec<_> = params
+    // Declaration order, as the definition side spells it: every regular
+    // parameter after the collector is keyword-only.
+    let collector_position = mojito_symbol::symbol::VariadicKey::from_callable(ty)
+        .map_or(params.len(), |collector| collector.position())
+        .min(params.len());
+    let signature_types: Vec<_> = params[..collector_position]
         .iter()
         .chain(variadic.iter().map(Box::as_ref))
+        .chain(&params[collector_position..])
         .collect();
     let signature = mojito_symbol::symbol::SignatureKey::from_tys(signature_types)
         .with_kw_variadic(kw_variadic.as_deref())
+        .with_keyword_names(names[collector_position..].to_vec())
         .with_owned_params(conventions);
     Some(mojito_symbol::symbol::function_symbol(name, &signature))
 }
@@ -602,6 +618,20 @@ pub(super) fn overload_rank(
         + usize::from(generic)
 }
 
+/// The rank a variadic candidate adds for how it uses its collector, below
+/// every other term. Current Mojo prefers, among otherwise tied variadic
+/// candidates, one whose collector takes at least one argument, and then the
+/// one that binds the most arguments to regular parameters: `f(1, 2, 3)`
+/// selects `f(a, b, *rest)` over `f(a, *rest)`, while `f(1, 2)` selects
+/// `f(a, *rest)` because the other's collector would be empty.
+pub(super) fn variadic_absorption_rank(absorbed: Option<usize>) -> usize {
+    const EMPTY_COLLECTOR: usize = 127;
+    absorbed.map_or(0, |count| match count {
+        0 => EMPTY_COLLECTOR,
+        _ => count.min(EMPTY_COLLECTOR - 1),
+    }) << 1
+}
+
 /// The conversion cost of one argument: 0 for an exact match or a numeric
 /// literal at its contextual default type, 1 for an implicit conversion. A
 /// string literal converting to anything but the nominal `String` costs 2:
@@ -629,7 +659,7 @@ pub(super) fn conversion_count(actual: &Ty, expected: &Ty) -> usize {
 
 pub(super) fn select_callable_overload(
     matches: Vec<CallableOverloadMatch>,
-) -> Result<(Ty, String, Option<Ty>), OverloadSelect> {
+) -> Result<(Ty, String, usize, Option<Ty>), OverloadSelect> {
     let best = matches
         .iter()
         .map(|candidate| candidate.score)
@@ -668,9 +698,13 @@ pub(super) fn select_callable_overload(
         best_matches.swap(0, *index);
     }
     let CallableOverloadMatch {
-        ret, target, error, ..
+        ret,
+        target,
+        index,
+        error,
+        ..
     } = best_matches.swap_remove(0);
-    Ok((ret, target, error))
+    Ok((ret, target, index, error))
 }
 
 /// Whether each regular parameter of a callable is owned (`var`).

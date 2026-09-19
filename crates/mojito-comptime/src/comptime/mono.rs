@@ -903,13 +903,11 @@ impl Elab<'_> {
                     return Ok(());
                 }
                 if mono.resolves_top_template(name) && self.specializable.contains_key(name) {
-                    // Which declaration of an overloaded compile-time-keyed
-                    // family this call selected; `None` on every other path.
+                    // Which declaration of an overloaded template family
+                    // this call selected; `None` on every other path.
                     let mut selected_decl = None;
-                    let (vals, kept_type_args, whole_pack_abi) = if self
-                        .comptime_overload_family(name)
-                    {
-                        // An overloaded compile-time-keyed name cannot be
+                    let (vals, kept_type_args, whole_pack_abi) = if self.overload_family(name) {
+                        // An overloaded template name cannot be
                         // resolved syntactically at all: explicit `[...]`
                         // arguments name type arguments, not an overload, and
                         // overload selection is the checker's. Inferred and
@@ -1554,7 +1552,7 @@ impl Elab<'_> {
             // provenance): stay abstract.
             return None;
         }
-        // An overloaded compile-time-keyed name resolves to the declaration
+        // An overloaded template name resolves to the declaration
         // the request selected, not to the registry's name-level entry.
         let template = match target.decl {
             Some(_) => self.selected_declaration(name, target.decl),

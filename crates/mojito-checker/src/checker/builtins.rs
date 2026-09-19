@@ -826,6 +826,7 @@ impl Checker {
                 // the seed resolves it by name alone.
                 parameter_names: Vec::new(),
                 parameter_types: Vec::new(),
+                variadic: None,
                 arguments: arguments.clone(),
             },
         );

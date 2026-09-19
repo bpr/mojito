@@ -159,12 +159,16 @@ pub struct DefSpecializationRequest {
     occurrence: SourceSpan,
     callee: String,
     /// The selected overload's runtime parameter names, in declaration order:
-    /// which declaration of an overloaded compile-time-keyed name the request
+    /// which declaration of an overloaded template name the request
     /// is for. A uniquely named callee ignores it.
     parameter_names: Vec<String>,
     /// The same parameters' declared types, mangled as `TypeKey`, breaking a
     /// tie between overloads that share a parameter-name list.
     parameter_types: Vec<String>,
+    /// The selected overload's `*args` collector, spelled by neither list:
+    /// what tells two type-pack overloads apart when every regular parameter
+    /// agrees.
+    variadic: Option<mojito_symbol::symbol::VariadicKey>,
     /// The checker's declaration-order argument list from `resolve_use_params`.
     arguments: Vec<TyArg>,
 }
@@ -182,8 +186,16 @@ impl DefSpecializationRequest {
             callee,
             parameter_names,
             parameter_types,
+            variadic: None,
             arguments,
         }
+    }
+
+    /// Name the selected overload's `*args` collector as well.
+    #[must_use]
+    pub fn with_variadic(mut self, variadic: Option<mojito_symbol::symbol::VariadicKey>) -> Self {
+        self.variadic = variadic;
+        self
     }
 
     pub const fn occurrence(&self) -> &SourceSpan {
@@ -200,6 +212,10 @@ impl DefSpecializationRequest {
 
     pub fn parameter_types(&self) -> &[String] {
         &self.parameter_types
+    }
+
+    pub const fn variadic(&self) -> Option<&mojito_symbol::symbol::VariadicKey> {
+        self.variadic.as_ref()
     }
 
     pub fn arguments(&self) -> &[TyArg] {
@@ -848,7 +864,7 @@ pub fn elaborate_prepared(
         bound_generics,
         pack_generics,
         comptime_generics: collect_comptime_generic_templates(program),
-        comptime_overloads: collect_comptime_overload_families(program),
+        overload_families: collect_overload_families(program),
         method_requests: method_requests_by_owner,
         instance_requests,
         hash_leaf_types: hash_leaf_types.to_vec(),
@@ -1595,11 +1611,11 @@ struct Elab<'a> {
     /// instantiation for its occurrence; a deferred call keeps the template as
     /// a signature-only stub for the discovery check.
     comptime_generics: HashSet<String>,
-    /// The declarations of every overloaded compile-time-keyed name, in
-    /// declaration order (see [`collect_comptime_overload_families`]). A call
+    /// The declarations of every overloaded template name, in
+    /// declaration order (see [`collect_overload_families`]). A call
     /// to such a name is served only from the checker's recorded
     /// instantiation, which names the selected overload.
-    comptime_overloads: HashMap<String, Vec<&'a Stmt>>,
+    overload_families: HashMap<String, Vec<&'a Stmt>>,
     /// Checker-discovered generic-method instantiations on specialized
     /// variadic structs, by owner name: each becomes a per-call clone.
     method_requests: HashMap<String, Vec<MethodSpecializationRequest>>,
@@ -1683,8 +1699,8 @@ fn substitute_source_param_arg_binding(argument: &mut ParamArg, binding: &str, r
 /// The concrete clone a checker-discovered inferred application selects.
 struct DefCallTarget {
     template: String,
-    /// Which declaration of an overloaded compile-time-keyed name the request
-    /// selected, as an index into [`Elab::comptime_overloads`]. `None` for
+    /// Which declaration of an overloaded template name the request
+    /// selected, as an index into [`Elab::overload_families`]. `None` for
     /// every uniquely named template.
     decl: Option<usize>,
     vals: Vec<CtValue>,
@@ -1798,7 +1814,7 @@ struct Mono {
     queue: VecDeque<Job>,
     /// Mangled names already requested (dedups identical instantiations).
     done: HashSet<String>,
-    /// The same dedup for an overloaded compile-time-keyed family, where two
+    /// The same dedup for an overloaded template family, where two
     /// declarations specialized at the same values share one mangled name and
     /// are told apart only by the declaration index. `done` cannot serve here:
     /// it is shared with struct instances.
@@ -1884,7 +1900,7 @@ struct Mono {
 
 impl Mono {
     /// Whether a specialization named `output_name` is new and should be
-    /// queued. Two declarations of an overloaded compile-time-keyed family
+    /// queued. Two declarations of an overloaded template family
     /// specialized at the same values share one mangled name, so they dedup
     /// on the declaration index instead.
     fn queue_specialization(&mut self, output_name: &str, decl: Option<usize>) -> bool {
@@ -2145,17 +2161,18 @@ fn collect_specializable<'a>(
             // An overloaded name has one entry here, the first declaration:
             // this registry answers the name-level question "is this a
             // template at all?". Which declaration of an overloaded
-            // compile-time-keyed name a call selects is
+            // template name a call selects is
             // [`Elab::family_declaration`]'s to answer, from
-            // [`collect_comptime_overload_families`].
+            // [`collect_overload_families`].
             m.entry(name.clone()).or_insert(s);
         }
     }
     m
 }
 
-/// The declarations of every overloaded compile-time-keyed name, in
-/// declaration order.
+/// The declarations of every overloaded template name, in declaration order:
+/// a name declared more than once with a compile-time-keyed or type-pack
+/// declaration among them.
 ///
 /// Overload selection is the checker's, so the elaborator cannot pick among
 /// these itself: a call reaches one of them only through the checker's
@@ -2165,7 +2182,7 @@ fn collect_specializable<'a>(
 /// one — because the class is a property of a declaration, not of the name:
 /// the request's selected declaration index is what tells a call which class
 /// serves it.
-fn collect_comptime_overload_families(program: &[Stmt]) -> HashMap<String, Vec<&Stmt>> {
+fn collect_overload_families(program: &[Stmt]) -> HashMap<String, Vec<&Stmt>> {
     let mut families: HashMap<String, Vec<&Stmt>> = HashMap::new();
     for statement in program {
         if let StmtKind::Def { name, .. } = &statement.kind {
@@ -2173,7 +2190,10 @@ fn collect_comptime_overload_families(program: &[Stmt]) -> HashMap<String, Vec<&
         }
     }
     families.retain(|_, declarations| {
-        declarations.len() > 1 && declarations.iter().any(|s| comptime_keyed_declaration(s))
+        declarations.len() > 1
+            && declarations
+                .iter()
+                .any(|s| comptime_keyed_declaration(s) || pack_keyed_declaration(s))
     });
     families
 }
@@ -2204,6 +2224,24 @@ fn declaration_takes_types(statement: &Stmt, parameter_types: &[String]) -> bool
             .as_str()
             .to_string()
     })
+}
+
+/// Whether `statement`'s `*args` collector is `variadic`: the same position
+/// among its caller-visible parameters and the same element key, or no
+/// collector on either side.
+fn declaration_takes_variadic(
+    statement: &Stmt,
+    variadic: Option<&mojito_symbol::symbol::VariadicKey>,
+) -> bool {
+    let StmtKind::Def {
+        params,
+        type_params,
+        ..
+    } = &statement.kind
+    else {
+        return false;
+    };
+    mojito_symbol::symbol::VariadicKey::from_ast_params(params, type_params).as_ref() == variadic
 }
 
 fn declaration_takes(
@@ -2274,23 +2312,16 @@ fn def_name_counts(program: &[Stmt]) -> HashMap<&str, usize> {
 
 /// Top-level type-pack templates: a `def` with a `*Ts` type parameter (see
 /// [`pack_generic_template_names`]). Value packs stay on the syntactic (hard)
-/// specialization path. An overloaded name joins only as a member of a
-/// compile-time-keyed family, whose request path tells its declarations apart;
-/// otherwise overload selection is the checker's and the name-keyed registry
-/// could not say which declaration a call meant.
+/// specialization path. An overloaded name is a template family
+/// ([`collect_overload_families`]), whose request path tells its declarations
+/// apart, since overload selection is the checker's.
 fn collect_pack_generic_templates(program: &[Stmt]) -> HashSet<String> {
-    let def_counts = def_name_counts(program);
-    let families = collect_comptime_overload_families(program);
     program
         .iter()
-        .filter_map(|statement| {
-            let StmtKind::Def { name, .. } = &statement.kind else {
-                return None;
-            };
-            if def_counts[name.as_str()] != 1 && !families.contains_key(name.as_str()) {
-                return None;
-            }
-            pack_keyed_declaration(statement).then(|| name.clone())
+        .filter(|statement| pack_keyed_declaration(statement))
+        .filter_map(|statement| match &statement.kind {
+            StmtKind::Def { name, .. } => Some(name.clone()),
+            _ => None,
         })
         .collect()
 }
@@ -2316,7 +2347,7 @@ fn pack_keyed_declaration(statement: &Stmt) -> bool {
 /// parameters, and SIMD-width parameters stay on their own paths: their
 /// signatures cannot stand in as a checkable stub.
 fn collect_comptime_generic_templates(program: &[Stmt]) -> HashSet<String> {
-    let families = collect_comptime_overload_families(program);
+    let families = collect_overload_families(program);
     let def_counts = def_name_counts(program);
     program
         .iter()
@@ -2398,7 +2429,7 @@ fn stmt_has_comptime(s: &Stmt) -> bool {
 /// A pending specialization request: template `orig`, specialized for `vals`.
 struct Job {
     orig: String,
-    /// The selected declaration of an overloaded compile-time-keyed name; see
+    /// The selected declaration of an overloaded template name; see
     /// [`DefCallTarget::decl`]. The drain resolves the template through it,
     /// since `orig` names a whole family.
     decl: Option<usize>,
@@ -2508,25 +2539,25 @@ mod specialize;
 use rewrite::*;
 
 impl<'a> Elab<'a> {
-    /// The one declaration of overloaded compile-time-keyed `name` whose
+    /// The one declaration of overloaded template `name` whose
     /// runtime parameters are `parameter_names`, with its index.
     ///
     /// The checker records the selected overload's parameter names in
     /// declaration order, excluding an `out` named result, so this is how a
     /// request names one overload of a template. Overloads that share a
-    /// parameter-name list are told apart by their mangled parameter types,
-    /// and overloads that share both — a variadic parameter is caller-visible
-    /// but is named by neither key, so a type pack and a nullary declaration
-    /// both spell the empty list — by whether the request's own arguments
-    /// bind the declaration's parameters at all. A family ambiguous under all
-    /// three leaves the call abstract, and the driver's unserved-use check
-    /// rejects it in the caller's own terms.
+    /// parameter-name list are told apart by their mangled parameter types.
+    /// A variadic parameter is caller-visible but is named by neither key, so
+    /// overloads that share both are told apart by their `*args` collector —
+    /// its position and element key — and then by whether the request's own
+    /// arguments bind the declaration's parameters at all. A family ambiguous
+    /// under all four leaves the call abstract, and the driver's unserved-use
+    /// check rejects it in the caller's own terms.
     pub(super) fn family_declaration(
         &self,
         name: &str,
         request: &DefSpecializationRequest,
     ) -> Option<(usize, &'a Stmt)> {
-        let declarations = self.comptime_overloads.get(name)?;
+        let declarations = self.overload_families.get(name)?;
         let by_name: Vec<(usize, &'a Stmt)> = declarations
             .iter()
             .enumerate()
@@ -2552,6 +2583,16 @@ impl<'a> Elab<'a> {
             [] => candidates,
             _ => by_type,
         };
+        let by_collector: Vec<(usize, &'a Stmt)> = candidates
+            .iter()
+            .copied()
+            .filter(|(_, declaration)| declaration_takes_variadic(declaration, request.variadic()))
+            .collect();
+        let candidates = match by_collector.as_slice() {
+            [only] => return Some(*only),
+            [] => candidates,
+            _ => by_collector,
+        };
         let mut by_shape = candidates.into_iter().filter(|(_, declaration)| {
             self.def_request_values(declaration, request.arguments())
                 .is_some()
@@ -2560,7 +2601,7 @@ impl<'a> Elab<'a> {
         by_shape.next().is_none().then_some(only)
     }
 
-    /// Whether `statement` shares an overloaded compile-time-keyed name
+    /// Whether `statement` shares an overloaded template name
     /// without being a template of any class itself — a plain
     /// `def kind(a: Int, b: Int)` beside a `def kind[T](a: T)` whose body holds
     /// a `comptime if`.
@@ -2575,20 +2616,20 @@ impl<'a> Elab<'a> {
         let StmtKind::Def { name, .. } = &statement.kind else {
             return false;
         };
-        self.comptime_overloads.contains_key(name) && !is_specializable_declaration(statement)
+        self.overload_families.contains_key(name) && !is_specializable_declaration(statement)
     }
 
-    /// Whether `name` is an overloaded compile-time-keyed family: a call to it
+    /// Whether `name` is an overloaded template family: a call to it
     /// is served only from the checker's recorded instantiation, never
     /// resolved syntactically.
-    pub(super) fn comptime_overload_family(&self, name: &str) -> bool {
-        self.comptime_overloads.contains_key(name)
+    pub(super) fn overload_family(&self, name: &str) -> bool {
+        self.overload_families.contains_key(name)
     }
 
     /// The declaration a job or call target selected, or the sole declaration
     /// the name-keyed registry holds.
     pub(super) fn selected_declaration(&self, name: &str, decl: Option<usize>) -> &'a Stmt {
-        decl.and_then(|index| self.comptime_overloads.get(name)?.get(index).copied())
+        decl.and_then(|index| self.overload_families.get(name)?.get(index).copied())
             .unwrap_or_else(|| self.specializable[name])
     }
 
@@ -2996,6 +3037,56 @@ mod def_request_tests {
         assert!(
             calls.iter().any(|name| name.starts_with("ident$")),
             "{calls:?}"
+        );
+    }
+
+    #[test]
+    fn a_request_names_a_type_pack_overload_by_its_collector() {
+        let source = "def pos[*Ts: Writable](a: Int, *rest: *Ts) -> Int:\n    return 1\n\n\
+                      def pos[*Ts: Writable](*rest: *Ts, a: Int) -> Int:\n    return 2\n\n\
+                      def main():\n    print(pos(7, a=1))\n";
+        let parsed = parse(source).expect("parse");
+        let occurrence = inferred_call_span(&parsed, "pos");
+        let StmtKind::Def {
+            params,
+            type_params,
+            ..
+        } = &parsed[1].kind
+        else {
+            panic!("the second declaration is a def");
+        };
+        let request = DefSpecializationRequest::new(
+            occurrence,
+            "pos".to_string(),
+            vec!["a".to_string()],
+            vec!["Int".to_string()],
+            vec![TyArg::Val(CtValue::Tuple(vec![CtValue::Type(Box::new(
+                Ty::Int,
+            ))]))],
+        )
+        .with_variadic(mojito_symbol::symbol::VariadicKey::from_ast_params(
+            params,
+            type_params,
+        ));
+
+        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[], &[], &[])
+            .expect("materialize the requested specialization")
+            .program;
+
+        let clones: Vec<_> = elaborated
+            .iter()
+            .filter_map(|statement| match &statement.kind {
+                StmtKind::Def { name, params, .. } if name.starts_with("pos$") => Some(params),
+                _ => None,
+            })
+            .collect();
+        let [clone] = clones.as_slice() else {
+            panic!("exactly one clone, got {}", clones.len());
+        };
+        assert_eq!(
+            clone[0].kind,
+            mojito_ast::ast::ParamKind::Variadic,
+            "the clone comes from the collector-first declaration"
         );
     }
 

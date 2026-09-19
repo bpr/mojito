@@ -288,8 +288,12 @@ pub struct GenericInstantiation {
     /// `mojito_symbol::symbol::TypeKey` so they compare directly against the
     /// declaration's own annotations. This breaks a tie between overloads
     /// sharing a parameter-name list (`f[T](a: T)` beside `f(a: String)`); a
-    /// family ambiguous under both lists is served for none of its members.
+    /// family ambiguous under both lists is told apart by [`Self::variadic`].
     pub parameter_types: Vec<String>,
+    /// The selected overload's `*args` collector, which neither list spells:
+    /// two type-pack overloads can agree on every regular parameter and differ
+    /// only in where the collector sits or in its pack's bounds.
+    pub variadic: Option<mojito_symbol::symbol::VariadicKey>,
     pub arguments: Vec<mojito_types::types::TyArg>,
 }
 

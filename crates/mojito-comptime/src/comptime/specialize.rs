@@ -299,7 +299,7 @@ impl Elab<'_> {
         }
         for (index, stmt) in program.into_iter().enumerate() {
             let template_name = match &stmt.kind {
-                // A plain overload sharing a compile-time-keyed family's name
+                // A plain overload sharing a template family's name
                 // is not a template: it survives the rebuild unchanged, and
                 // the family's clones are emitted at its keyed sibling.
                 StmtKind::Def { name, .. } | StmtKind::Struct { name, .. }
@@ -417,11 +417,11 @@ impl Elab<'_> {
             {
                 continue;
             }
-            // An overloaded compile-time-keyed name is a family: the request's
+            // An overloaded template name is a family: the request's
             // parameter names say which declaration the checker selected, and
             // a request that names none of them (or two of them) is skipped so
             // the call stays abstract.
-            let (decl, template) = if self.comptime_overload_family(callee) {
+            let (decl, template) = if self.overload_family(callee) {
                 match self.family_declaration(callee, request) {
                     Some((index, declaration)) => (Some(index), declaration),
                     None => continue,

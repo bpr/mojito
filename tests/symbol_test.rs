@@ -386,3 +386,53 @@ fn specialization_keys_spell_a_minted_tuple_element_canonically() {
     let erased = Ty::Struct("Tuple$t2[y3:Inty4:Bool]".to_string(), Vec::new());
     assert_eq!(canonical_specialization_type(&erased), erased);
 }
+
+#[test]
+fn collector_position_is_part_of_callable_identity() {
+    let source = "def route(a: Int, *rest: Int) -> Int:\n    return 1\n\ndef route(*rest: Int, a: Int) -> Int:\n    return 2\n\ndef main():\n    print(route(1, 2))\n    print(route(2, a=1))\n";
+    let names = lowered_names(source);
+    let program = parse(source).expect("parse error");
+    let targets = resolve_overload_targets(&program).expect("check error");
+    let route_targets: HashSet<_> = targets
+        .values()
+        .filter(|target| target.starts_with("route$ov$"))
+        .cloned()
+        .collect();
+    assert_eq!(route_targets.len(), 2, "{route_targets:?}");
+    assert!(
+        route_targets.iter().all(|target| names.contains(target)),
+        "{route_targets:?} vs {names:?}"
+    );
+}
+
+#[test]
+fn variadic_key_spells_a_collectors_position_and_pack_bounds() {
+    use mojito::ast::StmtKind;
+    use mojito::symbol::VariadicKey;
+
+    let program = parse(
+        "def f[*Ts: Writable](a: Int, *rest: *Ts):\n    pass\n\n\
+         def f[*Ts: Writable](*rest: *Ts, a: Int):\n    pass\n\n\
+         def f[*Ts: Intable](a: Int, *rest: *Ts):\n    pass\n\n\
+         def f[*Ts: Writable](b: Int, var *others: *Ts):\n    pass\n\n\
+         def f(a: Int):\n    pass\n",
+    )
+    .expect("parse error");
+    let keys: Vec<_> = program
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            StmtKind::Def {
+                params,
+                type_params,
+                ..
+            } => Some(VariadicKey::from_ast_params(params, type_params)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(keys[0].as_ref().map(VariadicKey::position), Some(1));
+    assert_eq!(keys[1].as_ref().map(VariadicKey::position), Some(0));
+    assert_ne!(keys[0], keys[1], "position");
+    assert_ne!(keys[0], keys[2], "pack bounds");
+    assert_eq!(keys[0], keys[3], "name and convention are not identity");
+    assert_eq!(keys[4], None);
+}

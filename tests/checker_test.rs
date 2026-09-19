@@ -6592,3 +6592,16 @@ fn print_keywords_are_checked() {
         "got {e:?}"
     );
 }
+
+#[test]
+fn collector_position_distinguishes_overloads() {
+    ok(
+        "def pos[*Ts: Writable](a: Int, *rest: *Ts) -> Int:\n    return 1\n\n\
+         def pos[*Ts: Writable](*rest: *Ts, a: Int) -> Int:\n    return 2\n",
+    );
+    let e = err(
+        "def pos[*Ts: Writable](a: Int, *rest: *Ts) -> Int:\n    return 1\n\n\
+         def pos[*Ts: Writable](a: Int, *others: *Ts) -> Int:\n    return 2\n",
+    );
+    assert_eq!(e, TypeError::Redeclaration("pos".into()));
+}

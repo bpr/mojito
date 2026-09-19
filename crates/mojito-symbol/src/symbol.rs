@@ -506,6 +506,73 @@ impl SignatureKey {
     }
 }
 
+/// A callable's `*args` collector as typed data: how many caller-visible
+/// regular parameters precede it, and its element type's key.
+///
+/// A specialization request names one overload of a template by its regular
+/// parameters' names and types, and a collector is spelled by neither: two
+/// type-pack declarations can agree on both and differ only here, in the
+/// collector's position (`f(a: Int, *rest: *Ts)` beside
+/// `f(*rest: *Ts, a: Int)`) or in its pack's bounds. The collector's own name
+/// and convention are not part of the key, since no call can select by them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VariadicKey {
+    position: usize,
+    element: TypeKey,
+}
+
+impl VariadicKey {
+    /// The collector of a declared parameter list, keyed in the scope of the
+    /// declaration's own compile-time parameters (see
+    /// [`TypeKey::from_ast_in_scope`]). An `out` named result is not
+    /// caller-visible and does not count toward the position.
+    pub fn from_ast_params(params: &[FnParam], type_params: &[TypeParam]) -> Option<Self> {
+        let index = params
+            .iter()
+            .position(|parameter| parameter.kind == mojito_ast::ast::ParamKind::Variadic)?;
+        Some(Self {
+            position: params[..index]
+                .iter()
+                .filter(|parameter| {
+                    parameter.kind == mojito_ast::ast::ParamKind::Regular
+                        && !matches!(parameter.convention, Some(ArgConvention::Out))
+                })
+                .count(),
+            element: TypeKey::from_ast_in_scope(&params[index].ty, type_params),
+        })
+    }
+
+    /// The collector of a checker-resolved callable type. Every regular
+    /// parameter after a collector is keyword-only, so the callable's
+    /// keyword-only index is the collector's position.
+    pub fn from_callable(ty: &Ty) -> Option<Self> {
+        let (Ty::Func {
+            params,
+            variadic: Some(element),
+            keyword_only,
+            ..
+        }
+        | Ty::GenericFunc {
+            params,
+            variadic: Some(element),
+            keyword_only,
+            ..
+        }) = ty
+        else {
+            return None;
+        };
+        Some(Self {
+            position: keyword_only.unwrap_or(params.len()),
+            element: TypeKey::from_ty(element),
+        })
+    }
+
+    /// How many caller-visible regular parameters precede the collector.
+    pub const fn position(&self) -> usize {
+        self.position
+    }
+}
+
 /// The bundled stdlib's nominal `String` struct under its linked module
 /// identity. The checker's construction routing and the VM's
 /// literal-to-struct bridge both key on this exact declaration.
@@ -742,13 +809,18 @@ pub fn lowered_def_name(
         function_symbol(
             name,
             // A free function has no enclosing struct, so no `Self` to canonicalize.
-            &signature_from_ast(params, type_params, &sets.comptimes, None).with_owned_params(
-                &params
-                    .iter()
-                    .filter(|param| param.kind == mojito_ast::ast::ParamKind::Regular)
-                    .map(|param| param.convention)
-                    .collect::<Vec<_>>(),
-            ),
+            // The parameters after a `*args` collector are keyword-only, and
+            // their names tell `f(a: Int, *rest: Int)` from
+            // `f(*rest: Int, a: Int)`, whose type sequences agree.
+            &signature_from_ast(params, type_params, &sets.comptimes, None)
+                .with_keyword_names(keyword_only_names(params, None))
+                .with_owned_params(
+                    &params
+                        .iter()
+                        .filter(|param| param.kind == mojito_ast::ast::ParamKind::Regular)
+                        .map(|param| param.convention)
+                        .collect::<Vec<_>>(),
+                ),
         )
     } else {
         name.to_string()

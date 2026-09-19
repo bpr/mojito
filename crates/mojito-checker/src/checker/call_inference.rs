@@ -575,6 +575,7 @@ impl Checker {
                                         ret,
                                         score,
                                         target,
+                                        index,
                                         error,
                                         owned: owned_parameters(candidate),
                                         owned_arguments: owned_arguments(candidate, args, kwargs),
@@ -639,10 +640,10 @@ impl Checker {
                     saved_consuming_receivers;
             }
             return match select_callable_overload(matches) {
-                Ok((ret, target, error)) => {
+                Ok((ret, target, selected_index, error)) => {
                     self.overload_targets
                         .borrow_mut()
-                        .insert(span.clone(), target.clone());
+                        .insert(span.clone(), target);
                     // Only the selected candidate's re-run below may leave an
                     // instantiation at this occurrence. A losing generic
                     // candidate wrote one while it was being probed, and a
@@ -650,11 +651,9 @@ impl Checker {
                     // hand the elaborator a request for a callee this call
                     // does not make.
                     self.generic_instantiations.borrow_mut().remove(&span);
-                    if let Some((index, selected)) =
-                        candidates.iter().enumerate().find(|(_, candidate)| {
-                            callable_lowered_name(name, candidate).as_deref()
-                                == Some(target.as_str())
-                        })
+                    if let Some((index, selected)) = candidates
+                        .get(selected_index)
+                        .map(|selected| (selected_index, selected))
                     {
                         let (prepared, ordinary_param_args) = self
                             .prepare_callable_specialization(
@@ -1397,7 +1396,8 @@ impl Checker {
             .unwrap_or(*ret);
         Ok((
             result,
-            overload_rank(score, variadic.is_some() || has_kw_collector, 0, false),
+            overload_rank(score, variadic.is_some() || has_kw_collector, 0, false)
+                + variadic_absorption_rank(variadic.as_ref().map(|_| overflow.len())),
             error.map(|error| *error),
             bool_bindings,
         ))
@@ -1665,6 +1665,7 @@ impl Checker {
                                 .to_string()
                         })
                         .collect(),
+                    variadic: mojito_symbol::symbol::VariadicKey::from_callable(generic),
                     arguments: tyargs,
                 },
             );
@@ -1676,7 +1677,7 @@ impl Checker {
                 variadic.is_some() || kw_variadic.is_some(),
                 decls.len(),
                 true,
-            ),
+            ) + variadic_absorption_rank(variadic.as_ref().map(|_| overflow.len())),
             error,
             bool_bindings,
         ))

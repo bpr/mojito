@@ -34,7 +34,7 @@ map and dependency DAG live in `docs/architecture.md` §Workspace Layout.
 |---|---|---|
 | Structural call binding | `call::{match_call_slots, ArgSlot, CallSlots}` | Checker and VM call adapters. |
 | Parser-to-call marker normalization | `call::{regular_marker_index, effective_keyword_only_index}` | Checker and MIR declaration lowering. |
-| Callable identity, overload/dispatch, and native instance names | `symbol::{SignatureKey, InstanceArg, OverloadSets, resolve_callable_symbol, resolve_method_symbol, instance_symbol, canonical_specialization_type, unqualified_instance_name, lowered_def_name, lowered_method_name, static_method_symbol, is_tuple_specialization_symbol}` | Checker, MIR, VM, native monomorphization, symbol tests. Runtime and native method retargeting share one declaration-view policy. A receiver-overloaded static (`Tuple.__len__()` beside the instance `__len__`) keys as `static_method_symbol`; a minted Tuple instance spells bare in overload keys and with its elements in instance names (`KeyMode`). A struct's variadic runtime-pack constructor beside a same-arity nullary one is selected by the VM's `constructor_name`, the monomorphizer's `runtime_pack_constructor`, and the native `constructor_init` alike. |
+| Callable identity, overload/dispatch, and native instance names | `symbol::{SignatureKey, VariadicKey, InstanceArg, OverloadSets, resolve_callable_symbol, resolve_method_symbol, instance_symbol, canonical_specialization_type, unqualified_instance_name, lowered_def_name, lowered_method_name, static_method_symbol, is_tuple_specialization_symbol}` | Checker, MIR, VM, native monomorphization, symbol tests. Runtime and native method retargeting share one declaration-view policy. A receiver-overloaded static (`Tuple.__len__()` beside the instance `__len__`) keys as `static_method_symbol`; a minted Tuple instance spells bare in overload keys and with its elements in instance names (`KeyMode`). A struct's variadic runtime-pack constructor beside a same-arity nullary one is selected by the VM's `constructor_name`, the monomorphizer's `runtime_pack_constructor`, and the native `constructor_init` alike. |
 | Checked semantic facts | `checked::{CheckedProgram, CheckedTables, CheckedConst, AnnotationSite, CheckedCallContract, CheckedIteratorCall, CheckedResultAdapter}` | MIR, ownership driver, backends. `CheckedProgram::tables` is the one `Arc<CheckedTables>` (expressions, declarations, span indexes) that every `hir::Cfg` and MIR `Flatten` shares — lowering never copies program-wide tables. |
 | Source annotation syntax | `ast::SourceType` (alias of the AST `Type` node) | Parser, checker input, HIR/MIR source metadata. |
 | Source location/provenance | `token::{Span, SourceSpan}` | AST, checker side tables, MIR diagnostics. |
@@ -487,8 +487,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `omits_required_param` in `comptime/mono.rs` — each classification is a
   per-declaration predicate (`comptime_keyed_declaration`,
   `pack_keyed_declaration`) that an overloaded name admits one declaration at
-  a time, so one family may hold two classes and `Elab::family_declaration`
-  picks the declaration a request selected; `template_stub` in
+  a time, so one family may hold two classes, or two type packs, and
+  `Elab::family_declaration` picks the declaration a request selected by its
+  parameter names, parameter types, and `symbol::VariadicKey`; `template_stub` in
   `comptime/specialize.rs` stands in for either deferred template;
   `Mono::retain_abstract` records each abstract reference and
   `Mono::record_method_edge` each by-name method call from an abstract body,
