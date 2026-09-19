@@ -590,7 +590,7 @@ fn print_fixture_exes_match_vm_output() {
 ///
 /// Only a sanitized executable catches this: stdout is correct either way,
 /// because the freed bytes are still intact when the constructor copies them.
-/// The whole-corpus ASan lane that first caught it (`tests/heavy/`) costs
+/// The whole-corpus `ASan` lane that first caught it (`tests/heavy/`) costs
 /// 30-60 minutes and sits outside the overnight gate, so the shape is pinned
 /// here too. `detect_leaks=1` keeps the copy from being the other bug.
 #[test]

@@ -100,6 +100,16 @@ pub struct FnSignature {
     /// abandon owned arguments in the VM arena; native code releases their
     /// storage invisibly after the call.
     pub empty_body: bool,
+    /// Whether the result is the value itself or a reference to it.
+    pub result_form: ResultForm,
+}
+
+/// What a compiled function hands back: its result value, or one pointer to
+/// caller-owned storage holding it (`func.returns_reference`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ResultForm {
+    Value,
+    Reference,
 }
 
 /// The `{ tag: u32, ok: T, err: MjError }` outcome of a raising function,

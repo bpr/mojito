@@ -3390,7 +3390,7 @@ fn function_names(mir: &mojito::mir::MirProgram) -> Vec<&str> {
 }
 
 #[test]
-fn inferred_bound_generic_call_monomorphizes_and_drops_the_template() {
+fn inferred_bound_generic_call_monomorphizes_beside_the_template() {
     let mir = compiled_mir(
         "def ident[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    print(ident(2))\n",
     );
@@ -3399,7 +3399,9 @@ fn inferred_bound_generic_call_monomorphizes_and_drops_the_template() {
         names.iter().any(|name| name.starts_with("ident$")),
         "{names:?}"
     );
-    assert!(!names.contains(&"ident"), "{names:?}");
+    // The abstract template stays beside its clone: its body keeps the
+    // pre-check its own parameter bounds demand.
+    assert!(names.contains(&"ident"), "{names:?}");
     let main = &mir
         .functions
         .iter()
@@ -3432,7 +3434,7 @@ fn inferred_iteration_clone_uses_no_erased_iterator_dispatch() {
         !rendered.contains("__iterator_dispatch"),
         "clone still dispatches abstractly: {rendered}"
     );
-    assert!(!names.contains(&"first"), "{names:?}");
+    assert!(names.contains(&"first"), "{names:?}");
 }
 
 #[test]
@@ -3453,7 +3455,7 @@ fn clone_interior_inferred_calls_reach_a_second_discovery_round() {
         names.iter().any(|name| name.starts_with("inner$")),
         "{names:?}"
     );
-    assert!(!names.contains(&"outer"), "{names:?}");
+    assert!(names.contains(&"outer"), "{names:?}");
     let outer_clone = &mir
         .functions
         .iter()

@@ -2071,7 +2071,11 @@ impl Checker {
         // is always checked with its enclosing validated body.
         let check_body = !self.source_validation
             || !self.function_bases.is_empty()
-            || validates_body(type_params, body);
+            || validates_body(
+                type_params,
+                body,
+                body_keys_rebind(body, &self.rebind_keyed_bodies),
+            );
         if named_result.is_some() && ret_anno.is_some() {
             return Err(TypeError::Unsupported(
                 "a function cannot declare both a named result and '->' return type".to_string(),

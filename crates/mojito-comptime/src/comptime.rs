@@ -946,6 +946,39 @@ fn block_has_comptime(stmts: &[Stmt]) -> bool {
     stmts.iter().any(stmt_has_comptime)
 }
 
+/// Whether a block names `rebind[Dest](value)` anywhere below it, a nested
+/// `def` included: that nested body specializes per call, so the body holding
+/// it has to reach it through a clone of its own.
+///
+/// `rebind` asserts that the operand's parametric type resolves to `Dest`
+/// once instantiated, so — like a `comptime if` — the body it sits in can
+/// only check with that parameter bound. The assertion is made on the clone.
+pub(super) fn block_has_rebind(stmts: &[Stmt]) -> bool {
+    struct Finder {
+        found: bool,
+    }
+
+    impl mojito_ast::visit::Visitor for Finder {
+        fn visit_expr(&mut self, expr: &Expr) {
+            if matches!(&expr.kind, ExprKind::TypeApply { name, .. } | ExprKind::Call { name, .. } if name == "rebind")
+            {
+                self.found = true;
+            }
+        }
+    }
+
+    let mut finder = Finder { found: false };
+    mojito_ast::visit::walk_block(&mut finder, stmts);
+    finder.found
+}
+
+/// Whether a parametric body can only check once its own parameters are
+/// bound: it holds compile-time control flow, or a `rebind` assertion over
+/// them. Either way the template is stubbed and every instantiation clones.
+fn block_keys_specialization(stmts: &[Stmt]) -> bool {
+    block_has_comptime(stmts) || block_has_rebind(stmts)
+}
+
 fn collect_reference_origin_parameters(
     ty: &Ty,
     origins: &mut HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Mutability>,
@@ -1458,7 +1491,7 @@ fn is_specializable_declaration_in(
             type_params, body, ..
         } => {
             !type_params.is_empty()
-                && (block_has_comptime(body)
+                && (block_keys_specialization(body)
                     || type_params
                         .iter()
                         .any(|parameter| parameter.name.starts_with('*'))
@@ -2104,7 +2137,8 @@ fn collect_pack_generic_templates(program: &[Stmt]) -> HashSet<String> {
 
 /// Top-level compile-time-keyed templates (see
 /// [`comptime_generic_template_names`]): a uniquely named `def` specializable
-/// only because its body holds compile-time control flow. Packs, `DType`
+/// only because its body holds compile-time control flow or a `rebind`
+/// assertion over its own parameters. Packs, `DType`
 /// parameters, and SIMD-width parameters stay on their own paths: their
 /// signatures cannot stand in as a checkable stub.
 fn collect_comptime_generic_templates(program: &[Stmt]) -> HashSet<String> {
@@ -2122,7 +2156,7 @@ fn collect_comptime_generic_templates(program: &[Stmt]) -> HashSet<String> {
                 return None;
             };
             let admitted = def_counts[name.as_str()] == 1
-                && block_has_comptime(body)
+                && block_keys_specialization(body)
                 && !type_params.iter().any(|parameter| {
                     parameter.name.starts_with('*')
                         || matches!(parameter.bounds.as_slice(), [only] if only == "DType")

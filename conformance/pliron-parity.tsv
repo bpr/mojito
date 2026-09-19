@@ -72,7 +72,7 @@ assets/ok/container_hashable.mojo	main	exe-differential	sanitized
 assets/ok/contextual_member_static.mojo	main	exe-differential	sanitized
 assets/ok/copy_return.mojo	main	exe-differential	sanitized
 assets/ok/copyable.mojo	main	exe-differential	sanitized
-assets/ok/copyable_iterator_reference_aggregate.mojo	main	excluded	pliron backend: in `take$mono$TRefIter`: unsupported reference-result method adapter at assets/ok/copyable_iterator_reference_aggregate.mojo:36:12
+assets/ok/copyable_iterator_reference_aggregate.mojo	main	exe-differential	sanitized
 assets/ok/copyinit_moveinit.mojo	main	exe-differential	sanitized
 assets/ok/decorators.mojo	main	exe-differential	sanitized
 assets/ok/default_args.mojo	main	exe-differential	sanitized
@@ -155,7 +155,7 @@ assets/ok/inplace_subscript_ref.mojo	main	exe-differential	sanitized
 assets/ok/inplace_subscript_value.mojo	main	exe-differential	sanitized
 assets/ok/inplace_var.mojo	main	exe-differential	sanitized
 assets/ok/input.mojo	main	exe-differential	sanitized
-assets/ok/interior_dest_rebind_releases_loans.mojo	main	excluded	pliron backend: in `__module$std$memory$alloc$unsafe_alloc`: unsupported concrete instance symbol `__module$std$memory$alloc$unsafe_alloc$mono$TRefBox` collides with an existing declaration
+assets/ok/interior_dest_rebind_releases_loans.mojo	main	exe-differential	sanitized
 assets/ok/invert_operator.mojo	main	exe-differential	sanitized
 assets/ok/joint_map.mojo	main	exe-differential	sanitized
 assets/ok/keyword_call.mojo	main	exe-differential	sanitized
@@ -208,7 +208,7 @@ assets/ok/nominal_string_affix.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_atof_rounding.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_basics.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_bool_mul.mojo	main	exe-differential	sanitized
-assets/ok/nominal_string_bytes_capacity.mojo	main	excluded	pliron backend: in `__module$$ahash$AHasher$vuint64:4;[i0;i0;i0;i0;].update`: unsupported concrete instance symbol `__module$$ahash$AHasher$vuint64:4;[i0;i0;i0;i0;].update$mono$TStringSpan` collides with an existing declaration
+assets/ok/nominal_string_bytes_capacity.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_bytes_peek_split.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_case.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_codepoint_from_byte.mojo	main	exe-differential	sanitized
@@ -398,6 +398,7 @@ assets/ok/raise_borrowed_string_parameter.mojo	main	exe-differential	sanitized
 assets/ok/range_zero_step_empty.mojo	main	exe-differential	sanitized
 assets/ok/rebind_assignment.mojo	main	exe-differential	sanitized
 assets/ok/rebind_augmented_assignment.mojo	main	exe-differential	sanitized
+assets/ok/rebind_generic_body.mojo	main	exe-differential	sanitized
 assets/ok/ref_binding_projected_field_offset.mojo	main	exe-differential	sanitized
 assets/ok/ref_binding_temporary_source.mojo	main	exe-differential	sanitized
 assets/ok/ref_param.mojo	main	exe-differential	sanitized
@@ -543,11 +544,11 @@ assets/ownership_ok/shared_iterations_coexist.mojo	main	exe-differential	sanitiz
 assets/ownership_ok/view_live_across_reading_loop.mojo	main	exe-differential	sanitized
 assets/extensions/ok/comprehension_borrowed_named_source.mojo	main	exe-differential	sanitized
 assets/extensions/ok/container_owning_family_apis.mojo	main	exe-differential	sanitized
-assets/extensions/ok/copyable_iterator_reference_aggregate.mojo	main	excluded	pliron backend: in `take$mono$TRefIter`: unsupported reference-result method adapter at assets/extensions/ok/copyable_iterator_reference_aggregate.mojo:36:12
+assets/extensions/ok/copyable_iterator_reference_aggregate.mojo	main	exe-differential	sanitized
 assets/extensions/ok/delegated_ref_return_projection.mojo	main	exe-differential	sanitized
 assets/extensions/ok/forward_struct_reference_iterator.mojo	main	exe-differential	sanitized
 assets/extensions/ok/generic_borrowed_dispatch_overloaded_iter.mojo	main	exe-differential	sanitized
-assets/extensions/ok/interior_dest_rebind_releases_loans.mojo	main	excluded	pliron backend: in `__module$std$memory$alloc$unsafe_alloc`: unsupported concrete instance symbol `__module$std$memory$alloc$unsafe_alloc$mono$TRefBox` collides with an existing declaration
+assets/extensions/ok/interior_dest_rebind_releases_loans.mojo	main	exe-differential	sanitized
 assets/extensions/ok/iterable_associated_element.mojo	-	ineligible	no-main-entry
 assets/extensions/ok/lambda_captures.mojo	main	exe-differential	sanitized
 assets/extensions/ok/origin_argument_alias_bodies.mojo	main	exe-differential	sanitized

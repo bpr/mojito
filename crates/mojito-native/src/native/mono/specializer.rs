@@ -179,9 +179,21 @@ impl<'a> Specializer<'a> {
             }
         });
 
+        // Origins erase from the runtime ABI and from the instance symbol, so
+        // two arguments differing only in an origin name the same native
+        // instance; keying on them would mint a second instance under the same
+        // symbol and collide with the first.
         let key = InstanceKey {
             template: template.to_string(),
-            arguments,
+            arguments: arguments
+                .into_iter()
+                .map(|argument| match argument {
+                    InstanceArg::Ty(ty) => {
+                        InstanceArg::Ty(mojito_types::types::erase_origin_arguments(&ty))
+                    }
+                    value @ InstanceArg::Value(_) => value,
+                })
+                .collect(),
             owner,
         };
         if let Some((_, name)) = self.instances.iter().find(|(known, _)| known == &key) {

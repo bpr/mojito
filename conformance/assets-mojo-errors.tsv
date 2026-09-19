@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	396
+# swept-count	397
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -356,6 +356,7 @@ assets/type_error/positional_only_by_keyword.mojo	compile-reject	agree	error: in
 assets/type_error/predicate_alias_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/predicate_alias_in_type_position.mojo	compile-reject	agree	error: expected a type, not a value
 assets/type_error/print_unknown_keyword.mojo	compile-reject	agree	error: invalid call to 'print': unexpected keyword argument 'foo'
+assets/type_error/rebind_generic_body_mismatch.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/rebind_register_passable_assignment.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/rebind_register_passable_bound_assignment.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/rebind_register_passable_bound_inplace_destination.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination

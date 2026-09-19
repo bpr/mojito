@@ -80,9 +80,13 @@ pub fn check_program(stmts: &[Stmt]) -> Result<mojito_checked::checked::CheckedP
 /// Each function or method body containing a `comptime if`/`comptime for`
 /// is checked once with its declaration's parameters left symbolic: every
 /// condition must be a compile-time `Bool`, every arm and loop body is
-/// checked in its own scope, and no arm is ever dropped unchecked. Bodies
-/// without such constructs are declared (so the validated bodies can call
-/// them) but not checked here — the executable check covers them.
+/// checked in its own scope, and no arm is ever dropped unchecked. A body
+/// holding a `rebind` is checked the same way and for the same reason — it
+/// too is stubbed as a template, and its target is taken on faith here,
+/// asserted on each clone (`rebind::rebind_keyed_bodies`, scanned before the
+/// erasure removes the calls). Bodies with neither are declared (so the
+/// validated bodies can call them) but not checked here — the executable
+/// check covers them.
 ///
 /// Validation runs the abstract destruction check over the bodies it checked
 /// (`explicit_destroy::DestroyScope::ValidatedTemplates`): a compile-time-keyed
@@ -101,17 +105,19 @@ pub fn validate_comptime_templates(stmts: &[Stmt]) -> Result<(), TypeError> {
     let _validate = timing::span("comptime_validation");
     let mut expanded = expand_trait_defaults(stmts)?;
     mojito_ast::ast::rekey_syntax(&mut expanded);
+    let rebind_keyed = rebind::rebind_keyed_bodies(&expanded);
     let rebind_targets = erase_rebinds(&mut expanded);
     let mut checker = Checker::new();
     checker.source_validation = true;
     checker.rebind_targets = rebind_targets;
+    checker.rebind_keyed_bodies = rebind_keyed;
     let checked = checker.check_program(&expanded).and_then(|()| {
         with_stmt::splice_with_desugars(&mut expanded, &checker.with_desugars.borrow());
         run_explicit_destroy(
             &checker,
             &expanded,
             &explicit_destroy_types(&checker),
-            crate::explicit_destroy::DestroyScope::ValidatedTemplates,
+            crate::explicit_destroy::DestroyScope::ValidatedTemplates(&checker.rebind_keyed_bodies),
         )
     });
     match checked {
@@ -265,8 +271,13 @@ pub fn check_program_with_materialized_callables(
 pub(crate) fn validates_comptime_body(
     type_params: &[mojito_ast::ast::TypeParam],
     body: &[Stmt],
+    rebind_keyed: &HashSet<SourceSpan>,
 ) -> bool {
-    comptime_validation::validates_body(type_params, body)
+    comptime_validation::validates_body(
+        type_params,
+        body,
+        rebind::body_keys_rebind(body, rebind_keyed),
+    )
 }
 
 /// A declaration-only view of the checker's conformance registry for phases
@@ -445,6 +456,11 @@ pub struct Checker {
     /// The retypings the erased `rebind[Dest](value)` calls left behind (see
     /// `rebind.rs`).
     rebind_targets: RebindTargets,
+    /// The bodies a `rebind` keys, scanned before the erasure removed the
+    /// calls. Source validation checks exactly these beside the
+    /// compile-time-keyed ones; empty in the executable check, which sees
+    /// only clones.
+    rebind_keyed_bodies: HashSet<SourceSpan>,
     /// Per-scope compile-time bindings of a validated body: `comptime for`
     /// variables and the declaration's value parameters. The elaborator
     /// substitutes each as a literal, so a nested function or lambda reading
@@ -795,6 +811,7 @@ impl Checker {
             local_type_aliases: vec![HashMap::new()],
             local_comptime_values: vec![HashMap::new()],
             rebind_targets: RebindTargets::default(),
+            rebind_keyed_bodies: HashSet::new(),
             compile_time_bindings: vec![HashSet::new()],
             enclosing_type_params: Vec::new(),
             self_ty: None,
@@ -2099,7 +2116,7 @@ fn run_explicit_destroy(
     checker: &Checker,
     program: &[Stmt],
     struct_types: &HashMap<String, mojito_checked::checked::ExplicitDestroyInfo>,
-    scope: crate::explicit_destroy::DestroyScope,
+    scope: crate::explicit_destroy::DestroyScope<'_>,
 ) -> Result<(), TypeError> {
     let binding_types = checker.binding_types.borrow();
     let comprehension_bindings = checker.comprehension_bindings.borrow();

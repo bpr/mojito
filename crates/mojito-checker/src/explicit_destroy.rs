@@ -28,13 +28,14 @@ pub struct CheckedDeletability {
 
 /// Which declarations [`check`] walks.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum DestroyScope {
+pub enum DestroyScope<'a> {
     /// Every function and method of the elaborated program.
     Program,
     /// Only the template bodies source validation checked with the
-    /// declaration's parameters symbolic (`validates_body`). Every other body
-    /// is left to the executable check, whose facts this run does not have.
-    ValidatedTemplates,
+    /// declaration's parameters symbolic (`validates_body`), which needs the
+    /// bodies a `rebind` keys. Every other body is left to the executable
+    /// check, whose facts this run does not have.
+    ValidatedTemplates(&'a HashSet<SourceSpan>),
 }
 
 /// Per-expression facts the checker recorded for one program, carried on
@@ -65,7 +66,7 @@ pub fn check(
     deletability: &CheckedDeletability,
     types: &HashMap<String, ExplicitDestroyInfo>,
     spans: SpanFacts,
-    scope: DestroyScope,
+    scope: DestroyScope<'_>,
 ) -> Result<(), TypeError> {
     if types.is_empty() {
         return Ok(());
@@ -530,10 +531,12 @@ fn obligation_place(expr: &Expr, env: &Env) -> Option<(usize, Vec<String>)> {
 /// instantiations select. A value destroyed in one arm only is left
 /// conditionally initialized: a later use of it is a use of an uninitialized
 /// value, and with no later use it is abandoned at the end of its scope.
-fn join_parametric(mut exits: Vec<Env>) -> Env {
-    let Some(mut joined) = exits.pop() else {
-        return Env::default();
-    };
+///
+/// No exit at all means every arm is terminal (`return`, `raise`, `break`,
+/// `continue`): there is no environment to carry on with, and the caller
+/// stops walking the block.
+fn join_parametric(mut exits: Vec<Env>) -> Option<Env> {
+    let mut joined = exits.pop()?;
     for other in &exits {
         for (var, arm) in joined.vars.iter_mut().zip(&other.vars) {
             if var.message.is_some()
@@ -545,7 +548,7 @@ fn join_parametric(mut exits: Vec<Env>) -> Env {
             }
         }
     }
-    joined
+    Some(joined)
 }
 
 fn join(mut exits: Vec<Env>) -> Result<Env, TypeError> {
@@ -609,12 +612,45 @@ fn branch_exits(
     Ok(exits)
 }
 
+/// Check a runtime `if`: every branch runs from the entry environment and
+/// their exits must agree (`join`).
+///
+/// `None` means every branch is terminal, so nothing follows the statement.
+fn check_if(
+    branches: &[(Expr, Vec<Stmt>)],
+    orelse: Option<&[Stmt]>,
+    env: Env,
+    binding_types: &HashMap<SourceSpan, Ty>,
+    comprehension_bindings: &HashMap<
+        SourceSpan,
+        Vec<mojito_checked::checked::CheckedComprehensionBinding>,
+    >,
+    deletability: &CheckedDeletability,
+    types: &HashMap<String, ExplicitDestroyInfo>,
+) -> Result<Option<Env>, TypeError> {
+    let exits = branch_exits(
+        branches,
+        orelse,
+        env,
+        binding_types,
+        comprehension_bindings,
+        deletability,
+        types,
+    )?;
+    if exits.is_empty() {
+        return Ok(None);
+    }
+    join(exits).map(Some)
+}
+
 /// Check a `comptime if`. A condition naming a parameter in scope selects a
 /// different arm per instantiation, and the arms join as branches
 /// (`join_parametric`). Any other condition folds to one arm before this
 /// analysis would run on the elaborated body; which one is not known here, so
 /// the arms are alternatives (`join_comptime`), which can miss an abandonment
 /// but never reports one the taken arm does not have.
+///
+/// `None` means every arm is terminal, so nothing follows the statement.
 fn check_comptime_if(
     branches: &[(Expr, Vec<Stmt>)],
     orelse: Option<&[Stmt]>,
@@ -626,7 +662,7 @@ fn check_comptime_if(
     >,
     deletability: &CheckedDeletability,
     types: &HashMap<String, ExplicitDestroyInfo>,
-) -> Result<Env, TypeError> {
+) -> Result<Option<Env>, TypeError> {
     let parametric = branches
         .iter()
         .any(|(condition, _)| env.is_parametric(condition));
@@ -643,7 +679,7 @@ fn check_comptime_if(
         return Ok(join_parametric(exits));
     }
     exits.push(env);
-    Ok(join_comptime(exits))
+    Ok(Some(join_comptime(exits)))
 }
 
 /// Join the alternatives of a `comptime if` that folds without the parameters
@@ -905,8 +941,15 @@ fn check_stmt(
             env.check_ids(0..env.vars.len())?;
             return Ok(None);
         }
-        StmtKind::If { branches, orelse } => {
-            env = join(branch_exits(
+        // The same branch walk, joined by each form's own rule; no exit at
+        // all means every branch is terminal.
+        StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
+            let check = if matches!(stmt.kind, StmtKind::ComptimeIf { .. }) {
+                check_comptime_if
+            } else {
+                check_if
+            };
+            let Some(next) = check(
                 branches,
                 orelse.as_deref(),
                 env,
@@ -914,18 +957,11 @@ fn check_stmt(
                 comprehension_bindings,
                 deletability,
                 types,
-            )?)?;
-        }
-        StmtKind::ComptimeIf { branches, orelse } => {
-            env = check_comptime_if(
-                branches,
-                orelse.as_deref(),
-                env,
-                binding_types,
-                comprehension_bindings,
-                deletability,
-                types,
-            )?;
+            )?
+            else {
+                return Ok(None);
+            };
+            env = next;
         }
         // The loop unrolls per instantiation, possibly to nothing or to
         // several copies, so its body must leave every outer obligation as it
@@ -1205,14 +1241,14 @@ fn check_def(
 /// validation checked exactly the bodies `validates_body` selects; the facts
 /// this pass reads exist for no other body in that run.
 fn walks_body(
-    scope: DestroyScope,
+    scope: DestroyScope<'_>,
     type_params: &[mojito_ast::ast::TypeParam],
     body: &[Stmt],
 ) -> bool {
     match scope {
         DestroyScope::Program => true,
-        DestroyScope::ValidatedTemplates => {
-            crate::checker::validates_comptime_body(type_params, body)
+        DestroyScope::ValidatedTemplates(rebind_keyed) => {
+            crate::checker::validates_comptime_body(type_params, body, rebind_keyed)
         }
     }
 }

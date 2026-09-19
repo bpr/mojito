@@ -18,6 +18,45 @@ use super::*;
 use mojito_ast::ast::ParamArg;
 use mojito_ast::visit::{MutVisitor, walk_block_mut};
 
+/// The bodies source validation must check because they hold a `rebind`:
+/// every module-level `def` body and struct method body naming the builtin,
+/// keyed at the body's first statement.
+///
+/// A `rebind` asserts that a parametric operand type resolves to its target
+/// once instantiated, so the elaborator keys specialization on it exactly as
+/// on a `comptime if`: the template is stubbed and only clones are checked
+/// executably. Validation is then the only place the template is judged, and
+/// it must run on the source as written — `erase_rebinds` removes the calls
+/// this scan looks for, so the scan precedes it.
+pub fn rebind_keyed_bodies(statements: &[Stmt]) -> HashSet<SourceSpan> {
+    let mut keyed = HashSet::new();
+    let mut record = |body: &[Stmt]| {
+        if let Some(first) = body.first()
+            && block_has_rebind(body)
+        {
+            keyed.insert(first.source_span());
+        }
+    };
+    for statement in statements {
+        match &statement.kind {
+            StmtKind::Def { body, .. } => record(body),
+            StmtKind::Struct { methods, .. } => {
+                for method in methods {
+                    record(&method.body);
+                }
+            }
+            _ => {}
+        }
+    }
+    keyed
+}
+
+/// Whether `body` is one of the bodies [`rebind_keyed_bodies`] recorded.
+pub fn body_keys_rebind(body: &[Stmt], keyed: &HashSet<SourceSpan>) -> bool {
+    body.first()
+        .is_some_and(|first| keyed.contains(&first.source_span()))
+}
+
 /// The retypings `erase_rebinds` recorded.
 #[derive(Clone, Default)]
 pub(super) struct RebindTargets {
@@ -226,6 +265,26 @@ impl Checker {
         };
         self.ty_from_anno(&annotation)
     }
+}
+
+/// Whether a block names `rebind[Dest](value)` anywhere below it.
+fn block_has_rebind(statements: &[Stmt]) -> bool {
+    struct Finder {
+        found: bool,
+    }
+
+    impl mojito_ast::visit::Visitor for Finder {
+        fn visit_expr(&mut self, expr: &Expr) {
+            if matches!(&expr.kind, ExprKind::TypeApply { name, .. } | ExprKind::Call { name, .. } if name == "rebind")
+            {
+                self.found = true;
+            }
+        }
+    }
+
+    let mut finder = Finder { found: false };
+    mojito_ast::visit::walk_block(&mut finder, statements);
+    finder.found
 }
 
 /// The target and operand of a `rebind[Dest](value)` call the eraser removes:

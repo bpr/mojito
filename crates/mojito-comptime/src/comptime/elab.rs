@@ -337,6 +337,14 @@ impl Elab<'_> {
                             m.body = vec![super::specialize::unspecialized_method_stub(name, &m)];
                             return Ok(m);
                         }
+                        // A `rebind` asserts that a parametric operand type
+                        // resolves to its target; only the per-instantiation
+                        // clone can make that assertion, so the template body
+                        // is a trap stub even though it elaborates.
+                        if !type_params.is_empty() && super::block_has_rebind(&m.body) {
+                            m.body = vec![super::specialize::unspecialized_method_stub(name, &m)];
+                            return Ok(m);
+                        }
                         m.body = match self.block(&m.body, env, true) {
                             Ok(body) => body,
                             // A method whose body only elaborates with the

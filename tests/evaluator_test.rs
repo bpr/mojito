@@ -1245,8 +1245,11 @@ fn list_assignment_is_a_copy() {
 
 #[test]
 fn list_index_out_of_range_is_a_runtime_error() {
+    // An out-of-bounds index aborts, as the pinned Mojo does; the VM and the
+    // native backend agree on the category (assets/runtime_error/
+    // list_out_of_range.mojo).
     let err = run_err("var xs: List[Int] = [1, 2]\nvar y: Int = xs[5]\n");
-    assert!(matches!(err, RuntimeError::TypeError(_)), "got {err:?}");
+    assert!(matches!(err, RuntimeError::Abort(_)), "got {err:?}");
 }
 
 // --- List (Steps 2 & 3: index-assign, append, pop) ---

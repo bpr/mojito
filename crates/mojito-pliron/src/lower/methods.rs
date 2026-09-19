@@ -4,6 +4,33 @@
 use super::*;
 
 impl FnLowering<'_> {
+    /// The `CopyIteratorReference` adapter over a method result: the callee
+    /// returned a pointer to storage it borrowed out, while the contract the
+    /// caller checked against yields the element by value, so the result is
+    /// an owned copy of the referent (the VM's `clone_value`).
+    pub(super) fn copy_reference_result(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+    ) -> Result<(), PlironError> {
+        let Some(result) = self.func.reg_types.get(&dest.0).cloned() else {
+            return Err(self.unsupported_reg("untyped reference result".into(), dest));
+        };
+        let place = self.reg_ptr(ctx, dest)?;
+        match lower_ty(self.name, &result, &self.layout, self.reg_span(dest))? {
+            LowerTy::Scalar(scalar) => {
+                let handle = scalar.handle(ctx);
+                let load = LoadOp::new(ctx, place, handle);
+                self.define(ctx, dest, load.get_operation(), load.get_result(ctx))
+            }
+            LowerTy::Aggregate { ty, layout } => self.copy_aggregate(ctx, dest, &ty, layout, place),
+            LowerTy::ZeroSized => {
+                self.erased.insert(dest.0);
+                Ok(())
+            }
+        }
+    }
+
     /// A resolved method call: the receiver and aggregate arguments pass by
     /// pointer; a `mut self` (or `deinit self`) receiver's final state copies
     /// back to the caller's receiver place afterwards — the VM's

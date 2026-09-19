@@ -1581,7 +1581,7 @@ impl NestedMono {
                     let StmtKind::Def { body, .. } = &statement.kind else {
                         unreachable!("nested templates are functions")
                     };
-                    output.push(if block_has_comptime(body) {
+                    output.push(if block_keys_specialization(body) {
                         template_stub(
                             &statement,
                             "unspecialized compile-time-keyed nested function",

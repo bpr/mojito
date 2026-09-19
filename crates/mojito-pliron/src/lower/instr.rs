@@ -360,11 +360,6 @@ impl FnLowering<'_> {
                 // The callee's compiled signature is authoritative for the
                 // raising and reference-result ABI.
                 let _ = (raises, reference_result);
-                if result_adapter.is_some() {
-                    return Err(
-                        self.unsupported_reg("reference-result method adapter".into(), *dest)
-                    );
-                }
                 // Capture accesses are static ownership facts execution
                 // erases. Erased type-parameter slots (`value: None`) carry
                 // no runtime data and are permitted; argument places matter
@@ -377,6 +372,7 @@ impl FnLowering<'_> {
                         *dest,
                     ));
                 }
+                let adapter = result_adapter.is_some();
                 self.lower_method_call(
                     ctx,
                     *dest,
@@ -388,7 +384,23 @@ impl FnLowering<'_> {
                     arg_places,
                     kwarg_places,
                     recv_place.as_ref(),
-                )
+                )?;
+                // `__next__` reached through the iterator contract yields its
+                // element by value. An implementation that returns `ref`
+                // hands back a borrowed place instead, so the contract's
+                // value is an owned copy of the referent — the VM's
+                // `CopyIteratorReference` adapter, which
+                // `lower_try_next_reference` already performs for a `for`
+                // loop's own advance.
+                if adapter
+                    && resolved
+                        .as_deref()
+                        .and_then(|callee| self.signatures.get(callee))
+                        .is_some_and(|signature| signature.result_form == ResultForm::Reference)
+                {
+                    return self.copy_reference_result(ctx, *dest);
+                }
+                Ok(())
             }
             MirInstr::Call {
                 dest,

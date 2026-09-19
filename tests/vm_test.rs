@@ -1823,9 +1823,11 @@ fn explicit_bound_generic_application_iterates_concrete_collections() {
     // An explicit concrete application of a plain trait-bound generic clones
     // and re-checks the body with `C := List[Int]` / `Set[Int]`, so the
     // generic `for` runs through ordinary concrete borrowed iteration with no
-    // erased dispatch at these call sites.
-    let src = "from std.collections.set import Set\n\ndef total[C: Iterable](c: C) -> Int:\n    var acc = 0\n    for item in c:\n        acc += item\n    return acc\n\ndef main():\n    var xs: List[Int] = [3, 4, 5]\n    print(total[List[Int]](xs))\n    var s: Set[Int] = Set[Int]()\n    s.add(30)\n    print(total[Set[Int]](s))\n";
-    assert_eq!(run_compiled(src).unwrap(), "12\n30\n");
+    // erased dispatch at these call sites. The body counts rather than sums:
+    // the retained template checks abstractly too, and `C.Element` proves no
+    // arithmetic there (the pinned Mojo rejects `acc += item` the same way).
+    let src = "from std.collections.set import Set\n\ndef total[C: Iterable](c: C) -> Int:\n    var acc = 0\n    for item in c:\n        acc += 1\n    return acc\n\ndef main():\n    var xs: List[Int] = [3, 4, 5]\n    print(total[List[Int]](xs))\n    var s: Set[Int] = Set[Int]()\n    s.add(30)\n    print(total[Set[Int]](s))\n";
+    assert_eq!(run_compiled(src).unwrap(), "3\n1\n");
 }
 
 #[test]

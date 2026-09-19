@@ -44,29 +44,46 @@ selects, and `rebind[Dest](value)` is implemented. The second step took the
 explicit-destruction analysis with it: every parametric body is now judged
 with its own parameters symbolic, whatever its call sites do, because a
 bound-generic template survives beside its specializations and validation runs
-the analysis over compile-time-keyed bodies. Each task pays off by
-itself, and together they are what moving toward Mojo's shape needs.
+the analysis over compile-time-keyed bodies. The third step made a `rebind`
+key specialization the way a `comptime if` does, so its assertion is made on
+every instantiation and never against a symbolic parameter. Each task pays off
+by itself, and together they are what moving toward Mojo's shape needs.
 
 Unlike sections 2 and 3, this section is sorted in **dependency order**: each
 entry names what it depends on, and an entry with no dependency sits as early
 as its size allows. The **Model:** bullet carries the complexity estimate and
 says whether the entry can be done as-is or must be planned first.
 
-- [ ] **`rebind` in a generic body without compile-time control flow is
-  rejected**
+- [ ] **An overloaded compile-time-keyed `def` cannot be called without its
+  parameters**
 
-  Problem: `def bump[T: Copyable](mut x: T): rebind[Int](x) += 1`, called
-  with an `Int`, runs at the pin (prints `4`), while Mojito reports "the
-  input type does not match the result type: expected Int, found T".
-  - Only bodies holding a `comptime if`/`comptime for` are specialized per
-    instantiation. This body is checked once, generically, where
-    `apply_rebind_target` (`checker/rebind.rs`) demands `T == Int`.
-  - Taking the target on faith in the generic check is not enough. Upstream
-    asserts the equality after instantiation, and bound-generic
-    monomorphization runs below the checker, with no check of its own.
+  Problem: two `def kind[T: Copyable]` overloads whose bodies hold a
+  `comptime if` run at the pin (`kind(3)`, `kind(3, 4)`), while Mojito
+  reports "compile-time call arity: generic 'kind' requires compile-time
+  parameter 'T'".
+  - The three template classes are keyed by name and admit a name only when
+    it is unique (`def_name_counts`, `comptime/comptime.rs`), because
+    overload selection belongs to the checker. An overloaded compile-time-keyed
+    `def` therefore joins no class: it is neither retained as a bound generic
+    nor served by the specialization request path.
+  - Found while making a `rebind` key specialization: those bodies joined the
+    same class and inherited the limitation.
   - Depends on nothing.
-  - Model: Opus, plan first. The plan must say where the equality is
-    asserted per instantiation.
+  - Model: Opus, plan first. The plan must say how a request names one
+    overload of a template.
+
+- [ ] **A compile-time-keyed `def` cannot be passed as a function value**
+
+  Problem: `apply(as_int, 3)`, where `as_int[T]` holds a `comptime if` or a
+  `rebind` and `apply` declares a callable bound, runs at the pin and reports
+  "Undefined variable 'as_int'" in Mojito.
+  - The template is dropped or stubbed, and only its `$`-mangled clones carry
+    a name; a bare reference resolves to neither.
+  - The rejection is safe (no wrong answer), but the message names nothing
+    the source wrote.
+  - Depends on nothing.
+  - Model: Fable, plan first. The plan must say which clone a bare reference
+    names, and what the rejection says when none can be chosen.
 
 - [ ] **A `def`'s own type pack cannot be queried in a runtime position**
 
@@ -594,28 +611,34 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
       before Mojito's is changed, and `docs/native-abi.md` already defines
       some of them deliberately (wrapping overflow), so the plan decides
       which are bugs and which are recorded choices.
-  - `native-exclusions-returned`: four fixtures the native backend used to
-    compile are now rejected by it, breaking the Stage 5 zero-exclusion
-    result. Each reproduces from a clean `HEAD` build, so none comes from
-    uncommitted work, and the 2026-09-18 regeneration is what surfaced them —
-    `expect_file!` and the `excluded == 0` ratchet had not executed since the
-    ASan failure started panicking the sweep early on 2026-09-14, so nothing
-    was checking these rows.
-    - `assets/ok/lambda_hof.mojo`: "unsupported binding call to `main$scale`
-      during monomorphization: Missing("x")".
-    - `assets/ok/copyable_iterator_reference_aggregate.mojo` and its
-      `assets/extensions/ok` twin: "unsupported reference-result method
-      adapter".
-    - `assets/ok/interior_dest_rebind_releases_loans.mojo` and its twin:
-      `unsafe_alloc$mono$TRefBox` "collides with an existing declaration".
-    - `assets/ok/nominal_string_bytes_capacity.mojo`: the same collision for
-      `AHasher…update$mono$TStringSpan`.
-    - The checked-in manifest claimed `exe-differential` for all six rows
-      throughout this window, so its history dates nothing; bisecting needs a
-      featured build per candidate commit.
-    - Model: Fable. Two of the three symptoms are monomorphization symbol
-      collisions and one is an adapter gap, so this is more likely one
-      instantiation-keying defect than four independent ones.
+  - `native-exclusions-returned`: `assets/ok/lambda_hof.mojo` is the one
+    fixture the native backend still rejects — "unsupported binding call to
+    `main$scale` during monomorphization: Missing("x")".
+    - `observe[f: def(x: Int) capturing[origins] -> Int]` takes its callable
+      as a compile-time parameter and the argument captures `factor`.
+      Monomorphization binds the callable by name and rewrites the body's
+      read of it to `Const::Function("main$scale")`
+      (`mono/substitute.rs`), which erases the environment; a capturing
+      lambda's lowered body takes its captures as leading parameters, so the
+      direct call is one argument short.
+    - The VM keeps the closure and calls it indirectly. Passing the
+      environment natively means the instance takes the closure as a runtime
+      argument, which changes the instance's arity — something
+      monomorphization never does today. Both existing guards (the
+      `CallIndirect` rewrite's "generic retained callable … has captures",
+      and `infer_call`'s captures-empty condition) are simply not reached,
+      because the constant-folding happens first.
+    - The other three exclusions of the 2026-09-18 regeneration closed on
+      2026-09-19: an instance key that kept its arguments' origins minted a
+      second instance under the same origin-free symbol
+      (`interior_dest_rebind_releases_loans`,
+      `nominal_string_bytes_capacity`), and a direct
+      `iterator.__next__()` through the contract had no native
+      `CopyIteratorReference` adapter, which a `for` loop's own advance has
+      had all along (`copyable_iterator_reference_aggregate`).
+    - Model: Opus, plan first. The arity change touches the instance
+      signature, the call site, and the pliron parameter-argument rule
+      together.
   - `destructor-timing-against-the-pin`: two corpus fixtures run the same
     destructors later than the pin does
     (`conformance/assets-mojo-output-diffs.tsv`, family `drop-timing`):

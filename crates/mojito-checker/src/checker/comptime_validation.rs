@@ -27,7 +27,11 @@ impl Checker {
                 .expect("inserted above") += 1;
             // A method keyed on its own pack (`def params[*Ts: Writable](self,
             // *args: *Ts)`) checks only per specialization, like a pack def.
-            if !validates_body(&m.type_params, &m.body) {
+            if !validates_body(
+                &m.type_params,
+                &m.body,
+                body_keys_rebind(&m.body, &self.rebind_keyed_bodies),
+            ) {
                 continue;
             }
             self.check_method(
@@ -530,11 +534,20 @@ pub(super) fn concrete_only_def(stmt: &Stmt) -> bool {
 }
 
 /// Whether source validation checks a declaration's body: one holding
-/// compile-time control flow, unless it checks only per instantiation — a
-/// variadic template, or a body reading a reflection handle (`reflect[T]`),
+/// compile-time control flow, or a `rebind` over the declaration's own
+/// parameters (`keys_rebind`, from `rebind::rebind_keyed_bodies`) — both
+/// leave the template stubbed, so validation is the only check it gets.
+/// Either way a body that checks only per instantiation is left out: a
+/// variadic template, or one reading a reflection handle (`reflect[T]`),
 /// whose field facts only the elaborator evaluates.
-pub(super) fn validates_body(type_params: &[mojito_ast::ast::TypeParam], body: &[Stmt]) -> bool {
-    block_has_comptime(body) && !is_variadic_template(type_params) && !reads_reflection(body)
+pub(super) fn validates_body(
+    type_params: &[mojito_ast::ast::TypeParam],
+    body: &[Stmt],
+    keys_rebind: bool,
+) -> bool {
+    (block_has_comptime(body) || keys_rebind)
+        && !is_variadic_template(type_params)
+        && !reads_reflection(body)
 }
 
 /// Whether a block holds a `comptime if`/`comptime for` anywhere below it,

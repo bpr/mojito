@@ -168,6 +168,25 @@ fn rebind_retypes_its_operand_and_checks_the_instantiation() {
 }
 
 #[test]
+fn rebind_keys_specialization_without_compile_time_control_flow() {
+    // A `rebind` alone makes a parametric body specialize per instantiation:
+    // the assertion is made on each clone, so an instantiation that satisfies
+    // it runs, one that does not is rejected, and a template no call
+    // instantiates is never judged.
+    let src = "def bump[T: Copyable](mut x: T):\n    rebind[Int](x) += 1\n\ndef main():\n    var v = 3\n    bump(v)\n    print(v)\n";
+    assert_eq!(run(src).unwrap(), "4\n");
+    let mismatch = "def bump[T: Copyable](mut x: T):\n    rebind[Int](x) += 1\n\ndef main():\n    var s = String(\"a\")\n    bump(s)\n    print(s)\n";
+    let err = run(mismatch).unwrap_err();
+    assert!(
+        err.contains("rebind: the input type does not match the result type"),
+        "{err}"
+    );
+    let uninstantiated =
+        "def bump[T: Copyable](mut x: T):\n    rebind[Int](x) += 1\n\ndef main():\n    print(1)\n";
+    assert_eq!(run(uninstantiated).unwrap(), "1\n");
+}
+
+#[test]
 fn comptime_for_unrolls_with_substitution() {
     // `i` becomes a literal in each unrolled copy (0², 1², 2², 3²).
     let src = "def main():\n    comptime for i in range(4):\n        print(i, i * i)\n";

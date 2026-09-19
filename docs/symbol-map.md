@@ -290,6 +290,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   into the plain `Assign` of `x`, whose retyping `rebind_assignment_target`
   applies from the `Assign` arm. The parser admits the call as an
   assignment and augmented-assignment target (`parser/stmts.rs`).
+  `rebind_keyed_bodies`, scanned before the erasure removes the calls, names
+  the bodies source validation must check for this reason
+  (`Checker.rebind_keyed_bodies`, read through `body_keys_rebind` by
+  `validates_body` and `explicit_destroy::walks_body`); the elaborator's twin
+  is `comptime::block_has_rebind`, which keys specialization on it
+  (`is_specializable_declaration_in`, `collect_comptime_generic_templates`,
+  and the method stub in `comptime/elab.rs`).
 - `checker/constraints.rs` owns compile-time evaluation and generic-constraint
   compilation/evaluation. `compile_where_clause` retains an optional source
   diagnostic around the semantic constraint compiled by

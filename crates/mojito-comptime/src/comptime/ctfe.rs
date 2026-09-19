@@ -1400,11 +1400,24 @@ impl Elab<'_> {
         // pre-check elaboration installs; no compile-time program calls it
         // unspecialized.
         for statement in &mut program {
-            let StmtKind::Struct { name, methods, .. } = &mut statement.kind else {
+            let StmtKind::Struct {
+                name,
+                type_params,
+                methods,
+                ..
+            } = &mut statement.kind
+            else {
                 continue;
             };
             for method in methods.iter_mut() {
-                if !method.type_params.is_empty() && super::block_has_comptime(&method.body) {
+                // A `rebind` is keyed on the struct's parameters as readily
+                // as on the method's own, so either being open stubs it.
+                let keyed = if method.type_params.is_empty() {
+                    !type_params.is_empty() && super::block_has_rebind(&method.body)
+                } else {
+                    super::block_keys_specialization(&method.body)
+                };
+                if keyed {
                     method.body = vec![super::specialize::unspecialized_method_stub(name, method)];
                 }
             }

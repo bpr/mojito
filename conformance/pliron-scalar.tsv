@@ -398,6 +398,7 @@ assets/ok/raise_borrowed_string_parameter.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/range_zero_step_empty.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/rebind_assignment.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/rebind_augmented_assignment.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/rebind_generic_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_binding_projected_field_offset.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_binding_temporary_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_param.mojo	-	ineligible	no-scalar-entry-shape

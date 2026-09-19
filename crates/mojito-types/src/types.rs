@@ -2512,51 +2512,6 @@ pub fn is_stdlib_file_descriptor_struct(name: &str) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct CheckedDeclId(pub u32);
 
-#[cfg(test)]
-mod collection_representation_tests {
-    use super::*;
-
-    #[test]
-    fn public_collection_helpers_construct_only_nominal_types() {
-        let runtime_list = list_type(Ty::Int);
-        for ty in [
-            runtime_list.clone(),
-            set_type(Ty::Int),
-            dict_type(Ty::StringLiteral, Ty::Int),
-            range_type(),
-        ] {
-            assert!(matches!(ty, Ty::Struct(..)), "got {ty:?}");
-        }
-        assert_ne!(runtime_list, Ty::ComptimeList(Box::new(Ty::Int)));
-        assert_eq!(
-            Ty::ComptimeList(Box::new(Ty::Int)).to_string(),
-            "<comptime-list[Int]>"
-        );
-    }
-
-    #[test]
-    fn uninit_storage_element_recognizes_every_mangled_spelling() {
-        let storage = |name: &str| Ty::Struct(name.to_string(), vec![TyArg::Ty(Ty::Int)]);
-        for name in [
-            "__UninitStorage",
-            "mono_test$__UninitStorage",
-            "__UninitStorage$mono$TInt",
-            "mono_test$__UninitStorage$mono$TRecorder",
-        ] {
-            assert_eq!(
-                uninit_storage_element(&storage(name)),
-                Some(&Ty::Int),
-                "{name}"
-            );
-        }
-        assert_eq!(uninit_storage_element(&storage("Storageish")), None);
-        assert_eq!(
-            uninit_storage_element(&Ty::Struct("__UninitStorage".into(), vec![])),
-            None
-        );
-    }
-}
-
 /// Whether `ty` still mentions something only an instantiation can resolve.
 ///
 /// A type parameter, an associated or dependent projection, `Self`, or an
@@ -2641,5 +2596,50 @@ pub fn ct_value_is_symbolic(value: &CtValue) -> bool {
         | CtValue::Dtype(_)
         | CtValue::Simd { .. }
         | CtValue::Str(_) => false,
+    }
+}
+
+#[cfg(test)]
+mod collection_representation_tests {
+    use super::*;
+
+    #[test]
+    fn public_collection_helpers_construct_only_nominal_types() {
+        let runtime_list = list_type(Ty::Int);
+        for ty in [
+            runtime_list.clone(),
+            set_type(Ty::Int),
+            dict_type(Ty::StringLiteral, Ty::Int),
+            range_type(),
+        ] {
+            assert!(matches!(ty, Ty::Struct(..)), "got {ty:?}");
+        }
+        assert_ne!(runtime_list, Ty::ComptimeList(Box::new(Ty::Int)));
+        assert_eq!(
+            Ty::ComptimeList(Box::new(Ty::Int)).to_string(),
+            "<comptime-list[Int]>"
+        );
+    }
+
+    #[test]
+    fn uninit_storage_element_recognizes_every_mangled_spelling() {
+        let storage = |name: &str| Ty::Struct(name.to_string(), vec![TyArg::Ty(Ty::Int)]);
+        for name in [
+            "__UninitStorage",
+            "mono_test$__UninitStorage",
+            "__UninitStorage$mono$TInt",
+            "mono_test$__UninitStorage$mono$TRecorder",
+        ] {
+            assert_eq!(
+                uninit_storage_element(&storage(name)),
+                Some(&Ty::Int),
+                "{name}"
+            );
+        }
+        assert_eq!(uninit_storage_element(&storage("Storageish")), None);
+        assert_eq!(
+            uninit_storage_element(&Ty::Struct("__UninitStorage".into(), vec![])),
+            None
+        );
     }
 }

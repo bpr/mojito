@@ -421,13 +421,15 @@ clone (pack qualification, the synthesized `copy`/`__hash__` methods, the
 SIMD-keyed method desugar, SIMD alias-bound folding). The checker then
 validates the prepared source (`validate_comptime_templates`,
 `checker/comptime_validation.rs`): every function or method body holding a
-`comptime if`/`comptime for` is checked once with its declaration's
-parameters left symbolic — each condition typed as a compile-time `Bool`
+`comptime if`/`comptime for`, or a `rebind` over its own parameters, is
+checked once with its declaration's parameters left symbolic — each condition typed as a compile-time `Bool`
 (a generic constraint over the parameters in scope, a concrete conformance,
 or a `Bool` value), each arm and loop body in its own scope, no arm assumed
 selected — so a type error in an untaken arm rejects as upstream rejects it,
 a guard such as `T == Int` narrows nothing, and an unused template still
-checks. Bodies without such constructs are declared but left to the
+checks. A `rebind` takes its target on faith here, where the operand's type
+is still symbolic, exactly as upstream does; the equality is asserted on each
+clone. Bodies without such constructs are declared but left to the
 executable check; bodies keyed on a variadic pack, a `DType`, or a
 vector-typed value parameter register as template shells and keep their
 per-instantiation check (`docs/roadmap.md` §1). Validation then runs the
@@ -482,14 +484,19 @@ The implemented forms are:
 
 Generic `def` templates monomorphize in two classes sharing one worklist,
 mangling, and clone generator. A **comptime-class** template (a `comptime
-if`/`for` body, or a type pack) must specialize at every reference: resolution
+if`/`for` body, a `rebind` over the declaration's own parameters, or a type
+pack) must specialize at every reference: resolution
 failure is an error, and the template is replaced by its clones (a dead
-template is dropped unchecked). Two comptime-class subsets take an inferred
+template is dropped unchecked). A `rebind` keys the class because it asserts
+that a parametric operand type resolves to its target, which only an
+instantiation can settle; a generic struct's method holding one is stubbed on
+the template for the same reason, and the assertion is made on every clone.
+Two comptime-class subsets take an inferred
 call through discovery instead: a type pack whose element types are not
 statically evident, and a uniquely named **compile-time-keyed** `def`
-specialized only for its `comptime if`/`for` body (no pack, `DType`, or
-SIMD-width parameter; `comptime_generic_template_names`) called without an
-argument for a required parameter. Until the checker's request is served,
+specialized only for its `comptime if`/`for` body or `rebind` (no pack,
+`DType`, or SIMD-width parameter; `comptime_generic_template_names`) called
+without an argument for a required parameter. Until the checker's request is served,
 such a template survives as a signature-only `template_stub` whose body
 traps, so the discovery check can type the call against it. The stub stays
 in the program for a call from a retained bound-generic body over that body's
@@ -1070,7 +1077,10 @@ tail is the struct's own binder, rigid inside its methods. `Origin::coerces_to`
 is the tail rule: unbound accepts anything, everything else demands identity or
 containment. The tail erases below the checker exactly like a pointer origin —
 mangling emits nothing for it, MIR verification compares struct prefixes only,
-monomorphization treats origin-differing instances as one, and the checker's
+monomorphization treats origin-differing instances as one (the native instance
+key erases its arguments' origin tails, since the instance symbol spells none —
+keying on them would mint a second instance under the first one's symbol), and
+the checker's
 instantiation records reset it to unbound so a place origin (a per-check owner
 id) never makes an instantiation look new across discovery rounds.
 
@@ -1111,7 +1121,11 @@ requires the adapter on abstract value-result `__next__` calls and forbids it on
 concrete calls. The VM temporarily restores both the executing caller and the
 identified just-completed iterator frame while user copy code runs; reference
 handles nested inside a `Copyable` result therefore resolve against real storage
-and any permitted write-through is preserved.
+and any permitted write-through is preserved. The native backend applies the
+same test at both sites: a `for` loop's own advance copies the element out in
+`lower_try_next_reference`, and a direct `iterator.__next__()` through the
+contract copies it in `copy_reference_result` (`lower/methods.rs`), keyed on
+the resolved callee's compiled `ResultForm`.
 
 Opaque trait-bounded collection indexing uses the requirement signature for its
 index and result types, then executes through concrete dunder dispatch after
