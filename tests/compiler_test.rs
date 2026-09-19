@@ -968,3 +968,56 @@ fn assigned_call_over_plain_origin_view_argument_is_accepted() {
     let execution = compiler.execute(&program).expect("execute");
     assert_eq!(execution.output, "abc\n");
 }
+
+#[test]
+fn a_type_pack_overload_declared_first_does_not_capture_a_keyed_call() {
+    // The name-keyed template registry keeps one declaration per name, so
+    // resolving every call of `kind` against it answered 99 here: the pack
+    // clone ran for a call the checker gave to the keyed overload. Which
+    // declaration serves a call is the request's to say, not the registry's.
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            "def kind[*Ts: Copyable](*xs: *Ts) -> Int:\n    return 99\n\ndef kind[T: Copyable](a: T) -> Int:\n    comptime if T == Int:\n        return 1\n    else:\n        return 10\n\ndef main():\n    print(kind(3))\n    print(kind(True))\n",
+            std::path::Path::new("/tmp/mojito_pack_overload_declared_first.mojo"),
+        )
+        .expect("a keyed overload declared after a type-pack one");
+    let output = compiler.execute(&program).expect("run the keyed clones");
+    assert_eq!(output.output, "1\n10\n");
+}
+
+#[test]
+fn a_type_pack_overload_of_a_keyed_name_is_served_by_its_own_class() {
+    // One name, two specialization classes. The keyed member bakes its
+    // `comptime if` per argument type and the pack member specializes over
+    // its element types; each call reaches the clone of the declaration the
+    // checker selected.
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            "def kind[T: Copyable](a: T) -> Int:\n    comptime if T == Int:\n        return 1\n    else:\n        return 10\n\ndef kind[*Ts: Copyable](*xs: *Ts) -> Int:\n    var n = 0\n    comptime for i in range(Ts.length):\n        n = n + 1\n    return n\n\ndef main():\n    print(kind(3))\n    print(kind(True))\n    print(kind(1, 2))\n    print(kind(1, True, 3))\n",
+            std::path::Path::new("/tmp/mojito_mixed_overload_family.mojo"),
+        )
+        .expect("a compile-time-keyed def overloaded with a type-pack one");
+    let output = compiler
+        .execute(&program)
+        .expect("run both classes' clones");
+    assert_eq!(output.output, "1\n10\n2\n3\n");
+}
+
+#[test]
+fn a_nullary_overload_beside_a_type_pack_one_is_told_apart_by_its_arguments() {
+    // A variadic parameter is caller-visible but is spelled by neither the
+    // request's parameter names nor its parameter types, so the pack member
+    // and the nullary one both claim the empty list. Only whether the
+    // request's arguments bind a declaration's parameters separates them.
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            "def kind[T: Copyable](a: T) -> Int:\n    comptime if T == Int:\n        return 1\n    else:\n        return 10\n\ndef kind[*Ts: Copyable](*xs: *Ts) -> Int:\n    var n = 0\n    comptime for i in range(Ts.length):\n        n = n + 1\n    return n\n\ndef kind() -> Int:\n    return 77\n\ndef main():\n    print(kind(3))\n    print(kind(1, 2))\n    print(kind())\n",
+            std::path::Path::new("/tmp/mojito_nullary_beside_pack_overload.mojo"),
+        )
+        .expect("a nullary overload sharing the family's empty parameter key");
+    let output = compiler.execute(&program).expect("run each selected clone");
+    assert_eq!(output.output, "1\n2\n77\n");
+}

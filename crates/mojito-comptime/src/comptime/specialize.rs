@@ -284,7 +284,20 @@ impl Elab<'_> {
         // generation order so a callee is defined before its caller (the checker
         // binds names sequentially, without forward references).
         let mut out = Vec::with_capacity(program.len());
-        for stmt in program {
+        // A mixed family declares one name twice, once per specialization
+        // class. Its clones are all filed under the name, so they are emitted
+        // at its *last* template declaration: every retained sibling then
+        // still precedes them, as a single template's stub does.
+        let mut last_template = HashMap::new();
+        for (index, stmt) in program.iter().enumerate() {
+            if let StmtKind::Def { name, .. } | StmtKind::Struct { name, .. } = &stmt.kind
+                && self.specializable.contains_key(name)
+                && !self.shares_a_family_name(stmt)
+            {
+                last_template.insert(name.clone(), index);
+            }
+        }
+        for (index, stmt) in program.into_iter().enumerate() {
             let template_name = match &stmt.kind {
                 // A plain overload sharing a compile-time-keyed family's name
                 // is not a template: it survives the rebuild unchanged, and
@@ -300,7 +313,9 @@ impl Elab<'_> {
                     continue;
                 }
             };
-            let generated = mono.generated.remove(&template_name);
+            let generated = (last_template.get(&template_name) == Some(&index))
+                .then(|| mono.generated.remove(&template_name))
+                .flatten();
             // A variadic struct template applied over a retained generic
             // body's own parameters survives as a shell: its parameters,
             // conformances (taken unconditionally — the concrete
@@ -318,18 +333,26 @@ impl Elab<'_> {
             // precedes its specializations: a clone may still reference the
             // template abstractly (an inferred recursive call), and the
             // checker binds top-level names sequentially.
+            //
+            // Which stub a retained declaration stands as is its own class's
+            // to say, not its name's: a mixed family holds two classes at one
+            // name, and retention is recorded per name, so a sibling of the
+            // deferred call's class would otherwise be stubbed under it.
+            let retained = mono.retained.contains(&template_name);
             if self.bound_generics.contains(&template_name) {
                 out.push(stmt);
-            } else if self.pack_generics.contains(&template_name)
-                && mono.retained.contains(&template_name)
+            } else if retained
+                && self.pack_generics.contains(&template_name)
+                && pack_keyed_declaration(&stmt)
             {
                 // A type-pack template with a deferred call survives as a
                 // signature-only stub: the discovery check types the call
                 // against it and records the instantiation the next round
                 // mints; its body only specializes concretely.
                 out.push(template_stub(&stmt, "unspecialized type-pack function"));
-            } else if self.comptime_generics.contains(&template_name)
-                && mono.retained.contains(&template_name)
+            } else if retained
+                && self.comptime_generics.contains(&template_name)
+                && comptime_keyed_declaration(&stmt)
             {
                 // A compile-time-keyed template with a deferred call stands
                 // in the same way: until the checker's request is served, or

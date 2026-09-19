@@ -484,7 +484,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   specialize from checker-recorded instantiations, and
   `comptime_generic_template_names` for defs keyed only by a `comptime
   if`/`for` body, whose inferred calls do the same, gated by
-  `omits_required_param` in `comptime/mono.rs`; `template_stub` in
+  `omits_required_param` in `comptime/mono.rs` — each classification is a
+  per-declaration predicate (`comptime_keyed_declaration`,
+  `pack_keyed_declaration`) that an overloaded name admits one declaration at
+  a time, so one family may hold two classes and `Elab::family_declaration`
+  picks the declaration a request selected; `template_stub` in
   `comptime/specialize.rs` stands in for either deferred template;
   `Mono::retain_abstract` records each abstract reference and
   `Mono::record_method_edge` each by-name method call from an abstract body,

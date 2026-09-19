@@ -501,8 +501,20 @@ name is a *family* (`collect_comptime_overload_families`): no call to it is
 ever resolved syntactically, since explicit `[...]` arguments name type
 arguments rather than an overload and overload selection is the checker's.
 Every call is served from the checker's recorded instantiation, which names
-the selected overload by its runtime parameter names and, where two overloads
-share those, by their mangled parameter types. Two declarations specialized at
+the selected overload by its runtime parameter names, where two overloads
+share those by their mangled parameter types, and where two share both — a
+variadic parameter is caller-visible but is spelled by neither key — by
+whether the request's own arguments bind the declaration's parameters at all.
+
+A family may mix specialization classes, because the class is a property of a
+*declaration* and not of a name: a keyed `def kind[T](a: T)` beside a type
+pack `def kind[*Ts](*xs: *Ts)` is two templates of two classes at one name,
+and the request's selected declaration index is the only thing that tells a
+call which class serves it. The registries above stay name-keyed only as the
+question "is this name a template at all"; admission, routing, and the
+program rebuild's choice of stub all decide per declaration.
+
+Two declarations specialized at
 the same values mangle to one clone name and become an ordinary overload set
 there, which `$ov$` qualifies at lowering exactly as it qualifies the sources;
 a plain overload sharing the family's name is not a template and survives the

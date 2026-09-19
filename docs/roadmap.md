@@ -46,7 +46,10 @@ with its own parameters symbolic, whatever its call sites do, because a
 bound-generic template survives beside its specializations and validation runs
 the analysis over compile-time-keyed bodies. The third step made a `rebind`
 key specialization the way a `comptime if` does, so its assertion is made on
-every instantiation and never against a symbolic parameter. Each task pays off
+every instantiation and never against a symbolic parameter. The fourth step
+made the specialization class a property of a declaration rather than of a
+name, so one overloaded name may hold two classes and the checker's recorded
+instantiation says which declaration serves each call. Each task pays off
 by itself, and together they are what moving toward Mojo's shape needs.
 
 Unlike sections 2 and 3, this section is sorted in **dependency order**: each
@@ -54,27 +57,22 @@ entry names what it depends on, and an entry with no dependency sits as early
 as its size allows. The **Model:** bullet carries the complexity estimate and
 says whether the entry can be done as-is or must be planned first.
 
-- [ ] **A compile-time-keyed `def` overloaded with a type-pack one is
-  rejected**
+- [ ] **Two type-pack overloads of one name cannot be told apart**
 
-  Problem: `def kind[T: Copyable](a: T)` holding a `comptime if`, beside
-  `def kind[*Ts](var *xs: *Ts)`, runs at the pin but reports "compile-time
-  call arity: generic 'kind' requires compile-time parameter 'T'".
-  - An overloaded compile-time-keyed name forms a family
-    (`collect_comptime_overload_families`, `comptime/comptime.rs`) only when
-    every declaration of it could be keyed on its own. A pack, a `DType`
-    parameter, or a layout-dependent parameter disqualifies the whole family,
-    which then joins no class at all — the state every overloaded keyed `def`
-    was in before the family path landed.
-  - A mixed family needs one worklist to serve two specialization classes at
-    one name, which the pack entry below has to settle first.
-  - The rejection is safe: no wrong answer, and the message names a real
-    parameter of a real overload.
-  - Found while making an overloaded compile-time-keyed `def` callable
-    without its parameters.
-  - Depends on the type-pack entries below.
-  - Model: Opus, plan first. The plan must say which class serves a call
-    when two of them claim the name.
+  Problem: two `def collect[*Ts](...)` declarations sharing a name leave
+  every call abstract, and the driver rejects it with "requires compile-time
+  parameter".
+  - A request names its overload by the selected signature's runtime
+    parameter names, then its mangled parameter types, then whether the
+    request's arguments bind the declaration's parameters.
+  - A variadic parameter is caller-visible but is spelled by neither key, so
+    two pack declarations tie on all three.
+  - The fix is a faithful spelling of a variadic parameter in the request
+    key, which `Ty::GenericFunc::names` cannot carry: that field is zipped
+    positionally with `params` and `conventions` and reaches MIR naming.
+  - Depends on nothing.
+  - Model: Fable, plan first. The plan must say where the variadic spelling
+    lives if not in `names`.
 
 - [ ] **A compile-time-keyed `def` cannot be passed as a function value**
 
@@ -189,6 +187,27 @@ says whether the entry can be done as-is or must be planned first.
   - Model: Fable, plan first. Changes the SIMD type's contract across the
     checker, the elaborator's width folding, and native lowering's vector
     types.
+
+- [ ] **An explicit `DType`-keyed application loses to a keyed overload of
+  the same name**
+
+  Problem: `kind[DType.float64](1.5)`, where `def kind[dt: DType](a:
+  Scalar[dt])` shares its name with a `def kind[T: Copyable](a: T)` holding a
+  `comptime if`, reports "type mismatch for type parameter 'T': expected a
+  type, found a value" — the wrong overload's parameter.
+  - The family's branch is request-only, and the `DType` member is served by
+    neither request-served class, so its call is deferred to discovery.
+  - The member is then dropped from the round-one program, leaving only the
+    keyed sibling's stub for the explicit application to bind against.
+  - Keeping it alive instead does not work today: its `Scalar[dt]` signature
+    cannot be checked with `dt` symbolic, which is exactly the
+    `DType`-keyed validation entry above.
+  - Inferred calls to the *keyed* sibling do now work beside such a member,
+    where the whole name used to be rejected.
+  - Depends on the `DType`-keyed symbolic-validation entry above.
+  - Model: Fable, plan first. The lever is the symbolic `Ty::Simd` that entry
+    introduces; the plan's job is the round-one survival rule for a member
+    of no request-served class.
 
 - [ ] **A variadic struct's type arguments are not inferred from its
   constructor**

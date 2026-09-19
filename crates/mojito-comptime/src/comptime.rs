@@ -2160,9 +2160,11 @@ fn collect_specializable<'a>(
 /// Overload selection is the checker's, so the elaborator cannot pick among
 /// these itself: a call reaches one of them only through the checker's
 /// recorded instantiation, which names the selected overload by its runtime
-/// parameter names. A family whose members are not all admissible on their own
-/// — a type pack, a `DType` parameter, a layout-dependent parameter — stays
-/// off this path entirely and keeps today's behavior.
+/// parameter names. A family may mix specialization classes — a keyed
+/// declaration beside a type pack, a `DType` parameter, or a layout-dependent
+/// one — because the class is a property of a declaration, not of the name:
+/// the request's selected declaration index is what tells a call which class
+/// serves it.
 fn collect_comptime_overload_families(program: &[Stmt]) -> HashMap<String, Vec<&Stmt>> {
     let mut families: HashMap<String, Vec<&Stmt>> = HashMap::new();
     for statement in program {
@@ -2171,9 +2173,7 @@ fn collect_comptime_overload_families(program: &[Stmt]) -> HashMap<String, Vec<&
         }
     }
     families.retain(|_, declarations| {
-        declarations.len() > 1
-            && declarations.iter().any(|s| comptime_keyed_declaration(s))
-            && declarations.iter().all(|s| admits_comptime_keying(s))
+        declarations.len() > 1 && declarations.iter().any(|s| comptime_keyed_declaration(s))
     });
     families
 }
@@ -2272,42 +2272,41 @@ fn def_name_counts(program: &[Stmt]) -> HashMap<&str, usize> {
     counts
 }
 
-/// Top-level trait-bound generic `def`s with no comptime constructs. These
-/// monomorphize per explicit concrete application like the comptime class, but
-/// resolution is soft — an unresolvable call (inference, symbolic arguments)
-/// stays on the template's abstract erased-dispatch path — and the template
-/// survives whenever any reference stays abstract or none exists, keeping the
-/// Mojo-style pre-check of the uninstantiated body. An overloaded name stays
-/// entirely on the abstract path: the registry is name-keyed and overload
-/// selection is the checker's.
-/// Top-level type-pack templates: a uniquely named `def` with a `*Ts` type
-/// parameter (see [`pack_generic_template_names`]). Value packs and
-/// overloaded names stay on the syntactic (hard) specialization path.
+/// Top-level type-pack templates: a `def` with a `*Ts` type parameter (see
+/// [`pack_generic_template_names`]). Value packs stay on the syntactic (hard)
+/// specialization path. An overloaded name joins only as a member of a
+/// compile-time-keyed family, whose request path tells its declarations apart;
+/// otherwise overload selection is the checker's and the name-keyed registry
+/// could not say which declaration a call meant.
 fn collect_pack_generic_templates(program: &[Stmt]) -> HashSet<String> {
     let def_counts = def_name_counts(program);
+    let families = collect_comptime_overload_families(program);
     program
         .iter()
         .filter_map(|statement| {
-            let StmtKind::Def {
-                name, type_params, ..
-            } = &statement.kind
-            else {
+            let StmtKind::Def { name, .. } = &statement.kind else {
                 return None;
             };
-            if def_counts[name.as_str()] != 1 {
+            if def_counts[name.as_str()] != 1 && !families.contains_key(name.as_str()) {
                 return None;
             }
-            type_params
-                .iter()
-                .any(|parameter| {
-                    matches!(
-                        classify_ct_param(parameter, type_params),
-                        Some(ParamDecl::Type { variadic: true, .. })
-                    )
-                })
-                .then(|| name.clone())
+            pack_keyed_declaration(statement).then(|| name.clone())
         })
         .collect()
+}
+
+/// Whether a top-level `def` is a type-pack template: it declares a `*Ts` type
+/// parameter — the type-pack class's per-declaration predicate.
+fn pack_keyed_declaration(statement: &Stmt) -> bool {
+    let StmtKind::Def { type_params, .. } = &statement.kind else {
+        return false;
+    };
+    type_params.iter().any(|parameter| {
+        matches!(
+            classify_ct_param(parameter, type_params),
+            Some(ParamDecl::Type { variadic: true, .. })
+        )
+    })
 }
 
 /// Top-level compile-time-keyed templates (see
@@ -2334,6 +2333,14 @@ fn collect_comptime_generic_templates(program: &[Stmt]) -> HashSet<String> {
         .collect()
 }
 
+/// Top-level trait-bound generic `def`s with no comptime constructs. These
+/// monomorphize per explicit concrete application like the comptime class, but
+/// resolution is soft — an unresolvable call (inference, symbolic arguments)
+/// stays on the template's abstract erased-dispatch path — and the template
+/// survives whenever any reference stays abstract or none exists, keeping the
+/// Mojo-style pre-check of the uninstantiated body. An overloaded name stays
+/// entirely on the abstract path: the registry is name-keyed and overload
+/// selection is the checker's.
 fn collect_bound_generic_templates(program: &[Stmt]) -> HashSet<String> {
     let def_counts = def_name_counts(program);
     program
@@ -2507,46 +2514,68 @@ impl<'a> Elab<'a> {
     /// The checker records the selected overload's parameter names in
     /// declaration order, excluding an `out` named result, so this is how a
     /// request names one overload of a template. Overloads that share a
-    /// parameter-name list are told apart by their mangled parameter types;
-    /// a family ambiguous under both leaves the call abstract, and the
-    /// driver's unserved-use check rejects it in the caller's own terms.
+    /// parameter-name list are told apart by their mangled parameter types,
+    /// and overloads that share both — a variadic parameter is caller-visible
+    /// but is named by neither key, so a type pack and a nullary declaration
+    /// both spell the empty list — by whether the request's own arguments
+    /// bind the declaration's parameters at all. A family ambiguous under all
+    /// three leaves the call abstract, and the driver's unserved-use check
+    /// rejects it in the caller's own terms.
     pub(super) fn family_declaration(
         &self,
         name: &str,
         request: &DefSpecializationRequest,
     ) -> Option<(usize, &'a Stmt)> {
         let declarations = self.comptime_overloads.get(name)?;
-        let by_name: Vec<(usize, &&Stmt)> = declarations
+        let by_name: Vec<(usize, &'a Stmt)> = declarations
             .iter()
             .enumerate()
             .filter(|(_, declaration)| {
                 declaration_takes_names(declaration, request.parameter_names())
             })
+            .map(|(index, declaration)| (index, *declaration))
             .collect();
         let candidates = match by_name.as_slice() {
-            [only] => return Some((only.0, *only.1)),
+            [only] => return Some(*only),
             [] => return None,
             _ => by_name,
         };
-        let mut by_type = candidates.into_iter().filter(|(_, declaration)| {
-            declaration_takes_types(declaration, request.parameter_types())
+        let by_type: Vec<(usize, &'a Stmt)> = candidates
+            .iter()
+            .copied()
+            .filter(|(_, declaration)| {
+                declaration_takes_types(declaration, request.parameter_types())
+            })
+            .collect();
+        let candidates = match by_type.as_slice() {
+            [only] => return Some(*only),
+            [] => candidates,
+            _ => by_type,
+        };
+        let mut by_shape = candidates.into_iter().filter(|(_, declaration)| {
+            self.def_request_values(declaration, request.arguments())
+                .is_some()
         });
-        let only = by_type.next()?;
-        by_type.next().is_none().then_some((only.0, *only.1))
+        let only = by_shape.next()?;
+        by_shape.next().is_none().then_some(only)
     }
 
     /// Whether `statement` shares an overloaded compile-time-keyed name
-    /// without being keyed itself — a plain `def kind(a: Int, b: Int)` beside
-    /// a `def kind[T](a: T)` whose body holds a `comptime if`.
+    /// without being a template of any class itself — a plain
+    /// `def kind(a: Int, b: Int)` beside a `def kind[T](a: T)` whose body holds
+    /// a `comptime if`.
     ///
-    /// Such a declaration is not a template and specializes nothing: the walk
-    /// and the program rebuild must treat it as an ordinary statement, since
-    /// both otherwise decide by name alone and would drop it.
+    /// Such a declaration specializes nothing: the walk and the program
+    /// rebuild must treat it as an ordinary statement, since both otherwise
+    /// decide by name alone and would drop it. A sibling that *is* a template
+    /// of some other class — a type pack beside the keyed declaration — must
+    /// not answer yes here, or the rebuild would push its unspecialized body
+    /// through verbatim.
     pub(super) fn shares_a_family_name(&self, statement: &Stmt) -> bool {
         let StmtKind::Def { name, .. } = &statement.kind else {
             return false;
         };
-        self.comptime_overloads.contains_key(name) && !comptime_keyed_declaration(statement)
+        self.comptime_overloads.contains_key(name) && !is_specializable_declaration(statement)
     }
 
     /// Whether `name` is an overloaded compile-time-keyed family: a call to it
