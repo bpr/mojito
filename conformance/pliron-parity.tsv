@@ -64,6 +64,9 @@ assets/ok/comptime_if_inferred_def.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_inferred_static_method.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_nested_def_call.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_nested_keyed_def.mojo	main	exe-differential	sanitized
+assets/ok/comptime_if_overload_beside_plain.mojo	main	exe-differential	sanitized
+assets/ok/comptime_if_overloaded_def.mojo	main	exe-differential	sanitized
+assets/ok/comptime_if_overloaded_def_explicit.mojo	main	exe-differential	sanitized
 assets/ok/comptime_lambda_initializer.mojo	main	exe-differential	sanitized
 assets/ok/comptime_shadowed_locals.mojo	main	exe-differential	sanitized
 assets/ok/comptime_string_value.mojo	main	exe-differential	sanitized
@@ -399,6 +402,7 @@ assets/ok/range_zero_step_empty.mojo	main	exe-differential	sanitized
 assets/ok/rebind_assignment.mojo	main	exe-differential	sanitized
 assets/ok/rebind_augmented_assignment.mojo	main	exe-differential	sanitized
 assets/ok/rebind_generic_body.mojo	main	exe-differential	sanitized
+assets/ok/rebind_overloaded_def.mojo	main	exe-differential	sanitized
 assets/ok/ref_binding_projected_field_offset.mojo	main	exe-differential	sanitized
 assets/ok/ref_binding_temporary_source.mojo	main	exe-differential	sanitized
 assets/ok/ref_param.mojo	main	exe-differential	sanitized

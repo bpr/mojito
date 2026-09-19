@@ -493,10 +493,20 @@ instantiation can settle; a generic struct's method holding one is stubbed on
 the template for the same reason, and the assertion is made on every clone.
 Two comptime-class subsets take an inferred
 call through discovery instead: a type pack whose element types are not
-statically evident, and a uniquely named **compile-time-keyed** `def`
+statically evident, and a **compile-time-keyed** `def`
 specialized only for its `comptime if`/`for` body or `rebind` (no pack,
 `DType`, or SIMD-width parameter; `comptime_generic_template_names`) called
-without an argument for a required parameter. Until the checker's request is served,
+without an argument for a required parameter. An overloaded compile-time-keyed
+name is a *family* (`collect_comptime_overload_families`): no call to it is
+ever resolved syntactically, since explicit `[...]` arguments name type
+arguments rather than an overload and overload selection is the checker's.
+Every call is served from the checker's recorded instantiation, which names
+the selected overload by its runtime parameter names and, where two overloads
+share those, by their mangled parameter types. Two declarations specialized at
+the same values mangle to one clone name and become an ordinary overload set
+there, which `$ov$` qualifies at lowering exactly as it qualifies the sources;
+a plain overload sharing the family's name is not a template and survives the
+rebuild unchanged. Until the checker's request is served,
 such a template survives as a signature-only `template_stub` whose body
 traps, so the discovery check can type the call against it. The stub stays
 in the program for a call from a retained bound-generic body over that body's

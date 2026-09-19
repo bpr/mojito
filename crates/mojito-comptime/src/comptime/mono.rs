@@ -588,6 +588,7 @@ impl Elab<'_> {
                     if mono.done.insert(mangled.clone()) {
                         mono.queue.push_back(Job {
                             orig: name.clone(),
+                            decl: None,
                             vals,
                             site: "a type annotation".to_string(),
                             output_name: mangled.clone(),
@@ -800,6 +801,7 @@ impl Elab<'_> {
                     if mono.done.insert(mangled.clone()) {
                         mono.queue.push_back(Job {
                             orig: name.clone(),
+                            decl: None,
                             vals,
                             site: request_site,
                             output_name: mangled.clone(),
@@ -873,6 +875,7 @@ impl Elab<'_> {
                     if mono.done.insert(mangled.clone()) {
                         mono.queue.push_back(Job {
                             orig: template,
+                            decl: None,
                             vals,
                             site: request_site,
                             output_name: mangled.clone(),
@@ -900,7 +903,27 @@ impl Elab<'_> {
                     return Ok(());
                 }
                 if mono.resolves_top_template(name) && self.specializable.contains_key(name) {
-                    let (vals, kept_type_args, whole_pack_abi) = if self.struct_template(name) {
+                    // Which declaration of an overloaded compile-time-keyed
+                    // family this call selected; `None` on every other path.
+                    let mut selected_decl = None;
+                    let (vals, kept_type_args, whole_pack_abi) = if self
+                        .comptime_overload_family(name)
+                    {
+                        // An overloaded compile-time-keyed name cannot be
+                        // resolved syntactically at all: explicit `[...]`
+                        // arguments name type arguments, not an overload, and
+                        // overload selection is the checker's. Inferred and
+                        // explicit calls alike are served only from the
+                        // checker's recorded instantiation.
+                        let Some((values, kept, decl)) =
+                            self.def_request_target(name, &source_span, param_args, mono)
+                        else {
+                            mono.retain_abstract(name, &source_span, false);
+                            return Ok(());
+                        };
+                        selected_decl = decl;
+                        (values, kept, false)
+                    } else if self.struct_template(name) {
                         // A struct specialization is fully concrete: every
                         // compile-time argument is baked into the mangled name.
                         let Some(values) =
@@ -936,7 +959,7 @@ impl Elab<'_> {
                             // checker-discovered request for this occurrence
                             // before falling back to the abstract path.
                             Err(_) => {
-                                if let Some((values, kept)) =
+                                if let Some((values, kept, _)) =
                                     self.def_request_target(name, &source_span, param_args, mono)
                                 {
                                     (values, kept, false)
@@ -985,7 +1008,7 @@ impl Elab<'_> {
                             // evident either: its arguments are the
                             // checker's to solve.
                             Ok(_) | Err(_) => {
-                                if let Some((values, kept)) =
+                                if let Some((values, kept, _)) =
                                     self.def_request_target(name, &source_span, param_args, mono)
                                 {
                                     (values, kept, whole_pack_abi)
@@ -1003,7 +1026,7 @@ impl Elab<'_> {
                         // so consult the recorded instantiation for this
                         // occurrence, else keep the template as a stub for the
                         // discovery check.
-                        let Some((values, kept)) =
+                        let Some((values, kept, _)) =
                             self.def_request_target(name, &source_span, param_args, mono)
                         else {
                             mono.retain_abstract(name, &source_span, false);
@@ -1039,13 +1062,13 @@ impl Elab<'_> {
                                         &mono.symbolic_type_params,
                                     ) =>
                             {
-                                let Some(target) =
+                                let Some((values, kept, _)) =
                                     self.def_request_target(name, &source_span, param_args, mono)
                                 else {
                                     mono.retain_abstract(name, &source_span, false);
                                     return Ok(());
                                 };
-                                target
+                                (values, kept)
                             }
                             resolved => resolved?,
                         };
@@ -1056,9 +1079,10 @@ impl Elab<'_> {
                     if whole_pack_abi {
                         output_name.push_str("$whole_pack");
                     }
-                    if mono.done.insert(output_name.clone()) {
+                    if mono.queue_specialization(&output_name, selected_decl) {
                         mono.queue.push_back(Job {
                             orig: original,
+                            decl: selected_decl,
                             vals,
                             site: request_site,
                             output_name: output_name.clone(),
@@ -1521,7 +1545,7 @@ impl Elab<'_> {
         source_span: &SourceSpan,
         param_args: &[ParamArg],
         mono: &Mono,
-    ) -> Option<(Vec<CtValue>, Vec<ParamArg>)> {
+    ) -> Option<(Vec<CtValue>, Vec<ParamArg>, Option<usize>)> {
         let target = mono
             .def_call_targets
             .get(&source_span.clone().without_syntax())?;
@@ -1530,9 +1554,14 @@ impl Elab<'_> {
             // provenance): stay abstract.
             return None;
         }
-        let template = self.specializable.get(name)?;
+        // An overloaded compile-time-keyed name resolves to the declaration
+        // the request selected, not to the registry's name-level entry.
+        let template = match target.decl {
+            Some(_) => self.selected_declaration(name, target.decl),
+            None => *self.specializable.get(name)?,
+        };
         let kept = self.request_kept_param_args(template, name, param_args, &target.vals)?;
-        Some((target.vals.clone(), kept))
+        Some((target.vals.clone(), kept, target.decl))
     }
 
     /// The source arguments a request-rewritten call retains: arguments bound

@@ -91,6 +91,7 @@ impl Elab<'_> {
             if mono.done.insert(mangled.clone()) {
                 mono.queue.push_back(Job {
                     orig: orig.clone(),
+                    decl: None,
                     vals: vals.clone(),
                     site: "a compile-time type alias".to_string(),
                     output_name: mangled.clone(),
@@ -114,6 +115,7 @@ impl Elab<'_> {
             if mono.done.insert(output_name.clone()) {
                 mono.queue.push_back(Job {
                     orig: "Tuple".to_string(),
+                    decl: None,
                     vals,
                     site: request.occurrence().map_or_else(
                         || "a checked Tuple type".to_string(),
@@ -171,6 +173,7 @@ impl Elab<'_> {
             if mono.done.insert(output_name.clone()) {
                 mono.queue.push_back(Job {
                     orig: "TString".to_string(),
+                    decl: None,
                     vals,
                     site: match &request.occurrence().source {
                         Some(source) => {
@@ -223,6 +226,7 @@ impl Elab<'_> {
             if let StmtKind::Def { name, .. } | StmtKind::Struct { name, .. } = &stmt.kind
                 && self.specializable.contains_key(name)
                 && !self.bound_generics.contains(name)
+                && !self.shares_a_family_name(stmt)
             {
                 continue;
             }
@@ -282,8 +286,12 @@ impl Elab<'_> {
         let mut out = Vec::with_capacity(program.len());
         for stmt in program {
             let template_name = match &stmt.kind {
+                // A plain overload sharing a compile-time-keyed family's name
+                // is not a template: it survives the rebuild unchanged, and
+                // the family's clones are emitted at its keyed sibling.
                 StmtKind::Def { name, .. } | StmtKind::Struct { name, .. }
-                    if self.specializable.contains_key(name) =>
+                    if self.specializable.contains_key(name)
+                        && !self.shares_a_family_name(&stmt) =>
                 {
                     name.clone()
                 }
@@ -386,8 +394,20 @@ impl Elab<'_> {
             {
                 continue;
             }
-            let Some(template) = self.specializable.get(callee) else {
-                continue;
+            // An overloaded compile-time-keyed name is a family: the request's
+            // parameter names say which declaration the checker selected, and
+            // a request that names none of them (or two of them) is skipped so
+            // the call stays abstract.
+            let (decl, template) = if self.comptime_overload_family(callee) {
+                match self.family_declaration(callee, request) {
+                    Some((index, declaration)) => (Some(index), declaration),
+                    None => continue,
+                }
+            } else {
+                match self.specializable.get(callee) {
+                    Some(template) => (None, *template),
+                    None => continue,
+                }
             };
             let Some(vals) = self.def_request_values(template, request.arguments()) else {
                 continue;
@@ -405,9 +425,10 @@ impl Elab<'_> {
                 .is_some_and(|source| source.contains(NESTED_MARKER_INFIX))
             {
                 let output_name = mangle(callee, &vals);
-                if mono.done.insert(output_name.clone()) {
+                if mono.queue_specialization(&output_name, decl) {
                     mono.queue.push_back(Job {
                         orig: callee.to_string(),
+                        decl,
                         vals: vals.clone(),
                         site: format!("a call inside a nested specialization of '{callee}'"),
                         output_name,
@@ -419,6 +440,7 @@ impl Elab<'_> {
                 .entry(request.occurrence().clone())
                 .or_insert_with(|| DefCallTarget {
                     template: callee.to_string(),
+                    decl,
                     vals,
                 });
         }
@@ -659,7 +681,8 @@ impl Elab<'_> {
                     mangle(&job.orig, &job.vals), job.site
                 ))
             })?;
-            let mut spec = match &self.specializable[&job.orig].kind {
+            let template = self.selected_declaration(&job.orig, job.decl);
+            let mut spec = match &template.kind {
                 StmtKind::Struct { type_params, .. }
                     if !classify_ct_params(type_params)
                         .iter()
@@ -668,12 +691,9 @@ impl Elab<'_> {
                     self.generate_value_struct_spec(&job.orig, &job.vals)?
                 }
                 StmtKind::Struct { .. } => self.generate_struct_spec(&job.orig, &job.vals)?,
-                _ => self.generate_def_spec(
-                    self.specializable[&job.orig],
-                    &job.orig,
-                    job.output_name.clone(),
-                    &job.vals,
-                )?,
+                _ => {
+                    self.generate_def_spec(template, &job.orig, job.output_name.clone(), &job.vals)?
+                }
             };
             // TString's public specialization identity describes its source
             // segments, while its concrete storage pack upgrades textual
@@ -686,9 +706,8 @@ impl Elab<'_> {
             }
             // A specialization of a bundled template is walked as bundled
             // code: the instances it reaches keep the erased path.
-            mono.in_bundled = mojito_checker::checker::is_bundled_module_source(
-                self.specializable[&job.orig].module.as_deref(),
-            );
+            mono.in_bundled =
+                mojito_checker::checker::is_bundled_module_source(template.module.as_deref());
             // A specialization is walked whole — signature and body — for
             // further template uses (nested instantiations, recursive packs):
             // a def clone's expanded `-> Variant[Int, String]` requests that

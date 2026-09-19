@@ -643,6 +643,13 @@ impl Checker {
                     self.overload_targets
                         .borrow_mut()
                         .insert(span.clone(), target.clone());
+                    // Only the selected candidate's re-run below may leave an
+                    // instantiation at this occurrence. A losing generic
+                    // candidate wrote one while it was being probed, and a
+                    // non-generic winner never overwrites it — which would
+                    // hand the elaborator a request for a callee this call
+                    // does not make.
+                    self.generic_instantiations.borrow_mut().remove(&span);
                     if let Some((index, selected)) =
                         candidates.iter().enumerate().find(|(_, candidate)| {
                             callable_lowered_name(name, candidate).as_deref()
@@ -1649,6 +1656,15 @@ impl Checker {
                 span.clone(),
                 mojito_checked::checked::GenericInstantiation {
                     callee: name.to_string(),
+                    parameter_names: names.clone(),
+                    parameter_types: params
+                        .iter()
+                        .map(|ty| {
+                            mojito_symbol::symbol::TypeKey::from_ty(ty)
+                                .as_str()
+                                .to_string()
+                        })
+                        .collect(),
                     arguments: tyargs,
                 },
             );

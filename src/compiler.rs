@@ -580,19 +580,25 @@ fn reject_unserved_template_calls(
                     && span.span == reference.site.span
                     && instantiation.callee == reference.callee
             })
-            .map(|(_, instantiation)| instantiation.arguments.as_slice());
+            .map(|(_, instantiation)| {
+                (
+                    instantiation.parameter_names.as_slice(),
+                    instantiation.arguments.as_slice(),
+                )
+            });
         match instantiation {
-            Some(arguments) => Some((reference, arguments)),
-            None if reference.function_value => Some((reference, &[][..])),
+            Some(recorded) => Some((reference, recorded)),
+            None if reference.function_value => Some((reference, (&[][..], &[][..]))),
             None => None,
         }
     });
-    let Some((unserved, arguments)) = unserved else {
+    let Some((unserved, (parameter_names, arguments))) = unserved else {
         return Ok(());
     };
     let parameter = unserved_template_parameter(
         linked,
         template_display_name(&unserved.callee),
+        parameter_names,
         arguments,
         &closed_generic_argument,
     );
@@ -628,6 +634,8 @@ fn def_specialization_requests(
         let request = DefSpecializationRequest::new(
             span.clone(),
             instantiation.callee.clone(),
+            instantiation.parameter_names.clone(),
+            instantiation.parameter_types.clone(),
             instantiation.arguments.clone(),
         );
         let key = request.occurrence().clone();
@@ -815,6 +823,8 @@ fn scalar_range_requests(
             Some(DefSpecializationRequest::new(
                 span.clone(),
                 linked.clone(),
+                Vec::new(),
+                Vec::new(),
                 instantiation.arguments.clone(),
             ))
         })

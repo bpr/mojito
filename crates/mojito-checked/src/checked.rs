@@ -276,6 +276,20 @@ pub struct CheckedIteratorCall {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenericInstantiation {
     pub callee: String,
+    /// The selected overload's runtime parameter names, in declaration order,
+    /// as the callee's own signature lists them (regular parameters, with an
+    /// `out` named result excluded). This is how a specialization request
+    /// names one overload of an overloaded template, exactly as
+    /// [`MethodInstantiation::parameter_names`] does for a method. Overloads
+    /// that differ only in their parameter *types* share a name list and are
+    /// told apart by [`Self::parameter_types`].
+    pub parameter_names: Vec<String>,
+    /// The same parameters' declared types, mangled as
+    /// `mojito_symbol::symbol::TypeKey` so they compare directly against the
+    /// declaration's own annotations. This breaks a tie between overloads
+    /// sharing a parameter-name list (`f[T](a: T)` beside `f(a: String)`); a
+    /// family ambiguous under both lists is served for none of its members.
+    pub parameter_types: Vec<String>,
     pub arguments: Vec<mojito_types::types::TyArg>,
 }
 

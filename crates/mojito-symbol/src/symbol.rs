@@ -324,6 +324,28 @@ impl TypeKey {
         )))
     }
 
+    /// Mangle a declared parameter annotation in the scope of the
+    /// declaration's own compile-time parameters, so an annotation naming one
+    /// of them carries its bounds exactly as the checker's `Ty::Param` does
+    /// (`T$Copyable`). [`Self::from_ast`] spells such an annotation bare,
+    /// which is right for a lowered symbol but does not compare against a
+    /// checker-resolved type.
+    pub fn from_ast_in_scope(ty: &Type, type_params: &[TypeParam]) -> Self {
+        let type_bounds = type_params
+            .iter()
+            .map(|parameter| (parameter.name.clone(), parameter.bounds.clone()))
+            .collect();
+        Self(sanitize(&ast_raw(ty, &HashMap::new(), &type_bounds, None)))
+    }
+
+    /// The mangled spelling. Two keys compare equal exactly when the
+    /// declaration and call-resolution sides agree on the type, which is what
+    /// makes a checker-recorded parameter type matchable against the
+    /// declaration annotation it came from.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
     /// Mangle a checker-resolved type (the call-resolution side). Aligned with
     /// [`TypeKey::from_ast`]: a struct/parameter/`Self.T` type spells exactly as
     /// its annotation does, so checker-recorded callees name real MIR functions.

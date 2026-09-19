@@ -54,23 +54,27 @@ entry names what it depends on, and an entry with no dependency sits as early
 as its size allows. The **Model:** bullet carries the complexity estimate and
 says whether the entry can be done as-is or must be planned first.
 
-- [ ] **An overloaded compile-time-keyed `def` cannot be called without its
-  parameters**
+- [ ] **A compile-time-keyed `def` overloaded with a type-pack one is
+  rejected**
 
-  Problem: two `def kind[T: Copyable]` overloads whose bodies hold a
-  `comptime if` run at the pin (`kind(3)`, `kind(3, 4)`), while Mojito
-  reports "compile-time call arity: generic 'kind' requires compile-time
-  parameter 'T'".
-  - The three template classes are keyed by name and admit a name only when
-    it is unique (`def_name_counts`, `comptime/comptime.rs`), because
-    overload selection belongs to the checker. An overloaded compile-time-keyed
-    `def` therefore joins no class: it is neither retained as a bound generic
-    nor served by the specialization request path.
-  - Found while making a `rebind` key specialization: those bodies joined the
-    same class and inherited the limitation.
-  - Depends on nothing.
-  - Model: Opus, plan first. The plan must say how a request names one
-    overload of a template.
+  Problem: `def kind[T: Copyable](a: T)` holding a `comptime if`, beside
+  `def kind[*Ts](var *xs: *Ts)`, runs at the pin but reports "compile-time
+  call arity: generic 'kind' requires compile-time parameter 'T'".
+  - An overloaded compile-time-keyed name forms a family
+    (`collect_comptime_overload_families`, `comptime/comptime.rs`) only when
+    every declaration of it could be keyed on its own. A pack, a `DType`
+    parameter, or a layout-dependent parameter disqualifies the whole family,
+    which then joins no class at all — the state every overloaded keyed `def`
+    was in before the family path landed.
+  - A mixed family needs one worklist to serve two specialization classes at
+    one name, which the pack entry below has to settle first.
+  - The rejection is safe: no wrong answer, and the message names a real
+    parameter of a real overload.
+  - Found while making an overloaded compile-time-keyed `def` callable
+    without its parameters.
+  - Depends on the type-pack entries below.
+  - Model: Opus, plan first. The plan must say which class serves a call
+    when two of them claim the name.
 
 - [ ] **A compile-time-keyed `def` cannot be passed as a function value**
 

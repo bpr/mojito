@@ -822,6 +822,10 @@ impl Checker {
             span.clone(),
             mojito_checked::checked::GenericInstantiation {
                 callee: family.to_string(),
+                // A range family is a struct template, never an overload set:
+                // the seed resolves it by name alone.
+                parameter_names: Vec::new(),
+                parameter_types: Vec::new(),
                 arguments: arguments.clone(),
             },
         );

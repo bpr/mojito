@@ -158,15 +158,30 @@ pub struct DefSpecializationRequest {
     /// The call occurrence, stored without its phase-local syntax id.
     occurrence: SourceSpan,
     callee: String,
+    /// The selected overload's runtime parameter names, in declaration order:
+    /// which declaration of an overloaded compile-time-keyed name the request
+    /// is for. A uniquely named callee ignores it.
+    parameter_names: Vec<String>,
+    /// The same parameters' declared types, mangled as `TypeKey`, breaking a
+    /// tie between overloads that share a parameter-name list.
+    parameter_types: Vec<String>,
     /// The checker's declaration-order argument list from `resolve_use_params`.
     arguments: Vec<TyArg>,
 }
 
 impl DefSpecializationRequest {
-    pub const fn new(occurrence: SourceSpan, callee: String, arguments: Vec<TyArg>) -> Self {
+    pub const fn new(
+        occurrence: SourceSpan,
+        callee: String,
+        parameter_names: Vec<String>,
+        parameter_types: Vec<String>,
+        arguments: Vec<TyArg>,
+    ) -> Self {
         Self {
             occurrence: occurrence.without_syntax(),
             callee,
+            parameter_names,
+            parameter_types,
             arguments,
         }
     }
@@ -177,6 +192,14 @@ impl DefSpecializationRequest {
 
     pub fn callee(&self) -> &str {
         &self.callee
+    }
+
+    pub fn parameter_names(&self) -> &[String] {
+        &self.parameter_names
+    }
+
+    pub fn parameter_types(&self) -> &[String] {
+        &self.parameter_types
     }
 
     pub fn arguments(&self) -> &[TyArg] {
@@ -673,10 +696,11 @@ pub fn template_display_name(template: &str) -> &str {
 pub fn unserved_template_parameter(
     program: &[Stmt],
     template: &str,
+    parameter_names: &[String],
     arguments: &[TyArg],
     is_closed: &dyn Fn(&TyArg) -> bool,
 ) -> String {
-    let Some(parameters) = declaration_type_params(program, template) else {
+    let Some(parameters) = declaration_type_params(program, template, parameter_names) else {
         return String::new();
     };
     let mut cursor = arguments
@@ -704,21 +728,34 @@ pub fn unserved_template_parameter(
 ///
 /// A nested `def` is reported by the same diagnostics as a top-level one, and
 /// it is spelled by the name the search is given: its qualified marker while
-/// the discovery check sees it, its source name otherwise.
-fn declaration_type_params<'a>(program: &'a [Stmt], template: &str) -> Option<&'a Vec<TypeParam>> {
-    fn in_block<'a>(block: &'a [Stmt], template: &str) -> Option<&'a Vec<TypeParam>> {
+/// the discovery check sees it, its source name otherwise. An overloaded name
+/// resolves to the declaration whose runtime parameters the call supplied, so
+/// the message names that overload's parameter rather than a sibling's.
+fn declaration_type_params<'a>(
+    program: &'a [Stmt],
+    template: &str,
+    parameter_names: &[String],
+) -> Option<&'a Vec<TypeParam>> {
+    fn in_block<'a>(
+        block: &'a [Stmt],
+        template: &str,
+        accepts: &dyn Fn(&Stmt) -> bool,
+    ) -> Option<&'a Vec<TypeParam>> {
         block.iter().find_map(|statement| match &statement.kind {
             StmtKind::Def {
                 name, type_params, ..
-            } if name == template => Some(type_params),
-            StmtKind::Def { body, .. } => in_block(body, template),
+            } if name == template && accepts(statement) => Some(type_params),
+            StmtKind::Def { body, .. } => in_block(body, template, accepts),
             StmtKind::Struct { methods, .. } => methods
                 .iter()
-                .find_map(|method| in_block(&method.body, template)),
+                .find_map(|method| in_block(&method.body, template, accepts)),
             _ => None,
         })
     }
-    in_block(program, template)
+    in_block(program, template, &|statement| {
+        declaration_takes_names(statement, parameter_names)
+    })
+    .or_else(|| in_block(program, template, &|_| true))
 }
 
 /// Elaborate a [`prepare`]d, validated program while materializing
@@ -811,6 +848,7 @@ pub fn elaborate_prepared(
         bound_generics,
         pack_generics,
         comptime_generics: collect_comptime_generic_templates(program),
+        comptime_overloads: collect_comptime_overload_families(program),
         method_requests: method_requests_by_owner,
         instance_requests,
         hash_leaf_types: hash_leaf_types.to_vec(),
@@ -1557,6 +1595,11 @@ struct Elab<'a> {
     /// instantiation for its occurrence; a deferred call keeps the template as
     /// a signature-only stub for the discovery check.
     comptime_generics: HashSet<String>,
+    /// The declarations of every overloaded compile-time-keyed name, in
+    /// declaration order (see [`collect_comptime_overload_families`]). A call
+    /// to such a name is served only from the checker's recorded
+    /// instantiation, which names the selected overload.
+    comptime_overloads: HashMap<String, Vec<&'a Stmt>>,
     /// Checker-discovered generic-method instantiations on specialized
     /// variadic structs, by owner name: each becomes a per-call clone.
     method_requests: HashMap<String, Vec<MethodSpecializationRequest>>,
@@ -1640,6 +1683,10 @@ fn substitute_source_param_arg_binding(argument: &mut ParamArg, binding: &str, r
 /// The concrete clone a checker-discovered inferred application selects.
 struct DefCallTarget {
     template: String,
+    /// Which declaration of an overloaded compile-time-keyed name the request
+    /// selected, as an index into [`Elab::comptime_overloads`]. `None` for
+    /// every uniquely named template.
+    decl: Option<usize>,
     vals: Vec<CtValue>,
 }
 
@@ -1751,6 +1798,11 @@ struct Mono {
     queue: VecDeque<Job>,
     /// Mangled names already requested (dedups identical instantiations).
     done: HashSet<String>,
+    /// The same dedup for an overloaded compile-time-keyed family, where two
+    /// declarations specialized at the same values share one mangled name and
+    /// are told apart only by the declaration index. `done` cannot serve here:
+    /// it is shared with struct instances.
+    overload_done: HashSet<(String, usize)>,
     /// Generated specializations, by template name (in generation order).
     generated: HashMap<String, Vec<Stmt>>,
     /// Lexical value bindings visible while call sites are rewritten. `true`
@@ -1831,6 +1883,17 @@ struct Mono {
 }
 
 impl Mono {
+    /// Whether a specialization named `output_name` is new and should be
+    /// queued. Two declarations of an overloaded compile-time-keyed family
+    /// specialized at the same values share one mangled name, so they dedup
+    /// on the declaration index instead.
+    fn queue_specialization(&mut self, output_name: &str, decl: Option<usize>) -> bool {
+        match decl {
+            Some(index) => self.overload_done.insert((output_name.to_string(), index)),
+            None => self.done.insert(output_name.to_string()),
+        }
+    }
+
     /// Leave the call or function-value use of `template` at `site` on its
     /// abstract path.
     fn retain_abstract(&mut self, template: &str, site: &SourceSpan, function_value: bool) {
@@ -2079,10 +2142,122 @@ fn collect_specializable<'a>(
             && (is_specializable_declaration_in(s, &|bound| struct_names.contains(bound))
                 || bound_generics.contains(name))
         {
-            m.insert(name.clone(), s);
+            // An overloaded name has one entry here, the first declaration:
+            // this registry answers the name-level question "is this a
+            // template at all?". Which declaration of an overloaded
+            // compile-time-keyed name a call selects is
+            // [`Elab::family_declaration`]'s to answer, from
+            // [`collect_comptime_overload_families`].
+            m.entry(name.clone()).or_insert(s);
         }
     }
     m
+}
+
+/// The declarations of every overloaded compile-time-keyed name, in
+/// declaration order.
+///
+/// Overload selection is the checker's, so the elaborator cannot pick among
+/// these itself: a call reaches one of them only through the checker's
+/// recorded instantiation, which names the selected overload by its runtime
+/// parameter names. A family whose members are not all admissible on their own
+/// — a type pack, a `DType` parameter, a layout-dependent parameter — stays
+/// off this path entirely and keeps today's behavior.
+fn collect_comptime_overload_families(program: &[Stmt]) -> HashMap<String, Vec<&Stmt>> {
+    let mut families: HashMap<String, Vec<&Stmt>> = HashMap::new();
+    for statement in program {
+        if let StmtKind::Def { name, .. } = &statement.kind {
+            families.entry(name.clone()).or_default().push(statement);
+        }
+    }
+    families.retain(|_, declarations| {
+        declarations.len() > 1
+            && declarations.iter().any(|s| comptime_keyed_declaration(s))
+            && declarations.iter().all(|s| admits_comptime_keying(s))
+    });
+    families
+}
+
+/// Whether `statement`'s caller-visible runtime parameters are exactly
+/// `parameter_names`.
+///
+/// This must agree with how the checker builds `Ty::GenericFunc::names`
+/// (`caller_regular`, `checker/statements.rs`): regular parameters in
+/// declaration order, with an `out` named result excluded, since a caller
+/// never supplies one.
+fn declaration_takes_names(statement: &Stmt, parameter_names: &[String]) -> bool {
+    declaration_takes(statement, parameter_names, |parameter| {
+        parameter.name.clone()
+    })
+}
+
+/// Whether `statement`'s caller-visible parameters are declared with exactly
+/// `parameter_types`, mangled the way the checker mangles the resolved types it
+/// recorded. [`mojito_symbol::symbol::TypeKey`] aligns its declaration and
+/// call-resolution sides precisely so these compare.
+fn declaration_takes_types(statement: &Stmt, parameter_types: &[String]) -> bool {
+    let StmtKind::Def { type_params, .. } = &statement.kind else {
+        return false;
+    };
+    declaration_takes(statement, parameter_types, |parameter| {
+        mojito_symbol::symbol::TypeKey::from_ast_in_scope(&parameter.ty, type_params)
+            .as_str()
+            .to_string()
+    })
+}
+
+fn declaration_takes(
+    statement: &Stmt,
+    expected: &[String],
+    spell: impl Fn(&mojito_ast::ast::FnParam) -> String,
+) -> bool {
+    let StmtKind::Def { params, .. } = &statement.kind else {
+        return false;
+    };
+    let mut caller_visible = params
+        .iter()
+        .filter(|parameter| {
+            parameter.kind == mojito_ast::ast::ParamKind::Regular
+                && !matches!(
+                    parameter.convention,
+                    Some(mojito_ast::ast::ArgConvention::Out)
+                )
+        })
+        .map(spell);
+    expected
+        .iter()
+        .all(|wanted| caller_visible.next().as_ref() == Some(wanted))
+        && caller_visible.next().is_none()
+}
+
+/// Whether a top-level `def` is specializable only because its body holds
+/// compile-time control flow or a `rebind` over its own parameters — the
+/// compile-time-keyed class's per-declaration predicate.
+fn comptime_keyed_declaration(statement: &Stmt) -> bool {
+    let StmtKind::Def {
+        type_params, body, ..
+    } = &statement.kind
+    else {
+        return false;
+    };
+    block_keys_specialization(body)
+        && admits_comptime_keying(statement)
+        && type_params
+            .iter()
+            .any(|parameter| !retained_specialization_param(parameter, type_params))
+}
+
+/// Whether a declaration's own parameters permit the compile-time-keyed class.
+/// A pack, a `DType` parameter, or a layout-dependent parameter keeps its own
+/// specialization path: such a signature cannot stand in as a checkable stub.
+fn admits_comptime_keying(statement: &Stmt) -> bool {
+    let StmtKind::Def { type_params, .. } = &statement.kind else {
+        return false;
+    };
+    !type_params.iter().any(|parameter| {
+        parameter.name.starts_with('*')
+            || matches!(parameter.bounds.as_slice(), [only] if only == "DType")
+    }) && !def_uses_layout_dependent_param(statement)
 }
 
 /// How many top-level `def`s share each name: the name-keyed template classes
@@ -2142,29 +2317,18 @@ fn collect_pack_generic_templates(program: &[Stmt]) -> HashSet<String> {
 /// parameters, and SIMD-width parameters stay on their own paths: their
 /// signatures cannot stand in as a checkable stub.
 fn collect_comptime_generic_templates(program: &[Stmt]) -> HashSet<String> {
+    let families = collect_comptime_overload_families(program);
     let def_counts = def_name_counts(program);
     program
         .iter()
         .filter_map(|statement| {
-            let StmtKind::Def {
-                name,
-                type_params,
-                body,
-                ..
-            } = &statement.kind
-            else {
+            let StmtKind::Def { name, .. } = &statement.kind else {
                 return None;
             };
-            let admitted = def_counts[name.as_str()] == 1
-                && block_keys_specialization(body)
-                && !type_params.iter().any(|parameter| {
-                    parameter.name.starts_with('*')
-                        || matches!(parameter.bounds.as_slice(), [only] if only == "DType")
-                })
-                && !def_uses_layout_dependent_param(statement)
-                && type_params
-                    .iter()
-                    .any(|parameter| !retained_specialization_param(parameter, type_params));
+            // A unique name joins on its own declaration; an overloaded name
+            // joins as a family, whose members the request path tells apart.
+            let admitted = (def_counts[name.as_str()] == 1 || families.contains_key(name.as_str()))
+                && comptime_keyed_declaration(statement);
             admitted.then(|| name.clone())
         })
         .collect()
@@ -2227,6 +2391,10 @@ fn stmt_has_comptime(s: &Stmt) -> bool {
 /// A pending specialization request: template `orig`, specialized for `vals`.
 struct Job {
     orig: String,
+    /// The selected declaration of an overloaded compile-time-keyed name; see
+    /// [`DefCallTarget::decl`]. The drain resolves the template through it,
+    /// since `orig` names a whole family.
+    decl: Option<usize>,
     vals: Vec<CtValue>,
     site: String,
     output_name: String,
@@ -2332,7 +2500,69 @@ mod specialize;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use rewrite::*;
 
-impl Elab<'_> {
+impl<'a> Elab<'a> {
+    /// The one declaration of overloaded compile-time-keyed `name` whose
+    /// runtime parameters are `parameter_names`, with its index.
+    ///
+    /// The checker records the selected overload's parameter names in
+    /// declaration order, excluding an `out` named result, so this is how a
+    /// request names one overload of a template. Overloads that share a
+    /// parameter-name list are told apart by their mangled parameter types;
+    /// a family ambiguous under both leaves the call abstract, and the
+    /// driver's unserved-use check rejects it in the caller's own terms.
+    pub(super) fn family_declaration(
+        &self,
+        name: &str,
+        request: &DefSpecializationRequest,
+    ) -> Option<(usize, &'a Stmt)> {
+        let declarations = self.comptime_overloads.get(name)?;
+        let by_name: Vec<(usize, &&Stmt)> = declarations
+            .iter()
+            .enumerate()
+            .filter(|(_, declaration)| {
+                declaration_takes_names(declaration, request.parameter_names())
+            })
+            .collect();
+        let candidates = match by_name.as_slice() {
+            [only] => return Some((only.0, *only.1)),
+            [] => return None,
+            _ => by_name,
+        };
+        let mut by_type = candidates.into_iter().filter(|(_, declaration)| {
+            declaration_takes_types(declaration, request.parameter_types())
+        });
+        let only = by_type.next()?;
+        by_type.next().is_none().then_some((only.0, *only.1))
+    }
+
+    /// Whether `statement` shares an overloaded compile-time-keyed name
+    /// without being keyed itself — a plain `def kind(a: Int, b: Int)` beside
+    /// a `def kind[T](a: T)` whose body holds a `comptime if`.
+    ///
+    /// Such a declaration is not a template and specializes nothing: the walk
+    /// and the program rebuild must treat it as an ordinary statement, since
+    /// both otherwise decide by name alone and would drop it.
+    pub(super) fn shares_a_family_name(&self, statement: &Stmt) -> bool {
+        let StmtKind::Def { name, .. } = &statement.kind else {
+            return false;
+        };
+        self.comptime_overloads.contains_key(name) && !comptime_keyed_declaration(statement)
+    }
+
+    /// Whether `name` is an overloaded compile-time-keyed family: a call to it
+    /// is served only from the checker's recorded instantiation, never
+    /// resolved syntactically.
+    pub(super) fn comptime_overload_family(&self, name: &str) -> bool {
+        self.comptime_overloads.contains_key(name)
+    }
+
+    /// The declaration a job or call target selected, or the sole declaration
+    /// the name-keyed registry holds.
+    pub(super) fn selected_declaration(&self, name: &str, decl: Option<usize>) -> &'a Stmt {
+        decl.and_then(|index| self.comptime_overloads.get(name)?.get(index).copied())
+            .unwrap_or_else(|| self.specializable[name])
+    }
+
     /// Whether `name` declares an explicit (non-infer-only) `Origin`/
     /// `OriginSet` parameter — a slot the checker erases from `Ty::Struct`,
     /// so a type mentioning the struct cannot be spelled concretely in a
@@ -2716,6 +2946,8 @@ mod def_request_tests {
         let request = DefSpecializationRequest::new(
             occurrence,
             "ident".to_string(),
+            vec!["x".to_string()],
+            vec!["T".to_string()],
             vec![TyArg::Ty(Ty::Int)],
         );
 
@@ -2747,6 +2979,8 @@ mod def_request_tests {
         let request = DefSpecializationRequest::new(
             occurrence,
             "ident".to_string(),
+            vec!["x".to_string()],
+            vec!["T".to_string()],
             vec![TyArg::Val(CtValue::Int(1))],
         );
 
@@ -2772,6 +3006,8 @@ mod def_request_tests {
         let request = DefSpecializationRequest::new(
             occurrence,
             "ident".to_string(),
+            vec!["x".to_string()],
+            vec!["T".to_string()],
             vec![TyArg::Ty(Ty::Int)],
         );
 
