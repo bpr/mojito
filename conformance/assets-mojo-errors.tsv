@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	391
+# swept-count	394
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -176,6 +176,7 @@ assets/type_error/comptime_dict_raising_subscript.mojo	compile-reject	agree	erro
 assets/type_error/comptime_dict_result_not_freezable.mojo	runs	subset	the pin runs it; Mojito rejects: cannot cross back from VM CTFE
 assets/type_error/comptime_for_tuple.mojo	compile-reject	agree	error: 'Tuple[String, String, String]' does not implement the '__iter__' method
 assets/type_error/comptime_if_instantiated_bad_branch.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["bad"]' value to 'Int'
+assets/type_error/comptime_keyed_abandoned_temporary.mojo	compile-reject	agree	error: '(expression temporary)' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Writable'
 assets/type_error/comptime_list_runtime_use.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Array[Int, Int(3)]' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/comptime_struct_missing_field.mojo	compile-reject	agree	error: 'Extent' value has no attribute 'missing'
 assets/type_error/contextual_member_no_context.mojo	compile-reject	agree	error: cannot resolve inferred member without a contextual type
@@ -219,6 +220,7 @@ assets/type_error/fieldwise_anytype_field.mojo	compile-reject	agree	error: field
 assets/type_error/function_type.mojo	compile-reject	agree	error: cannot implicitly convert 'def wrong(value: String) thin -> Int' value to 'def(Int) thin -> Int' in 'var' initializer
 assets/type_error/function_type_where_call_violates.mojo	compile-reject	agree	error: violated constraint
 assets/type_error/function_type_where_missing_on_contract.mojo	compile-reject	agree	error: invalid call to 'apply': 'apply' parameter 'F' has 'def[w: Int](Int) thin -> None' type, but value has type 'def kernel[w: Int](x: Int) thin -> None where (w > Int(0))'
+assets/type_error/generic_abandoned_temporary.mojo	compile-reject	agree	error: '(expression temporary)' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Writable'
 assets/type_error/generic_callable_value_contextual_specialization.mojo	compile-reject	agree	error: cannot implicitly convert 'def identity[T: Copyable](value: T) thin -> T' value to 'def(Int) thin -> Int' in 'var' initializer
 assets/type_error/generic_ctfe_impure.mojo	runs	subset	the pin runs it;Mojito rejects: not a compile-time value
 assets/type_error/hashable_bound_value_hash.mojo	compile-reject	agree	error: invalid call to '__hash__': missing required argument: 'hasher'
@@ -252,6 +254,7 @@ assets/type_error/inplace_subscript_bad_arg.mojo	compile-reject	agree	error: inv
 assets/type_error/inplace_subscript_missing.mojo	compile-reject	agree	error: 'Only' does not implement the '__iadd__' method
 assets/type_error/inplace_subscript_raises_unhandled.mojo	compile-reject	agree	error: cannot call function that may raise in a context that cannot raise
 assets/type_error/input_outside_raising_context.mojo	compile-reject	agree	error: cannot call function that may raise in a context that cannot raise
+assets/type_error/instantiated_generic_abandoned_binding.mojo	compile-reject	agree	error: 'y' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Writable'
 assets/type_error/is_operator_missing_dunder.mojo	compile-reject	agree	error: 'Plain' does not implement the '__is__' method
 assets/type_error/is_operator_non_struct.mojo	compile-reject	agree	error: 'Int' does not implement the '__is__' method
 assets/type_error/is_same_type_removed.mojo	compile-reject	agree	error: use of unknown declaration 'is_same_type'

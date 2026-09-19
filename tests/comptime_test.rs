@@ -1098,15 +1098,15 @@ fn explicit_type_argument_bound_violation_is_reported_at_the_call() {
 }
 
 #[test]
-fn bound_generic_clone_reports_concrete_body_errors() {
-    // A plain trait-bound generic (no comptime constructs) monomorphizes per
-    // explicit concrete application, so a body-invalid instantiation fails
-    // against the concrete type — Mojo's post-instantiation error — rather
-    // than an abstract trait query on `T`.
+fn bound_generic_template_reports_abstract_body_errors() {
+    // A plain trait-bound generic keeps its template alongside the clone the
+    // explicit application mints, so a body the parameter's bounds cannot
+    // support fails on `T` — upstream's pre-instantiation error — even though
+    // the instantiation itself is concrete.
     let src = "@fieldwise_init\nstruct Plain(Copyable, Movable):\n    var n: Int\n\ndef broken[T: Movable](x: T) -> Int:\n    return x.definitely_missing_member\n\ndef main():\n    print(broken[Plain](Plain(3)))\n";
     let error = run(src).unwrap_err();
     assert!(
-        error.contains("type 'Plain' has no field 'definitely_missing_member'"),
+        error.contains("type 'T' has no field 'definitely_missing_member'"),
         "got: {error}"
     );
 }

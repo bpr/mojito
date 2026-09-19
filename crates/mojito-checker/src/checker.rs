@@ -84,8 +84,13 @@ pub fn check_program(stmts: &[Stmt]) -> Result<mojito_checked::checked::CheckedP
 /// without such constructs are declared (so the validated bodies can call
 /// them) but not checked here — the executable check covers them.
 ///
-/// Validation produces no checked facts: the checker it runs is discarded,
-/// so nothing recorded for an untaken arm can reach lowering. Bodies that
+/// Validation runs the abstract destruction check over the bodies it checked
+/// (`explicit_destroy::DestroyScope::ValidatedTemplates`): a compile-time-keyed
+/// template is replaced by a trapping stub before the executable check, so this
+/// is the only place its abandoned values are seen with `T` symbolic.
+///
+/// Validation produces no other checked facts: the checker it runs is
+/// discarded, so nothing recorded for an untaken arm can reach lowering. Bodies that
 /// only check concretely — a variadic template shell's, one keyed on a
 /// `DType`/vector value parameter, or one reading a reflection handle —
 /// keep their per-instantiation check. A member of a template-shell struct
@@ -100,7 +105,15 @@ pub fn validate_comptime_templates(stmts: &[Stmt]) -> Result<(), TypeError> {
     let mut checker = Checker::new();
     checker.source_validation = true;
     checker.rebind_targets = rebind_targets;
-    match checker.check_program(&expanded) {
+    let checked = checker.check_program(&expanded).and_then(|()| {
+        run_explicit_destroy(
+            &checker,
+            &expanded,
+            &explicit_destroy_types(&checker),
+            crate::explicit_destroy::DestroyScope::ValidatedTemplates,
+        )
+    });
+    match checked {
         Err(error) if checker.is_template_shell_member_error(&error) => Ok(()),
         result => result,
     }
@@ -194,65 +207,13 @@ pub fn check_program_with_materialized_callables(
     // the ordinary statements it checked.
     with_stmt::splice_with_desugars(&mut expanded, &checker.with_desugars.borrow());
     let _finish = timing::span("explicit_destroy");
-    let explicit_destroy_types: HashMap<String, mojito_checked::checked::ExplicitDestroyInfo> =
-        checker
-            .structs
-            .iter()
-            .filter_map(|(name, info)| {
-                let self_ty =
-                    Ty::Struct(name.clone(), info.decls.iter().map(param_as_arg).collect());
-                (!checker.is_deinitable(&self_ty)).then(|| {
-                    (
-                        name.clone(),
-                        mojito_checked::checked::ExplicitDestroyInfo {
-                            message: info.explicit_destroy_message.clone().unwrap_or_else(|| {
-                                "value is not implicitly deletable and must be explicitly destroyed"
-                                    .to_string()
-                            }),
-                            destructors: info.explicit_destructors.clone(),
-                            fields: info
-                                .fields
-                                .iter()
-                                .filter_map(|(field, ty)| match ty {
-                                    Ty::Struct(field_ty, _) if !checker.is_deinitable(ty) => {
-                                        Some((field.clone(), field_ty.clone()))
-                                    }
-                                    _ => None,
-                                })
-                                .collect(),
-                        },
-                    )
-                })
-            })
-            .collect();
-    {
-        let binding_types = checker.binding_types.borrow();
-        let comprehension_bindings = checker.comprehension_bindings.borrow();
-        let deletability = checker.explicit_destroy_deletability.borrow();
-        // A value typed by a non-`Deinitable` type parameter is linear with
-        // upstream's message; the entry exists only for this pass, and only
-        // when some binding is one.
-        let mut explicit_destroy_types = explicit_destroy_types.clone();
-        if !deletability.linear_declarations.is_empty() || !deletability.linear_bindings.is_empty()
-        {
-            explicit_destroy_types.insert(
-                crate::explicit_destroy::LINEAR_TYPE_PARAMETER.to_string(),
-                mojito_checked::checked::ExplicitDestroyInfo {
-                    message: "unhandled explicitly destroyed type 'AnyType'".to_string(),
-                    destructors: HashMap::new(),
-                    fields: HashMap::new(),
-                },
-            );
-        }
-        crate::explicit_destroy::check(
-            &expanded,
-            &binding_types,
-            &comprehension_bindings,
-            &deletability,
-            &explicit_destroy_types,
-            &checker.borrowed_read_call_places.borrow(),
-        )?;
-    }
+    let explicit_destroy_types = explicit_destroy_types(&checker);
+    run_explicit_destroy(
+        &checker,
+        &expanded,
+        &explicit_destroy_types,
+        crate::explicit_destroy::DestroyScope::Program,
+    )?;
     Ok(mojito_checked::checked::CheckedProgram::new(
         expanded,
         checker.overload_targets.into_inner(),
@@ -296,6 +257,15 @@ pub fn check_program_with_materialized_callables(
         &checker.truthiness_conditions.into_inner(),
         checker.declaration_effects.into_inner(),
     ))
+}
+
+/// The source-validation body gate, which `explicit_destroy` reuses to walk
+/// exactly the bodies a validation run checked.
+pub(crate) fn validates_comptime_body(
+    type_params: &[mojito_ast::ast::TypeParam],
+    body: &[Stmt],
+) -> bool {
+    comptime_validation::validates_body(type_params, body)
 }
 
 /// A declaration-only view of the checker's conformance registry for phases
@@ -741,6 +711,14 @@ pub struct Checker {
     /// destroys each once the call returns. Checker-owned because the
     /// effective conventions are resolved here.
     read_temporary_arguments: RefCell<HashSet<SourceSpan>>,
+    /// Expressions whose value nothing takes ownership of: a temporary bound
+    /// to a read parameter, an argument of `print`, a discarded statement
+    /// expression. A linear one is abandoned there.
+    unconsumed_temporaries: RefCell<HashSet<SourceSpan>>,
+    /// Call results typed by one of the enclosing body's own type parameters
+    /// whose bounds do not prove `Deinitable`: the caller owns each and cannot
+    /// destroy it (`explicit_destroy`'s abandoned-temporary rule).
+    linear_temporaries: RefCell<HashSet<SourceSpan>>,
     /// Consuming method calls whose place receiver is implicitly copied. Kept
     /// separate from the single operation-adjustment slot so parameterized
     /// method metadata can coexist at the same expression.
@@ -886,6 +864,8 @@ impl Checker {
             call_place_uses: RefCell::new(HashSet::new()),
             borrowed_read_call_places: RefCell::new(HashSet::new()),
             read_temporary_arguments: RefCell::new(HashSet::new()),
+            unconsumed_temporaries: RefCell::new(HashSet::new()),
+            linear_temporaries: RefCell::new(HashSet::new()),
             implicitly_copied_consuming_receivers: RefCell::new(HashSet::new()),
             truthiness_conditions: RefCell::new(HashSet::new()),
             return_ref_contracts: Vec::new(),
@@ -2072,6 +2052,97 @@ impl StructInfo {
             })
             .collect()
     }
+}
+
+/// The explicit-destruction obligations a checked program's structs carry:
+/// one entry per struct whose self-type is not `Deinitable`.
+fn explicit_destroy_types(
+    checker: &Checker,
+) -> HashMap<String, mojito_checked::checked::ExplicitDestroyInfo> {
+    checker
+        .structs
+        .iter()
+        .filter_map(|(name, info)| {
+            let self_ty = Ty::Struct(name.clone(), info.decls.iter().map(param_as_arg).collect());
+            (!checker.is_deinitable(&self_ty)).then(|| {
+                (
+                    name.clone(),
+                    mojito_checked::checked::ExplicitDestroyInfo {
+                        message: info.explicit_destroy_message.clone().unwrap_or_else(|| {
+                            "value is not implicitly deletable and must be explicitly destroyed"
+                                .to_string()
+                        }),
+                        destructors: info.explicit_destructors.clone(),
+                        fields: info
+                            .fields
+                            .iter()
+                            .filter_map(|(field, ty)| match ty {
+                                Ty::Struct(field_ty, _) if !checker.is_deinitable(ty) => {
+                                    Some((field.clone(), field_ty.clone()))
+                                }
+                                _ => None,
+                            })
+                            .collect(),
+                    },
+                )
+            })
+        })
+        .collect()
+}
+
+/// Run the explicit-destruction analysis over `program` with the facts
+/// `checker` recorded for it. The two callers differ only in scope: the
+/// executable check walks the whole elaborated program, source validation
+/// walks the template bodies it checked symbolically.
+fn run_explicit_destroy(
+    checker: &Checker,
+    program: &[Stmt],
+    struct_types: &HashMap<String, mojito_checked::checked::ExplicitDestroyInfo>,
+    scope: crate::explicit_destroy::DestroyScope,
+) -> Result<(), TypeError> {
+    let binding_types = checker.binding_types.borrow();
+    let comprehension_bindings = checker.comprehension_bindings.borrow();
+    let deletability = checker.explicit_destroy_deletability.borrow();
+    // A call result typed by a non-`Deinitable` type parameter, in a position
+    // that takes no ownership of it, is a temporary the caller owns and cannot
+    // implicitly destroy.
+    let unconsumed = checker.unconsumed_temporaries.borrow();
+    let linear_temporaries: HashSet<SourceSpan> = checker
+        .linear_temporaries
+        .borrow()
+        .iter()
+        .filter(|span| unconsumed.contains(span))
+        .cloned()
+        .collect();
+    // A value typed by a non-`Deinitable` type parameter is linear with
+    // upstream's message; the entry exists only for this pass, and only when
+    // some value is one.
+    let mut types = struct_types.clone();
+    if !deletability.linear_declarations.is_empty()
+        || !deletability.linear_bindings.is_empty()
+        || !linear_temporaries.is_empty()
+    {
+        types.insert(
+            crate::explicit_destroy::LINEAR_TYPE_PARAMETER.to_string(),
+            mojito_checked::checked::ExplicitDestroyInfo {
+                message: "unhandled explicitly destroyed type 'AnyType'".to_string(),
+                destructors: HashMap::new(),
+                fields: HashMap::new(),
+            },
+        );
+    }
+    crate::explicit_destroy::check(
+        program,
+        &binding_types,
+        &comprehension_bindings,
+        &deletability,
+        &types,
+        crate::explicit_destroy::SpanFacts {
+            lent: checker.borrowed_read_call_places.borrow().clone(),
+            linear_temporaries,
+        },
+        scope,
+    )
 }
 
 /// Whether a struct parameter is an origin slot (`o: Origin[mut=m]`, an

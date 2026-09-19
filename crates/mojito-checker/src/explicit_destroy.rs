@@ -26,6 +26,30 @@ pub struct CheckedDeletability {
     pub linear_bindings: HashSet<SourceSpan>,
 }
 
+/// Which declarations [`check`] walks.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum DestroyScope {
+    /// Every function and method of the elaborated program.
+    Program,
+    /// Only the template bodies source validation checked with the
+    /// declaration's parameters symbolic (`validates_body`). Every other body
+    /// is left to the executable check, whose facts this run does not have.
+    ValidatedTemplates,
+}
+
+/// Per-expression facts the checker recorded for one program, carried on
+/// every environment this analysis builds.
+#[derive(Default)]
+pub struct SpanFacts {
+    /// Spans of `^` transfers the checker bound to a read parameter or
+    /// receiver: they lend their place and consume nothing.
+    pub lent: HashSet<SourceSpan>,
+    /// Call results the enclosing body owns but cannot destroy — their type is
+    /// one of its own type parameters, whose bounds do not prove `Deinitable`
+    /// — in a position that takes no ownership of them.
+    pub linear_temporaries: HashSet<SourceSpan>,
+}
+
 /// The synthetic explicit-destroy type name of a value typed by a
 /// non-`Deinitable` type parameter (`ExplicitDestroyInfo` key).
 pub const LINEAR_TYPE_PARAMETER: &str = "$linear";
@@ -40,22 +64,26 @@ pub fn check(
     >,
     deletability: &CheckedDeletability,
     types: &HashMap<String, ExplicitDestroyInfo>,
-    lent: &HashSet<SourceSpan>,
+    spans: SpanFacts,
+    scope: DestroyScope,
 ) -> Result<(), TypeError> {
     if types.is_empty() {
         return Ok(());
     }
-    let lent = std::rc::Rc::new(lent.clone());
+    let spans = std::rc::Rc::new(spans);
     for statement in statements {
         match &statement.kind {
-            StmtKind::Def { .. } => check_def(
+            StmtKind::Def {
+                type_params, body, ..
+            } if walks_body(scope, type_params, body) => check_def(
                 statement,
                 binding_types,
                 comprehension_bindings,
                 deletability,
                 types,
-                &lent,
+                &spans,
             )?,
+            StmtKind::Def { .. } => {}
             // A template shell carries signatures only.
             StmtKind::Struct {
                 template_shell: true,
@@ -63,6 +91,9 @@ pub fn check(
             } => {}
             StmtKind::Struct { name, methods, .. } => {
                 for (method_index, method) in methods.iter().enumerate() {
+                    if !walks_body(scope, &method.type_params, &method.body) {
+                        continue;
+                    }
                     let mut params = method
                         .params
                         .iter()
@@ -94,7 +125,7 @@ pub fn check(
                         comprehension_bindings,
                         deletability,
                         types,
-                        &lent,
+                        &spans,
                     )?;
                 }
             }
@@ -113,8 +144,16 @@ fn check_expr(
     >,
     types: &HashMap<String, ExplicitDestroyInfo>,
 ) -> Result<(), TypeError> {
+    if env.spans.linear_temporaries.contains(&expr.source_span())
+        && let Some(info) = types.get(LINEAR_TYPE_PARAMETER)
+    {
+        return Err(TypeError::LinearAbandoned {
+            var: "(expression temporary)".to_string(),
+            message: info.message.clone(),
+        });
+    }
     match &expr.kind {
-        ExprKind::Transfer(inner) if env.lent.contains(&expr.source_span()) => {
+        ExprKind::Transfer(inner) if env.spans.lent.contains(&expr.source_span()) => {
             check_expr(inner, env, comprehension_bindings, types)?;
         }
         ExprKind::Transfer(inner) => move_root(inner, env, types)?,
@@ -276,9 +315,7 @@ fn check_expr(
 struct Env {
     scopes: Vec<HashMap<String, usize>>,
     vars: Vec<Var>,
-    /// Spans of `^` transfers the checker bound to a read parameter or
-    /// receiver: they lend their place and consume nothing.
-    lent: std::rc::Rc<HashSet<SourceSpan>>,
+    spans: std::rc::Rc<SpanFacts>,
 }
 
 impl Env {
@@ -444,6 +481,129 @@ fn join(mut exits: Vec<Env>) -> Result<Env, TypeError> {
     Ok(first)
 }
 
+/// Check the branches of an `if`. Every branch runs from the entry
+/// environment, a diverging one contributes no exit, and a missing `else`
+/// contributes the entry environment itself — so a value consumed on one
+/// branch only is conditionally destroyed, which `join` rejects.
+fn check_branches(
+    branches: &[(Expr, Vec<Stmt>)],
+    orelse: Option<&[Stmt]>,
+    env: Env,
+    binding_types: &HashMap<SourceSpan, Ty>,
+    comprehension_bindings: &HashMap<
+        SourceSpan,
+        Vec<mojito_checked::checked::CheckedComprehensionBinding>,
+    >,
+    deletability: &CheckedDeletability,
+    types: &HashMap<String, ExplicitDestroyInfo>,
+) -> Result<Env, TypeError> {
+    let mut exits = Vec::new();
+    for (condition, body) in branches {
+        let mut branch = env.clone();
+        check_expr(condition, &mut branch, comprehension_bindings, types)?;
+        if let Some(exit) = check_block(
+            body,
+            branch,
+            true,
+            binding_types,
+            comprehension_bindings,
+            deletability,
+            types,
+        )? {
+            exits.push(exit);
+        }
+    }
+    match orelse {
+        Some(body) => {
+            if let Some(exit) = check_block(
+                body,
+                env,
+                true,
+                binding_types,
+                comprehension_bindings,
+                deletability,
+                types,
+            )? {
+                exits.push(exit);
+            }
+        }
+        None => exits.push(env),
+    }
+    join(exits)
+}
+
+/// Check the arms of a `comptime if`. Exactly one is selected per
+/// instantiation, so they are alternatives rather than branches: each is
+/// checked from the entry environment, and an obligation any one discharges
+/// counts as discharged. That can miss an abandonment the pin reports but can
+/// never reject a program the pin accepts.
+fn check_comptime_alternatives(
+    branches: &[(Expr, Vec<Stmt>)],
+    orelse: Option<&[Stmt]>,
+    env: Env,
+    binding_types: &HashMap<SourceSpan, Ty>,
+    comprehension_bindings: &HashMap<
+        SourceSpan,
+        Vec<mojito_checked::checked::CheckedComprehensionBinding>,
+    >,
+    deletability: &CheckedDeletability,
+    types: &HashMap<String, ExplicitDestroyInfo>,
+) -> Result<Env, TypeError> {
+    let mut exits = Vec::new();
+    for (condition, body) in branches {
+        let mut arm = env.clone();
+        check_expr(condition, &mut arm, comprehension_bindings, types)?;
+        if let Some(exit) = check_block(
+            body,
+            arm,
+            true,
+            binding_types,
+            comprehension_bindings,
+            deletability,
+            types,
+        )? {
+            exits.push(exit);
+        }
+    }
+    if let Some(body) = orelse
+        && let Some(exit) = check_block(
+            body,
+            env.clone(),
+            true,
+            binding_types,
+            comprehension_bindings,
+            deletability,
+            types,
+        )?
+    {
+        exits.push(exit);
+    }
+    exits.push(env);
+    Ok(join_comptime(exits))
+}
+
+/// Join the alternatives of a `comptime if`. Elaboration selects exactly one,
+/// so an obligation any alternative discharges is discharged: the result keeps
+/// only the obligations every alternative kept. The entry environment is the
+/// last exit, so it carries the scope stack and the smallest `vars` arena.
+fn join_comptime(mut exits: Vec<Env>) -> Env {
+    let Some(mut joined) = exits.pop() else {
+        return Env::default();
+    };
+    for other in &exits {
+        for (id, var) in joined.vars.iter_mut().enumerate() {
+            let Some(alternative) = other.vars.get(id) else {
+                break;
+            };
+            var.obligations
+                .retain(|path| alternative.obligations.contains(path));
+            var.moved.extend(alternative.moved.iter().cloned());
+            var.uninitialized &= alternative.uninitialized;
+        }
+    }
+    joined
+}
+
 fn type_at_path(
     root_type: &str,
     path: &[String],
@@ -493,10 +653,10 @@ fn check_function<'a>(
     >,
     deletability: &CheckedDeletability,
     types: &HashMap<String, ExplicitDestroyInfo>,
-    lent: &std::rc::Rc<HashSet<SourceSpan>>,
+    spans: &std::rc::Rc<SpanFacts>,
 ) -> Result<(), TypeError> {
     let mut env = Env {
-        lent: std::rc::Rc::clone(lent),
+        spans: std::rc::Rc::clone(spans),
         ..Env::default()
     };
     env.push();
@@ -656,39 +816,40 @@ fn check_stmt(
             return Ok(None);
         }
         StmtKind::If { branches, orelse } => {
-            let base = env.clone();
-            let mut exits = Vec::new();
-            for (condition, body) in branches {
-                let mut branch = base.clone();
-                check_expr(condition, &mut branch, comprehension_bindings, types)?;
-                if let Some(exit) = check_block(
-                    body,
-                    branch,
-                    true,
-                    binding_types,
-                    comprehension_bindings,
-                    deletability,
-                    types,
-                )? {
-                    exits.push(exit);
-                }
-            }
-            if let Some(body) = orelse {
-                if let Some(exit) = check_block(
-                    body,
-                    base,
-                    true,
-                    binding_types,
-                    comprehension_bindings,
-                    deletability,
-                    types,
-                )? {
-                    exits.push(exit);
-                }
-            } else {
-                exits.push(base);
-            }
-            env = join(exits)?;
+            env = check_branches(
+                branches,
+                orelse.as_deref(),
+                env,
+                binding_types,
+                comprehension_bindings,
+                deletability,
+                types,
+            )?;
+        }
+        StmtKind::ComptimeIf { branches, orelse } => {
+            env = check_comptime_alternatives(
+                branches,
+                orelse.as_deref(),
+                env,
+                binding_types,
+                comprehension_bindings,
+                deletability,
+                types,
+            )?;
+        }
+        // The loop is unrolled per instantiation and may unroll to nothing, so
+        // the body proves only its own internal obligations.
+        StmtKind::ComptimeFor { iter, body, .. } => {
+            check_expr(iter, &mut env, comprehension_bindings, types)?;
+            check_block(
+                body,
+                env.clone(),
+                true,
+                binding_types,
+                comprehension_bindings,
+                deletability,
+                types,
+            )?;
         }
         StmtKind::While { cond, body, orelse } => {
             check_expr(cond, &mut env, comprehension_bindings, types)?;
@@ -885,7 +1046,7 @@ fn check_stmt(
             comprehension_bindings,
             deletability,
             types,
-            &env.lent,
+            &env.spans,
         )?,
         _ => {}
     }
@@ -902,7 +1063,7 @@ fn check_def(
     >,
     deletability: &CheckedDeletability,
     types: &HashMap<String, ExplicitDestroyInfo>,
-    lent: &std::rc::Rc<HashSet<SourceSpan>>,
+    spans: &std::rc::Rc<SpanFacts>,
 ) -> Result<(), TypeError> {
     let StmtKind::Def { params, body, .. } = &statement.kind else {
         return Ok(());
@@ -929,8 +1090,24 @@ fn check_def(
         comprehension_bindings,
         deletability,
         types,
-        lent,
+        spans,
     )
+}
+
+/// Whether `scope` walks a declaration with these parameters and body. Source
+/// validation checked exactly the bodies `validates_body` selects; the facts
+/// this pass reads exist for no other body in that run.
+fn walks_body(
+    scope: DestroyScope,
+    type_params: &[mojito_ast::ast::TypeParam],
+    body: &[Stmt],
+) -> bool {
+    match scope {
+        DestroyScope::Program => true,
+        DestroyScope::ValidatedTemplates => {
+            crate::checker::validates_comptime_body(type_params, body)
+        }
+    }
 }
 
 /// Check one conceptual comprehension iteration. Each generator introduces a
@@ -1216,7 +1393,7 @@ fn consumed_roots_in_stmts(statements: &[Stmt], env: &Env, roots: &mut HashSet<u
 
 fn consumed_roots_in_expr(expr: &Expr, env: &Env, roots: &mut HashSet<usize>) {
     match &expr.kind {
-        ExprKind::Transfer(inner) if !env.lent.contains(&expr.source_span()) => {
+        ExprKind::Transfer(inner) if !env.spans.lent.contains(&expr.source_span()) => {
             if let Some((id, _)) = obligation_place(inner, env) {
                 roots.insert(id);
             }

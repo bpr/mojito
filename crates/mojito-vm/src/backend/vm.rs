@@ -683,59 +683,6 @@ impl Prog {
     }
 }
 
-fn vm_type_is_symbolic(ty: &Ty) -> bool {
-    match ty {
-        Ty::Infer | Ty::Param { .. } | Ty::Assoc { .. } | Ty::Dependent(_) | Ty::SelfType => true,
-        Ty::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
-            mojito_types::types::TyArg::Ty(ty) => vm_type_is_symbolic(ty),
-            mojito_types::types::TyArg::Val(value) => vm_ct_value_is_symbolic(value),
-            // Origins erase from the runtime ABI, so they never make a type symbolic.
-            mojito_types::types::TyArg::Origin(_) => false,
-        }),
-        Ty::Func {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            error,
-            ..
-        }
-        | Ty::GenericFunc {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            error,
-            ..
-        } => {
-            params.iter().any(vm_type_is_symbolic)
-                || vm_type_is_symbolic(ret)
-                || variadic.as_deref().is_some_and(vm_type_is_symbolic)
-                || kw_variadic.as_deref().is_some_and(vm_type_is_symbolic)
-                || error.as_deref().is_some_and(vm_type_is_symbolic)
-        }
-        Ty::Overload(types) | Ty::Tuple(types) | Ty::RuntimePack(types) | Ty::Variant(types) => {
-            types.iter().any(vm_type_is_symbolic)
-        }
-        Ty::ComptimeList(element) | Ty::VariadicPack(element) | Ty::Pointer { element, .. } => {
-            vm_type_is_symbolic(element)
-        }
-        Ty::Ref(reference) => vm_type_is_symbolic(&reference.referent),
-        Ty::Dtype
-        | Ty::Int
-        | Ty::UInt
-        | Ty::Bool
-        | Ty::StringLiteral
-        | Ty::Float64
-        | Ty::None
-        | Ty::Never
-        | Ty::IntLiteral
-        | Ty::FloatLiteral
-        | Ty::Simd { .. }
-        | Ty::Error => false,
-    }
-}
-
 struct CallerFrame<'a> {
     id: FrameId,
     /// The caller's function (its compile-time bindings resolve by name).
@@ -1051,33 +998,6 @@ fn resolve_value_parameter_slots(
         resolved[index] = Some(value);
     }
     resolved
-}
-
-fn vm_ct_value_is_symbolic(value: &CtValue) -> bool {
-    match value {
-        CtValue::Param(_) => true,
-        CtValue::Tuple(values)
-        | CtValue::List(values)
-        | CtValue::Set {
-            elements: values, ..
-        } => values.iter().any(vm_ct_value_is_symbolic),
-        CtValue::Dict { entries, .. } => entries
-            .iter()
-            .any(|(key, value)| vm_ct_value_is_symbolic(key) || vm_ct_value_is_symbolic(value)),
-        CtValue::Type(ty) | CtValue::Reflected(ty) => vm_type_is_symbolic(ty),
-        CtValue::Struct { fields, .. } => fields
-            .iter()
-            .any(|(_, value)| vm_ct_value_is_symbolic(value)),
-        CtValue::Int(_)
-        | CtValue::UInt(_)
-        | CtValue::Float(_)
-        | CtValue::IntLiteral(_)
-        | CtValue::FloatLiteral(_)
-        | CtValue::Bool(_)
-        | CtValue::Dtype(_)
-        | CtValue::Simd { .. }
-        | CtValue::Str(_) => false,
-    }
 }
 
 struct Frame {

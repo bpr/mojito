@@ -409,6 +409,7 @@ impl Checker {
             self.expression_types
                 .borrow_mut()
                 .insert(expr.source_span(), ty.clone());
+            self.record_linear_temporary(expr, ty);
             if let Some(mojito_checked::checked::SemanticAdjustment::ReferenceResult { reference }) =
                 self.operation_adjustments.borrow().get(&expr.source_span())
                 && self.is_implicitly_copyable(&reference.referent)

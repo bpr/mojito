@@ -260,7 +260,26 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   compile-time-only values, `concrete_only_struct`/`concrete_only_def` and
   `validates_body` draw the per-instantiation boundary (template shells,
   pack templates, reflection readers), and `is_template_shell_member_error`
-  names the errors that end validation without a verdict.
+  names the errors that end validation without a verdict. `checker.rs`
+  re-exports `validates_body` as `validates_comptime_body`, the body gate
+  `explicit_destroy::check` reuses for its `DestroyScope::ValidatedTemplates`
+  run.
+- `explicit_destroy.rs` owns the explicit-destruction analysis, run from
+  `checker.rs`'s `run_explicit_destroy` twice: once over the elaborated
+  program (`DestroyScope::Program`) and once over source validation's
+  symbolic template bodies (`DestroyScope::ValidatedTemplates`), whose
+  `ComptimeIf` arms `join_comptime` merges as alternatives rather than
+  `join`/`ensure_same`'s branches. `LINEAR_TYPE_PARAMETER` (`$linear`) keys
+  the obligation of a value typed by a non-`Deinitable` type parameter;
+  `Env.linear_temporaries` carries the call results the checker recorded as
+  owned-but-unconsumed (`places.rs`'s `record_linear_temporary` and
+  `record_unconsumed_temporary`, intersected in `run_explicit_destroy`),
+  reported as `'(expression temporary)'`.
+- `mojito-types`' `types::is_symbolic`/`ct_value_is_symbolic` answer whether a
+  type still mentions something only an instantiation can resolve. MIR's
+  `lower_expr/expr.rs` uses it to turn `size_of` of an unspecialized type into
+  `MirInstr::Unsupported`, and `mojito-vm`'s abstract-call adapters use it
+  where `vm_type_is_symbolic` used to.
 - `checker/rebind.rs` owns `rebind[Dest](value)`: `erase_rebinds` replaces
   each well-formed call by its operand before checking and records the
   retyping in `Checker.rebind_targets`; `apply_rebind_target` (from

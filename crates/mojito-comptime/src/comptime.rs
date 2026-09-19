@@ -2675,7 +2675,7 @@ mod def_request_tests {
     }
 
     #[test]
-    fn closed_request_rewrites_the_inferred_call_and_drops_the_template() {
+    fn closed_request_rewrites_the_inferred_call_beside_the_template() {
         let source = format!("{TEMPLATE}def main():\n    print(ident(2))\n");
         let parsed = parse(&source).expect("parse");
         let occurrence = inferred_call_span(&parsed, "ident");
@@ -2694,7 +2694,9 @@ mod def_request_tests {
             defs.iter().any(|name| name.starts_with("ident$")),
             "{defs:?}"
         );
-        assert!(!defs.contains(&"ident"), "{defs:?}");
+        // The abstract template stays beside its clone: its body keeps the
+        // pre-check the parameter bounds demand.
+        assert!(defs.contains(&"ident"), "{defs:?}");
         let calls = main_call_names(&elaborated);
         assert!(
             calls.iter().any(|name| name.starts_with("ident$")),
@@ -2751,7 +2753,9 @@ mod def_request_tests {
             1,
             "{defs:?}"
         );
-        assert!(!defs.contains(&"ident"), "{defs:?}");
+        // The abstract template stays beside its clone: its body keeps the
+        // pre-check the parameter bounds demand.
+        assert!(defs.contains(&"ident"), "{defs:?}");
         let calls = main_call_names(&elaborated);
         assert_eq!(
             calls

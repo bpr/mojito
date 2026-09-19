@@ -430,7 +430,14 @@ a guard such as `T == Int` narrows nothing, and an unused template still
 checks. Bodies without such constructs are declared but left to the
 executable check; bodies keyed on a variadic pack, a `DType`, or a
 vector-typed value parameter register as template shells and keep their
-per-instantiation check (`docs/roadmap.md` §1). Validation produces no
+per-instantiation check (`docs/roadmap.md` §1). Validation then runs the
+explicit-destruction analysis over exactly those bodies
+(`explicit_destroy::check` with `DestroyScope::ValidatedTemplates`): a
+compile-time-keyed template is a trapping stub by the time the executable
+check sees it, so this is the only place its abandoned values are judged with
+the parameters symbolic. A `comptime if`'s arms join as alternatives there,
+not as branches — elaboration selects exactly one, so a value any arm
+destroys counts as destroyed. Validation produces no
 checked facts: its checker is discarded, and `Compiler::compile_linked`
 runs it once on the prepared program that every discovery round then
 re-elaborates. `comptime::elaborate`, the composed-stage seam, runs the
@@ -525,9 +532,11 @@ A **bound-generic** template — a plain
 trait-bound generic `def` with no comptime constructs and a unique top-level
 name — resolves softly: only an explicit application whose arguments resolve
 concretely monomorphizes, while inferred calls, symbolic arguments, and
-function-value uses stay on the template's abstract erased-dispatch path and
-retain the template; a template with no references at all also survives,
-keeping its Mojo-style abstract pre-check. In both classes each clone bakes
+function-value uses stay on the template's abstract erased-dispatch path. The
+template itself always survives the rebuild, instantiated or not: what a
+parametric body demands of its own parameters is a fact about the template,
+so its Mojo-style abstract pre-check must not depend on which arguments some
+call happened to supply. In both classes each clone bakes
 its concrete type arguments into every remaining type position — annotations,
 compile-time argument lists, and constructor heads — and drops them from the
 residual signature and the rewritten calls, so the clone checks concretely.
@@ -637,7 +646,7 @@ target without queuing work; the clone job queues lazily when the soft
 resolution path fails on source arguments and consults the request — so a
 request can only upgrade a call from the abstract path, and a drifted or
 conflicting request (a `comptime for` unrolling duplicates one source
-occurrence) leaves the call abstract. A retained bound-generic template is
+occurrence) leaves the call abstract. A bound-generic template is
 emitted before its specializations because a clone may still reference the
 template abstractly (an inferred recursive call) and the checker binds
 top-level names sequentially.

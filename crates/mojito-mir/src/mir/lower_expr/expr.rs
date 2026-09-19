@@ -317,7 +317,20 @@ impl Flatten<'_> {
                     })
                 {
                     let dest = self.fresh_typed(span(e), None, Ty::Int);
-                    self.emit(MirInstr::SizeOf { dest, ty });
+                    // A symbolic type has no layout to take the size of. Only
+                    // a specialization can answer, and this body runs only
+                    // once one exists, so the abstract template stops here.
+                    if mojito_types::types::is_symbolic(&ty) {
+                        self.emit(MirInstr::Unsupported(format!(
+                            "size_of of the unspecialized type '{ty}'"
+                        )));
+                        self.emit(MirInstr::Const {
+                            dest,
+                            k: Const::Int(0),
+                        });
+                    } else {
+                        self.emit(MirInstr::SizeOf { dest, ty });
+                    }
                     return dest;
                 }
                 if let Some(mojito_checked::checked::SemanticAdjustment::TypeName { text }) =

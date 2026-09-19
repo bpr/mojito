@@ -1932,6 +1932,7 @@ impl Checker {
                 self.discarded_reference_results
                     .borrow_mut()
                     .insert(expr.source_span());
+                self.record_unconsumed_temporary(expr);
                 Ok(())
             }
         }

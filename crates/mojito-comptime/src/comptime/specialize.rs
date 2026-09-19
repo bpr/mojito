@@ -293,7 +293,6 @@ impl Elab<'_> {
                 }
             };
             let generated = mono.generated.remove(&template_name);
-            let monomorphized = generated.is_some();
             // A variadic struct template applied over a retained generic
             // body's own parameters survives as a shell: its parameters,
             // conformances (taken unconditionally — the concrete
@@ -303,16 +302,15 @@ impl Elab<'_> {
                 out.push(template_shell(&stmt));
             }
             // A comptime-class template either specialized or is a dead
-            // generic, dropped either way. A bound-generic template survives
-            // while any reference stays on its abstract path — and when it has
-            // no references at all, keeping the uninstantiated body's
-            // Mojo-style pre-check. A retained template precedes its
-            // specializations: a clone may still reference the template
-            // abstractly (an inferred recursive call), and the checker binds
-            // top-level names sequentially.
-            if self.bound_generics.contains(&template_name)
-                && (mono.retained.contains(&template_name) || !monomorphized)
-            {
+            // generic, dropped either way. A bound-generic template always
+            // survives, so its body keeps the abstract pre-check whether or
+            // not it was instantiated: what a parametric body demands of its
+            // own parameters is a fact about the template, not about the
+            // arguments some call happened to supply. A retained template
+            // precedes its specializations: a clone may still reference the
+            // template abstractly (an inferred recursive call), and the
+            // checker binds top-level names sequentially.
+            if self.bound_generics.contains(&template_name) {
                 out.push(stmt);
             } else if self.pack_generics.contains(&template_name)
                 && mono.retained.contains(&template_name)

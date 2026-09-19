@@ -46,9 +46,46 @@ impl Checker {
                 kwargs,
                 receiver,
             ));
-        self.read_temporary_arguments
+        let read = read_temporary_arguments(slots, conventions, args, kwargs);
+        self.unconsumed_temporaries
             .borrow_mut()
-            .extend(read_temporary_arguments(slots, conventions, args, kwargs));
+            .extend(read.iter().cloned());
+        self.read_temporary_arguments.borrow_mut().extend(read);
+    }
+
+    /// Record an expression whose value nothing takes ownership of: a
+    /// temporary a callee only borrows, or a discarded statement expression.
+    /// A linear one is abandoned there ([`Self::record_linear_temporary`]).
+    pub(super) fn record_unconsumed_temporary(&self, expr: &Expr) {
+        if !is_place_expr(expr) && !matches!(expr.kind, ExprKind::Transfer(_)) {
+            self.unconsumed_temporaries
+                .borrow_mut()
+                .insert(expr.source_span());
+        }
+    }
+
+    /// Record a call result the enclosing body owns but cannot destroy: its
+    /// type is one of that body's own type parameters, whose bounds do not
+    /// prove `Deinitable`. The parameter must be in scope here — the same
+    /// `Ty::Param` at a concrete call site is the erased-dispatch spelling of
+    /// a solved argument, not a linear value.
+    pub(super) fn record_linear_temporary(&self, expr: &Expr, ty: &Ty) {
+        let Ty::Param { name, .. } = ty else {
+            return;
+        };
+        let call = matches!(
+            expr.kind,
+            ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
+        );
+        let own_parameter = self
+            .tparams
+            .iter()
+            .any(|scope| scope.contains_key(name.as_str()));
+        if call && own_parameter && !self.is_deinitable(ty) {
+            self.linear_temporaries
+                .borrow_mut()
+                .insert(expr.source_span());
+        }
     }
 }
 

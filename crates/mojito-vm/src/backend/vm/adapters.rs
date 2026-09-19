@@ -122,7 +122,7 @@ impl VmBackend {
         if !prog.structs.contains_key(name)
             && public_elements
                 .iter()
-                .any(|element| vm_type_is_symbolic(element))
+                .any(|element| mojito_types::types::is_symbolic(element))
         {
             return Ok(Value::Tuple(items));
         }
