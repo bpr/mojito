@@ -359,22 +359,29 @@ ordinary bundled structs. The figures below replace it.
 
 | Program | Plain | Template | Generated | Instance-clone checks | Derived | Template bodies reused |
 |---|---:|---:|---:|---:|---:|---:|
-| `hello.mojo` | 2100 | 1656 | 1320 | 0 | 0 | 240 |
-| `stdlib_heavy.mojo` | 2100 | 1676 | 3016 | 2254 | 586 | 250 |
-| `generic.mojo` | 2118 | 1658 | 1638 | 474 | 178 | 250 |
+| `hello.mojo` | 2100 | 1571 | 1320 | 0 | 0 | 325 |
+| `stdlib_heavy.mojo` | 2100 | 1586 | 2904 | 2254 | 698 | 340 |
+| `generic.mojo` | 2118 | 1573 | 1596 | 474 | 220 | 335 |
 
 - Hello World mints no per-instantiation method clones: a program without its
   own instantiations has none. Its generated bodies are members of structs the
   elaborator specialized whole (`Tuple$…`, the `DType`-keyed ranges, the
   hasher) and per-call clones, all from concrete-only templates.
-- `stdlib_heavy.mojo` checks an instance clone 2254 times and derives 586 of
-  them, 26%; `generic.mojo` derives 178 of 474, 38%. With scalar getters alone
+- `stdlib_heavy.mojo` checks an instance clone 2254 times and derives 698 of
+  them, 31%; `generic.mojo` derives 220 of 474, 46%. With scalar getters alone
   (`MethodScalarBody`) those were 242 and 70, and wall time did not move.
+  Before `ref self` accessors and the `_mojito_abort` statement they were 586
+  and 178.
 - The `MethodBody` class moves it. Three interleaved runs each against the
   preceding commit, debug profile, no `--timings`: `stdlib_heavy.mojo` 17.78 to
   17.98 s before and 16.91 to 17.12 s after; `generic.mojo` 11.30 to 11.57 s
   before and 10.53 to 10.82 s after. `--timings` itself costs about four
   seconds on `stdlib_heavy.mojo`, before and after, most of it the census.
+- `ref self` accessors and reference results move it again, measured the same
+  way against c08b3aa: `stdlib_heavy.mojo` 17.64 to 17.74 s before and 16.88
+  to 17.07 s after; `generic.mojo` 11.21 to 11.46 s before and 10.53 to
+  10.64 s after. Absolute times drift between sessions, so only the
+  interleaved pairs compare.
 
 ### Census of method bodies (`stdlib_heavy.mojo`, last discovery round, one pass)
 
@@ -383,42 +390,44 @@ captured (`template_census.*`; `MOJITO_TIMING_NOTES=1` names each body).
 
 | | Bodies inferred | Capturable with today's recipes |
 |---|---:|---:|
-| Generic method templates | 271 | 108 |
-| Per-instantiation clones | 333 | 124 |
+| Generic method templates | 253 | 107 |
+| Per-instantiation clones | 314 | 130 |
 
 A derived body is not inferred, so it is not in the census. Of the 411
-per-instantiation clone bodies of that pass, 103 derive; the census rows are
+per-instantiation clone bodies of that pass, 122 derive; the census rows are
 the generated generic bodies that were inferred.
 
 What blocks the clone bodies, by how many bodies each reason appears in:
 
 | Reason | Bodies | Sole blocker of |
 |---|---:|---:|
-| `ConstructionImmutableBinders` | 103 | 43 |
-| `ReferenceValueUses` | 60 | 18 |
+| `ConstructionImmutableBinders` | 103 | 56 |
 | a callee effect summary that is not empty | 39 | 27 |
-| adjustment `ReferenceResult` | 37 | 0 |
 | a fact keyed outside the body's occurrences | 24 | 0 |
-| `InteriorReferences` | 22 | 0 |
-| `CopyableReferenceResultReads` | 16 | 0 |
 | `ExplicitDestroyCalls` | 13 | 4 |
 | `CallPlaceUses` | 13 | 4 |
+| adjustment `TypeName` | 11 | 3 |
+| `SubscriptDescriptors` | 10 | 0 |
 
-The best recipe sets by how many more clone bodies they would make capturable:
-one, 43 (`ConstructionImmutableBinders`); two, 70 (plus effect summaries);
-three, 92 (plus `ReferenceValueUses`). Capturable is necessary, not
-sufficient: 124 bodies are capturable already and are inferred because no
-class admits their syntax.
+The four reference facts (`ReferenceValueUses`, the `ReferenceResult`
+adjustment, `InteriorReferences`, `CopyableReferenceResultReads`) have recipes
+and left the table. The best recipe sets by how many more clone bodies they
+would make capturable: one, 56 (`ConstructionImmutableBinders`); two, 83 (plus
+effect summaries). Capturable is necessary, not sufficient: 130 bodies are
+capturable already and are inferred because no class admits their syntax.
 
 What those bodies are made of is the census's second half
 (`template_census.<class>.grammar.<construct>`): every construct a method's
-declaration and body hold, whatever class admits it. Among the 333 clone
-bodies, the constructs no class admits in any form are a string literal (54
-bodies), a `ref self` (51), the method's own binders (40), a `mut` parameter
-(37), a `ref` declaration (28), and `raises` with `raise` (21). The rest are
-admitted only in part: a method call with arguments (178, admitted when every
-argument is a closed scalar), a subscript (139, admitted on a pointer slot), a
-non-scalar closed result (137), and a `^` transfer (123).
+declaration and body hold, whatever class admits it. Among the 314 clone
+bodies, the constructs no class admits in any form are the method's own
+binders (40), a `mut` parameter (37), a `ref` declaration (28), and `raises`
+with `raise` (21). The rest are admitted only in part: a method call with
+arguments (175, admitted when every argument is a closed scalar), a direct
+call with arguments (174), a subscript (129, admitted on a pointer slot or as
+a reference call on a field), a `^` transfer (121), a non-scalar closed result
+(117), a string literal (42, admitted as the `_mojito_abort` message), a
+`ref self` (41, admitted with no receiver origin), and a reference result (16,
+admitted when every `return` hands out a place of `self`).
 
 The remaining cost is body inference of uncovered bodies, about one second per
 transfer pass. `docs/roadmap.md` section 1 carries the entries that attack it,

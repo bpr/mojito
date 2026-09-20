@@ -269,6 +269,9 @@ pub fn derive_adjustment(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TemplateCallContract {
     pub contract: CheckedCallContract,
+    /// The contract's reference result, which names the receiver's binding.
+    /// The contract's own is left empty, and its result type is the referent.
+    pub reference_result: Option<TemplateReference>,
     pub arguments: Vec<TemplateArgumentBoundary>,
     /// Receiver and call-site generation changes.
     pub invalidations: Vec<TemplateInvalidation>,
@@ -312,6 +315,25 @@ pub fn trivial_method_contract(call: &TemplateCallContract) -> bool {
 /// callee's declaration, which an instance's clone keeps. Every field is
 /// named, so a new one must be given a rule here before this crate builds.
 pub fn closed_method_contract(call: &TemplateCallContract) -> bool {
+    call.reference_result.is_none() && closed_contract(call)
+}
+
+/// Whether a method call's contract is a [`closed_method_contract`] but for
+/// the reference it returns.
+///
+/// The reference's origin is the callee's declared origin against the
+/// receiver's place, and its mutability is the receiver binding's: neither
+/// reads a struct parameter, so an instance changes only the referent, by
+/// substitution, and gets its own receiver binding back in the origin. The
+/// receiver needs a place, which a field of `self` is.
+pub fn closed_reference_contract(call: &TemplateCallContract) -> bool {
+    call.reference_result.is_some()
+        && call.contract.receiver_requires_place
+        && closed_contract(call)
+}
+
+/// What [`closed_method_contract`] and [`closed_reference_contract`] share.
+fn closed_contract(call: &TemplateCallContract) -> bool {
     use mojito_ast::ast::ArgConvention;
     let TemplateCallContract {
         contract:
@@ -336,6 +358,7 @@ pub fn closed_method_contract(call: &TemplateCallContract) -> bool {
                         invalidations: _,
                     },
             },
+        reference_result: _,
         arguments: boundary_arguments,
         invalidations: _,
     } = call;
@@ -484,6 +507,13 @@ impl MethodFeatures {
     /// A method call on `self` or one of its fields whose contract is closed
     /// but carries arguments or a `mut` receiver.
     pub const SIBLING_CALLS: Self = Self(1 << 3);
+    /// A reference result: every `return` hands out a place of `self`, a
+    /// field or a pointer slot, as a handle rather than a value.
+    pub const REFERENCE_RESULT: Self = Self(1 << 4);
+    /// A reference-returning method call on a field of `self`, passing
+    /// scalars, forwarded as the method's own reference result or read by
+    /// value.
+    pub const REFERENCE_CALLS: Self = Self(1 << 5);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
@@ -527,6 +557,35 @@ pub struct TemplateInvalidation {
     pub path: Vec<mojito_types::origin::OriginSeg>,
     pub except: Option<TemplateOwner>,
     pub include_base_generation: bool,
+}
+
+/// A place below one of the declaration's own bindings, in template-local
+/// terms.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplatePlace {
+    pub root: TemplateOwner,
+    pub path: Vec<mojito_types::origin::OriginSeg>,
+}
+
+/// An origin with each place it is rooted at in template-local terms.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TemplateOrigin {
+    Place(TemplatePlace),
+    Union(Vec<Self>),
+    /// An origin that names no binding identity, kept as written.
+    Unrooted(mojito_types::origin::Origin),
+}
+
+/// One [`mojito_types::origin::RefTy`] a call yielded, in template-local
+/// terms.
+///
+/// An instance substitutes the referent and gets its own bindings back in the
+/// origin. The mutability is read off the receiver's declaration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplateReference {
+    pub referent: Ty,
+    pub origin: TemplateOrigin,
+    pub mutability: mojito_types::origin::Mutability,
 }
 
 /// A binding a retained fact names, in template-local terms: checker owner
@@ -605,6 +664,11 @@ pub enum TemplateObligation {
     /// decides it; a linear temporary stays one only while its type is still
     /// a parameter.
     Deletability,
+    /// A reference result is marked a copyable read where its referent is
+    /// implicitly copyable at the instance's type, as inference marks a
+    /// clone's. One the template marked must stay marked: a by-value read
+    /// rests on it.
+    ReferenceResultReads,
 }
 
 /// The facts one body check recorded, keyed by the body's own syntax
@@ -658,6 +722,11 @@ pub struct CheckedBodyFacts {
     /// Values an expression statement or a `_ =` assignment discards. The
     /// statement's syntax alone decides it, so an instance inherits the set.
     pub discarded_reference_results: Vec<OccurrenceId>,
+    /// Expressions kept as a reference handle rather than read through, and
+    /// whether the handle is writable. Only the value of a `return` in a
+    /// method that returns a reference derives: the declaration and the
+    /// statement's syntax decide that entry, and it is never writable.
+    pub reference_value_uses: Vec<(OccurrenceId, bool)>,
     pub deletable_bindings: Vec<OccurrenceId>,
     /// Bindings of a bare parameter type whose bounds do not prove
     /// `Deinitable`. An instance judges each binding again at its own type
@@ -666,6 +735,16 @@ pub struct CheckedBodyFacts {
     /// Call results of a bare parameter type the body owns and cannot
     /// destroy. An instance's type is never a parameter, so it keeps none.
     pub linear_temporaries: Vec<OccurrenceId>,
+    /// The reference each reference-returning call yields: the
+    /// [`SemanticAdjustment::ReferenceResult`] entries of the adjustment
+    /// table, kept apart because their origins name bindings.
+    pub reference_results: Vec<(OccurrenceId, TemplateReference)>,
+    /// The interior generation a subscript's reference belongs to.
+    pub interior_references: Vec<(OccurrenceId, TemplatePlace)>,
+    /// Reference results whose referent is implicitly copyable. An instance
+    /// judges each reference result again at its own referent
+    /// ([`TemplateObligation::ReferenceResultReads`]).
+    pub copyable_reference_result_reads: Vec<OccurrenceId>,
     /// Every `^` transfer, from the syntax alone. An instance owes `Movable`
     /// at each one whose type mentioned a parameter
     /// ([`TemplateObligation::Movable`]).
@@ -834,6 +913,13 @@ impl CheckedBodyFacts {
                 self.discarded_reference_results, other.discarded_reference_results
             );
         }
+        if self.reference_value_uses != other.reference_value_uses {
+            let _ = writeln!(
+                out,
+                " reference_value_uses:\n  derived:  {:?}\n  inferred: {:?}",
+                self.reference_value_uses, other.reference_value_uses
+            );
+        }
         if self.deletable_bindings != other.deletable_bindings {
             let _ = writeln!(
                 out,
@@ -853,6 +939,27 @@ impl CheckedBodyFacts {
                 out,
                 " linear_temporaries:\n  derived:  {:?}\n  inferred: {:?}",
                 self.linear_temporaries, other.linear_temporaries
+            );
+        }
+        if self.reference_results != other.reference_results {
+            let _ = writeln!(
+                out,
+                " reference_results:\n  derived:  {:?}\n  inferred: {:?}",
+                self.reference_results, other.reference_results
+            );
+        }
+        if self.interior_references != other.interior_references {
+            let _ = writeln!(
+                out,
+                " interior_references:\n  derived:  {:?}\n  inferred: {:?}",
+                self.interior_references, other.interior_references
+            );
+        }
+        if self.copyable_reference_result_reads != other.copyable_reference_result_reads {
+            let _ = writeln!(
+                out,
+                " copyable_reference_result_reads:\n  derived:  {:?}\n  inferred: {:?}",
+                self.copyable_reference_result_reads, other.copyable_reference_result_reads
             );
         }
         if self.transfers != other.transfers {
@@ -936,9 +1043,13 @@ impl CheckedBodyFacts {
             interior_invalidations: at(&self.interior_invalidations, occurrences),
             unconsumed_temporaries: flagged(&self.unconsumed_temporaries),
             discarded_reference_results: flagged(&self.discarded_reference_results),
+            reference_value_uses: at(&self.reference_value_uses, occurrences),
             deletable_bindings: flagged(&self.deletable_bindings),
             linear_bindings: flagged(&self.linear_bindings),
             linear_temporaries: flagged(&self.linear_temporaries),
+            reference_results: at(&self.reference_results, occurrences),
+            interior_references: at(&self.interior_references, occurrences),
+            copyable_reference_result_reads: flagged(&self.copyable_reference_result_reads),
             transfers: flagged(&self.transfers),
             locals: self.locals,
         }
@@ -969,9 +1080,13 @@ impl CheckedBodyFacts {
             + self.interior_invalidations.len()
             + self.unconsumed_temporaries.len()
             + self.discarded_reference_results.len()
+            + self.reference_value_uses.len()
             + self.deletable_bindings.len()
             + self.linear_bindings.len()
             + self.linear_temporaries.len()
+            + self.reference_results.len()
+            + self.interior_references.len()
+            + self.copyable_reference_result_reads.len()
             + self.transfers.len()
     }
 }

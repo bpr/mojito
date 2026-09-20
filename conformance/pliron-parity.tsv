@@ -499,6 +499,8 @@ assets/ok/template_inner_request.mojo	main	exe-differential	sanitized
 assets/ok/template_method_calls.mojo	main	exe-differential	sanitized
 assets/ok/template_method_getter.mojo	main	exe-differential	sanitized
 assets/ok/template_method_moves.mojo	main	exe-differential	sanitized
+assets/ok/template_method_reference_call.mojo	main	exe-differential	sanitized
+assets/ok/template_method_reference_result.mojo	main	exe-differential	sanitized
 assets/ok/template_method_statements.mojo	main	exe-differential	sanitized
 assets/ok/template_overload_binding.mojo	main	exe-differential	sanitized
 assets/ok/template_overload_binding_local.mojo	main	exe-differential	sanitized

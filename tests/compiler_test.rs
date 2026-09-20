@@ -1550,6 +1550,41 @@ fn template_method_moves_derive() {
 }
 
 #[test]
+fn template_method_reference_results_derive() {
+    // A `ref self` accessor returning a field or a pointer slot as a handle,
+    // behind a scalar guard or the bundled bounds check that aborts.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_reference_result.mojo"),
+        "1 0 1\na 0 a\n3 0 3\nz y\n4 4\n",
+        &[
+            ("Slot.peek", 3),
+            ("Slot.counter", 3),
+            ("Slot.guarded", 3),
+            ("List.unsafe_get", 1),
+            ("Optional.value", 1),
+            ("Optional.unsafe_value", 1),
+        ],
+    );
+}
+
+#[test]
+fn template_method_reference_calls_derive() {
+    // A reference-returning call on a field of `self`, forwarded as the
+    // method's own reference result or read by value. `Rack`'s template marks
+    // no copyable read; its `Int` instance does and its `Token` one does not.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_reference_call.mojo"),
+        "4\n3 4\n8\n9\ny\nx y\n",
+        &[
+            ("Rack.at", 2),
+            ("Shelf.at", 2),
+            ("Shelf.first", 2),
+            ("Shelf.second", 2),
+        ],
+    );
+}
+
+#[test]
 fn template_def_with_a_scalar_local_keeps_the_symbolic_choice() {
     // A surviving trait-bound `def` with a scalar local derives, so its
     // instances inherit the overload the template bound rather than ranking

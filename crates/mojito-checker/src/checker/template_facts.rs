@@ -19,7 +19,8 @@ use mojito_checked::templates::{
     CallParameterFact, CheckedBodyFacts, CheckedTemplate, FactTable, IncompleteReason,
     InstanceName, InstanceTrace, MethodFeatures, OccurrenceId, TemplateArgumentBoundary,
     TemplateCallContract, TemplateClass, TemplateCoverage, TemplateId, TemplateInvalidation,
-    TemplateObligation, TemplateOwner, TemplateProducer,
+    TemplateObligation, TemplateOrigin, TemplateOwner, TemplatePlace, TemplateProducer,
+    TemplateReference,
 };
 use mojito_common::error::TypeError;
 use mojito_common::timing;
@@ -755,9 +756,38 @@ impl Checker {
                     )
                 })
                 .collect(),
+            reference_results: template
+                .reference_results
+                .iter()
+                .map(|(id, reference)| {
+                    (
+                        *id,
+                        TemplateReference {
+                            referent: substitute(&reference.referent),
+                            ..reference.clone()
+                        },
+                    )
+                })
+                .collect(),
             effect_free_callees: Vec::new(),
             ..template.clone()
         };
+        // Inference marks a reference result a copyable read where its
+        // referent is implicitly copyable, whatever reads it. A mark the
+        // template made is one a by-value read may rest on.
+        facts.copyable_reference_result_reads = facts
+            .reference_results
+            .iter()
+            .filter(|(_, reference)| self.is_implicitly_copyable(&reference.referent))
+            .map(|(id, _)| *id)
+            .collect();
+        if !template
+            .copyable_reference_result_reads
+            .iter()
+            .all(|read| facts.copyable_reference_result_reads.contains(read))
+        {
+            return Err("a reference result is not implicitly copyable for the instance");
+        }
         // The equality source validation took on faith. A false one is the
         // clone check's to report, in its own words.
         if facts
@@ -1055,6 +1085,9 @@ impl Checker {
         let contract = &mut facts.selected_calls[index].1.contract;
         contract.target.clone_from(&target);
         contract.result_ty = mojito_types::types::substitute(&contract.result_ty, substitution);
+        if let Some(reference) = &mut facts.selected_calls[index].1.reference_result {
+            reference.referent = mojito_types::types::substitute(&reference.referent, substitution);
+        }
         if let Some(entry) = facts
             .overload_targets
             .iter_mut()
@@ -1226,6 +1259,7 @@ impl Checker {
             .chain([
                 TemplateObligation::Movable,
                 TemplateObligation::Deletability,
+                TemplateObligation::ReferenceResultReads,
             ])
             .chain(method_body.then_some(TemplateObligation::PlainDataArguments))
             .collect(),
@@ -1354,8 +1388,11 @@ impl Checker {
             receiver: false,
             self_writable: false,
             moved_result: None,
+            reference_result: None,
             features: std::cell::Cell::default(),
             locals: RefCell::new(Vec::new()),
+            handles: RefCell::new(Vec::new()),
+            references: RefCell::new(Vec::new()),
         };
         if !shape.block(body, false) {
             return outside("the body is not scalar returns over direct calls and 'len'");
@@ -1363,6 +1400,9 @@ impl Checker {
         let Some(facts) = facts else {
             return TemplateCoverage::Certified(TemplateClass::ClosedScalarBody);
         };
+        if !shape.references_recorded(facts) {
+            return outside("an expression yields or keeps a reference");
+        }
         let effects_closed = facts
             .expression_effects
             .iter()
@@ -1443,13 +1483,13 @@ impl Checker {
     /// - Nothing outside the fact tables: the body wrote through no origin
     ///   parameter, transferred nothing, and recorded no request.
     ///
-    /// [`TemplateClass::MethodBody`] widens that along four independent
-    /// [`MethodFeatures`]. The receiver may be `mut`, `var`, `deinit`, the
-    /// `out` of an `__init__`, or absent (`@staticmethod`), and the method
-    /// may carry a `where` clause: the elaborator mints a clone only where
-    /// the clause holds, and a clone's signature no longer states it. A `ref`
-    /// receiver, the copy and move initializers, an origin, a reference
-    /// result, binders, and `raises` stay outside.
+    /// [`TemplateClass::MethodBody`] widens that along six independent
+    /// [`MethodFeatures`]. The receiver may be `mut`, `var`, `deinit`, a bare
+    /// `ref`, the `out` of an `__init__`, or absent (`@staticmethod`), and
+    /// the method may carry a `where` clause: the elaborator mints a clone
+    /// only where the clause holds, and a clone's signature no longer states
+    /// it. The copy and move initializers, a receiver origin, binders, and
+    /// `raises` stay outside.
     ///
     /// - `STATEMENTS`: a runtime statement is checked once whatever runs it,
     ///   so `if`, `while`, `break`, `continue`, and a bare `return` neither
@@ -1476,6 +1516,18 @@ impl Checker {
     /// - `SIBLING_CALLS`: see [`Self::realize_method_call`] and
     ///   `closed_method_contract`. Arguments are closed scalars in both
     ///   checks; a callee summary that is not empty refuses.
+    /// - `REFERENCE_RESULT`: see [`BodyShape::returned_place`]. The handle a
+    ///   `return` keeps is decided by the declaration and the statement's
+    ///   syntax, and the declared origin is checked on the place's path and
+    ///   the signature, which the clone's own signature check repeats.
+    /// - `REFERENCE_CALLS`: see [`BodyShape::reference_call`] and
+    ///   `closed_reference_contract`. The reference a call yields names the
+    ///   receiver, so it is kept by template owner
+    ///   ([`TemplateReference`]), and an instance marks its copyable reads
+    ///   again at its own referent.
+    ///
+    /// Any other handle, reference result, interior reference, or copyable
+    /// read in the body refuses it ([`BodyShape::references_recorded`]).
     fn method_certificate(
         &self,
         method: &mojito_ast::ast::Method,
@@ -1504,16 +1556,24 @@ impl Checker {
                     && decorator.kwargs.is_empty());
         let plain_read =
             method.has_self && matches!(method.self_convention, None | Some(ArgConvention::Imm));
+        // A bare `ref self` has parametric mutability, so the body may not
+        // write through it, and one binding identity names it under every
+        // instance as it does any other receiver.
         let owned_receiver = method.has_self
             && matches!(
                 method.self_convention,
-                Some(ArgConvention::Mut | ArgConvention::Var | ArgConvention::Deinit)
+                Some(
+                    ArgConvention::Mut
+                        | ArgConvention::Var
+                        | ArgConvention::Deinit
+                        | ArgConvention::Ref
+                )
             );
         if !(plain_read || owned_receiver || is_static || constructs)
             || method.self_origin.is_some()
             || initializer
         {
-            return outside("the receiver is a 'ref' one, or carries an origin");
+            return outside("the receiver carries an origin, or is a copy or move initializer's");
         }
         // A `where` clause is the declaration's constraint: the elaborator
         // mints a clone only where it evaluates true, and a trace exists only
@@ -1551,9 +1611,6 @@ impl Checker {
             .return_ref_contracts
             .last()
             .is_some_and(Option::is_some);
-        if returns_reference {
-            return outside("the method returns a reference");
-        }
         let owned_parameter = method
             .params
             .iter()
@@ -1572,7 +1629,8 @@ impl Checker {
                 method.self_convention,
                 Some(ArgConvention::Mut | ArgConvention::Var | ArgConvention::Out)
             ),
-            moved_result: Some(ret_ty),
+            moved_result: (!returns_reference).then_some(ret_ty),
+            reference_result: returns_reference.then_some(ret_ty),
             features: std::cell::Cell::new(
                 if plain_read && closed_scalar(ret_ty) && !owned_parameter {
                     MethodFeatures::default()
@@ -1581,6 +1639,8 @@ impl Checker {
                 },
             ),
             locals: RefCell::new(Vec::new()),
+            handles: RefCell::new(Vec::new()),
+            references: RefCell::new(Vec::new()),
         };
         if !shape.block(&method.body, false) {
             return outside("the body is outside the method grammar");
@@ -1596,6 +1656,9 @@ impl Checker {
         let Some(facts) = facts else {
             return class();
         };
+        if !shape.references_recorded(facts) {
+            return outside("a reference is yielded or kept outside the method grammar");
+        }
         // The grammar admitted every method call it judged closed. Nothing
         // else may have selected a callee or read an effect summary.
         let targets: Vec<&str> = facts
@@ -1700,16 +1763,21 @@ impl Checker {
             .filter_map(|occurrence| {
                 let adjustments = self.operation_adjustments.borrow();
                 let adjustment = adjustments.get(&occurrence.span)?;
-                mojito_checked::templates::derive_adjustment(adjustment, &Ty::clone)
-                    .is_none()
-                    .then(|| {
-                        let spelled = format!("{adjustment:?}");
-                        let variant = spelled
-                            .split(|c: char| !c.is_alphanumeric())
-                            .next()
-                            .unwrap_or_default();
-                        format!("adjustment:{variant}")
-                    })
+                let kept_apart = matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
+                );
+                (!kept_apart
+                    && mojito_checked::templates::derive_adjustment(adjustment, &Ty::clone)
+                        .is_none())
+                .then(|| {
+                    let spelled = format!("{adjustment:?}");
+                    let variant = spelled
+                        .split(|c: char| !c.is_alphanumeric())
+                        .next()
+                        .unwrap_or_default();
+                    format!("adjustment:{variant}")
+                })
             })
             .collect();
         adjustments.sort();
@@ -1802,6 +1870,10 @@ impl Checker {
                         ExprKind::MethodCall { object, method, .. } => {
                             Some((self.origins.origin(object.syntax_id), method.clone()))
                         }
+                        ExprKind::Index { object, .. } => Some((
+                            self.origins.origin(object.syntax_id),
+                            "__getitem__".to_string(),
+                        )),
                         _ => None,
                     },
                     transfer: matches!(expr.kind, ExprKind::Transfer(_)),
@@ -1845,6 +1917,273 @@ impl Checker {
                 .collect();
             recorded.join(" ; ")
         });
+        self.capturable(&occurrences, baseline, reads)?;
+        let owner_end = self.next_owner.get();
+        let local_owner = |owner: OwnerId| {
+            param_owners
+                .runtime
+                .iter()
+                .position(|param| *param == Some(owner))
+                .map(TemplateOwner::Param)
+                .or_else(|| {
+                    (param_owners.receiver == Some(owner)).then_some(TemplateOwner::Receiver)
+                })
+                .or_else(|| {
+                    param_owners
+                        .compile_time
+                        .iter()
+                        .find(|(_, param)| *param == owner)
+                        .map(|(name, _)| TemplateOwner::CompileTimeParam(name.clone()))
+                })
+                .or_else(|| {
+                    (baseline.owner_start..owner_end)
+                        .contains(&owner.0)
+                        .then(|| TemplateOwner::Local(owner.0 - baseline.owner_start))
+                })
+                .or_else(|| {
+                    self.owner_scopes.first().and_then(|globals| {
+                        globals
+                            .iter()
+                            .find(|(_, global)| **global == owner)
+                            .map(|(name, _)| TemplateOwner::Global(name.clone()))
+                    })
+                })
+                .ok_or(IncompleteReason::ExternalBinding)
+        };
+        // A reference names the receiver or a parameter, which every instance
+        // has. One rooted at a local would also need `renumber_locals`.
+        let local_place = |place: &mojito_types::origin::OriginPlace| match local_owner(place.root)?
+        {
+            root @ (TemplateOwner::Receiver | TemplateOwner::Param(_)) => Ok(TemplatePlace {
+                root,
+                path: place.path.clone(),
+            }),
+            TemplateOwner::Local(_)
+            | TemplateOwner::Global(_)
+            | TemplateOwner::CompileTimeParam(_) => Err(IncompleteReason::ExternalBinding),
+        };
+        let local_reference = |reference: &mojito_types::origin::RefTy| {
+            if names_place(&reference.referent) {
+                return Err(IncompleteReason::ExternalBinding);
+            }
+            Ok(TemplateReference {
+                referent: (*reference.referent).clone(),
+                origin: template_origin(&reference.origin, &local_place)?,
+                mutability: reference.mutability,
+            })
+        };
+        let local_invalidations =
+            |invalidations: Vec<mojito_checked::checked::InteriorInvalidation>| {
+                invalidations
+                    .into_iter()
+                    .map(|invalidation| {
+                        Ok(TemplateInvalidation {
+                            root: local_owner(invalidation.base.root)?,
+                            path: invalidation.base.path,
+                            except: invalidation.except.map(&local_owner).transpose()?,
+                            include_base_generation: invalidation.include_base_generation,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, IncompleteReason>>()
+            };
+        let keyed = |lookup: &dyn Fn(&SourceSpan) -> bool| -> Vec<OccurrenceId> {
+            occurrences
+                .iter()
+                .filter(|occurrence| lookup(&occurrence.span))
+                .map(|occurrence| occurrence.id)
+                .collect()
+        };
+        let owned = |table: &HashMap<SourceSpan, OwnerId>| {
+            values(&occurrences, table)
+                .into_iter()
+                .map(|(id, owner)| local_owner(owner).map(|owner| (id, owner)))
+                .collect::<Result<Vec<_>, _>>()
+        };
+        let mut effect_free_callees: Vec<String> = reads
+            .effect_queries
+            .iter()
+            .map(|(callee, _)| callee.clone())
+            .collect();
+        effect_free_callees.sort();
+        effect_free_callees.dedup();
+        Ok(CheckedBodyFacts {
+            expression_types: values(&occurrences, &self.expression_types.borrow()),
+            expression_place_types: values(&occurrences, &self.expression_place_types.borrow()),
+            binding_types: values(&occurrences, &self.binding_types.borrow()),
+            expression_bindings: owned(&self.expression_bindings.borrow())?,
+            statement_bindings: owned(&self.statement_bindings.borrow())?,
+            expression_effects: values(&occurrences, &self.expression_effects.borrow()),
+            operation_adjustments: values(&occurrences, &self.operation_adjustments.borrow())
+                .into_iter()
+                .filter(|(_, adjustment)| {
+                    !matches!(
+                        adjustment,
+                        mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
+                    )
+                })
+                .collect(),
+            reference_results: values(&occurrences, &self.operation_adjustments.borrow())
+                .into_iter()
+                .filter_map(|(id, adjustment)| match adjustment {
+                    mojito_checked::checked::SemanticAdjustment::ReferenceResult { reference } => {
+                        Some(local_reference(&reference).map(|reference| (id, reference)))
+                    }
+                    _ => None,
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            interior_references: values(&occurrences, &self.interior_references.borrow())
+                .into_iter()
+                .map(|(id, place)| local_place(&place).map(|place| (id, place)))
+                .collect::<Result<Vec<_>, _>>()?,
+            copyable_reference_result_reads: keyed(&|span| {
+                self.copyable_reference_result_reads.borrow().contains(span)
+            }),
+            generic_instantiations: values(&occurrences, &self.generic_instantiations.borrow()),
+            overload_targets: values(&occurrences, &self.overload_targets.borrow()),
+            call_parameters: values(&occurrences, &self.call_parameters.borrow())
+                .into_iter()
+                .map(|(id, parameters)| {
+                    (
+                        id,
+                        parameters
+                            .into_iter()
+                            .map(|parameter| CallParameterFact {
+                                name: parameter.name,
+                                convention: parameter.convention,
+                                ty: parameter.ty,
+                            })
+                            .collect(),
+                    )
+                })
+                .collect(),
+            borrowed_read_call_places: keyed(&|span| {
+                self.borrowed_read_call_places.borrow().contains(span)
+            }),
+            read_temporary_arguments: keyed(&|span| {
+                self.read_temporary_arguments.borrow().contains(span)
+            }),
+            effect_free_callees,
+            selected_calls: values(&occurrences, &self.selected_calls.borrow())
+                .into_iter()
+                .map(|(id, mut contract)| {
+                    let boundary = std::mem::take(&mut contract.boundary);
+                    // The reference a call yields is its result type too;
+                    // both name the receiver's binding, so the referent
+                    // stands in for the result until an instance installs it.
+                    let reference_result = contract
+                        .reference_result
+                        .take()
+                        .map(|reference| {
+                            if contract.result_ty != Ty::Ref(reference.clone()) {
+                                return Err(IncompleteReason::ExternalBinding);
+                            }
+                            contract.result_ty = (*reference.referent).clone();
+                            local_reference(&reference)
+                        })
+                        .transpose()?;
+                    let arguments = boundary
+                        .arguments
+                        .into_iter()
+                        .map(|argument| {
+                            // An argument the call synthesized is no
+                            // occurrence of the body.
+                            let value = occurrences
+                                .iter()
+                                .find(|occurrence| occurrence.span == argument.value_source)
+                                .map(|occurrence| occurrence.id)
+                                .ok_or(IncompleteReason::FactOutsideBody(
+                                    FactTable::SelectedCalls,
+                                ))?;
+                            Ok(TemplateArgumentBoundary {
+                                source: argument.source,
+                                value,
+                                adjustments: argument.adjustments,
+                                invalidations: local_invalidations(argument.invalidations)?,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, IncompleteReason>>()?;
+                    Ok((
+                        id,
+                        TemplateCallContract {
+                            contract,
+                            reference_result,
+                            arguments,
+                            invalidations: local_invalidations(boundary.invalidations)?,
+                        },
+                    ))
+                })
+                .collect::<Result<Vec<_>, IncompleteReason>>()?,
+            // Recording is idempotent, and a clone check reaches a retargeted
+            // receiver's application twice, so only the set matters.
+            struct_applications: reads.struct_applications.iter().fold(
+                Vec::new(),
+                |mut distinct, application| {
+                    if !distinct.contains(application) {
+                        distinct.push(application.clone());
+                    }
+                    distinct
+                },
+            ),
+            builtin_len_calls: occurrences
+                .iter()
+                .filter(|occurrence| {
+                    occurrence.callee.as_deref() == Some("len") && self.lookup("len").is_none()
+                })
+                .map(|occurrence| occurrence.id)
+                .collect(),
+            rebind_assertions: values(&occurrences, &self.rebind_assertions.borrow()),
+            copy_place_value_uses: keyed(&|span| {
+                self.copy_place_value_uses.borrow().contains(span)
+            }),
+            interior_invalidations: values(&occurrences, &self.interior_invalidations.borrow())
+                .into_iter()
+                .map(|(id, invalidations)| {
+                    local_invalidations(invalidations).map(|invalidations| (id, invalidations))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            unconsumed_temporaries: keyed(&|span| {
+                self.unconsumed_temporaries.borrow().contains(span)
+            }),
+            discarded_reference_results: keyed(&|span| {
+                self.discarded_reference_results.borrow().contains(span)
+            }),
+            reference_value_uses: values(&occurrences, &self.reference_value_uses.borrow()),
+            deletable_bindings: keyed(&|span| {
+                self.explicit_destroy_deletability
+                    .borrow()
+                    .bindings
+                    .contains(span)
+            }),
+            linear_bindings: keyed(&|span| {
+                self.explicit_destroy_deletability
+                    .borrow()
+                    .linear_bindings
+                    .contains(span)
+            }),
+            linear_temporaries: keyed(&|span| self.linear_temporaries.borrow().contains(span)),
+            transfers: occurrences
+                .iter()
+                .filter(|occurrence| occurrence.transfer)
+                .map(|occurrence| occurrence.id)
+                .collect(),
+            locals: owner_end - baseline.owner_start,
+            occurrences: occurrences
+                .into_iter()
+                .map(|occurrence| occurrence.id)
+                .collect(),
+        })
+    }
+
+    /// Whether one body inference recorded only what capture can keep: no
+    /// growth in a store not keyed by occurrence, no callee effect summary
+    /// that was not empty, no entry keyed outside the body or in a table
+    /// without a recipe, and no retained type naming a place.
+    fn capturable(
+        &self,
+        occurrences: &[Occurrence],
+        baseline: &BodyFactBaseline,
+        reads: &BodyReads,
+    ) -> Result<(), IncompleteReason> {
         if let Some((store, _)) = self
             .unkeyed_fact_entries()
             .into_iter()
@@ -1890,198 +2229,7 @@ impl Checker {
         }) {
             return Err(IncompleteReason::ExternalBinding);
         }
-        let owner_end = self.next_owner.get();
-        let local_owner = |owner: OwnerId| {
-            param_owners
-                .runtime
-                .iter()
-                .position(|param| *param == Some(owner))
-                .map(TemplateOwner::Param)
-                .or_else(|| {
-                    (param_owners.receiver == Some(owner)).then_some(TemplateOwner::Receiver)
-                })
-                .or_else(|| {
-                    param_owners
-                        .compile_time
-                        .iter()
-                        .find(|(_, param)| *param == owner)
-                        .map(|(name, _)| TemplateOwner::CompileTimeParam(name.clone()))
-                })
-                .or_else(|| {
-                    (baseline.owner_start..owner_end)
-                        .contains(&owner.0)
-                        .then(|| TemplateOwner::Local(owner.0 - baseline.owner_start))
-                })
-                .or_else(|| {
-                    self.owner_scopes.first().and_then(|globals| {
-                        globals
-                            .iter()
-                            .find(|(_, global)| **global == owner)
-                            .map(|(name, _)| TemplateOwner::Global(name.clone()))
-                    })
-                })
-                .ok_or(IncompleteReason::ExternalBinding)
-        };
-        let local_invalidations =
-            |invalidations: Vec<mojito_checked::checked::InteriorInvalidation>| {
-                invalidations
-                    .into_iter()
-                    .map(|invalidation| {
-                        Ok(TemplateInvalidation {
-                            root: local_owner(invalidation.base.root)?,
-                            path: invalidation.base.path,
-                            except: invalidation.except.map(&local_owner).transpose()?,
-                            include_base_generation: invalidation.include_base_generation,
-                        })
-                    })
-                    .collect::<Result<Vec<_>, IncompleteReason>>()
-            };
-        let keyed = |lookup: &dyn Fn(&SourceSpan) -> bool| -> Vec<OccurrenceId> {
-            occurrences
-                .iter()
-                .filter(|occurrence| lookup(&occurrence.span))
-                .map(|occurrence| occurrence.id)
-                .collect()
-        };
-        let owned = |table: &HashMap<SourceSpan, OwnerId>| {
-            values(&occurrences, table)
-                .into_iter()
-                .map(|(id, owner)| local_owner(owner).map(|owner| (id, owner)))
-                .collect::<Result<Vec<_>, _>>()
-        };
-        let mut effect_free_callees: Vec<String> = reads
-            .effect_queries
-            .iter()
-            .map(|(callee, _)| callee.clone())
-            .collect();
-        effect_free_callees.sort();
-        effect_free_callees.dedup();
-        Ok(CheckedBodyFacts {
-            expression_types: values(&occurrences, &self.expression_types.borrow()),
-            expression_place_types: values(&occurrences, &self.expression_place_types.borrow()),
-            binding_types: values(&occurrences, &self.binding_types.borrow()),
-            expression_bindings: owned(&self.expression_bindings.borrow())?,
-            statement_bindings: owned(&self.statement_bindings.borrow())?,
-            expression_effects: values(&occurrences, &self.expression_effects.borrow()),
-            operation_adjustments: values(&occurrences, &self.operation_adjustments.borrow()),
-            generic_instantiations: values(&occurrences, &self.generic_instantiations.borrow()),
-            overload_targets: values(&occurrences, &self.overload_targets.borrow()),
-            call_parameters: values(&occurrences, &self.call_parameters.borrow())
-                .into_iter()
-                .map(|(id, parameters)| {
-                    (
-                        id,
-                        parameters
-                            .into_iter()
-                            .map(|parameter| CallParameterFact {
-                                name: parameter.name,
-                                convention: parameter.convention,
-                                ty: parameter.ty,
-                            })
-                            .collect(),
-                    )
-                })
-                .collect(),
-            borrowed_read_call_places: keyed(&|span| {
-                self.borrowed_read_call_places.borrow().contains(span)
-            }),
-            read_temporary_arguments: keyed(&|span| {
-                self.read_temporary_arguments.borrow().contains(span)
-            }),
-            effect_free_callees,
-            selected_calls: values(&occurrences, &self.selected_calls.borrow())
-                .into_iter()
-                .map(|(id, mut contract)| {
-                    let boundary = std::mem::take(&mut contract.boundary);
-                    let arguments = boundary
-                        .arguments
-                        .into_iter()
-                        .map(|argument| {
-                            // An argument the call synthesized is no
-                            // occurrence of the body.
-                            let value = occurrences
-                                .iter()
-                                .find(|occurrence| occurrence.span == argument.value_source)
-                                .map(|occurrence| occurrence.id)
-                                .ok_or(IncompleteReason::FactOutsideBody(
-                                    FactTable::SelectedCalls,
-                                ))?;
-                            Ok(TemplateArgumentBoundary {
-                                source: argument.source,
-                                value,
-                                adjustments: argument.adjustments,
-                                invalidations: local_invalidations(argument.invalidations)?,
-                            })
-                        })
-                        .collect::<Result<Vec<_>, IncompleteReason>>()?;
-                    Ok((
-                        id,
-                        TemplateCallContract {
-                            contract,
-                            arguments,
-                            invalidations: local_invalidations(boundary.invalidations)?,
-                        },
-                    ))
-                })
-                .collect::<Result<Vec<_>, IncompleteReason>>()?,
-            // Recording is idempotent, and a clone check reaches a retargeted
-            // receiver's application twice, so only the set matters.
-            struct_applications: reads.struct_applications.iter().fold(
-                Vec::new(),
-                |mut distinct, application| {
-                    if !distinct.contains(application) {
-                        distinct.push(application.clone());
-                    }
-                    distinct
-                },
-            ),
-            builtin_len_calls: occurrences
-                .iter()
-                .filter(|occurrence| {
-                    occurrence.callee.as_deref() == Some("len") && self.lookup("len").is_none()
-                })
-                .map(|occurrence| occurrence.id)
-                .collect(),
-            rebind_assertions: values(&occurrences, &self.rebind_assertions.borrow()),
-            copy_place_value_uses: keyed(&|span| {
-                self.copy_place_value_uses.borrow().contains(span)
-            }),
-            interior_invalidations: values(&occurrences, &self.interior_invalidations.borrow())
-                .into_iter()
-                .map(|(id, invalidations)| {
-                    local_invalidations(invalidations).map(|invalidations| (id, invalidations))
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-            unconsumed_temporaries: keyed(&|span| {
-                self.unconsumed_temporaries.borrow().contains(span)
-            }),
-            discarded_reference_results: keyed(&|span| {
-                self.discarded_reference_results.borrow().contains(span)
-            }),
-            deletable_bindings: keyed(&|span| {
-                self.explicit_destroy_deletability
-                    .borrow()
-                    .bindings
-                    .contains(span)
-            }),
-            linear_bindings: keyed(&|span| {
-                self.explicit_destroy_deletability
-                    .borrow()
-                    .linear_bindings
-                    .contains(span)
-            }),
-            linear_temporaries: keyed(&|span| self.linear_temporaries.borrow().contains(span)),
-            transfers: occurrences
-                .iter()
-                .filter(|occurrence| occurrence.transfer)
-                .map(|occurrence| occurrence.id)
-                .collect(),
-            locals: owner_end - baseline.owner_start,
-            occurrences: occurrences
-                .into_iter()
-                .map(|occurrence| occurrence.id)
-                .collect(),
-        })
+        Ok(())
     }
 
     /// Install a realized bundle as if the body had been inferred: each fact
@@ -2164,6 +2312,37 @@ impl Checker {
                 .borrow_mut()
                 .insert(span(id)?, adjustment.clone());
         }
+        let rooted = |place: &TemplatePlace| {
+            Ok::<_, TypeError>(mojito_types::origin::OriginPlace {
+                root: owner(&place.root)?,
+                path: place.path.clone(),
+            })
+        };
+        let referenced = |reference: &TemplateReference| {
+            Ok::<_, TypeError>(mojito_types::origin::RefTy {
+                referent: Box::new(reference.referent.clone()),
+                origin: checked_origin(&reference.origin, &rooted)?,
+                mutability: reference.mutability,
+            })
+        };
+        for (id, reference) in &facts.reference_results {
+            self.operation_adjustments.borrow_mut().insert(
+                span(id)?,
+                mojito_checked::checked::SemanticAdjustment::ReferenceResult {
+                    reference: referenced(reference)?,
+                },
+            );
+        }
+        for (id, place) in &facts.interior_references {
+            self.interior_references
+                .borrow_mut()
+                .insert(span(id)?, rooted(place)?);
+        }
+        for id in &facts.copyable_reference_result_reads {
+            self.copyable_reference_result_reads
+                .borrow_mut()
+                .insert(span(id)?);
+        }
         for (id, instantiation) in &facts.generic_instantiations {
             self.generic_instantiations
                 .borrow_mut()
@@ -2231,6 +2410,11 @@ impl Checker {
                 .borrow_mut()
                 .insert(span(id)?);
         }
+        for (id, writable) in &facts.reference_value_uses {
+            self.reference_value_uses
+                .borrow_mut()
+                .insert(span(id)?, *writable);
+        }
         for id in &facts.deletable_bindings {
             self.explicit_destroy_deletability
                 .borrow_mut()
@@ -2259,9 +2443,18 @@ impl Checker {
                     })
                 })
                 .collect::<Result<Vec<_>, TypeError>>()?;
+            let reference_result = call
+                .reference_result
+                .as_ref()
+                .map(&referenced)
+                .transpose()?;
             self.selected_calls.borrow_mut().insert(
                 span(id)?,
                 mojito_checked::checked::CheckedCallContract {
+                    result_ty: reference_result
+                        .clone()
+                        .map_or_else(|| call.contract.result_ty.clone(), Ty::Ref),
+                    reference_result,
                     boundary: mojito_checked::checked::CheckedCallBoundary {
                         arguments,
                         invalidations: placed(&call.invalidations)?,
@@ -2533,6 +2726,9 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::SelectedCalls
         | FactTable::InteriorInvalidations
         | FactTable::DiscardedReferenceResults
+        | FactTable::ReferenceValueUses
+        | FactTable::InteriorReferences
+        | FactTable::CopyableReferenceResultReads
         | FactTable::DeletableBindings
         | FactTable::LinearBindings
         | FactTable::LinearTemporaries => true,
@@ -2548,7 +2744,6 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::ConstructionImmutableBinders
         | FactTable::CallResultOrigins
         | FactTable::TupleUnpackPlans
-        | FactTable::InteriorReferences
         | FactTable::ViewResultInteriors
         | FactTable::WithDesugars
         | FactTable::DeclarationCaptures
@@ -2556,8 +2751,6 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::SubscriptDescriptors
         | FactTable::IterationProtocols
         | FactTable::ExplicitDestroyCalls
-        | FactTable::ReferenceValueUses
-        | FactTable::CopyableReferenceResultReads
         | FactTable::BorrowedReferenceReceivers
         | FactTable::CallPlaceUses
         | FactTable::ImplicitlyCopiedConsumingReceivers
@@ -2722,7 +2915,9 @@ fn grammar_features(method: &mojito_ast::ast::Method, ret_ty: &Ty) -> Vec<String
         (true, None) => "read".to_string(),
         (true, Some(convention)) => format!("{convention:?}").to_lowercase(),
     };
-    let result = if closed_scalar(ret_ty) {
+    let result = if matches!(method.ret, Some(mojito_ast::ast::Type::Ref { .. })) {
+        "ref"
+    } else if closed_scalar(ret_ty) {
         "scalar"
     } else if *ret_ty == Ty::None {
         "none"
@@ -2792,6 +2987,44 @@ fn names_place(ty: &Ty) -> bool {
         _ => false,
     }
     })
+}
+
+/// An origin with each place it is rooted at mapped by `place`.
+fn template_origin(
+    origin: &mojito_types::origin::Origin,
+    place: &dyn Fn(&mojito_types::origin::OriginPlace) -> Result<TemplatePlace, IncompleteReason>,
+) -> Result<TemplateOrigin, IncompleteReason> {
+    use mojito_types::origin::Origin;
+    match origin {
+        Origin::Place(rooted) => place(rooted).map(TemplateOrigin::Place),
+        Origin::Union(members) => members
+            .iter()
+            .map(|member| template_origin(member, place))
+            .collect::<Result<_, _>>()
+            .map(TemplateOrigin::Union),
+        Origin::Param(_)
+        | Origin::SelfParam
+        | Origin::Static
+        | Origin::Untracked { .. }
+        | Origin::Unbound => Ok(TemplateOrigin::Unrooted(origin.clone())),
+    }
+}
+
+/// The inverse of [`template_origin`], for an instance's own bindings.
+fn checked_origin(
+    origin: &TemplateOrigin,
+    rooted: &dyn Fn(&TemplatePlace) -> Result<mojito_types::origin::OriginPlace, TypeError>,
+) -> Result<mojito_types::origin::Origin, TypeError> {
+    use mojito_types::origin::Origin;
+    match origin {
+        TemplateOrigin::Place(place) => rooted(place).map(Origin::Place),
+        TemplateOrigin::Union(members) => members
+            .iter()
+            .map(|member| checked_origin(member, rooted))
+            .collect::<Result<_, _>>()
+            .map(Origin::Union),
+        TemplateOrigin::Unrooted(origin) => Ok(origin.clone()),
+    }
 }
 
 /// Whether a type is, holds, or is applied to a callable.
@@ -2890,20 +3123,31 @@ struct BodyShape<'a> {
     /// The declared result, when the body may move a whole value of any type
     /// into it: a method that returns no reference.
     moved_result: Option<&'a Ty>,
+    /// The declared referent, when the method returns a reference: every
+    /// `return` then hands out a place of `self` as a handle.
+    reference_result: Option<&'a Ty>,
     /// What the body held beyond scalar `return`s.
     features: std::cell::Cell<MethodFeatures>,
     /// The locals declared so far, and whether each is a closed scalar.
     locals: RefCell<Vec<(String, bool)>>,
+    /// The occurrences admitted as reference handles.
+    handles: RefCell<Vec<OccurrenceId>>,
+    /// The calls admitted as reference-returning.
+    references: RefCell<Vec<OccurrenceId>>,
 }
 
 impl BodyShape<'_> {
     fn statement(&self, statement: &Stmt, in_loop: bool) -> bool {
         match &statement.kind {
+            StmtKind::Return(value) if self.reference_result.is_some() => value
+                .as_ref()
+                .is_some_and(|value| self.returned_place(value)),
             StmtKind::Return(Some(value)) => {
                 (self.expression(value) && self.scalar(value))
-                    || self
-                        .moved_result
-                        .is_some_and(|result| self.whole_value(value) && self.typed(value, result))
+                    || self.moved_result.is_some_and(|result| {
+                        (self.whole_value(value) || self.reference_read(value))
+                            && self.typed(value, result)
+                    })
             }
             StmtKind::Pass => true,
             // A condition is typed, never evaluated, by the check that
@@ -2932,7 +3176,7 @@ impl BodyShape<'_> {
                 let moved = !scalar
                     && ty.is_none()
                     && self.moved_result.is_some()
-                    && self.whole_value(value)
+                    && (self.whole_value(value) || self.reference_read(value))
                     && self.judged_binding(value);
                 self.locals.borrow_mut().push((name.clone(), scalar));
                 (scalar || moved) && self.holds(MethodFeatures::STATEMENTS)
@@ -2972,6 +3216,7 @@ impl BodyShape<'_> {
                 ) && self.expression(value)
                     && self.closed(value);
                 call || (self.moved_result.is_some() && self.pointer_statement(value))
+                    || (!self.keyed && self.abort(value))
             }
             StmtKind::Assign { name, value } if name == "_" => {
                 self.expression(value) && self.scalar(value)
@@ -2992,6 +3237,122 @@ impl BodyShape<'_> {
             }
             _ => false,
         }
+    }
+
+    /// The value of a `return` in a method that returns a reference: a field
+    /// of `self`, a pointer slot, or a reference a call on a field yields, of
+    /// exactly the declared referent type, so neither check converts it.
+    ///
+    /// The `return` keeps the place as a handle because the declaration
+    /// returns a reference, whatever the place's type, and demands neither a
+    /// copy nor a move of it. Whether the place lies within the declared
+    /// origin is judged on its path and the signature, which no instance
+    /// changes.
+    fn returned_place(&self, value: &Expr) -> bool {
+        let id = self.occurrence(value);
+        let admitted =
+            (self.receiver_field(value) || self.slot(value) || self.reference_call(value))
+                && self
+                    .reference_result
+                    .is_some_and(|referent| self.typed(value, referent))
+                && self.facts.is_none_or(|facts| {
+                    fact_at(&facts.reference_value_uses, id) == Some(&false)
+                        && !facts.copy_place_value_uses.contains(&id)
+                });
+        if admitted {
+            self.handles.borrow_mut().push(id);
+        }
+        admitted && self.holds(MethodFeatures::REFERENCE_RESULT)
+    }
+
+    /// A reference-returning call on a field of `self`, passing scalars:
+    /// a subscript or a named accessor whose recorded contract is a
+    /// `closed_reference_contract`. It is admitted only as a returned place
+    /// or as a whole value read, never as a receiver, an operand, or an
+    /// argument, each of which records a borrow of its own. An iterator's
+    /// `__next__` marks its copyable read by another rule.
+    fn reference_call(&self, expr: &Expr) -> bool {
+        let (object, method, arguments) = match &expr.kind {
+            ExprKind::Index { object, index } => {
+                (object, "__getitem__", std::slice::from_ref(&**index))
+            }
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+                kwargs,
+            } if kwargs.is_empty() && method != "__next__" => {
+                (object, method.as_str(), args.as_slice())
+            }
+            _ => return false,
+        };
+        let admitted = !self.keyed
+            && self.receiver_field(object)
+            && arguments
+                .iter()
+                .all(|argument| self.expression(argument) && self.scalar(argument))
+            && self.facts.is_none_or(|facts| {
+                self.named_contract(facts, expr, object, method)
+                    .is_some_and(mojito_checked::templates::closed_reference_contract)
+            });
+        if admitted {
+            self.references.borrow_mut().push(self.occurrence(expr));
+        }
+        admitted && self.holds(MethodFeatures::REFERENCE_CALLS)
+    }
+
+    /// A reference call read by value, which the template marked a copyable
+    /// read: a referent that is not implicitly copyable records nothing
+    /// there, and its clone check would refuse the read.
+    fn reference_read(&self, expr: &Expr) -> bool {
+        let id = self.occurrence(expr);
+        self.reference_call(expr)
+            && self
+                .facts
+                .is_none_or(|facts| facts.copyable_reference_result_reads.contains(&id))
+    }
+
+    /// Whether the references the check recorded are exactly the ones the
+    /// grammar admitted: each handle kept at a returned place, and each
+    /// reference result, interior generation, and copyable read at an
+    /// admitted reference call. Every other writer of those tables decides on
+    /// a type or on a binding's declaration.
+    fn references_recorded(&self, facts: &CheckedBodyFacts) -> bool {
+        let handles = self.handles.borrow();
+        let references = self.references.borrow();
+        facts.reference_value_uses.len() == handles.len()
+            && facts
+                .reference_value_uses
+                .iter()
+                .all(|(id, _)| handles.contains(id))
+            && references
+                .iter()
+                .all(|id| fact_at(&facts.reference_results, *id).is_some())
+            && facts
+                .reference_results
+                .iter()
+                .map(|(id, _)| id)
+                .chain(facts.interior_references.iter().map(|(id, _)| id))
+                .chain(&facts.copyable_reference_result_reads)
+                .all(|id| references.contains(id))
+    }
+
+    /// The compiler-private trap `_mojito_abort("message")`, as a statement.
+    /// The built-in types its literal and selects nothing, so it records no
+    /// parameters and no binding; a declaration of that name would record
+    /// both, and is not this.
+    fn abort(&self, expr: &Expr) -> bool {
+        let id = self.occurrence(expr);
+        let admitted = matches!(&expr.kind, ExprKind::Call { name, param_args, args, kwargs }
+            if name == "_mojito_abort"
+                && param_args.is_empty()
+                && kwargs.is_empty()
+                && matches!(args.as_slice(), [message] if matches!(message.kind, ExprKind::Str(_))))
+            && self.facts.is_none_or(|facts| {
+                fact_at(&facts.call_parameters, id).is_none()
+                    && fact_at(&facts.expression_bindings, id).is_none()
+            });
+        admitted && self.holds(MethodFeatures::STATEMENTS)
     }
 
     /// Note that the body holds `feature`.
@@ -3167,24 +3528,35 @@ impl BodyShape<'_> {
         object: &Expr,
         method: &str,
     ) -> bool {
+        self.named_contract(facts, expr, object, method)
+            .is_some_and(|call| {
+                mojito_checked::templates::trivial_method_contract(call)
+                    || (!self.keyed
+                        && mojito_checked::templates::closed_method_contract(call)
+                        && self.holds(MethodFeatures::SIBLING_CALLS))
+            })
+    }
+
+    /// The contract the call at `expr` recorded, when it names `method` on
+    /// the struct `object` has.
+    fn named_contract<'f>(
+        &self,
+        facts: &'f CheckedBodyFacts,
+        expr: &Expr,
+        object: &Expr,
+        method: &str,
+    ) -> Option<&'f TemplateCallContract> {
         let Some(Ty::Struct(owner, _)) = fact_at(&facts.expression_types, self.occurrence(object))
         else {
-            return false;
+            return None;
         };
-        fact_at(&facts.selected_calls, self.occurrence(expr)).is_some_and(|call| {
-            let named = call
-                .contract
+        fact_at(&facts.selected_calls, self.occurrence(expr)).filter(|call| {
+            call.contract
                 .target
                 .strip_prefix(owner.as_str())
                 .and_then(|rest| rest.strip_prefix('.'))
                 .and_then(|rest| rest.strip_prefix(method))
-                .is_some_and(|overload| overload.is_empty() || overload.starts_with('$'));
-            let trivial = mojito_checked::templates::trivial_method_contract(call);
-            named
-                && (trivial
-                    || (!self.keyed
-                        && mojito_checked::templates::closed_method_contract(call)
-                        && self.holds(MethodFeatures::SIBLING_CALLS)))
+                .is_some_and(|overload| overload.is_empty() || overload.starts_with('$'))
         })
     }
 

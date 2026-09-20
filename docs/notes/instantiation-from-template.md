@@ -108,9 +108,13 @@ expression and statement bindings, expression effects, operation adjustments
 (`MaterializeLiteral`, `PointerOffset`, `PointerStorageTake`,
 `PointerStorageDestroy`, and a moving `PointerWrite`), generic instantiations,
 overload targets, call parameters, selected calls (a `closed_method_contract`
-only), borrowed read call places, read temporary arguments, unconsumed
-temporaries, discarded results, deletable and linear bindings, linear
-temporaries, copied places, interior invalidations, and rebind assertions.
+or a `closed_reference_contract` only), borrowed read call places, read
+temporary arguments, unconsumed temporaries, discarded results, deletable and
+linear bindings, linear temporaries, copied places, interior invalidations,
+rebind assertions, reference handles (`ReferenceValueUses`, at the value of a
+`return` in a method that returns a reference, and nowhere else), reference
+results (the `ReferenceResult` adjustment, kept apart from the other
+adjustments), interior references, and copyable reference-result reads.
 
 Two things are kept in template-local form because they belong to one checker
 run. A binding identity becomes a `TemplateOwner`. A selected call becomes a
@@ -120,6 +124,19 @@ place by template owner. Capture also refuses a body whose retained types name
 a place (an origin rooted at a binding identity, in a pointer, a reference, or
 a struct's origin argument), since a type is kept as written and nothing would
 remap the identity inside it.
+
+A reference a call yields is the one place a binding identity sits inside a
+type, and it is kept as a `TemplateReference`: the referent, the mutability,
+and a `TemplateOrigin` whose places are rooted at a template owner
+(`TemplatePlace`). It appears three times for one call — the
+`ReferenceResult` adjustment, the contract's `reference_result`, and the
+contract's result type — and once more, as a bare place, in
+`InteriorReferences`. Capture moves all four into template-local form (the
+stored contract's result type becomes the referent) and installation rebuilds
+them on the instance's own receiver. Only a receiver or a parameter may root
+one. The recorded expression types of such a body are the referents, because
+ordinary inference reads through a reference, so the guard on the three type
+tables stands unchanged.
 
 ## The expansion trace
 
@@ -192,11 +209,13 @@ copy, and the loop variable may only key a condition.
 
 ### `MethodBody`
 
-The declaration may have a `mut`, `var`, or `deinit` receiver, the `out` of an
-`__init__`, or none (`@staticmethod`), a `where` clause, `var` parameters, and
-any result that is not a reference. Which fields an `__init__` initializes is
+The declaration may have a `mut`, `var`, `deinit`, or `ref` receiver, the
+`out` of an `__init__`, or none (`@staticmethod`), a `where` clause, `var`
+parameters, and any result, a reference included. Which fields an `__init__` initializes is
 its syntax, and definite initialization is judged outside the body check. A
-`ref` receiver, a receiver origin, the copy and move initializers, the
+bare `ref self` is a receiver like the others: it has parametric mutability, so
+the body cannot write through it, and one binding identity names it under
+every instance. A receiver origin, the copy and move initializers, the
 method's own binders, and `raises` stay outside. A `where`
 clause is the declaration's constraint: `generate_instance_clones` mints a
 clone only where it evaluates true, a trace exists only for a minted clone, and
@@ -211,6 +230,13 @@ they are a set, not a ladder.
 | `OPAQUE_MOVES` | a whole value of any type moved (`^`) or copied between a parameter, a local, a field of `self`, and the result | The value is never an operand, a receiver, a condition, or an argument, so nothing dispatches on its type. A store or a result has the value's own recorded type, which stays equal under substitution, so neither check converts. What a clone check still decides from the type is owed per instance (obligations 3 and 10 to 12 below). |
 | `POINTER_SLOTS` | over a pointer field of `self` with no tracked provenance: `unsafe_offset(scalar)`, `unsafe_take_pointee()`, `unsafe_deinit_pointee()`, `free`, and the slot `pointer[scalar]` as a store target or a copied place | Such a pointer holds no loan, names no place, and is a pointer under every instance, so its methods are the built-in ones (`infer_pointer_method`), which select no callee and record an adjustment naming at most the pointee. Every other judgment there only produces an error, and the template's is at least as strict. |
 | `SIBLING_CALLS` | a method call on `self` or a field of it, passing closed scalars, whose contract is a `closed_method_contract` | Obligation 7 below. Arguments are closed scalars in both checks, so nothing about them depends on the instance. |
+| `REFERENCE_RESULT` | a method that returns a reference: every `return` hands out a field of `self`, a pointer slot, or a reference call's result, of exactly the declared referent type | The `return` keeps its value as a handle because the declaration returns a reference (`ReferenceValueUses`, written from the declaration and the statement's syntax alone) and demands neither a copy nor a move. Whether the place lies within the declared origin is judged on its path, the signature, and the receiver's constructor, none of which an instance changes; the loan-escape check reads what obligation 12 already rules out. The signature is checked per clone before the body, derived or not. Any other handle in the body refuses it. |
+| `REFERENCE_CALLS` | a subscript or a named accessor on a field of `self`, passing closed scalars, whose contract is a `closed_reference_contract`, either returned as above or read by value into the result or an unannotated `var` | Obligation 13 below. The call is never a receiver, an operand, a condition, or an argument, each of which records a borrow of its own. A by-value read is admitted only where the template marked the read copyable. An iterator's `__next__` marks its read by another rule and stays out. |
+
+The compiler-private trap `_mojito_abort("message")` is a statement of any
+non-keyed body: the built-in types its literal and selects nothing. A
+declaration of that name would record a binding and parameters at the call,
+and such a call is not admitted.
 
 A bare place of a parameter type is admitted at a consuming position only
 where the template recorded the copy (`copy_place_value_uses`). A type that is
@@ -284,6 +310,22 @@ only `Movable` records nothing there, and its `Int` clone would.
     symbolic, records none of them. `type_may_carry_loans` is conservative for
     a struct whose declared fields have parameter types, so
     `List[DictEntry[…]]` refuses today.
+13. **Reference calls.** A `closed_reference_contract` is a
+    `closed_method_contract` but for the reference it returns, on a receiver
+    that needs a place. The reference's origin is the callee's declared origin
+    against the receiver's place, its mutability is the receiver binding's,
+    and the interior generation's tag is chosen by the receiver's constructor:
+    none reads a struct parameter, so an instance substitutes the referent and
+    gets its own receiver back in the origin. The target is realized as in
+    obligation 7. Inference marks a reference result a copyable read where its
+    referent is implicitly copyable, whatever reads it, so the instance marks
+    each again at its own referent: a template over a merely movable `T`
+    marks nothing and its `Int` instance marks the read. A mark the template
+    made must survive, since a by-value read rests on it; the struct's bound
+    grants it, so that refusal is a guard and not a reachable verdict
+    (`assets/type_error/template_method_reference_read_requires_copy.mojo` is
+    the template's own rejection). `check_reference_result_reads` runs over
+    every installed adjustment after the bodies, derived or not.
 
 The declaration's bounds and `where` clauses are not re-checked: the checker
 discharges them at the requesting call, and the elaborator proves a fully
@@ -374,21 +416,22 @@ tables. In short, for one debug-profile run each:
 
 - Building the arena once saves about 6% (Hello World 10.58 s to 9.90 s).
 - `stdlib_heavy.mojo` checks a per-instantiation method clone 2254 times per
-  compilation and derives 586 of them (26%); `generic.mojo` derives 178 of
-  474 (38%). With `MethodScalarBody` alone those were 242 and 70, and wall
+  compilation and derives 698 of them (31%); `generic.mojo` derives 220 of
+  474 (46%). With `MethodScalarBody` alone those were 242 and 70, and wall
   time did not move. With `MethodBody` it does: 17.9 s to 17.0 s and 11.4 s to
-  10.6 s, three interleaved runs each.
+  10.6 s, three interleaved runs each. `ref self` accessors, reference
+  results, and the `_mojito_abort` statement took the counts from 586 and 178.
 - Hello World mints no per-instantiation clones at all. Its generated bodies
   are members of structs specialized whole and per-call clones, from
   concrete-only templates.
 - The census (`template_census.*`) says which table recipes come next:
-  `ConstructionImmutableBinders` alone would make 43 more of the 333 clone
-  bodies still inferred capturable, a callee effect summary that is not empty
-  27 more, and `ReferenceValueUses` 18 more. Its `grammar.*` counters say
-  which constructs keep a body outside every class whatever its tables: a
-  method call passing something other than a scalar (178 bodies), a subscript
-  that is not a pointer slot (139), a non-scalar closed result (137), and a
-  `ref self` (51).
+  `ConstructionImmutableBinders` alone would make 56 more of the 314 clone
+  bodies still inferred capturable, and a callee effect summary that is not
+  empty 27 more. Its `grammar.*` counters say which constructs keep a body
+  outside every class whatever its tables: a method call passing something
+  other than a scalar (175 bodies), a direct call with arguments (174), a
+  subscript that is neither a pointer slot nor a reference call on a field
+  (129), and a non-scalar closed result (117).
 
 An earlier version of the `body_inference.clone` counter tested for a `$` in a
 name and so counted ordinary bundled structs' methods as clones. The figures
@@ -398,10 +441,15 @@ it produced (3828 for Hello World) were wrong and are withdrawn.
 
 Each of these keeps the clone check. The roadmap carries one entry per item.
 
-- A method body beyond `MethodBody`: a `ref` receiver, a copy or move
-  initializer, a reference result, `raises`, the method's own binders, a
-  `for` loop, a construction, a string, a call passing a value that is not a
-  closed scalar, and a local whose type is built over a parameter.
+- A method body beyond `MethodBody`: a receiver origin, a copy or move
+  initializer, `raises`, the method's own binders, a `ref` or `mut` parameter,
+  a `for` loop, a construction, a string other than the `_mojito_abort`
+  message, a call passing a value that is not a closed scalar, and a local
+  whose type is built over a parameter.
+- A reference a call yields that is bound to a local (`ref x = …`), used as a
+  receiver, an operand, or an argument, or yielded by a callee on anything but
+  a field of `self`. A struct with an origin or a value parameter (`Span`,
+  `Array`) derives no method at all.
 - An instance whose argument may carry a loan, which includes every struct
   with a field of a parameter type (`DictEntry[K, V, H]`).
 - Per-call method clones and members of a struct specialized whole, which

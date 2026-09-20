@@ -59,8 +59,10 @@ its template, and a covered clone inherits those facts by substitution instead
 of being inferred (`docs/notes/instantiation-from-template.md`). The seventh
 step extended that to a generic struct's per-instantiation method clones. The
 eighth widened the method class to runtime statements, whole-value moves,
-pointer slots, and sibling calls that pass scalars. The entries below widen it
-further. Each task pays off by itself, and together they are what moving
+pointer slots, and sibling calls that pass scalars. The ninth admitted a
+`ref self` receiver and a reference result, and keeps the reference a call
+yields by template owner, so the collection accessors derive. The entries
+below widen it further. Each task pays off by itself, and together they are what moving
 toward Mojo's shape needs.
 
 This section holds only work that moves the check order: checking a template
@@ -74,28 +76,23 @@ entry names what it depends on. Size does not move an entry up. The **Model:**
 bullet carries the complexity estimate and says whether the entry can be done
 as-is or must be planned first.
 
-- [ ] **A method that takes `ref self` or returns a reference keeps the clone
+- [ ] **A method that binds a reference or calls through one keeps the clone
   check**
 
-  Problem: the method class refuses a `ref` receiver, a receiver origin, and a
-  reference result, and those are the accessors every collection read goes
-  through.
-  - `List.__getitem__`, `List.unsafe_get`, `Optional.value`, and
-    `Dict.__getitem__` are all of this shape. 51 of the 333 clone bodies
-    `benchmarks/compile/stdlib_heavy.mojo` still infers take `ref self`
-    (`--timings`, `template_census.clone.grammar.self:ref`).
-  - The facts have no recipe: `ReferenceValueUses` (60 bodies), the
-    `ReferenceResult` adjustment (37), `InteriorReferences` (22), and
-    `CopyableReferenceResultReads` (16).
-  - A reference type holds an origin, and an origin rooted at a binding
-    identity sits inside the type. Capture refuses such a type today
-    (`template_facts.rs:names_place`). The recipe needs types remapped by
-    template owner.
-  - `CopyableReferenceResultReads` takes a type-dependent entry
-    (`inference.rs`, gated on `is_implicitly_copyable` of the referent), so it
-    needs an obligation, not an identity copy.
-  - The design record is
-    [`docs/notes/instantiation-from-template.md`](notes/instantiation-from-template.md).
+  Problem: a reference a call yields derives only when the method returns it
+  or reads it by value, and every other use records a borrow with no recipe.
+  - `ref entry = self.entries[i]` is a `ref` declaration: 28 of the 314 clone
+    bodies `benchmarks/compile/stdlib_heavy.mojo` still infers hold one
+    (`--timings`, `template_census.clone.grammar.stmt:RefDecl`). It writes
+    `ReferenceValueUses` and `InteriorReferences` from the binding, not from a
+    `return`.
+  - `self.items[i].method()` records `BorrowedReferenceReceivers`, the sole
+    blocker of 5 bodies.
+  - A `ref` parameter is outside the method grammar, as a `mut` one is (37
+    bodies).
+  - The template-local form exists: `templates.rs:TemplateReference` and
+    `TemplatePlace`. A reference rooted at a local also needs
+    `template_facts.rs:renumber_locals` to cover it.
   - Depends on nothing.
   - Model: Fable, plan first.
 
@@ -106,7 +103,7 @@ as-is or must be planned first.
   - `List.copy`, `Optional.copy`, `Set.copy`, `Dict.keys`, and `Dict.__iter__`
     are one construction each.
   - `ConstructionImmutableBinders` blocks 103 clone bodies and is the sole
-    blocker of 43, the best single recipe left (`docs/performance.md`, *Census
+    blocker of 56, the best single recipe left (`docs/performance.md`, *Census
     of method bodies*).
   - A construction also records a `generic_instantiations` entry and an
     overload target naming the `__init__` clone. `constructor_clone_target`
@@ -116,6 +113,17 @@ as-is or must be planned first.
     waits on the recipe entry below.
   - Depends on the recipe entry below for non-scalar arguments.
   - Model: Fable, plan first.
+
+- [ ] **A method that raises keeps the clone check**
+
+  Problem: `raises` and `raise` are outside the method grammar, so a checked
+  accessor is inferred per instantiation beside its unchecked twin.
+  - `Optional.__getitem__` and `Dict.__getitem__` are of this shape: 21 clone
+    bodies per pass (`template_census.clone.grammar.raises`).
+  - The raised value is a construction, so this waits on the construction
+    entry above. `EffectFacts::raises` already substitutes.
+  - Depends on the construction entry above.
+  - Model: Opus, plan first.
 
 - [ ] **A struct with a field of a parameter type is never a plain-data
   argument**
@@ -174,6 +182,10 @@ as-is or must be planned first.
     (`realize_builtin_len`).
   - A callee whose transfer or call-through summary is not empty also refuses.
     Replaying a stabilized summary on remapped places is the missing recipe.
+  - A reference-returning call on a field already derives when it passes
+    scalars (`templates.rs:closed_reference_contract`). `List.index`,
+    `List.__hash__`, `Dict.get`, and `Dict.__eq__` hold one and wait only on a
+    non-scalar argument or a call through a bound.
   - Each recipe needs its soundness argument written beside
     `template_certificate`, and a verification-mode run over a probe.
   - Depends on nothing.
@@ -216,6 +228,21 @@ as-is or must be planned first.
   - Depends on nothing.
   - Model: Opus, plan first. A kept identity on a folded node must be checked
     against every consumer of `SyntaxId::fresh()` in the elaborator.
+
+- [ ] **A struct with an origin or a value parameter derives no method**
+
+  Problem: a method derives only on a struct whose parameters are all plain
+  types, so `Span` and `Array` keep the clone check for every method.
+  - `template_facts.rs:method_certificate` refuses the declaration, and
+    `instance_substitution` maps type arguments only.
+  - `Span.__getitem__`, `Array.__getitem__`, and `Array.unsafe_get` are
+    otherwise the returned-place shape that already derives for `List`.
+  - A receiver origin (`ref[o] self`) is refused for the same reason: the
+    binder it names is not a plain type parameter.
+  - An origin argument passes through unchanged. A value argument is folded by
+    the elaborator, which is the folded-value entry above.
+  - Depends on the folded-value entry above for a value parameter.
+  - Model: Fable, plan first.
 
 - [ ] **A local declared inside an unrolled loop has no per-copy binding**
 
@@ -562,6 +589,35 @@ The checkboxes below, and the bullets inside the standing ones, are sorted Opus 
   - Model: Opus, plan first. Lending an element place changes loans for every
     view-returning method on a subscript, so the plan enumerates that
     fallout first.
+
+- [ ] **A returned reference may declare a wider origin than its place**
+
+  Problem: the pin compares a returned place's origin with the declared one
+  exactly, and Mojito accepts any declared origin the place lies within.
+  - `def peek(ref self) -> ref[origin_of(self)] Self.T` with `return
+    self.item` runs on Mojito. The pin reports "cannot return reference with
+    incompatible origin: 'origin_of(self.item)' vs 'origin_of(self)'".
+  - A `List` subscript is the same: the pin wants
+    `origin_of(self.items)._get_owned_interior["element"]`, and Mojito also
+    takes `origin_of(self.items)` and `origin_of(self)`.
+  - The lever is the return check's `origins/subst.rs:origin_is_within`
+    (`statements.rs`, `StmtKind::Return`).
+  - Pinned by `conformance/probes/reference_return_wider_origin.mojo`.
+  - Model: Opus, plan first. Every fixture and bundled accessor that declares
+    an owner's origin for a field must be found and respelled first.
+
+- [ ] **Forwarding a named accessor's reference result is rejected**
+
+  Problem: `return self.items.unsafe_get(index)` under
+  `ref[origin_of(self.items)._get_owned_interior["element"]]` reports
+  "returned reference escapes storage outside its declared origin", where the
+  pin runs it.
+  - The subscript `return self.items[index]` under the same origin works.
+  - Only the subscript path records the interior generation the return check
+    compares (`indexing.rs`, `origins/interior.rs:record_interior_reference`).
+    A named call leaves the returned reference's place without it.
+  - Pinned by `conformance/probes/reference_return_forwarded_accessor.mojo`.
+  - Model: Opus, plan first.
 
 - [ ] **A tuple binding with a `Tuple[...]` annotation loses `reverse` and
   `concat`**
