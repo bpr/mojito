@@ -268,7 +268,7 @@ pub enum ParamArg {
 /// Mojito supports the index and fixed-width integers up to 64 bits,
 /// `float16`, `float32`, `float64`, and `bool`; upstream's other names are
 /// [`UPSTREAM_ONLY_DTYPE_NAMES`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Dtype {
     /// Platform-sized signed integer, used by `Int = Scalar[DType.int]`.
     Int,
@@ -607,7 +607,7 @@ pub enum ParamKind {
 /// borrowed, the default), `mut`, `var`, `out`, and `ref` — a
 /// parametric-mutability reference). `imm`, `mut`, `var`, call-scoped `ref`,
 /// and a single free-function named `out` result are modeled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ArgConvention {
     /// `imm` — the immutable convention. The legacy `read` spelling is a hard
     /// error (removed upstream 2026-08) with a targeted migration diagnostic.

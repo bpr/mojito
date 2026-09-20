@@ -56,7 +56,10 @@ use mojito_ast::call::{
 };
 use mojito_common::error::TypeError;
 use mojito_common::token::SourceSpan;
-use mojito_types::ct::{CtExpr, CtValue};
+use mojito_types::ct::CtValue;
+use mojito_types::param_expr::{
+    ConstraintVerdict, HoleKind, MetaTy, ParamContext, ParamError, ParamExpr, ParamOp,
+};
 use mojito_types::types::{
     CallableDefault, ConstraintOperand, DependentType, GenericConstraint, ParamDecl, SliceKind, Ty,
     TyArg, array_element, array_parts, array_type, contains_infer, dict_elements, dict_type,
@@ -104,7 +107,7 @@ pub fn check_program(stmts: &[Stmt]) -> Result<mojito_checked::checked::CheckedP
 pub fn validate_comptime_templates(stmts: &[Stmt]) -> Result<(), TypeError> {
     validate_comptime_templates_into(
         stmts,
-        &mut mojito_checked::templates::TemplateCatalog::default(),
+        &mut mojito_checked::templates::TemplateCatalog::new(false),
     )
 }
 
@@ -128,6 +131,7 @@ pub fn validate_comptime_templates_into(
     checker.rebind_targets = rebind_targets;
     checker.rebind_keyed_bodies = rebind_keyed;
     checker.syntax_origins = syntax_origins;
+    checker.param_context = catalog.param_context().clone();
     checker.template_catalog.replace(std::mem::take(catalog));
     let body_check = checker.check_program(&expanded);
     *catalog = checker.template_catalog.take();
@@ -160,7 +164,7 @@ pub fn check_program_with_materialized_callables(
     check_program_with_templates(
         stmts,
         materialized_callables,
-        &mut mojito_checked::templates::TemplateCatalog::default(),
+        &mut mojito_checked::templates::TemplateCatalog::new(false),
     )
 }
 
@@ -244,6 +248,7 @@ pub fn check_program_for_discovery<S: std::hash::BuildHasher>(
         );
         checker.rebind_targets.clone_from(&rebind_targets);
         checker.syntax_origins.clone_from(&syntax_origins);
+        checker.param_context = catalog.param_context().clone();
         checker.template_catalog.replace(std::mem::take(catalog));
         let body_check = {
             let _check = timing::span("check_program");
@@ -502,6 +507,12 @@ pub struct Checker {
     /// anonymous callable-trait contract.
     /// (A `def`'s *value* parameters are ordinary `Int` locals, not here.)
     tparams: Vec<HashMap<String, Ty>>,
+    /// Value parameters in scope by bare name, innermost last: the typed
+    /// references a dependent parameter expression resolves its names to.
+    vparams: Vec<HashMap<String, ParamExpr>>,
+    /// The compilation's parameter-expression context, shared with every
+    /// checker run and the elaborator of the same compilation.
+    param_context: ParamContext,
     /// The enclosing struct's parameters while checking its fields and methods,
     /// so `Self.T` resolves to `Ty::Param` and `Self.n` to a value parameter.
     /// Saved/restored around a (possibly nested) struct definition.
@@ -512,6 +523,11 @@ pub struct Checker {
     /// and can make an otherwise identical return type fail to match. The
     /// facts refine capability queries only while that method body is checked.
     assumed_conformances: Vec<HashSet<(String, String)>>,
+    /// The residual propositions the enclosing declarations' own `where`
+    /// clauses assume, level for level beside `assumed_conformances`. A
+    /// callee's constraint that stays residual is proven only by being one of
+    /// these canonical nodes.
+    assumed_propositions: Vec<Vec<ParamExpr>>,
     /// Source-validation mode (`validate_comptime_templates`): compile-time
     /// control flow is checked with every arm visited and the declaration's
     /// parameters symbolic, and a module-level function or method body
@@ -903,8 +919,11 @@ impl Checker {
             allow_generated_tuple_forward_types: false,
             traits: HashMap::new(),
             tparams: Vec::new(),
+            vparams: Vec::new(),
+            param_context: ParamContext::detached(),
             self_decls: Vec::new(),
             assumed_conformances: Vec::new(),
+            assumed_propositions: Vec::new(),
             source_validation: false,
             local_type_aliases: vec![HashMap::new()],
             local_comptime_values: vec![HashMap::new()],
@@ -2149,8 +2168,8 @@ impl StructInfo {
 
     /// The arguments of the struct's own `Self` type: each declared parameter
     /// as itself, then each origin slot as its own binder.
-    fn self_arguments(&self) -> Vec<TyArg> {
-        self_struct_arguments(&self.decls, &self.source_params)
+    fn self_arguments(&self, owner: &str) -> Vec<TyArg> {
+        self_struct_arguments(owner, &self.decls, &self.source_params)
     }
 
     /// The origin tail of an instance's arguments (empty for an erased
@@ -2185,7 +2204,7 @@ fn explicit_destroy_types(
         .structs
         .iter()
         .filter_map(|(name, info)| {
-            let self_ty = Ty::Struct(name.clone(), info.decls.iter().map(param_as_arg).collect());
+            let self_ty = Ty::Struct(name.clone(), params_as_args(name, &info.decls));
             (!checker.is_deinitable(&self_ty)).then(|| {
                 (
                     name.clone(),
@@ -2290,12 +2309,12 @@ fn struct_origin_slots(
 
 /// See [`StructInfo::self_arguments`].
 fn self_struct_arguments(
+    owner: &str,
     decls: &[ParamDecl],
     source_params: &[mojito_ast::ast::TypeParam],
 ) -> Vec<TyArg> {
-    decls
-        .iter()
-        .map(param_as_arg)
+    params_as_args(owner, decls)
+        .into_iter()
         .chain(
             struct_origin_slots(source_params)
                 .into_iter()
@@ -2309,7 +2328,7 @@ fn self_struct_arguments(
 /// clauses attach to the last one — so each type-bodied application validates
 /// arity, bounds, defaults, and declaration constraints through the same
 /// `resolve_use_params` contract as a struct application. A type body is
-/// lowered once to a symbolic template (`Ty::Param` / `CtValue::Param`) and
+/// lowered once to a symbolic template (`Ty::Param` / `CtValue::Expr`) and
 /// substituted per application; a Bool body is lowered once to a symbolic
 /// [`GenericConstraint`] and inlined into the consuming proposition per
 /// application. Aliases lower sequentially at declaration, so a body may
@@ -2352,7 +2371,7 @@ enum AliasBody {
 /// A parameterized associated type a conforming struct defines
 /// (`comptime Buf[n: Int] = Fixed[n]`). The body is lowered once with the
 /// member's own parameters in scope, so the resulting `template` carries them
-/// symbolically (`Ty::Param`, `CtValue::Param`, `Origin::Param`); concrete
+/// symbolically (`Ty::Param`, `CtValue::Expr`, `Origin::Param`); concrete
 /// resolution substitutes an application's arguments into it. The raw
 /// `TypeParam`s are retained (rather than classified `ParamDecl`s) so the
 /// argument-to-parameter binding can distinguish type, value, and origin kinds.
@@ -2755,14 +2774,19 @@ mod dependent_callable_signature_tests {
     use super::*;
 
     fn indexed_callable(binder: &str, offset: i64) -> Ty {
-        let index = if offset == 0 {
-            CtExpr::Param(binder.to_string())
-        } else {
-            CtExpr::Add(
-                Box::new(CtExpr::Param(binder.to_string())),
-                Box::new(CtExpr::Value(CtValue::Int(offset))),
+        let context = ParamContext::new();
+        // Each contract owns its binder: alpha-equivalence must come from the
+        // signature slots, not from two declarations sharing an identity.
+        let reference = value_parameter_expr(&format!("$contract:{binder}"), 0, binder, &Ty::Int);
+        let index = context
+            .infix(
+                InfixOp::Add,
+                &reference,
+                &context
+                    .constant(CtValue::Int(offset))
+                    .expect("an Int is a constant"),
             )
-        };
+            .expect("Int + Int builds");
         Ty::GenericFunc {
             environment: mojito_types::origin::CallableEnvironment::Thin,
             decls: vec![ParamDecl::Value {
@@ -2774,10 +2798,11 @@ mod dependent_callable_signature_tests {
                 variadic: false,
                 constraints: Vec::new(),
             }],
-            params: vec![Ty::Dependent(DependentType::Indexed {
-                elements: vec![Ty::Int, Ty::StringLiteral],
-                index,
-            })],
+            params: vec![DependentType::resolve(
+                context
+                    .select(vec![Ty::Int, Ty::StringLiteral], &index)
+                    .expect("an Int index selects"),
+            )],
             names: vec!["element".to_string()],
             ret: Box::new(Ty::None),
             required: vec![true],

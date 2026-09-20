@@ -488,6 +488,12 @@ impl Compiler {
             crate::mir::lower_checked_program(&checked)
         };
         timing::count("mir_functions", mir.functions.len() as u64);
+        let param_stats = templates_catalog.param_context().stats();
+        timing::count("param_expr.interned", param_stats.interned);
+        timing::count("param_expr.intern_hits", param_stats.hits);
+        timing::count("param_expr.constant_folds", param_stats.constant_folds);
+        timing::count("param_expr.replacements", param_stats.replacements);
+        timing::count("param_expr.contexts", param_stats.contexts);
         if !mir.invariant_errors.is_empty() {
             return Err(CompilerError::Verify(mir.invariant_errors));
         }
@@ -841,16 +847,30 @@ fn method_specialization_requests(
             continue;
         }
         let owner = if instance_owner {
-            let values: Vec<CtValue> = instantiation
+            // An erased origin argument contributes the key's own marker
+            // part; it is key vocabulary, never a compile-time value.
+            let types: Vec<Option<CtValue>> = instantiation
                 .owner_arguments
                 .iter()
                 .map(|argument| match argument {
-                    TyArg::Ty(ty) => CtValue::Type(Box::new(ty.clone())),
-                    TyArg::Val(value) => value.clone(),
-                    TyArg::Origin(_) => CtValue::Param("origin".to_string()),
+                    TyArg::Ty(ty) => Some(CtValue::Type(Box::new(ty.clone()))),
+                    TyArg::Val(value) => Some(value.clone()),
+                    TyArg::Origin(_) => None,
                 })
                 .collect();
-            crate::symbol::mangle(&instantiation.owner, &values)
+            let parts: Vec<crate::symbol::SpecializationKeyPart<'_>> = types
+                .iter()
+                .map(|value| {
+                    value.as_ref().map_or(
+                        crate::symbol::SpecializationKeyPart::ErasedOrigin,
+                        crate::symbol::SpecializationKeyPart::Value,
+                    )
+                })
+                .collect();
+            let Ok(owner) = crate::symbol::mangle_parts(&instantiation.owner, &parts) else {
+                continue;
+            };
+            owner
         } else {
             instantiation.owner.clone()
         };
@@ -972,7 +992,7 @@ fn struct_instance_requests(checked: &DiscoveryResult) -> Vec<StructInstanceRequ
         .filter(|instantiation| {
             instantiation.arguments.iter().all(|argument| {
                 closed_generic_argument(argument)
-                    && !matches!(argument, TyArg::Val(CtValue::Param(_)))
+                    && !matches!(argument, TyArg::Val(CtValue::Deferred(_)))
             })
         })
         .map(|instantiation| {
@@ -984,18 +1004,20 @@ fn struct_instance_requests(checked: &DiscoveryResult) -> Vec<StructInstanceRequ
         .collect()
 }
 
-/// A top-level bare `CtValue::Param` is admitted: it is the checker's
-/// callable-value placeholder, which the elaborator's alignment walk consumes
-/// and drops (or rejects) — rejecting it here would wrongly exclude every
-/// call to a generic with a callable-value parameter. Origins erase from the
-/// runtime ABI and never gate replay.
+/// Whether a recorded argument can be replayed as a specialization request.
+/// Replayable is wider than closed: a top-level [`CtValue::Deferred`] is the
+/// checker's callable-value placeholder, which the elaborator's alignment
+/// walk consumes and drops (or rejects) — rejecting it here would wrongly
+/// exclude every call to a generic with a callable-value parameter — and
+/// origins erase from the runtime ABI, so neither gates replay. A residual
+/// parameter expression is neither: a symbolic value names no instance.
 fn closed_generic_argument(argument: &TyArg) -> bool {
     static EMPTY: std::sync::OnceLock<std::collections::HashSet<String>> =
         std::sync::OnceLock::new();
     let empty = EMPTY.get_or_init(std::collections::HashSet::new);
     match argument {
         TyArg::Ty(ty) => tuple_specialization_type_is_closed(ty),
-        TyArg::Val(CtValue::Param(_)) | TyArg::Origin(_) => true,
+        TyArg::Val(CtValue::Deferred(_)) | TyArg::Origin(_) => true,
         TyArg::Val(value) => tuple_specialization_value_is_closed_in(value, empty, empty),
     }
 }
@@ -1096,10 +1118,8 @@ fn tuple_specialization_type_is_closed_in(
         Ty::Assoc { base, .. } => {
             tuple_specialization_type_is_closed_in(base, type_binders, value_binders)
         }
-        Ty::Dependent(crate::types::DependentType::Indexed { elements, index }) => {
-            elements.iter().all(|element| {
-                tuple_specialization_type_is_closed_in(element, type_binders, value_binders)
-            }) && tuple_specialization_ct_expr_is_closed(index, type_binders, value_binders)
+        Ty::Dependent(dependent) => {
+            tuple_specialization_ct_expr_is_closed(dependent.expr(), type_binders, value_binders)
         }
         Ty::Struct(_, arguments) => arguments.iter().all(|argument| match argument {
             TyArg::Ty(ty) => {
@@ -1201,7 +1221,10 @@ fn tuple_specialization_value_is_closed_in(
 ) -> bool {
     use crate::ct::CtValue;
     match value {
-        CtValue::Param(name) => value_binders.contains(name.trim_start_matches('*')),
+        CtValue::Expr(expression) => {
+            tuple_specialization_ct_expr_is_closed(expression, type_binders, value_binders)
+        }
+        CtValue::Deferred(name) => value_binders.contains(name.trim_start_matches('*')),
         CtValue::Tuple(values)
         | CtValue::List(values)
         | CtValue::Set {
@@ -1281,29 +1304,37 @@ fn tuple_specialization_decls_are_closed(
 }
 
 fn tuple_specialization_ct_expr_is_closed(
-    expression: &crate::ct::CtExpr,
+    expression: &crate::param_expr::ParamExpr,
     type_binders: &std::collections::HashSet<String>,
     value_binders: &std::collections::HashSet<String>,
 ) -> bool {
-    use crate::ct::CtExpr;
-    match expression {
-        CtExpr::Value(value) => {
-            tuple_specialization_value_is_closed_in(value, type_binders, value_binders)
-        }
-        CtExpr::Param(name) => value_binders.contains(name.trim_start_matches('*')),
-        CtExpr::Neg(value) => {
-            tuple_specialization_ct_expr_is_closed(value, type_binders, value_binders)
-        }
-        CtExpr::Add(left, right)
-        | CtExpr::Sub(left, right)
-        | CtExpr::Mul(left, right)
-        | CtExpr::FloorDiv(left, right)
-        | CtExpr::Mod(left, right)
-        | CtExpr::Pow(left, right) => {
-            tuple_specialization_ct_expr_is_closed(left, type_binders, value_binders)
-                && tuple_specialization_ct_expr_is_closed(right, type_binders, value_binders)
-        }
-    }
+    use crate::param_expr::ParamKind;
+    let mut closed = true;
+    expression.visit(&mut |node| {
+        closed &= match node.kind() {
+            ParamKind::Constant(value) => {
+                tuple_specialization_value_is_closed_in(value, type_binders, value_binders)
+            }
+            ParamKind::DeclRef(reference) => {
+                value_binders.contains(reference.name.trim_start_matches('*'))
+            }
+            ParamKind::PackQuery { pack, .. } => {
+                type_binders.contains(pack.trim_start_matches('*'))
+            }
+            ParamKind::Hole { .. } => false,
+            // A signature slot is bound by the contract that holds it.
+            ParamKind::IndexRef { .. }
+            | ParamKind::Op { .. }
+            | ParamKind::Identical(..)
+            | ParamKind::Conforms { .. }
+            | ParamKind::Trivial { .. } => true,
+            ParamKind::TypeShape(_) | ParamKind::Select { .. } => node
+                .embedded_types()
+                .into_iter()
+                .all(|ty| tuple_specialization_type_is_closed_in(ty, type_binders, value_binders)),
+        };
+    });
+    closed
 }
 
 fn tuple_specialization_callable_default_is_closed(
@@ -1403,6 +1434,9 @@ fn tuple_specialization_constraint_operand_is_closed(
         }
         crate::types::ConstraintOperand::PackLength(name) => {
             type_binders.contains(name.trim_start_matches('*'))
+        }
+        crate::types::ConstraintOperand::Expr(expression) => {
+            tuple_specialization_ct_expr_is_closed(expression, type_binders, value_binders)
         }
     }
 }

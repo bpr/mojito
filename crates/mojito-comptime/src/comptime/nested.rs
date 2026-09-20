@@ -1256,7 +1256,7 @@ impl NestedMono {
                     if let Some((vals, kept)) =
                         elab.instance_body_request_target(name, &source_span, param_args)
                     {
-                        *name = mangle(name, &vals);
+                        *name = mangle(name, &vals)?;
                         *param_args = kept;
                     }
                     return Ok(());
@@ -1318,7 +1318,7 @@ impl NestedMono {
                 if whole_pack_abi {
                     *args = unwrap_forwarded_pack_arguments(std::mem::take(args));
                 }
-                let mut output_name = mangle(&template.marker_name, &values);
+                let mut output_name = mangle(&template.marker_name, &values)?;
                 if whole_pack_abi {
                     output_name.push_str("$whole_pack");
                 }

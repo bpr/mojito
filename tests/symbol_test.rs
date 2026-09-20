@@ -436,3 +436,137 @@ fn variadic_key_spells_a_collectors_position_and_pack_bounds() {
     assert_eq!(keys[0], keys[3], "name and convention are not identity");
     assert_eq!(keys[4], None);
 }
+
+/// Every concrete specialization value keeps its encoding byte for byte, the
+/// erased-origin marker is an explicit key part, and a residual or deferred
+/// value anywhere in a key's input refuses the key instead of being dropped
+/// or spelled as a parameter name.
+#[test]
+fn param_expr_closed_specialization_keys() {
+    use mojito::ast::Dtype;
+    use mojito::ct::CtLane;
+    use mojito::param_expr::{MetaTy, ParamContext, ParamId};
+    use mojito::symbol::{SpecializationKeyPart, mangle, mangle_parts, specialized_method_values};
+    use mojito::{CtValue, ParamDecl, Ty, TyArg};
+
+    let float_literal = mojito::literal::FloatLiteral::parse_exact("157/50").expect("exact");
+    let rendered = float_literal.to_string();
+    let concrete = [
+        (CtValue::Int(-3), "i-3;".to_string()),
+        (CtValue::UInt(4), "u4;".to_string()),
+        (
+            CtValue::Float(1.0_f64.to_bits()),
+            "f3ff0000000000000;".to_string(),
+        ),
+        (
+            CtValue::IntLiteral(mojito::literal::IntLiteral::from(7_i64)),
+            "I1:7".to_string(),
+        ),
+        (
+            CtValue::FloatLiteral(float_literal),
+            format!("F{}:{rendered}", rendered.len()),
+        ),
+        (CtValue::Bool(true), "b1;".to_string()),
+        (CtValue::Str("hi".into()), "s2:hi".to_string()),
+        (
+            CtValue::Tuple(vec![CtValue::Int(1), CtValue::Bool(false)]),
+            "t2[i1;b0;]".to_string(),
+        ),
+        (CtValue::List(vec![CtValue::Int(1)]), "l1[i1;]".to_string()),
+        (
+            CtValue::dict(None, vec![(CtValue::Str("k".into()), CtValue::Int(1))]),
+            "m1[s1:ki1;]".to_string(),
+        ),
+        (
+            CtValue::set(None, vec![CtValue::Int(9)]),
+            "h1[i9;]".to_string(),
+        ),
+        (CtValue::Dtype(Dtype::Float32), "dfloat32;".to_string()),
+        (
+            CtValue::Simd {
+                dtype: Dtype::UInt8,
+                lanes: vec![CtLane::Int(1), CtLane::Int(2)],
+            },
+            "vuint8:2;[i1;i2;]".to_string(),
+        ),
+        (
+            CtValue::Struct {
+                name: "Extent".into(),
+                fields: vec![("w".into(), CtValue::Int(2)), ("h".into(), CtValue::Int(3))],
+            },
+            "S6:Extent{i2;i3;}".to_string(),
+        ),
+        (CtValue::Type(Box::new(Ty::Int)), "y3:Int".to_string()),
+        (
+            CtValue::Reflected(Box::new(Ty::Bool)),
+            "r4:Bool".to_string(),
+        ),
+    ];
+    assert_eq!(concrete.len(), 16);
+    for (value, encoding) in &concrete {
+        assert_eq!(
+            mangle("f", std::slice::from_ref(value)),
+            Ok(format!("f${encoding}")),
+            "{value:?}"
+        );
+    }
+    // The owner key of a method on an origin-parameterized struct.
+    assert_eq!(
+        mangle_parts(
+            "Holder",
+            &[
+                SpecializationKeyPart::Value(&CtValue::Type(Box::new(Ty::Int))),
+                SpecializationKeyPart::ErasedOrigin,
+            ],
+        ),
+        Ok("Holder$y3:Int$p6:origin".to_string())
+    );
+
+    // A residual: direct, nested in an aggregate, and inside a type payload.
+    let context = ParamContext::new();
+    let n = CtValue::Expr(context.decl_ref(ParamId::new("f", 0), "n", MetaTy::int()));
+    let open = [
+        n.clone(),
+        CtValue::Deferred("callback".into()),
+        CtValue::Tuple(vec![CtValue::Int(1), n.clone()]),
+        CtValue::Struct {
+            name: "Extent".into(),
+            fields: vec![("w".into(), n.clone())],
+        },
+        CtValue::Type(Box::new(Ty::Struct(
+            "Buf".into(),
+            vec![TyArg::Val(n.clone())],
+        ))),
+    ];
+    for value in &open {
+        let error = mangle("f", &[CtValue::Int(1), value.clone()]).expect_err("a residual key");
+        assert_eq!(error.template, "f");
+    }
+
+    // A residual value is not silently omitted from a method's value list; a
+    // deferred callable slot is the one intentional omission.
+    let value_decl = |name: &str| ParamDecl::Value {
+        name: name.into(),
+        ty: Box::new(Ty::Int),
+        default: None,
+        callable_default: None,
+        infer_only: false,
+        variadic: false,
+        constraints: Vec::new(),
+    };
+    let decls = [value_decl("a"), value_decl("b")];
+    assert_eq!(
+        specialized_method_values(&decls, &[TyArg::Val(CtValue::Int(1)), TyArg::Val(n)]),
+        None
+    );
+    assert_eq!(
+        specialized_method_values(
+            &decls,
+            &[
+                TyArg::Val(CtValue::Int(1)),
+                TyArg::Val(CtValue::Deferred("b".into()))
+            ]
+        ),
+        Some(vec![CtValue::Int(1)])
+    );
+}

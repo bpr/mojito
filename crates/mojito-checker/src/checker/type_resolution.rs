@@ -518,7 +518,7 @@ impl Checker {
                 }
             }
             // Bare `Self` — the enclosing struct type or a trait's abstract Self.
-            // Value-parameterized structs carry their symbolic `CtValue::Param`
+            // Value-parameterized structs carry their symbolic `CtValue::Expr`
             // arguments here; specialization bakes them out.
             SourceType::SelfType => match &self.self_ty {
                 Some(ty) => ty.clone(),
@@ -587,7 +587,7 @@ impl Checker {
                 } else {
                     let elements = self.dependent_type_sequence(base)?;
                     let index = self.compile_dependent_ct_expr(index)?;
-                    self.resolve_dependent_index(elements, index, &HashMap::new())?
+                    self.resolve_dependent_index(elements, &index, &HashMap::new())?
                 }
             }
         })
@@ -1195,59 +1195,62 @@ impl Checker {
     /// Collapse an indexed dependent type when its compile-time environment is
     /// concrete; otherwise retain the structural expression in generic
     /// metadata for later specialization.
-    #[allow(
-        clippy::unused_self,
-        reason = "TODO: make an associated function or use the receiver"
-    )]
     pub(super) fn resolve_dependent_index(
         &self,
         elements: Vec<Ty>,
-        index: CtExpr,
+        index: &ParamExpr,
         parameters: &HashMap<String, CtValue>,
     ) -> Result<Ty, TypeError> {
-        let Some(value) = index.evaluate(parameters) else {
-            return Ok(Ty::Dependent(DependentType::Indexed { elements, index }));
-        };
-        let index_value = match value {
-            CtValue::Int(value) => Some(value),
-            CtValue::UInt(value) => i64::try_from(value).ok(),
-            CtValue::IntLiteral(value) => value.to_i64(),
-            _ => None,
-        }
-        .ok_or_else(|| TypeError::NotComptime("dependent type index must be an Int".to_string()))?;
-        let position = usize::try_from(index_value).map_err(|_| {
-            TypeError::NotComptime(format!("dependent type index {index_value} is negative"))
-        })?;
-        elements.get(position).cloned().ok_or_else(|| {
-            TypeError::NotComptime(format!(
-                "dependent type index {index_value} is out of range for {} element(s)",
-                elements.len()
-            ))
-        })
+        let context = &self.param_context;
+        let bindings =
+            mojito_types::param_expr::ParamBindings::from_named_values(context, parameters);
+        // Selecting a type needs the index's value, so it is evaluated.
+        context
+            .replace(index, &bindings)
+            .and_then(|index| context.fold(&index))
+            .and_then(|index| context.select(elements, &index))
+            .map(DependentType::resolve)
+            .map_err(param_error)
     }
 
     /// Resolve dependent leaves after a generic use has supplied its value
     /// parameters. This is a typed walk: the candidate type sequence and the
-    /// retained [`CtExpr`] remain structural until the environment is concrete.
+    /// retained [`ParamExpr`] remain structural until the environment is concrete.
     pub(super) fn resolve_dependent_ty(
         &self,
         ty: &Ty,
         parameters: &HashMap<String, CtValue>,
     ) -> Result<Ty, TypeError> {
         Ok(match ty {
-            Ty::Dependent(DependentType::Indexed { elements, index }) => {
-                let elements = elements
-                    .iter()
-                    .map(|element| self.resolve_dependent_ty(element, parameters))
-                    .collect::<Result<Vec<_>, _>>()?;
-                self.resolve_dependent_index(elements, index.clone(), parameters)?
-            }
+            Ty::Dependent(dependent) => match dependent.selection() {
+                Some((elements, index)) => {
+                    let elements = elements
+                        .iter()
+                        .map(|element| self.resolve_dependent_ty(element, parameters))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    self.resolve_dependent_index(elements, index, parameters)?
+                }
+                None => ty.clone(),
+            },
             Ty::Struct(name, arguments) => Ty::Struct(
                 name.clone(),
                 arguments
                     .iter()
                     .map(|argument| match argument {
                         TyArg::Ty(ty) => self.resolve_dependent_ty(ty, parameters).map(TyArg::Ty),
+                        // A residual value argument closes under the use's
+                        // bindings and re-folds: `Buf[n + 1]` at `n = 3` is
+                        // `Buf[4]`.
+                        TyArg::Val(value @ CtValue::Expr(_)) if !parameters.is_empty() => {
+                            let context = &self.param_context;
+                            let bindings =
+                                mojito_types::param_expr::ParamBindings::from_named_values(
+                                    context, parameters,
+                                );
+                            mojito_types::types::replace_value_parameters(context, value, &bindings)
+                                .map(TyArg::Val)
+                                .map_err(param_error)
+                        }
                         TyArg::Val(value) => Ok(TyArg::Val(value.clone())),
                         TyArg::Origin(origin) => Ok(TyArg::Origin(origin.clone())),
                     })
@@ -1450,8 +1453,9 @@ impl Checker {
                         member: name.to_string(),
                     });
                 };
-                let subst = struct_subst(&info.decls, targs);
-                Ok(self.resolve_assoc_ty(&substitute(ty, &subst)))
+                // The member's type names the struct's own parameters of
+                // every kind; the instance binds them all at once.
+                Ok(self.resolve_assoc_ty(&substitute_at(ty, info, targs)))
             }
             Ty::Param { bounds, .. } => {
                 if self.lookup_trait_assoc_type(bounds, name).is_some() {
@@ -1849,7 +1853,7 @@ impl Checker {
                     // Function values are compile-time parameters in source, but
                     // deliberately remain runtime values in the VM ABI: MIR
                     // evaluates the parameter argument into a register and the
-                    // call frame reifies it under `name`. `CtValue::Param` is only
+                    // call frame reifies it under `name`. `CtValue::Deferred` is only
                     // the erased generic-identity marker used by this resolver.
                     if matches!(ty.as_ref(), Ty::Func { .. } | Ty::GenericFunc { .. }) {
                         let actual = self.infer(expr)?;
@@ -1860,7 +1864,7 @@ impl Checker {
                                 context: format!("callable-value parameter '{name}'"),
                             });
                         }
-                        return Ok(TyArg::Val(CtValue::Param(name.clone())));
+                        return Ok(TyArg::Val(CtValue::Deferred(name.clone())));
                     }
                     // Source validation types before the elaborator folds a
                     // value argument it alone can evaluate (a vector
@@ -1870,7 +1874,7 @@ impl Checker {
                     let value = match self.eval_associated_ct(expr, &HashMap::new()) {
                         Ok(value) => value,
                         Err(_) if self.source_validation => {
-                            return Ok(TyArg::Val(CtValue::Param(name.clone())));
+                            return Ok(TyArg::Val(CtValue::Deferred(name.clone())));
                         }
                         Err(error) => return Err(error),
                     };
@@ -1891,7 +1895,7 @@ impl Checker {
                     self.record_literal_materializations(expr, &actual, ty)?;
                     // A symbolic enclosing-scope parameter stays symbolic here;
                     // specialization bakes it out like the callable case above.
-                    if matches!(value, CtValue::Param(_)) {
+                    if matches!(value, CtValue::Expr(_)) {
                         return Ok(TyArg::Val(value));
                     }
                     let rendered = value.to_string();
@@ -1910,7 +1914,7 @@ impl Checker {
                 // spelling `eval_associated_ct` resolves), bound to the
                 // instance value inside a per-instantiation clone.
                 ParamArg::Type(SourceType::SelfParam(param))
-                    if matches!(self.self_param_ct_value(param), Some(CtValue::Param(_))) =>
+                    if matches!(self.self_param_ct_value(param), Some(CtValue::Expr(_))) =>
                 {
                     if let Some(Ty::Struct(_, arguments)) = &self.self_ty
                         && arguments.len() >= self.self_decls.len()
@@ -1919,11 +1923,13 @@ impl Checker {
                             .iter()
                             .position(|d| d.name() == param && matches!(d, ParamDecl::Value { .. }))
                         && let Some(TyArg::Val(bound)) = arguments.get(index)
-                        && !matches!(bound, CtValue::Param(_))
+                        && !matches!(bound, CtValue::Expr(_))
                     {
                         return Ok(TyArg::Val(bound.clone()));
                     }
-                    Ok(TyArg::Val(CtValue::Param(param.clone())))
+                    self.self_param_ct_value(param)
+                        .map(TyArg::Val)
+                        .ok_or_else(|| TypeError::UnknownSelfParam(param.clone()))
                 }
                 // A bare parameter name, or `Self.<field>`, in a value slot.
                 ParamArg::Type(ty) if let Some(error) = self.bare_or_field_in_value_slot(ty) => {
@@ -2613,7 +2619,7 @@ impl Checker {
             return None;
         }
         let info = self.structs.get(name)?;
-        Some(Ty::Struct(name.to_string(), info.self_arguments()))
+        Some(Ty::Struct(name.to_string(), info.self_arguments(name)))
     }
 
     /// Resolve the alternatives of `Variant[T1, ..., Tn]`.  Alternative order
@@ -2752,10 +2758,10 @@ impl Checker {
 
 fn tyarg_is_symbolic(argument: &TyArg) -> bool {
     match argument {
-        TyArg::Val(CtValue::Param(_)) => true,
+        TyArg::Val(CtValue::Expr(_) | CtValue::Deferred(_)) => true,
         TyArg::Val(CtValue::Tuple(values) | CtValue::List(values)) => values
             .iter()
-            .any(|value| matches!(value, CtValue::Param(_))),
+            .any(|value| matches!(value, CtValue::Expr(_) | CtValue::Deferred(_))),
         TyArg::Val(_) => false,
         TyArg::Origin(
             mojito_types::origin::Origin::Param(_) | mojito_types::origin::Origin::SelfParam,

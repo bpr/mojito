@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.0
+# Mojito Textual MIR Format, Version 1.1
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.0 is implemented end to end for inspection and loading: canonical
+Version 1.1 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -20,8 +20,11 @@ corpus fixture by the `roundtrip::*` group of `tests/corpus_test.rs`, and
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.0
+mojito-mir 1.1
 ```
+
+The writer emits 1.1. The reader accepts 1.0 and 1.1; *Schema 1.0* below says
+how a 1.0 artifact is read.
 
 The two unsigned decimal components are major and minor versions. A consumer
 must reject an unknown major version. Within major version 1, a newer minor may
@@ -31,6 +34,12 @@ required fields, types, instructions, terminators, or enum tags are errors. A
 semantic or executable addition therefore requires consumer support and cannot
 be hidden in optional metadata. Removing or changing existing syntax requires a
 new major version.
+
+Minor version 1 respells one value family — compile-time parameter
+expressions — and is therefore not an optional addition: a 1.0 consumer
+rejects a 1.1 artifact at the header, which is the intended failure, and a 1.1
+consumer reads both. Every other spelling, the concrete `ct_*` values
+included, is byte-identical between the two.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -247,8 +256,46 @@ rational; reprinting reduces it.
 `checked_string`, or `checked_none` with the same fidelity rules.
 
 `CtValue` uses `ct_int`, `ct_uint`, `ct_float_bits`, `ct_int_literal`,
-`ct_float_literal`, `ct_bool`, `ct_string`, `ct_tuple`, `ct_list`, `ct_dtype`,
-`ct_struct { name, fields }`, `ct_type`, `ct_reflected`, or `ct_param`.
+`ct_float_literal`, `ct_bool`, `ct_string`, `ct_tuple`, `ct_list`, `ct_dict`,
+`ct_set`, `ct_dtype`, `ct_simd`, `ct_struct { name, fields }`, `ct_type`,
+`ct_reflected`, `ct_expr(param-expr)` for a residual parameter expression, or
+`ct_deferred(symbol)` for a slot whose value arrives later (a callable-value
+parameter the VM reifies) and which is no part of generic identity.
+
+### Parameter expressions
+
+A parameter expression is typed and canonical
+(`docs/notes/param-expr-attributes.md`). Operands print in canonical order, a
+declared parameter by its owner symbol and slot, a signature binder by depth
+and index; no address or process-local key is written.
+
+```text
+param_constant(ct-value)
+param_decl_ref  { owner: "symbol", slot: N, name: symbol, type: meta }
+param_index_ref { depth: N, index: N, type: meta }
+param_expr      { op, type: meta, operands: [param-expr...] }
+param_identical { left, right }
+param_conforms  { subject, trait }
+param_trivial   { lifecycle, subject }
+param_type_shape(type)
+param_select    { elements: [type...], index }
+param_pack_query { pack, query }
+```
+
+`op` is one of `add`, `mul`, `neg`, `sub`, `div`, `floordiv`, `mod`, `pow`,
+`shl`, `shr`, `and`, `or`, `xor`, `eq`, `lt`, `le`, `bool_and`, `bool_or`,
+`bool_xor`, `cond`. `meta` is `meta_value(type)`, `meta_type`,
+`meta_reflected`, `meta_tuple([meta...])`, `meta_list([meta...])`,
+`meta_set([meta...])`, `meta_dict([meta_entry { key, value }...])`, or
+`meta_param_list(meta)`. A pack `query` is `pack_length`,
+`pack_conforms(symbol)`, `pack_predicate { predicate, all }`, or
+`pack_contains(param-expr)`.
+
+Parsing re-enters the canonicalizing constructors, so a parsed expression is
+canonical whatever order the text spelled its operands in, a bad arity or
+operand domain is a diagnostic at the expression, and a `param_expr`'s recorded
+`type` must be the type it builds to. An unknown or unbound parameter
+(`param_hole`) never crosses into MIR and is rejected.
 
 ### Types
 
@@ -266,7 +313,7 @@ generic_func { environment, param_decls, params, names, return_type, required,
 overload([type...])
 param { name, bounds, callable_bound }
 assoc { base, member, arguments }
-dependent_index { elements, index }
+dependent_parameter(param-expr)
 struct_type { name, arguments }
 simd { dtype, width }
 comptime_list(type) tuple([type...]) runtime_pack([type...])
@@ -286,14 +333,31 @@ or
 Callable defaults use `default_symbol`, `default_parameter`, or
 `default_if { condition, then_value, else_value }`.
 
-`GenericConstraint` and `CtExpr` are prefix trees. Their tags map one-to-one to
-the public variants: `with_message { condition, message }`, `conforms`,
-`conforms_pack`, `pack_predicate` (whose predicate is `predicate_trivial` or
+`GenericConstraint` is a prefix tree. Its tags map one-to-one to the public
+variants: `with_message { condition, message }`, `conforms`, `conforms_pack`,
+`pack_predicate` (whose predicate is `predicate_trivial` or
 `predicate_alias`), `pack_contains`, `trivial`, `eq`, `ne`, `lt`, `le`, `gt`,
-`ge`, `and`, `or`, `not`, `constraint_bool`; and `ct_param`, `ct_value`,
-`ct_neg`, `ct_add`,
-`ct_sub`, `ct_mul`, `ct_floor_div`, `ct_mod`, `ct_pow`. Constraint operands are
-`operand_param`, `operand_value`, `operand_type`, and `operand_pack_length`.
+`ge`, `and`, `or`, `not`, `constraint_bool`. Constraint operands are
+`operand_param`, `operand_value`, `operand_type`, `operand_pack_length`, and
+`operand_expr(param-expr)` for an arithmetic operand. A value parameter's
+`default` and a `default_if` condition are parameter expressions.
+
+### Schema 1.0
+
+A 1.0 artifact spells a parameter expression as a name-only tree —
+`ct_param(symbol)`, `ct_value(ct-value)`, `ct_neg`, and `ct_add`, `ct_sub`,
+`ct_mul`, `ct_floor_div`, `ct_mod`, `ct_pow` as `{ left, right }` records — a
+finite type selection as `dependent_index { elements, index }`, and both a
+parameter reference and a deferred slot in value position as `ct_param`. The
+1.1 reader translates these into the canonical graph and the writer never
+emits them; in a 1.1 artifact they are errors.
+
+A 1.0 name carries no type, so it resolves through the value parameters the
+artifact declares (`value_param { name, type, ... }`, callable-valued ones
+excluded). Exactly one declared type gives a typed reference. None gives a
+deferred slot in value position and an error in expression position. Several
+different declared types are an error that asks for a 1.1 re-emission: nothing
+in a 1.0 reference chooses between them, and the reader does not guess.
 
 ### Origins and callable environments
 
@@ -419,7 +483,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.0
+mojito-mir 1.1
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

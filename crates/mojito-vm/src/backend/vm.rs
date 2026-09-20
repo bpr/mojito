@@ -892,7 +892,9 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
         | CtValue::Set { .. }
         | CtValue::Type(_)
         | CtValue::Reflected(_)
-        | CtValue::Param(_) => return None,
+        // No unresolved expression or deferred slot becomes a runtime value.
+        | CtValue::Expr(_)
+        | CtValue::Deferred(_) => return None,
     })
 }
 
@@ -908,7 +910,7 @@ fn resolve_callable_default(
             condition,
             then_value,
             else_value,
-        } => match condition.evaluate(comptime)? {
+        } => match condition.evaluate_named(comptime).ok()? {
             CtValue::Bool(true) => resolve_callable_default(then_value, runtime, comptime),
             CtValue::Bool(false) => resolve_callable_default(else_value, runtime, comptime),
             _ => None,
@@ -982,7 +984,8 @@ fn resolve_value_parameter_slots(
             .or_else(|| {
                 default.as_ref().and_then(|default| {
                     default
-                        .evaluate(&comptime)
+                        .evaluate_named(&comptime)
+                        .ok()
                         .and_then(|value| value.materialize_as(ty))
                         .and_then(ct_value_as_runtime)
                 })

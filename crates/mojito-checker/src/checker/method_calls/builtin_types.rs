@@ -676,10 +676,19 @@ impl Checker {
                         mojito_types::origin::CaptureOriginSet::empty(),
                     ),
                     decls: vec![index_decl],
-                    params: vec![Ty::Dependent(DependentType::Indexed {
-                        elements: elements.to_vec(),
-                        index: CtExpr::Param("index".to_string()),
-                    })],
+                    params: vec![
+                        self.param_context
+                            .select(
+                                elements.to_vec(),
+                                &self.param_context.index_ref(
+                                    0,
+                                    0,
+                                    mojito_types::param_expr::MetaTy::int(),
+                                ),
+                            )
+                            .map(DependentType::resolve)
+                            .map_err(param_error)?,
+                    ],
                     names: vec!["element".to_string()],
                     ret: Box::new(Ty::None),
                     required: vec![true],

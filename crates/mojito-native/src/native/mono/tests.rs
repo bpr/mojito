@@ -383,7 +383,11 @@ fn substitution_resolves_nested_type_and_value_arguments() {
                 bounds: vec![],
                 callable_bound: None,
             }),
-            TyArg::Val(CtValue::Param("n".into())),
+            TyArg::Val(CtValue::Expr(ParamContext::detached().decl_ref(
+                mojito_types::param_expr::ParamId::new("Holder", 1),
+                "n",
+                mojito_types::param_expr::MetaTy::int(),
+            ))),
         ],
     );
     let Ty::Struct(name, args) = substitute_ty(&ty, &bindings).unwrap() else {

@@ -138,7 +138,8 @@ impl Checker {
                         "positional-only/keyword-only markers on trait methods".to_string(),
                     ));
                 }
-                let mut decls = self.classify_params(&m.type_params)?;
+                let mut decls =
+                    self.classify_params(&method_binder_owner(name, &m.name), &m.type_params)?;
                 for condition in &m.where_clauses {
                     let constraint = self.compile_where_clause(condition)?;
                     let Some(last) = decls.last_mut() else {
@@ -151,7 +152,7 @@ impl Checker {
                         | ParamDecl::Value { constraints, .. } => constraints.push(constraint),
                     }
                 }
-                self.tparams.push(type_scope(&decls));
+                self.push_param_scope(&method_binder_owner(name, &m.name), &decls);
                 let signature = (|| {
                     Ok::<_, TypeError>((
                         self.param_tys(&m.params)?,
@@ -290,7 +291,7 @@ impl Checker {
         if self.structs.contains_key(name) || self.traits.contains_key(name) {
             return Err(TypeError::Redeclaration(name.to_string()));
         }
-        let decls = self.classify_params(type_params)?;
+        let decls = self.classify_params(name, type_params)?;
         self.generic_parameters.borrow_mut().insert(
             mojito_checked::checked::GenericSite::Struct {
                 module: declaration.module.clone(),
@@ -401,7 +402,7 @@ impl Checker {
 
     /// Enter the member-resolution scope of a shelled struct: its parameters
     /// are in scope as `Self.T` / `Self.n` (type parameters as `Ty::Param`,
-    /// value parameters as symbolic `CtValue::Param`) and bare `Self` is the
+    /// value parameters as symbolic `CtValue::Expr`) and bare `Self` is the
     /// struct type. Returns the `Self` type and the saved outer scope for
     /// `exit_struct_scope`.
     fn enter_struct_scope(
@@ -419,7 +420,7 @@ impl Checker {
         let generated_tuple = name.starts_with("Tuple$") || name.contains("$Tuple$");
         let self_ty = Ty::Struct(
             name.to_string(),
-            fixed_arguments.unwrap_or_else(|| info.self_arguments()),
+            fixed_arguments.unwrap_or_else(|| info.self_arguments(name)),
         );
         let saved = SavedStructScope {
             forward_types: std::mem::replace(
@@ -689,11 +690,12 @@ impl Checker {
             // A template shell registers the signatures that resolve
             // symbolically and skips the rest (pack-dependent shapes): the
             // concrete specialization checks every method.
-            let method_decls = match self.classify_params(&m.type_params) {
-                Ok(decls) => decls,
-                Err(_) if declaration.template_shell => continue,
-                Err(error) => return Err(error),
-            };
+            let method_decls =
+                match self.classify_params(&method_binder_owner(name, &m.name), &m.type_params) {
+                    Ok(decls) => decls,
+                    Err(_) if declaration.template_shell => continue,
+                    Err(error) => return Err(error),
+                };
             self.generic_parameters.borrow_mut().insert(
                 mojito_checked::checked::GenericSite::Method {
                     module: declaration.module.clone(),
@@ -702,7 +704,7 @@ impl Checker {
                 },
                 method_decls.clone(),
             );
-            self.tparams.push(type_scope(&method_decls));
+            self.push_param_scope(&method_binder_owner(name, &m.name), &method_decls);
             let saved_method_type_params = self.enclosing_type_params.clone();
             let saved_struct_count = self
                 .enclosing_struct_type_params
@@ -723,6 +725,7 @@ impl Checker {
             // types its receiver's bare bounds do not admit.
             let signature = match self.method_where_assumptions(m) {
                 Ok(assumptions) => {
+                    self.assume_propositions(Vec::new());
                     self.assumed_conformances.push(assumptions);
                     let signature = (|| {
                         let all_types = self.param_tys(&m.params)?;
@@ -1646,7 +1649,11 @@ impl Checker {
 
     pub(super) fn ct_value_ty(&self, value: &CtValue, self_ty: &Ty) -> Option<Ty> {
         match value {
-            CtValue::Int(_) | CtValue::Param(_) => Some(Ty::Int),
+            CtValue::Int(_) | CtValue::Deferred(_) => Some(Ty::Int),
+            CtValue::Expr(expr) => match expr.meta() {
+                mojito_types::param_expr::MetaTy::Value(ty) => Some((**ty).clone()),
+                _ => None,
+            },
             CtValue::UInt(_) => Some(Ty::UInt),
             CtValue::Float(_) => Some(Ty::Float64),
             CtValue::IntLiteral(_) => Some(Ty::IntLiteral),

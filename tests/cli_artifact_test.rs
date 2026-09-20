@@ -13,7 +13,7 @@ fn emit_mir_file_writes_only_a_canonical_artifact() {
         .expect("run emit-mir");
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
-    assert!(output.stdout.starts_with(b"mojito-mir 1.0\n"));
+    assert!(output.stdout.starts_with(b"mojito-mir 1.1\n"));
     assert!(output.stdout.ends_with(b"\n"));
     assert!(!output.stdout.ends_with(b"\n\n"));
 }
@@ -62,7 +62,7 @@ fn emit_mir_uses_normal_module_resolution() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(output.stdout.starts_with(b"mojito-mir 1.0\n"));
+    assert!(output.stdout.starts_with(b"mojito-mir 1.1\n"));
 }
 
 #[test]

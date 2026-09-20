@@ -161,23 +161,91 @@ pub(super) fn type_scope(decls: &[ParamDecl]) -> HashMap<String, Ty> {
         .collect()
 }
 
-/// A struct's own parameter, as the `TyArg` it contributes to the struct's `Self`
-/// type while its body is checked: a type parameter as `Ty::Param`, a value
-/// parameter as a symbolic `CtValue::Param`.
-pub(super) fn param_as_arg(decl: &ParamDecl) -> TyArg {
-    match decl {
-        ParamDecl::Type {
-            name,
-            bounds,
-            callable_bound,
-            ..
-        } => TyArg::Ty(Ty::Param {
-            name: name.clone(),
-            bounds: bounds.clone(),
-            callable_bound: callable_bound.clone(),
-        }),
-        ParamDecl::Value { name, .. } => TyArg::Val(CtValue::Param(name.clone())),
+/// A struct's own parameters, as the `TyArg`s they contribute to the struct's
+/// `Self` type while its body is checked: a type parameter as `Ty::Param`, a
+/// value parameter as a reference to its declaration.
+pub(super) fn params_as_args(owner: &str, decls: &[ParamDecl]) -> Vec<TyArg> {
+    decls
+        .iter()
+        .enumerate()
+        .map(|(slot, decl)| match decl {
+            ParamDecl::Type {
+                name,
+                bounds,
+                callable_bound,
+                ..
+            } => TyArg::Ty(Ty::Param {
+                name: name.clone(),
+                bounds: bounds.clone(),
+                callable_bound: callable_bound.clone(),
+            }),
+            ParamDecl::Value { name, ty, .. } => TyArg::Val(value_parameter(owner, slot, name, ty)),
+        })
+        .collect()
+}
+
+/// The reference to value parameter `slot` of the declaration `owner`, which
+/// [`binder_owner`] or [`method_binder_owner`] names.
+pub(super) fn value_parameter(owner: &str, slot: usize, name: &str, ty: &Ty) -> CtValue {
+    CtValue::Expr(value_parameter_expr(owner, slot, name, ty))
+}
+
+pub(super) fn value_parameter_expr(owner: &str, slot: usize, name: &str, ty: &Ty) -> ParamExpr {
+    ParamContext::detached().decl_ref(
+        mojito_types::param_expr::ParamId::new(&binder_owner(owner), slot),
+        name.trim_start_matches('*'),
+        mojito_types::param_expr::MetaTy::value(ty.clone()),
+    )
+}
+
+/// The declaration that owns a name's parameter binders: the template, so a
+/// `$` clone shares its template's parameters rather than minting fresh ones.
+pub(super) fn binder_owner(name: &str) -> String {
+    mojito_symbol::symbol::demangle_specialization(name)
+        .map_or(name, |(template, _)| template)
+        .to_string()
+}
+
+/// [`binder_owner`] for a method's own parameters.
+pub(super) fn method_binder_owner(owner: &str, method: &str) -> String {
+    format!("{}.{}", binder_owner(owner), binder_owner(method))
+}
+
+/// The checker's diagnostic for a parameter-expression error.
+pub(super) fn param_error(error: mojito_types::param_expr::ParamError) -> TypeError {
+    use mojito_types::param_expr::ParamError;
+    TypeError::NotComptime(match error {
+        ParamError::Arithmetic(message) | ParamError::Unsupported(message) => message,
+        other => other.to_string(),
+    })
+}
+
+/// The binder owner of `method` on the struct `self_ty` names.
+pub(super) fn method_owner(self_ty: &Ty, method: &str) -> String {
+    match self_ty {
+        Ty::Struct(owner, _) => method_binder_owner(owner, method),
+        _ => method_binder_owner("Self", method),
     }
+}
+
+/// The value-parameter scope a declaration's own binders open.
+pub(super) fn value_scope(owner: &str, decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
+    decls
+        .iter()
+        .enumerate()
+        .filter_map(|(slot, decl)| match decl {
+            ParamDecl::Value {
+                name,
+                ty,
+                callable_default: None,
+                ..
+            } if !matches!(ty.as_ref(), Ty::Func { .. } | Ty::GenericFunc { .. }) => Some((
+                name.trim_start_matches('*').to_string(),
+                value_parameter_expr(owner, slot, name, ty),
+            )),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The substitution mapping a struct's type-parameter names to a value's type

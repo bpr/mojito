@@ -767,13 +767,17 @@ impl Elab<'_> {
             && let Some(values) = tyargs
                 .iter()
                 .map(|argument| match argument {
-                    TyArg::Val(value) if !matches!(value, CtValue::Param(_)) => Some(value.clone()),
+                    TyArg::Val(value)
+                        if !matches!(value, CtValue::Expr(_) | CtValue::Deferred(_)) =>
+                    {
+                        Some(value.clone())
+                    }
                     _ => None,
                 })
                 .collect::<Option<Vec<_>>>()
             && !values.is_empty()
         {
-            let mangled = mangle(name, &values);
+            let mangled = mangle(name, &values)?;
             self.pending_struct_instances
                 .borrow_mut()
                 .entry(mangled.clone())

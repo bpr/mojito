@@ -352,7 +352,7 @@ impl Elab<'_> {
                 let mut left = self.eval(first, scope)?;
                 for (op, right) in rest {
                     let r = self.eval(right, scope)?;
-                    if !compare_numeric_values(*op, &left, &r)? {
+                    if !mojito_types::param_expr::fold::compare(*op, &left, &r)? {
                         return Ok(CtValue::Bool(false));
                     }
                     left = r;
@@ -667,7 +667,10 @@ impl Elab<'_> {
             ExprKind::Identifier(name) => scope.get(name).is_some_and(|value| {
                 !matches!(
                     value,
-                    CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Param(_)
+                    CtValue::Type(_)
+                        | CtValue::Reflected(_)
+                        | CtValue::Expr(_)
+                        | CtValue::Deferred(_)
                 )
             }),
             _ => false,
@@ -700,11 +703,13 @@ impl Elab<'_> {
                 let item = self.eval(item, scope)?;
                 Ok(CtValue::Bool(comptime_contains(receiver, &item)?))
             }
-            (CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Param(_), _, _) => {
-                Err(ComptimeError::NotComptime(format!(
-                    "compile-time method '{method}' needs a value receiver"
-                )))
-            }
+            (
+                CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Expr(_) | CtValue::Deferred(_),
+                _,
+                _,
+            ) => Err(ComptimeError::NotComptime(format!(
+                "compile-time method '{method}' needs a value receiver"
+            ))),
             _ => self.ctfe_expr_entry(call, scope),
         }
     }
@@ -1173,7 +1178,7 @@ impl Elab<'_> {
                     .map(|param| {
                         let mut param = param.clone();
                         param.ty = self.resolve_reflected_type(&param.ty, scope)?;
-                        Ok(param)
+                        Ok::<_, ComptimeError>(param)
                     })
                     .collect::<Result<Vec<_>, _>>()?,
                 ret: Box::new(self.resolve_reflected_type(ret, scope)?),
@@ -1216,11 +1221,6 @@ impl Elab<'_> {
         right: &Expr,
         scope: &HashMap<String, CtValue>,
     ) -> Result<CtValue, ComptimeError> {
-        use InfixOp::{
-            Add, BitAnd, BitOr, BitXor, Div, Eq, FloorDiv, Ge, Gt, Le, Lt, Mod, Mul, Ne, Pow, Shl,
-            Shr, Sub,
-        };
-
         match op {
             InfixOp::In | InfixOp::NotIn => {
                 let item = self.eval(left, scope)?;
@@ -1246,187 +1246,13 @@ impl Elab<'_> {
             }
             _ => {}
         }
-        // Type equality is a compile-time proposition used by trailing `where`
-        // clauses after their type parameters have been specialized.
-        if let (CtValue::Type(left), CtValue::Type(right)) =
-            (self.eval(left, scope)?, self.eval(right, scope)?)
-        {
-            return match op {
-                InfixOp::Eq => Ok(CtValue::Bool(left == right)),
-                InfixOp::Ne => Ok(CtValue::Bool(left != right)),
-                _ => Err(ComptimeError::NotComptime(
-                    "only == and != are defined for compile-time types".to_string(),
-                )),
-            };
-        }
-        // String concatenation (`+`) and equality (`==`/`!=`) at compile time.
-        if let (CtValue::Str(a), CtValue::Str(b)) =
-            (self.eval(left, scope)?, self.eval(right, scope)?)
-        {
-            return match op {
-                InfixOp::Add => Ok(CtValue::Str(a + &b)),
-                InfixOp::Eq => Ok(CtValue::Bool(a == b)),
-                InfixOp::Ne => Ok(CtValue::Bool(a != b)),
-                _ => Err(ComptimeError::NotComptime(
-                    "unsupported compile-time String operator".to_string(),
-                )),
-            };
-        }
+        // Both operands are required from here on; operator semantics are the
+        // shared folder's.
         let left = self.eval(left, scope)?;
         let right = self.eval(right, scope)?;
-        let bad = |m: &str| ComptimeError::BadArithmetic(m.to_string());
-        if matches!(op, Eq | Ne | Lt | Gt | Le | Ge) {
-            return Ok(CtValue::Bool(compare_numeric_values(op, &left, &right)?));
-        }
-        match (left, right) {
-            // Lane-wise integer arithmetic on compile-time vectors (a hasher
-            // key mixes with its constants: `Self.key ^ U256(...)`).
-            (
-                CtValue::Simd { dtype, lanes: a },
-                CtValue::Simd {
-                    dtype: other,
-                    lanes: b,
-                },
-            ) if dtype == other && a.len() == b.len() => {
-                let lanes = a
-                    .iter()
-                    .zip(&b)
-                    .map(|(x, y)| match (x, y) {
-                        (mojito_types::ct::CtLane::Int(x), mojito_types::ct::CtLane::Int(y)) => {
-                            let value = match op {
-                                BitXor => x ^ y,
-                                BitAnd => x & y,
-                                BitOr => x | y,
-                                Add => x.wrapping_add(*y),
-                                Sub => x.wrapping_sub(*y),
-                                Mul => x.wrapping_mul(*y),
-                                _ => return None,
-                            };
-                            Some(mojito_types::ct::CtLane::Int(mojito_types::ct::wrap_lane(
-                                dtype, value,
-                            )))
-                        }
-                        _ => None,
-                    })
-                    .collect::<Option<Vec<_>>>()
-                    .ok_or_else(|| {
-                        ComptimeError::NotComptime(
-                            "unsupported compile-time SIMD operator".to_string(),
-                        )
-                    })?;
-                Ok(CtValue::Simd { dtype, lanes })
-            }
-            (CtValue::Int(a), CtValue::Int(b)) => match op {
-                Add => a
-                    .checked_add(b)
-                    .map(CtValue::Int)
-                    .ok_or_else(|| bad("compile-time integer overflow")),
-                Sub => a
-                    .checked_sub(b)
-                    .map(CtValue::Int)
-                    .ok_or_else(|| bad("compile-time integer overflow")),
-                Mul => a
-                    .checked_mul(b)
-                    .map(CtValue::Int)
-                    .ok_or_else(|| bad("compile-time integer overflow")),
-                FloorDiv if b != 0 => a
-                    .checked_div_euclid(b)
-                    .map(CtValue::Int)
-                    .ok_or_else(|| bad("compile-time integer overflow")),
-                Mod if b != 0 => a
-                    .checked_rem_euclid(b)
-                    .map(CtValue::Int)
-                    .ok_or_else(|| bad("compile-time integer overflow")),
-                FloorDiv | Mod => Err(bad("division by zero")),
-                Pow if b >= 0 => u32::try_from(b)
-                    .ok()
-                    .and_then(|exponent| a.checked_pow(exponent))
-                    .map(CtValue::Int)
-                    .ok_or_else(|| bad("compile-time integer overflow")),
-                Pow => Err(bad("negative exponent")),
-                _ => Err(ComptimeError::NotComptime(
-                    "unsupported compile-time operator".to_string(),
-                )),
-            },
-            (CtValue::IntLiteral(a), CtValue::IntLiteral(b)) => {
-                let value = match op {
-                    Add => Some(CtValue::IntLiteral(a.add(&b))),
-                    Sub => Some(CtValue::IntLiteral(a.sub(&b))),
-                    Mul => Some(CtValue::IntLiteral(a.mul(&b))),
-                    Div => mojito_common::literal::FloatLiteral::from_int(&a)
-                        .div(&mojito_common::literal::FloatLiteral::from_int(&b))
-                        .map(CtValue::FloatLiteral),
-                    FloorDiv => a.floor_div(&b).map(CtValue::IntLiteral),
-                    Mod => a.floor_mod(&b).map(CtValue::IntLiteral),
-                    Pow => a.pow(&b).map(CtValue::IntLiteral),
-                    Shl => a.shl(&b).map(CtValue::IntLiteral),
-                    Shr => a.shr(&b).map(CtValue::IntLiteral),
-                    BitAnd => Some(CtValue::IntLiteral(a.bitand(&b))),
-                    BitOr => Some(CtValue::IntLiteral(a.bitor(&b))),
-                    BitXor => Some(CtValue::IntLiteral(a.bitxor(&b))),
-                    _ => {
-                        return Err(ComptimeError::NotComptime(
-                            "unsupported exact compile-time operator".to_string(),
-                        ));
-                    }
-                };
-                value.ok_or_else(|| bad("invalid exact compile-time arithmetic"))
-            }
-            (CtValue::FloatLiteral(a), CtValue::FloatLiteral(b)) => {
-                let value = match op {
-                    Add => Some(a.add(&b)),
-                    Sub => Some(a.sub(&b)),
-                    Mul => Some(a.mul(&b)),
-                    Div => a.div(&b),
-                    FloorDiv => a.floor_div(&b),
-                    Mod => a.floor_mod(&b),
-                    Pow => b.to_int_if_whole().and_then(|b| a.pow_int(&b)),
-                    _ => {
-                        return Err(ComptimeError::NotComptime(
-                            "unsupported exact compile-time float operator".to_string(),
-                        ));
-                    }
-                };
-                value
-                    .map(CtValue::FloatLiteral)
-                    .ok_or_else(|| bad("invalid exact compile-time arithmetic"))
-            }
-            (CtValue::Int(a), CtValue::IntLiteral(b)) => {
-                self.eval_infix_values(op, CtValue::IntLiteral(a.into()), CtValue::IntLiteral(b))
-            }
-            (CtValue::IntLiteral(a), CtValue::Int(b)) => {
-                self.eval_infix_values(op, CtValue::IntLiteral(a), CtValue::IntLiteral(b.into()))
-            }
-            (CtValue::IntLiteral(a), CtValue::FloatLiteral(b)) => self.eval_infix_values(
-                op,
-                CtValue::FloatLiteral(mojito_common::literal::FloatLiteral::from_int(&a)),
-                CtValue::FloatLiteral(b),
-            ),
-            (CtValue::FloatLiteral(a), CtValue::IntLiteral(b)) => self.eval_infix_values(
-                op,
-                CtValue::FloatLiteral(a),
-                CtValue::FloatLiteral(mojito_common::literal::FloatLiteral::from_int(&b)),
-            ),
-            _ => Err(ComptimeError::NotComptime(
-                "unsupported compile-time operands".to_string(),
-            )),
-        }
-    }
-
-    pub(super) fn eval_infix_values(
-        &self,
-        op: InfixOp,
-        left: CtValue,
-        right: CtValue,
-    ) -> Result<CtValue, ComptimeError> {
-        let scope = HashMap::from([("__left".to_string(), left), ("__right".to_string(), right)]);
-        let expression = |name: &str| Expr {
-            kind: ExprKind::Identifier(name.to_string()),
-            span: Span::default(),
-            source: None,
-            syntax_id: mojito_common::token::SyntaxId::fresh(),
-        };
-        self.eval_infix(op, &expression("__left"), &expression("__right"), &scope)
+        Ok(mojito_types::param_expr::fold::fold_infix(
+            op, &left, &right,
+        )?)
     }
 
     /// Evaluate a `comptime for` / CTFE `for` iterable to the sequence of loop

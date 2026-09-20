@@ -261,6 +261,12 @@ emission rejects any residual illegal operation. Missing Pliron facilities
 are upstreamed as narrowly scoped patches rather than accumulating an
 untracked local fork.
 
+The front end's parameter-expression layer (`mojito_types::param_expr`, Stage
+2 *Parameter Expressions*) is independent Rust data shaped like a dialect's
+uniqued typed attributes, so moving it into a parametric dialect is a
+re-homing of storage and not a redesign. It needs no Pliron dependency, and it
+does not move `CheckedProgram`, the MIR waist, or the VM's authority.
+
 Every backend stage is tested through four complementary layers:
 
 1. IR unit tests for each lowering, verifier, rewrite, conversion, ABI type,
@@ -470,8 +476,39 @@ CtValue::Str
 CtValue::Tuple
 CtValue::List
 CtValue::Type
-CtValue::Param
+CtValue::Expr      // a residual parameter expression, never a constant
+CtValue::Deferred  // a slot whose value arrives later; not part of identity
 ```
+
+### Parameter Expressions
+
+A value argument such as the `n + 1` of `Buf[n + 1]` is a typed, immutable,
+canonical node: `mojito_types::param_expr::ParamExpr`, built only by the
+canonicalizing constructors of a per-compilation `ParamContext`. Two
+expressions the front end can prove equal are the same node, so type equality
+over value arguments is decided before any value is supplied. A value
+parameter's default, a conditional callable default's condition, and a
+dependent type (`DependentType::Parameter`) are the same nodes; there is no
+second expression tree.
+
+- The context rides in `TemplateCatalog`, so source validation and every
+  discovery and transfer round of one compilation share it. Pure helpers in
+  `mojito-types` canonicalize on a detached context; equality is structural
+  across contexts.
+- The normal form is no stronger than the pinned Mojo's: integer `+`, binary
+  `-`, and `*` are a sum of products, a left shift by a constant is a
+  multiplication, and unary `-`, `//`, `%`, and `**` are opaque atoms.
+- Replacement (type identity) re-folds the polynomial and leaves an opaque
+  atom unfolded; evaluation (a default, a dependent index, native
+  monomorphization) folds it. The pin draws the same line.
+- A reference is owned by its declaration (`ParamId { owner, slot }`), so
+  same-spelled parameters of unrelated declarations differ and a `$` clone
+  shares its template's.
+- `param_expr::fold` is the one implementation of compile-time scalar
+  operators; the checker, the elaborator, and native monomorphization call it.
+
+`docs/notes/param-expr-attributes.md` is the design record, with the pin
+evidence behind each rule.
 
 The implemented forms are:
 
@@ -916,8 +953,9 @@ That layering is useful but not final. Today there are two related mechanisms:
   small expression subset it needs for those positions.
 
 `ParamDecl::Value` retains its declared checked type and optional compile-time
-default. The shared `CtValue` model carries integers, booleans, strings,
-tuples/lists, types, symbolic parameters, and zero-sized reflection handles.
+default, a `ParamExpr`. The shared `CtValue` model carries integers, booleans,
+strings, tuples/lists, types, residual parameter expressions, and zero-sized
+reflection handles. Both mechanisms fold through `param_expr::fold`.
 Only literal-shaped values materialize into runtime AST; type and reflection
 handles are consumed and erased during elaboration.
 
@@ -1557,6 +1595,20 @@ per trailing `where` clause, the first failing clause reports its own message,
 and truth-only operations (implication, inherited-requirement merging) fold a
 clause list into one conjunction without erasing the stored per-clause
 messages. Per-trait conditional-conformance conditions stay single-clause.
+
+Evaluation is three-valued. `Checker::constraint_verdict` lowers a constraint
+under an environment to a `Bool` parameter expression and classifies it as
+`Proven`, `Disproven`, or `Residual`: a leaf the bindings decide is a constant,
+an arithmetic operand (`ConstraintOperand::Expr`, the `n + 1` of `where n + 1
+== m`) stays its canonical expression, and a leaf whose parameter has no
+binding is unknown. The connectives are the parameter-expression context's, so
+`not` over a residual is a residual and a missing binding never becomes an
+acceptance under negation. As at the pin, an application needs evidence even
+with its arguments symbolic: a residual passes only when the enclosing
+declaration's own `where` assumes the same canonical proposition, and is
+otherwise reported as lacking evidence rather than as false. A selecting
+consumer (an overload, a conditional conformance, method availability) reads
+`eval_generic_constraint`, which is `is_proven()`.
 Generic top-level comptime aliases lower once into the checker's alias
 registry (classified `ParamDecl`s plus a symbolic template shared with
 parameterized associated members) and expand per application in type

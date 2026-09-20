@@ -1621,10 +1621,8 @@ impl Checker {
                 .iter()
                 .filter(|(_, info)| info.methods.contains_key(method))
                 .filter(|(name, info)| {
-                    let implementation = Ty::Struct(
-                        (*name).clone(),
-                        info.decls.iter().map(param_as_arg).collect(),
-                    );
+                    let implementation =
+                        Ty::Struct((*name).clone(), params_as_args(name, &info.decls));
                     bounds
                         .iter()
                         .all(|bound| self.conforms_to(&implementation, bound))
@@ -1634,8 +1632,7 @@ impl Checker {
                     if signatures.len() == 1 {
                         return vec![format!("{name}.{method}")];
                     }
-                    let self_ty =
-                        Ty::Struct(name.clone(), info.decls.iter().map(param_as_arg).collect());
+                    let self_ty = Ty::Struct(name.clone(), params_as_args(name, &info.decls));
                     signatures
                         .iter()
                         .map(|signature| {
@@ -1935,7 +1932,7 @@ impl Checker {
             Ty::Struct(sname, targs) => match self.structs.get(sname) {
                 Some(info) => (
                     info.tail_origin_bindings(targs),
-                    Ty::Struct(sname.clone(), info.self_arguments()),
+                    Ty::Struct(sname.clone(), info.self_arguments(sname)),
                 ),
                 None => (HashMap::new(), obj_ty.clone()),
             },

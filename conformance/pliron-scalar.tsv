@@ -289,6 +289,16 @@ assets/ok/pack_struct_getitem.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_pair.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_variadic_init.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_writable.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/param_expr_alias.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/param_expr_arithmetic.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/param_expr_array.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/param_expr_canonical.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/param_expr_fold_routes.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/param_expr_literal_argument.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/param_expr_normal_form.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/param_expr_overflow.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/param_expr_where.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/param_expr_where_assumption.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_assoc_concrete.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_assoc_origin.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_assoc_self_origin.mojo	-	ineligible	no-scalar-entry-shape

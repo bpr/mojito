@@ -12,12 +12,12 @@ use std::path::Path;
 
 // --- Negative coverage: hand-built malformed MIR per verifier check class ---
 
-use mojito::ct::CtExpr;
 use mojito::mir::{
     Const, FuncRef, MirBlock, MirDeclarations, MirFunction, MirInstr, MirInteriorOrigin,
     MirIntrinsicSubscript, MirLoan, MirParamArg, MirPlace, MirProgram, MirTerm, Proj, Reg,
     SpanTable,
 };
+use mojito::param_expr::{MetaTy, ParamContext, ParamId};
 use mojito::types::DependentType;
 use mojito::types::TransferSet;
 use mojito::{CtValue, ParamDecl, Ty, TyArg};
@@ -520,10 +520,18 @@ fn dependent_generic_callable(index: &str) -> Ty {
     Ty::GenericFunc {
         environment: mojito::CallableEnvironment::Thin,
         decls: vec![value_parameter("index", Ty::Int)],
-        params: vec![Ty::Dependent(DependentType::Indexed {
-            elements: vec![Ty::Int, Ty::StringLiteral],
-            index: CtExpr::Param(index.to_string()),
-        })],
+        params: vec![DependentType::resolve(
+            ParamContext::detached()
+                .select(
+                    vec![Ty::Int, Ty::StringLiteral],
+                    &ParamContext::detached().decl_ref(
+                        ParamId::new("handler", 0),
+                        index,
+                        MetaTy::int(),
+                    ),
+                )
+                .expect("an Int index selects"),
+        )],
         names: vec!["element".to_string()],
         ret: Box::new(Ty::None),
         required: vec![true],

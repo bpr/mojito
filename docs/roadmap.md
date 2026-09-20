@@ -66,7 +66,12 @@ admitted a `ref` declaration, a field read or a closed call through a
 reference, and `mut` and bare `ref` parameters, which pays in user structs and
 moved no bundled body by itself. The eleventh admitted a scalar store through
 a subscript, a place handed to a `mut` or `ref` parameter, and a `ref`
-parameter with an origin clause. The entries below widen it further. Each task pays off by itself, and together they are what moving
+parameter with an origin clause. The twelfth gave parameter expressions a
+typed canonical form (`docs/notes/param-expr-attributes.md`): a value argument
+is an interned node whose normal form is the pin's, so `Buf[n + 1]` is
+`Buf[1 + n]` with `n` symbolic, a free `def`'s value parameter may appear in a
+type argument, and a `where` clause is three-valued. The entries below widen
+it further. Each task pays off by itself, and together they are what moving
 toward Mojo's shape needs.
 
 This section holds only work that moves the check order: checking a template
@@ -303,24 +308,32 @@ as-is or must be planned first.
   - Depends on the recipe entry above.
   - Model: Fable, plan first.
 
-- [ ] **Parameter expressions have no symbolic form**
+- [ ] **Type parameters are identified by spelling**
 
-  Problem: `CtValue` carries concrete values plus an opaque symbolic `Param`,
-  so two parameter expressions can only be compared by making them concrete.
-  - `SIMD[dt, n + 1]` and `SIMD[dt, 1 + n]` cannot be judged equal today.
-  - Symbolic branch checking over a `DType` or vector width needs this, and
-    so does any parametric IR.
-  - Upstream stores parameter expressions as uniqued typed attributes and
-    decides equality by canonicalization rather than evaluation.
-  - Shape the representation like a Pliron attribute, uniqued and
-    canonicalized, so a later dialect move is a re-homing and not a redesign.
-  - Depends on nothing. It gates the `DType`/vector validation entry and the
-    Pliron parametric layer.
-  - Model: Fable, plan first. A representation change under `CtValue`,
-    `CtExpr`, the checker's constraint evaluation, and the elaborator's
-    evaluator, with no single lever. Astra for the plan if it is to be shaped
-    as the attribute layer of a future dialect rather than as a checker-only
-    normal form.
+  Problem: a value parameter is now owned by its declaration
+  (`ParamId { owner, slot }`), but `Ty::Param` still compares by name, so two
+  unrelated declarations that both spell `T` share a type parameter.
+  - Every type substitution in the checker is a name map
+    (`substitute(ty, &HashMap<String, Ty>)`), which is why the value half
+    could move alone: `ParamBindings` keeps a by-name adapter beside its
+    identity entries.
+  - Giving value parameters owners exposed two sites that only worked because
+    spellings coincided (fieldwise construction, a non-parameterized
+    associated alias). The type half will expose more of the same.
+  - Two readers still have no owner to give and bind by name: the
+    elaborator's declaration metadata (`$elaborated`) and a schema 1.0 MIR
+    artifact (`$mir-1.0:<name>`).
+  - A CTFE subprogram makes its own `ParamContext` instead of inheriting the
+    compilation's. Equality is structural across contexts, so this costs
+    interning only.
+  - The lever is a reference wrapper in `Ty::Param` with identity equality and
+    a diagnostic name, and `IndexRef`-style slots for a signature's own
+    binders, as `canonical_generic_signature` already does for values.
+  - Depends on nothing. The pack and `DType`/vector entries below are easier
+    after it, and do not need it.
+  - Model: Fable, plan first. A comparison change under every checker
+    substitution; the plan's job is to find the coincidence sites before the
+    edit does.
 
 - [ ] **A pack-keyed template body is not validated symbolically**
 
@@ -334,6 +347,11 @@ as-is or must be planned first.
     `self.storage[i]` as a `T`, where upstream keeps `Ts.values[i]` and
     demands `rebind[T](...)`. `assets/ok/pack_element_rebind.mojo` is the
     spelling both compilers accept.
+  - The representation hook is landed: `DependentType::Parameter` wraps a
+    Type-meta-type `ParamExpr`, `MetaTy::ParamList` is reserved, and
+    `param_list.{size, get, concat, reduce, tabulate}` are documented but
+    unbuilt (`docs/notes/param-expr-attributes.md`). `get(list, index)` lands
+    in that wrapper rather than as a made-up nominal type.
   - The lever is an opaque pack element in the checker: `Self.Ts[i]` under a
     symbolic index becomes a `Ty::Param` whose bounds are the pack's declared
     bound plus the enclosing method's `conforms_to(Self.Ts.values, …)` /
@@ -382,9 +400,15 @@ as-is or must be planned first.
     scalar-range family (`std/range.mojo`) plus the SIMD-keyed stdlib
     methods are the fallout; `dtype_keyed`/`concrete_only_def` mark the
     boundary today.
-  - Depends on the symbolic parameter-expression form above (a width is a
-    parameter expression) and on the pack-keyed entry's opaque-element
-    machinery.
+  - A width and a dtype are `ParamExpr`s now
+    (`mojito_types::param_expr`), and the pin accepts the symbolic shapes
+    (`conformance/probes/param_expr_simd_hooks.mojo`). The order is: give
+    `Ty::Simd` typed expression slots and update every visitor, then validate
+    widths and dtypes, then lift `simd_width`/`concrete_only_def`, then the
+    concrete extraction in lowering.
+  - The same residual-discharge API closes the by-value `rebind` gap in the
+    pack entry above without a second assertion system.
+  - Depends on the pack-keyed entry's opaque-element machinery.
   - Model: Fable, plan first. Changes the SIMD type's contract across the
     checker, the elaborator's width folding, and native lowering's vector
     types.
@@ -425,6 +449,11 @@ as-is or must be planned first.
     template's constructor symbolically and unify `*Ts` against the
     argument types, then request the instance the way it already requests
     inferred bound-generic clones.
+  - Value inference already binds a direct reference and leaves any other
+    residual as an equation (`solve_value_args`, `unify_arg` in native mono);
+    pack inference is added to that, not beside it. The pin does not invert
+    `Buf[n + 1]` against `Buf[4]` either
+    (`assets/type_error/param_expr_inverse_inference.mojo`).
   - Depends on the pack-keyed validation entry (the template must type
     symbolically before its constructor can be unified against).
   - Model: Fable, plan first. Moves one instantiation decision from the
@@ -441,9 +470,12 @@ as-is or must be planned first.
   - Decide from the measurements: continue to A2, or record the rejection in
     [`docs/non-goals.md`](non-goals.md).
   - This is the decision point for MIR-as-a-dialect, not a commitment to it.
-  - Depends on the symbolic parameter-expression form above, which is the
-    parametric layer [`docs/pliron-future.md`](pliron-future.md) found missing
-    from the pivot plan's dialect design. Last in this section.
+  - The attribute layer [`docs/pliron-future.md`](pliron-future.md) found
+    missing is landed as independent Rust data
+    (`docs/notes/param-expr-attributes.md`); A1 carries it as `#[pliron_attr]`
+    wrappers over `uniqued_any`, with its own construction, substitution,
+    identity, cross-context clone, and canonical-text tests. That alone is
+    not the proof. Last in this section.
   - Model: Astra for the plan and the measurement design (the broadest scope
     in this document: it reopens the waist and the dialect policy), Fable to
     build and measure the A1 slice once planned.
@@ -485,6 +517,28 @@ whatever its model, because it batches every change that needs a new
   - Model: Opus, plan first. One recording site plus one stdlib body, but
     the plan bounds the fixture fallout of any `__eq__` that relied on the
     copy.
+
+- [ ] **A value argument forwarded from a caller's parameter is not a native
+  constant**
+
+  Problem: a generic `def` that calls another with a value argument built
+  from its own parameter runs on the VM and is refused natively:
+  `successor[n, 1 + n]()` reports ``in `successor`: unsupported value
+  parameter `m` is not compile-time constant``, and a method's
+  `below[Self.n, k]()` the same for `n`.
+  - MIR passes a value argument as a runtime register (`MirParamArg`), which
+    the VM reifies per call. Native monomorphization needs the constant, and
+    the register tells it nothing.
+  - Forwarding a free `def`'s own parameters unchanged (`below[n, k]()`)
+    already works.
+  - The lever is a `ParamExpr` on the MIR value argument, which
+    monomorphization evaluates under the caller instance's bindings
+    (`mono/symbolic.rs::eval_ct`).
+  - `assets/ok/param_expr_where_assumption.mojo` avoids the shape so it stays
+    in the native parity set; the checker test
+    `param_expr_residual_is_not_false` covers it.
+  - Model: Fable, plan first. It changes the MIR call contract and the text
+    schema with it.
 
 - [ ] **Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
@@ -940,6 +994,44 @@ The checkboxes below, and the bullets inside the standing ones, are sorted Opus 
     enumerate the clone paths that share it (free `def`, method-own pack,
     nested forwarding) and the materialization rewrite each one runs.
 
+- [ ] **A member-led arithmetic type argument does not parse in an alias
+  body**
+
+  Problem: `comptime Next = Sized[Self.n + 1]` is a parse error (`Expected ']'
+  after a subscript`), where the pin accepts it.
+  - The bracket is parsed as a runtime subscript, whose index grammar stops at
+    the member access. `Sized[(Self.n + 1)]` and `Sized[0 + Self.n]` parse.
+  - The same expression in annotation position (`var x: Sized[Self.n + 1]`)
+    parses, and the checker already types it symbolically.
+  - Model: Opus, plan first. It is the standing Index-versus-TypeApply split;
+    the plan decides whether the alias body re-parses as a type or the
+    subscript grammar widens.
+
+- [ ] **An associated alias is not constructible through a parameterized
+  base**
+
+  Problem: `Holder[7].Same()` for `comptime Same = Sized[Self.n]` reports
+  `Undefined variable 'Holder'`, where the pin runs it.
+  - The annotation spelling works: `var made: Holder[7].Same = Sized[7]()`.
+  - The alias now binds the instance's value parameters
+    (`associated_type_from_base`), so only the call path is missing.
+  - Model: Opus, plan first.
+
+- [ ] **An arithmetic `where` operand compiles for `def`s and struct methods
+  only**
+
+  Problem: `where n + 1 == m` needs its declaration's value parameters in
+  scope when the clause compiles, and only a free `def` and a struct method
+  open that scope first.
+  - A trait method, a comptime alias, and a Bool-bodied predicate alias
+    report `unsupported generic constraint operand`, as every declaration did
+    before.
+  - The lever is `push_param_scope` around each remaining
+    `compile_where_clause` site (`checker/traits.rs`, `statements.rs`,
+    `conformance.rs`).
+  - Model: Opus, plan first. The sites are known; the predicate alias also
+    needs its substitution (`substitute_predicate`) to carry an expression.
+
 - [ ] **A compile-time-keyed `def` cannot be passed as a function value**
 
   Problem: `apply(as_int, 3)`, where `as_int[T]` holds a `comptime if` or a
@@ -1328,12 +1420,6 @@ The checkboxes below, and the bullets inside the standing ones, are sorted Opus 
        a user-struct key with a non-fieldwise `__eq__`.
      - The typing probe checks the CTFE subprogram once more per VM-bound
        expression.
-     - A non-parameterized struct alias mentioning a value parameter
-       (`comptime Alias = S[Self.T, Self.length]`) resolved through an
-       instance (`S[Int, 3].Alias`) keeps `length` symbolic (`expected
-       S[Int, length], found S[Int, 3]`). `associated_type_from_base`
-       substitutes type parameters only; parameterized aliases substitute
-       both.
      - A string element of a compile-time tuple indexed under a `comptime
        for` (`comptime t = (1, "s")`; `comptime for i in range(2)`) breaks
        inside a list display: `first([t[i], t[i]], t[i])` fails MIR

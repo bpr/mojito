@@ -168,7 +168,7 @@ pub fn disassemble(program: &MirProgram) -> Result<String, DisassembleError> {
 
 pub const MAGIC: &str = "mojito-mir";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 0;
+pub const VERSION_MINOR: u16 = 1;
 
 pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "loans.establish",
@@ -261,7 +261,7 @@ pub const TYPE_SPELLINGS: &[&str] = &[
     "overload",
     "param",
     "assoc",
-    "dependent_index",
+    "dependent_parameter",
     "Self",
     "struct_type",
     "simd",
@@ -437,7 +437,7 @@ pub const fn type_spelling(ty: &Ty) -> &'static str {
         Ty::Overload(_) => "overload",
         Ty::Param { .. } => "param",
         Ty::Assoc { .. } => "assoc",
-        Ty::Dependent(_) => "dependent_index",
+        Ty::Dependent(_) => "dependent_parameter",
         Ty::SelfType => "Self",
         Ty::Struct(_, _) => "struct_type",
         Ty::Simd { .. } => "simd",

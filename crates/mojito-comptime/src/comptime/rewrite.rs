@@ -203,7 +203,10 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
                 && let Some(value) = subs(field)
                 && !matches!(
                     value,
-                    CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Param(_)
+                    CtValue::Type(_)
+                        | CtValue::Reflected(_)
+                        | CtValue::Expr(_)
+                        | CtValue::Deferred(_)
                 )
                 && let Some(materialized) = value.materialize(e.span)
             {
@@ -433,18 +436,18 @@ fn fold_pack_typelist_use(e: &Expr, subs: Subs) -> Option<Expr> {
 const RUNTIME_LOCAL: &str = "$local";
 
 pub(super) fn runtime_local_marker() -> CtValue {
-    CtValue::Param(RUNTIME_LOCAL.to_string())
+    CtValue::Deferred(RUNTIME_LOCAL.to_string())
 }
 
 /// The `Subs` marker for a declared struct name (see `materialize_block`).
 const TYPE_NAME: &str = "$type";
 
 fn type_name_marker() -> CtValue {
-    CtValue::Param(TYPE_NAME.to_string())
+    CtValue::Deferred(TYPE_NAME.to_string())
 }
 
 fn is_runtime_local(subs: Subs, name: &str) -> bool {
-    matches!(subs(name), Some(CtValue::Param(marker)) if marker == RUNTIME_LOCAL)
+    matches!(subs(name), Some(CtValue::Deferred(marker)) if marker == RUNTIME_LOCAL)
 }
 
 /// Rewrite a single-argument type application on a runtime local (`v[Int]`)
@@ -1510,7 +1513,10 @@ fn rewrite_param_args(args: &mut [mojito_ast::ast::ParamArg], subs: Subs) {
                 if let Some(value) = subs(name)
                     && !matches!(
                         value,
-                        CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Param(_)
+                        CtValue::Type(_)
+                            | CtValue::Reflected(_)
+                            | CtValue::Expr(_)
+                            | CtValue::Deferred(_)
                     )
                     && let Some(materialized) =
                         value.materialize(mojito_common::token::DUMMY_SPAN) =>

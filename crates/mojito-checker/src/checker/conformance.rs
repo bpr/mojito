@@ -61,7 +61,7 @@ impl ConformanceOracle {
                 return Ok(());
             };
 
-            let decls = match checker.classify_params(type_params) {
+            let decls = match checker.classify_params(name, type_params) {
                 Ok(decls) => decls,
                 Err(error) => match defer {
                     Some(deferred) => {
@@ -209,7 +209,10 @@ impl ConformanceOracle {
                 // itself cannot be resolved as a single erased type.
                 continue;
             }
-            let self_ty = Ty::Struct(name.clone(), self_struct_arguments(&decls, type_params));
+            let self_ty = Ty::Struct(
+                name.clone(),
+                self_struct_arguments(name, &decls, type_params),
+            );
             let saved_self_decls = std::mem::replace(&mut checker.self_decls, decls);
             let saved_type_params =
                 std::mem::replace(&mut checker.enclosing_type_params, type_params.clone());

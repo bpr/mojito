@@ -21,8 +21,9 @@ use mojito_mir::mir::{
     MirProgram, MirStructDeclaration, Reg,
 };
 use mojito_symbol::symbol::{CallableCandidate, InstanceArg};
-use mojito_types::ct::{CtExpr, CtValue};
-use mojito_types::types::{DependentType, ParamDecl, Ty, TyArg};
+use mojito_types::ct::CtValue;
+use mojito_types::param_expr::{ParamBindings, ParamContext, ParamExpr};
+use mojito_types::types::{ParamDecl, Ty, TyArg};
 
 /// A fully concrete backend-private program and the concrete identity of every
 /// requested public entry.

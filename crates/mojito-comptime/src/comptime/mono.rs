@@ -550,7 +550,10 @@ impl Elab<'_> {
             }
             values.push(CtValue::Type(ty));
         }
-        if mono.instances_done.insert(mangle(name, &values)) {
+        // Every value is a closed type here, so the key always forms.
+        if let Ok(key) = mangle(name, &values)
+            && mono.instances_done.insert(key)
+        {
             mono.instance_jobs.push_back((name.to_string(), values));
         }
     }
@@ -584,7 +587,7 @@ impl Elab<'_> {
                         // resulting closed nominal specialization.
                         return Ok(());
                     };
-                    let mangled = mangle(name, &vals);
+                    let mangled = mangle(name, &vals)?;
                     if mono.done.insert(mangled.clone()) {
                         mono.queue.push_back(Job {
                             orig: name.clone(),
@@ -797,7 +800,7 @@ impl Elab<'_> {
                     else {
                         return Ok(());
                     };
-                    let mangled = mangle(name, &vals);
+                    let mangled = mangle(name, &vals)?;
                     if mono.done.insert(mangled.clone()) {
                         mono.queue.push_back(Job {
                             orig: name.clone(),
@@ -871,7 +874,7 @@ impl Elab<'_> {
                         .get(&source_span.clone().without_syntax())
                         .cloned()
                 {
-                    let mangled = mangle(&template, &vals);
+                    let mangled = mangle(&template, &vals)?;
                     if mono.done.insert(mangled.clone()) {
                         mono.queue.push_back(Job {
                             orig: template,
@@ -1073,7 +1076,7 @@ impl Elab<'_> {
                         (values, kept, whole_pack_abi)
                     };
                     let original = name.clone();
-                    let mut output_name = mangle(name, &vals);
+                    let mut output_name = mangle(name, &vals)?;
                     if whole_pack_abi {
                         output_name.push_str("$whole_pack");
                     }
@@ -1344,18 +1347,14 @@ impl Elab<'_> {
             let value = if let Some(argument) = arguments.first() {
                 self.resolve_ct_arg(&decl, argument, &environment)?
             } else {
-                let ParamDecl::Value {
-                    default: Some(default),
-                    ty,
-                    ..
-                } = &decl
+                let (ParamDecl::Value { ty, .. }, Some(default)) = (&decl, &parameter.default)
                 else {
                     return Err(ComptimeError::Arity(format!(
                         "generic '{name}' requires compile-time parameter '{}'",
                         parameter.name
                     )));
                 };
-                let evaluated = default.evaluate(&environment).ok_or_else(|| {
+                let evaluated = self.eval(default, &environment).map_err(|_| {
                     ComptimeError::NotComptime(format!(
                         "cannot evaluate default for parameter '{}'",
                         parameter.name
@@ -1448,7 +1447,7 @@ impl Elab<'_> {
                 // A thin/capturing callable-value parameter keeps a checker
                 // slot (a symbolic placeholder) but stays symbolic here.
                 match argument {
-                    TyArg::Val(CtValue::Param(_)) => continue,
+                    TyArg::Val(CtValue::Expr(_) | CtValue::Deferred(_)) => continue,
                     _ => return None,
                 }
             }
@@ -1477,7 +1476,9 @@ impl Elab<'_> {
                     },
                     TyArg::Val(value),
                 ) => {
-                    if matches!(value, CtValue::Param(_)) || !ct_value_has_type(value, ty) {
+                    if matches!(value, CtValue::Expr(_) | CtValue::Deferred(_))
+                        || !ct_value_has_type(value, ty)
+                    {
                         return None;
                     }
                     value.clone()
@@ -1719,13 +1720,9 @@ impl Elab<'_> {
             let value = if let Some(argument) = arguments.first() {
                 self.resolve_ct_arg(&decl, argument, &environment)?
             } else {
-                match &decl {
-                    ParamDecl::Value {
-                        default: Some(default),
-                        ty,
-                        ..
-                    } => {
-                        let evaluated = default.evaluate(&environment).ok_or_else(|| {
+                match (&decl, &parameter.default) {
+                    (ParamDecl::Value { ty, .. }, Some(default)) => {
+                        let evaluated = self.eval(default, &environment).map_err(|_| {
                             ComptimeError::NotComptime(format!(
                                 "cannot evaluate default for parameter '{}'",
                                 decl.name()
@@ -1738,10 +1735,13 @@ impl Elab<'_> {
                             ))
                         })?
                     }
-                    ParamDecl::Type {
-                        default: Some(default),
-                        ..
-                    } => CtValue::Type(default.clone()),
+                    (
+                        ParamDecl::Type {
+                            default: Some(default),
+                            ..
+                        },
+                        _,
+                    ) => CtValue::Type(default.clone()),
                     _ => {
                         return Err(ComptimeError::Arity(format!(
                             "generic '{display_name}' requires compile-time parameter '{}'",
@@ -1902,7 +1902,7 @@ fn closed_instance_argument(ty: &Ty) -> bool {
         | Ty::Simd { .. } => true,
         Ty::Struct(_, arguments) => arguments.iter().all(|argument| match argument {
             TyArg::Ty(ty) => closed_instance_argument(ty),
-            TyArg::Val(value) => !matches!(value, CtValue::Param(_)),
+            TyArg::Val(value) => !matches!(value, CtValue::Expr(_) | CtValue::Deferred(_)),
             TyArg::Origin(_) => true,
         }),
         _ => false,

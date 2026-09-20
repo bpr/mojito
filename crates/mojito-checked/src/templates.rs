@@ -1258,6 +1258,11 @@ pub struct TemplateCatalog {
     /// Compare each derived bundle with the clone check's own facts.
     verify: bool,
     stats: TemplateStats,
+    /// The compilation's parameter-expression context. The catalog is what
+    /// already travels through source validation and every discovery round,
+    /// so the context travels with it: one per compilation, shared by each
+    /// checker run. A defaulted catalog holds a detached context.
+    param_context: mojito_types::param_expr::ParamContext,
 }
 
 /// The declarations the elaboration being checked generated, as the
@@ -1315,8 +1320,13 @@ impl TemplateCatalog {
     pub fn new(verify: bool) -> Self {
         Self {
             verify,
+            param_context: mojito_types::param_expr::ParamContext::new(),
             ..Self::default()
         }
+    }
+
+    pub const fn param_context(&self) -> &mojito_types::param_expr::ParamContext {
+        &self.param_context
     }
 
     pub const fn verify(&self) -> bool {

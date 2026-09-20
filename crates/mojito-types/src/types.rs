@@ -8,7 +8,8 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::ct::{CtExpr, CtValue};
+use crate::ct::CtValue;
+use crate::param_expr::{ParamBindings, ParamContext, ParamError, ParamExpr, ParamKind};
 use mojito_ast::ast::{ArgConvention, Dtype};
 
 /// Descriptor type selected for a slice literal at the checked boundary.
@@ -16,7 +17,7 @@ use mojito_ast::ast::{ArgConvention, Dtype};
 /// Two-component literals can use the view-oriented contiguous descriptor;
 /// literals with a second colon use the owning strided descriptor. `Slice` is
 /// the general protocol fallback accepted by user-defined collections.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SliceKind {
     Slice,
     ContiguousSlice,
@@ -39,7 +40,7 @@ impl SliceKind {
 ///
 /// Call sites replay the effect against their actuals, installing the
 /// caller-side loan the callee's store implies.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TransferEffect {
     pub dest: crate::origin::SigOrigin,
     pub src: crate::origin::SigOrigin,
@@ -69,6 +70,12 @@ impl TransferSet {
     }
 }
 
+impl std::hash::Hash for TransferSet {
+    /// Hashes nothing, matching the always-equal `PartialEq` below: a type's
+    /// hash must not see metadata its identity ignores.
+    fn hash<H: std::hash::Hasher>(&self, _state: &mut H) {}
+}
+
 impl PartialEq for TransferSet {
     /// Always equal BY DESIGN: the set is metadata on the type, not part of
     /// its identity. See the type-level comment before relying on `==`.
@@ -77,24 +84,58 @@ impl PartialEq for TransferSet {
     }
 }
 
-/// A checked type expression whose final member is selected by compile-time
-/// evaluation.
+/// A checked type expression denoted by a Type-meta-type parameter
+/// expression.
 ///
-/// Candidate types and the canonical [`CtExpr`] remain structural semantic
-/// data; no phase has to encode or recover this operation from a synthesized
-/// name.
-///
-/// The enum leaves room for future dependent projection forms without making
-/// them special cases in the nominal type namespace.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The expression stays structural semantic data — no phase encodes or
+/// recovers it from a synthesized name — and folds away to the [`Ty`] it
+/// denotes once substitution closes it ([`DependentType::resolve`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DependentType {
-    /// Index a finite, already-checked sequence of types.
-    Indexed { elements: Vec<Ty>, index: CtExpr },
+    /// A type-valued parameter expression. Today's producer is finite type
+    /// selection (`ParamKind::Select`); a pack's `get` lands here later.
+    Parameter(ParamExpr),
+}
+
+impl DependentType {
+    /// The type `expr` denotes: the contained type when it is a closed Type
+    /// constant, and the symbolic wrapper otherwise.
+    pub fn resolve(expr: ParamExpr) -> Ty {
+        match expr.as_constant() {
+            Some(CtValue::Type(ty)) => (**ty).clone(),
+            _ => Ty::Dependent(Self::Parameter(expr)),
+        }
+    }
+
+    /// The finite selection this type is, when it is one.
+    pub fn selection(&self) -> Option<(&[Ty], &ParamExpr)> {
+        let Self::Parameter(expr) = self;
+        match expr.kind() {
+            ParamKind::Select { elements, index } => Some((elements, index)),
+            _ => None,
+        }
+    }
+
+    pub const fn expr(&self) -> &ParamExpr {
+        let Self::Parameter(expr) = self;
+        expr
+    }
+
+    /// Rebuild this type with `f` applied to each candidate of a finite
+    /// selection. Any other expression holds no candidate types.
+    pub fn map_types(&self, f: impl FnMut(&Ty) -> Ty) -> Ty {
+        match self.selection() {
+            Some((elements, index)) => ParamContext::detached()
+                .select(elements.iter().map(f).collect(), index)
+                .map_or_else(|_| Ty::Dependent(self.clone()), Self::resolve),
+            None => Ty::Dependent(self.clone()),
+        }
+    }
 }
 
 /// A type in mojito's semantic lattice. Scalars mirror `ast::Type`; `Func` is
 /// synthesized from a `def` signature or lowered from a function-type annotation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Ty {
     Int,
     UInt,
@@ -333,7 +374,7 @@ pub fn array_parts(ty: &Ty) -> Option<(&Ty, i64)> {
 }
 
 /// The element of any `Array` instantiation, including a struct-body template
-/// whose `length` is still the symbolic `CtValue::Param`.
+/// whose `length` is still a symbolic `CtValue::Expr`.
 pub fn array_element(ty: &Ty) -> Option<&Ty> {
     let Ty::Struct(name, arguments) = ty else {
         return None;
@@ -619,6 +660,7 @@ pub fn mentions(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool) -> bool {
     }
     let argument_mentions = |argument: &TyArg| match argument {
         TyArg::Ty(ty) => mentions(ty, predicate),
+        TyArg::Val(CtValue::Expr(expr)) => expr_mentions(expr, predicate),
         TyArg::Val(_) | TyArg::Origin(_) => false,
     };
     match ty {
@@ -626,9 +668,7 @@ pub fn mentions(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool) -> bool {
         Ty::ComptimeList(element) | Ty::VariadicPack(element) | Ty::Pointer { element, .. } => {
             mentions(element, predicate)
         }
-        Ty::Dependent(DependentType::Indexed { elements, .. }) => {
-            elements.iter().any(|element| mentions(element, predicate))
-        }
+        Ty::Dependent(dependent) => expr_mentions(dependent.expr(), predicate),
         Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
             elements.iter().any(|element| mentions(element, predicate))
         }
@@ -679,7 +719,7 @@ pub fn constructible_type_parameter(declaration: &ParamDecl) -> bool {
     )
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ParamDecl {
     /// A type parameter `T: Trait & ...`.
     Type {
@@ -699,7 +739,7 @@ pub enum ParamDecl {
     Value {
         name: String,
         ty: Box<Ty>,
-        default: Option<CtExpr>,
+        default: Option<ParamExpr>,
         /// A callable default is deliberately not a `CtValue`: captured
         /// closures contain frame-relative runtime state and therefore cannot
         /// be serialized into generic identity.  This symbolic plan is
@@ -717,18 +757,18 @@ pub enum ParamDecl {
 /// earlier reified callable parameter, and conditional defaults select between
 /// two such plans using ordinary scalar compile-time parameters.  No variant
 /// stores a closure payload.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CallableDefault {
     Symbol(String),
     Parameter(String),
     If {
-        condition: CtExpr,
+        condition: ParamExpr,
         then_value: Box<Self>,
         else_value: Box<Self>,
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ConstraintOperand {
     Param(String),
     Value(CtValue),
@@ -736,13 +776,17 @@ pub enum ConstraintOperand {
     /// `TypeList[Ts.values]().length` over a symbolic pack parameter,
     /// resolving to the bound pack's element count.
     PackLength(String),
+    /// An arithmetic operand over value parameters (`n + 1` in `where n + 1 ==
+    /// m`), in canonical form. It is retained symbolically and discharged by
+    /// replacement at each application.
+    Expr(ParamExpr),
 }
 
 /// The per-element predicate of a `TypeList` `any`/`all` proposition.
 ///
 /// A builtin `IsTrivially*` spelling or a Bool-bodied predicate alias with one
 /// type parameter, applied to each element of the bound pack.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PackPredicateRef {
     Trivial(TrivialLifecycle),
     Alias(String),
@@ -754,7 +798,7 @@ pub enum PackPredicateRef {
 /// The type conforms to `TrivialRegisterPassable`, or the base capability
 /// holds and the corresponding lifecycle operation is compiler-generated with
 /// recursively trivial fields (a bitwise move/copy or a no-op destructor).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TrivialLifecycle {
     Movable,
     Copyable,
@@ -788,7 +832,7 @@ pub const fn trivial_predicate_spelling(kind: TrivialLifecycle) -> &'static str 
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum GenericConstraint {
     /// A top-level `where (condition, "message")` clause. The message affects
     /// only the failed-specialization diagnostic; semantic operations recurse
@@ -884,6 +928,7 @@ impl fmt::Display for ConstraintOperand {
             Self::PackLength(name) => {
                 write!(f, "TypeList[{name}.values]().length")
             }
+            Self::Expr(expr) => write!(f, "{expr}"),
         }
     }
 }
@@ -903,11 +948,36 @@ impl ParamDecl {
 /// Origins participate in checked identity but erase from the runtime ABI,
 /// exactly like `Ty::Pointer` origins — a parameterized iterator's `origin`
 /// argument distinguishes checked types without changing lowering.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Eq)]
 pub enum TyArg {
     Ty(Ty),
     Val(CtValue),
     Origin(crate::origin::Origin),
+}
+
+impl PartialEq for TyArg {
+    /// Value arguments compare by parameter identity
+    /// ([`crate::param_expr::identity_eq`]): a residual by its canonical
+    /// node, a constant by its value, with a display's spelling left out.
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Ty(left), Self::Ty(right)) => left == right,
+            (Self::Val(left), Self::Val(right)) => crate::param_expr::identity_eq(left, right),
+            (Self::Origin(left), Self::Origin(right)) => left == right,
+            _ => false,
+        }
+    }
+}
+
+impl std::hash::Hash for TyArg {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Self::Ty(ty) => ty.hash(state),
+            Self::Val(value) => crate::param_expr::identity_hash(value, state),
+            Self::Origin(origin) => origin.hash(state),
+        }
+    }
 }
 
 impl TyArg {
@@ -1074,16 +1144,7 @@ impl fmt::Display for Ty {
                 }
                 Ok(())
             }
-            Self::Dependent(DependentType::Indexed { elements, index }) => {
-                write!(f, "type_sequence[")?;
-                for (position, element) in elements.iter().enumerate() {
-                    if position > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{element}")?;
-                }
-                write!(f, "][{index:?}]")
-            }
+            Self::Dependent(dependent) => write!(f, "{}", dependent.expr()),
             Self::SelfType => write!(f, "Self"),
             Self::Simd { dtype, width: 1 } => match dtype.scalar_alias() {
                 Some(alias) => write!(f, "{alias}"),
@@ -1820,6 +1881,9 @@ pub fn canonical_generic_signature(
     };
     let mut subst = HashMap::new();
     let mut value_names = HashMap::new();
+    // A value binder's references become signature slots, so two contracts
+    // that differ only in their binders' spelling are one identity.
+    let mut value_slots = ParamBindings::new();
     let canonical_decls = decls
         .iter()
         .enumerate()
@@ -1835,9 +1899,9 @@ pub fn canonical_generic_signature(
             } => {
                 let canonical_name = format!("${index}");
                 let canonical_callable_bound = callable_bound.as_ref().map(|bound| {
-                    Box::new(rename_dependent_parameters(
+                    Box::new(bind_signature_slots(
                         &substitute(bound, &subst),
-                        &value_names,
+                        &value_slots,
                     ))
                 });
                 subst.insert(
@@ -1872,8 +1936,15 @@ pub fn canonical_generic_signature(
                 ..
             } => {
                 let canonical_name = format!("${index}");
-                let canonical_ty =
-                    rename_dependent_parameters(&substitute(ty, &subst), &value_names);
+                let canonical_ty = bind_signature_slots(&substitute(ty, &subst), &value_slots);
+                value_slots.bind_name(
+                    name,
+                    ParamContext::detached().index_ref(
+                        0,
+                        u32::try_from(index).unwrap_or(u32::MAX),
+                        crate::param_expr::MetaTy::value((**ty).clone()),
+                    ),
+                );
                 value_names.insert(
                     name.trim_start_matches('*').to_string(),
                     canonical_name.clone(),
@@ -1892,7 +1963,7 @@ pub fn canonical_generic_signature(
         .collect();
     let canonical_params = params
         .iter()
-        .map(|ty| rename_dependent_parameters(&substitute(ty, &subst), &value_names))
+        .map(|ty| bind_signature_slots(&substitute(ty, &subst), &value_slots))
         .collect();
     // Second pass: alpha-rename binder references INSIDE the retained
     // constraints, so `def[w: Int](…) where w > 0` and `def[n: Int](…) where
@@ -1900,7 +1971,7 @@ pub fn canonical_generic_signature(
     // the fold above (a clause on the last binder may reference any of them);
     // names the contract does not bind (an enclosing declaration's
     // parameters) stay as-is and correctly distinguish contracts.
-    let mut binder_names: HashMap<String, String> = value_names.clone();
+    let mut binder_names: HashMap<String, String> = value_names;
     for (name, ty) in &subst {
         if let Ty::Param {
             name: canonical, ..
@@ -1920,7 +1991,7 @@ pub fn canonical_generic_signature(
                             constraint,
                             &binder_names,
                             &subst,
-                            &value_names,
+                            &value_slots,
                         )
                     })
                     .collect();
@@ -1968,11 +2039,14 @@ pub fn substitute(ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
         Ty::Struct(name, args) => {
             Ty::Struct(name.clone(), map_tyargs(args, |t| substitute(t, subst)))
         }
-        Ty::Dependent(crate::types::DependentType::Indexed { elements, index }) => {
-            Ty::Dependent(crate::types::DependentType::Indexed {
-                elements: elements.iter().map(|ty| substitute(ty, subst)).collect(),
-                index: index.clone(),
-            })
+        Ty::Dependent(dependent) => {
+            let mut bindings = ParamBindings::new();
+            for (name, ty) in subst {
+                bindings.bind_type(name, ty.clone());
+            }
+            ParamContext::detached()
+                .replace(dependent.expr(), &bindings)
+                .map_or_else(|_| ty.clone(), DependentType::resolve)
         }
         Ty::ComptimeList(elem) => Ty::ComptimeList(Box::new(substitute(elem, subst))),
         Ty::Tuple(elems) => Ty::Tuple(elems.iter().map(|t| substitute(t, subst)).collect()),
@@ -2142,82 +2216,87 @@ pub fn substitute(ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
     }
 }
 
-/// Alpha-rename compile-time value binders referenced by structural dependent
-/// types.
+/// A structural rebuild of a type.
 ///
-/// Type-parameter substitution and value-parameter renaming are kept separate:
-/// a value binder occurs inside [`CtExpr`], never as `Ty::Param`. Nested
-/// generic callable declarations shadow an outer binder of the same spelling,
-/// so only genuinely free references are renamed while descending.
-#[allow(clippy::implicit_hasher, reason = "TODO: generalize over BuildHasher")]
-pub fn rename_dependent_parameters(ty: &Ty, names: &HashMap<String, String>) -> Ty {
-    match ty {
+/// This is the one traversal behind parameter replacement and
+/// signature-binder canonicalization. An implementation says
+/// what a type parameter, a value argument's expression, and a signature's
+/// own binders mean; [`rewrite_ty`] visits every type, value argument,
+/// default, and aggregate child.
+pub trait TyRewrite {
+    /// The replacement for the type parameter `name`, if any.
+    fn param(&mut self, _name: &str) -> Option<Ty> {
+        None
+    }
+
+    /// Rewrite one parameter expression.
+    fn expr(&mut self, expr: &ParamExpr) -> Result<ParamExpr, ParamError>;
+
+    /// Observe a compile-time value before it is rebuilt.
+    fn value(&mut self, _value: &CtValue) {}
+
+    /// A generic callable's own binders come into scope: they shadow
+    /// same-spelled outer names and sit one signature level further in.
+    fn enter_signature(&mut self, _decls: &[ParamDecl]) {}
+
+    fn exit_signature(&mut self) {}
+}
+
+/// Rebuild `ty` through `rewrite`. Origins, conventions, and transfer effects
+/// pass through: they are checked decorations, not parameter positions.
+pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError> {
+    let all = |types: &[Ty], rewrite: &mut dyn TyRewrite| {
+        types
+            .iter()
+            .map(|ty| rewrite_ty(ty, rewrite))
+            .collect::<Result<Vec<_>, _>>()
+    };
+    let boxed = |ty: &Option<Box<Ty>>, rewrite: &mut dyn TyRewrite| {
+        ty.as_deref()
+            .map(|ty| rewrite_ty(ty, rewrite).map(Box::new))
+            .transpose()
+    };
+    Ok(match ty {
         Ty::Param {
             name,
             bounds,
             callable_bound,
-        } => Ty::Param {
-            name: name.clone(),
-            bounds: bounds.clone(),
-            callable_bound: callable_bound
-                .as_ref()
-                .map(|bound| Box::new(rename_dependent_parameters(bound, names))),
+        } => match rewrite.param(name) {
+            Some(replacement) => replacement,
+            None => Ty::Param {
+                name: name.clone(),
+                bounds: bounds.clone(),
+                callable_bound: boxed(callable_bound, rewrite)?,
+            },
         },
-        Ty::Struct(name, arguments) => Ty::Struct(
-            name.clone(),
-            map_tyargs(arguments, |ty| rename_dependent_parameters(ty, names)),
-        ),
-        Ty::Dependent(crate::types::DependentType::Indexed { elements, index }) => {
-            Ty::Dependent(crate::types::DependentType::Indexed {
-                elements: elements
-                    .iter()
-                    .map(|ty| rename_dependent_parameters(ty, names))
-                    .collect(),
-                index: index.rename_parameters(names),
-            })
+        Ty::Struct(name, arguments) => {
+            Ty::Struct(name.clone(), rewrite_tyargs(arguments, rewrite)?)
         }
-        Ty::ComptimeList(element) => {
-            Ty::ComptimeList(Box::new(rename_dependent_parameters(element, names)))
-        }
-        Ty::Tuple(elements) => Ty::Tuple(
-            elements
-                .iter()
-                .map(|ty| rename_dependent_parameters(ty, names))
-                .collect(),
-        ),
-        Ty::RuntimePack(elements) => Ty::RuntimePack(
-            elements
-                .iter()
-                .map(|ty| rename_dependent_parameters(ty, names))
-                .collect(),
-        ),
-        Ty::VariadicPack(element) => {
-            Ty::VariadicPack(Box::new(rename_dependent_parameters(element, names)))
-        }
-        Ty::Variant(alternatives) => Ty::Variant(
-            alternatives
-                .iter()
-                .map(|ty| rename_dependent_parameters(ty, names))
-                .collect(),
-        ),
+        Ty::Dependent(dependent) => DependentType::resolve(rewrite.expr(dependent.expr())?),
+        Ty::ComptimeList(element) => Ty::ComptimeList(Box::new(rewrite_ty(element, rewrite)?)),
+        Ty::VariadicPack(element) => Ty::VariadicPack(Box::new(rewrite_ty(element, rewrite)?)),
+        Ty::Tuple(elements) => Ty::Tuple(all(elements, rewrite)?),
+        Ty::RuntimePack(elements) => Ty::RuntimePack(all(elements, rewrite)?),
+        Ty::Variant(alternatives) => Ty::Variant(all(alternatives, rewrite)?),
+        Ty::Overload(candidates) => Ty::Overload(all(candidates, rewrite)?),
         Ty::Pointer { element, origin } => Ty::Pointer {
-            element: Box::new(rename_dependent_parameters(element, names)),
+            element: Box::new(rewrite_ty(element, rewrite)?),
             origin: origin.clone(),
         },
         Ty::Ref(reference) => {
             let mut reference = reference.clone();
-            reference.referent = Box::new(rename_dependent_parameters(&reference.referent, names));
+            reference.referent = Box::new(rewrite_ty(&reference.referent, rewrite)?);
             Ty::Ref(reference)
         }
         Ty::Assoc { base, name, args } => Ty::Assoc {
-            base: Box::new(rename_dependent_parameters(base, names)),
+            base: Box::new(rewrite_ty(base, rewrite)?),
             name: name.clone(),
-            args: map_tyargs(args, |t| rename_dependent_parameters(t, names)),
+            args: rewrite_tyargs(args, rewrite)?,
         },
         Ty::Func {
             environment,
             params,
-            names: parameter_names,
+            names,
             ret,
             required,
             variadic,
@@ -2232,25 +2311,16 @@ pub fn rename_dependent_parameters(ty: &Ty, names: &HashMap<String, String>) -> 
             transfers,
         } => Ty::Func {
             environment: environment.clone(),
-            params: params
-                .iter()
-                .map(|ty| rename_dependent_parameters(ty, names))
-                .collect(),
-            names: parameter_names.clone(),
-            ret: Box::new(rename_dependent_parameters(ret, names)),
+            params: all(params, rewrite)?,
+            names: names.clone(),
+            ret: Box::new(rewrite_ty(ret, rewrite)?),
             required: required.clone(),
-            variadic: variadic
-                .as_ref()
-                .map(|ty| Box::new(rename_dependent_parameters(ty, names))),
-            kw_variadic: kw_variadic
-                .as_ref()
-                .map(|ty| Box::new(rename_dependent_parameters(ty, names))),
+            variadic: boxed(variadic, rewrite)?,
+            kw_variadic: boxed(kw_variadic, rewrite)?,
             positional_only: *positional_only,
             keyword_only: *keyword_only,
             raises: *raises,
-            error: error
-                .as_ref()
-                .map(|ty| Box::new(rename_dependent_parameters(ty, names))),
+            error: boxed(error, rewrite)?,
             conventions: conventions.clone(),
             ref_params: ref_params.clone(),
             ref_return: ref_return.clone(),
@@ -2260,7 +2330,7 @@ pub fn rename_dependent_parameters(ty: &Ty, names: &HashMap<String, String>) -> 
             environment,
             decls,
             params,
-            names: parameter_names,
+            names,
             ret,
             required,
             variadic,
@@ -2274,91 +2344,234 @@ pub fn rename_dependent_parameters(ty: &Ty, names: &HashMap<String, String>) -> 
             ref_return,
             transfers,
         } => {
-            let mut free_names = names.clone();
-            for declaration in decls {
-                free_names.remove(declaration.name().trim_start_matches('*'));
-            }
-            let decls = decls
-                .iter()
-                .map(|declaration| match declaration {
-                    ParamDecl::Type {
-                        name,
-                        bounds,
-                        callable_bound,
-                        default,
-                        infer_only,
-                        variadic,
-                        constraints,
-                    } => ParamDecl::Type {
-                        name: name.clone(),
-                        bounds: bounds.clone(),
-                        callable_bound: callable_bound
-                            .as_ref()
-                            .map(|bound| Box::new(rename_dependent_parameters(bound, &free_names))),
-                        default: default.as_ref().map(|default| {
-                            Box::new(rename_dependent_parameters(default, &free_names))
-                        }),
-                        infer_only: *infer_only,
-                        variadic: *variadic,
-                        constraints: constraints.clone(),
-                    },
-                    ParamDecl::Value {
-                        name,
-                        ty,
-                        default,
-                        callable_default,
-                        infer_only,
-                        variadic,
-                        constraints,
-                    } => ParamDecl::Value {
-                        name: name.clone(),
-                        ty: Box::new(rename_dependent_parameters(ty, &free_names)),
-                        default: default
-                            .as_ref()
-                            .map(|value| value.rename_parameters(&free_names)),
-                        callable_default: callable_default.clone(),
-                        infer_only: *infer_only,
-                        variadic: *variadic,
-                        constraints: constraints.clone(),
-                    },
+            rewrite.enter_signature(decls);
+            let rebuilt = (|| {
+                Ok(Ty::GenericFunc {
+                    environment: environment.clone(),
+                    decls: decls
+                        .iter()
+                        .map(|decl| rewrite_decl(decl, rewrite))
+                        .collect::<Result<_, _>>()?,
+                    params: all(params, rewrite)?,
+                    names: names.clone(),
+                    ret: Box::new(rewrite_ty(ret, rewrite)?),
+                    required: required.clone(),
+                    variadic: boxed(variadic, rewrite)?,
+                    kw_variadic: boxed(kw_variadic, rewrite)?,
+                    positional_only: *positional_only,
+                    keyword_only: *keyword_only,
+                    raises: *raises,
+                    error: boxed(error, rewrite)?,
+                    conventions: conventions.clone(),
+                    ref_params: ref_params.clone(),
+                    ref_return: ref_return.clone(),
+                    transfers: transfers.clone(),
                 })
-                .collect();
-            Ty::GenericFunc {
-                environment: environment.clone(),
-                decls,
-                params: params
+            })();
+            rewrite.exit_signature();
+            rebuilt?
+        }
+        Ty::Int
+        | Ty::UInt
+        | Ty::Bool
+        | Ty::StringLiteral
+        | Ty::Float64
+        | Ty::None
+        | Ty::Never
+        | Ty::IntLiteral
+        | Ty::FloatLiteral
+        | Ty::Infer
+        | Ty::Dtype
+        | Ty::SelfType
+        | Ty::Simd { .. }
+        | Ty::Error => ty.clone(),
+    })
+}
+
+/// [`rewrite_ty`] over a parameter-argument list. Origins pass through.
+pub fn rewrite_tyargs(
+    arguments: &[TyArg],
+    rewrite: &mut dyn TyRewrite,
+) -> Result<Vec<TyArg>, ParamError> {
+    arguments
+        .iter()
+        .map(|argument| {
+            Ok(match argument {
+                TyArg::Ty(ty) => TyArg::Ty(rewrite_ty(ty, rewrite)?),
+                TyArg::Val(value) => TyArg::Val(rewrite_value(value, rewrite)?),
+                TyArg::Origin(origin) => TyArg::Origin(origin.clone()),
+            })
+        })
+        .collect()
+}
+
+/// [`rewrite_ty`] over a compile-time value: residual expressions, embedded
+/// types, and every aggregate child. A rewritten expression that folds
+/// becomes its ordinary concrete value.
+pub fn rewrite_value(value: &CtValue, rewrite: &mut dyn TyRewrite) -> Result<CtValue, ParamError> {
+    let all = |values: &[CtValue], rewrite: &mut dyn TyRewrite| {
+        values
+            .iter()
+            .map(|value| rewrite_value(value, rewrite))
+            .collect::<Result<Vec<_>, _>>()
+    };
+    rewrite.value(value);
+    Ok(match value {
+        CtValue::Expr(expr) => rewrite.expr(expr)?.into_value(),
+        CtValue::Type(ty) => CtValue::Type(Box::new(rewrite_ty(ty, rewrite)?)),
+        CtValue::Reflected(ty) => CtValue::Reflected(Box::new(rewrite_ty(ty, rewrite)?)),
+        CtValue::Tuple(values) => CtValue::Tuple(all(values, rewrite)?),
+        CtValue::List(values) => CtValue::List(all(values, rewrite)?),
+        CtValue::Set { spelling, elements } => CtValue::Set {
+            spelling: spelling.clone(),
+            elements: all(elements, rewrite)?,
+        },
+        CtValue::Dict { spelling, entries } => CtValue::Dict {
+            spelling: spelling.clone(),
+            entries: entries
+                .iter()
+                .map(|(key, value)| {
+                    Ok((rewrite_value(key, rewrite)?, rewrite_value(value, rewrite)?))
+                })
+                .collect::<Result<_, ParamError>>()?,
+        },
+        CtValue::Struct { name, fields } => CtValue::Struct {
+            name: name.clone(),
+            fields: fields
+                .iter()
+                .map(|(field, value)| Ok((field.clone(), rewrite_value(value, rewrite)?)))
+                .collect::<Result<_, ParamError>>()?,
+        },
+        CtValue::Int(_)
+        | CtValue::UInt(_)
+        | CtValue::Float(_)
+        | CtValue::IntLiteral(_)
+        | CtValue::FloatLiteral(_)
+        | CtValue::Bool(_)
+        | CtValue::Str(_)
+        | CtValue::Dtype(_)
+        | CtValue::Simd { .. }
+        | CtValue::Deferred(_) => value.clone(),
+    })
+}
+
+/// Replace declared parameters, signature slots, and type parameters in `ty`.
+///
+/// Replacement re-enters the canonicalizing constructors of `context`.
+/// `depth` is the number of signature binders already descended through.
+pub fn replace_parameters(
+    context: &ParamContext,
+    ty: &Ty,
+    bindings: &ParamBindings,
+    depth: u32,
+) -> Result<Ty, ParamError> {
+    let mut replacer = Replacer {
+        context,
+        scopes: vec![bindings.clone()],
+        depth,
+    };
+    rewrite_ty(ty, &mut replacer)
+}
+
+/// [`replace_parameters`] over one compile-time value.
+pub fn replace_value_parameters(
+    context: &ParamContext,
+    value: &CtValue,
+    bindings: &ParamBindings,
+) -> Result<CtValue, ParamError> {
+    let mut replacer = Replacer {
+        context,
+        scopes: vec![bindings.clone()],
+        depth: 0,
+    };
+    rewrite_value(value, &mut replacer)
+}
+
+/// [`replace_parameters`] over one parameter argument.
+pub fn replace_argument_parameters(
+    context: &ParamContext,
+    argument: &TyArg,
+    bindings: &ParamBindings,
+) -> Result<TyArg, ParamError> {
+    let mut replacer = Replacer {
+        context,
+        scopes: vec![bindings.clone()],
+        depth: 0,
+    };
+    rewrite_tyargs(std::slice::from_ref(argument), &mut replacer)
+        .map(|mut arguments| arguments.remove(0))
+}
+
+/// The declared parameters referenced free anywhere in `ty`, by name.
+///
+/// It reaches every expression operand, embedded type, default, and aggregate
+/// child. A generic callable's own binders are bound, not free.
+pub fn referenced_parameters<S: std::hash::BuildHasher>(
+    ty: &Ty,
+    output: &mut std::collections::HashSet<String, S>,
+) {
+    struct Collector<'a, S> {
+        output: &'a mut std::collections::HashSet<String, S>,
+        bound: Vec<String>,
+        marks: Vec<usize>,
+    }
+    impl<S: std::hash::BuildHasher> TyRewrite for Collector<'_, S> {
+        fn expr(&mut self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {
+            let mut names = std::collections::HashSet::new();
+            expr.referenced_parameters(&mut names);
+            self.output
+                .extend(names.into_iter().filter(|name| !self.bound.contains(name)));
+            let mut nested = Vec::new();
+            expr.visit(&mut |node| nested.extend(node.embedded_types().into_iter().cloned()));
+            for ty in &nested {
+                rewrite_ty(ty, self)?;
+            }
+            Ok(expr.clone())
+        }
+
+        fn enter_signature(&mut self, decls: &[ParamDecl]) {
+            self.marks.push(self.bound.len());
+            self.bound.extend(
+                decls
                     .iter()
-                    .map(|ty| rename_dependent_parameters(ty, &free_names))
-                    .collect(),
-                names: parameter_names.clone(),
-                ret: Box::new(rename_dependent_parameters(ret, &free_names)),
-                required: required.clone(),
-                variadic: variadic
-                    .as_ref()
-                    .map(|ty| Box::new(rename_dependent_parameters(ty, &free_names))),
-                kw_variadic: kw_variadic
-                    .as_ref()
-                    .map(|ty| Box::new(rename_dependent_parameters(ty, &free_names))),
-                positional_only: *positional_only,
-                keyword_only: *keyword_only,
-                raises: *raises,
-                error: error
-                    .as_ref()
-                    .map(|ty| Box::new(rename_dependent_parameters(ty, &free_names))),
-                conventions: conventions.clone(),
-                ref_params: ref_params.clone(),
-                ref_return: ref_return.clone(),
-                transfers: transfers.clone(),
+                    .map(|decl| decl.name().trim_start_matches('*').to_string()),
+            );
+        }
+
+        fn exit_signature(&mut self) {
+            if let Some(mark) = self.marks.pop() {
+                self.bound.truncate(mark);
             }
         }
-        Ty::Overload(candidates) => Ty::Overload(
-            candidates
-                .iter()
-                .map(|ty| rename_dependent_parameters(ty, names))
-                .collect(),
-        ),
-        _ => ty.clone(),
     }
+    // The collector never fails; the rebuilt type is discarded.
+    let _ = rewrite_ty(
+        ty,
+        &mut Collector {
+            output,
+            bound: Vec::new(),
+            marks: Vec::new(),
+        },
+    );
+}
+
+/// Whether a deferred slot ([`CtValue::Deferred`]) occurs in a value argument
+/// anywhere in `ty`.
+pub fn mentions_deferred_value(ty: &Ty) -> bool {
+    struct Finder(bool);
+    impl TyRewrite for Finder {
+        fn expr(&mut self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {
+            Ok(expr.clone())
+        }
+
+        fn value(&mut self, value: &CtValue) {
+            self.0 |= matches!(value, CtValue::Deferred(_));
+        }
+    }
+    let mut finder = Finder(false);
+    // The finder never fails; the rebuilt type is discarded.
+    let _ = rewrite_ty(ty, &mut finder);
+    finder.0
 }
 
 /// Apply `f` to each type argument of a struct's parameter list, passing value
@@ -2384,7 +2597,7 @@ pub fn rename_constraint_parameters(
     constraint: &GenericConstraint,
     binder_names: &HashMap<String, String>,
     subst: &HashMap<String, Ty>,
-    value_names: &HashMap<String, String>,
+    value_slots: &ParamBindings,
 ) -> GenericConstraint {
     let rename = |name: &str| -> String {
         if let Some(canonical) = binder_names.get(name) {
@@ -2402,14 +2615,18 @@ pub fn rename_constraint_parameters(
             ConstraintOperand::Param(name) => ConstraintOperand::Param(rename(name)),
             ConstraintOperand::PackLength(name) => ConstraintOperand::PackLength(rename(name)),
             ConstraintOperand::Value(value) => ConstraintOperand::Value(value.clone()),
-            ConstraintOperand::Type(ty) => ConstraintOperand::Type(rename_dependent_parameters(
-                &substitute(ty, subst),
-                value_names,
-            )),
+            ConstraintOperand::Expr(expr) => ConstraintOperand::Expr(
+                ParamContext::detached()
+                    .replace(expr, value_slots)
+                    .unwrap_or_else(|_| expr.clone()),
+            ),
+            ConstraintOperand::Type(ty) => {
+                ConstraintOperand::Type(bind_signature_slots(&substitute(ty, subst), value_slots))
+            }
         }
     };
     let recurse = |inner: &GenericConstraint| {
-        rename_constraint_parameters(inner, binder_names, subst, value_names)
+        rename_constraint_parameters(inner, binder_names, subst, value_slots)
     };
     match constraint {
         GenericConstraint::WithMessage(inner, message) => {
@@ -2574,7 +2791,7 @@ pub fn is_symbolic(ty: &Ty) -> bool {
 /// any collection or type handle carrying one.
 pub fn ct_value_is_symbolic(value: &CtValue) -> bool {
     match value {
-        CtValue::Param(_) => true,
+        CtValue::Expr(_) | CtValue::Deferred(_) => true,
         CtValue::Tuple(values)
         | CtValue::List(values)
         | CtValue::Set {
@@ -2597,6 +2814,130 @@ pub fn ct_value_is_symbolic(value: &CtValue) -> bool {
         | CtValue::Simd { .. }
         | CtValue::Str(_) => false,
     }
+}
+
+/// The replacing [`TyRewrite`]: one binding scope per signature level, the
+/// innermost masking the names its own binders shadow.
+struct Replacer<'a> {
+    context: &'a ParamContext,
+    scopes: Vec<ParamBindings>,
+    depth: u32,
+}
+
+impl Replacer<'_> {
+    fn bindings(&self) -> &ParamBindings {
+        self.scopes
+            .last()
+            .expect("a replacer always holds its outermost scope")
+    }
+}
+
+impl TyRewrite for Replacer<'_> {
+    fn param(&mut self, name: &str) -> Option<Ty> {
+        self.bindings().types().get(name).cloned()
+    }
+
+    fn expr(&mut self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        self.context
+            .replace_at(expr, self.bindings(), self.depth, &mut HashMap::new())
+    }
+
+    fn enter_signature(&mut self, decls: &[ParamDecl]) {
+        let mut inner = self.bindings().clone();
+        inner.mask(decls.iter().map(ParamDecl::name));
+        self.scopes.push(inner);
+        self.depth += 1;
+    }
+
+    fn exit_signature(&mut self) {
+        self.scopes.pop();
+        self.depth -= 1;
+    }
+}
+
+fn rewrite_decl(decl: &ParamDecl, rewrite: &mut dyn TyRewrite) -> Result<ParamDecl, ParamError> {
+    let boxed = |ty: &Option<Box<Ty>>, rewrite: &mut dyn TyRewrite| {
+        ty.as_deref()
+            .map(|ty| rewrite_ty(ty, rewrite).map(Box::new))
+            .transpose()
+    };
+    Ok(match decl {
+        ParamDecl::Type {
+            name,
+            bounds,
+            callable_bound,
+            default,
+            infer_only,
+            variadic,
+            constraints,
+        } => ParamDecl::Type {
+            name: name.clone(),
+            bounds: bounds.clone(),
+            callable_bound: boxed(callable_bound, rewrite)?,
+            default: boxed(default, rewrite)?,
+            infer_only: *infer_only,
+            variadic: *variadic,
+            constraints: constraints.clone(),
+        },
+        ParamDecl::Value {
+            name,
+            ty,
+            default,
+            callable_default,
+            infer_only,
+            variadic,
+            constraints,
+        } => ParamDecl::Value {
+            name: name.clone(),
+            ty: Box::new(rewrite_ty(ty, rewrite)?),
+            default: default
+                .as_ref()
+                .map(|value| rewrite.expr(value))
+                .transpose()?,
+            callable_default: callable_default
+                .as_ref()
+                .map(|default| rewrite_callable_default(default, rewrite))
+                .transpose()?,
+            infer_only: *infer_only,
+            variadic: *variadic,
+            constraints: constraints.clone(),
+        },
+    })
+}
+
+fn rewrite_callable_default(
+    default: &CallableDefault,
+    rewrite: &mut dyn TyRewrite,
+) -> Result<CallableDefault, ParamError> {
+    Ok(match default {
+        CallableDefault::Symbol(_) | CallableDefault::Parameter(_) => default.clone(),
+        CallableDefault::If {
+            condition,
+            then_value,
+            else_value,
+        } => CallableDefault::If {
+            condition: rewrite.expr(condition)?,
+            then_value: Box::new(rewrite_callable_default(then_value, rewrite)?),
+            else_value: Box::new(rewrite_callable_default(else_value, rewrite)?),
+        },
+    })
+}
+
+/// Bind a generic signature's own value binders to their slots. A type the
+/// slots do not type (a binder declared over another binder) stays as it is.
+fn bind_signature_slots(ty: &Ty, slots: &ParamBindings) -> Ty {
+    replace_parameters(&ParamContext::detached(), ty, slots, 0).unwrap_or_else(|_| ty.clone())
+}
+
+fn expr_mentions(expr: &ParamExpr, predicate: &dyn Fn(&Ty) -> bool) -> bool {
+    let mut found = false;
+    expr.visit(&mut |node| {
+        found |= node
+            .embedded_types()
+            .into_iter()
+            .any(|ty| mentions(ty, predicate));
+    });
+    found
 }
 
 #[cfg(test)]

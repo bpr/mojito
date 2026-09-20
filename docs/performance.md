@@ -389,6 +389,29 @@ ordinary bundled structs. The figures below replace it.
   holds a `for` (the 12 `Dict`/`Set` entry loops and `List.extend(Span)`).
   The shapes derive in user structs.
 
+### Parameter-expression attributes (2026-09-20)
+
+Value arguments, value defaults, and dependent types became typed canonical
+nodes interned per compilation (`docs/notes/param-expr-attributes.md`), and
+the checker, elaborator, and native monomorphization now share one compile-time
+folder. Release build, `rustc 1.96.1`, Intel i7-10875H, `hyperfine --warmup 1
+--runs 5 -N`, baseline `74a3d40`:
+
+| Program | Baseline | After | Peak RSS |
+|---|---|---|---|
+| `hello.mojo` | 2.032 s ± 0.037 | 1.947 s ± 0.023 | 283.9 MB → 273.2 MB |
+| `generic.mojo` | 2.246 s ± 0.059 | 2.136 s ± 0.010 | |
+| `tuple.mojo` | 2.065 s ± 0.028 | 2.010 s ± 0.028 | |
+
+- The gain is the elaborator's `eval_infix`, which evaluated each operand up
+  to three times before choosing a domain and now evaluates it once.
+- `--timings` reports `param_expr.{interned, intern_hits, constant_folds,
+  replacements, contexts}`. `generic.mojo` interns 21 nodes over 744
+  replacements and 17,231 intern hits in one context; a CTFE subprogram is a
+  standalone checker boundary and adds a context of its own.
+- These are current-build numbers. The 0.8 s figure earlier in this document
+  is historical and is not the baseline.
+
 ### Census of method bodies (`stdlib_heavy.mojo`, last discovery round, one pass)
 
 `--timings` reports, per generic body, everything that keeps it from being

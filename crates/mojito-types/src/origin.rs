@@ -513,7 +513,7 @@ impl PointerOrigin {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 /// Checked reference type: referent, storage origin, and access permission.
 pub struct RefTy {
     pub referent: Box<crate::types::Ty>,
@@ -524,7 +524,7 @@ pub struct RefTy {
 /// An origin in a callable contract. Unlike [`Origin`], roots name parameter
 /// slots rather than checker-local bindings, so the contract survives overload
 /// storage and can be substituted with caller places.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SigOrigin {
     Self_,
     Param(usize),
@@ -548,7 +548,7 @@ pub enum SigOrigin {
     Infer,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 /// Mutability component of a callable reference contract.
 pub enum SigMutability {
     Immutable,
@@ -561,7 +561,7 @@ pub enum SigMutability {
     Infer,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 /// Reference result or parameter contract retained in a callable signature.
 pub struct RefSig {
     pub origin: SigOrigin,

@@ -3,47 +3,22 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-pub(super) fn eval_ct(expr: &CtExpr, bindings: &Bindings) -> Result<CtValue, MonoError> {
-    use CtExpr::{Add, FloorDiv, Mod, Mul, Neg, Param, Pow, Sub, Value};
-    let int = |value: CtValue| match value {
-        CtValue::Int(v) => Ok(v),
-        _ => Err(MonoError {
-            function: None,
-            construct: "dependent expression requires an Int value".to_string(),
-        }),
-    };
-    Ok(match expr {
-        Value(CtValue::Param(name)) | Param(name) => bindings
-            .values
-            .get(name)
-            .cloned()
-            .ok_or_else(|| MonoError {
-                function: None,
-                construct: format!("unresolved value parameter `{name}`"),
-            })?,
-        Value(value) => value.clone(),
-        Neg(v) => CtValue::Int(int(eval_ct(v, bindings)?)?.wrapping_neg()),
-        Add(a, b) => {
-            CtValue::Int(int(eval_ct(a, bindings)?)?.wrapping_add(int(eval_ct(b, bindings)?)?))
-        }
-        Sub(a, b) => {
-            CtValue::Int(int(eval_ct(a, bindings)?)?.wrapping_sub(int(eval_ct(b, bindings)?)?))
-        }
-        Mul(a, b) => {
-            CtValue::Int(int(eval_ct(a, bindings)?)?.wrapping_mul(int(eval_ct(b, bindings)?)?))
-        }
-        FloorDiv(a, b) => {
-            CtValue::Int(int(eval_ct(a, bindings)?)?.div_euclid(int(eval_ct(b, bindings)?)?))
-        }
-        Mod(a, b) => {
-            CtValue::Int(int(eval_ct(a, bindings)?)?.rem_euclid(int(eval_ct(b, bindings)?)?))
-        }
-        Pow(a, b) => CtValue::Int(int(eval_ct(a, bindings)?)?.wrapping_pow(
-            u32::try_from(int(eval_ct(b, bindings)?)?).map_err(|_| MonoError {
-                function: None,
-                construct: "dependent exponent is out of range".to_string(),
-            })?,
-        )),
+/// The constant a parameter expression denotes under the mono environment:
+/// the shared replacement, then explicit concrete extraction. Monomorphization
+/// holds no arithmetic of its own.
+pub(super) fn eval_ct(expr: &ParamExpr, bindings: &Bindings) -> Result<CtValue, MonoError> {
+    let context = ParamContext::detached();
+    let named = ParamBindings::from_named_values(&context, &bindings.values);
+    let replaced = context.replace(expr, &named).map_err(|error| MonoError {
+        function: None,
+        construct: error.to_string(),
+    })?;
+    replaced.require_constant().map_err(|error| MonoError {
+        function: None,
+        construct: replaced.free_parameters().first().map_or_else(
+            || error.to_string(),
+            |parameter| format!("unresolved value parameter `{}`", parameter.name),
+        ),
     })
 }
 
@@ -83,7 +58,7 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
 pub(super) fn arg_has_symbolic(arg: &TyArg) -> bool {
     match arg {
         TyArg::Ty(ty) => is_symbolic(ty),
-        TyArg::Val(CtValue::Param(_)) => true,
+        TyArg::Val(CtValue::Expr(_) | CtValue::Deferred(_)) => true,
         TyArg::Val(_) | TyArg::Origin(_) => false,
     }
 }

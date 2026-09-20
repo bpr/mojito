@@ -635,7 +635,12 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
             value.referent = Box::new(substitute_ty(&value.referent, bindings)?);
             Ty::Ref(value)
         }
-        Ty::Dependent(DependentType::Indexed { elements, index }) => {
+        Ty::Dependent(dependent) => {
+            let Some((elements, index)) = dependent.selection() else {
+                return Err(unsupported(format!(
+                    "dependent type `{ty}` has no concrete MIR declaration fact"
+                )));
+            };
             let value = eval_ct(index, bindings)?;
             let index = match value {
                 CtValue::Int(v) => usize::try_from(v).ok(),
@@ -717,16 +722,9 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
 pub(super) fn substitute_arg(arg: &TyArg, bindings: &Bindings) -> Result<TyArg, MonoError> {
     Ok(match arg {
         TyArg::Ty(ty) => TyArg::Ty(substitute_ty(ty, bindings)?),
-        TyArg::Val(CtValue::Param(name)) => TyArg::Val(
-            bindings
-                .values
-                .get(name)
-                .cloned()
-                .ok_or_else(|| MonoError {
-                    function: None,
-                    construct: format!("unresolved value parameter `{name}`"),
-                })?,
-        ),
+        // A residual closes under the mono environment or it is the
+        // contextual unsupported boundary; nothing symbolic reaches lowering.
+        TyArg::Val(CtValue::Expr(expr)) => TyArg::Val(eval_ct(expr, bindings)?),
         TyArg::Val(value) => TyArg::Val(value.clone()),
         TyArg::Origin(origin) => TyArg::Origin(origin.clone()),
     })

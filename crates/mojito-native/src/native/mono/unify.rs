@@ -348,7 +348,16 @@ pub(super) fn unify_arg(
 ) -> Result<(), String> {
     match (pattern, actual) {
         (TyArg::Ty(p), TyArg::Ty(a)) => unify(p, a, bindings),
-        (TyArg::Val(CtValue::Param(name)), TyArg::Val(value)) => bind_value(name, value, bindings),
+        // A direct reference binds; any other residual must already agree
+        // with the actual once the environment closes it.
+        (TyArg::Val(CtValue::Expr(expr)), TyArg::Val(value)) => match expr.as_decl_ref() {
+            Some(reference) => bind_value(&reference.name, value, bindings),
+            None => match eval_ct(expr, bindings) {
+                Ok(closed) if mojito_types::param_expr::identity_eq(&closed, value) => Ok(()),
+                Ok(_) => Err("generic application arguments disagree".to_string()),
+                Err(error) => Err(error.construct),
+            },
+        },
         (TyArg::Val(p), TyArg::Val(a)) if p == a => Ok(()),
         (TyArg::Origin(_), TyArg::Origin(_)) => Ok(()),
         _ => Err("generic application arguments disagree".to_string()),
@@ -395,7 +404,7 @@ pub(super) fn bind_value(
     value: &CtValue,
     bindings: &mut Bindings,
 ) -> Result<(), String> {
-    if matches!(value, CtValue::Param(_)) {
+    if matches!(value, CtValue::Expr(_) | CtValue::Deferred(_)) {
         return Err(format!("solution for `{name}` is not constant"));
     }
     match bindings.values.get(name) {

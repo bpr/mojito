@@ -417,7 +417,7 @@ pub const TYPE_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "semantic-only; Stage 5 monomorphization target",
     ),
     (
-        "dependent_index",
+        "dependent_parameter",
         CapabilityStatus::Unsupported,
         "semantic-only; Stage 5 monomorphization target",
     ),

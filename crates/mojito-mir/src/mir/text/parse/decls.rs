@@ -4,11 +4,13 @@
 use super::*;
 
 impl Decoder {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(legacy: bool) -> Self {
         Self {
             diagnostics: Vec::new(),
             source_map: ArtifactSourceMap::default(),
             files: BTreeMap::new(),
+            context: ParamContext::new(),
+            legacy_binders: legacy.then(HashMap::new),
         }
     }
 
@@ -17,6 +19,9 @@ impl Decoder {
         value: &Value,
     ) -> Result<(MirProgram, ArtifactSourceMap), Vec<ArtifactDiagnostic>> {
         self.mark("artifact", value.span);
+        if self.legacy_binders.is_some() {
+            self.legacy_binders = Some(Self::legacy_value_binders(value));
+        }
         let Ok(fields) = self.record(value, "artifact") else {
             return Err(self.diagnostics);
         };

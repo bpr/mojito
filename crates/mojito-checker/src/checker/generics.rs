@@ -170,7 +170,7 @@ pub(super) fn solved_value_bindings(
 }
 
 /// Solve value parameters from a pattern/actual type pair, the value-argument
-/// counterpart of [`unify`]: a pattern's symbolic `TyArg::Val(CtValue::Param)`
+/// counterpart of [`unify`]: a pattern's symbolic `TyArg::Val(CtValue::Expr)`
 /// binds to the actual's value argument in the same slot (`Array[T, length]`
 /// against `Array[Int, 3]` solves `length = 3`). First solution wins; a
 /// structural mismatch contributes nothing, exactly like `unify`.
@@ -181,8 +181,14 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
         {
             for (p, a) in pargs.iter().zip(aargs) {
                 match (p, a) {
-                    (TyArg::Val(CtValue::Param(name)), TyArg::Val(value)) => {
-                        out.entry(name.clone()).or_insert_with(|| value.clone());
+                    // A direct reference binds. Any other residual (`n + 1`
+                    // against `4`) is an equation this solver leaves alone:
+                    // the substituted signature compares canonically later.
+                    (TyArg::Val(CtValue::Expr(expr)), TyArg::Val(value)) => {
+                        if let Some(reference) = expr.as_decl_ref() {
+                            out.entry(reference.name.to_string())
+                                .or_insert_with(|| value.clone());
+                        }
                     }
                     (TyArg::Ty(p), TyArg::Ty(a)) => solve_value_args(p, a, out),
                     _ => {}
@@ -219,15 +225,7 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
             name.clone(),
             map_tyargs(args, |t| substitute_self(t, replacement)),
         ),
-        Ty::Dependent(mojito_types::types::DependentType::Indexed { elements, index }) => {
-            Ty::Dependent(mojito_types::types::DependentType::Indexed {
-                elements: elements
-                    .iter()
-                    .map(|ty| substitute_self(ty, replacement))
-                    .collect(),
-                index: index.clone(),
-            })
-        }
+        Ty::Dependent(dependent) => dependent.map_types(|ty| substitute_self(ty, replacement)),
         Ty::ComptimeList(elem) => Ty::ComptimeList(Box::new(substitute_self(elem, replacement))),
         Ty::Tuple(elems) => Ty::Tuple(
             elems
@@ -323,7 +321,7 @@ pub(super) struct AssocBindings {
 
 /// Substitute a parameterized associated type's template with concrete
 /// arguments. Types are substituted first with the ordinary type substitution;
-/// a second pass then replaces symbolic value parameters (`CtValue::Param`) and
+/// a second pass then replaces symbolic value parameters (`CtValue::Expr`) and
 /// origin parameters (`Origin::Param`), which the type-only pass carries through.
 pub(super) fn substitute_assoc(ty: &Ty, bindings: &AssocBindings) -> Ty {
     let typed = substitute(ty, &bindings.types);
@@ -336,17 +334,16 @@ fn substitute_values_and_origins(
     origins: &HashMap<u32, mojito_types::origin::Origin>,
 ) -> Ty {
     let recur = |t: &Ty| substitute_values_and_origins(t, values, origins);
+    let context = ParamContext::detached();
+    let bindings = mojito_types::param_expr::ParamBindings::from_named_values(&context, values);
     let map_args = |args: &[TyArg]| -> Vec<TyArg> {
         args.iter()
             .map(|argument| match argument {
                 TyArg::Ty(inner) => TyArg::Ty(recur(inner)),
-                TyArg::Val(CtValue::Param(name)) => TyArg::Val(
-                    values
-                        .get(name)
-                        .cloned()
-                        .unwrap_or_else(|| CtValue::Param(name.clone())),
+                TyArg::Val(value) => TyArg::Val(
+                    mojito_types::types::replace_value_parameters(&context, value, &bindings)
+                        .unwrap_or_else(|_| value.clone()),
                 ),
-                TyArg::Val(value) => TyArg::Val(value.clone()),
                 TyArg::Origin(origin) => TyArg::Origin(substitute_origin(origin, origins)),
             })
             .collect()
@@ -373,11 +370,13 @@ fn substitute_values_and_origins(
         Ty::VariadicPack(element) => Ty::VariadicPack(Box::new(recur(element))),
         Ty::Variant(alternatives) => Ty::Variant(alternatives.iter().map(recur).collect()),
         Ty::ComptimeList(element) => Ty::ComptimeList(Box::new(recur(element))),
-        Ty::Dependent(mojito_types::types::DependentType::Indexed { elements, index }) => {
-            Ty::Dependent(mojito_types::types::DependentType::Indexed {
-                elements: elements.iter().map(recur).collect(),
-                index: index.clone(),
-            })
+        Ty::Dependent(dependent) => {
+            let resolved = mojito_types::types::replace_parameters(&context, ty, &bindings, 0)
+                .unwrap_or_else(|_| ty.clone());
+            match &resolved {
+                Ty::Dependent(_) => dependent.map_types(recur),
+                _ => recur(&resolved),
+            }
         }
         other => other.clone(),
     }
@@ -772,7 +771,7 @@ impl Checker {
         if values.is_empty() {
             return None;
         }
-        let name = mojito_symbol::symbol::mangle(method, &values);
+        let name = mojito_symbol::symbol::mangle(method, &values).ok()?;
         self.structs
             .get(owner)
             .is_some_and(|info| info.methods.contains_key(&name))
@@ -875,7 +874,7 @@ impl Checker {
             return None;
         }
         values.extend(call);
-        let name = mojito_symbol::symbol::mangle(method, &values);
+        let name = mojito_symbol::symbol::mangle(method, &values).ok()?;
         info.methods.contains_key(&name).then_some(name)
     }
 

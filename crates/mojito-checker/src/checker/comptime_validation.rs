@@ -316,7 +316,10 @@ impl Checker {
             ConstraintOperand::Param(name) | ConstraintOperand::PackLength(name) => {
                 self.comptime_name_resolves(name)
             }
-            ConstraintOperand::Value(_) | ConstraintOperand::Type(_) => Ok(()),
+            // An arithmetic operand resolved its names when it was compiled.
+            ConstraintOperand::Value(_)
+            | ConstraintOperand::Type(_)
+            | ConstraintOperand::Expr(_) => Ok(()),
         };
         match constraint {
             GenericConstraint::WithMessage(inner, _) | GenericConstraint::Not(inner) => {

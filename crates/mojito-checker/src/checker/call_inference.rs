@@ -1721,7 +1721,9 @@ impl Checker {
         for (decl, argument) in decls.iter().zip(arguments) {
             match (decl, argument) {
                 (ParamDecl::Type { variadic: true, .. }, _) => return None,
-                (_, TyArg::Val(CtValue::Param(_))) => continue,
+                // A deferred callable-value slot is not part of the key; a
+                // residual value names no clone at all (`mangle` refuses it).
+                (_, TyArg::Val(CtValue::Deferred(_))) => continue,
                 (ParamDecl::Type { .. }, TyArg::Ty(ty)) => {
                     values.push(CtValue::Type(Box::new(ty.clone())));
                 }
@@ -1732,7 +1734,7 @@ impl Checker {
         if values.is_empty() {
             return None;
         }
-        let clone = mojito_symbol::symbol::mangle(name, &values);
+        let clone = mojito_symbol::symbol::mangle(name, &values).ok()?;
         matches!(self.lookup(&clone), Some(Ty::Func { .. })).then_some(clone)
     }
 

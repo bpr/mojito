@@ -80,7 +80,7 @@ type	generic_func	unsupported	semantic-only; Stage 5 monomorphization target
 type	overload	unsupported	semantic-only
 type	param	unsupported	monomorphization substitutes receiver-bound instances; a residual parameter is a contextual rejection
 type	assoc	unsupported	semantic-only; Stage 5 monomorphization target
-type	dependent_index	unsupported	semantic-only; Stage 5 monomorphization target
+type	dependent_parameter	unsupported	semantic-only; Stage 5 monomorphization target
 type	Self	unsupported	semantic-only
 type	struct_type	partial	concrete field layouts only
 type	simd	supported	width-1 scalar aliases; multi-lane values compute as LLVM fixed vectors (arithmetic, masked shifts, floor div/mod, comparisons, select, casts, to_bits, shuffle, extract, llvm.vector.reduce.* and minnum/maxnum reductions) over lane-aligned aggregate storage with byte-per-lane Bool; lane writes and formatting go lane-wise

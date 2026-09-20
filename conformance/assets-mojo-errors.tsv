@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	400
+# swept-count	408
 assets/type_error/template_method_place_argument_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed mutably to 'n' argument in 'grow' call
 assets/type_error/template_where_instance_violated.mojo	compile-reject	agree	error: invalid call to 'small': violated constraint
 fixture	verdict	family	upstream
@@ -332,6 +332,14 @@ assets/type_error/pack_struct_init_arity.mojo	compile-reject	agree	error: no mat
 assets/type_error/pack_struct_needs_explicit_args.mojo	runs	divergence	the pin runs it; Mojito rejects: variadic struct 'Pair' requires explicit compile-time type arguments
 assets/type_error/pack_struct_runtime_getitem_index.mojo	compile-reject	agree	error: invalid call to '__getitem__': cannot use a dynamic value in a parameter list
 assets/type_error/pack_struct_runtime_index.mojo	compile-reject	agree	error: invalid call to '__getitem_param__': cannot use a dynamic value in a parameter list
+assets/type_error/param_expr_inverse_inference.mojo	compile-reject	agree	error: invalid call to 'take': value passed to 'x' cannot be converted from 'Buf[Int(4)]' to 'Buf[(n + Int(1))]', it depends on an unresolved parameter 'n'
+assets/type_error/param_expr_opaque_negation.mojo	compile-reject	agree	error: cannot implicitly convert 'Buf[--n]' value to 'Buf[n]'
+assets/type_error/param_expr_power_unequal.mojo	compile-reject	agree	error: cannot implicitly convert 'Buf[(n * n)]' value to 'Buf[(n ** Int(2))]'
+assets/type_error/param_expr_unequal.mojo	compile-reject	agree	error: cannot implicitly convert 'Buf[(n + Int(1))]' value to 'Buf[(n + Int(2))]'
+assets/type_error/param_expr_unfolded_atom.mojo	compile-reject	agree	error: invalid call to 'halve': value passed to 'x' cannot be converted from 'Buf[Int(4)]' to 'Buf[(Int(8) // Int(2))]'
+assets/type_error/param_expr_where_false.mojo	compile-reject	agree	error: invalid call to 'check': violated constraint
+assets/type_error/param_expr_where_residual.mojo	compile-reject	agree	error: invalid call to 'below': lacking evidence to prove correctness
+assets/type_error/param_expr_where_unfolded_atom.mojo	compile-reject	agree	error: invalid call to 'floored': lacking evidence to prove correctness
 assets/type_error/parameter_closure_immutable_capture_write.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
 assets/type_error/parameterized_assoc_arity.mojo	compile-reject	agree	error: failed to infer parameter 'b', specify the parameter or use '_' or '...' to unbind the parameter explicitly
 assets/type_error/parameterized_assoc_conformance_arity.mojo	compile-reject	agree	error: 'Holder' does not implement all requirements for 'HasWrap'

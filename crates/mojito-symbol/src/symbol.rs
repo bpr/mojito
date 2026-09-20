@@ -200,15 +200,20 @@ pub fn simd_update_clone_name(leaf: &Ty) -> String {
         },
         other => other,
     };
+    // A hash leaf is a concrete scalar or vector type, so the key is closed;
+    // a symbolic leaf names no clone and keeps the template's name.
     mangle("_update_with_simd", &[CtValue::Type(Box::new(leaf))])
+        .unwrap_or_else(|_| "_update_with_simd".to_string())
 }
 
 /// The list `mangle` bakes into a clone's name for a method or struct
 /// instantiation: its specialization values in declaration order.
 ///
-/// `None` when the instantiation cannot name a clone: callable-bounded
-/// parameters stay symbolic on the clone and contribute nothing; packs and
-/// symbolic placeholders make it unspecializable.
+/// `None` when the instantiation cannot name a clone: a pack bound any way but
+/// to a closed tuple, or a value that is still a residual parameter
+/// expression, is unspecializable. Callable-bounded type parameters and
+/// deferred callable-value slots stay symbolic on the clone and contribute
+/// nothing — the one intentional omission.
 ///
 /// The checker's retargeting, the specializer's `method_request_values`, and
 /// the backends' instance lookups all agree through this one function.
@@ -233,8 +238,12 @@ pub fn specialized_method_values(decls: &[ParamDecl], arguments: &[TyArg]) -> Op
             (ParamDecl::Type { .. }, TyArg::Ty(ty)) => {
                 values.push(CtValue::Type(Box::new(ty.clone())));
             }
-            (ParamDecl::Value { .. }, TyArg::Val(CtValue::Param(_))) => continue,
-            (ParamDecl::Value { .. }, TyArg::Val(value)) => values.push(value.clone()),
+            (ParamDecl::Value { .. }, TyArg::Val(CtValue::Deferred(_))) => continue,
+            (ParamDecl::Value { .. }, TyArg::Val(value))
+                if specialization_value_is_closed(value) =>
+            {
+                values.push(value.clone());
+            }
             _ => return None,
         }
     }
@@ -274,7 +283,7 @@ pub fn instance_method_clone_name(
     if values.is_empty() {
         return None;
     }
-    Some(mangle(method, &values))
+    mangle(method, &values).ok()
 }
 
 /// The method a per-instantiation or per-call clone was minted from
@@ -1795,12 +1804,24 @@ pub fn canonical_specialization_type(ty: &Ty) -> Ty {
 }
 
 /// Canonical concrete symbol selected for public `Tuple[*Ts]` element types.
+///
+/// Checker inference probes this speculatively, so elements that are not
+/// closed name the unspecialized nominal type rather than a symbolic clone.
 pub fn tuple_specialization_symbol(elements: &[Ty]) -> String {
-    mangle("Tuple", &tuple_specialization_values(elements))
+    mangle(
+        mojito_types::types::TUPLE_TYPE_NAME,
+        &tuple_specialization_values(elements),
+    )
+    .unwrap_or_else(|_| mojito_types::types::TUPLE_TYPE_NAME.to_string())
 }
 
+/// [`tuple_specialization_symbol`] for `TString`.
 pub fn tstring_specialization_symbol(elements: &[Ty]) -> String {
-    mangle("TString", &tuple_specialization_values(elements))
+    mangle(
+        mojito_types::types::TSTRING_TYPE_NAME,
+        &tuple_specialization_values(elements),
+    )
+    .unwrap_or_else(|_| mojito_types::types::TSTRING_TYPE_NAME.to_string())
 }
 
 pub fn tuple_specialization_values(elements: &[Ty]) -> Vec<CtValue> {
@@ -2065,16 +2086,109 @@ fn decode_specialization_value(text: &str, position: usize) -> Option<(CtValue, 
     })
 }
 
-/// The specialized name for `orig` at value arguments `vals` — e.g. `f$0`, `f$1`.
-/// `$` cannot appear in a source identifier, so a specialization never collides
-/// with a user-written name.
-pub fn mangle(orig: &str, vals: &[CtValue]) -> String {
-    let mut s = orig.to_string();
-    for v in vals {
-        s.push('$');
-        encode_specialization_value(v, &mut s);
+/// A specialization value that is not a constant: a residual parameter
+/// expression or a deferred slot somewhere in the key's input. No symbolic
+/// spelling enters a key, so the request is refused instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NonConstantSpecialization {
+    pub template: String,
+    pub value: String,
+}
+
+impl std::fmt::Display for NonConstantSpecialization {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "cannot specialize '{}': '{}' is not a compile-time constant",
+            self.template, self.value
+        )
     }
-    s
+}
+
+impl std::error::Error for NonConstantSpecialization {}
+
+/// One part of a specialization key.
+///
+/// A part is a closed compile-time value, or the marker an erased origin
+/// argument contributes to an owner key. The marker is key vocabulary, not a
+/// parameter declaration.
+#[derive(Debug, Clone, Copy)]
+pub enum SpecializationKeyPart<'a> {
+    Value(&'a CtValue),
+    ErasedOrigin,
+}
+
+/// The specialized name for `orig` at value arguments `vals` — e.g. `f$0`, `f$1`.
+///
+/// `$` cannot appear in a source identifier, so a specialization never collides
+/// with a user-written name. Every value must be recursively closed.
+pub fn mangle(orig: &str, vals: &[CtValue]) -> Result<String, NonConstantSpecialization> {
+    let parts: Vec<_> = vals.iter().map(SpecializationKeyPart::Value).collect();
+    mangle_parts(orig, &parts)
+}
+
+/// [`mangle`] over explicit key parts. The complete input is validated before
+/// any of the key is written.
+pub fn mangle_parts(
+    orig: &str,
+    parts: &[SpecializationKeyPart<'_>],
+) -> Result<String, NonConstantSpecialization> {
+    if let Some(open) = parts.iter().find_map(|part| match part {
+        SpecializationKeyPart::Value(value) if !specialization_value_is_closed(value) => {
+            Some(*value)
+        }
+        _ => None,
+    }) {
+        return Err(NonConstantSpecialization {
+            template: orig.to_string(),
+            value: open.to_string(),
+        });
+    }
+    let mut s = orig.to_string();
+    for part in parts {
+        s.push('$');
+        match part {
+            SpecializationKeyPart::Value(value) => encode_specialization_value(value, &mut s),
+            SpecializationKeyPart::ErasedOrigin => s.push_str("p6:origin"),
+        }
+    }
+    Ok(s)
+}
+
+/// Whether no residual parameter expression or deferred slot occurs in `value`.
+///
+/// The search covers an aggregate child, a struct field, and a value argument
+/// of a type payload. A type parameter inside a type payload keeps its
+/// spelling; a callable type is closed relative to its own binders.
+pub fn specialization_value_is_closed(value: &CtValue) -> bool {
+    match value {
+        CtValue::Expr(_) | CtValue::Deferred(_) => false,
+        CtValue::Tuple(values)
+        | CtValue::List(values)
+        | CtValue::Set {
+            elements: values, ..
+        } => values.iter().all(specialization_value_is_closed),
+        CtValue::Dict { entries, .. } => entries.iter().all(|(key, value)| {
+            specialization_value_is_closed(key) && specialization_value_is_closed(value)
+        }),
+        CtValue::Struct { fields, .. } => fields
+            .iter()
+            .all(|(_, value)| specialization_value_is_closed(value)),
+        CtValue::Type(ty) | CtValue::Reflected(ty) => {
+            let mut open = std::collections::HashSet::new();
+            mojito_types::types::referenced_parameters(ty, &mut open);
+            open.is_empty() && !mojito_types::types::mentions_deferred_value(ty)
+        }
+        CtValue::Int(_)
+        | CtValue::UInt(_)
+        | CtValue::Float(_)
+        | CtValue::IntLiteral(_)
+        | CtValue::FloatLiteral(_)
+        | CtValue::Bool(_)
+        | CtValue::Str(_)
+        | CtValue::Dtype(_)
+        | CtValue::Simd { .. } => true,
+    }
 }
 
 #[allow(
@@ -2154,6 +2268,7 @@ fn encode_specialization_value(value: &CtValue, out: &mut String) {
             let rendered = ty.to_string();
             out.push_str(&format!("r{}:{rendered}", rendered.len()));
         }
-        CtValue::Param(name) => out.push_str(&format!("p{}:{name}", name.len())),
+        // `mangle_parts` validated the whole key before encoding began.
+        CtValue::Expr(_) | CtValue::Deferred(_) => {}
     }
 }

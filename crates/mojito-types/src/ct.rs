@@ -10,8 +10,10 @@
 //! type-valued compile-time members.
 //!
 //! Scalar values and recursively materializable tuples/lists/dicts/sets have a
-//! runtime literal form; `Type`, `Reflected`, and `Param` are compile-time-only.
+//! runtime literal form; `Type`, `Reflected`, `Expr`, and `Deferred` are
+//! compile-time-only.
 
+use crate::param_expr::ParamExpr;
 use crate::types::{Ty, TyArg, dict_elements, list_element, set_element, tuple_elements};
 use mojito_ast::ast::{Expr, ExprKind, KwArg, ParamArg, Type};
 use mojito_common::literal::{FloatLiteral, IntLiteral};
@@ -21,7 +23,7 @@ use std::fmt;
 /// One lane of a compile-time SIMD value: integer lanes hold the post-wrap
 /// mathematical value (an unsigned lane is non-negative), float lanes their
 /// IEEE bits (so equality is structural).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CtLane {
     Int(i128),
     Float(u64),
@@ -84,9 +86,9 @@ pub fn wrap_lane(dtype: mojito_ast::ast::Dtype, value: i128) -> i128 {
 ///
 /// Scalar values drive folding; `Tuple`/`List` let `comptime for` iterate
 /// compile-time collections; `Type` carries a semantic type for associated
-/// comptime members; `Param` is a symbolic value parameter while a generic
+/// comptime members; `Expr` is a symbolic parameter expression while a generic
 /// body is being checked.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CtValue {
     /// An already-materialized machine `Int` compile-time value. Compiler
     /// generated indices, lengths, and value parameters use this variant.
@@ -147,162 +149,17 @@ pub enum CtValue {
     /// `reflect[T]` API. Field selection returns another handle, allowing
     /// `.field[name]` / `.field_at[index]` chains to terminate in `.T`.
     Reflected(Box<Ty>),
-    Param(String),
-}
-
-/// A canonical dependent compile-time expression retained in generic metadata.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CtExpr {
-    Value(CtValue),
-    Param(String),
-    Neg(Box<Self>),
-    Add(Box<Self>, Box<Self>),
-    Sub(Box<Self>, Box<Self>),
-    Mul(Box<Self>, Box<Self>),
-    FloorDiv(Box<Self>, Box<Self>),
-    Mod(Box<Self>, Box<Self>),
-    Pow(Box<Self>, Box<Self>),
-}
-
-impl CtExpr {
-    /// Collect the symbolic compile-time binders referenced by this expression.
-    /// The verifier uses this to reject dependent types whose index escaped its
-    /// generic declaration scope.
-    pub fn referenced_parameters(&self, output: &mut std::collections::HashSet<String>) {
-        use CtExpr::{Add, FloorDiv, Mod, Mul, Neg, Param, Pow, Sub, Value};
-        match self {
-            Param(name) => {
-                output.insert(name.clone());
-            }
-            Value(_) => {}
-            Neg(value) => value.referenced_parameters(output),
-            Add(left, right)
-            | Sub(left, right)
-            | Mul(left, right)
-            | FloorDiv(left, right)
-            | Mod(left, right)
-            | Pow(left, right) => {
-                left.referenced_parameters(output);
-                right.referenced_parameters(output);
-            }
-        }
-    }
-
-    /// Alpha-rename symbolic binders while preserving the expression tree.
-    #[must_use]
-    pub fn rename_parameters(&self, names: &std::collections::HashMap<String, String>) -> Self {
-        use CtExpr::{Add, FloorDiv, Mod, Mul, Neg, Param, Pow, Sub, Value};
-        match self {
-            Value(value) => Value(value.clone()),
-            Param(name) => Param(names.get(name).cloned().unwrap_or_else(|| name.clone())),
-            Neg(value) => Neg(Box::new(value.rename_parameters(names))),
-            Add(left, right) => Add(
-                Box::new(left.rename_parameters(names)),
-                Box::new(right.rename_parameters(names)),
-            ),
-            Sub(left, right) => Sub(
-                Box::new(left.rename_parameters(names)),
-                Box::new(right.rename_parameters(names)),
-            ),
-            Mul(left, right) => Mul(
-                Box::new(left.rename_parameters(names)),
-                Box::new(right.rename_parameters(names)),
-            ),
-            FloorDiv(left, right) => FloorDiv(
-                Box::new(left.rename_parameters(names)),
-                Box::new(right.rename_parameters(names)),
-            ),
-            Mod(left, right) => Mod(
-                Box::new(left.rename_parameters(names)),
-                Box::new(right.rename_parameters(names)),
-            ),
-            Pow(left, right) => Pow(
-                Box::new(left.rename_parameters(names)),
-                Box::new(right.rename_parameters(names)),
-            ),
-        }
-    }
-
-    pub fn evaluate(
-        &self,
-        parameters: &std::collections::HashMap<String, CtValue>,
-    ) -> Option<CtValue> {
-        use CtExpr::{Add, FloorDiv, Mod, Mul, Neg, Param, Pow, Sub, Value};
-        match self {
-            Value(value) => Some(value.clone()),
-            Param(name) => parameters.get(name).cloned(),
-            Neg(value) => match value.evaluate(parameters)? {
-                CtValue::Int(value) => value.checked_neg().map(CtValue::Int),
-                CtValue::IntLiteral(value) => Some(CtValue::IntLiteral(value.neg())),
-                _ => None,
-            },
-            Add(left, right) => match (left.evaluate(parameters)?, right.evaluate(parameters)?) {
-                (CtValue::Int(left), CtValue::Int(right)) => {
-                    left.checked_add(right).map(CtValue::Int)
-                }
-                (CtValue::IntLiteral(left), CtValue::IntLiteral(right)) => {
-                    Some(CtValue::IntLiteral(left.add(&right)))
-                }
-                (CtValue::Int(left), CtValue::IntLiteral(right)) => {
-                    Some(CtValue::IntLiteral(IntLiteral::from(left).add(&right)))
-                }
-                (CtValue::IntLiteral(left), CtValue::Int(right)) => {
-                    Some(CtValue::IntLiteral(left.add(&IntLiteral::from(right))))
-                }
-                (CtValue::Str(left), CtValue::Str(right)) => Some(CtValue::Str(left + &right)),
-                _ => None,
-            },
-            Sub(left, right) => int_binary(left, right, parameters, i64::checked_sub, |a, b| {
-                Some(a.sub(b))
-            }),
-            Mul(left, right) => int_binary(left, right, parameters, i64::checked_mul, |a, b| {
-                Some(a.mul(b))
-            }),
-            FloorDiv(left, right) => int_binary(
-                left,
-                right,
-                parameters,
-                i64::checked_div_euclid,
-                IntLiteral::floor_div,
-            ),
-            Mod(left, right) => int_binary(
-                left,
-                right,
-                parameters,
-                i64::checked_rem_euclid,
-                IntLiteral::floor_mod,
-            ),
-            Pow(left, right) => int_binary(
-                left,
-                right,
-                parameters,
-                |a, b| u32::try_from(b).ok().and_then(|b| a.checked_pow(b)),
-                IntLiteral::pow,
-            ),
-        }
-    }
-}
-
-fn int_binary(
-    left: &CtExpr,
-    right: &CtExpr,
-    parameters: &std::collections::HashMap<String, CtValue>,
-    operation: impl FnOnce(i64, i64) -> Option<i64>,
-    literal_operation: impl FnOnce(&IntLiteral, &IntLiteral) -> Option<IntLiteral>,
-) -> Option<CtValue> {
-    match (left.evaluate(parameters)?, right.evaluate(parameters)?) {
-        (CtValue::Int(left), CtValue::Int(right)) => operation(left, right).map(CtValue::Int),
-        (CtValue::IntLiteral(left), CtValue::IntLiteral(right)) => {
-            literal_operation(&left, &right).map(CtValue::IntLiteral)
-        }
-        (CtValue::Int(left), CtValue::IntLiteral(right)) => {
-            literal_operation(&left.into(), &right).map(CtValue::IntLiteral)
-        }
-        (CtValue::IntLiteral(left), CtValue::Int(right)) => {
-            literal_operation(&left, &right.into()).map(CtValue::IntLiteral)
-        }
-        _ => None,
-    }
+    /// A residual parameter expression: a declared parameter, or an operator
+    /// over one, while a generic declaration is checked. Never a constant — a
+    /// folded expression is its ordinary concrete variant
+    /// ([`ParamExpr::into_value`]).
+    Expr(ParamExpr),
+    /// A parameter slot whose value arrives later and takes no part in
+    /// generic identity: a callable-value parameter the VM reifies under this
+    /// name, a value argument only the elaborator can fold, or an
+    /// elaborator-private marker. It is not a parameter reference and never
+    /// enters a specialization key.
+    Deferred(String),
 }
 
 impl CtValue {
@@ -390,7 +247,7 @@ impl CtValue {
                 Some(ty) => ty.to_string(),
                 None => format!("Set[{}]", elements.first()?.runtime_type_text()?),
             },
-            Self::Type(_) | Self::Reflected(_) | Self::Param(_) => return None,
+            Self::Type(_) | Self::Reflected(_) | Self::Expr(_) | Self::Deferred(_) => return None,
         })
     }
 
@@ -499,7 +356,7 @@ impl CtValue {
     }
 
     /// Materialize this value as a literal expression, or `None` when it has no
-    /// runtime form (a symbolic `Param`, or a collection containing one).
+    /// runtime form (a symbolic `Expr`, or a collection containing one).
     pub fn materialize(&self, span: Span) -> Option<Expr> {
         let kind = match self {
             Self::Int(n) => ExprKind::Int(IntLiteral::from(*n)),
@@ -626,8 +483,7 @@ impl CtValue {
                     .collect::<Option<Vec<_>>>()?,
                 kwargs: Vec::new(),
             },
-            Self::Type(_) | Self::Reflected(_) => return None,
-            Self::Param(_) => return None,
+            Self::Type(_) | Self::Reflected(_) | Self::Expr(_) | Self::Deferred(_) => return None,
         };
         Some(Expr {
             kind,
@@ -760,7 +616,8 @@ impl fmt::Display for CtValue {
             }
             Self::Type(ty) => write!(f, "{ty}"),
             Self::Reflected(ty) => write!(f, "reflect[{ty}]"),
-            Self::Param(name) => write!(f, "{name}"),
+            Self::Expr(expr) => write!(f, "{expr}"),
+            Self::Deferred(name) => write!(f, "{name}"),
             Self::Dict { entries, .. } => {
                 write!(f, "{{")?;
                 for (index, (key, value)) in entries.iter().enumerate() {

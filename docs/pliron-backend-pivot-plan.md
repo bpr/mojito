@@ -218,6 +218,12 @@ analysis, optimization, or multiple lowering paths a stable contract.
 
 - Define types, attributes, locations, function/module, scalar, CFG, call,
   variable/place, and lifecycle operations with verifiers and textual syntax.
+- Carry the landed canonical parameter attributes
+  (`docs/notes/param-expr-attributes.md`) on instantiated `mojito.core` types:
+  `#[pliron_attr]` wrappers over a `uniqued_any` payload, with independent
+  tests for symbolic construction, substitution, identity, cross-context
+  cloning, and canonical text. A1's executable core is monomorphic, so it
+  holds no unresolved generic body.
 - Translate current verified MIR to `mojito.core` and back in tests only.
 - Run byte/semantic differential checks: old MIR → VM versus MIR → core → MIR → VM.
 - Measure construction time, verification time, memory, and text size.

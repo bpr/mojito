@@ -33,6 +33,22 @@ impl Decoder {
                 "runtime_pack" => Ty::RuntimePack(self.types(inner)),
                 "variadic_pack" => Ty::VariadicPack(Box::new(self.ty(inner)?)),
                 "variant" => Ty::Variant(self.types(inner)),
+                // A type-valued parameter expression; it folds back to the
+                // type it denotes when the text spelled a closed one.
+                "dependent_parameter" => {
+                    let expr = self.param_expr(inner)?;
+                    if *expr.meta() != MetaTy::Type {
+                        self.error(
+                            value.span,
+                            format!(
+                                "a dependent type needs a Type expression, not `{}`",
+                                expr.meta()
+                            ),
+                        );
+                        return None;
+                    }
+                    DependentType::resolve(expr)
+                }
                 other => {
                     self.error(value.span, format!("unknown type `{other}`"));
                     return None;
@@ -63,11 +79,15 @@ impl Decoder {
                     self.unknown(fields, &["base", "member", "arguments"]);
                     Ty::Assoc { base, name, args }
                 }
+                // Schema 1.0's finite selection; 1.1 spells it as the
+                // `dependent_parameter` of a `param_select`.
                 "dependent_index" => {
+                    self.require_legacy(value, tag)?;
                     let elements = self.req(value, fields, "elements", |d, v| Some(d.types(v)))?;
-                    let index = self.req(value, fields, "index", Self::ct_expr)?;
+                    let index = self.req(value, fields, "index", Self::param_expr)?;
                     self.unknown(fields, &["elements", "index"]);
-                    Ty::Dependent(DependentType::Indexed { elements, index })
+                    let selected = self.context.select(elements, &index);
+                    DependentType::resolve(self.built(value, selected)?)
                 }
                 "struct_type" => {
                     let name = self.req(value, fields, "name", Self::symbol)?;
@@ -298,7 +318,8 @@ impl Decoder {
                 let ty = Box::new(self.req(value, fields, "type", Self::ty)?);
                 let default = {
                     let field = self.required(value, fields, "default")?;
-                    self.option_value(Some(field)).and_then(|v| self.ct_expr(v))
+                    self.option_value(Some(field))
+                        .and_then(|v| self.param_expr(v))
                 };
                 let callable_default = {
                     let field = self.required(value, fields, "callable_default")?;
@@ -440,6 +461,7 @@ impl Decoder {
             "operand_value" => self.ct_value(inner).map(ConstraintOperand::Value),
             "operand_type" => self.ty(inner).map(ConstraintOperand::Type),
             "operand_pack_length" => self.symbol(inner).map(ConstraintOperand::PackLength),
+            "operand_expr" => self.param_expr(inner).map(ConstraintOperand::Expr),
             other => {
                 self.error(value.span, format!("unknown constraint operand `{other}`"));
                 None
@@ -482,7 +504,7 @@ impl Decoder {
                 }
             },
             ValueKind::Record(tag, fields) if tag == "default_if" => {
-                let condition = self.req(value, fields, "condition", Self::ct_expr)?;
+                let condition = self.req(value, fields, "condition", Self::param_expr)?;
                 let then_value =
                     Box::new(self.req(value, fields, "then_value", Self::callable_default)?);
                 let else_value =
@@ -501,12 +523,45 @@ impl Decoder {
         }
     }
 
-    pub(super) fn ct_expr(&mut self, value: &Value) -> Option<CtExpr> {
+    /// A parameter expression. Every form re-enters the canonicalizing
+    /// constructors, so a parsed expression is canonical whatever order the
+    /// text spelled it in. Schema 1.0's name-only tree is accepted in a 1.0
+    /// artifact and translated through the artifact's declared binders.
+    pub(super) fn param_expr(&mut self, value: &Value) -> Option<ParamExpr> {
         match &value.kind {
             ValueKind::Positional(tag, inner) => match tag.as_str() {
-                "ct_value" => self.ct_value(inner).map(CtExpr::Value),
-                "ct_param" => self.symbol(inner).map(CtExpr::Param),
-                "ct_neg" => Some(CtExpr::Neg(Box::new(self.ct_expr(inner)?))),
+                "param_constant" => {
+                    let constant = self.ct_value(inner)?;
+                    let built = self.context.constant(constant);
+                    self.built(value, built)
+                }
+                "param_type_shape" => self.ty(inner).map(|ty| self.context.type_shape(ty)),
+                "ct_value" => {
+                    self.require_legacy(value, tag)?;
+                    let constant = self.ct_value(inner)?;
+                    let built = self.context.constant(constant);
+                    self.built(value, built)
+                }
+                "ct_param" => {
+                    self.require_legacy(value, tag)?;
+                    let name = self.symbol(inner)?;
+                    match self.legacy_reference(value, &name)? {
+                        LegacyBinder::Typed(reference) => Some(reference),
+                        LegacyBinder::Undeclared => {
+                            self.error(
+                                value.span,
+                                format!("compile-time parameter `{name}` has no declaration"),
+                            );
+                            None
+                        }
+                    }
+                }
+                "ct_neg" => {
+                    self.require_legacy(value, tag)?;
+                    let operand = self.param_expr(inner)?;
+                    let built = self.context.neg(&operand);
+                    self.built(value, built)
+                }
                 other => {
                     self.error(
                         value.span,
@@ -515,32 +570,292 @@ impl Decoder {
                     None
                 }
             },
-            ValueKind::Record(tag, fields) => {
-                let make = match tag.as_str() {
-                    "ct_add" => CtExpr::Add,
-                    "ct_sub" => CtExpr::Sub,
-                    "ct_mul" => CtExpr::Mul,
-                    "ct_floor_div" => CtExpr::FloorDiv,
-                    "ct_mod" => CtExpr::Mod,
-                    "ct_pow" => CtExpr::Pow,
-                    other => {
+            ValueKind::Record(tag, fields) => match tag.as_str() {
+                "param_decl_ref" => {
+                    let owner = self.req(value, fields, "owner", Self::string)?;
+                    let slot = self.req(value, fields, "slot", Self::uint)?;
+                    let name = self.req(value, fields, "name", Self::symbol)?;
+                    let meta = self.req(value, fields, "type", Self::meta_ty)?;
+                    self.unknown(fields, &["owner", "slot", "name", "type"]);
+                    Some(
+                        self.context
+                            .decl_ref(ParamId::new(&owner, slot), &name, meta),
+                    )
+                }
+                "param_index_ref" => {
+                    let depth = self.req(value, fields, "depth", Self::uint32)?;
+                    let index = self.req(value, fields, "index", Self::uint32)?;
+                    let meta = self.req(value, fields, "type", Self::meta_ty)?;
+                    self.unknown(fields, &["depth", "index", "type"]);
+                    Some(self.context.index_ref(depth, index, meta))
+                }
+                "param_expr" => {
+                    let op_value = self.required(value, fields, "op")?;
+                    let op_name = self.atom(op_value)?.to_string();
+                    let Some(op) = ParamOp::from_name(&op_name) else {
+                        self.error(
+                            op_value.span,
+                            format!("unknown parameter operator `{op_name}`"),
+                        );
+                        return None;
+                    };
+                    let meta = self.req(value, fields, "type", Self::meta_ty)?;
+                    let operands_value = self.required(value, fields, "operands")?;
+                    let operands: Vec<ParamExpr> = self
+                        .list(operands_value)
+                        .ok()?
+                        .iter()
+                        .map(|operand| self.param_expr(operand))
+                        .collect::<Option<_>>()?;
+                    self.unknown(fields, &["op", "type", "operands"]);
+                    let built = self.context.op(op, &operands);
+                    let built = self.built(value, built)?;
+                    if *built.meta() != meta {
                         self.error(
                             value.span,
-                            format!("unknown compile-time expression `{other}`"),
+                            format!(
+                                "parameter expression has type `{}`, not the recorded `{meta}`",
+                                built.meta()
+                            ),
                         );
                         return None;
                     }
-                };
-                let left = Box::new(self.req(value, fields, "left", Self::ct_expr)?);
-                let right = Box::new(self.req(value, fields, "right", Self::ct_expr)?);
-                self.unknown(fields, &["left", "right"]);
-                Some(make(left, right))
-            }
+                    Some(built)
+                }
+                "param_identical" => {
+                    let left = self.req(value, fields, "left", Self::param_expr)?;
+                    let right = self.req(value, fields, "right", Self::param_expr)?;
+                    self.unknown(fields, &["left", "right"]);
+                    Some(self.context.identical(&left, &right))
+                }
+                "param_conforms" => {
+                    let subject = self.req(value, fields, "subject", Self::param_expr)?;
+                    let trait_name = self.req(value, fields, "trait", Self::symbol)?;
+                    self.unknown(fields, &["subject", "trait"]);
+                    let built = self.context.conforms(&subject, &trait_name);
+                    self.built(value, built)
+                }
+                "param_trivial" => {
+                    let lifecycle = self.req(value, fields, "lifecycle", Self::lifecycle)?;
+                    let subject = self.req(value, fields, "subject", Self::param_expr)?;
+                    self.unknown(fields, &["lifecycle", "subject"]);
+                    let built = self.context.trivial(lifecycle, &subject);
+                    self.built(value, built)
+                }
+                "param_select" => {
+                    let elements = self.req(value, fields, "elements", |d, v| Some(d.types(v)))?;
+                    let index = self.req(value, fields, "index", Self::param_expr)?;
+                    self.unknown(fields, &["elements", "index"]);
+                    let built = self.context.select(elements, &index);
+                    self.built(value, built)
+                }
+                "param_pack_query" => {
+                    let pack = self.req(value, fields, "pack", Self::symbol)?;
+                    let query = self.req(value, fields, "query", Self::pack_query)?;
+                    self.unknown(fields, &["pack", "query"]);
+                    Some(self.context.pack_query(&pack, query))
+                }
+                // A hole is a boundary error at MIR, never a parsed form.
+                "param_hole" => {
+                    self.error(
+                        value.span,
+                        "an unknown or unbound parameter cannot cross MIR",
+                    );
+                    None
+                }
+                legacy
+                @ ("ct_add" | "ct_sub" | "ct_mul" | "ct_floor_div" | "ct_mod" | "ct_pow") => {
+                    self.require_legacy(value, legacy)?;
+                    let op = match legacy {
+                        "ct_add" => InfixOp::Add,
+                        "ct_sub" => InfixOp::Sub,
+                        "ct_mul" => InfixOp::Mul,
+                        "ct_floor_div" => InfixOp::FloorDiv,
+                        "ct_mod" => InfixOp::Mod,
+                        _ => InfixOp::Pow,
+                    };
+                    let left = self.req(value, fields, "left", Self::param_expr)?;
+                    let right = self.req(value, fields, "right", Self::param_expr)?;
+                    self.unknown(fields, &["left", "right"]);
+                    let built = self.context.infix(op, &left, &right);
+                    self.built(value, built)
+                }
+                other => {
+                    self.error(
+                        value.span,
+                        format!("unknown compile-time expression `{other}`"),
+                    );
+                    None
+                }
+            },
             _ => {
                 self.error(value.span, "expected compile-time expression");
                 None
             }
         }
+    }
+
+    fn pack_query(&mut self, value: &Value) -> Option<PackQuery> {
+        match &value.kind {
+            ValueKind::Atom(atom) if atom == "pack_length" => Some(PackQuery::Length),
+            ValueKind::Positional(tag, inner) => match tag.as_str() {
+                "pack_conforms" => self.symbol(inner).map(PackQuery::Conforms),
+                "pack_contains" => self.param_expr(inner).map(PackQuery::Contains),
+                other => {
+                    self.error(value.span, format!("unknown pack query `{other}`"));
+                    None
+                }
+            },
+            ValueKind::Record(tag, fields) if tag == "pack_predicate" => {
+                let predicate = self.req(value, fields, "predicate", Self::pack_predicate)?;
+                let all = self.req(value, fields, "all", Self::boolean)?;
+                self.unknown(fields, &["predicate", "all"]);
+                Some(PackQuery::Predicate { predicate, all })
+            }
+            _ => {
+                self.error(value.span, "expected pack query");
+                None
+            }
+        }
+    }
+
+    fn meta_ty(&mut self, value: &Value) -> Option<MetaTy> {
+        match &value.kind {
+            ValueKind::Atom(atom) if atom == "meta_type" => Some(MetaTy::Type),
+            ValueKind::Atom(atom) if atom == "meta_reflected" => Some(MetaTy::ReflectedType),
+            ValueKind::Positional(tag, inner) => match tag.as_str() {
+                "meta_value" => self.ty(inner).map(MetaTy::value),
+                "meta_tuple" => self.meta_tys(inner).map(MetaTy::Tuple),
+                "meta_list" => self.meta_tys(inner).map(MetaTy::List),
+                "meta_set" => self.meta_tys(inner).map(MetaTy::Set),
+                "meta_param_list" => self
+                    .meta_ty(inner)
+                    .map(|element| MetaTy::ParamList(Box::new(element))),
+                "meta_dict" => self
+                    .list(inner)
+                    .ok()?
+                    .iter()
+                    .map(|entry| {
+                        let fields = self.record(entry, "meta_entry").ok()?;
+                        let key = self.req(entry, fields, "key", Self::meta_ty)?;
+                        let value = self.req(entry, fields, "value", Self::meta_ty)?;
+                        self.unknown(fields, &["key", "value"]);
+                        Some((key, value))
+                    })
+                    .collect::<Option<_>>()
+                    .map(MetaTy::Dict),
+                other => {
+                    self.error(value.span, format!("unknown meta-type `{other}`"));
+                    None
+                }
+            },
+            _ => {
+                self.error(value.span, "expected meta-type");
+                None
+            }
+        }
+    }
+
+    fn meta_tys(&mut self, value: &Value) -> Option<Vec<MetaTy>> {
+        self.list(value)
+            .ok()?
+            .iter()
+            .map(|meta| self.meta_ty(meta))
+            .collect()
+    }
+
+    /// Report a constructor's rejection (bad arity, operand domain, budget)
+    /// at the text that spelled the expression.
+    fn built(
+        &mut self,
+        value: &Value,
+        built: Result<ParamExpr, mojito_types::param_expr::ParamError>,
+    ) -> Option<ParamExpr> {
+        built
+            .map_err(|error| self.error(value.span, error.to_string()))
+            .ok()
+    }
+
+    /// A schema 1.0 form is an error in a 1.1 artifact.
+    fn require_legacy(&mut self, value: &Value, tag: &str) -> Option<()> {
+        if self.legacy_binders.is_some() {
+            return Some(());
+        }
+        self.error(
+            value.span,
+            format!("`{tag}` is schema 1.0 syntax; schema 1.1 spells a typed `param_*` form"),
+        );
+        None
+    }
+
+    /// What a 1.0 name denotes, or `None` (with a diagnostic) when the
+    /// artifact declares several value parameters of that name with different
+    /// types, since a 1.0 reference carries nothing that chooses between them.
+    fn legacy_reference(&mut self, value: &Value, name: &str) -> Option<LegacyBinder> {
+        let metas = self
+            .legacy_binders
+            .as_ref()
+            .and_then(|binders| binders.get(name.trim_start_matches('*')))
+            .cloned()
+            .unwrap_or_default();
+        match metas.as_slice() {
+            [] => Some(LegacyBinder::Undeclared),
+            [meta] => Some(LegacyBinder::Typed(self.context.decl_ref(
+                ParamId::new(&format!("$mir-1.0:{name}"), 0),
+                name,
+                meta.clone(),
+            ))),
+            _ => {
+                self.error(
+                    value.span,
+                    format!(
+                        "schema 1.0 parameter `{name}` is declared with more than one type;                          re-emit the artifact as schema 1.1"
+                    ),
+                );
+                None
+            }
+        }
+    }
+
+    /// Every value parameter an artifact declares, by name, decoded on a
+    /// scratch decoder so the real pass reports each diagnostic once.
+    pub(super) fn legacy_value_binders(artifact: &Value) -> HashMap<String, Vec<MetaTy>> {
+        fn walk(value: &Value, scratch: &mut Decoder, out: &mut HashMap<String, Vec<MetaTy>>) {
+            match &value.kind {
+                ValueKind::Record(tag, fields) => {
+                    if tag == "value_param"
+                        && let (Ok(name), Ok(ty)) =
+                            (scratch.field(fields, "name"), scratch.field(fields, "type"))
+                        && let (Some(name), Some(ty)) = (scratch.symbol(name), scratch.ty(ty))
+                        && !matches!(ty, Ty::Func { .. } | Ty::GenericFunc { .. })
+                    {
+                        let metas = out
+                            .entry(name.trim_start_matches('*').to_string())
+                            .or_default();
+                        let meta = MetaTy::value(ty);
+                        if !metas.contains(&meta) {
+                            metas.push(meta);
+                        }
+                    }
+                    for field in fields {
+                        walk(&field.value, scratch, out);
+                    }
+                }
+                ValueKind::List(values) => {
+                    for value in values {
+                        walk(value, scratch, out);
+                    }
+                }
+                ValueKind::Positional(_, inner) => walk(inner, scratch, out),
+                ValueKind::Atom(_) | ValueKind::String(_) => {}
+            }
+        }
+        let mut out = HashMap::new();
+        // The scratch decoder reads no 1.0 reference itself: a parameter's
+        // declared type never names another parameter by a bare `ct_param`.
+        let mut scratch = Self::new(false);
+        walk(artifact, &mut scratch, &mut out);
+        out
     }
 
     pub(super) fn ct_values(&mut self, value: &Value) -> Vec<CtValue> {
@@ -564,7 +879,20 @@ impl Decoder {
                 "ct_dtype" => self.dtype(inner).map(CtValue::Dtype),
                 "ct_type" => self.ty(inner).map(|ty| CtValue::Type(Box::new(ty))),
                 "ct_reflected" => self.ty(inner).map(|ty| CtValue::Reflected(Box::new(ty))),
-                "ct_param" => self.symbol(inner).map(CtValue::Param),
+                "ct_expr" => self.param_expr(inner).map(ParamExpr::into_value),
+                "ct_deferred" => self.symbol(inner).map(CtValue::Deferred),
+                // Schema 1.0 spelled both a parameter reference and a
+                // deferred callable-value slot this way; a declared scalar
+                // value parameter is the reference.
+                "ct_param" => {
+                    self.require_legacy(value, tag)?;
+                    let name = self.symbol(inner)?;
+                    self.legacy_reference(value, &name)
+                        .map(|binder| match binder {
+                            LegacyBinder::Typed(reference) => reference.into_value(),
+                            LegacyBinder::Undeclared => CtValue::Deferred(name),
+                        })
+                }
                 other => {
                     self.error(value.span, format!("unknown compile-time value `{other}`"));
                     None
@@ -678,4 +1006,13 @@ impl Decoder {
             }
         }
     }
+}
+
+/// What a schema 1.0 parameter name resolves to.
+enum LegacyBinder {
+    /// The one value parameter the artifact declares under that name.
+    Typed(ParamExpr),
+    /// No value parameter of that name: a deferred slot in value position,
+    /// an error in expression position.
+    Undeclared,
 }

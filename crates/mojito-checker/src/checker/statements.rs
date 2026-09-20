@@ -2090,11 +2090,18 @@ impl Checker {
         let kw_only = effective_keyword_only_index(params, *keyword_only, variadic_idx);
         let required = required_mask(&caller_regular, kw_only)?;
         self.validate_origin_signature(type_params, params, None)?;
-        let mut decls = self.classify_params(type_params)?;
+        let mut decls = self.classify_params(name, type_params)?;
         let mut function_assumptions = HashSet::new();
         let mut erased_origin_constraints = Vec::new();
-        for condition in where_clauses {
-            let constraint = self.compile_where_clause(condition)?;
+        // An arithmetic `where` operand names the declaration's own value
+        // parameters, so their scope is open while the clauses compile.
+        self.push_param_scope(name, &decls);
+        let compiled = where_clauses
+            .iter()
+            .map(|condition| self.compile_where_clause(condition))
+            .collect::<Result<Vec<_>, _>>();
+        self.tparams.pop();
+        for constraint in compiled? {
             let mut facts = Vec::new();
             guaranteed_conformance_atoms(&constraint, &mut facts);
             function_assumptions.extend(facts.into_iter().map(|(parameter, trait_name)| {
@@ -2121,8 +2128,9 @@ impl Checker {
             decls.clone(),
         );
         // Type parameters are in scope while resolving the signature and
-        // checking the body (as bare `T`).
-        self.tparams.push(type_scope(&decls));
+        // checking the body (as bare `T`), and value parameters as the typed
+        // references a dependent parameter expression names (`Buf[n + 1]`).
+        self.push_param_scope(name, &decls);
 
         let signature = (|| {
             let generated = self.generated_declaration.replace(name.contains('$'));
@@ -2375,6 +2383,7 @@ impl Checker {
                 lambda,
             })
         };
+        self.assume_declared_propositions(name, &decls);
         self.assumed_conformances.push(function_assumptions);
         // A parameter typed by a dependent pack projection (`values.Ts[index]`
         // in a `Tuple.consume_elements` handler) is opaque inside the user's
@@ -2836,7 +2845,7 @@ impl Checker {
             // silently discarded (mirrors associated-member declarations).
             self.ct_member_req_from_anno(type_params, annotation)?;
         }
-        let mut decls = self.classify_params(type_params)?;
+        let mut decls = self.classify_params(name, type_params)?;
         for condition in where_clauses {
             let constraint = self.compile_where_clause(condition)?;
             let Some(last) = decls.last_mut() else {

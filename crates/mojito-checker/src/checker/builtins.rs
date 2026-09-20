@@ -643,7 +643,9 @@ impl Checker {
     }
 
     pub(super) fn len_result_for_type(&self, ty: &Ty) -> Result<Option<Ty>, TypeError> {
-        if let Ty::Dependent(DependentType::Indexed { elements, .. }) = ty {
+        if let Ty::Dependent(dependent) = ty
+            && let Some((elements, _)) = dependent.selection()
+        {
             for element in elements {
                 match self.len_result_for_type(element)? {
                     Some(Ty::Int) => {}

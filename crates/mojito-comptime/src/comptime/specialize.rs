@@ -220,7 +220,7 @@ impl Elab<'_> {
                 else {
                     continue;
                 };
-                if mono.instances_done.insert(mangle(template, &values)) {
+                if mono.instances_done.insert(mangle(template, &values)?) {
                     mono.instance_jobs.push_back((template.clone(), values));
                 }
             }
@@ -453,7 +453,9 @@ impl Elab<'_> {
                 .as_deref()
                 .is_some_and(|source| source.contains(NESTED_MARKER_INFIX))
             {
-                let output_name = mangle(callee, &vals);
+                let Ok(output_name) = mangle(callee, &vals) else {
+                    continue;
+                };
                 if mono.queue_specialization(&output_name, decl) {
                     mono.queue.push_back(Job {
                         orig: callee.to_string(),
@@ -532,7 +534,7 @@ impl Elab<'_> {
         // reach a sibling's clone. A body that fails to walk is dropped here,
         // after `generate_instance_clones` has returned, so the count is taken
         // on what survived.
-        let constructor_clone = mangle("__init__", values);
+        let constructor_clone = mangle("__init__", values)?;
         if kept
             .iter()
             .filter(|clone| clone.name == constructor_clone)
@@ -707,7 +709,8 @@ impl Elab<'_> {
             self.burn().map_err(|_| {
                 ComptimeError::NotComptime(format!(
                     "specialization quota exceeded while instantiating '{}' requested at {}; possible unbounded generic recursion",
-                    mangle(&job.orig, &job.vals), job.site
+                    mangle(&job.orig, &job.vals).unwrap_or_else(|_| job.orig.clone()),
+                    job.site
                 ))
             })?;
             let template = self.selected_declaration(&job.orig, job.decl);
@@ -1397,7 +1400,7 @@ impl Elab<'_> {
             specialized_methods.push(method);
         }
         specialized_methods.extend(simd_clones);
-        let mangled = mangle(orig, vals);
+        let mangled = mangle(orig, vals)?;
         let mut spec = mk(
             StmtKind::Struct {
                 name: mangled.clone(),
@@ -1888,7 +1891,7 @@ impl Elab<'_> {
                 .iter()
                 .any(|parameter| method_parameter_is_baked(parameter, &method.type_params));
             if specializable_method {
-                let owner = mangle(orig, vals);
+                let owner = mangle(orig, vals)?;
                 let mut minted = HashSet::new();
                 // The request names the selected overload's regular
                 // parameters (a `*args` collector is not among them).
@@ -1917,7 +1920,7 @@ impl Elab<'_> {
                     else {
                         continue;
                     };
-                    let instance = mangle(&method.name, &values);
+                    let instance = mangle(&method.name, &values)?;
                     if !minted.insert(instance.clone()) {
                         continue;
                     }
@@ -1980,7 +1983,7 @@ impl Elab<'_> {
                 template.span,
             );
         }
-        let mangled = mangle(orig, vals);
+        let mangled = mangle(orig, vals)?;
         let mut spec = mk(
             StmtKind::Struct {
                 name: mangled.clone(),
@@ -2183,7 +2186,9 @@ impl Elab<'_> {
                     },
                     TyArg::Val(value),
                 ) => {
-                    if matches!(value, CtValue::Param(_)) || !ct_value_has_type(value, ty) {
+                    if matches!(value, CtValue::Expr(_) | CtValue::Deferred(_))
+                        || !ct_value_has_type(value, ty)
+                    {
                         return None;
                     }
                     values.push(value.clone());
@@ -2361,7 +2366,7 @@ impl Elab<'_> {
         // methods (`b.kind[Bool]()` on `Box[Int]`) mint per-call clones with
         // the instance's values baked before the call's
         // (`kind$y3:Int$y4:Bool`); the request owner is the instance key.
-        let instance_key = mangle(name, values);
+        let instance_key = mangle(name, values)?;
         let per_call_requests = self
             .method_requests
             .get(&instance_key)
@@ -2408,7 +2413,7 @@ impl Elab<'_> {
             // clones under the name it is registered and dispatched by, so
             // `__init__(out self, *, copy: Self)` clones as
             // `__copyinit__$y3:Int`.
-            let clone_name = mangle(lifecycle, values);
+            let clone_name = mangle(lifecycle, values)?;
             // A `where` clause that is false (or cannot be evaluated) for this
             // instance leaves the method uncloned: the call reports the
             // template's availability failure as today.
@@ -2549,7 +2554,9 @@ impl Elab<'_> {
             };
             let mut values = base_values.to_vec();
             values.extend(call_values);
-            let clone_name = mangle(&method.name, &values);
+            let Ok(clone_name) = mangle(&method.name, &values) else {
+                continue;
+            };
             if !minted.insert(clone_name.clone()) {
                 continue;
             }
@@ -3032,9 +3039,9 @@ fn owed_instance_clones(
             method.self_ty.is_none()
                 && stub_reaching.contains(&super::method_owner(template, &method.name))
         })
-        .map(|method| {
+        .filter_map(|method| {
             let lifecycle = mojito_symbol::symbol::lifecycle_method_name(method);
-            (method.name.clone(), mangle(lifecycle, values))
+            Some((method.name.clone(), mangle(lifecycle, values).ok()?))
         })
         .collect()
 }

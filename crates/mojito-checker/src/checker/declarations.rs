@@ -456,13 +456,31 @@ impl Checker {
     /// all name traits (built-in or user), giving a **type** parameter. The
     /// parser guarantees each parameter carries at least one `: bound` (Mojo has
     /// no unconstrained parameters).
+    /// `owner` names the declaration whose binders these are
+    /// ([`binder_owner`]/[`method_binder_owner`]); a default may reference the
+    /// value parameters declared before it.
     pub(super) fn classify_params(
         &mut self,
+        owner: &str,
+        tps: &[mojito_ast::ast::TypeParam],
+    ) -> Result<Vec<ParamDecl>, TypeError> {
+        self.push_param_scope(owner, &[]);
+        let classified = self.classify_params_in_scope(owner, tps);
+        self.tparams.pop();
+        classified
+    }
+
+    fn classify_params_in_scope(
+        &mut self,
+        owner: &str,
         tps: &[mojito_ast::ast::TypeParam],
     ) -> Result<Vec<ParamDecl>, TypeError> {
         let mut decls = Vec::new();
         let mut seen = HashSet::new();
         for tp in tps {
+            if let Some(scope) = self.vparams.last_mut() {
+                *scope = value_scope(owner, &decls);
+            }
             if !seen.insert(tp.name.clone()) {
                 return Err(TypeError::Redeclaration(tp.name.clone()));
             }
@@ -607,7 +625,7 @@ impl Checker {
         // (`F: def(T) -> T`), so lower them only after the complete preliminary
         // parameter scope exists. An explicit `thin`/`capturing[...]` spelling is
         // instead a compile-time callable-value parameter in current Mojo.
-        self.tparams.push(type_scope(&decls));
+        self.push_param_scope(owner, &decls);
         let result = (|| {
             for source in tps {
                 let Some(callable) = &source.callable_bound else {
@@ -693,7 +711,7 @@ impl Checker {
                 "anonymous callable lowering received a non-function type".to_string(),
             ));
         };
-        let mut decls = self.classify_params(type_params)?;
+        let mut decls = self.classify_params("$callable", type_params)?;
         // A trailing `where` clause constrains the contract's own `def[...]`
         // parameters; with none declared there is nothing to constrain.
         if !where_clauses.is_empty() && decls.is_empty() {
@@ -701,7 +719,7 @@ impl Checker {
                 "a function-type 'where' clause requires a def[...] parameter list".to_string(),
             ));
         }
-        self.tparams.push(type_scope(&decls));
+        self.push_param_scope("$callable", &decls);
 
         let mut contextual_callable = callable.clone();
         let SourceType::Func {
@@ -934,17 +952,19 @@ impl Checker {
         overload_index: usize,
     ) -> Result<(), TypeError> {
         self.parametric_write_frames.borrow_mut().push(Vec::new());
-        let decls = self.classify_params(&m.type_params)?;
+        let decls =
+            self.classify_params(&method_binder_owner(declaration, &m.name), &m.type_params)?;
         let saved_site = self
             .method_site
             .replace((module.cloned(), declaration.to_string()));
-        self.tparams.push(type_scope(&decls));
+        self.push_param_scope(&method_binder_owner(declaration, &m.name), &decls);
         let saved = self.enclosing_type_params.clone();
         let saved_struct_count = self.enclosing_struct_type_params.replace(saved.len());
         self.enclosing_type_params.extend(m.type_params.clone());
         let assumptions = self.method_where_assumptions(m);
         let result = match assumptions {
             Ok(assumptions) => {
+                self.assume_method_propositions(declaration, m, &decls);
                 self.assumed_conformances.push(assumptions);
                 let result = (|| {
                     for param in 0..m.params.len() {
@@ -1234,7 +1254,7 @@ impl Checker {
         // Compile-time callable/scalar value parameters occupy named runtime
         // slots in a method body, just as they do in a generic free function.
         // Type parameters remain type-only and are available through `tparams`.
-        let method_decls = self.classify_params(&m.type_params)?;
+        let method_decls = self.classify_params(&method_owner(self_ty, &m.name), &m.type_params)?;
         for declaration in &method_decls {
             if let ParamDecl::Value {
                 name, ty, variadic, ..
@@ -2339,8 +2359,15 @@ impl Checker {
             &arg_tys,
             &partitioned.explicit_origins,
         )?;
+        // A field type names the struct's own value parameters; the resolved
+        // application binds them beside its type parameters.
+        let bindings = AssocBindings {
+            types: subst,
+            values: solved_value_bindings(&decls, &tyargs),
+            origins: HashMap::new(),
+        };
         for (i, (aty, fty)) in arg_tys.iter().zip(&field_tys).enumerate() {
-            let expected = origin_bindings.substitute(&substitute(fty, &subst));
+            let expected = origin_bindings.substitute(&substitute_assoc(fty, &bindings));
             if Self::storage_value_coerces(aty, &expected) {
                 self.record_literal_materializations(&args[i], aty, &expected)?;
             } else if !self.record_constructor_conversion(&args[i], aty, &expected)? {
@@ -2539,14 +2566,14 @@ impl Checker {
                     // The VM evaluates the symbolic default after reifying all
                     // preceding scalar/callable parameters.  Generic identity
                     // records only that this runtime value occupies the slot.
-                    TyArg::Val(CtValue::Param(name.clone()))
+                    TyArg::Val(CtValue::Deferred(name.clone()))
                 } else if let ParamDecl::Value {
                     default: Some(value),
                     ty,
                     ..
                 } = decl
                 {
-                    let value = value.evaluate(&value_environment).ok_or_else(|| {
+                    let value = value.evaluate_named(&value_environment).map_err(|_| {
                         TypeError::NotComptime(format!("default for parameter '{}'", decl.name()))
                     })?;
                     let rendered = value.to_string();
@@ -2665,7 +2692,7 @@ impl Checker {
                             .insert(pname.trim_start_matches('*').to_string(), value.clone());
                         tyargs.push(TyArg::Val(value.clone()));
                     } else if let Some(value) = default {
-                        let value = value.evaluate(&value_environment).ok_or_else(|| {
+                        let value = value.evaluate_named(&value_environment).map_err(|_| {
                             TypeError::NotComptime(format!("default for parameter '{pname}'"))
                         })?;
                         let rendered = value.to_string();
@@ -2681,7 +2708,7 @@ impl Checker {
                             .insert(pname.trim_start_matches('*').to_string(), value.clone());
                         tyargs.push(TyArg::Val(value));
                     } else if callable_default.is_some() {
-                        tyargs.push(TyArg::Val(CtValue::Param(pname.clone())));
+                        tyargs.push(TyArg::Val(CtValue::Deferred(pname.clone())));
                     } else {
                         return Err(TypeError::CannotInferTypeParam {
                             name: name.to_string(),

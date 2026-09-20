@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::param_expr::{ParamBindings, ParamContext};
 
 /// Compatibility for verification purposes: either direction of the checker's
 /// coercion predicate. Lowering emits checker-approved conversions before
@@ -38,6 +39,12 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
         // unqualified `def(...)` value) has already run, and comptime callable
         // bounds legitimately ground `Capturing` values against `Default`
         // contracts here.
+        return false;
+    }
+    // Two residual sizes over the same binders are one type only when they
+    // are one canonical expression: a parameter occurring in both does not
+    // make `Buf[n + 1]` and `Buf[n + 2]` interchangeable.
+    if residual_arguments_conflict(found, expected) {
         return false;
     }
     if contains_type_param(found) || contains_type_param(expected) {
@@ -221,50 +228,49 @@ pub(super) fn instantiate_checked_type(
                 bounds: bounds.clone(),
                 callable_bound: callable_bound.clone(),
             }),
-        Ty::Dependent(DependentType::Indexed { elements, index }) => {
-            let elements = elements
-                .iter()
-                .map(|element| {
-                    instantiate_checked_type(element, type_arguments, value_arguments, bound_values)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let Some(value) = index.evaluate(value_arguments) else {
+        Ty::Dependent(dependent) => {
+            let context = ParamContext::detached();
+            let bindings = ParamBindings::from_named_values(&context, value_arguments);
+            let expr = match dependent.selection() {
+                Some((elements, index)) => {
+                    let elements = elements
+                        .iter()
+                        .map(|element| {
+                            instantiate_checked_type(
+                                element,
+                                type_arguments,
+                                value_arguments,
+                                bound_values,
+                            )
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    context
+                        .replace(index, &bindings)
+                        .and_then(|index| context.fold(&index))
+                        .and_then(|index| context.select(elements, &index))
+                }
+                None => context.replace(dependent.expr(), &bindings),
+            }
+            .map_err(|error| error.to_string())?;
+            let instantiated = DependentType::resolve(expr);
+            if let Ty::Dependent(residual) = &instantiated {
                 let mut referenced = HashSet::new();
-                index.referenced_parameters(&mut referenced);
-                if !referenced.is_empty()
-                    && referenced.iter().all(|name| bound_values.contains(name))
-                {
-                    return Ok(Ty::Dependent(DependentType::Indexed {
-                        elements,
-                        index: index.clone(),
-                    }));
+                residual.expr().referenced_parameters(&mut referenced);
+                if referenced.is_empty() {
+                    return Err(
+                        "dependent index did not evaluate to a compile-time value".to_string()
+                    );
                 }
                 let mut unbound: Vec<_> = referenced.difference(bound_values).cloned().collect();
                 unbound.sort();
-                return Err(if unbound.is_empty() {
-                    "dependent index did not evaluate to a compile-time value".to_string()
-                } else {
-                    format!(
+                if !unbound.is_empty() {
+                    return Err(format!(
                         "dependent index references unsubstituted parameter(s): {}",
                         unbound.join(", ")
-                    )
-                });
-            };
-            let index_value = match value {
-                CtValue::Int(value) => Some(value),
-                CtValue::UInt(value) => i64::try_from(value).ok(),
-                CtValue::IntLiteral(value) => value.to_i64(),
-                _ => None,
+                    ));
+                }
             }
-            .ok_or_else(|| "dependent index is not an Int".to_string())?;
-            let position = usize::try_from(index_value)
-                .map_err(|_| format!("dependent index {index_value} is negative"))?;
-            elements.get(position).cloned().ok_or_else(|| {
-                format!(
-                    "dependent index {index_value} is out of range for {} element(s)",
-                    elements.len()
-                )
-            })?
+            instantiated
         }
         Ty::Struct(name, arguments) => Ty::Struct(
             name.clone(),
@@ -275,7 +281,16 @@ pub(super) fn instantiate_checked_type(
                         instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
                             .map(TyArg::Ty)
                     }
-                    TyArg::Val(value) => Ok(TyArg::Val(value.clone())),
+                    // A residual value argument binds through the same
+                    // replacement the checker used, so an erased instance
+                    // compares canonical expressions, not spellings.
+                    TyArg::Val(value) => {
+                        let context = ParamContext::detached();
+                        let bindings = ParamBindings::from_named_values(&context, value_arguments);
+                        mojito_types::types::replace_value_parameters(&context, value, &bindings)
+                            .map(TyArg::Val)
+                            .map_err(|error| error.to_string())
+                    }
                     TyArg::Origin(origin) => Ok(TyArg::Origin(origin.clone())),
                 })
                 .collect::<Result<Vec<_>, String>>()?,
@@ -434,6 +449,29 @@ pub(super) fn instantiate_checked_type(
     })
 }
 
+/// Whether two instantiations of one struct hold, in the same slot, distinct
+/// residual expressions over the same set of parameters. An instance binding
+/// maps both alike, so they can never become equal; residuals over different
+/// binders (a caller's `n + 1` against a callee's `m + 1`) are not judged.
+pub(super) fn residual_arguments_conflict(found: &Ty, expected: &Ty) -> bool {
+    use mojito_types::ct::CtValue;
+    use mojito_types::types::TyArg;
+    let (Ty::Struct(found_name, found_args), Ty::Struct(expected_name, expected_args)) =
+        (found, expected)
+    else {
+        return false;
+    };
+    found_name == expected_name
+        && found_args.len() == expected_args.len()
+        && found_args.iter().zip(expected_args).any(|pair| match pair {
+            (TyArg::Val(CtValue::Expr(left)), TyArg::Val(CtValue::Expr(right))) => {
+                left != right && left.free_parameters() == right.free_parameters()
+            }
+            (TyArg::Ty(left), TyArg::Ty(right)) => residual_arguments_conflict(left, right),
+            _ => false,
+        })
+}
+
 pub(super) fn contains_type_param(ty: &Ty) -> bool {
     match ty {
         Ty::Param { .. } | Ty::Assoc { .. } | Ty::Dependent(_) => true,
@@ -447,7 +485,10 @@ pub(super) fn contains_type_param(ty: &Ty) -> bool {
             // A symbolic value argument (`Counter[Self.length]` in an erased
             // method's signature) is an ABI slot the instance binds.
             mojito_types::types::TyArg::Val(value) => {
-                matches!(value, mojito_types::ct::CtValue::Param(_))
+                matches!(
+                    value,
+                    mojito_types::ct::CtValue::Expr(_) | mojito_types::ct::CtValue::Deferred(_)
+                )
             }
             mojito_types::types::TyArg::Origin(_) => false,
         }),
@@ -474,5 +515,80 @@ pub(super) fn contains_type_param(ty: &Ty) -> bool {
                 || error.as_deref().is_some_and(contains_type_param)
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mojito_ast::ast::InfixOp;
+    use mojito_types::ct::CtValue;
+    use mojito_types::param_expr::{MetaTy, ParamExpr, ParamId};
+    use mojito_types::types::TyArg;
+
+    fn sized(size: ParamExpr) -> Ty {
+        Ty::Struct("Buf".into(), vec![TyArg::Val(size.into_value())])
+    }
+
+    fn plus(context: &ParamContext, parameter: &ParamExpr, offset: i64) -> ParamExpr {
+        context
+            .infix(
+                InfixOp::Add,
+                parameter,
+                &context
+                    .constant(CtValue::Int(offset))
+                    .expect("an Int is a constant"),
+            )
+            .expect("Int + Int builds")
+    }
+
+    /// A parameter occurring on both sides is not a wildcard: two residual
+    /// sizes over the same binder are compatible only as one canonical node.
+    #[test]
+    fn distinct_residual_sizes_are_not_compatible() {
+        let context = ParamContext::new();
+        let n = context.decl_ref(ParamId::new("f", 0), "n", MetaTy::int());
+        let m = context.decl_ref(ParamId::new("g", 0), "m", MetaTy::int());
+        assert!(types_compatible(
+            &sized(plus(&context, &n, 1)),
+            &sized(plus(&context, &n, 1))
+        ));
+        assert!(!types_compatible(
+            &sized(plus(&context, &n, 1)),
+            &sized(plus(&context, &n, 2))
+        ));
+        // Residuals over different binders are an instance binding's to
+        // relate, so the verifier does not judge them.
+        assert!(types_compatible(
+            &sized(plus(&context, &n, 1)),
+            &sized(plus(&context, &m, 1))
+        ));
+        // A bound residual re-folds and then compares as a constant.
+        let bound = instantiate_checked_type(
+            &sized(plus(&context, &n, 1)),
+            &HashMap::new(),
+            &HashMap::from([("n".to_string(), CtValue::Int(3))]),
+            &HashSet::new(),
+        )
+        .expect("instantiation");
+        assert_eq!(
+            bound,
+            Ty::Struct("Buf".into(), vec![TyArg::Val(CtValue::Int(4))])
+        );
+    }
+
+    #[test]
+    fn signature_slots_and_holes_are_checked_at_the_mir_boundary() {
+        let context = ParamContext::new();
+        let dangling = sized(context.index_ref(0, 0, MetaTy::int()));
+        assert!(
+            super::super::calls::validate_dependent_bindings(&dangling)
+                .is_err_and(|finding| finding.contains("names no enclosing binder"))
+        );
+        let hole = sized(context.hole(mojito_types::param_expr::HoleKind::Unbound, MetaTy::int()));
+        assert!(
+            super::super::calls::validate_dependent_bindings(&hole)
+                .is_err_and(|finding| finding.contains("cannot cross into MIR"))
+        );
     }
 }

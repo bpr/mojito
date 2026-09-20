@@ -44,7 +44,8 @@ pub use mojito_symbol::symbol::{
 
 use mojito_ast::call::{CallVariadics, effective_keyword_only_index, match_call_slots};
 use mojito_common::token::{SourceSpan, Span};
-use mojito_types::ct::{CtExpr, CtLane, CtValue};
+use mojito_types::ct::{CtLane, CtValue};
+use mojito_types::param_expr::{ParamContext, ParamError, ParamExpr};
 use mojito_types::types::{ParamDecl, Ty, TyArg, list_type, tuple_type};
 use mojito_vm::backend::VmBackend;
 use mojito_vm::runtime::{SimdLanes, Value};
@@ -351,8 +352,11 @@ pub fn tuple_materialized_callables(
                 }
             }
             Ty::Ref(reference) => collect(&reference.referent, output),
-            Ty::Dependent(mojito_types::types::DependentType::Indexed { elements, .. }) => {
-                for element in elements {
+            Ty::Dependent(dependent) => {
+                for element in dependent
+                    .selection()
+                    .map_or(&[][..], |(elements, _)| elements)
+                {
                     collect(element, output);
                 }
             }
@@ -476,6 +480,21 @@ pub enum ComptimeError {
     UnqualifiedStructParam(String),
     /// The compile-time step/iteration quota was exceeded (a likely infinite loop).
     QuotaExceeded,
+}
+
+impl From<mojito_symbol::symbol::NonConstantSpecialization> for ComptimeError {
+    fn from(error: mojito_symbol::symbol::NonConstantSpecialization) -> Self {
+        Self::NotComptime(error.to_string())
+    }
+}
+
+impl From<ParamError> for ComptimeError {
+    fn from(error: ParamError) -> Self {
+        match error {
+            ParamError::Arithmetic(message) => Self::BadArithmetic(message),
+            other => Self::NotComptime(other.to_string()),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -1198,7 +1217,9 @@ fn collect_reference_origin_parameters(
             }
             Some(())
         }
-        Ty::Dependent(mojito_types::types::DependentType::Indexed { elements, .. }) => elements
+        Ty::Dependent(dependent) => dependent
+            .selection()
+            .map_or(&[][..], |(elements, _)| elements)
             .iter()
             .try_for_each(|element| collect_reference_origin_parameters(element, origins)),
         _ => Some(()),
@@ -1295,30 +1316,51 @@ fn literal_ct_value(expr: &Expr) -> Option<CtValue> {
     }
 }
 
-fn ct_expr_from_ast(expr: &Expr) -> Option<CtExpr> {
-    let pair = |left: &Expr, right: &Expr| {
-        Some((
-            Box::new(ct_expr_from_ast(left)?),
-            Box::new(ct_expr_from_ast(right)?),
-        ))
-    };
-    Some(match &expr.kind {
-        ExprKind::Identifier(name) => CtExpr::Param(name.clone()),
-        ExprKind::Prefix(PrefixOp::Neg, value) => CtExpr::Neg(Box::new(ct_expr_from_ast(value)?)),
-        ExprKind::Infix(op, left, right) => {
-            let (left, right) = pair(left, right)?;
-            match op {
-                InfixOp::Add => CtExpr::Add(left, right),
-                InfixOp::Sub => CtExpr::Sub(left, right),
-                InfixOp::Mul => CtExpr::Mul(left, right),
-                InfixOp::FloorDiv => CtExpr::FloorDiv(left, right),
-                InfixOp::Mod => CtExpr::Mod(left, right),
-                InfixOp::Pow => CtExpr::Pow(left, right),
+/// A value parameter's default as declaration metadata: literals, the
+/// sibling value parameters declared before it, and integer arithmetic over
+/// them, built through the shared typed constructors. The elaborator itself
+/// evaluates a default from its source expression, so `None` here only means
+/// the metadata carries no symbolic form.
+fn ct_expr_from_ast(expr: &Expr, siblings: &[TypeParam]) -> Option<ParamExpr> {
+    let context = ParamContext::detached();
+    match &expr.kind {
+        ExprKind::Identifier(name) => {
+            let (slot, sibling) = siblings
+                .iter()
+                .enumerate()
+                .find(|(_, sibling)| sibling.name == *name)?;
+            let ty = match (&sibling.value_type, sibling.bounds.as_slice()) {
+                (Some(source), _) => ct_param_source_type(source)?,
+                (None, [only]) => ct_value_param_type(only)?,
                 _ => return None,
-            }
+            };
+            Some(context.decl_ref(
+                mojito_types::param_expr::ParamId::new("$elaborated", slot),
+                name,
+                mojito_types::param_expr::MetaTy::value(ty),
+            ))
         }
-        _ => CtExpr::Value(literal_ct_value(expr)?),
-    })
+        ExprKind::Prefix(PrefixOp::Neg, value) => {
+            context.neg(&ct_expr_from_ast(value, siblings)?).ok()
+        }
+        ExprKind::Infix(
+            op @ (InfixOp::Add
+            | InfixOp::Sub
+            | InfixOp::Mul
+            | InfixOp::FloorDiv
+            | InfixOp::Mod
+            | InfixOp::Pow),
+            left,
+            right,
+        ) => context
+            .infix(
+                *op,
+                &ct_expr_from_ast(left, siblings)?,
+                &ct_expr_from_ast(right, siblings)?,
+            )
+            .ok(),
+        _ => context.constant(literal_ct_value(expr)?).ok(),
+    }
 }
 
 fn ct_param_source_type(source: &Type) -> Option<Ty> {
@@ -1493,7 +1535,7 @@ fn ct_to_vm(value: &CtValue) -> Result<Value, ComptimeError> {
             name: name.clone(),
             fields: fields
                 .iter()
-                .map(|(field, value)| Ok((field.clone(), ct_to_vm(value)?)))
+                .map(|(field, value)| Ok::<_, ComptimeError>((field.clone(), ct_to_vm(value)?)))
                 .collect::<Result<Vec<_>, _>>()?,
             value_params: Vec::new(),
         }),
@@ -1542,7 +1584,7 @@ fn ct_to_vm(value: &CtValue) -> Result<Value, ComptimeError> {
             })
         }
         CtValue::Dtype(dtype) => Ok(Value::Dtype(*dtype)),
-        CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Param(_) => {
+        CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Expr(_) | CtValue::Deferred(_) => {
             Err(ComptimeError::NotComptime(
                 "type-valued or symbolic values cannot cross into VM CTFE".to_string(),
             ))
@@ -2557,60 +2599,6 @@ struct SpecRequest<'a> {
     consts: &'a HashMap<String, CtValue>,
     request_site: &'a str,
     forwarded_pack_types: Option<&'a [Ty]>,
-}
-
-/// A compile-time comparison: numbers by exact value, and `DType`s by
-/// equality only.
-fn compare_numeric_values(
-    op: InfixOp,
-    left: &CtValue,
-    right: &CtValue,
-) -> Result<bool, ComptimeError> {
-    use InfixOp::{Eq, Ge, Gt, Le, Lt, Ne};
-
-    if let (CtValue::Dtype(left), CtValue::Dtype(right)) = (left, right) {
-        return match op {
-            Eq => Ok(left == right),
-            Ne => Ok(left != right),
-            _ => Err(ComptimeError::NotComptime(
-                "'DType' supports only '==' and '!=' comparisons".to_string(),
-            )),
-        };
-    }
-
-    let exact = |value: &CtValue| match value {
-        CtValue::Int(value) => Some(mojito_common::literal::FloatLiteral::from_int(
-            &mojito_common::literal::IntLiteral::from(*value),
-        )),
-        CtValue::UInt(value) => Some(mojito_common::literal::FloatLiteral::from_int(
-            &mojito_common::literal::IntLiteral::from(*value),
-        )),
-        CtValue::Float(bits) => {
-            mojito_common::literal::FloatLiteral::from_f64(f64::from_bits(*bits))
-        }
-        CtValue::IntLiteral(value) => Some(mojito_common::literal::FloatLiteral::from_int(value)),
-        CtValue::FloatLiteral(value) => Some(value.clone()),
-        _ => None,
-    };
-    let (Some(left), Some(right)) = (exact(left), exact(right)) else {
-        return Err(ComptimeError::NotComptime(
-            "numeric comparison expects numeric operands".to_string(),
-        ));
-    };
-    let ordering = left.as_rational().cmp(right.as_rational());
-    Ok(match op {
-        Eq => ordering.is_eq(),
-        Ne => !ordering.is_eq(),
-        Lt => ordering.is_lt(),
-        Gt => ordering.is_gt(),
-        Le => !ordering.is_gt(),
-        Ge => !ordering.is_lt(),
-        _ => {
-            return Err(ComptimeError::NotComptime(
-                "not a comparison operator".to_string(),
-            ));
-        }
-    })
 }
 
 fn lit_result(val: &CtValue, span: Span) -> Result<Expr, ComptimeError> {

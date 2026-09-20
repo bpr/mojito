@@ -6,11 +6,12 @@ use mojito_checked::checked::{
     CheckedCallArgument, CheckedCallArgumentSource, CheckedConst, CheckedIteratorCall,
     CheckedResultAdapter,
 };
-use mojito_types::ct::{CtExpr, CtValue};
+use mojito_types::ct::CtValue;
 use mojito_types::origin::{
     CallableEnvironment, CaptureAccess, CaptureOriginSet, Mutability, Origin, OriginSeg,
     PointerOrigin, RefSig, RefTy, SigMutability, SigOrigin,
 };
+use mojito_types::param_expr::{MetaTy, PackQuery, ParamExpr, ParamKind};
 use mojito_types::types::{
     CallableDefault, ConstraintOperand, DependentType, GenericConstraint, PackPredicateRef,
     ParamDecl, TrivialLifecycle, Ty, TyArg,
@@ -1505,13 +1506,9 @@ fn ty_value(ty: &Ty) -> String {
                 ("arguments", list(args.iter().map(ty_arg))),
             ],
         ),
-        Ty::Dependent(DependentType::Indexed { elements, index }) => record(
-            "dependent_index",
-            &[
-                ("elements", list(elements.iter().map(ty_value))),
-                ("index", ct_expr(index)),
-            ],
-        ),
+        Ty::Dependent(DependentType::Parameter(expr)) => {
+            positional("dependent_parameter", &param_expr(expr))
+        }
         Ty::Struct(name, args) => record(
             "struct_type",
             &[
@@ -1650,7 +1647,7 @@ fn param_decl(value: &ParamDecl) -> String {
             &[
                 ("name", symbol(name)),
                 ("type", ty_value(ty)),
-                ("default", option(default.as_ref().map(ct_expr))),
+                ("default", option(default.as_ref().map(param_expr))),
                 (
                     "callable_default",
                     option(callable_default.as_ref().map(callable_default_value)),
@@ -1742,6 +1739,7 @@ fn constraint_operand(value: &ConstraintOperand) -> String {
         ConstraintOperand::Value(value) => positional("operand_value", &ct_value(value)),
         ConstraintOperand::Type(value) => positional("operand_type", &ty_value(value)),
         ConstraintOperand::PackLength(value) => positional("operand_pack_length", &symbol(value)),
+        ConstraintOperand::Expr(value) => positional("operand_expr", &param_expr(value)),
     }
 }
 
@@ -1771,7 +1769,7 @@ fn callable_default_value(value: &CallableDefault) -> String {
         } => record(
             "default_if",
             &[
-                ("condition", ct_expr(condition)),
+                ("condition", param_expr(condition)),
                 ("then_value", callable_default_value(then_value)),
                 ("else_value", callable_default_value(else_value)),
             ],
@@ -1806,22 +1804,121 @@ fn checked_const(value: &CheckedConst) -> String {
         ),
     }
 }
-fn ct_expr(value: &CtExpr) -> String {
-    match value {
-        CtExpr::Value(v) => positional("ct_value", &ct_value(v)),
-        CtExpr::Param(v) => positional("ct_param", &symbol(v)),
-        CtExpr::Neg(v) => positional("ct_neg", &ct_expr(v)),
-        CtExpr::Add(a, b) => binary("ct_add", a, b),
-        CtExpr::Sub(a, b) => binary("ct_sub", a, b),
-        CtExpr::Mul(a, b) => binary("ct_mul", a, b),
-        CtExpr::FloorDiv(a, b) => binary("ct_floor_div", a, b),
-        CtExpr::Mod(a, b) => binary("ct_mod", a, b),
-        CtExpr::Pow(a, b) => binary("ct_pow", a, b),
+/// A parameter expression in schema 1.1's typed structural form. Operands
+/// print in canonical order, references by owner symbol and slot (or by
+/// signature depth and index); no address or process-local key is written.
+fn param_expr(value: &ParamExpr) -> String {
+    let meta = ("type", meta_ty(value.meta()));
+    match value.kind() {
+        ParamKind::Constant(constant) => positional("param_constant", &ct_value(constant)),
+        ParamKind::DeclRef(reference) => record(
+            "param_decl_ref",
+            &[
+                ("owner", quote(&reference.id.owner)),
+                ("slot", reference.id.slot.to_string()),
+                ("name", symbol(&reference.name)),
+                meta,
+            ],
+        ),
+        ParamKind::IndexRef { depth, index } => record(
+            "param_index_ref",
+            &[
+                ("depth", depth.to_string()),
+                ("index", index.to_string()),
+                meta,
+            ],
+        ),
+        ParamKind::Op { op, operands } => record(
+            "param_expr",
+            &[
+                ("op", op.name().into()),
+                meta,
+                ("operands", list(operands.iter().map(param_expr))),
+            ],
+        ),
+        ParamKind::Identical(left, right) => record(
+            "param_identical",
+            &[("left", param_expr(left)), ("right", param_expr(right))],
+        ),
+        ParamKind::Conforms {
+            subject,
+            trait_name,
+        } => record(
+            "param_conforms",
+            &[
+                ("subject", param_expr(subject)),
+                ("trait", symbol(trait_name)),
+            ],
+        ),
+        ParamKind::Trivial { lifecycle, subject } => record(
+            "param_trivial",
+            &[
+                ("lifecycle", self::lifecycle(*lifecycle).into()),
+                ("subject", param_expr(subject)),
+            ],
+        ),
+        ParamKind::TypeShape(ty) => positional("param_type_shape", &ty_value(ty)),
+        ParamKind::Select { elements, index } => record(
+            "param_select",
+            &[
+                ("elements", list(elements.iter().map(ty_value))),
+                ("index", param_expr(index)),
+            ],
+        ),
+        ParamKind::PackQuery { pack, query } => record(
+            "param_pack_query",
+            &[("pack", symbol(pack)), ("query", pack_query(query))],
+        ),
+        // A hole never crosses into MIR; `schema_findings` reports it before
+        // printing, and the token keeps the text honest if it is reached.
+        ParamKind::Hole { kind, token } => record(
+            "param_hole",
+            &[
+                ("kind", format!("{kind:?}").to_lowercase()),
+                ("token", token.to_string()),
+                meta,
+            ],
+        ),
     }
 }
-fn binary(tag: &str, left: &CtExpr, right: &CtExpr) -> String {
-    record(tag, &[("left", ct_expr(left)), ("right", ct_expr(right))])
+
+fn pack_query(query: &PackQuery) -> String {
+    match query {
+        PackQuery::Length => "pack_length".into(),
+        PackQuery::Conforms(trait_name) => positional("pack_conforms", &symbol(trait_name)),
+        PackQuery::Predicate { predicate, all } => record(
+            "pack_predicate",
+            &[
+                ("predicate", pack_predicate(predicate)),
+                ("all", all.to_string()),
+            ],
+        ),
+        PackQuery::Contains(element) => positional("pack_contains", &param_expr(element)),
+    }
 }
+
+fn meta_ty(meta: &MetaTy) -> String {
+    let metas = |metas: &[MetaTy]| list(metas.iter().map(meta_ty));
+    match meta {
+        MetaTy::Value(ty) => positional("meta_value", &ty_value(ty)),
+        MetaTy::Type => "meta_type".into(),
+        MetaTy::ReflectedType => "meta_reflected".into(),
+        MetaTy::Tuple(elements) => positional("meta_tuple", &metas(elements)),
+        MetaTy::List(elements) => positional("meta_list", &metas(elements)),
+        MetaTy::Set(elements) => positional("meta_set", &metas(elements)),
+        MetaTy::Dict(entries) => positional(
+            "meta_dict",
+            &list(entries.iter().map(|(key, value)| {
+                record(
+                    "meta_entry",
+                    &[("key", meta_ty(key)), ("value", meta_ty(value))],
+                )
+            })),
+        ),
+        MetaTy::ParamList(element) => positional("meta_param_list", &meta_ty(element)),
+    }
+}
+
 fn ct_value(value: &CtValue) -> String {
     match value {
         CtValue::Int(v) => positional("ct_int", &v.to_string()),
@@ -1893,7 +1990,8 @@ fn ct_value(value: &CtValue) -> String {
         }
         CtValue::Type(v) => positional("ct_type", &ty_value(v)),
         CtValue::Reflected(v) => positional("ct_reflected", &ty_value(v)),
-        CtValue::Param(v) => positional("ct_param", &symbol(v)),
+        CtValue::Expr(v) => positional("ct_expr", &param_expr(v)),
+        CtValue::Deferred(v) => positional("ct_deferred", &symbol(v)),
     }
 }
 

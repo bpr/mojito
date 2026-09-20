@@ -2,6 +2,16 @@
 use super::*;
 use crate::mir::text::write;
 
+fn int_parameter(owner: &str, slot: usize, name: &str) -> ParamExpr {
+    ParamContext::detached().decl_ref(ParamId::new(owner, slot), name, MetaTy::int())
+}
+
+fn constant(value: CtValue) -> ParamExpr {
+    ParamContext::detached()
+        .constant(value)
+        .expect("a closed value is a constant")
+}
+
 fn program_with(functions: Vec<(String, MirFunction)>) -> MirProgram {
     MirProgram {
         functions,
@@ -174,12 +184,17 @@ fn type_families_reprint_byte_identically() {
             ParamDecl::Value {
                 name: "width".into(),
                 ty: Box::new(Ty::Int),
-                default: Some(CtExpr::Add(
-                    Box::new(CtExpr::Param("n".into())),
-                    Box::new(CtExpr::Value(CtValue::Int(1))),
-                )),
+                default: Some(
+                    ParamContext::detached()
+                        .infix(
+                            InfixOp::Add,
+                            &int_parameter("f", 0, "n"),
+                            &constant(CtValue::Int(1)),
+                        )
+                        .expect("Int + Int builds"),
+                ),
                 callable_default: Some(CallableDefault::If {
-                    condition: CtExpr::Value(CtValue::Bool(true)),
+                    condition: constant(CtValue::Bool(true)),
                     then_value: Box::new(CallableDefault::Symbol("default_fn".into())),
                     else_value: Box::new(CallableDefault::Parameter("F".into())),
                 }),
@@ -225,7 +240,8 @@ fn type_families_reprint_byte_identically() {
                 CtValue::Dtype(Dtype::Float16),
                 CtValue::Type(Box::new(Ty::Int)),
                 CtValue::Reflected(Box::new(Ty::Bool)),
-                CtValue::Param("N".into()),
+                CtValue::Expr(int_parameter("Holder", 1, "N")),
+                CtValue::Deferred("callback".into()),
                 CtValue::Dict {
                     spelling: Some(Box::new(mojito_types::types::dict_type(Ty::Int, Ty::Bool))),
                     entries: vec![(CtValue::Int(1), CtValue::Bool(true))],
@@ -260,13 +276,20 @@ fn type_families_reprint_byte_identically() {
                     name: "IteratorType".into(),
                     args: vec![TyArg::Origin(Origin::SelfParam)],
                 },
-                Ty::Dependent(DependentType::Indexed {
-                    elements: vec![Ty::Int, Ty::Bool],
-                    index: CtExpr::FloorDiv(
-                        Box::new(CtExpr::Neg(Box::new(CtExpr::Param("i".into())))),
-                        Box::new(CtExpr::Value(CtValue::Int(2))),
-                    ),
-                }),
+                {
+                    let context = ParamContext::detached();
+                    let negated = context
+                        .neg(&int_parameter("f", 2, "i"))
+                        .expect("negation builds");
+                    let index = context
+                        .infix(InfixOp::FloorDiv, &negated, &constant(CtValue::Int(2)))
+                        .expect("Int // Int builds");
+                    DependentType::resolve(
+                        context
+                            .select(vec![Ty::Int, Ty::Bool], &index)
+                            .expect("an Int index selects"),
+                    )
+                },
                 func_ty,
                 generic_ty,
                 struct_ty,
@@ -1070,7 +1093,7 @@ fn declaration_metadata_reprints_byte_identically() {
         param_decls: vec![ParamDecl::Value {
             name: "n".into(),
             ty: Box::new(Ty::Int),
-            default: Some(CtExpr::Value(CtValue::Int(2))),
+            default: Some(constant(CtValue::Int(2))),
             callable_default: None,
             infer_only: false,
             variadic: false,
@@ -1159,5 +1182,170 @@ fn func_types_reject_param_decls() {
         diagnostics(&text)
             .iter()
             .any(|message| message.contains("`func` types take no param_decls"))
+    );
+}
+
+/// A generic callable over one `Int` binder whose only parameter is
+/// `Buf[<size>]`, in the text of `version`.
+fn sized_callable_text(version: &str, size: &str) -> String {
+    artifact_with_register_type(&format!(
+        "generic_func {{ environment: default, param_decls: [value_param {{ name: n, type: Int, \
+         default: absent, callable_default: absent, infer_only: false, variadic: false, \
+         constraints: [] }}], params: [struct_type {{ name: Buf, arguments: [value_arg({size})] \
+         }}], names: [x], return_type: None, required: [true], variadic: absent, kw_variadic: \
+         absent, positional_only: absent, keyword_only: absent, raises: false, error_type: \
+         absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] }}"
+    ))
+    .replacen("mojito-mir 1.0", &format!("mojito-mir {version}"), 1)
+}
+
+fn only_register_type(text: &str) -> Ty {
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    parsed.program.functions[0].1.reg_types[&0].clone()
+}
+
+/// Schema 1.1 round trips every constant form and the symbolic forms, a 1.0
+/// artifact translates through its declared binders into the same canonical
+/// graph, and a malformed or dangling expression is a diagnostic.
+#[test]
+fn param_expr_mir_round_trip() {
+    let context = ParamContext::detached();
+    let n = int_parameter("f", 0, "n");
+    let sum = context
+        .infix(InfixOp::Add, &n, &constant(CtValue::Int(1)))
+        .expect("Int + Int builds");
+    // All sixteen constant forms, each as its own closed constant node.
+    let constants = vec![
+        CtValue::Int(-3),
+        CtValue::UInt(u64::MAX),
+        CtValue::Float((-0.0_f64).to_bits()),
+        CtValue::IntLiteral(parse_int_literal("-12345678901234567890").unwrap()),
+        CtValue::FloatLiteral(FloatLiteral::parse_exact("157/50").unwrap()),
+        CtValue::Bool(true),
+        CtValue::Str("a \"quoted\" default".into()),
+        CtValue::Tuple(vec![CtValue::Int(1), CtValue::Bool(false)]),
+        CtValue::List(vec![CtValue::Int(2), CtValue::Int(1)]),
+        CtValue::dict(None, vec![(CtValue::Str("k".into()), CtValue::Int(1))]),
+        CtValue::set(None, vec![CtValue::Int(9), CtValue::Int(4)]),
+        CtValue::Dtype(Dtype::Float16),
+        CtValue::Simd {
+            dtype: Dtype::UInt8,
+            lanes: vec![
+                mojito_types::ct::CtLane::Int(255),
+                mojito_types::ct::CtLane::Int(0),
+            ],
+        },
+        CtValue::Struct {
+            name: "Extent".into(),
+            fields: vec![("w".into(), CtValue::Int(2)), ("h".into(), CtValue::Int(3))],
+        },
+        CtValue::Type(Box::new(Ty::Bool)),
+        CtValue::Reflected(Box::new(Ty::Int)),
+    ];
+    assert_eq!(constants.len(), 16);
+    let mut register_types: Vec<Ty> = constants
+        .into_iter()
+        .map(|value| Ty::Struct("Holder".into(), vec![TyArg::Val(value)]))
+        .collect();
+    // Residual value arguments, a nested signature slot, and a finite
+    // dependent type over a residual index.
+    register_types.push(Ty::Struct(
+        "Buf".into(),
+        vec![TyArg::Val(CtValue::Expr(sum.clone()))],
+    ));
+    register_types.push(Ty::Struct(
+        "Buf".into(),
+        vec![TyArg::Val(CtValue::Expr(
+            context
+                .infix(
+                    InfixOp::Mul,
+                    &context.index_ref(1, 0, MetaTy::int()),
+                    &context.index_ref(0, 2, MetaTy::int()),
+                )
+                .expect("Int * Int builds"),
+        ))],
+    ));
+    register_types.push(DependentType::resolve(
+        context
+            .select(vec![Ty::Int, Ty::Bool], &sum)
+            .expect("an Int index selects"),
+    ));
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(register_types, Vec::new()),
+    )]);
+    assert_reprints(&program);
+
+    // A parse lands in a fresh context and still equals the source graph,
+    // whatever order the text spelled the operands in.
+    let reordered = only_register_type(&sized_callable_text(
+        "1.1",
+        "ct_expr(param_expr { op: add, type: meta_value(Int), operands: [param_constant(ct_int(1)), \
+         param_decl_ref { owner: \"f\", slot: 0, name: n, type: meta_value(Int) }] })",
+    ));
+    let Ty::GenericFunc { params, .. } = &reordered else {
+        panic!("a generic callable")
+    };
+    assert_eq!(
+        params[0],
+        Ty::Struct("Buf".into(), vec![TyArg::Val(CtValue::Expr(sum))])
+    );
+
+    // Schema 1.0: the name resolves through the artifact's declared binder,
+    // and the old tree becomes the canonical graph (`1 + n` is `n + 1`).
+    let legacy = |size: &str| only_register_type(&sized_callable_text("1.0", size));
+    let translated = legacy("ct_param(n)");
+    let Ty::GenericFunc { params, .. } = &translated else {
+        panic!("a generic callable")
+    };
+    let Ty::Struct(_, arguments) = &params[0] else {
+        panic!("a struct parameter")
+    };
+    let TyArg::Val(CtValue::Expr(reference)) = &arguments[0] else {
+        panic!("a 1.0 reference to a declared Int binder is a typed reference")
+    };
+    assert_eq!(reference.meta(), &MetaTy::int());
+    assert_eq!(reference.to_string(), "n");
+    // A 1.0 name no value parameter declares was a deferred callable slot.
+    let Ty::GenericFunc { params, .. } = legacy("ct_param(callback)") else {
+        panic!("a generic callable")
+    };
+    assert_eq!(
+        params[0],
+        Ty::Struct(
+            "Buf".into(),
+            vec![TyArg::Val(CtValue::Deferred("callback".into()))]
+        )
+    );
+
+    // Malformed forms are diagnostics, never guessed.
+    let rejects = |version: &str, size: &str, needle: &str| {
+        let messages = diagnostics(&sized_callable_text(version, size));
+        assert!(
+            messages.iter().any(|message| message.contains(needle)),
+            "expected `{needle}` in {messages:?}"
+        );
+    };
+    rejects(
+        "1.1",
+        "ct_expr(param_expr { op: cond, type: meta_value(Int), operands: [param_constant(ct_int(1))] })",
+        "does not take 1 operands",
+    );
+    rejects(
+        "1.1",
+        "ct_expr(param_expr { op: add, type: meta_value(Bool), operands: [param_constant(ct_int(1)), \
+         param_decl_ref { owner: \"f\", slot: 0, name: n, type: meta_value(Int) }] })",
+        "not the recorded",
+    );
+    rejects(
+        "1.1",
+        "ct_expr(param_expr { op: frobnicate, type: meta_value(Int), operands: [] })",
+        "unknown parameter operator",
+    );
+    rejects("1.1", "ct_param(n)", "schema 1.0 syntax");
+    rejects(
+        "1.1",
+        "ct_expr(param_hole { kind: unknown, token: 0, type: meta_value(Int) })",
+        "cannot cross MIR",
     );
 }

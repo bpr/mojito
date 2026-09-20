@@ -289,6 +289,16 @@ assets/ok/pack_struct_getitem.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_pair.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_variadic_init.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_writable.mojo	main	exe-differential	sanitized
+assets/ok/param_expr_alias.mojo	main	exe-differential	sanitized
+assets/ok/param_expr_arithmetic.mojo	main	exe-differential	sanitized
+assets/ok/param_expr_array.mojo	main	exe-differential	sanitized
+assets/ok/param_expr_canonical.mojo	main	exe-differential	sanitized
+assets/ok/param_expr_fold_routes.mojo	main	exe-differential	sanitized
+assets/ok/param_expr_literal_argument.mojo	main	exe-differential	sanitized
+assets/ok/param_expr_normal_form.mojo	main	exe-differential	sanitized
+assets/ok/param_expr_overflow.mojo	main	exe-differential	sanitized
+assets/ok/param_expr_where.mojo	main	exe-differential	sanitized
+assets/ok/param_expr_where_assumption.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_concrete.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_origin.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_self_origin.mojo	main	exe-differential	sanitized

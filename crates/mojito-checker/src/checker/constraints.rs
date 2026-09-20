@@ -28,34 +28,14 @@ impl Checker {
             ExprKind::Prefix(PrefixOp::Neg, e) => Ok(self.eval_ct(e)?.neg()),
             ExprKind::Infix(op, l, r) => {
                 let (a, b) = (self.eval_ct(l)?, self.eval_ct(r)?);
-                match op {
-                    InfixOp::Add => Ok(a.add(&b)),
-                    InfixOp::Sub => Ok(a.sub(&b)),
-                    InfixOp::Mul => Ok(a.mul(&b)),
-                    InfixOp::FloorDiv => a.floor_div(&b).ok_or_else(|| {
-                        TypeError::NotComptime("compile-time division by zero".to_string())
-                    }),
-                    InfixOp::Mod => a.floor_mod(&b).ok_or_else(|| {
-                        TypeError::NotComptime("compile-time modulo by zero".to_string())
-                    }),
-                    InfixOp::Pow => a.pow(&b).ok_or_else(|| {
-                        TypeError::NotComptime(
-                            "invalid or resource-limited compile-time power".to_string(),
-                        )
-                    }),
-                    InfixOp::Shl => a.shl(&b).ok_or_else(|| {
-                        TypeError::NotComptime(
-                            "invalid or resource-limited compile-time shift".to_string(),
-                        )
-                    }),
-                    InfixOp::Shr => a.shr(&b).ok_or_else(|| {
-                        TypeError::NotComptime(
-                            "invalid or resource-limited compile-time shift".to_string(),
-                        )
-                    }),
-                    InfixOp::BitAnd => Ok(a.bitand(&b)),
-                    InfixOp::BitOr => Ok(a.bitor(&b)),
-                    InfixOp::BitXor => Ok(a.bitxor(&b)),
+                let folded = mojito_types::param_expr::fold::fold_infix(
+                    *op,
+                    &CtValue::IntLiteral(a),
+                    &CtValue::IntLiteral(b),
+                )
+                .map_err(param_error)?;
+                match folded {
+                    CtValue::IntLiteral(value) => Ok(value),
                     _ => Err(TypeError::NotComptime(
                         "unsupported comptime operation".to_string(),
                     )),
@@ -168,6 +148,7 @@ impl Checker {
                     guaranteed_conformance_atoms(&constraint, &mut facts);
                 }
             }
+            self.assume_propositions(Vec::new());
             self.assumed_conformances.push(
                 facts
                     .into_iter()
@@ -229,7 +210,7 @@ impl Checker {
     /// generic top-level comptime alias — to its symbolic template. The
     /// declaration's own parameters are put in scope (any enclosing struct's
     /// parameters already are), so type parameters resolve to `Ty::Param`, value
-    /// parameters to `CtValue::Param`, and origin parameters to `Origin::Param`;
+    /// parameters to `CtValue::Expr`, and origin parameters to `Origin::Param`;
     /// concrete resolution substitutes an application's arguments into the result.
     pub(super) fn lower_parameterized_member(
         &mut self,
@@ -239,7 +220,7 @@ impl Checker {
         // Member type parameters resolve as `Ty::Param` (via the `tparams` scope,
         // like a generic def's parameters); origin parameters resolve to
         // `Origin::Param` via `enclosing_type_params`; value parameters resolve to
-        // a symbolic `CtValue::Param`.
+        // a symbolic `CtValue::Expr`.
         let scope: HashMap<String, Ty> = params
             .iter()
             .filter(|p| matches!(assoc_param_kind(p), AssocParamKind::Type))
@@ -278,6 +259,11 @@ impl Checker {
             ExprKind::Str(s) => Ok(CtValue::Str(s.clone())),
             ExprKind::TypeValue(ty) => self.ty_from_anno(ty).map(Box::new).map(CtValue::Type),
             ExprKind::Identifier(name) => {
+                // A value parameter of an enclosing declaration is its typed
+                // reference: `Buf[n + 1]` stays symbolic in the template.
+                if let Some(reference) = self.value_parameter_in_scope(name) {
+                    return Ok(CtValue::Expr(reference));
+                }
                 if let Some(n) = self.comptimes.get(name) {
                     return Ok(CtValue::IntLiteral(n.clone()));
                 }
@@ -293,6 +279,41 @@ impl Checker {
             ExprKind::TypeApply { name, args } => self
                 .ty_value_from_name(name, args)?
                 .ok_or_else(|| TypeError::NotComptime(name.clone())),
+            // `Int(3)`: a scalar conversion of a compile-time value, which is
+            // the declared type's ordinary literal materialization. It makes
+            // `Array[Int, Int(3)]` and `Array[Int, 3]` one type.
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if kwargs.is_empty()
+                && param_args.is_empty()
+                && args.len() == 1
+                && matches!(
+                    scalar_type_name(name),
+                    Some(Ty::Int | Ty::UInt | Ty::Float64 | Ty::Bool)
+                ) =>
+            {
+                let target = scalar_type_name(name).expect("guard established a scalar type");
+                let value = self.eval_associated_ct(&args[0], associated)?;
+                if let CtValue::Expr(expr) = &value {
+                    return (*expr.meta() == mojito_types::param_expr::MetaTy::value(target))
+                        .then_some(value.clone())
+                        .ok_or_else(|| {
+                            TypeError::NotComptime(format!(
+                                "'{name}' conversion of a symbolic '{}' value",
+                                expr.meta()
+                            ))
+                        });
+                }
+                let rendered = value.to_string();
+                value.materialize_as(&target).ok_or_else(|| {
+                    TypeError::NotComptime(format!(
+                        "'{name}({rendered})' is not a compile-time {name}"
+                    ))
+                })
+            }
             // `SIMD[DType.d, w](lanes...)`, or a vector alias's application
             // (`U256(0)`), is a compile-time vector — a hasher key: one lane
             // per element, or one element splatted across the width.
@@ -378,20 +399,13 @@ impl Checker {
                     "unsupported associated comptime member access".to_string(),
                 ))
             }
-            ExprKind::Prefix(PrefixOp::Neg, e) => match self.eval_associated_ct(e, associated)? {
-                CtValue::Int(n) => n.checked_neg().map(CtValue::Int).ok_or_else(|| {
-                    TypeError::NotComptime("compile-time integer overflow".to_string())
-                }),
-                CtValue::IntLiteral(n) => Ok(CtValue::IntLiteral(n.neg())),
-                CtValue::FloatLiteral(value) => Ok(CtValue::FloatLiteral(value.neg())),
-                _ => Err(TypeError::NotComptime(
-                    "unary '-' expects a comptime numeric value".to_string(),
-                )),
-            },
+            ExprKind::Prefix(PrefixOp::Neg, e) => self
+                .fold_ct_neg(&self.eval_associated_ct(e, associated)?)
+                .map_err(param_error),
             ExprKind::Infix(op, l, r) => self.eval_associated_ct_infix(
                 *op,
-                self.eval_associated_ct(l, associated)?,
-                self.eval_associated_ct(r, associated)?,
+                &self.eval_associated_ct(l, associated)?,
+                &self.eval_associated_ct(r, associated)?,
             ),
             ExprKind::TupleLit(elems) => elems
                 .iter()
@@ -434,110 +448,85 @@ impl Checker {
         }
     }
 
-    #[allow(
-        clippy::self_only_used_in_recursion,
-        reason = "TODO: lift out of the impl or use the receiver"
-    )]
+    /// `left op right` over two associated compile-time values. Concrete
+    /// operands fold through the shared folder; a residual operand builds the
+    /// canonical expression, so `Self.n + 1` stays symbolic in a template.
     pub(super) fn eval_associated_ct_infix(
         &self,
         op: InfixOp,
-        left: CtValue,
-        right: CtValue,
+        left: &CtValue,
+        right: &CtValue,
     ) -> Result<CtValue, TypeError> {
-        let unsupported =
-            || TypeError::NotComptime("unsupported associated comptime operation".to_string());
-        match (left, right) {
-            (CtValue::Int(left), CtValue::Int(right)) => {
-                let value = match op {
-                    InfixOp::Add => left.checked_add(right),
-                    InfixOp::Sub => left.checked_sub(right),
-                    InfixOp::Mul => left.checked_mul(right),
-                    InfixOp::FloorDiv if right != 0 => left.checked_div_euclid(right),
-                    InfixOp::Mod if right != 0 => left.checked_rem_euclid(right),
-                    InfixOp::Pow if right >= 0 => u32::try_from(right)
-                        .ok()
-                        .and_then(|exponent| left.checked_pow(exponent)),
-                    _ => return Err(unsupported()),
-                };
-                value
-                    .map(CtValue::Int)
-                    .ok_or_else(|| TypeError::NotComptime("compile-time integer overflow".into()))
-            }
-            (CtValue::IntLiteral(left), CtValue::IntLiteral(right)) => {
-                let value = match op {
-                    InfixOp::Add => Some(CtValue::IntLiteral(left.add(&right))),
-                    InfixOp::Sub => Some(CtValue::IntLiteral(left.sub(&right))),
-                    InfixOp::Mul => Some(CtValue::IntLiteral(left.mul(&right))),
-                    InfixOp::Div => mojito_common::literal::FloatLiteral::from_int(&left)
-                        .div(&mojito_common::literal::FloatLiteral::from_int(&right))
-                        .map(CtValue::FloatLiteral),
-                    InfixOp::FloorDiv => left.floor_div(&right).map(CtValue::IntLiteral),
-                    InfixOp::Mod => left.floor_mod(&right).map(CtValue::IntLiteral),
-                    InfixOp::Pow => left.pow(&right).map(CtValue::IntLiteral),
-                    _ => return Err(unsupported()),
-                };
-                value.ok_or_else(|| {
-                    TypeError::NotComptime("invalid exact compile-time arithmetic".into())
-                })
-            }
-            (CtValue::FloatLiteral(left), CtValue::FloatLiteral(right)) => {
-                let value = match op {
-                    InfixOp::Add => Some(left.add(&right)),
-                    InfixOp::Sub => Some(left.sub(&right)),
-                    InfixOp::Mul => Some(left.mul(&right)),
-                    InfixOp::Div => left.div(&right),
-                    InfixOp::FloorDiv => left.floor_div(&right),
-                    InfixOp::Mod => left.floor_mod(&right),
-                    InfixOp::Pow => right
-                        .to_int_if_whole()
-                        .and_then(|exponent| left.pow_int(&exponent)),
-                    _ => return Err(unsupported()),
-                };
-                value.map(CtValue::FloatLiteral).ok_or_else(|| {
-                    TypeError::NotComptime("invalid exact compile-time arithmetic".into())
-                })
-            }
-            (CtValue::Int(value), CtValue::IntLiteral(literal)) => self.eval_associated_ct_infix(
-                op,
-                CtValue::IntLiteral(value.into()),
-                CtValue::IntLiteral(literal),
-            ),
-            (CtValue::IntLiteral(literal), CtValue::Int(value)) => self.eval_associated_ct_infix(
-                op,
-                CtValue::IntLiteral(literal),
-                CtValue::IntLiteral(value.into()),
-            ),
-            (CtValue::IntLiteral(integer), CtValue::FloatLiteral(float)) => self
-                .eval_associated_ct_infix(
-                    op,
-                    CtValue::FloatLiteral(mojito_common::literal::FloatLiteral::from_int(&integer)),
-                    CtValue::FloatLiteral(float),
-                ),
-            (CtValue::FloatLiteral(float), CtValue::IntLiteral(integer)) => self
-                .eval_associated_ct_infix(
-                    op,
-                    CtValue::FloatLiteral(float),
-                    CtValue::FloatLiteral(mojito_common::literal::FloatLiteral::from_int(&integer)),
-                ),
-            _ => Err(unsupported()),
+        if matches!(left, CtValue::Expr(_)) || matches!(right, CtValue::Expr(_)) {
+            let context = &self.param_context;
+            return context
+                .constant(left.clone())
+                .and_then(|left| Ok((left, context.constant(right.clone())?)))
+                .and_then(|(left, right)| context.infix(op, &left, &right))
+                .map(ParamExpr::into_value)
+                .map_err(param_error);
+        }
+        mojito_types::param_expr::fold::fold_infix(op, left, right).map_err(param_error)
+    }
+
+    /// Unary `-` over an associated compile-time value; see
+    /// [`Self::eval_associated_ct_infix`].
+    fn fold_ct_neg(
+        &self,
+        value: &CtValue,
+    ) -> Result<CtValue, mojito_types::param_expr::ParamError> {
+        match value {
+            CtValue::Expr(expr) => self.param_context.neg(expr).map(ParamExpr::into_value),
+            concrete => mojito_types::param_expr::fold::fold_neg(concrete),
         }
     }
 
+    /// The typed reference a bare name denotes when it is a value parameter
+    /// of an enclosing declaration, innermost first.
+    pub(super) fn value_parameter_in_scope(&self, name: &str) -> Option<ParamExpr> {
+        self.vparams
+            .iter()
+            .take(self.tparams.len())
+            .rev()
+            .find_map(|scope| scope.get(name))
+            .map(|reference| self.param_context.intern(reference))
+    }
+
+    /// Open the scope of a declaration's own binders: its type parameters and,
+    /// level for level beside them, its value parameters. `tparams.pop()`
+    /// closes both, since a value scope deeper than the type scopes is dead.
+    pub(super) fn push_param_scope(&mut self, owner: &str, decls: &[ParamDecl]) {
+        let depth = self.tparams.len();
+        self.vparams.truncate(depth);
+        self.vparams.resize_with(depth, HashMap::new);
+        self.vparams.push(value_scope(owner, decls));
+        self.tparams.push(type_scope(decls));
+    }
+
     pub(super) fn self_param_ct_value(&self, name: &str) -> Option<CtValue> {
-        self.self_decls.iter().find_map(|decl| match decl {
-            ParamDecl::Type {
-                name: n,
-                bounds,
-                callable_bound,
-                ..
-            } if n == name => Some(CtValue::Type(Box::new(Ty::Param {
-                name: n.clone(),
-                bounds: bounds.clone(),
-                callable_bound: callable_bound.clone(),
-            }))),
-            ParamDecl::Value { name: n, .. } if n == name => Some(CtValue::Param(n.clone())),
-            _ => None,
-        })
+        let owner = match &self.self_ty {
+            Some(Ty::Struct(owner, _)) => owner.as_str(),
+            _ => "Self",
+        };
+        self.self_decls
+            .iter()
+            .enumerate()
+            .find_map(|(slot, decl)| match decl {
+                ParamDecl::Value { name: n, ty, .. } if n == name => {
+                    Some(value_parameter(owner, slot, n, ty))
+                }
+                ParamDecl::Type {
+                    name: n,
+                    bounds,
+                    callable_bound,
+                    ..
+                } if n == name => Some(CtValue::Type(Box::new(Ty::Param {
+                    name: n.clone(),
+                    bounds: bounds.clone(),
+                    callable_bound: callable_bound.clone(),
+                }))),
+                _ => None,
+            })
     }
 
     /// The type value a name (with bracket arguments) denotes, `None` when
@@ -601,23 +590,38 @@ impl Checker {
             })
     }
 
-    pub(super) fn compile_dependent_ct_expr(&self, expr: &Expr) -> Result<CtExpr, TypeError> {
-        let pair = |left: &Expr, right: &Expr| {
-            Ok((
-                Box::new(self.compile_dependent_ct_expr(left)?),
-                Box::new(self.compile_dependent_ct_expr(right)?),
-            ))
+    /// Compile a dependent parameter expression through the shared typed
+    /// builder. Name resolution is the checker's; operator semantics and
+    /// canonical form are [`ParamContext`]'s.
+    pub(super) fn compile_dependent_ct_expr(&self, expr: &Expr) -> Result<ParamExpr, TypeError> {
+        let context = &self.param_context;
+        let constant = |value: CtValue| context.constant(value).map_err(param_error);
+        let aggregate = |values: &[Expr]| {
+            values
+                .iter()
+                .map(|value| self.eval_associated_ct(value, &HashMap::new()))
+                .collect::<Result<Vec<_>, _>>()
         };
-        Ok(match &expr.kind {
-            ExprKind::Int(value) => CtExpr::Value(CtValue::IntLiteral(value.clone())),
-            ExprKind::Float(value) => CtExpr::Value(CtValue::FloatLiteral(value.clone())),
-            ExprKind::Bool(value) => CtExpr::Value(CtValue::Bool(*value)),
-            ExprKind::Str(value) => CtExpr::Value(CtValue::Str(value.clone())),
-            ExprKind::Identifier(name) => {
-                if let Some(value) = self.comptimes.get(name) {
-                    CtExpr::Value(CtValue::IntLiteral(value.clone()))
-                } else {
-                    CtExpr::Param(name.clone())
+        match &expr.kind {
+            ExprKind::Int(value) => constant(CtValue::IntLiteral(value.clone())),
+            ExprKind::Float(value) => constant(CtValue::FloatLiteral(value.clone())),
+            ExprKind::Bool(value) => constant(CtValue::Bool(*value)),
+            ExprKind::Str(value) => constant(CtValue::Str(value.clone())),
+            ExprKind::Identifier(name) => match self.comptimes.get(name) {
+                Some(value) => constant(CtValue::IntLiteral(value.clone())),
+                None => self.value_parameter_in_scope(name).ok_or_else(|| {
+                    if self.is_enclosing_struct_param(name) {
+                        TypeError::UnqualifiedStructParam(name.clone())
+                    } else {
+                        TypeError::NotComptime(name.clone())
+                    }
+                }),
+            },
+            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
+                match self.self_param_ct_value(field) {
+                    Some(CtValue::Expr(expr)) => Ok(context.intern(&expr)),
+                    Some(value) => constant(value),
+                    None => Err(TypeError::UnknownSelfParam(field.clone())),
                 }
             }
             // `DType.<dt>` — a dtype value parameter's default (`dtype: DType
@@ -627,45 +631,34 @@ impl Checker {
                 let dtype = mojito_ast::ast::Dtype::from_name(field).ok_or_else(|| {
                     TypeError::Unsupported(format!("unknown DType member '{field}'"))
                 })?;
-                CtExpr::Value(CtValue::Dtype(dtype))
+                constant(CtValue::Dtype(dtype))
             }
-            ExprKind::TupleLit(values) => CtExpr::Value(CtValue::Tuple(
-                values
-                    .iter()
-                    .map(|value| self.eval_associated_ct(value, &HashMap::new()))
-                    .collect::<Result<_, _>>()?,
+            ExprKind::TupleLit(values) => constant(CtValue::Tuple(aggregate(values)?)),
+            ExprKind::ListLit(values) => constant(CtValue::List(aggregate(values)?)),
+            ExprKind::Prefix(PrefixOp::Neg, value) => context
+                .neg(&self.compile_dependent_ct_expr(value)?)
+                .map_err(param_error),
+            ExprKind::Infix(
+                op @ (InfixOp::Add
+                | InfixOp::Sub
+                | InfixOp::Mul
+                | InfixOp::FloorDiv
+                | InfixOp::Mod
+                | InfixOp::Pow
+                | InfixOp::Shl),
+                left,
+                right,
+            ) => context
+                .infix(
+                    *op,
+                    &self.compile_dependent_ct_expr(left)?,
+                    &self.compile_dependent_ct_expr(right)?,
+                )
+                .map_err(param_error),
+            _ => Err(TypeError::Unsupported(
+                "unsupported dependent parameter expression".to_string(),
             )),
-            ExprKind::ListLit(values) => CtExpr::Value(CtValue::List(
-                values
-                    .iter()
-                    .map(|value| self.eval_associated_ct(value, &HashMap::new()))
-                    .collect::<Result<_, _>>()?,
-            )),
-            ExprKind::Prefix(PrefixOp::Neg, value) => {
-                CtExpr::Neg(Box::new(self.compile_dependent_ct_expr(value)?))
-            }
-            ExprKind::Infix(op, left, right) => {
-                let (left, right) = pair(left, right)?;
-                match op {
-                    InfixOp::Add => CtExpr::Add(left, right),
-                    InfixOp::Sub => CtExpr::Sub(left, right),
-                    InfixOp::Mul => CtExpr::Mul(left, right),
-                    InfixOp::FloorDiv => CtExpr::FloorDiv(left, right),
-                    InfixOp::Mod => CtExpr::Mod(left, right),
-                    InfixOp::Pow => CtExpr::Pow(left, right),
-                    _ => {
-                        return Err(TypeError::Unsupported(
-                            "unsupported dependent parameter expression".to_string(),
-                        ));
-                    }
-                }
-            }
-            _ => {
-                return Err(TypeError::Unsupported(
-                    "unsupported dependent parameter expression".to_string(),
-                ));
-            }
-        })
+        }
     }
 
     /// Compile a declaration-level `where` clause, retaining the optional
@@ -1215,7 +1208,9 @@ impl Checker {
                         trait_name: trait_name.clone(),
                     },
                     ConstraintOperand::Type(ty) => Bool(self.conforms_to(&ty, trait_name)),
-                    ConstraintOperand::Value(_) | ConstraintOperand::PackLength(_) => {
+                    ConstraintOperand::Value(_)
+                    | ConstraintOperand::PackLength(_)
+                    | ConstraintOperand::Expr(_) => {
                         return Err(TypeError::Unsupported(format!(
                             "conforms_to in a comptime alias requires a type argument for '{param}'"
                         )));
@@ -1305,6 +1300,33 @@ impl Checker {
             ExprKind::TypeApply { name, args } => ConstraintOperand::Type(
                 self.ty_from_anno(&SourceType::Named(name.clone(), args.clone()))?,
             ),
+            // Arithmetic over value parameters (`n + 1`), through the same
+            // builder a dependent type argument uses. A name it cannot type —
+            // a parameter whose scope is not open here — is the explicit
+            // unsupported operand, never an untyped symbol.
+            ExprKind::Infix(
+                InfixOp::Add
+                | InfixOp::Sub
+                | InfixOp::Mul
+                | InfixOp::FloorDiv
+                | InfixOp::Mod
+                | InfixOp::Pow
+                | InfixOp::Shl,
+                _,
+                _,
+            )
+            | ExprKind::Prefix(PrefixOp::Neg, _) => match self.compile_dependent_ct_expr(expr) {
+                Ok(expression) => match expression.as_constant() {
+                    Some(value) => ConstraintOperand::Value(value.clone()),
+                    None => ConstraintOperand::Expr(expression),
+                },
+                Err(TypeError::NotComptime(_)) => {
+                    return Err(TypeError::Unsupported(
+                        "unsupported generic constraint operand".to_string(),
+                    ));
+                }
+                Err(error) => return Err(error),
+            },
             _ => {
                 return Err(TypeError::Unsupported(
                     "unsupported generic constraint operand".to_string(),
@@ -1334,20 +1356,117 @@ impl Checker {
         Ok(())
     }
 
+    /// Record what the declaration `owner` assumes inside its own body: each
+    /// of its `where` clauses that is still a proposition once its own
+    /// parameters stand for themselves. It is recorded beside the
+    /// conformance assumptions about to be pushed, so the same pop closes it.
+    pub(super) fn assume_declared_propositions(&mut self, owner: &str, decls: &[ParamDecl]) {
+        let arguments = params_as_args(owner, decls);
+        let environment: HashMap<&str, &TyArg> = decls
+            .iter()
+            .zip(&arguments)
+            .map(|(decl, argument)| (decl.name().trim_start_matches('*'), argument))
+            .collect();
+        let mut assumed = Vec::new();
+        for constraint in decls.iter().flat_map(|decl| match decl {
+            ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
+                constraints.as_slice()
+            }
+        }) {
+            if let Ok(ConstraintVerdict::Residual(proposition)) =
+                self.constraint_verdict(constraint, &environment)
+            {
+                assumed.extend(conjuncts(&proposition));
+            }
+        }
+        self.assume_propositions(assumed);
+    }
+
+    /// [`Self::assume_declared_propositions`] for a method: its own `where`
+    /// clauses, over the struct's parameters (`Self.n`) and its own.
+    pub(super) fn assume_method_propositions(
+        &mut self,
+        owner: &str,
+        method: &mojito_ast::ast::Method,
+        method_decls: &[ParamDecl],
+    ) {
+        let struct_decls = self.self_decls.clone();
+        let mut arguments = params_as_args(owner, &struct_decls);
+        arguments.extend(params_as_args(
+            &method_binder_owner(owner, &method.name),
+            method_decls,
+        ));
+        let environment: HashMap<&str, &TyArg> = struct_decls
+            .iter()
+            .chain(method_decls)
+            .zip(&arguments)
+            .map(|(decl, argument)| (decl.name().trim_start_matches('*'), argument))
+            .collect();
+        let assumed = method
+            .where_clauses
+            .iter()
+            .filter_map(|condition| self.compile_where_clause(condition).ok())
+            .filter_map(
+                |constraint| match self.constraint_verdict(&constraint, &environment) {
+                    Ok(ConstraintVerdict::Residual(proposition)) => Some(conjuncts(&proposition)),
+                    _ => None,
+                },
+            )
+            .flatten()
+            .collect();
+        self.assume_propositions(assumed);
+    }
+
+    /// Open the proposition level of the conformance assumptions about to be
+    /// pushed. Every push site calls this, so a closed level never lingers
+    /// under a later declaration.
+    pub(super) fn assume_propositions(&mut self, assumed: Vec<ParamExpr>) {
+        let depth = self.assumed_conformances.len();
+        self.assumed_propositions.truncate(depth);
+        self.assumed_propositions.resize_with(depth, Vec::new);
+        self.assumed_propositions.push(assumed);
+    }
+
+    /// Whether every conjunct of a residual proposition is one an enclosing
+    /// declaration assumes. Canonical node identity is the whole proof: there
+    /// is no solver behind it.
+    fn assumptions_prove(&self, proposition: &ParamExpr) -> bool {
+        conjuncts(proposition).iter().all(|conjunct| {
+            self.assumed_propositions
+                .iter()
+                .take(self.assumed_conformances.len())
+                .flatten()
+                .any(|assumed| assumed == conjunct)
+        })
+    }
+
+    /// Require `constraint` at one application. Proven passes and Disproven
+    /// is the violated constraint. A residual is neither, and the pinned Mojo
+    /// requires a proof even under symbolic arguments
+    /// (`assets/type_error/param_expr_where_residual.mojo`): it passes only
+    /// when the enclosing declaration's own `where` assumes the same
+    /// proposition, and is otherwise reported as lacking evidence, never as
+    /// false.
     pub(super) fn validate_constraint_in_environment(
         &self,
         name: &str,
         constraint: &GenericConstraint,
         environment: &HashMap<&str, &TyArg>,
     ) -> Result<(), TypeError> {
-        if self.eval_generic_constraint(constraint, environment) {
-            return Ok(());
-        }
-        let reason = match constraint {
-            GenericConstraint::WithMessage(_, message) => {
-                format!("constraint failed: {message}")
+        let reason = match self.constraint_verdict(constraint, environment)? {
+            ConstraintVerdict::Proven => return Ok(()),
+            ConstraintVerdict::Residual(proposition) if self.assumptions_prove(&proposition) => {
+                return Ok(());
             }
-            violated => super::generics::violated_constraint_reason(violated),
+            ConstraintVerdict::Residual(_) => format!(
+                "lacking evidence to prove correctness; cannot prove constraint '{constraint}'"
+            ),
+            ConstraintVerdict::Disproven => match constraint {
+                GenericConstraint::WithMessage(_, message) => {
+                    format!("constraint failed: {message}")
+                }
+                violated => super::generics::violated_constraint_reason(violated),
+            },
         };
         Err(TypeError::BadCall {
             func: name.to_string(),
@@ -1358,7 +1477,8 @@ impl Checker {
     /// Validate a constraint on a declaration with no generic argument list,
     /// such as a non-generic `comptime` constant. Parameterized declarations
     /// attach the same constraint to their final [`ParamDecl`] instead so it is
-    /// evaluated against each concrete application.
+    /// evaluated against each concrete application. A closed declaration has
+    /// no later instantiation, so its verdict must be concrete.
     pub(super) fn validate_declaration_constraint(
         &self,
         name: &str,
@@ -1367,54 +1487,91 @@ impl Checker {
         self.validate_constraint_in_environment(name, constraint, &HashMap::new())
     }
 
+    /// Whether `constraint` is proven under `environment`. A residual is not
+    /// a proof, and neither is its negation: a consumer that must choose
+    /// (an overload, a conditional conformance) does not choose on it.
     pub(super) fn eval_generic_constraint(
         &self,
         constraint: &GenericConstraint,
         environment: &HashMap<&str, &TyArg>,
     ) -> bool {
+        self.constraint_verdict(constraint, environment)
+            .is_ok_and(|verdict| verdict.is_proven())
+    }
+
+    /// The three-valued verdict of `constraint` under `environment`.
+    pub(super) fn constraint_verdict(
+        &self,
+        constraint: &GenericConstraint,
+        environment: &HashMap<&str, &TyArg>,
+    ) -> Result<ConstraintVerdict, TypeError> {
+        self.constraint_proposition(constraint, environment)
+            .map(ConstraintVerdict::from)
+            .map_err(param_error)
+    }
+
+    /// Lower `constraint` to its Bool proposition under `environment`. Every
+    /// leaf the bindings decide is a constant; a leaf over a residual value is
+    /// its canonical expression; a leaf whose parameter has no binding is an
+    /// unknown proposition. The connectives are the context's, so there is one
+    /// three-valued `and`/`or`/`not`.
+    fn constraint_proposition(
+        &self,
+        constraint: &GenericConstraint,
+        environment: &HashMap<&str, &TyArg>,
+    ) -> Result<ParamExpr, ParamError> {
         use GenericConstraint::{
             And, Bool, Conforms, ConformsPack, Eq, Ge, Gt, Le, Lt, Ne, Not, Or, PackContains,
             PackPredicate, Trivial, WithMessage,
         };
-        match constraint {
-            WithMessage(condition, _) => self.eval_generic_constraint(condition, environment),
-            Bool(value) => *value,
-            Not(value) => !self.eval_generic_constraint(value, environment),
-            And(left, right) => {
-                self.eval_generic_constraint(left, environment)
-                    && self.eval_generic_constraint(right, environment)
-            }
-            Or(left, right) => {
-                self.eval_generic_constraint(left, environment)
-                    || self.eval_generic_constraint(right, environment)
-            }
-            Conforms { param, trait_name } => environment
-                .get(param.as_str())
-                .and_then(|argument| match argument {
-                    TyArg::Ty(ty) => Some(self.conforms_to(ty, trait_name)),
-                    TyArg::Val(_) | TyArg::Origin(_) => None,
-                })
-                .unwrap_or(false),
-            Trivial(kind, operand) => match self.constraint_value(operand, environment) {
-                Some(TyArg::Ty(ty)) => self.is_trivially(*kind, &ty),
-                _ => false,
+        let context = &self.param_context;
+        let unknown = || context.hole(HoleKind::Unknown, MetaTy::bool());
+        // A parameter bound to the wrong kind of argument decides the leaf
+        // false; only a parameter with no binding at all is unknown.
+        let pack = |param: &str, holds: &dyn Fn(&[Ty]) -> bool| match (
+            bound_pack_types(environment, param),
+            environment.contains_key(param),
+        ) {
+            (Some(types), _) => context.boolean(holds(&types)),
+            (None, true) => context.boolean(false),
+            (None, false) => unknown(),
+        };
+        Ok(match constraint {
+            WithMessage(condition, _) => self.constraint_proposition(condition, environment)?,
+            Bool(value) => context.boolean(*value),
+            Not(value) => context.not(&self.constraint_proposition(value, environment)?)?,
+            And(left, right) => context.op(
+                ParamOp::BoolAnd,
+                &[
+                    self.constraint_proposition(left, environment)?,
+                    self.constraint_proposition(right, environment)?,
+                ],
+            )?,
+            Or(left, right) => context.op(
+                ParamOp::BoolOr,
+                &[
+                    self.constraint_proposition(left, environment)?,
+                    self.constraint_proposition(right, environment)?,
+                ],
+            )?,
+            Conforms { param, trait_name } => match environment.get(param.as_str()) {
+                Some(TyArg::Ty(ty)) => context.boolean(self.conforms_to(ty, trait_name)),
+                Some(TyArg::Val(_) | TyArg::Origin(_)) => context.boolean(false),
+                None => unknown(),
             },
-            ConformsPack { param, trait_name } => environment
-                .get(param.as_str())
-                .and_then(|argument| {
-                    match argument {
-                    TyArg::Val(CtValue::Tuple(values)) => Some(values.iter().all(|value| {
-                        matches!(value, CtValue::Type(ty) if self.conforms_to(ty, trait_name))
-                    })),
-                    _ => None,
-                }
-                })
-                .unwrap_or(false),
+            Trivial(kind, operand) => match self.constraint_value(operand, environment) {
+                Some(TyArg::Ty(ty)) => context.boolean(self.is_trivially(*kind, &ty)),
+                Some(_) => context.boolean(false),
+                None => unknown(),
+            },
+            ConformsPack { param, trait_name } => pack(param, &|types| {
+                types.iter().all(|ty| self.conforms_to(ty, trait_name))
+            }),
             PackPredicate {
                 param,
                 predicate,
                 all,
-            } => bound_pack_types(environment, param).is_some_and(|types| {
+            } => pack(param, &|types| {
                 let mut holds = types
                     .iter()
                     .map(|ty| self.eval_pack_predicate(predicate, ty));
@@ -1424,53 +1581,62 @@ impl Checker {
                     holds.any(|held| held)
                 }
             }),
-            PackContains { param, element } => {
-                let Some(TyArg::Ty(needle)) = self.constraint_value(element, environment) else {
-                    return false;
+            PackContains { param, element } => match self.constraint_value(element, environment) {
+                Some(TyArg::Ty(needle)) => pack(param, &|types| types.contains(&needle)),
+                Some(_) => context.boolean(false),
+                None => unknown(),
+            },
+            Eq(left, right) | Ne(left, right) => {
+                let equal = match (
+                    self.constraint_value(left, environment),
+                    self.constraint_value(right, environment),
+                ) {
+                    (Some(TyArg::Val(left)), Some(TyArg::Val(right)))
+                        if matches!(left, CtValue::Expr(_))
+                            || matches!(right, CtValue::Expr(_)) =>
+                    {
+                        context.infix(
+                            InfixOp::Eq,
+                            &context.constant(left)?,
+                            &context.constant(right)?,
+                        )?
+                    }
+                    (Some(left), Some(right)) => context.boolean(ty_args_equal(&left, &right)),
+                    _ => unknown(),
                 };
-                bound_pack_types(environment, param).is_some_and(|types| types.contains(&needle))
-            }
-            Eq(left, right) => {
-                match (
-                    self.constraint_value(left, environment),
-                    self.constraint_value(right, environment),
-                ) {
-                    (Some(left), Some(right)) => ty_args_equal(&left, &right),
-                    _ => false,
-                }
-            }
-            Ne(left, right) => {
-                match (
-                    self.constraint_value(left, environment),
-                    self.constraint_value(right, environment),
-                ) {
-                    (Some(left), Some(right)) => !ty_args_equal(&left, &right),
-                    _ => false,
+                if matches!(constraint, Ne(..)) {
+                    context.not(&equal)?
+                } else {
+                    equal
                 }
             }
             Lt(left, right) | Le(left, right) | Gt(left, right) | Ge(left, right) => {
-                let (Some(TyArg::Val(left)), Some(TyArg::Val(right))) = (
+                let op = match constraint {
+                    Lt(..) => InfixOp::Lt,
+                    Le(..) => InfixOp::Le,
+                    Gt(..) => InfixOp::Gt,
+                    _ => InfixOp::Ge,
+                };
+                match (
                     self.constraint_value(left, environment),
                     self.constraint_value(right, environment),
-                ) else {
-                    return false;
-                };
-                let op = match constraint {
-                    Lt(_, _) => InfixOp::Lt,
-                    Le(_, _) => InfixOp::Le,
-                    Gt(_, _) => InfixOp::Gt,
-                    Ge(_, _) => InfixOp::Ge,
-                    _ => unreachable!(),
-                };
-                compare_ct_integers(op, &left, &right).unwrap_or(false)
+                ) {
+                    (Some(TyArg::Val(left)), Some(TyArg::Val(right)))
+                        if matches!(left, CtValue::Expr(_))
+                            || matches!(right, CtValue::Expr(_)) =>
+                    {
+                        context.infix(op, &context.constant(left)?, &context.constant(right)?)?
+                    }
+                    (Some(TyArg::Val(left)), Some(TyArg::Val(right))) => {
+                        context.boolean(compare_ct_integers(op, &left, &right).unwrap_or(false))
+                    }
+                    (Some(_), Some(_)) => context.boolean(false),
+                    _ => unknown(),
+                }
             }
-        }
+        })
     }
 
-    #[allow(
-        clippy::unused_self,
-        reason = "TODO: make an associated function or use the receiver"
-    )]
     pub(super) fn constraint_value<'b>(
         &self,
         operand: &'b ConstraintOperand,
@@ -1484,6 +1650,26 @@ impl Checker {
             ConstraintOperand::Type(ty) => Some(TyArg::Ty(ty.clone())),
             ConstraintOperand::PackLength(param) => bound_pack_types(environment, param)
                 .map(|types| TyArg::Val(CtValue::Int(types.len() as i64))),
+            // Replacement binds the application's values by name and re-folds;
+            // what stays symbolic is returned residual.
+            ConstraintOperand::Expr(expression) => {
+                let context = &self.param_context;
+                let mut bindings = mojito_types::param_expr::ParamBindings::new();
+                for (name, argument) in environment {
+                    if let TyArg::Val(value) = argument
+                        && let Ok(value) = context.constant(value.clone())
+                    {
+                        bindings.bind_name(name, value);
+                    }
+                }
+                // As for a type argument, an opaque atom stays unfolded: the
+                // pin finds no evidence for `n // -2 == -4` even at `n = 7`
+                // (`assets/type_error/param_expr_where_unfolded_atom.mojo`).
+                context
+                    .replace(expression, &bindings)
+                    .ok()
+                    .map(|replaced| TyArg::Val(replaced.into_value()))
+            }
         }
     }
 
@@ -1512,6 +1698,18 @@ impl Checker {
                     })
             }
         }
+    }
+}
+
+/// The conjuncts of a proposition: the operands of a canonical `and`, or the
+/// proposition itself.
+fn conjuncts(proposition: &ParamExpr) -> Vec<ParamExpr> {
+    match proposition.kind() {
+        mojito_types::param_expr::ParamKind::Op {
+            op: ParamOp::BoolAnd,
+            operands,
+        } => operands.clone(),
+        _ => vec![proposition.clone()],
     }
 }
 
@@ -1643,6 +1841,9 @@ fn validate_predicate_params(
         ConstraintOperand::Value(_) | ConstraintOperand::Type(_) => Ok(()),
         ConstraintOperand::PackLength(_) => Err(TypeError::Unsupported(
             "a pack projection in a Bool-bodied comptime alias".to_string(),
+        )),
+        ConstraintOperand::Expr(_) => Err(TypeError::Unsupported(
+            "an arithmetic operand in a Bool-bodied comptime alias".to_string(),
         )),
     };
     match constraint {

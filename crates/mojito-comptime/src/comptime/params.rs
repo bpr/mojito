@@ -77,7 +77,10 @@ pub(super) fn classify_ct_param_with(
         return Some(ParamDecl::Value {
             name: tp.name.clone(),
             ty: Box::new(Ty::Struct(only.clone(), Vec::new())),
-            default: tp.default.as_ref().and_then(ct_expr_from_ast),
+            default: tp
+                .default
+                .as_ref()
+                .and_then(|default| ct_expr_from_ast(default, siblings)),
             callable_default: None,
             infer_only: tp.infer_only,
             variadic: tp.name.starts_with('*'),
@@ -97,7 +100,10 @@ pub(super) fn classify_ct_param(tp: &TypeParam, siblings: &[TypeParam]) -> Optio
         return Some(ParamDecl::Value {
             name: tp.name.clone(),
             ty: Box::new(ty),
-            default: tp.default.as_ref().and_then(ct_expr_from_ast),
+            default: tp
+                .default
+                .as_ref()
+                .and_then(|default| ct_expr_from_ast(default, siblings)),
             callable_default: None,
             infer_only: tp.infer_only,
             variadic: tp.name.starts_with('*'),
@@ -110,7 +116,10 @@ pub(super) fn classify_ct_param(tp: &TypeParam, siblings: &[TypeParam]) -> Optio
         return Some(ParamDecl::Value {
             name: tp.name.clone(),
             ty: Box::new(ty),
-            default: tp.default.as_ref().and_then(ct_expr_from_ast),
+            default: tp
+                .default
+                .as_ref()
+                .and_then(|default| ct_expr_from_ast(default, siblings)),
             callable_default: None,
             infer_only: tp.infer_only,
             variadic: tp.name.starts_with('*'),
@@ -133,7 +142,7 @@ pub(super) fn classify_ct_param(tp: &TypeParam, siblings: &[TypeParam]) -> Optio
 }
 
 pub(super) fn decode_ct_origin_marker(value: &CtValue) -> Option<mojito_types::origin::RefTy> {
-    let CtValue::Param(marker) = value else {
+    let CtValue::Deferred(marker) = value else {
         return None;
     };
     let marker = marker.strip_prefix("$tuple-origin:")?;
@@ -177,7 +186,7 @@ pub(super) fn ct_value_param_type(name: &str) -> Option<Ty> {
 /// CTFE does not evaluate an Origin as a runtime value, but nested type
 /// annotations still need its stable declaration-order identity while the
 /// monomorphizer resolves a variadic Tuple element pack. Encode that semantic
-/// fact in the existing non-materializable `Param` carrier for the duration of
+/// fact in the existing non-materializable `Deferred` carrier for the duration of
 /// the enclosing struct walk.
 pub(super) fn ct_origin_marker(
     index: usize,
@@ -188,7 +197,7 @@ pub(super) fn ct_origin_marker(
         mojito_types::origin::Mutability::Mutable => "mut",
         mojito_types::origin::Mutability::Param(_) => "param",
     };
-    CtValue::Param(format!("$tuple-origin:{index}:{permission}"))
+    CtValue::Deferred(format!("$tuple-origin:{index}:{permission}"))
 }
 
 pub(super) fn ct_value_has_type(value: &CtValue, ty: &Ty) -> bool {

@@ -162,6 +162,18 @@ of `min(-0.0, +0.0)`.
 - Fixtures avoid mixed-sign zeros in min/max reductions.
 - Revisit only if upstream pins a rule.
 
+### A compile-time `//` or `%` by zero stays an error
+
+The pinned Mojo folds `comptime a = Int(7) // Int(0)` (and the literal and `%`
+forms) to `0`. Mojito reports `division by zero`, a rejection the subset rule
+allows.
+
+- The pin's `0` reads as an artifact of its folder, not as language
+  semantics; nothing documents it.
+- The shared folder (`mojito_types::param_expr::fold`) keeps the structured
+  error, and a closed partial operator in an untaken branch stays unevaluated.
+- Revisit only if upstream documents the fold as the rule.
+
 ### `Pointer(to=<temporary>)` is unsupported
 
 `View(Pointer(to=make_list()), 0)` reports `Pointer(to=...) requires a place

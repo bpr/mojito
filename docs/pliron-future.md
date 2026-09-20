@@ -248,9 +248,13 @@ steps 1 and 2 below and can interleave with them.
    Conformance needs this regardless of Pliron, and it is where the Mojo-like
    behavior users actually notice lives: errors before instantiation, rather
    than template stack traces.
-2. **Give parameter expressions a symbolic, normalized form.** Store them
-   uniqued and canonicalized, shaped like Pliron attributes, so a later move
-   costs little.
+2. **Give parameter expressions a symbolic, normalized form.** *Landed*
+   (`docs/notes/param-expr-attributes.md`): `mojito_types::param_expr` stores
+   them typed, uniqued per compilation, and canonicalized, as independent Rust
+   data shaped like Pliron attributes, so the later move is a re-homing of
+   storage onto `uniqued_any`. The canonical form is the pinned Mojo's and no
+   stronger. There is still no parametric IR: the attribute layer alone is not
+   the pivot plan's falsifiable A1 proof.
 3. **Only then decide on hosting MIR as a Pliron dialect**, via the pivot plan's
    Stage A1 falsifiable slice. The full Mojo-style version, with an elaborator
    and an interpreter over parametric IR, rewrites about 40% of the compiler.
@@ -430,9 +434,10 @@ onto code Mojito already has:
 2. **Let the front-end work order the dialects, not the framework.** The note
    suggests `hlcf`, then `pop`, then `kgen`, then `lit`, to exercise Pliron
    feature by feature. For Mojito, the first Pliron-shaped artifact is the
-   symbolic parameter-expression form (§1). It is an attribute: a
-   `#[pliron_attr]` with canonicalization, whether or not it lives in Pliron
-   yet. Next comes the parametric layer with its compile-time `if` and `for`,
+   symbolic parameter-expression form, which has landed outside Pliron
+   (`mojito_types::param_expr`). It is an attribute: a `#[pliron_attr]`
+   wrapper over a uniqued payload with canonicalization, once a dialect exists
+   to hold it. Next comes the parametric layer with its compile-time `if` and `for`,
    then `mojito.core`.
 3. **Grow any declarative layer upstream, as a build-time generator rather
    than more derive macros.** Propose it to Pliron in line with the pivot

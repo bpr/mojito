@@ -12,12 +12,13 @@ use mojito_checked::checked::{
 };
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_common::token::SourceSpan;
-use mojito_types::ct::{CtExpr, CtValue};
+use mojito_types::ct::CtValue;
 use mojito_types::origin::{
     CallableEnvironment, CaptureAccess, CaptureOrigin, CaptureOriginSet, CaptureSetParamId,
     Mutability, Origin, OriginParamId, OriginPlace, OriginSeg, OwnerId, PointerOrigin, RefSig,
     RefTy, SigMutability, SigOrigin,
 };
+use mojito_types::param_expr::{MetaTy, PackQuery, ParamContext, ParamExpr, ParamId, ParamOp};
 use mojito_types::types::{
     CallableDefault, ConstraintOperand, DependentType, GenericConstraint, PackPredicateRef,
     ParamDecl, SliceKind, TrivialLifecycle, Ty, TyArg,
@@ -87,7 +88,7 @@ pub(super) fn artifact(
             vec![diagnostic((0, input.len()), "missing artifact record")],
         ));
     };
-    match Decoder::new().program(&value) {
+    match Decoder::new(parser.legacy).program(&value) {
         Ok((program, source_map)) => Ok(ParsedArtifact {
             program,
             source_map,
@@ -115,6 +116,9 @@ struct Parser<'a> {
     source: &'a str,
     pos: usize,
     diagnostics: Vec<ArtifactDiagnostic>,
+    /// The header named schema 1.0, whose compile-time expressions reference
+    /// parameters by name alone.
+    legacy: bool,
 }
 
 mod decls;
@@ -129,6 +133,13 @@ struct Decoder {
     diagnostics: Vec<ArtifactDiagnostic>,
     source_map: ArtifactSourceMap,
     files: BTreeMap<usize, Option<String>>,
+    /// The one parameter-expression context of this parse: every expression
+    /// re-enters its canonicalizing constructors.
+    context: ParamContext,
+    /// Schema 1.0 only: the declared type(s) of every value parameter in the
+    /// artifact by name, which is all a 1.0 reference carries. `None` reads
+    /// schema 1.1, whose references are self-describing.
+    legacy_binders: Option<HashMap<String, Vec<MetaTy>>>,
 }
 
 fn parse_int_literal(value: &str) -> Option<IntLiteral> {

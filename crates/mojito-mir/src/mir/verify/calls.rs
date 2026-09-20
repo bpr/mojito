@@ -126,15 +126,64 @@ pub(super) fn generic_callable_decls(ty: &Ty) -> Option<&[mojito_types::types::P
 }
 
 /// Ensure each symbolic dependent index is owned by an explicit enclosing
-/// value-parameter binder. This permits generic MIR to remain symbolic while
-/// rejecting a misspelled or escaped index name before wildcard compatibility
-/// could hide it.
+/// value-parameter binder, and that every parameter expression a type carries
+/// may cross into MIR at all. This permits generic MIR to remain symbolic
+/// while rejecting a misspelled or escaped index name, an out-of-range or
+/// mistyped signature slot, and an unknown or unbound parameter before
+/// wildcard compatibility could hide it.
 pub(super) fn validate_dependent_bindings(ty: &Ty) -> Result<(), String> {
-    pub(super) fn walk(ty: &Ty, bound: &HashSet<String>) -> Result<(), String> {
+    /// `frames` holds the value-binder types of each enclosing generic
+    /// signature, innermost last; a type parameter's slot holds `None`.
+    fn check_expr(
+        expr: &mojito_types::param_expr::ParamExpr,
+        frames: &[Vec<Option<Ty>>],
+    ) -> Result<(), String> {
+        use mojito_types::param_expr::{MetaTy, ParamKind};
+        let mut finding = None;
+        expr.visit(&mut |node| {
+            if finding.is_some() {
+                return;
+            }
+            finding = match node.kind() {
+                ParamKind::Hole { .. } => {
+                    Some("an unknown or unbound parameter cannot cross into MIR".to_string())
+                }
+                ParamKind::IndexRef { depth, index } => {
+                    let slot = frames
+                        .len()
+                        .checked_sub(1 + *depth as usize)
+                        .and_then(|frame| frames[frame].get(*index as usize));
+                    match slot {
+                        None => Some(format!(
+                            "signature slot {depth}.{index} names no enclosing binder"
+                        )),
+                        Some(None) => Some(format!(
+                            "signature slot {depth}.{index} names a type parameter"
+                        )),
+                        Some(Some(declared)) if MetaTy::value(declared.clone()) != *node.meta() => {
+                            Some(format!(
+                                "signature slot {depth}.{index} is declared `{declared}`, not `{}`",
+                                node.meta()
+                            ))
+                        }
+                        Some(Some(_)) => None,
+                    }
+                }
+                _ => None,
+            };
+        });
+        finding.map_or(Ok(()), Err)
+    }
+
+    fn walk(
+        ty: &Ty,
+        bound: &HashSet<String>,
+        frames: &mut Vec<Vec<Option<Ty>>>,
+    ) -> Result<(), String> {
         match ty {
-            Ty::Dependent(DependentType::Indexed { elements, index }) => {
+            Ty::Dependent(dependent) => {
                 let mut referenced = HashSet::new();
-                index.referenced_parameters(&mut referenced);
+                dependent.expr().referenced_parameters(&mut referenced);
                 let mut unbound: Vec<_> = referenced.difference(bound).cloned().collect();
                 unbound.sort();
                 if !unbound.is_empty() {
@@ -143,8 +192,12 @@ pub(super) fn validate_dependent_bindings(ty: &Ty) -> Result<(), String> {
                         unbound.join(", ")
                     ));
                 }
-                for element in elements {
-                    walk(element, bound)?;
+                check_expr(dependent.expr(), frames)?;
+                for element in dependent
+                    .selection()
+                    .map_or(&[][..], |(elements, _)| elements)
+                {
+                    walk(element, bound, frames)?;
                 }
             }
             Ty::GenericFunc {
@@ -157,39 +210,53 @@ pub(super) fn validate_dependent_bindings(ty: &Ty) -> Result<(), String> {
                 ..
             } => {
                 let mut signature_scope = bound.clone();
-                for declaration in decls {
-                    match declaration {
-                        ParamDecl::Type {
-                            callable_bound,
-                            default,
-                            ..
-                        } => {
-                            if let Some(callable) = callable_bound {
-                                walk(callable, &signature_scope)?;
+                frames.push(
+                    decls
+                        .iter()
+                        .map(|declaration| match declaration {
+                            ParamDecl::Value { ty, .. } => Some((**ty).clone()),
+                            ParamDecl::Type { .. } => None,
+                        })
+                        .collect(),
+                );
+                let checked = (|| -> Result<(), String> {
+                    for declaration in decls {
+                        match declaration {
+                            ParamDecl::Type {
+                                callable_bound,
+                                default,
+                                ..
+                            } => {
+                                if let Some(callable) = callable_bound {
+                                    walk(callable, &signature_scope, frames)?;
+                                }
+                                if let Some(default) = default {
+                                    walk(default, &signature_scope, frames)?;
+                                }
                             }
-                            if let Some(default) = default {
-                                walk(default, &signature_scope)?;
+                            ParamDecl::Value { name, ty, .. } => {
+                                walk(ty, &signature_scope, frames)?;
+                                signature_scope.insert(name.trim_start_matches('*').to_string());
                             }
-                        }
-                        ParamDecl::Value { name, ty, .. } => {
-                            walk(ty, &signature_scope)?;
-                            signature_scope.insert(name.trim_start_matches('*').to_string());
                         }
                     }
-                }
-                for parameter in params {
-                    walk(parameter, &signature_scope)?;
-                }
-                walk(ret, &signature_scope)?;
-                if let Some(parameter) = variadic {
-                    walk(parameter, &signature_scope)?;
-                }
-                if let Some(parameter) = kw_variadic {
-                    walk(parameter, &signature_scope)?;
-                }
-                if let Some(error) = error {
-                    walk(error, &signature_scope)?;
-                }
+                    for parameter in params {
+                        walk(parameter, &signature_scope, frames)?;
+                    }
+                    walk(ret, &signature_scope, frames)?;
+                    if let Some(parameter) = variadic {
+                        walk(parameter, &signature_scope, frames)?;
+                    }
+                    if let Some(parameter) = kw_variadic {
+                        walk(parameter, &signature_scope, frames)?;
+                    }
+                    if let Some(error) = error {
+                        walk(error, &signature_scope, frames)?;
+                    }
+                    Ok(())
+                })();
+                frames.pop();
+                checked?;
             }
             Ty::Func {
                 params,
@@ -200,49 +267,53 @@ pub(super) fn validate_dependent_bindings(ty: &Ty) -> Result<(), String> {
                 ..
             } => {
                 for parameter in params {
-                    walk(parameter, bound)?;
+                    walk(parameter, bound, frames)?;
                 }
-                walk(ret, bound)?;
+                walk(ret, bound, frames)?;
                 if let Some(parameter) = variadic {
-                    walk(parameter, bound)?;
+                    walk(parameter, bound, frames)?;
                 }
                 if let Some(parameter) = kw_variadic {
-                    walk(parameter, bound)?;
+                    walk(parameter, bound, frames)?;
                 }
                 if let Some(error) = error {
-                    walk(error, bound)?;
+                    walk(error, bound, frames)?;
                 }
             }
             Ty::Param {
                 callable_bound: Some(callable),
                 ..
-            } => walk(callable, bound)?,
+            } => walk(callable, bound, frames)?,
             Ty::Struct(_, arguments) => {
                 for argument in arguments {
-                    if let TyArg::Ty(ty) = argument {
-                        walk(ty, bound)?;
+                    match argument {
+                        TyArg::Ty(ty) => walk(ty, bound, frames)?,
+                        TyArg::Val(mojito_types::ct::CtValue::Expr(expr)) => {
+                            check_expr(expr, frames)?;
+                        }
+                        TyArg::Val(_) | TyArg::Origin(_) => {}
                     }
                 }
             }
             Ty::ComptimeList(element) | Ty::VariadicPack(element) | Ty::Pointer { element, .. } => {
-                walk(element, bound)?;
+                walk(element, bound, frames)?;
             }
             Ty::Tuple(elements)
             | Ty::RuntimePack(elements)
             | Ty::Variant(elements)
             | Ty::Overload(elements) => {
                 for element in elements {
-                    walk(element, bound)?;
+                    walk(element, bound, frames)?;
                 }
             }
-            Ty::Assoc { base, .. } => walk(base, bound)?,
-            Ty::Ref(reference) => walk(&reference.referent, bound)?,
+            Ty::Assoc { base, .. } => walk(base, bound, frames)?,
+            Ty::Ref(reference) => walk(&reference.referent, bound, frames)?,
             _ => {}
         }
         Ok(())
     }
 
-    walk(ty, &HashSet::new())
+    walk(ty, &HashSet::new(), &mut Vec::new())
 }
 
 /// The storage a `MakeRef` handle designates. A capability-typed root already

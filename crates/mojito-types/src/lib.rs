@@ -1,9 +1,11 @@
 //! The semantic type vocabulary: the `Ty` lattice and its pure
 //! coercion/contract predicates (`types`), origins and reference signatures
-//! (`origin`), and compile-time values (`ct`). Sits above the AST and below
+//! (`origin`), compile-time values (`ct`), and the typed canonical
+//! parameter-expression attributes (`param_expr`). Sits above the AST and below
 //! every checking/lowering phase.
 
 pub mod ct;
 pub mod ffi;
 pub mod origin;
+pub mod param_expr;
 pub mod types;

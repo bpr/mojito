@@ -13,7 +13,7 @@
 //! refuses a body instead of being dropped silently. The design record is
 //! `docs/notes/instantiation-from-template.md`.
 
-use super::{Checker, callable_lowered_name};
+use super::{Checker, callable_lowered_name, method_binder_owner};
 use mojito_ast::ast::{Expr, ExprKind, Stmt, StmtKind};
 use mojito_checked::templates::{
     CallParameterFact, CheckedBodyFacts, CheckedTemplate, FactTable, IncompleteReason,
@@ -247,7 +247,8 @@ impl Checker {
         let Some(first) = m.body.first() else {
             return self.check_block(&m.body, Some(ret_ty), false);
         };
-        let method_decls = self.classify_params(&m.type_params)?;
+        let method_decls =
+            self.classify_params(&method_binder_owner(owner, &m.name), &m.type_params)?;
         let mut decls = self.self_decls.clone();
         decls.extend(method_decls.iter().cloned());
         // A per-instantiation clone carries its receiver type. Every other

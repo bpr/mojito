@@ -6750,3 +6750,96 @@ fn method_template_classes_name_what_the_body_holds() {
         coverage("same")
     );
 }
+
+/// A residual constraint is neither false nor a proof, and negating it proves
+/// nothing either. The pinned Mojo requires evidence at every application
+/// (`assets/type_error/param_expr_where_residual.mojo`): canonical identity,
+/// a concrete fold, or the enclosing declaration's own `where`.
+#[test]
+fn param_expr_residual_is_not_false() {
+    let check = "def check[n: Int, m: Int]() -> Int where n + 1 == m:\n    return m\n\n";
+    let negated = "def check[n: Int, m: Int]() -> Int where not (n + 1 == m):\n    return m\n\n";
+    let ordered = "def check[n: Int, m: Int]() -> Int where n < m:\n    return m\n\n";
+    let lacking = |error: TypeError| {
+        let text = error.to_string();
+        assert!(
+            text.contains("lacking evidence to prove correctness"),
+            "{text}"
+        );
+    };
+
+    // Proved by canonical identity, with the parameters still symbolic.
+    ok(&format!(
+        "{check}def outer[n: Int]() -> Int:\n    return check[n, 1 + n]()\n"
+    ));
+    // Unresolved: not accepted as true, and not reported as false.
+    lacking(err(&format!(
+        "{ordered}def outer[n: Int, k: Int]() -> Int:\n    return check[n, k]()\n"
+    )));
+    // `not` over the same unresolved comparison is unresolved too — the old
+    // Bool evaluator turned the missing proof into an acceptance here.
+    lacking(err(&format!(
+        "{negated}def outer[n: Int, k: Int]() -> Int:\n    return check[n, k]()\n"
+    )));
+    // The enclosing declaration's own clause is the evidence, in either
+    // operand order.
+    ok(&format!(
+        "{ordered}def outer[n: Int, k: Int]() -> Int where n < k:\n    return check[n, k]()\n"
+    ));
+    ok(&format!(
+        "{check}def outer[n: Int, k: Int]() -> Int where k == n + 1:\n    return check[n, k]()\n"
+    ));
+    // A method's own clause is evidence inside its body, over `Self.n` too.
+    ok(&format!(
+        "{ordered}struct Box[n: Int](Copyable, Movable):\n    var v: Int\n\n    \
+         def __init__(out self):\n        self.v = Self.n\n\n    \
+         def above[k: Int](self) -> Int where Self.n < k:\n        return check[Self.n, k]()\n"
+    ));
+    lacking(err(&format!(
+        "{ordered}struct Box[n: Int](Copyable, Movable):\n    var v: Int\n\n    \
+         def __init__(out self):\n        self.v = Self.n\n\n    \
+         def above[k: Int](self) -> Int:\n        return check[Self.n, k]()\n"
+    )));
+    // An assumption about other parameters is not evidence.
+    lacking(err(&format!(
+        "{ordered}def outer[n: Int, k: Int, j: Int]() -> Int where n < j:\n    return check[n, k]()\n"
+    )));
+    // Concrete applications fold to a definite verdict.
+    ok(&format!("{check}def main():\n    print(check[3, 4]())\n"));
+    let violated = err(&format!("{check}def main():\n    print(check[3, 5]())\n")).to_string();
+    assert!(violated.contains("violated constraint"), "{violated}");
+    ok(&format!("{negated}def main():\n    print(check[3, 5]())\n"));
+    let violated = err(&format!("{negated}def main():\n    print(check[3, 4]())\n")).to_string();
+    assert!(violated.contains("violated constraint"), "{violated}");
+}
+
+/// Equal parameter expressions are one type before any value is supplied;
+/// unproved ones are not, and same-spelled parameters of unrelated
+/// declarations do not alias.
+#[test]
+fn param_expr_types_compare_by_canonical_form() {
+    let buf = "struct Buf[n: Int](Copyable, Movable):\n    var value: Int\n\n    def __init__(out self, value: Int):\n        self.value = value\n\n";
+    ok(&format!(
+        "{buf}def reorder[n: Int](var x: Buf[n + 1]) -> Buf[1 + n]:\n    return x^\n\n\
+         def distribute[n: Int](var x: Buf[(n + 1) * 4]) -> Buf[n * 4 + 4]:\n    return x^\n\n\
+         def collect[n: Int](var x: Buf[n + n]) -> Buf[2 * n]:\n    return x^\n"
+    ));
+    let mismatch = err(&format!(
+        "{buf}def wrong[n: Int](var x: Buf[n + 1]) -> Buf[n + 2]:\n    return x^\n"
+    ))
+    .to_string();
+    assert!(
+        mismatch.contains("Buf[n + 2]") && mismatch.contains("Buf[n + 1]"),
+        "{mismatch}"
+    );
+    // Unary negation is an opaque atom, as at the pin.
+    err(&format!(
+        "{buf}def negated[n: Int](var x: Buf[-(-n)]) -> Buf[n]:\n    return x^\n"
+    ));
+    // `n` of `inner` and `n` of `outer` are different parameters: the call
+    // binds one to the other rather than the spellings coinciding.
+    ok(&format!(
+        "{buf}def inner[n: Int](var x: Buf[n + 1]) -> Buf[n + 1]:\n    return x^\n\n\
+         def outer[n: Int](var x: Buf[n + 2]) -> Buf[n + 2]:\n    return inner[n + 1](x^)\n"
+    ));
+}

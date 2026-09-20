@@ -38,7 +38,8 @@ map and dependency DAG live in `docs/architecture.md` §Workspace Layout.
 | Checked semantic facts | `checked::{CheckedProgram, CheckedTables, CheckedConst, AnnotationSite, CheckedCallContract, CheckedIteratorCall, CheckedResultAdapter}` | MIR, ownership driver, backends. `CheckedProgram::tables` is the one `Arc<CheckedTables>` (expressions, declarations, span indexes) that every `hir::Cfg` and MIR `Flatten` shares — lowering never copies program-wide tables. |
 | Source annotation syntax | `ast::SourceType` (alias of the AST `Type` node) | Parser, checker input, HIR/MIR source metadata. |
 | Source location/provenance | `token::{Span, SourceSpan}` | AST, checker side tables, MIR diagnostics. |
-| Compile-time values | `ct::CtValue` | Elaborator, specialization, checked constants. |
+| Compile-time values | `ct::CtValue` | Elaborator, specialization, checked constants. `CtValue::Expr` is a residual parameter expression and `CtValue::Deferred` a slot outside generic identity; neither is a constant. |
+| Parameter expressions | `param_expr::{ParamContext, ParamExpr, ParamKind, ParamOp, MetaTy, ParamId, ParamRef, ParamBindings, ParamEval, ParamError, ConstraintVerdict, ParamConstraint, identity_eq}` and `param_expr::fold::{fold_infix, fold_neg, compare}` (crate `mojito-types`) | The typed, canonical, per-compilation-interned form of a value argument, a value default, a callable default's condition, and a dependent type (`types::DependentType::Parameter`). `ParamContext` owns construction, canonical form, `replace` (type identity) and `evaluate`/`fold` (a required value); `fold` is the one implementation of compile-time scalar operators. Users: the checker (`constraints.rs`), the elaborator (`eval.rs`), MIR text and the verifier, native monomorphization (`mono/symbolic.rs`), the VM's default resolution, and `symbol::mangle`. `types::{TyRewrite, rewrite_ty, replace_parameters, referenced_parameters}` is the one type traversal behind replacement. Design: `docs/notes/param-expr-attributes.md`. |
 | Semantic types | `types::{Ty, TyArg, ParamDecl}` | Checker, checked data, MIR declarations, VM coercion. |
 | Runtime values/operations | `runtime::{Value, coerce_checked, apply_infix, apply_prefix}` | VM and VM-backed CTFE. |
 | Backend contract | `backend::{Backend, BackendKind}` | Compiler driver and CLI. |
@@ -337,7 +338,17 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`is_specializable_declaration_in`, `collect_comptime_generic_templates`,
   and the method stub in `comptime/elab.rs`).
 - `checker/constraints.rs` owns compile-time evaluation and generic-constraint
-  compilation/evaluation. `compile_where_clause` retains an optional source
+  compilation/evaluation. Its evaluators resolve names and delegate operator
+  semantics to `param_expr::fold`; `compile_dependent_ct_expr` builds a
+  `ParamExpr` through the compilation's `ParamContext`
+  (`Checker::param_context`, handed over by `TemplateCatalog::param_context`),
+  and `value_parameter_in_scope`/`push_param_scope` resolve a bare value
+  parameter to its owned reference (`annotations.rs`: `binder_owner`,
+  `method_binder_owner`, `value_parameter`, `params_as_args`).
+  `constraint_verdict`/`constraint_proposition` are the three-valued
+  evaluator, `assume_declared_propositions`/`assumptions_prove` the evidence
+  an enclosing `where` supplies, and `eval_generic_constraint` its
+  `is_proven()` projection. `compile_where_clause` retains an optional source
   diagnostic around the semantic constraint compiled by
   `compile_generic_constraint`; declarations compile one constraint per
   trailing `where` clause. `lower_parameterized_member` lowers the symbolic
@@ -603,6 +614,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `comptime/synth.rs` also owns the `SIMD[_, _]` parameter desugar
   (`desugar_simd_keyed_methods`), the vector-alias bound fold, and the eager
   per-leaf `_update_with_simd` clone requests (`hasher_leaf_requests`).
+- `crates/mojito-symbol/src/symbol.rs` owns specialization keys. `mangle`
+  returns `Result<String, NonConstantSpecialization>`: `mangle_parts`
+  validates the whole key (`specialization_value_is_closed`: no residual or
+  deferred value in an aggregate child, a struct field, or a type payload's
+  value argument) before writing any of it, so no symbolic spelling enters a
+  key. `SpecializationKeyPart::ErasedOrigin` is the owner-key marker an erased
+  origin argument contributes. `specialized_method_values` refuses a residual
+  value and skips only a deferred callable-value slot;
+  `tuple_specialization_symbol`/`tstring_specialization_symbol` name the
+  unspecialized nominal type for elements that are not closed.
 - `crates/mojito-symbol/src/symbol.rs` owns the hasher leaf clone name
   (`simd_update_clone_name`) every backend's `__hash__` leaf dispatch
   computes, and the value-specialization demangler

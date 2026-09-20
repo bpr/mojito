@@ -25,7 +25,7 @@ pub use mojito_module::module;
 pub use mojito_native::native;
 pub use mojito_parser::parser;
 pub use mojito_symbol::symbol;
-pub use mojito_types::{ct, origin, types};
+pub use mojito_types::{ct, origin, param_expr, types};
 pub use mojito_vm::runtime;
 
 pub mod artifact;
