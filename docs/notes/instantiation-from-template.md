@@ -210,13 +210,19 @@ copy, and the loop variable may only key a condition.
 ### `MethodBody`
 
 The declaration may have a `mut`, `var`, `deinit`, or `ref` receiver, the
-`out` of an `__init__`, or none (`@staticmethod`), a `where` clause, `var`
-parameters, and any result, a reference included. Which fields an `__init__` initializes is
+`out` of an `__init__`, or none (`@staticmethod`), a `where` clause, `var`,
+`mut`, and bare `ref` parameters, and any result, a reference included. A
+`mut` or `ref` parameter is bound from its declared convention and rooted at
+its own binding under every instance, so the body's facts name it by template
+owner; what its caller owes lives in the signature, which is checked per
+clone. The body may store to a `mut` parameter, a scalar or a whole value of
+the parameter's own type, and may only read a bare `ref` one, which it never
+moves out of. Which fields an `__init__` initializes is
 its syntax, and definite initialization is judged outside the body check. A
 bare `ref self` is a receiver like the others: it has parametric mutability, so
 the body cannot write through it, and one binding identity names it under
-every instance. A receiver origin, the copy and move initializers, the
-method's own binders, and `raises` stay outside. A `where`
+every instance. A receiver or parameter origin, the copy and move
+initializers, the method's own binders, and `raises` stay outside. A `where`
 clause is the declaration's constraint: `generate_instance_clones` mints a
 clone only where it evaluates true, a trace exists only for a minted clone, and
 a clone's signature no longer states it.
@@ -232,6 +238,8 @@ they are a set, not a ladder.
 | `SIBLING_CALLS` | a method call on `self` or a field of it, passing closed scalars, whose contract is a `closed_method_contract` | Obligation 7 below. Arguments are closed scalars in both checks, so nothing about them depends on the instance. |
 | `REFERENCE_RESULT` | a method that returns a reference: every `return` hands out a field of `self`, a pointer slot, or a reference call's result, of exactly the declared referent type | The `return` keeps its value as a handle because the declaration returns a reference (`ReferenceValueUses`, written from the declaration and the statement's syntax alone) and demands neither a copy nor a move. Whether the place lies within the declared origin is judged on its path, the signature, and the receiver's constructor, none of which an instance changes; the loan-escape check reads what obligation 12 already rules out. The signature is checked per clone before the body, derived or not. Any other handle in the body refuses it. |
 | `REFERENCE_CALLS` | a subscript or a named accessor on a field of `self`, passing closed scalars, whose contract is a `closed_reference_contract`, either returned as above or read by value into the result or an unannotated `var` | Obligation 13 below. The call is never a receiver, an operand, a condition, or an argument, each of which records a borrow of its own. A by-value read is admitted only where the template marked the read copyable. An iterator's `__next__` marks its read by another rule and stays out. |
+| `REFERENCE_LOCALS` | `ref name = place`, where the place is `self`, a field of it, a parameter, a `var` local, or a reference call; then a field read through the binding, the binding copied out whole, a scalar operand, `len` over it, a scalar store through it, or the binding forwarded as the method's own reference result | The declaration decides mutability from the value's reference and the binding it names, re-stamps an origin computed upstream, and runs no check of its own. Its type is a reference whose origin names a binding, so a bundle keeps it by template owner, as it keeps a call's, and an instance substitutes the referent. Every use records the referent. A copy out owes obligation 3, and a copyable read obligation 13. |
+| `REFERENCE_RECEIVERS` | a field read or a closed method call through a reference call's result or a `ref` local whose referent is a struct | A call borrows such a receiver (`BorrowedReferenceReceivers`) because of what the receiver is: a reference result, a `ref` binding, a `ref` field. None of those tests reads the referent. The callee is realized as in obligation 7, from the receiver's own substituted type; a receiver whose type was already closed in the template (`List[Pair]`) selected its clone there. A method of a bare parameter dispatches through the bound and stays out. |
 
 The compiler-private trap `_mojito_abort("message")` is a statement of any
 non-keyed body: the built-in types its literal and selects nothing. A
@@ -421,6 +429,12 @@ tables. In short, for one debug-profile run each:
   time did not move. With `MethodBody` it does: 17.9 s to 17.0 s and 11.4 s to
   10.6 s, three interleaved runs each. `ref self` accessors, reference
   results, and the `_mojito_abort` statement took the counts from 586 and 178.
+  `ref` locals, receivers reached through a reference, and `mut`/`ref`
+  parameters moved neither count: every bundled body that holds one also
+  constructs a struct, passes a non-scalar, or dispatches through a bound.
+  They derive in user structs today
+  (`assets/ok/template_method_reference_{local,receiver}.mojo`,
+  `template_method_borrowed_parameter.mojo`).
 - Hello World mints no per-instantiation clones at all. Its generated bodies
   are members of structs specialized whole and per-call clones, from
   concrete-only templates.
@@ -442,14 +456,15 @@ it produced (3828 for Hello World) were wrong and are withdrawn.
 Each of these keeps the clone check. The roadmap carries one entry per item.
 
 - A method body beyond `MethodBody`: a receiver origin, a copy or move
-  initializer, `raises`, the method's own binders, a `ref` or `mut` parameter,
-  a `for` loop, a construction, a string other than the `_mojito_abort`
+  initializer, `raises`, the method's own binders, a parameter with an origin
+  clause, a `for` loop, a construction, a string other than the `_mojito_abort`
   message, a call passing a value that is not a closed scalar, and a local
   whose type is built over a parameter.
-- A reference a call yields that is bound to a local (`ref x = …`), used as a
-  receiver, an operand, or an argument, or yielded by a callee on anything but
-  a field of `self`. A struct with an origin or a value parameter (`Span`,
-  `Array`) derives no method at all.
+- A reference used as an argument, as the receiver of a method its bare
+  parameter type promises through a bound, or as the base of a whole store
+  (`self.entries[i].hits = 0` records a subscript descriptor), and one yielded
+  by a callee on anything but a field of `self`. A struct with an origin or a
+  value parameter (`Span`, `Array`) derives no method at all.
 - An instance whose argument may carry a loan, which includes every struct
   with a field of a parameter type (`DictEntry[K, V, H]`).
 - Per-call method clones and members of a struct specialized whole, which

@@ -382,6 +382,12 @@ ordinary bundled structs. The figures below replace it.
   to 17.07 s after; `generic.mojo` 11.21 to 11.46 s before and 10.53 to
   10.64 s after. Absolute times drift between sessions, so only the
   interleaved pairs compare.
+- `ref` locals, receivers reached through a reference, and `mut`/`ref`
+  parameters move neither count, so wall time was not measured again. Every
+  bundled body that holds one also constructs a struct (the 16 `ref source =
+  self` iterator makers), passes a non-scalar, dispatches through a bound, or
+  holds a `for` (the 12 `Dict`/`Set` entry loops and `List.extend(Span)`).
+  The shapes derive in user structs.
 
 ### Census of method bodies (`stdlib_heavy.mojo`, last discovery round, one pass)
 
@@ -420,10 +426,12 @@ What those bodies are made of is the census's second half
 (`template_census.<class>.grammar.<construct>`): every construct a method's
 declaration and body hold, whatever class admits it. Among the 314 clone
 bodies, the constructs no class admits in any form are the method's own
-binders (40), a `mut` parameter (37), a `ref` declaration (28), and `raises`
-with `raise` (21). The rest are admitted only in part: a method call with
-arguments (175, admitted when every argument is a closed scalar), a direct
-call with arguments (174), a subscript (129, admitted on a pointer slot or as
+binders (40) and `raises` with `raise` (21). The rest are admitted only in
+part: a `mut` parameter (37, admitted with no origin clause, though every one
+of these is a writer or a hasher the body calls through its bound), a `ref`
+declaration (28, admitted over a place of `self`, a parameter, a local, or a
+reference call), a method call with arguments (175, admitted when every
+argument is a closed scalar), a direct call with arguments (174), a subscript (129, admitted on a pointer slot or as
 a reference call on a field), a `^` transfer (121), a non-scalar closed result
 (117), a string literal (42, admitted as the `_mojito_abort` message), a
 `ref self` (41, admitted with no receiver origin), and a reference result (16,

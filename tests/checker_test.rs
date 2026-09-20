@@ -6679,7 +6679,7 @@ fn method_template_classes_name_what_the_body_holds() {
     // features say which arguments its certificate rests on. A call through
     // a bound stays outside every class.
     use mojito::templates::{MethodFeatures, TemplateClass, TemplateCoverage};
-    let source = "@fieldwise_init\nstruct Slot[T: Movable & Deinitable & Equatable](Movable):\n    var item: Self.T\n    var uses: Int\n\n    def count(self) -> Int:\n        return self.uses\n\n    def bump(mut self, step: Int):\n        self.uses += step\n\n    def replace(mut self, var item: Self.T):\n        self.item = item^\n        self.bump(1)\n\n    def same(self, other: Self.T) -> Bool:\n        return self.item == other\n\n    def peek(ref self) -> ref[origin_of(self.item)] Self.T:\n        return self.item\n\ndef main():\n    var s = Slot(1, 0)\n    s.replace(2)\n    print(s.count(), s.same(2), s.peek())\n";
+    let source = "@fieldwise_init\nstruct Slot[T: Movable & Deinitable & Equatable](Movable):\n    var item: Self.T\n    var uses: Int\n\n    def count(self) -> Int:\n        return self.uses\n\n    def bump(mut self, step: Int):\n        self.uses += step\n\n    def replace(mut self, var item: Self.T):\n        self.item = item^\n        self.bump(1)\n\n    def same(self, other: Self.T) -> Bool:\n        return self.item == other\n\n    def peek(ref self) -> ref[origin_of(self.item)] Self.T:\n        return self.item\n\n    def tally(self, mut into: Int):\n        into += self.uses\n\n    def held(self) -> Int:\n        ref me = self\n        return me.uses\n\n    def through(self) -> Int:\n        ref me = self\n        return me.count()\n\ndef main():\n    var s = Slot(1, 0)\n    s.replace(2)\n    print(s.count(), s.same(2), s.peek())\n";
     let linked = mojito::link_source(source, std::path::Path::new("method_classes.mojo"))
         .expect("link error");
     let program = mojito::elaborate(linked).expect("elaborate");
@@ -6717,6 +6717,20 @@ fn method_template_classes_name_what_the_body_holds() {
         panic!("Slot.peek is certified: {:?}", coverage("peek"));
     };
     assert!(peek.contains(MethodFeatures::REFERENCE_RESULT));
+    assert_eq!(
+        coverage("tally"),
+        TemplateCoverage::Certified(TemplateClass::MethodBody(MethodFeatures::STATEMENTS))
+    );
+    let TemplateCoverage::Certified(TemplateClass::MethodBody(held)) = coverage("held") else {
+        panic!("Slot.held is certified: {:?}", coverage("held"));
+    };
+    assert!(held.contains(MethodFeatures::REFERENCE_LOCALS));
+    assert!(!held.contains(MethodFeatures::REFERENCE_RECEIVERS));
+    let TemplateCoverage::Certified(TemplateClass::MethodBody(through)) = coverage("through")
+    else {
+        panic!("Slot.through is certified: {:?}", coverage("through"));
+    };
+    assert!(through.contains(MethodFeatures::REFERENCE_RECEIVERS));
     assert!(
         matches!(coverage("same"), TemplateCoverage::Incomplete(_)),
         "Slot.same is outside every class: {:?}",

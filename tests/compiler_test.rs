@@ -1585,6 +1585,63 @@ fn template_method_reference_calls_derive() {
 }
 
 #[test]
+fn template_method_borrowed_parameters_derive() {
+    // A `mut` or bare `ref` parameter is bound from its convention alone: a
+    // `mut` one may be stored to, scalar or whole, and a `ref` one is read.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_borrowed_parameter.mojo"),
+        "5\n1 mine\n7 held\nTrue True\n0\n",
+        &[
+            ("Shelf.tally", 2),
+            ("Shelf.reset", 2),
+            ("Shelf.put", 2),
+            ("Shelf.same", 2),
+            ("Shelf.larger", 2),
+        ],
+    );
+}
+
+#[test]
+fn template_method_reference_locals_derive() {
+    // A `ref` declaration over `self`, a field, a parameter, a local, or a
+    // reference call, then read, copied out, stored through, or forwarded as
+    // the method's own reference result.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_reference_local.mojo"),
+        "3 0 3\n5 x\n4 y\n2 2 2 2\n4 4\n9 q\n5 x\n",
+        &[
+            ("Shelf.hits_at", 2),
+            ("Shelf.value_at", 2),
+            ("Shelf.item_at", 2),
+            ("Shelf.touch", 2),
+            ("Shelf.size", 2),
+            ("Shelf.mine", 2),
+            ("Shelf.doubled", 2),
+            ("Shelf.echo", 2),
+            ("Shelf.peek", 2),
+        ],
+    );
+}
+
+#[test]
+fn template_method_reference_receivers_derive() {
+    // A field read or a closed method call through a reference call's result
+    // or a `ref` local, over a closed referent and a generic one.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_reference_receiver.mojo"),
+        "1 0 3 2\n4 y\n10 0 4 3\n",
+        &[
+            ("Shelf.key_at", 2),
+            ("Shelf.total_at", 2),
+            ("Shelf.value_at", 2),
+            ("Shelf.bump_at", 2),
+            ("Shelf.seen_at", 2),
+            ("Shelf.touch", 2),
+        ],
+    );
+}
+
+#[test]
 fn template_def_with_a_scalar_local_keeps_the_symbolic_choice() {
     // A surviving trait-bound `def` with a scalar local derives, so its
     // instances inherit the overload the template bound rather than ranking

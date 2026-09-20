@@ -700,6 +700,15 @@ impl Checker {
                 .map(|(id, ty)| (*id, substitute(ty)))
                 .collect()
         };
+        let substituted_reference = |(id, reference): &(OccurrenceId, TemplateReference)| {
+            (
+                *id,
+                TemplateReference {
+                    referent: substitute(&reference.referent),
+                    ..reference.clone()
+                },
+            )
+        };
         let mut facts = CheckedBodyFacts {
             operation_adjustments: template
                 .operation_adjustments
@@ -759,15 +768,17 @@ impl Checker {
             reference_results: template
                 .reference_results
                 .iter()
-                .map(|(id, reference)| {
-                    (
-                        *id,
-                        TemplateReference {
-                            referent: substitute(&reference.referent),
-                            ..reference.clone()
-                        },
-                    )
-                })
+                .map(substituted_reference)
+                .collect(),
+            reference_binding_types: template
+                .reference_binding_types
+                .iter()
+                .map(substituted_reference)
+                .collect(),
+            reference_place_types: template
+                .reference_place_types
+                .iter()
+                .map(substituted_reference)
                 .collect(),
             effect_free_callees: Vec::new(),
             ..template.clone()
@@ -1033,6 +1044,24 @@ impl Checker {
             .ok_or("a called method is missing")?;
         let self_ty = self.self_instance_ty(&owner);
         let selected = &facts.selected_calls[index].1.contract.target;
+        let clone_name =
+            mojito_symbol::symbol::instance_method_clone_name(&method, &info.decls, &arguments);
+        // A receiver whose type was already closed in the template (`List[Pair]`)
+        // selected its clone there, on the arguments a clone check ranks too.
+        let selected_clone = clone_name.as_deref().is_some_and(|clone| {
+            selected
+                .strip_prefix(owner.as_str())
+                .and_then(|rest| rest.strip_prefix('.'))
+                .and_then(|rest| rest.strip_prefix(clone))
+                .is_some_and(|overload| overload.is_empty() || overload.starts_with('$'))
+        });
+        if selected_clone {
+            let target = selected.clone();
+            if !facts.effect_free_callees.contains(&target) {
+                facts.effect_free_callees.push(target);
+            }
+            return Ok(());
+        }
         let declared = match family.as_slice() {
             [only] => only,
             members => members
@@ -1060,8 +1089,6 @@ impl Checker {
         if !closed_family {
             return Err("an overloaded callee declares a parameter of a parameter type");
         }
-        let clone_name =
-            mojito_symbol::symbol::instance_method_clone_name(&method, &info.decls, &arguments);
         let target = if self
             .instance_method_clone(&owner, &method, &arguments)
             .is_some()
@@ -1384,6 +1411,8 @@ impl Checker {
                 .iter()
                 .map(|parameter| parameter.name.as_str())
                 .collect(),
+            borrowed_params: Vec::new(),
+            mut_params: Vec::new(),
             keyed,
             receiver: false,
             self_writable: false,
@@ -1393,6 +1422,7 @@ impl Checker {
             locals: RefCell::new(Vec::new()),
             handles: RefCell::new(Vec::new()),
             references: RefCell::new(Vec::new()),
+            receivers: RefCell::new(Vec::new()),
         };
         if !shape.block(body, false) {
             return outside("the body is not scalar returns over direct calls and 'len'");
@@ -1483,13 +1513,20 @@ impl Checker {
     /// - Nothing outside the fact tables: the body wrote through no origin
     ///   parameter, transferred nothing, and recorded no request.
     ///
-    /// [`TemplateClass::MethodBody`] widens that along six independent
+    /// [`TemplateClass::MethodBody`] widens that along eight independent
     /// [`MethodFeatures`]. The receiver may be `mut`, `var`, `deinit`, a bare
     /// `ref`, the `out` of an `__init__`, or absent (`@staticmethod`), and
     /// the method may carry a `where` clause: the elaborator mints a clone
     /// only where the clause holds, and a clone's signature no longer states
-    /// it. The copy and move initializers, a receiver origin, binders, and
-    /// `raises` stay outside.
+    /// it. A parameter may be `var`, `mut`, or a bare `ref`: it is bound from
+    /// its declared convention and rooted at its own binding under every
+    /// instance, its loan state is decided by a property
+    /// [`TemplateObligation::PlainDataArguments`] rules out, and what its
+    /// caller owes lives in the signature, which is checked per clone. A `mut`
+    /// parameter may be stored to; a bare `ref` one has parametric
+    /// mutability, and a write through it is refused below. The copy and move
+    /// initializers, a receiver or parameter origin, binders, and `raises`
+    /// stay outside.
     ///
     /// - `STATEMENTS`: a runtime statement is checked once whatever runs it,
     ///   so `if`, `while`, `break`, `continue`, and a bare `return` neither
@@ -1525,9 +1562,16 @@ impl Checker {
     ///   receiver, so it is kept by template owner
     ///   ([`TemplateReference`]), and an instance marks its copyable reads
     ///   again at its own referent.
+    /// - `REFERENCE_LOCALS`: see [`BodyShape::bound_place`]. A `ref`
+    ///   binding's type is a reference naming a binding, kept by template
+    ///   owner like a call's; every use records the referent.
+    /// - `REFERENCE_RECEIVERS`: see [`BodyShape::reference_receiver`]. A call
+    ///   borrows a receiver reached through a reference because of what the
+    ///   receiver is, and the callee is realized as a sibling call's is.
     ///
-    /// Any other handle, reference result, interior reference, or copyable
-    /// read in the body refuses it ([`BodyShape::references_recorded`]).
+    /// Any other handle, borrowed receiver, reference result, interior
+    /// reference, or copyable read in the body refuses it
+    /// ([`BodyShape::references_recorded`]).
     fn method_certificate(
         &self,
         method: &mojito_ast::ast::Method,
@@ -1598,15 +1642,36 @@ impl Checker {
         if !plain_struct {
             return outside("a struct parameter is not a plain type parameter");
         }
+        // A `mut` or bare `ref` parameter is bound from its declared
+        // convention alone, and is rooted at its own binding under every
+        // instance. What its caller owes lives in the signature, which is
+        // checked per clone.
         let plain_params = method.params.iter().all(|parameter| {
             parameter.kind == mojito_ast::ast::ParamKind::Regular
-                && matches!(parameter.convention, None | Some(ArgConvention::Var))
+                && matches!(
+                    parameter.convention,
+                    None | Some(ArgConvention::Var | ArgConvention::Mut | ArgConvention::Ref)
+                )
                 && parameter.default.is_none()
                 && parameter.origin.is_none()
         });
         if !plain_params {
-            return outside("a parameter is not an immutable or 'var' regular parameter");
+            return outside(
+                "a parameter has a default, an origin, or an 'out' or 'deinit' convention",
+            );
         }
+        let params_passed = |conventions: &[ArgConvention]| {
+            method
+                .params
+                .iter()
+                .filter(|parameter| {
+                    parameter
+                        .convention
+                        .is_some_and(|convention| conventions.contains(&convention))
+                })
+                .map(|parameter| parameter.name.as_str())
+                .collect::<Vec<_>>()
+        };
         let returns_reference = self
             .return_ref_contracts
             .last()
@@ -1623,6 +1688,8 @@ impl Checker {
                 .iter()
                 .map(|parameter| parameter.name.as_str())
                 .collect(),
+            borrowed_params: params_passed(&[ArgConvention::Mut, ArgConvention::Ref]),
+            mut_params: params_passed(&[ArgConvention::Mut]),
             keyed: false,
             receiver: method.has_self,
             self_writable: matches!(
@@ -1641,6 +1708,7 @@ impl Checker {
             locals: RefCell::new(Vec::new()),
             handles: RefCell::new(Vec::new()),
             references: RefCell::new(Vec::new()),
+            receivers: RefCell::new(Vec::new()),
         };
         if !shape.block(&method.body, false) {
             return outside("the body is outside the method grammar");
@@ -1950,18 +2018,20 @@ impl Checker {
                 })
                 .ok_or(IncompleteReason::ExternalBinding)
         };
-        // A reference names the receiver or a parameter, which every instance
-        // has. One rooted at a local would also need `renumber_locals`.
-        let local_place = |place: &mojito_types::origin::OriginPlace| match local_owner(place.root)?
-        {
-            root @ (TemplateOwner::Receiver | TemplateOwner::Param(_)) => Ok(TemplatePlace {
-                root,
-                path: place.path.clone(),
-            }),
-            TemplateOwner::Local(_)
-            | TemplateOwner::Global(_)
-            | TemplateOwner::CompileTimeParam(_) => Err(IncompleteReason::ExternalBinding),
-        };
+        // A reference names the receiver, a parameter, or a local, which
+        // every instance has (`for_each_owner` renumbers the last).
+        let local_place =
+            |place: &mojito_types::origin::OriginPlace| match local_owner(place.root)? {
+                root @ (TemplateOwner::Receiver
+                | TemplateOwner::Param(_)
+                | TemplateOwner::Local(_)) => Ok(TemplatePlace {
+                    root,
+                    path: place.path.clone(),
+                }),
+                TemplateOwner::Global(_) | TemplateOwner::CompileTimeParam(_) => {
+                    Err(IncompleteReason::ExternalBinding)
+                }
+            };
         let local_reference = |reference: &mojito_types::origin::RefTy| {
             if names_place(&reference.referent) {
                 return Err(IncompleteReason::ExternalBinding);
@@ -2006,10 +2076,29 @@ impl Checker {
             .collect();
         effect_free_callees.sort();
         effect_free_callees.dedup();
+        // A `ref` binding's type is a reference whose origin names a binding,
+        // so it is kept by template owner, apart from the closed types.
+        let apart = |types: Vec<(OccurrenceId, Ty)>| {
+            let (references, plain): (Vec<_>, Vec<_>) = types
+                .into_iter()
+                .partition(|(_, ty)| rooted_reference(ty).is_some());
+            let references = references
+                .iter()
+                .filter_map(|(id, ty)| Some((*id, rooted_reference(ty)?)))
+                .map(|(id, reference)| local_reference(reference).map(|kept| (id, kept)))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok::<_, IncompleteReason>((plain, references))
+        };
+        let (expression_place_types, reference_place_types) =
+            apart(values(&occurrences, &self.expression_place_types.borrow()))?;
+        let (binding_types, reference_binding_types) =
+            apart(values(&occurrences, &self.binding_types.borrow()))?;
         Ok(CheckedBodyFacts {
             expression_types: values(&occurrences, &self.expression_types.borrow()),
-            expression_place_types: values(&occurrences, &self.expression_place_types.borrow()),
-            binding_types: values(&occurrences, &self.binding_types.borrow()),
+            expression_place_types,
+            binding_types,
+            reference_binding_types,
+            reference_place_types,
             expression_bindings: owned(&self.expression_bindings.borrow())?,
             statement_bindings: owned(&self.statement_bindings.borrow())?,
             expression_effects: values(&occurrences, &self.expression_effects.borrow()),
@@ -2058,6 +2147,9 @@ impl Checker {
                 .collect(),
             borrowed_read_call_places: keyed(&|span| {
                 self.borrowed_read_call_places.borrow().contains(span)
+            }),
+            borrowed_reference_receivers: keyed(&|span| {
+                self.borrowed_reference_receivers.borrow().contains(span)
             }),
             read_temporary_arguments: keyed(&|span| {
                 self.read_temporary_arguments.borrow().contains(span)
@@ -2215,17 +2307,22 @@ impl Checker {
             }
         }
         // A type is retained as written, and a binding identity inside one
-        // would never be remapped for an instance.
-        let types = [
-            &*self.expression_types.borrow(),
+        // would never be remapped for an instance. The type of a `ref`
+        // binding is the exception: a reference at the top of a place or
+        // binding type is kept by template owner (`rooted_reference`).
+        let expression_types = self.expression_types.borrow();
+        let kept_apart = [
             &*self.expression_place_types.borrow(),
             &*self.binding_types.borrow(),
         ];
         if occurrences.iter().any(|occurrence| {
-            types
-                .iter()
-                .filter_map(|table| table.get(&occurrence.span))
-                .any(names_place)
+            expression_types
+                .get(&occurrence.span)
+                .is_some_and(names_place)
+                || kept_apart
+                    .iter()
+                    .filter_map(|table| table.get(&occurrence.span))
+                    .any(|ty| rooted_reference(ty).is_none() && names_place(ty))
         }) {
             return Err(IncompleteReason::ExternalBinding);
         }
@@ -2338,6 +2435,16 @@ impl Checker {
                 .borrow_mut()
                 .insert(span(id)?, rooted(place)?);
         }
+        for (id, reference) in &facts.reference_binding_types {
+            self.binding_types
+                .borrow_mut()
+                .insert(span(id)?, Ty::Ref(referenced(reference)?));
+        }
+        for (id, reference) in &facts.reference_place_types {
+            self.expression_place_types
+                .borrow_mut()
+                .insert(span(id)?, Ty::Ref(referenced(reference)?));
+        }
         for id in &facts.copyable_reference_result_reads {
             self.copyable_reference_result_reads
                 .borrow_mut()
@@ -2368,6 +2475,11 @@ impl Checker {
         }
         for id in &facts.borrowed_read_call_places {
             self.borrowed_read_call_places
+                .borrow_mut()
+                .insert(span(id)?);
+        }
+        for id in &facts.borrowed_reference_receivers {
+            self.borrowed_reference_receivers
                 .borrow_mut()
                 .insert(span(id)?);
         }
@@ -2729,6 +2841,7 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::ReferenceValueUses
         | FactTable::InteriorReferences
         | FactTable::CopyableReferenceResultReads
+        | FactTable::BorrowedReferenceReceivers
         | FactTable::DeletableBindings
         | FactTable::LinearBindings
         | FactTable::LinearTemporaries => true,
@@ -2751,7 +2864,6 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::SubscriptDescriptors
         | FactTable::IterationProtocols
         | FactTable::ExplicitDestroyCalls
-        | FactTable::BorrowedReferenceReceivers
         | FactTable::CallPlaceUses
         | FactTable::ImplicitlyCopiedConsumingReceivers
         | FactTable::TruthinessConditions => false,
@@ -2834,12 +2946,45 @@ fn renumber_locals(facts: &mut CheckedBodyFacts) {
             *local = u32::try_from(dense).unwrap_or(u32::MAX);
         }
     };
+    for_each_owner(facts, &renumber);
+    facts.locals = u32::try_from(declared.len()).unwrap_or(u32::MAX);
+}
+
+/// Visit every binding a bundle names by template owner: the binding tables,
+/// each invalidation's root and exception, and the root of every place a
+/// reference's origin holds.
+fn for_each_owner(facts: &mut CheckedBodyFacts, visit: &dyn Fn(&mut TemplateOwner)) {
+    fn origin_owners(origin: &mut TemplateOrigin, visit: &dyn Fn(&mut TemplateOwner)) {
+        match origin {
+            TemplateOrigin::Place(place) => visit(&mut place.root),
+            TemplateOrigin::Union(members) => members
+                .iter_mut()
+                .for_each(|member| origin_owners(member, visit)),
+            TemplateOrigin::Unrooted(_) => {}
+        }
+    }
     for (_, owner) in facts
         .statement_bindings
         .iter_mut()
         .chain(&mut facts.expression_bindings)
     {
-        renumber(owner);
+        visit(owner);
+    }
+    for (_, place) in &mut facts.interior_references {
+        visit(&mut place.root);
+    }
+    for (_, reference) in facts
+        .reference_results
+        .iter_mut()
+        .chain(&mut facts.reference_binding_types)
+        .chain(&mut facts.reference_place_types)
+    {
+        origin_owners(&mut reference.origin, visit);
+    }
+    for (_, call) in &mut facts.selected_calls {
+        if let Some(reference) = &mut call.reference_result {
+            origin_owners(&mut reference.origin, visit);
+        }
     }
     let call_invalidations = facts.selected_calls.iter_mut().flat_map(|(_, call)| {
         call.arguments
@@ -2853,12 +2998,11 @@ fn renumber_locals(facts: &mut CheckedBodyFacts) {
         .flat_map(|(_, invalidations)| invalidations)
         .chain(call_invalidations)
     {
-        renumber(&mut invalidation.root);
+        visit(&mut invalidation.root);
         if let Some(except) = &mut invalidation.except {
-            renumber(except);
+            visit(except);
         }
     }
-    facts.locals = u32::try_from(declared.len()).unwrap_or(u32::MAX);
 }
 
 /// The constructs a method's declaration and body hold, by name and without
@@ -2964,6 +3108,17 @@ fn grammar_features(method: &mojito_ast::ast::Method, ret_ty: &Ty) -> Vec<String
 
 /// Whether a type names a checker-local place: an origin rooted at a binding
 /// identity, in a pointer, a reference, or a struct's origin argument.
+/// The reference at the top of a `ref` binding's type, when its origin names
+/// a binding: what a bundle keeps by template owner instead of as written.
+fn rooted_reference(ty: &Ty) -> Option<&mojito_types::origin::RefTy> {
+    match ty {
+        Ty::Ref(reference) if names_place(ty) && !names_place(&reference.referent) => {
+            Some(reference)
+        }
+        _ => None,
+    }
+}
+
 fn names_place(ty: &Ty) -> bool {
     use mojito_types::origin::{Origin, PointerOrigin};
     fn rooted(origin: &Origin) -> bool {
@@ -3109,6 +3264,11 @@ struct BodyShape<'a> {
     /// `None` judges the syntax alone, before anything is captured.
     facts: Option<&'a CheckedBodyFacts>,
     params: Vec<&'a str>,
+    /// The `mut` and `ref` parameters among them: a place the body borrows,
+    /// so never the source of a `^` transfer.
+    borrowed_params: Vec<&'a str>,
+    /// The `mut` parameters, which the body may store to.
+    mut_params: Vec<&'a str>,
     /// Whether source validation produced the facts. A body it checks may
     /// hold compile-time control flow over scalar locals and assignments,
     /// under that check's own rules; any other body may hold runtime
@@ -3128,12 +3288,25 @@ struct BodyShape<'a> {
     reference_result: Option<&'a Ty>,
     /// What the body held beyond scalar `return`s.
     features: std::cell::Cell<MethodFeatures>,
-    /// The locals declared so far, and whether each is a closed scalar.
-    locals: RefCell<Vec<(String, bool)>>,
+    /// The locals declared so far.
+    locals: RefCell<Vec<(String, LocalKind)>>,
     /// The occurrences admitted as reference handles.
     handles: RefCell<Vec<OccurrenceId>>,
     /// The calls admitted as reference-returning.
     references: RefCell<Vec<OccurrenceId>>,
+    /// The references admitted as a method call's receiver.
+    receivers: RefCell<Vec<OccurrenceId>>,
+}
+
+/// What a local of a certified body is.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LocalKind {
+    /// A `var` of a closed scalar type.
+    Scalar,
+    /// A `var` holding a whole value of any other type.
+    Value,
+    /// A `ref` binding: a handle on a place, never a value to move.
+    Reference,
 }
 
 impl BodyShape<'_> {
@@ -3165,7 +3338,9 @@ impl BodyShape<'_> {
             StmtKind::ComptimeFor { body, .. } if self.keyed => self.block(body, true),
             StmtKind::VarDecl { name, value, .. } if self.keyed && !in_loop => {
                 let scalar = self.expression(value) && self.scalar(value);
-                self.locals.borrow_mut().push((name.clone(), true));
+                self.locals
+                    .borrow_mut()
+                    .push((name.clone(), LocalKind::Scalar));
                 scalar
             }
             // A runtime statement is checked once, whatever runs it, so it
@@ -3178,8 +3353,20 @@ impl BodyShape<'_> {
                     && self.moved_result.is_some()
                     && (self.whole_value(value) || self.reference_read(value))
                     && self.judged_binding(value);
-                self.locals.borrow_mut().push((name.clone(), scalar));
+                let kind = if scalar {
+                    LocalKind::Scalar
+                } else {
+                    LocalKind::Value
+                };
+                self.locals.borrow_mut().push((name.clone(), kind));
                 (scalar || moved) && self.holds(MethodFeatures::STATEMENTS)
+            }
+            StmtKind::RefDecl { name, value } if !self.keyed => {
+                let bound = self.bound_place(statement, value);
+                self.locals
+                    .borrow_mut()
+                    .push((name.clone(), LocalKind::Reference));
+                bound && self.holds(MethodFeatures::REFERENCE_LOCALS)
             }
             StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue if !self.keyed => {
                 self.holds(MethodFeatures::STATEMENTS)
@@ -3221,14 +3408,20 @@ impl BodyShape<'_> {
             StmtKind::Assign { name, value } if name == "_" => {
                 self.expression(value) && self.scalar(value)
             }
-            StmtKind::Assign { name, value } => {
-                self.local(name)
-                    && self.expression(value)
+            StmtKind::Assign { name, value } if self.local(name) => {
+                self.expression(value)
                     && self.scalar(value)
                     && (self.keyed || self.holds(MethodFeatures::STATEMENTS))
             }
+            // A whole store to a `mut` parameter, of the parameter's own type.
+            StmtKind::Assign { name, value } => {
+                self.mut_params.contains(&name.as_str())
+                    && self.parameter_store(value)
+                    && self.holds(MethodFeatures::STATEMENTS)
+            }
             StmtKind::AugAssign { place, value, .. } => {
-                let local = matches!(&place.kind, ExprKind::Identifier(name) if self.local(name));
+                let local = matches!(&place.kind, ExprKind::Identifier(name)
+                    if self.local(name) || self.mut_params.contains(&name.as_str()));
                 (local || (!self.keyed && self.scalar_field_place(place)))
                     && self.scalar(place)
                     && self.expression(value)
@@ -3250,27 +3443,32 @@ impl BodyShape<'_> {
     /// changes.
     fn returned_place(&self, value: &Expr) -> bool {
         let id = self.occurrence(value);
-        let admitted =
-            (self.receiver_field(value) || self.slot(value) || self.reference_call(value))
-                && self
-                    .reference_result
-                    .is_some_and(|referent| self.typed(value, referent))
-                && self.facts.is_none_or(|facts| {
-                    fact_at(&facts.reference_value_uses, id) == Some(&false)
-                        && !facts.copy_place_value_uses.contains(&id)
-                });
+        let forwarded =
+            matches!(&value.kind, ExprKind::Identifier(name) if self.reference_local(name));
+        let admitted = (forwarded
+            || self.receiver_field(value)
+            || self.slot(value)
+            || self.reference_call(value))
+            && self
+                .reference_result
+                .is_some_and(|referent| self.typed(value, referent))
+            && self.facts.is_none_or(|facts| {
+                fact_at(&facts.reference_value_uses, id) == Some(&false)
+                    && !facts.copy_place_value_uses.contains(&id)
+            });
         if admitted {
-            self.handles.borrow_mut().push(id);
+            self.handle(id);
         }
         admitted && self.holds(MethodFeatures::REFERENCE_RESULT)
     }
 
     /// A reference-returning call on a field of `self`, passing scalars:
     /// a subscript or a named accessor whose recorded contract is a
-    /// `closed_reference_contract`. It is admitted only as a returned place
-    /// or as a whole value read, never as a receiver, an operand, or an
-    /// argument, each of which records a borrow of its own. An iterator's
-    /// `__next__` marks its copyable read by another rule.
+    /// `closed_reference_contract`. It is admitted as a returned place, a
+    /// whole value read, a `ref` declaration's value, or the reference a
+    /// field is read or a method called through ([`Self::through`]), never as
+    /// an operand or an argument, each of which records a borrow of its own.
+    /// An iterator's `__next__` marks its copyable read by another rule.
     fn reference_call(&self, expr: &Expr) -> bool {
         let (object, method, arguments) = match &expr.kind {
             ExprKind::Index { object, index } => {
@@ -3313,14 +3511,22 @@ impl BodyShape<'_> {
     }
 
     /// Whether the references the check recorded are exactly the ones the
-    /// grammar admitted: each handle kept at a returned place, and each
-    /// reference result, interior generation, and copyable read at an
-    /// admitted reference call. Every other writer of those tables decides on
-    /// a type or on a binding's declaration.
+    /// grammar admitted: each handle kept at a returned place, a `ref`
+    /// declaration's value, or the base of a field read through a reference,
+    /// each receiver borrowed through a reference, and each reference result,
+    /// interior generation, and copyable read at an admitted reference call.
+    /// Every other writer of those tables decides on a type or on a
+    /// binding's declaration.
     fn references_recorded(&self, facts: &CheckedBodyFacts) -> bool {
         let handles = self.handles.borrow();
         let references = self.references.borrow();
-        facts.reference_value_uses.len() == handles.len()
+        let receivers = self.receivers.borrow();
+        facts.borrowed_reference_receivers.len() == receivers.len()
+            && facts
+                .borrowed_reference_receivers
+                .iter()
+                .all(|id| receivers.contains(id))
+            && facts.reference_value_uses.len() == handles.len()
             && facts
                 .reference_value_uses
                 .iter()
@@ -3335,6 +3541,91 @@ impl BodyShape<'_> {
                 .chain(facts.interior_references.iter().map(|(id, _)| id))
                 .chain(&facts.copyable_reference_result_reads)
                 .all(|id| references.contains(id))
+    }
+
+    /// The place a `ref` declaration binds: `self`, a field of it, a
+    /// parameter, a `var` local, or a reference call on a field.
+    ///
+    /// The declaration decides the binding's mutability from the value's own
+    /// reference and the binding it names, re-stamps an origin path computed
+    /// upstream, and runs no check of its own (`StmtKind::RefDecl`). Its type
+    /// is that reference, kept by template owner, and a later use resolves
+    /// through it and records the referent. So an instance substitutes the
+    /// referent and gets its own bindings back in the origin.
+    fn bound_place(&self, statement: &Stmt, value: &Expr) -> bool {
+        let named = match &value.kind {
+            ExprKind::Identifier(name) => {
+                (self.receiver && name == "self")
+                    || self.params.contains(&name.as_str())
+                    || self.local(name)
+                    || self.declared(name)
+            }
+            _ => self.receiver_field(value),
+        };
+        let declaration = OccurrenceId {
+            syntax: self.origins.origin(statement.syntax_id),
+            copy: 0,
+        };
+        let id = self.occurrence(value);
+        let admitted = (named || self.reference_call(value))
+            && self.facts.is_none_or(|facts| {
+                fact_at(&facts.reference_binding_types, declaration).is_some_and(|reference| {
+                    fact_at(&facts.expression_types, id) == Some(&reference.referent)
+                })
+            });
+        if admitted {
+            self.handle(id);
+        }
+        admitted
+    }
+
+    /// A field read through a reference, which keeps the reference as a
+    /// handle: a field has its declared type under the referent's arguments
+    /// in a template and a clone alike.
+    fn reference_member(&self, expr: &Expr) -> bool {
+        let ExprKind::Member { object, .. } = &expr.kind else {
+            return false;
+        };
+        let admitted = self.through(object);
+        if admitted {
+            self.handle(self.occurrence(object));
+        }
+        admitted
+    }
+
+    /// A reference the body reads a field or calls a method through: a `ref`
+    /// local, or a reference call's result.
+    fn through(&self, expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Identifier(name) => {
+                self.reference_local(name) && self.holds(MethodFeatures::REFERENCE_LOCALS)
+            }
+            _ => self.reference_call(expr) && self.holds(MethodFeatures::REFERENCE_RECEIVERS),
+        }
+    }
+
+    /// The receiver of a method call made through a reference. The call
+    /// borrows it, which is decided by what the receiver is and never by its
+    /// type. `named_contract` then demands a nominal struct there, so a
+    /// method of a bare parameter, which a clone selects again, stays out.
+    fn reference_receiver(&self, object: &Expr) -> bool {
+        let admitted = self.through(object);
+        if admitted {
+            let id = self.occurrence(object);
+            let mut receivers = self.receivers.borrow_mut();
+            if !receivers.contains(&id) {
+                receivers.push(id);
+            }
+        }
+        admitted && self.holds(MethodFeatures::REFERENCE_RECEIVERS)
+    }
+
+    /// Note that `id` is kept as a reference handle.
+    fn handle(&self, id: OccurrenceId) {
+        let mut handles = self.handles.borrow_mut();
+        if !handles.contains(&id) {
+            handles.push(id);
+        }
     }
 
     /// The compiler-private trap `_mojito_abort("message")`, as a statement.
@@ -3385,13 +3676,25 @@ impl BodyShape<'_> {
     fn whole_value(&self, expr: &Expr) -> bool {
         let source = |place: &Expr| match &place.kind {
             ExprKind::Identifier(name) => {
-                self.params.contains(&name.as_str()) || self.declared(name)
+                self.params.contains(&name.as_str())
+                    || self.declared(name)
+                    || self.reference_local(name)
             }
-            ExprKind::Member { .. } => self.receiver_field(place),
+            ExprKind::Member { .. } => self.receiver_field(place) || self.reference_member(place),
+            _ => false,
+        };
+        // A place the body only borrows is copied, never moved out of.
+        let borrowed = |place: &Expr| match &place.kind {
+            ExprKind::Identifier(name) => {
+                self.borrowed_params.contains(&name.as_str()) || self.reference_local(name)
+            }
+            ExprKind::Member { .. } => !self.receiver_field(place),
             _ => false,
         };
         let admitted = match &expr.kind {
-            ExprKind::Transfer(inner) => source(inner) || self.call_result(inner),
+            ExprKind::Transfer(inner) => {
+                (source(inner) && !borrowed(inner)) || self.call_result(inner)
+            }
             _ if self.call_result(expr) => true,
             // The pointee, taken out of its slot: a temporary.
             ExprKind::MethodCall {
@@ -3485,6 +3788,15 @@ impl BodyShape<'_> {
             })
     }
 
+    /// A whole value stored to a `mut` parameter. The check accepts the
+    /// store only where the value has the parameter's type or converts to it,
+    /// and a conversion is a fact no derivation carries, so the two types are
+    /// equal in the template and stay equal under substitution.
+    fn parameter_store(&self, value: &Expr) -> bool {
+        let scalar = self.expression(value) && self.scalar(value);
+        scalar || self.moved_result.is_some_and(|_| self.whole_value(value))
+    }
+
     /// Whether the recorded type of `expr` is exactly `ty`.
     fn typed(&self, expr: &Expr, ty: &Ty) -> bool {
         self.facts
@@ -3505,7 +3817,8 @@ impl BodyShape<'_> {
 
     /// A closed scalar field of a writable `self`, as the target of a store.
     fn scalar_field_place(&self, place: &Expr) -> bool {
-        self.self_writable && self.receiver_field(place) && self.scalar(place)
+        ((self.self_writable && self.receiver_field(place)) || self.reference_member(place))
+            && self.scalar(place)
     }
 
     /// A nested block: its locals go out of scope with it.
@@ -3569,24 +3882,46 @@ impl BodyShape<'_> {
 
     /// Whether `name` is a scalar local.
     fn local(&self, name: &str) -> bool {
+        self.local_kind(name) == Some(LocalKind::Scalar)
+    }
+
+    /// Whether `name` is a `var` local of any type.
+    fn declared(&self, name: &str) -> bool {
+        matches!(
+            self.local_kind(name),
+            Some(LocalKind::Scalar | LocalKind::Value)
+        )
+    }
+
+    /// Whether `name` is a `ref` local.
+    fn reference_local(&self, name: &str) -> bool {
+        self.local_kind(name) == Some(LocalKind::Reference)
+    }
+
+    /// The innermost local of that name.
+    fn local_kind(&self, name: &str) -> Option<LocalKind> {
         self.locals
             .borrow()
             .iter()
-            .any(|(local, scalar)| local == name && *scalar)
-    }
-
-    /// Whether `name` is a local of any type.
-    fn declared(&self, name: &str) -> bool {
-        self.locals.borrow().iter().any(|(local, _)| local == name)
+            .rev()
+            .find(|(local, _)| local == name)
+            .map(|(_, kind)| *kind)
     }
 
     fn expression(&self, expr: &Expr) -> bool {
         match &expr.kind {
             ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) => true,
-            ExprKind::Identifier(name) => self.params.contains(&name.as_str()) || self.local(name),
+            // A `ref` local is read through its handle, as the scalar every
+            // use site of `expression` also demands.
+            ExprKind::Identifier(name) => match self.local_kind(name) {
+                Some(kind) => kind != LocalKind::Value,
+                None => self.params.contains(&name.as_str()),
+            },
             // A field of `self`, admitted where its recorded type is a closed
             // scalar: every use site of `expression` also demands `scalar`.
-            ExprKind::Member { .. } => self.receiver_field(expr) && self.scalar(expr),
+            ExprKind::Member { .. } => {
+                (self.receiver_field(expr) || self.reference_member(expr)) && self.scalar(expr)
+            }
             // A call of a method on `self` or on one of its fields, passing
             // scalars, whose recorded contract changes per instance only in
             // its target and its substituted result (`closed_method_contract`).
@@ -3597,8 +3932,8 @@ impl BodyShape<'_> {
                 kwargs,
             } => {
                 let on_self = matches!(&object.kind, ExprKind::Identifier(name) if name == "self");
-                self.receiver
-                    && (on_self || self.receiver_field(object))
+                ((self.receiver && (on_self || self.receiver_field(object)))
+                    || (!self.keyed && self.reference_receiver(object)))
                     && (!self.keyed || (args.is_empty() && kwargs.is_empty()))
                     && args
                         .iter()
@@ -3631,12 +3966,15 @@ impl BodyShape<'_> {
                 // `self` of any type, not only a scalar one.
                 let builtin_len = self
                     .facts
-                    .is_some_and(|facts| facts.builtin_len_calls.contains(&id));
+                    .is_none_or(|facts| facts.builtin_len_calls.contains(&id));
                 known
                     && param_args.is_empty()
                     && kwargs.is_empty()
                     && args.iter().all(|argument| {
-                        self.expression(argument) || (builtin_len && self.receiver_field(argument))
+                        let held = matches!(&argument.kind, ExprKind::Identifier(name)
+                            if self.reference_local(name));
+                        self.expression(argument)
+                            || (builtin_len && (held || self.receiver_field(argument)))
                     })
             }
             _ => false,

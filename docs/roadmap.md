@@ -61,8 +61,10 @@ step extended that to a generic struct's per-instantiation method clones. The
 eighth widened the method class to runtime statements, whole-value moves,
 pointer slots, and sibling calls that pass scalars. The ninth admitted a
 `ref self` receiver and a reference result, and keeps the reference a call
-yields by template owner, so the collection accessors derive. The entries
-below widen it further. Each task pays off by itself, and together they are what moving
+yields by template owner, so the collection accessors derive. The tenth
+admitted a `ref` declaration, a field read or a closed call through a
+reference, and `mut` and bare `ref` parameters, which pays in user structs and
+moved no bundled body by itself. The entries below widen it further. Each task pays off by itself, and together they are what moving
 toward Mojo's shape needs.
 
 This section holds only work that moves the check order: checking a template
@@ -76,23 +78,20 @@ entry names what it depends on. Size does not move an entry up. The **Model:**
 bullet carries the complexity estimate and says whether the entry can be done
 as-is or must be planned first.
 
-- [ ] **A method that binds a reference or calls through one keeps the clone
-  check**
+- [ ] **A store through a call's reference and an origin-bearing parameter keep
+  the clone check**
 
-  Problem: a reference a call yields derives only when the method returns it
-  or reads it by value, and every other use records a borrow with no recipe.
-  - `ref entry = self.entries[i]` is a `ref` declaration: 28 of the 314 clone
-    bodies `benchmarks/compile/stdlib_heavy.mojo` still infers hold one
-    (`--timings`, `template_census.clone.grammar.stmt:RefDecl`). It writes
-    `ReferenceValueUses` and `InteriorReferences` from the binding, not from a
-    `return`.
-  - `self.items[i].method()` records `BorrowedReferenceReceivers`, the sole
-    blocker of 5 bodies.
-  - A `ref` parameter is outside the method grammar, as a `mut` one is (37
-    bodies).
-  - The template-local form exists: `templates.rs:TemplateReference` and
-    `TemplatePlace`. A reference rooted at a local also needs
-    `template_facts.rs:renumber_locals` to cover it.
+  Problem: a method body derives through a `ref` local and a bare `mut` or
+  `ref` parameter, and three neighbouring shapes still refuse it.
+  - `self.entries[i].hits = 0` records `SubscriptDescriptors`, which has no
+    recipe: 10 clone bodies in `benchmarks/compile/stdlib_heavy.mojo`, the
+    sole blocker of 4. The same store through `ref entry = self.entries[i]`
+    derives.
+  - A parameter with an origin clause (`ref[o] x`, `ref[Self.o] x`) is outside
+    the method grammar, as a receiver origin is.
+  - A sibling call that passes a place to a `mut` or `ref` parameter is not a
+    `closed_method_contract`, which demands every argument bound by value. It
+    records `CallPlaceUses` (13 clone bodies, the sole blocker of 4).
   - Depends on nothing.
   - Model: Fable, plan first.
 
@@ -105,6 +104,11 @@ as-is or must be planned first.
   - `ConstructionImmutableBinders` blocks 103 clone bodies and is the sole
     blocker of 56, the best single recipe left (`docs/performance.md`, *Census
     of method bodies*).
+  - The 16 iterator makers (`List.__iter__`, `List.__reversed__`,
+    `Optional.__iter__`, `Dict.take_items`) are `ref source = self` and one
+    construction. The `ref` declaration already derives. Their result type
+    carries `origin_of(self)`, a binding inside a type, which a bundle does
+    not keep yet.
   - A construction also records a `generic_instantiations` entry and an
     overload target naming the `__init__` clone. `constructor_clone_target`
     already finds that clone, through the helper the sibling-call recipe
@@ -174,7 +178,7 @@ as-is or must be planned first.
     (`templates.rs:derive_adjustment`, `template_facts.rs:derivable_table`).
   - A method call derives only under `templates.rs:closed_method_contract`:
     on `self` or a field of it, every argument a closed scalar bound by value.
-    178 of the 333 clone bodies still inferred hold a call that passes
+    175 of the 314 clone bodies still inferred hold a call that passes
     something else (`template_census.clone.grammar.expr:MethodCall+args`).
   - A method call through a trait bound records a `CheckedCallContract` whose
     target an instance must realize against the concrete implementation. The
@@ -186,6 +190,13 @@ as-is or must be planned first.
     scalars (`templates.rs:closed_reference_contract`). `List.index`,
     `List.__hash__`, `Dict.get`, and `Dict.__eq__` hold one and wait only on a
     non-scalar argument or a call through a bound.
+  - A `ref` local and a receiver reached through a reference derive too. The
+    12 `Dict` and `Set` loops over `ref entry = self.entries[i]` and
+    `List.extend(Span)` wait on the same two things: `entry.key == key`
+    dispatches through the bound, and `other.find_index(mine.key)` passes a
+    non-scalar.
+  - Every bundled `mut` parameter (37 clone bodies) is a writer or a hasher
+    the body calls through its bound, so those bodies wait here as well.
   - Each recipe needs its soundness argument written beside
     `template_certificate`, and a verification-mode run over a probe.
   - Depends on nothing.

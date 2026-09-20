@@ -315,7 +315,7 @@ pub fn trivial_method_contract(call: &TemplateCallContract) -> bool {
 /// callee's declaration, which an instance's clone keeps. Every field is
 /// named, so a new one must be given a rule here before this crate builds.
 pub fn closed_method_contract(call: &TemplateCallContract) -> bool {
-    call.reference_result.is_none() && closed_contract(call)
+    call.reference_result.is_none() && closed_contract(call, false)
 }
 
 /// Whether a method call's contract is a [`closed_method_contract`] but for
@@ -325,15 +325,17 @@ pub fn closed_method_contract(call: &TemplateCallContract) -> bool {
 /// receiver's place, and its mutability is the receiver binding's: neither
 /// reads a struct parameter, so an instance changes only the referent, by
 /// substitution, and gets its own receiver binding back in the origin. The
-/// receiver needs a place, which a field of `self` is.
+/// receiver needs a place, which a field of `self` is. A `ref self` accessor
+/// takes that place as `imm` from a receiver the body may only read and as
+/// `ref` from one it may write, which the body's own receiver decides.
 pub fn closed_reference_contract(call: &TemplateCallContract) -> bool {
     call.reference_result.is_some()
         && call.contract.receiver_requires_place
-        && closed_contract(call)
+        && closed_contract(call, true)
 }
 
 /// What [`closed_method_contract`] and [`closed_reference_contract`] share.
-fn closed_contract(call: &TemplateCallContract) -> bool {
+fn closed_contract(call: &TemplateCallContract, reference: bool) -> bool {
     use mojito_ast::ast::ArgConvention;
     let TemplateCallContract {
         contract:
@@ -366,10 +368,10 @@ fn closed_contract(call: &TemplateCallContract) -> bool {
     raises.is_none()
         && result_adapter.is_none()
         && !receiver_elided
-        && matches!(
+        && (matches!(
             receiver_convention,
             None | Some(ArgConvention::Imm | ArgConvention::Mut)
-        )
+        ) || (reference && *receiver_convention == Some(ArgConvention::Ref)))
         && arguments.iter().all(|argument| {
             argument.source != CheckedCallArgumentSource::Default
                 && closed_scalar(&argument.parameter_ty)
@@ -514,6 +516,14 @@ impl MethodFeatures {
     /// scalars, forwarded as the method's own reference result or read by
     /// value.
     pub const REFERENCE_CALLS: Self = Self(1 << 5);
+    /// A `ref` declaration binding a place of `self`, a parameter, a local,
+    /// or a reference call's result, and the reads and scalar stores made
+    /// through that binding.
+    pub const REFERENCE_LOCALS: Self = Self(1 << 6);
+    /// A field read or a closed method call through a reference: a reference
+    /// call's result or a `ref` local whose referent is a struct. This is the
+    /// last bit of the `u8`; the next feature widens it.
+    pub const REFERENCE_RECEIVERS: Self = Self(1 << 7);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
@@ -693,6 +703,9 @@ pub struct CheckedBodyFacts {
     pub overload_targets: Vec<(OccurrenceId, String)>,
     pub call_parameters: Vec<(OccurrenceId, Vec<CallParameterFact>)>,
     pub borrowed_read_call_places: Vec<OccurrenceId>,
+    /// Receivers reached through a reference, which a method call borrows
+    /// rather than reads: decided by what the receiver is, never by its type.
+    pub borrowed_reference_receivers: Vec<OccurrenceId>,
     pub read_temporary_arguments: Vec<OccurrenceId>,
     /// The callables whose transfer and call-through summaries the body
     /// read, every one of them empty: a derivation holds only while they
@@ -741,6 +754,13 @@ pub struct CheckedBodyFacts {
     pub reference_results: Vec<(OccurrenceId, TemplateReference)>,
     /// The interior generation a subscript's reference belongs to.
     pub interior_references: Vec<(OccurrenceId, TemplatePlace)>,
+    /// The type of each `ref` binding, keyed by its declaration: a reference
+    /// whose origin names a binding, kept out of `binding_types` for that
+    /// reason.
+    pub reference_binding_types: Vec<(OccurrenceId, TemplateReference)>,
+    /// The place type of each use of a `ref` binding, kept out of
+    /// `expression_place_types` likewise.
+    pub reference_place_types: Vec<(OccurrenceId, TemplateReference)>,
     /// Reference results whose referent is implicitly copyable. An instance
     /// judges each reference result again at its own referent
     /// ([`TemplateObligation::ReferenceResultReads`]).
@@ -834,6 +854,13 @@ impl CheckedBodyFacts {
                 out,
                 " call_parameters:\n  derived:  {:?}\n  inferred: {:?}",
                 self.call_parameters, other.call_parameters
+            );
+        }
+        if self.borrowed_reference_receivers != other.borrowed_reference_receivers {
+            let _ = writeln!(
+                out,
+                " borrowed_reference_receivers:\n  derived:  {:?}\n  inferred: {:?}",
+                self.borrowed_reference_receivers, other.borrowed_reference_receivers
             );
         }
         if self.borrowed_read_call_places != other.borrowed_read_call_places {
@@ -955,6 +982,20 @@ impl CheckedBodyFacts {
                 self.interior_references, other.interior_references
             );
         }
+        if self.reference_binding_types != other.reference_binding_types {
+            let _ = writeln!(
+                out,
+                " reference_binding_types:\n  derived:  {:?}\n  inferred: {:?}",
+                self.reference_binding_types, other.reference_binding_types
+            );
+        }
+        if self.reference_place_types != other.reference_place_types {
+            let _ = writeln!(
+                out,
+                " reference_place_types:\n  derived:  {:?}\n  inferred: {:?}",
+                self.reference_place_types, other.reference_place_types
+            );
+        }
         if self.copyable_reference_result_reads != other.copyable_reference_result_reads {
             let _ = writeln!(
                 out,
@@ -1023,6 +1064,7 @@ impl CheckedBodyFacts {
             overload_targets: at(&self.overload_targets, occurrences),
             call_parameters: at(&self.call_parameters, occurrences),
             borrowed_read_call_places: flagged(&self.borrowed_read_call_places),
+            borrowed_reference_receivers: flagged(&self.borrowed_reference_receivers),
             read_temporary_arguments: flagged(&self.read_temporary_arguments),
             // Realization recomputes these from the calls that remain.
             effect_free_callees: Vec::new(),
@@ -1049,6 +1091,8 @@ impl CheckedBodyFacts {
             linear_temporaries: flagged(&self.linear_temporaries),
             reference_results: at(&self.reference_results, occurrences),
             interior_references: at(&self.interior_references, occurrences),
+            reference_binding_types: at(&self.reference_binding_types, occurrences),
+            reference_place_types: at(&self.reference_place_types, occurrences),
             copyable_reference_result_reads: flagged(&self.copyable_reference_result_reads),
             transfers: flagged(&self.transfers),
             locals: self.locals,
@@ -1070,6 +1114,7 @@ impl CheckedBodyFacts {
             + self.overload_targets.len()
             + self.call_parameters.len()
             + self.borrowed_read_call_places.len()
+            + self.borrowed_reference_receivers.len()
             + self.read_temporary_arguments.len()
             + self.effect_free_callees.len()
             + self.builtin_len_calls.len()
@@ -1086,6 +1131,8 @@ impl CheckedBodyFacts {
             + self.linear_temporaries.len()
             + self.reference_results.len()
             + self.interior_references.len()
+            + self.reference_binding_types.len()
+            + self.reference_place_types.len()
             + self.copyable_reference_result_reads.len()
             + self.transfers.len()
     }

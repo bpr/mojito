@@ -82,6 +82,7 @@ assets/ownership_error/pointer_to_ref_second_write_rejected.mojo	runs	subset	the
 assets/ownership_error/pointer_to_ref_stale_after_owner_mutation.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference
 assets/ownership_error/reference_loop_element_held_across_append.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference
 assets/ownership_error/reference_row_iteration_invalidated_by_row_append.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference
+assets/ownership_error/template_method_reference_local_invalidated.mojo	compile-reject	agree	error: use of invalidated interior reference 'self.items["element"]'
 assets/ownership_error/transfer_into_var_parameter.mojo	compile-reject	agree	error: use of uninitialized value 'a'
 assets/ownership_error/use_after_move.mojo	compile-reject	agree	error: use of uninitialized value 'a'
 assets/ownership_error/use_after_move_after_try.mojo	compile-reject	agree	error: use of uninitialized value 's'
