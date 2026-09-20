@@ -406,6 +406,7 @@ Entry points:
 ```rust
 comptime::prepare(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError>
 checker::validate_comptime_templates(prepared: &[Stmt]) -> Result<(), TypeError>
+checker::validate_comptime_templates_into(prepared: &[Stmt], catalog: &mut TemplateCatalog) -> Result<(), TypeError>
 comptime::elaborate_prepared(prepared: Vec<Stmt>, …requests) -> Result<Elaborated, ComptimeError>
 comptime::elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError>
 ```
@@ -437,13 +438,28 @@ explicit-destruction analysis over exactly those bodies
 (`explicit_destroy::check` with `DestroyScope::ValidatedTemplates`): a
 compile-time-keyed template is a trapping stub by the time the executable
 check sees it, so this is the only place its abandoned values are judged with
-the parameters symbolic. A `comptime if`'s arms join as alternatives there,
-not as branches — elaboration selects exactly one, so a value any arm
-destroys counts as destroyed. Validation produces no
-checked facts: its checker is discarded, and `Compiler::compile_linked`
-runs it once on the prepared program that every discovery round then
-re-elaborates. `comptime::elaborate`, the composed-stage seam, runs the
-same three steps.
+the parameters symbolic. An arm whose condition names one of the body's
+parameters may assume nothing about the instantiation, so such arms join as
+`if` branches do: a value one arm alone destroys is abandoned, or
+uninitialized if used afterwards, even when every instantiation selects that
+arm, as upstream (`explicit_destroy::check_comptime_if`,
+`assets/type_error/comptime_if_arm_conditional_destroy.mojo`). A condition
+naming no parameter folds to one arm, and its arms join as alternatives. A
+`comptime for` body must leave every outer obligation as it found it.
+
+**Validation is a template producer.** `Compiler::compile_linked` runs
+validation once, on the prepared program that every discovery round then
+re-elaborates, and lends it the compilation's `TemplateCatalog`
+(`validate_comptime_templates_into`). A module-level body validation checks
+is retained there as a `CheckedTemplate`: its facts keyed by its own syntax
+occurrences, with a coverage certificate. The elaborator stubs such a
+template, so validation is the only check it gets, and its instances inherit
+the facts of the arms the elaborator selects instead of being inferred
+(Stage 3, *Checked Templates*). A run that ends without a verdict withdraws
+every certificate it produced. The verdict-only
+`validate_comptime_templates` remains for clients without a catalog, and
+`comptime::elaborate`, the composed-stage seam, runs the same three steps
+through it.
 
 Compile-time values are represented by:
 
@@ -660,7 +676,12 @@ concrete application that fails to resolve keeps its eager diagnostic, and the
 raw seam still rejects an unmarked variadic template.
 
 Inferred applications reach the same clones through the compiler's discovery
-fixpoint: `Compiler::compile_linked` iterates elaborate→check, deriving
+fixpoint. Each round's check stops at a `DiscoveryResult` (Stage 3): the
+requests below are read from it, every round but the converged one is
+discarded without its checked arena being built, and a clone the round's
+`DefInstanceTrace`s tie to a certified template takes its facts from the
+compilation's `TemplateCatalog` rather than being inferred.
+`Compiler::compile_linked` iterates elaborate→check, deriving
 `DefSpecializationRequest`s from the checker's recorded generic
 instantiations and `MethodSpecializationRequest`s from its recorded generic
 *method* instantiations — on a specialized variadic struct, on a closed
@@ -946,10 +967,24 @@ Entry point:
 ```rust
 checker::check(program: &[Stmt]) -> Result<(), TypeError>
 checker::check_program(program: &[Stmt]) -> Result<CheckedProgram, TypeError>
+checker::check_program_for_discovery(program, materialized_callables, catalog) -> Result<DiscoveryResult, TypeError>
+checker::check_program_with_templates(program, materialized_callables, catalog) -> Result<CheckedProgram, TypeError>
 ```
 
-`check` is the compatibility validation wrapper. The compiler pipeline uses
-`check_program`, whose checked handoff owns the elaborated AST for diagnostics and
+`check` is the compatibility validation wrapper, and `check_program` the
+whole-handoff entry the stage-composed seam, CTFE, and direct clients use.
+The compiler driver calls `check_program_for_discovery`, which runs every
+rejecting check — the transfer-effect fixpoint, reference-result reads,
+context-manager splicing, explicit destruction — and stops before the checked
+arena is assembled. A `DiscoveryResult` is `CheckedProgram::new`'s inputs,
+owned. The driver's request collectors read it directly, and the two that
+need every expression's types use `DiscoveryResult::scan_expressions`, which
+is the arena builder's own traversal with node construction switched off, so
+they see exactly the expressions the arena would hold. Only the round that
+converges is finalized (`DiscoveryResult::finalize`). A `DiscoveryResult` is
+not executable and never reaches HIR or MIR.
+
+The checked handoff owns the elaborated AST for diagnostics and
 an explicit semantic arena. Every checked expression has a `CheckedNodeId`, child
 edges, resolved runtime type, value/place/type category, stable owner identity for
 binding uses, extensible effect facts, and a list of semantic adjustments. Checked
@@ -1228,6 +1263,43 @@ Examples of syntax that may parse before it is fully implemented include richer
 trait features and advanced expression/declaration forms that the VM does not
 yet execute.
 
+### Checked Templates
+
+A generic body is inferred once, with its parameters symbolic, and the
+instances it covers inherit that result instead of being inferred again as
+clones. The vocabulary is `crates/mojito-checked/src/templates.rs`; capture,
+certification, realization, and installation are
+`checker/template_facts.rs`. The design record, with every certificate class
+and its soundness argument, is
+[`docs/notes/instantiation-from-template.md`](notes/instantiation-from-template.md).
+
+- **One producer per body.** The executable check retains the template of a
+  trait-bound generic that survives elaboration. Source validation retains
+  the template of a body it checks and the elaborator then stubs.
+- **Capture is total or it refuses.** `FactTable` enumerates every
+  occurrence-keyed fact table. A body that recorded into a table without a
+  derivation recipe, keyed a fact outside its own occurrences, grew a store
+  that is not keyed by occurrence, or read a callee effect summary that was
+  not empty is retained as `TemplateCoverage::Incomplete`, and its instances
+  keep the clone check.
+- **The trace is explicit.** The elaborator records which prepared declaration
+  each `def` clone instantiates and what each compile-time parameter became
+  (`DefInstanceTrace`). A clone node keeps the syntax identity of the template
+  node it was copied from, and `rekey_syntax` returns the identity each
+  re-keyed node had before (`SyntaxOrigins`). No correspondence is inferred
+  from a mangled name.
+- **An instance still owes its obligations.** Realization substitutes, then
+  discharges the `rebind` equalities, the implicit copies, the clone lookup
+  of each retained application, the built-in `len` witness, and the empty
+  effect summaries. A failed obligation refuses the derivation, so the clone
+  check reports it in its own words. A refusal never accepts a program.
+- **Selection is bound once.** A derived instance inherits the overload its
+  template selected and never ranks the set again, as the pinned Mojo binds a
+  call while it checks the generic body.
+
+`MOJITO_VERIFY_TEMPLATE_FACTS=1` infers every derivable body as well and
+requires the two fact bundles to agree.
+
 ### Overload Resolution
 
 Top-level functions, methods, trait requirements, and constructors may form
@@ -1245,12 +1317,17 @@ At a call site the checker:
 2. filters candidates by call shape, explicit type/value arguments, and argument
    type compatibility
 3. ranks surviving candidates lexicographically by conversion count, variadic
-   use, parameter-signature length, how a variadic candidate binds the
-   arguments (`VariadicBinding`: a non-empty collector, then fewer implicit
-   copies into `var` parameters, then more arguments bound by value, then
-   fewer `ref` parameters), and generic/concrete tie-break. A string literal
-   a type pack absorbs counts the conversion its materialization to `String`
-   costs a regular parameter
+   use, a non-empty collector, fewer implicit copies into `var` parameters,
+   parameter-signature length, then how a variadic candidate binds the rest of
+   the arguments (more bound by value, then fewer `ref` parameters), and the
+   generic/concrete tie-break. The copy a place costs a `var` parameter is
+   charged to every candidate — a method's and a constructor's as much as a
+   free function's — while the collector, by-value and `ref` terms decide
+   between variadic candidates alone, since outside a pack the pinned Mojo
+   follows different rules for a trivial value handed to a `var` parameter. A
+   method is ranked by its own compile-time parameters, not its owner's. A
+   string literal a type pack absorbs counts the conversion its
+   materialization to `String` costs a regular parameter
 4. accepts the unique lowest-score candidate
 5. rejects no-match and tied-best cases
 
@@ -1280,8 +1357,9 @@ arguments into converting constructors before testing source compatibility and
 constraints. It diagnoses ambiguity after substitution and records the selected
 specialized constructor identity for MIR lowering. The same deterministic
 ranking compares exact/coercing candidates, user conversions, variadic use,
-signature length, and generic/concrete specialization; the VM never repeats
-overload or conversion selection dynamically.
+the implicit copies a place costs a `var` parameter, signature length, and
+generic/concrete specialization; the VM never repeats overload or conversion
+selection dynamically.
 
 ### Borrow Checking In The Checker
 

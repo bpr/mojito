@@ -34,6 +34,7 @@
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
 # swept-count	400
+assets/type_error/template_where_instance_violated.mojo	compile-reject	agree	error: invalid call to 'small': violated constraint
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment

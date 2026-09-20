@@ -472,6 +472,91 @@ impl Checker {
     }
 }
 
+/// How the pipeline checks one parameterized module-level declaration's
+/// body, as the predicates below decide it. A class belongs to a declaration,
+/// never to a name: overloads of one name can sit in different classes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TemplateClass {
+    /// Checked abstractly by the executable pass and kept as an erased body.
+    SurvivingTraitBound,
+    /// Checked symbolically by source validation, then stubbed.
+    ValidatedKeyed,
+    /// Checked only per specialization.
+    ConcreteOnly,
+}
+
+impl TemplateClass {
+    pub(super) const fn counter(self) -> &'static str {
+        match self {
+            Self::SurvivingTraitBound => "templates.surviving_trait_bound",
+            Self::ValidatedKeyed => "templates.validated_keyed",
+            Self::ConcreteOnly => "templates.concrete_only",
+        }
+    }
+}
+
+/// Report the template classes of a prepared program's module-level
+/// declarations (a generic struct counts once per method) as timing counters.
+pub(super) fn count_template_classes(stmts: &[Stmt], rebind_keyed: &HashSet<SourceSpan>) {
+    if !timing::enabled() {
+        return;
+    }
+    let declared_structs: HashSet<&str> = stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            StmtKind::Struct { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    let body_class = |type_params: &[mojito_ast::ast::TypeParam], body: &[Stmt]| {
+        let keys_rebind = body_keys_rebind(body, rebind_keyed);
+        if validates_body(type_params, body, keys_rebind) {
+            TemplateClass::ValidatedKeyed
+        } else if keys_rebind || block_has_comptime(body) || is_variadic_template(type_params) {
+            TemplateClass::ConcreteOnly
+        } else {
+            TemplateClass::SurvivingTraitBound
+        }
+    };
+    for statement in stmts {
+        match &statement.kind {
+            StmtKind::Def {
+                name,
+                type_params,
+                body,
+                ..
+            } if !type_params.is_empty() => {
+                let class = if concrete_only_def(statement) {
+                    TemplateClass::ConcreteOnly
+                } else {
+                    body_class(type_params, body)
+                };
+                timing::count(class.counter(), 1);
+                timing::note(class.counter(), || name.clone());
+            }
+            StmtKind::Struct {
+                name,
+                type_params,
+                methods,
+                ..
+            } if !type_params.is_empty() => {
+                let shell =
+                    concrete_only_struct(type_params, &|bound| declared_structs.contains(bound));
+                for method in methods {
+                    let class = if shell {
+                        TemplateClass::ConcreteOnly
+                    } else {
+                        body_class(&method.type_params, &method.body)
+                    };
+                    timing::count(class.counter(), 1);
+                    timing::note(class.counter(), || format!("{name}.{}", method.name));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Whether a declaration has a `DType` parameter.
 pub(super) fn dtype_keyed(type_params: &[mojito_ast::ast::TypeParam]) -> bool {
     type_params

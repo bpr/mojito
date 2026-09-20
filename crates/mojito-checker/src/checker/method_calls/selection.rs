@@ -460,19 +460,29 @@ impl Checker {
                 });
             }
         }
+        // A method's own compile-time parameters rank it exactly as a free
+        // function's do: `s.m(String("t"))` selects a concrete `m(self, a:
+        // String)` over a generic `m[T: Writable](self, a: T)`. `decls` holds
+        // the method's own bracket list only — a struct's parameters live in
+        // `StructInfo::decls` — and a parameter no per-call clone bakes does
+        // not make the candidate generic.
+        let baked = baked_decl_count(&signature.decls);
         Ok(MethodCallScore {
-            rank: overload_rank(score, variadic.is_some() || kw_variadic.is_some(), 0, false)
-                + variadic.map_or(0, |_| {
-                    self.variadic_binding(
-                        overflow.len(),
-                        &slots,
-                        &signature.conventions,
-                        params,
-                        args,
-                        kwargs,
-                    )
-                    .rank()
-                }),
+            rank: overload_rank(
+                score,
+                variadic.is_some() || kw_variadic.is_some(),
+                baked,
+                baked > 0,
+            ) + self
+                .argument_binding(
+                    variadic.map(|_| overflow.len()),
+                    &slots,
+                    &signature.conventions,
+                    params,
+                    args,
+                    kwargs,
+                )
+                .rank(),
             slots,
             positional_overflow: overflow,
             keyword_overflow,

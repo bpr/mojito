@@ -1730,12 +1730,17 @@ fn lambdas_in_param_args<'a>(args: &'a [ParamArg], out: &mut Vec<&'a Expr>) {
 /// Already-unique parser IDs are retained so source-oriented public lookups
 /// remain compatible with the input AST; a repeated ID is never trusted and
 /// receives a deterministic final-tree identity here.
+///
+/// The returned [`SyntaxOrigins`] keeps the identity each re-keyed occurrence
+/// had before: a clone's node carries the identity of the template node it
+/// was copied from, which is the occurrence-level expansion trace.
 #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
-pub fn rekey_syntax(statements: &mut [Stmt]) {
+pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
     struct Rekey {
         next: u64,
         used: std::collections::HashSet<mojito_common::token::SyntaxId>,
         lambda_names: std::collections::HashSet<String>,
+        origins: SyntaxOrigins,
     }
 
     impl Rekey {
@@ -1750,6 +1755,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
                 let id = mojito_common::token::SyntaxId(self.next);
                 self.next += 1;
                 if self.used.insert(id) {
+                    self.origins.replaced.insert(id, current);
                     return id;
                 }
             }
@@ -2271,12 +2277,28 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
         }
     }
 
-    Rekey {
+    let mut rekey = Rekey {
         next: 1,
         used: std::collections::HashSet::new(),
         lambda_names: std::collections::HashSet::new(),
+        origins: SyntaxOrigins::default(),
+    };
+    rekey.block(statements);
+    rekey.origins
+}
+
+/// The identity each occurrence [`rekey_syntax`] re-keyed had before it.
+#[derive(Debug, Clone, Default)]
+pub struct SyntaxOrigins {
+    replaced:
+        std::collections::HashMap<mojito_common::token::SyntaxId, mojito_common::token::SyntaxId>,
+}
+
+impl SyntaxOrigins {
+    /// The identity `id` was copied with: itself unless it was re-keyed.
+    pub fn origin(&self, id: mojito_common::token::SyntaxId) -> mojito_common::token::SyntaxId {
+        self.replaced.get(&id).copied().unwrap_or(id)
     }
-    .block(statements);
 }
 
 /// Attach one linked source path to an entire AST subtree. Spans remain local

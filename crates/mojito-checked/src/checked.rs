@@ -979,6 +979,195 @@ impl CheckedTables {
     }
 }
 
+/// What one check of an elaborated program established, before the executable
+/// handoff is assembled.
+///
+/// Discovery needs a round's requests, not its checked expression arena, and
+/// every round but the last is re-elaborated and checked again. A round
+/// therefore ends here: every rejecting check has already run, the request
+/// queries below read the recorded facts directly, and only the round that
+/// converges pays for [`Self::finalize`]. This is not an executable program
+/// and never reaches HIR or MIR.
+///
+/// The fields are [`CheckedProgram::new`]'s inputs, owned.
+#[derive(Debug, Clone)]
+pub struct DiscoveryResult {
+    pub statements: Vec<Stmt>,
+    pub overload_targets: HashMap<SourceSpan, String>,
+    pub contextual_bases: HashMap<SourceSpan, String>,
+    pub generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
+    pub method_instantiations: HashMap<SourceSpan, MethodInstantiation>,
+    pub struct_instantiations: Vec<StructInstantiation>,
+    pub hash_leaf_types: Vec<Ty>,
+    pub call_transfers: HashMap<SourceSpan, Vec<CheckedCallTransfer>>,
+    pub implicit_conversions: HashMap<SourceSpan, String>,
+    pub implicit_conversion_types: HashMap<SourceSpan, Ty>,
+    pub conversion_source_borrows: HashMap<SourceSpan, bool>,
+    pub conversion_raises: HashMap<SourceSpan, Ty>,
+    pub checked_types: HashMap<AnnotationSite, Ty>,
+    pub generic_parameters: HashMap<GenericSite, Vec<mojito_types::types::ParamDecl>>,
+    pub expression_types: HashMap<SourceSpan, Ty>,
+    pub expression_bindings: HashMap<SourceSpan, mojito_types::origin::OwnerId>,
+    pub statement_bindings: HashMap<SourceSpan, mojito_types::origin::OwnerId>,
+    pub declaration_captures: HashMap<SourceSpan, Vec<CheckedCapture>>,
+    pub comprehension_bindings: HashMap<SourceSpan, Vec<CheckedComprehensionBinding>>,
+    pub expression_place_types: HashMap<SourceSpan, Ty>,
+    pub binding_types: HashMap<SourceSpan, Ty>,
+    pub expression_effects: HashMap<SourceSpan, EffectFacts>,
+    pub selected_calls: HashMap<SourceSpan, CheckedCallContract>,
+    pub subscript_descriptors:
+        HashMap<SourceSpan, (Vec<Option<mojito_types::types::SliceKind>>, bool)>,
+    pub iteration_protocols: HashMap<SourceSpan, IterationProtocol>,
+    pub simd_constructions: HashMap<SourceSpan, (mojito_ast::ast::Dtype, i64)>,
+    pub operation_adjustments: HashMap<SourceSpan, SemanticAdjustment>,
+    pub parameterized_method_calls: HashMap<SourceSpan, Vec<mojito_types::types::ParamDecl>>,
+    pub tuple_unpack_plans: HashMap<SourceSpan, Vec<CheckedTupleUnpackElement>>,
+    pub interior_references: HashMap<SourceSpan, mojito_types::origin::OriginPlace>,
+    pub interior_invalidations: HashMap<SourceSpan, Vec<InteriorInvalidation>>,
+    pub explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
+    pub explicit_destroy_calls: HashSet<SourceSpan>,
+    pub reference_value_uses: HashMap<SourceSpan, bool>,
+    pub copy_place_value_uses: HashSet<SourceSpan>,
+    pub call_place_uses: HashSet<SourceSpan>,
+    pub borrowed_read_call_places: HashSet<SourceSpan>,
+    pub read_temporary_arguments: HashSet<SourceSpan>,
+    pub implicitly_copied_consuming_receivers: HashSet<SourceSpan>,
+    pub truthiness_conditions: HashSet<SourceSpan>,
+    pub declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
+}
+
+impl DiscoveryResult {
+    /// Assemble the executable handoff. Nothing is inferred again: the arena
+    /// and its indexes are built from the facts this result already holds.
+    pub fn finalize(self) -> CheckedProgram {
+        CheckedProgram::new(
+            self.statements,
+            self.overload_targets,
+            &self.contextual_bases,
+            self.generic_instantiations,
+            self.method_instantiations,
+            self.struct_instantiations,
+            self.hash_leaf_types,
+            self.call_transfers,
+            self.implicit_conversions,
+            self.implicit_conversion_types,
+            &self.conversion_source_borrows,
+            &self.conversion_raises,
+            self.checked_types,
+            self.generic_parameters,
+            &self.expression_types,
+            &self.expression_bindings,
+            &self.statement_bindings,
+            &self.declaration_captures,
+            &self.comprehension_bindings,
+            &self.expression_place_types,
+            &self.binding_types,
+            &self.expression_effects,
+            &self.selected_calls,
+            &self.subscript_descriptors,
+            &self.iteration_protocols,
+            &self.simd_constructions,
+            &self.operation_adjustments,
+            &self.parameterized_method_calls,
+            &self.tuple_unpack_plans,
+            &self.interior_references,
+            &self.interior_invalidations,
+            self.explicit_destroy_types,
+            &self.explicit_destroy_calls,
+            &self.reference_value_uses,
+            &self.copy_place_value_uses,
+            &self.call_place_uses,
+            &self.borrowed_read_call_places,
+            &self.read_temporary_arguments,
+            &self.implicitly_copied_consuming_receivers,
+            &self.truthiness_conditions,
+            self.declaration_effects,
+        )
+    }
+
+    /// Visit every expression the checked arena would hold a node for, in the
+    /// arena's own order. The traversal is the arena builder's, so a request
+    /// query here sees exactly the expressions one over
+    /// [`CheckedProgram::expressions`] would.
+    pub fn scan_expressions(&self, visit: &mut dyn FnMut(&Expr)) {
+        build_checked_expressions(
+            &self.statements,
+            &self.contextual_bases,
+            &self.expression_types,
+            &self.expression_bindings,
+            &self.comprehension_bindings,
+            &self.expression_place_types,
+            &self.binding_types,
+            &self.expression_effects,
+            &self.selected_calls,
+            &self.subscript_descriptors,
+            &self.iteration_protocols,
+            &self.simd_constructions,
+            &self.operation_adjustments,
+            &self.parameterized_method_calls,
+            &self.tuple_unpack_plans,
+            &self.interior_references,
+            &self.interior_invalidations,
+            &self.overload_targets,
+            &self.implicit_conversions,
+            &self.implicit_conversion_types,
+            &self.conversion_source_borrows,
+            &self.conversion_raises,
+            &self.explicit_destroy_calls,
+            &self.reference_value_uses,
+            &self.copy_place_value_uses,
+            &self.call_place_uses,
+            &self.borrowed_read_call_places,
+            &self.read_temporary_arguments,
+            &self.implicitly_copied_consuming_receivers,
+            &self.truthiness_conditions,
+            Some(visit),
+        );
+    }
+
+    pub const fn generic_instantiations(&self) -> &HashMap<SourceSpan, GenericInstantiation> {
+        &self.generic_instantiations
+    }
+
+    pub const fn method_instantiations(&self) -> &HashMap<SourceSpan, MethodInstantiation> {
+        &self.method_instantiations
+    }
+
+    pub fn struct_instantiations(&self) -> &[StructInstantiation] {
+        &self.struct_instantiations
+    }
+
+    pub fn hash_leaf_types(&self) -> &[Ty] {
+        &self.hash_leaf_types
+    }
+
+    pub fn expression_type(&self, expression: &Expr) -> Option<&Ty> {
+        self.expression_types.get(&expression.source_span())
+    }
+
+    pub fn expression_place_type(&self, expression: &Expr) -> Option<&Ty> {
+        self.expression_place_types.get(&expression.source_span())
+    }
+
+    pub fn expression_binding_type(&self, expression: &Expr) -> Option<&Ty> {
+        self.binding_types.get(&expression.source_span())
+    }
+
+    /// The checked type of every declaration the arena would hold.
+    pub fn declaration_types(&self) -> Vec<Ty> {
+        build_checked_declarations(
+            &self.statements,
+            &self.checked_types,
+            &self.statement_bindings,
+            &self.declaration_captures,
+            &self.binding_types,
+        )
+        .into_iter()
+        .filter_map(|declaration| declaration.ty)
+        .collect()
+    }
+}
+
 /// A successfully checked program plus semantic facts that downstream phases
 /// previously recomputed from AST syntax or checker-private side tables.
 #[derive(Debug, Clone)]
@@ -1285,6 +1474,7 @@ impl CheckedProgram {
         truthiness_conditions: &HashSet<SourceSpan>,
         declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
     ) -> Self {
+        let expressions_span = mojito_common::timing::span("expressions");
         let (expressions, expression_index) = build_checked_expressions(
             &statements,
             contextual_bases,
@@ -1316,7 +1506,10 @@ impl CheckedProgram {
             read_temporary_arguments,
             implicitly_copied_consuming_receivers,
             truthiness_conditions,
+            None,
         );
+        drop(expressions_span);
+        let _declarations = mojito_common::timing::span("declarations");
         let declarations = build_checked_declarations(
             &statements,
             &checked_types,
@@ -1497,8 +1690,12 @@ fn build_checked_expressions(
     read_temporary_arguments: &HashSet<SourceSpan>,
     implicitly_copied_consuming_receivers: &HashSet<SourceSpan>,
     truthiness_conditions: &HashSet<SourceSpan>,
+    scan: Option<&mut dyn FnMut(&Expr)>,
 ) -> (Vec<CheckedExpr>, HashMap<SourceSpan, Vec<CheckedNodeId>>) {
-    struct Builder<'a> {
+    struct Builder<'a, 's> {
+        /// Report each expression instead of building its node: the
+        /// traversal alone, for [`DiscoveryResult::scan_expressions`].
+        scan: Option<&'s mut dyn FnMut(&Expr)>,
         nodes: Vec<CheckedExpr>,
         index: HashMap<SourceSpan, Vec<CheckedNodeId>>,
         contextual_bases: &'a HashMap<SourceSpan, String>,
@@ -1532,7 +1729,7 @@ fn build_checked_expressions(
         implicitly_copied_consuming_receivers: &'a HashSet<SourceSpan>,
         truthiness_conditions: &'a HashSet<SourceSpan>,
     }
-    impl Builder<'_> {
+    impl Builder<'_, '_> {
         #[allow(
             clippy::cognitive_complexity,
             clippy::too_many_lines,
@@ -1738,6 +1935,10 @@ fn build_checked_expressions(
                         }
                     }
                 }
+            }
+            if let Some(scan) = self.scan.as_mut() {
+                scan(expression);
+                return CheckedNodeId(0);
             }
             let span = expression.source_span();
             let mut adjustments = Vec::new();
@@ -2065,6 +2266,7 @@ fn build_checked_expressions(
         }
     }
     let mut builder = Builder {
+        scan,
         nodes: Vec::new(),
         index: HashMap::new(),
         contextual_bases,

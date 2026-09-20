@@ -102,16 +102,36 @@ pub fn check_program(stmts: &[Stmt]) -> Result<mojito_checked::checked::CheckedP
 /// so reaching one ends validation without a verdict and leaves the program
 /// to the executable check.
 pub fn validate_comptime_templates(stmts: &[Stmt]) -> Result<(), TypeError> {
+    validate_comptime_templates_into(
+        stmts,
+        &mut mojito_checked::templates::TemplateCatalog::default(),
+    )
+}
+
+/// [`validate_comptime_templates`] over a compilation's template catalog.
+///
+/// `catalog` is told when the run ended without a verdict: a template-shell
+/// member error stops the traversal, so `Ok(())` alone never certifies the
+/// bodies the run reached.
+pub fn validate_comptime_templates_into(
+    stmts: &[Stmt],
+    catalog: &mut mojito_checked::templates::TemplateCatalog,
+) -> Result<(), TypeError> {
     let _validate = timing::span("comptime_validation");
     let mut expanded = expand_trait_defaults(stmts)?;
-    mojito_ast::ast::rekey_syntax(&mut expanded);
+    let syntax_origins = mojito_ast::ast::rekey_syntax(&mut expanded);
     let rebind_keyed = rebind::rebind_keyed_bodies(&expanded);
+    count_template_classes(&expanded, &rebind_keyed);
     let rebind_targets = erase_rebinds(&mut expanded);
     let mut checker = Checker::new();
     checker.source_validation = true;
     checker.rebind_targets = rebind_targets;
     checker.rebind_keyed_bodies = rebind_keyed;
-    let checked = checker.check_program(&expanded).and_then(|()| {
+    checker.syntax_origins = syntax_origins;
+    checker.template_catalog.replace(std::mem::take(catalog));
+    let body_check = checker.check_program(&expanded);
+    *catalog = checker.template_catalog.take();
+    let checked = body_check.and_then(|()| {
         with_stmt::splice_with_desugars(&mut expanded, &checker.with_desugars.borrow());
         run_explicit_destroy(
             &checker,
@@ -121,7 +141,11 @@ pub fn validate_comptime_templates(stmts: &[Stmt]) -> Result<(), TypeError> {
         )
     });
     match checked {
-        Err(error) if checker.is_template_shell_member_error(&error) => Ok(()),
+        Err(error) if checker.is_template_shell_member_error(&error) => {
+            timing::count("templates.validation_aborted", 1);
+            catalog.abort_validation();
+            Ok(())
+        }
         result => result,
     }
 }
@@ -133,6 +157,42 @@ pub fn check_program_with_materialized_callables(
     stmts: &[Stmt],
     materialized_callables: &HashMap<String, Ty>,
 ) -> Result<mojito_checked::checked::CheckedProgram, TypeError> {
+    check_program_with_templates(
+        stmts,
+        materialized_callables,
+        &mut mojito_checked::templates::TemplateCatalog::default(),
+    )
+}
+
+/// [`check_program_with_materialized_callables`] over a template catalog.
+///
+/// A generic body this check infers is retained there, and a clone the
+/// catalog traces to a certified template takes its facts from it instead of
+/// being inferred (`checker/template_facts.rs`).
+pub fn check_program_with_templates<S: std::hash::BuildHasher>(
+    stmts: &[Stmt],
+    materialized_callables: &HashMap<String, Ty, S>,
+    catalog: &mut mojito_checked::templates::TemplateCatalog,
+) -> Result<mojito_checked::checked::CheckedProgram, TypeError> {
+    let discovery = check_program_for_discovery(stmts, materialized_callables, catalog)?;
+    let _arena = timing::span("arena");
+    timing::count("arena_builds", 1);
+    Ok(discovery.finalize())
+}
+
+/// Check an elaborated program and stop before the executable handoff is
+/// assembled.
+///
+/// Every check that can reject the program has run: the transfer-effect
+/// fixpoint, reference-result reads, context-manager splicing, and explicit
+/// destruction. What is left is building the checked arena, which the
+/// discovery loop needs only for the round that converges
+/// ([`DiscoveryResult::finalize`](mojito_checked::checked::DiscoveryResult::finalize)).
+pub fn check_program_for_discovery<S: std::hash::BuildHasher>(
+    stmts: &[Stmt],
+    materialized_callables: &HashMap<String, Ty, S>,
+    catalog: &mut mojito_checked::templates::TemplateCatalog,
+) -> Result<mojito_checked::checked::DiscoveryResult, TypeError> {
     // Two-phase transfer effects: a call site checked before its callee's
     // body only sees effects already committed, so the check reruns — seeded
     // with the prior round's committed map — whenever some call site
@@ -154,6 +214,10 @@ pub fn check_program_with_materialized_callables(
             .map(|(name, _)| name.clone())
     }
 
+    let materialized_callables: HashMap<String, Ty> = materialized_callables
+        .iter()
+        .map(|(name, ty)| (name.clone(), ty.clone()))
+        .collect();
     let mut expanded = {
         let _expand = timing::span("trait_defaults_expand");
         expand_trait_defaults(stmts)?
@@ -161,10 +225,10 @@ pub fn check_program_with_materialized_callables(
     // Source locations survive elaboration clones and therefore cannot identify
     // semantic occurrences. Re-key the final checked tree after the last
     // checker-side cloning transform, before any fact table is populated.
-    {
+    let syntax_origins = {
         let _rekey = timing::span("syntax_rekey");
-        mojito_ast::ast::rekey_syntax(&mut expanded);
-    }
+        mojito_ast::ast::rekey_syntax(&mut expanded)
+    };
     let rebind_targets = erase_rebinds(&mut expanded);
     let mut transfer_seed: HashMap<String, Vec<mojito_checked::checked::TransferEffect>> =
         HashMap::new();
@@ -179,10 +243,14 @@ pub fn check_program_with_materialized_callables(
             std::mem::take(&mut call_through_seed),
         );
         checker.rebind_targets.clone_from(&rebind_targets);
-        {
+        checker.syntax_origins.clone_from(&syntax_origins);
+        checker.template_catalog.replace(std::mem::take(catalog));
+        let body_check = {
             let _check = timing::span("check_program");
-            checker.check_program(&expanded)?;
-        }
+            checker.check_program(&expanded)
+        };
+        *catalog = checker.template_catalog.take();
+        body_check?;
         {
             let _reads = timing::span("reference_reads");
             checker.check_reference_result_reads()?;
@@ -213,57 +281,62 @@ pub fn check_program_with_materialized_callables(
     // Context managers are desugared by the checker; later phases see only
     // the ordinary statements it checked.
     with_stmt::splice_with_desugars(&mut expanded, &checker.with_desugars.borrow());
-    let _finish = timing::span("explicit_destroy");
-    let explicit_destroy_types = explicit_destroy_types(&checker);
-    run_explicit_destroy(
-        &checker,
-        &expanded,
-        &explicit_destroy_types,
-        crate::explicit_destroy::DestroyScope::Program,
-    )?;
-    Ok(mojito_checked::checked::CheckedProgram::new(
-        expanded,
-        checker.overload_targets.into_inner(),
-        &checker.contextual_bases.into_inner(),
-        checker.generic_instantiations.into_inner(),
-        checker.method_instantiations.into_inner(),
-        checker.struct_instantiations.into_inner(),
-        checker.hash_leaf_types.into_inner(),
-        checker.call_transfers.into_inner(),
-        checker.implicit_conversions.into_inner(),
-        checker.implicit_conversion_types.into_inner(),
-        &checker.conversion_source_borrows.into_inner(),
-        &checker.implicit_conversion_raises.into_inner(),
-        checker.declaration_types.into_inner(),
-        checker.generic_parameters.into_inner(),
-        &checker.expression_types.into_inner(),
-        &checker.expression_bindings.into_inner(),
-        &checker.statement_bindings.into_inner(),
-        &checker.declaration_captures.into_inner(),
-        &checker.comprehension_bindings.into_inner(),
-        &checker.expression_place_types.into_inner(),
-        &checker.binding_types.into_inner(),
-        &checker.expression_effects.into_inner(),
-        &checker.selected_calls.into_inner(),
-        &checker.subscript_descriptors.into_inner(),
-        &checker.iteration_protocols.into_inner(),
-        &checker.simd_constructions.into_inner(),
-        &checker.operation_adjustments.into_inner(),
-        &checker.parameterized_method_calls.into_inner(),
-        &checker.tuple_unpack_plans.into_inner(),
-        &checker.interior_references.into_inner(),
-        &checker.interior_invalidations.into_inner(),
+    let explicit_destroy_types = {
+        let _finish = timing::span("explicit_destroy");
+        let explicit_destroy_types = explicit_destroy_types(&checker);
+        run_explicit_destroy(
+            &checker,
+            &expanded,
+            &explicit_destroy_types,
+            crate::explicit_destroy::DestroyScope::Program,
+        )?;
+        explicit_destroy_types
+    };
+    Ok(mojito_checked::checked::DiscoveryResult {
+        statements: expanded,
+        overload_targets: checker.overload_targets.into_inner(),
+        contextual_bases: checker.contextual_bases.into_inner(),
+        generic_instantiations: checker.generic_instantiations.into_inner(),
+        method_instantiations: checker.method_instantiations.into_inner(),
+        struct_instantiations: checker.struct_instantiations.into_inner(),
+        hash_leaf_types: checker.hash_leaf_types.into_inner(),
+        call_transfers: checker.call_transfers.into_inner(),
+        implicit_conversions: checker.implicit_conversions.into_inner(),
+        implicit_conversion_types: checker.implicit_conversion_types.into_inner(),
+        conversion_source_borrows: checker.conversion_source_borrows.into_inner(),
+        conversion_raises: checker.implicit_conversion_raises.into_inner(),
+        checked_types: checker.declaration_types.into_inner(),
+        generic_parameters: checker.generic_parameters.into_inner(),
+        expression_types: checker.expression_types.into_inner(),
+        expression_bindings: checker.expression_bindings.into_inner(),
+        statement_bindings: checker.statement_bindings.into_inner(),
+        declaration_captures: checker.declaration_captures.into_inner(),
+        comprehension_bindings: checker.comprehension_bindings.into_inner(),
+        expression_place_types: checker.expression_place_types.into_inner(),
+        binding_types: checker.binding_types.into_inner(),
+        expression_effects: checker.expression_effects.into_inner(),
+        selected_calls: checker.selected_calls.into_inner(),
+        subscript_descriptors: checker.subscript_descriptors.into_inner(),
+        iteration_protocols: checker.iteration_protocols.into_inner(),
+        simd_constructions: checker.simd_constructions.into_inner(),
+        operation_adjustments: checker.operation_adjustments.into_inner(),
+        parameterized_method_calls: checker.parameterized_method_calls.into_inner(),
+        tuple_unpack_plans: checker.tuple_unpack_plans.into_inner(),
+        interior_references: checker.interior_references.into_inner(),
+        interior_invalidations: checker.interior_invalidations.into_inner(),
         explicit_destroy_types,
-        &checker.explicit_destroy_calls.into_inner(),
-        &checker.reference_value_uses.into_inner(),
-        &checker.copy_place_value_uses.into_inner(),
-        &checker.call_place_uses.into_inner(),
-        &checker.borrowed_read_call_places.into_inner(),
-        &checker.read_temporary_arguments.into_inner(),
-        &checker.implicitly_copied_consuming_receivers.into_inner(),
-        &checker.truthiness_conditions.into_inner(),
-        checker.declaration_effects.into_inner(),
-    ))
+        explicit_destroy_calls: checker.explicit_destroy_calls.into_inner(),
+        reference_value_uses: checker.reference_value_uses.into_inner(),
+        copy_place_value_uses: checker.copy_place_value_uses.into_inner(),
+        call_place_uses: checker.call_place_uses.into_inner(),
+        borrowed_read_call_places: checker.borrowed_read_call_places.into_inner(),
+        read_temporary_arguments: checker.read_temporary_arguments.into_inner(),
+        implicitly_copied_consuming_receivers: checker
+            .implicitly_copied_consuming_receivers
+            .into_inner(),
+        truthiness_conditions: checker.truthiness_conditions.into_inner(),
+        declaration_effects: checker.declaration_effects.into_inner(),
+    })
 }
 
 /// The source-validation body gate, which `explicit_destroy` reuses to walk
@@ -754,6 +827,23 @@ pub struct Checker {
     handled_raise_depth: usize,
     handled_raise_types: RefCell<Vec<Vec<Ty>>>,
     uninitialized: RefCell<HashSet<mojito_types::origin::OwnerId>>,
+    /// The compilation's checked templates and the clone traces of the
+    /// elaboration being checked (`template_facts.rs`). The driver lends it
+    /// for one check and takes it back; every other entry point checks with
+    /// an empty one, which derives nothing.
+    template_catalog: RefCell<mojito_checked::templates::TemplateCatalog>,
+    /// The identity each occurrence had before the final re-key: the
+    /// occurrence-level expansion trace from a template to its clones.
+    syntax_origins: mojito_ast::ast::SyntaxOrigins,
+    /// Each erased `rebind` this check judged, at its operand (or, for a
+    /// rebound assignment, its statement): the operand's own type, the
+    /// target, and whether the rebind is by value. A checked template keeps
+    /// these as the equalities its instances owe.
+    rebind_assertions: RefCell<HashMap<SourceSpan, mojito_checked::templates::RebindAssertion>>,
+    /// Per body being inferred, innermost last: each callee whose transfer
+    /// or call-through summary the body read, and whether it was empty. A
+    /// retained template depends on exactly these summaries.
+    effect_query_frames: RefCell<Vec<Vec<(String, bool)>>>,
 }
 
 impl Checker {
@@ -893,6 +983,10 @@ impl Checker {
             handled_raise_depth: 0,
             handled_raise_types: RefCell::new(Vec::new()),
             uninitialized: RefCell::new(HashSet::new()),
+            template_catalog: RefCell::new(mojito_checked::templates::TemplateCatalog::default()),
+            syntax_origins: mojito_ast::ast::SyntaxOrigins::default(),
+            rebind_assertions: RefCell::new(HashMap::new()),
+            effect_query_frames: RefCell::new(Vec::new()),
         }
     }
 
@@ -2378,6 +2472,7 @@ type CallResultOrigin = (
 );
 
 /// One runtime parameter of a selected callee, recorded per call site.
+#[derive(Debug, Clone, PartialEq)]
 struct CallParameter {
     name: String,
     convention: Option<ArgConvention>,
@@ -2400,12 +2495,30 @@ pub enum StorageStrictness {
     Full,
 }
 
+/// One overload candidate's rank is a single lexicographic word, most
+/// significant term first, as the pinned Mojo orders them:
+///
+/// ```text
+/// bits 25+   conversions            CONVERSION_RANK
+/// bit  24    variadic use           VARIADIC_RANK
+/// bit  23    empty collector        EMPTY_COLLECTOR_RANK   (variadic only)
+/// bits 18-22 copies into `var`      COPY_RANK              (every candidate)
+/// bits 10-17 signature length       SIGNATURE_LENGTH_RANK
+/// bits 0-9   ArgumentBinding's low word and the generic bit
+/// ```
 const CONVERSION_RANK: usize = 1 << 25;
 
 const VARIADIC_RANK: usize = 1 << 24;
 
-/// Leaves the low sixteen bits to `VariadicBinding::rank` and the generic bit.
-const SIGNATURE_LENGTH_RANK: usize = 1 << 16;
+const EMPTY_COLLECTOR_RANK: usize = 1 << 23;
+
+/// Five bits: a candidate copying more than `COPIES_MAX` arguments ties with
+/// one copying that many, which loses an ordering rather than inverting it.
+const COPY_RANK: usize = 1 << 18;
+
+/// Eight bits, above the low word `ArgumentBinding::rank` and the generic bit
+/// own.
+const SIGNATURE_LENGTH_RANK: usize = 1 << 10;
 
 /// Source-level arguments attached to a method invocation. Keeping the runtime
 /// and compile-time argument lists together prevents the two method-resolution
@@ -2618,6 +2731,7 @@ mod call_inference;
 mod ffi_calls;
 
 mod statements;
+mod template_facts;
 mod with_stmt;
 
 #[cfg(test)]

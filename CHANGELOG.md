@@ -8,6 +8,25 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A call inside a generic body is now bound once, while the body is checked
+  with its parameters symbolic, as the pinned Mojo binds it. With `pick(x:
+  Int)` beside `pick[T: Copyable](x: T)`, `outer[T](x)` calling `pick(x)`
+  selects the generic overload for every instantiation, so `outer(3)` prints 2
+  where it printed 1: re-checking the `Int` clone used to rank the set again.
+  The fix holds for an instance derived from its checked template (below); an
+  instance that still takes the clone check re-ranks, which
+  `docs/roadmap.md` section 3 carries.
+- Overload ranking now charges every candidate the implicit copy a place costs
+  a `var` parameter, as the pinned Mojo does, so `h(s)` against
+  `h(var a: String)` beside `h[T: Writable](a: T)` selects the generic
+  overload while the rvalue `h(String("t"))` selects the `var` one. The copy
+  ranks below one conversion and above the signature-length tie-break, a
+  keyword slot and a field place cost it as a positional place does, and
+  methods and constructors are ranked by the same term. A method is also
+  ranked by its own compile-time parameters now, so a concrete method beats a
+  generic sibling instead of reporting an ambiguous call. Among variadic
+  candidates a collector that takes at least one argument outranks both the
+  copy and the signature length, which fixes a second silent wrong answer.
 - An owning temporary is now destroyed as soon as its consumer finishes,
   running its `__deinit__` as the pinned Mojo does, where it was never
   destroyed before. A method receiver (`B(3).show()`) dies right after the
@@ -180,6 +199,26 @@ to evolve under the `0.x` compatibility rules.
   `assets/ok/temporary_receiver_view.mojo` pins the two-view case.
 
 ### Changed
+
+- A checked generic template is now the authority for the instantiations it
+  covers. Source validation and the abstract check retain a body's facts
+  (`mojito_checked::templates`), the elaborator leaves a trace from each `def`
+  clone to its template, and a covered clone inherits the facts by
+  substitution instead of being inferred. Covered today are module-level
+  functions returning scalars over closed scalar expressions, direct calls,
+  the built-in `len`, `comptime if` arms, scalar `comptime for` loops, scalar
+  locals, and `rebind`; everything else keeps the clone check, and a failed
+  per-instance obligation is reported by that check in its own words.
+  `MOJITO_VERIFY_TEMPLATE_FACTS=1` infers every derivable body as well and
+  requires the facts to agree. The design record is
+  `docs/notes/instantiation-from-template.md`.
+- The discovery loop builds the checked expression arena once per compilation
+  instead of once per round: a round's check returns a
+  `DiscoveryResult` that the request collectors read directly. Hello World
+  compiles about 6% faster in a debug build.
+- `--timings` reports body inference visits by declaration kind, template
+  classes, template capture and derivation counts, and arena builds.
+  `MOJITO_TIMING_NOTES=1` adds per-declaration `note` lines.
 
 - A variadic struct's members now spell the struct's own pack `Self.Ts`, as
   upstream requires: a field type, a `comptime` member, a method signature,

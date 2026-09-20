@@ -1255,6 +1255,11 @@ impl Checker {
                 }
             }
             if compatible {
+                // This site ranks by types alone: it is handed `&[Ty]`, not
+                // the call's expressions, so it charges no candidate the copy
+                // a place costs a `var` parameter the way every other ranking
+                // site does. The signature-length slot carries the runtime
+                // parameter count here, not compile-time parameters.
                 matches.push((
                     overload_rank(score, variadic.is_some(), parameters.len(), false),
                     signature,

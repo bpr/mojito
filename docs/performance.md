@@ -198,6 +198,14 @@ dedicated discovery result or checker mode that produces only the facts needed
 to request specializations. Final-only validation and complete
 `CheckedProgram` assembly should run once after specialization converges.
 
+**Landed 2026-09-20, in part.** A round's check now returns a
+`DiscoveryResult` and the checked arena is assembled once, for the round that
+converges (see *Checked templates and the discovery result* below). Trait
+defaults and syntax rekeying are not per-round waste: `prepare` already moves
+invariant normalization outside the loop, and the rekey is what identifies a
+clone's occurrences. The transfer fixpoint and the rejecting checks still run
+every round, because a program they reject must be rejected.
+
 ### 2. Transfer effects recheck every declaration and body
 
 Within each outer discovery check, transfer and call-through effects start with
@@ -223,6 +231,14 @@ linked program for bound-generic template names before entering this loop.
 A persistent elaboration session could own the synthesized base AST,
 declaration indexes, conformance information, and template catalog, then apply
 only newly discovered requests in later rounds.
+
+**Measured 2026-09-20: not worth it yet.** `prepare` already resynthesizes
+lifecycle methods once. What `elaborate_prepared` still rebuilds per round —
+the conformance oracle and the declaration indexes — costs about 5 ms
+(`discovery.*.elaborate.indexes` in `--timings`), and a whole elaboration is
+about 0.13 s of a 9.9 s debug Hello World. Native monomorphization consumes
+`MirProgram`, not the elaborator's output, so nothing downstream shares this
+state either.
 
 ### 4. Request discovery makes overlapping full-program scans
 
@@ -312,6 +328,47 @@ discovery checks; replace global transfer-effect replay; retain elaboration
 indexes across rounds; combine request scans; then address duplicate checked
 indexes, reusable ownership results, MIR/VM copies, and native-only caches or
 lazy artifacts according to their measured phase costs.
+
+## Checked templates and the discovery result (2026-09-20)
+
+One debug-profile run each, on `ceda943` plus uncommitted work, rustc 1.96.1,
+verification mode and timing notes off. These are single observations for
+comparing counts, not medians, and are not comparable with the release
+figures above.
+
+| Program | Total before | Total after | Arena builds | Clone body inferences | Instances derived |
+|---|---:|---:|---:|---:|---:|
+| `benchmarks/compile/hello.mojo` | 10.58 s | 9.90 s | 3 to 1 | 3828 | 0 |
+| `benchmarks/compile/stdlib_heavy.mojo` | 17.83 s | 16.68 s | 3 to 1 | 6122 | 0 |
+| `benchmarks/compile/generic.mojo` | 11.10 s | 10.55 s | 3 to 1 | 4324 to 4308 | 16 |
+| `benchmarks/compile/tuple.mojo` | 10.76 s | 10.02 s | 3 to 1 | 4038 | 0 |
+| `benchmarks/compile/tstring.mojo` | 10.78 s | 10.08 s | 3 to 1 | 3948 | 0 |
+
+Body inference visits are summed over every check pass of one compilation:
+Hello World runs three discovery rounds of two transfer passes each. Per pass
+it infers about 640 clone bodies, 240 template bodies, and 7 plain ones, and
+source validation classes 436 declarations as surviving trait-bound
+templates, 52 as concrete-only, and none as validated keyed.
+
+What the numbers say:
+
+- The saving is the arena. `CheckedProgram::new` cost about 0.49 s per round,
+  0.43 s of it building checked expressions, and two of three builds are gone.
+- Derivation covers no bundled-library body. The library's generic code is
+  struct methods, whose clones are not traced, and its compile-time control
+  flow is in `Tuple` and `Variant`, which are concrete-only. `generic.mojo` is
+  the one benchmark with covered user templates.
+- The remaining cost is body inference of uncovered clones, about one second
+  per transfer pass. `docs/roadmap.md` section 1 carries the entries that
+  attack it, and `docs/notes/instantiation-from-template.md` is the design
+  record.
+
+The counters are `body_inference.{plain,template,clone}`,
+`templates.{surviving_trait_bound,validated_keyed,concrete_only,validation_aborted}`,
+`template_facts_recorded`, `template_capture_incomplete.*`,
+`template_derivations.{installed,ineligible,verified,overload_rebinding}`,
+`template_bodies.reused`, and `arena_builds`. `MOJITO_TIMING_NOTES=1` names
+each declaration.
 
 ## Where to look first
 

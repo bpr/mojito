@@ -6605,3 +6605,38 @@ fn collector_position_distinguishes_overloads() {
     );
     assert_eq!(e, TypeError::Redeclaration("pos".into()));
 }
+
+#[test]
+fn template_catalog_does_not_certify_aborted_validation() {
+    // `Tuple(1, "one")` is a member of a template-shell struct, which has no
+    // symbolic signature: validation stops there without a verdict, before
+    // it reaches `second`. Neither the partial traversal nor the `Ok(())`
+    // it returns may certify a body.
+    let source = "def first[flag: Bool]() -> Int:\n    comptime if flag:\n        var pair = Tuple(1, \"one\")\n        return 1\n    else:\n        return 2\n\ndef second[flag: Bool]() -> Int:\n    comptime if flag:\n        return 1\n    else:\n        return 2\n\ndef main():\n    print(first[True]())\n    print(second[False]())\n";
+    let linked = mojito::link_source(source, std::path::Path::new("aborted_validation.mojo"))
+        .expect("link error");
+    let prepared = mojito::comptime::prepare(linked).expect("prepare");
+    let mut catalog = mojito::templates::TemplateCatalog::default();
+    mojito::checker::validate_comptime_templates_into(&prepared, &mut catalog)
+        .expect("an aborted validation still returns Ok");
+    assert!(
+        catalog.validation_aborted(),
+        "the shell-member error must be recorded as an abort"
+    );
+    assert!(
+        catalog.templates().iter().all(|template| !matches!(
+            template.coverage,
+            mojito::templates::TemplateCoverage::Certified(_)
+        )),
+        "an aborted run certifies nothing: {:?}",
+        catalog.templates()
+    );
+
+    let complete = "def second[flag: Bool]() -> Int:\n    comptime if flag:\n        return 1\n    else:\n        return 2\n\ndef main():\n    print(second[False]())\n";
+    let linked = mojito::link_source(complete, std::path::Path::new("complete_validation.mojo"))
+        .expect("link error");
+    let prepared = mojito::comptime::prepare(linked).expect("prepare");
+    let mut catalog = mojito::templates::TemplateCatalog::default();
+    mojito::checker::validate_comptime_templates_into(&prepared, &mut catalog).expect("validation");
+    assert!(!catalog.validation_aborted());
+}

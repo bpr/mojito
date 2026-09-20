@@ -53,6 +53,7 @@ impl Elab<'_> {
                 instances: Vec::new(),
                 stub_reaching_structs: HashSet::new(),
                 unserved_template_uses: Vec::new(),
+                def_traces: Vec::new(),
             });
         }
         if !tuple_requests.is_empty() && !self.struct_template("Tuple") {
@@ -384,6 +385,7 @@ impl Elab<'_> {
                 .map(|(owner, _)| owner.to_string())
                 .collect(),
             unserved_template_uses,
+            def_traces: Vec::new(),
         })
     }
 
@@ -1107,6 +1109,10 @@ impl Elab<'_> {
             }
             substitute_type_bindings_in_block(&mut final_body, &type_substitutions);
         }
+        let residual_names: Vec<String> = kept_type_params
+            .iter()
+            .map(|parameter| parameter.name.clone())
+            .collect();
         let mut specialization = mk(
             StmtKind::Def {
                 name: output_name.clone(),
@@ -1132,9 +1138,32 @@ impl Elab<'_> {
         // function its own synthetic source before checking/HIR lowering.
         let tag = match &template.module {
             Some(module) => format!("{module}${output_name}"),
-            None => output_name,
+            None => output_name.clone(),
         };
         mojito_ast::ast::stamp_source(std::slice::from_mut(&mut specialization), &tag);
+        let mut type_bindings: Vec<_> = type_substitutions.into_iter().collect();
+        type_bindings.sort_by(|left, right| left.0.cmp(&right.0));
+        self.def_traces.borrow_mut().push(super::DefInstanceTrace {
+            clone_module: tag,
+            clone_name: output_name,
+            template_module: template.module.clone(),
+            template_name: match &template.kind {
+                StmtKind::Def { name, .. } => name.clone(),
+                _ => display_name.to_string(),
+            },
+            template_span: template.span,
+            type_bindings,
+            value_bindings: type_params
+                .iter()
+                .filter_map(|parameter| {
+                    let name = parameter.name.trim_start_matches('*');
+                    subs.get(name)
+                        .map(|value| (name.to_string(), value.clone()))
+                })
+                .collect(),
+            pack_bindings: type_pack_expansions.into_keys().collect(),
+            residual: residual_names,
+        });
         Ok(specialization)
     }
 

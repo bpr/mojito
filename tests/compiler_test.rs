@@ -1021,3 +1021,377 @@ fn a_nullary_overload_beside_a_type_pack_one_is_told_apart_by_its_arguments() {
     let output = compiler.execute(&program).expect("run each selected clone");
     assert_eq!(output.output, "1\n2\n77\n");
 }
+
+const TEMPLATE_TWO_TYPES: &str = "def tag[T: Copyable](x: T) -> Int:\n    return 7\n\ndef main():\n    print(tag(3))\n    print(tag(True))\n";
+
+/// The `return` expressions of every generated clone of `template`.
+fn clone_return_values<'a>(
+    program: &'a mojito::compiler::CompiledProgram,
+    template: &str,
+) -> Vec<&'a mojito::ast::Expr> {
+    let prefix = format!("{template}$");
+    program
+        .checked()
+        .statements()
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            mojito::ast::StmtKind::Def { name, body, .. } if name.starts_with(&prefix) => {
+                Some(body)
+            }
+            _ => None,
+        })
+        .flat_map(|body| body.iter())
+        .filter_map(|statement| match &statement.kind {
+            mojito::ast::StmtKind::Return(Some(value)) => Some(value),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn template_two_types_infers_the_template_once() {
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_unlinked(TEMPLATE_TWO_TYPES)
+        .expect("compile");
+    let stats = program.template_stats();
+    assert_eq!(stats.certified, ["tag"], "one template inference");
+    assert!(
+        stats.reused.iter().all(|name| name == "tag") && !stats.reused.is_empty(),
+        "later passes reuse the template's own facts: {stats:?}"
+    );
+    let derived: std::collections::HashSet<&str> =
+        stats.derived.iter().map(String::as_str).collect();
+    assert_eq!(derived.len(), 2, "both instances derive: {stats:?}");
+    assert!(
+        stats
+            .inferred_clones
+            .iter()
+            .all(|name| !name.starts_with("tag$")),
+        "no clone of the certified template is inferred: {stats:?}"
+    );
+    let execution = compiler.execute(&program).expect("execute");
+    assert_eq!(execution.output, "7\n7\n");
+}
+
+#[test]
+fn template_instance_ids_are_disjoint() {
+    let program = Compiler::default()
+        .compile_unlinked(TEMPLATE_TWO_TYPES)
+        .expect("compile");
+    let values = clone_return_values(&program, "tag");
+    assert_eq!(values.len(), 2, "two clones, one return each");
+    let nodes: Vec<_> = values
+        .iter()
+        .map(|value| {
+            let ids = program.checked().expression_ids_at(&value.source_span());
+            assert_eq!(ids.len(), 1, "one checked node per clone occurrence");
+            program.checked().expression(ids[0]).expect("checked node")
+        })
+        .collect();
+    assert_ne!(nodes[0].id, nodes[1].id, "instances share no checked node");
+    assert_ne!(
+        values[0].source_span(),
+        values[1].source_span(),
+        "instances share no occurrence"
+    );
+    for node in nodes {
+        assert_eq!(node.ty, Some(mojito::Ty::IntLiteral));
+        assert!(
+            node.adjustments
+                .contains(&SemanticAdjustment::MaterializeLiteral(mojito::Ty::Int)),
+            "the derived literal keeps its materialization: {:?}",
+            node.adjustments
+        );
+    }
+}
+
+fn run_source(source: &str) -> (String, mojito::templates::TemplateStats) {
+    let compiler = Compiler::default();
+    let program = compiler.compile_unlinked(source).expect("compile");
+    let output = compiler.execute(&program).expect("execute").output;
+    (output, program.template_stats().clone())
+}
+
+#[test]
+fn template_overload_binding_keeps_the_symbolic_choice() {
+    // The pinned Mojo binds `pick(x)` once, while it checks `outer` with `T`
+    // symbolic: the generic overload is the only candidate a `T` argument
+    // fits, and every instance inherits it. Re-checking the `Int` clone used
+    // to rank the set again and pick `pick(x: Int)`.
+    let generic_last = "def pick(x: Int) -> Int:\n    return 1\n\ndef pick[T: Copyable](x: T) -> Int:\n    return 2\n\ndef outer[T: Copyable](x: T) -> Int:\n    return pick(x)\n\ndef main():\n    print(outer(3))\n    print(outer(True))\n    print(pick(5))\n";
+    let (output, stats) = run_source(generic_last);
+    assert_eq!(output, "2\n2\n1\n");
+    assert!(
+        stats.derived.iter().any(|name| name.starts_with("outer$")),
+        "the instances derive from the checked template: {stats:?}"
+    );
+    assert!(
+        stats
+            .inferred_clones
+            .iter()
+            .all(|name| !name.starts_with("outer$")),
+        "no instance re-ranks the overload set: {stats:?}"
+    );
+
+    let generic_first = "def pick[T: Copyable](x: T) -> Int:\n    return 2\n\ndef pick(x: Int) -> Int:\n    return 1\n\ndef outer[T: Copyable](x: T) -> Int:\n    return pick(x)\n\ndef main():\n    print(outer[Int](3))\n    print(outer[Bool](True))\n    print(outer(4))\n    print(pick(5))\n";
+    assert_eq!(run_source(generic_first).0, "2\n2\n2\n1\n");
+}
+
+#[test]
+fn template_inner_request_needs_no_outer_clone_inference() {
+    let source = "def helper[T: Copyable](x: T) -> Int:\n    return 5\n\ndef outer[T: Copyable](x: T) -> Int:\n    return helper(x)\n\ndef main():\n    print(outer(3))\n    print(outer(True))\n";
+    let (output, stats) = run_source(source);
+    assert_eq!(output, "5\n5\n");
+    for clone in ["outer$", "helper$"] {
+        assert!(
+            stats.derived.iter().any(|name| name.starts_with(clone)),
+            "{clone} instances derive, so the inner request came from retained facts: {stats:?}"
+        );
+        assert!(
+            stats
+                .inferred_clones
+                .iter()
+                .all(|name| !name.starts_with(clone)),
+            "{clone} instances are never inferred: {stats:?}"
+        );
+    }
+}
+
+#[test]
+fn template_bounded_len_realizes_per_instance() {
+    // `len(x)` is proved once through `T: Sized`. Each instance takes the
+    // concrete witness and the read-in-place fact the built-in records for a
+    // nominal struct, without its body being inferred again.
+    let source = "def is_empty[T: Sized](x: T) -> Bool:\n    return len(x) == 0\n\nstruct Bag(Sized):\n    var items: List[Int]\n\n    def __init__(out self):\n        self.items = List[Int]()\n\n    def __len__(self) -> Int:\n        return len(self.items)\n\ndef main():\n    var xs: List[Int] = [1, 2, 3]\n    print(is_empty(xs))\n    var b: Bag = Bag()\n    print(is_empty(b))\n";
+    let (output, stats) = run_source(source);
+    assert_eq!(output, "False\nTrue\n");
+    assert_eq!(stats.certified, ["is_empty"]);
+    assert!(
+        stats
+            .inferred_clones
+            .iter()
+            .all(|name| !name.starts_with("is_empty$")),
+        "{stats:?}"
+    );
+    assert!(
+        stats
+            .derived
+            .iter()
+            .filter(|name| name.starts_with("is_empty$"))
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            == 2,
+        "{stats:?}"
+    );
+}
+
+#[test]
+fn template_two_arms_select_checked_facts() {
+    // Source validation checks both arms once. Each instance keeps the
+    // occurrences of the arm the elaborator selected and inherits their
+    // facts; the untaken arm contributes nothing executable.
+    let source = "def choose[flag: Bool]() -> Int:\n    comptime if flag:\n        return 11\n    else:\n        return 22\n\ndef main():\n    print(choose[True]())\n    print(choose[False]())\n";
+    let compiler = Compiler::default();
+    let program = compiler.compile_unlinked(source).expect("compile");
+    let stats = program.template_stats();
+    assert_eq!(stats.certified, ["choose"], "{stats:?}");
+    assert!(
+        stats
+            .inferred_clones
+            .iter()
+            .all(|name| !name.starts_with("choose$")),
+        "{stats:?}"
+    );
+    let returned: Vec<String> = clone_return_values(&program, "choose")
+        .iter()
+        .map(|value| format!("{:?}", value.kind))
+        .collect();
+    assert_eq!(returned.len(), 2, "one selected arm per instance");
+    assert_ne!(returned[0], returned[1], "distinct selected-arm syntax");
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "11\n22\n"
+    );
+
+    // An invalid untaken arm is rejected from the template, before any
+    // instance exists, even when nothing instantiates it.
+    let invalid = "def choose[flag: Bool]() -> Int:\n    comptime if flag:\n        return 11\n    else:\n        return \"twenty-two\"\n\ndef main():\n    print(1)\n";
+    assert!(matches!(
+        compiler.compile_unlinked(invalid),
+        Err(CompilerError::Type(_))
+    ));
+}
+
+#[test]
+fn template_rebind_and_where_are_instance_obligations() {
+    let rebind = |argument: &str| {
+        format!(
+            "def as_int[T: Copyable](x: T) -> Int:\n    return rebind[Int](x)\n\ndef main():\n    print(as_int({argument}))\n"
+        )
+    };
+    let (output, stats) = run_source(&rebind("3"));
+    assert_eq!(output, "3\n");
+    assert!(
+        stats.derived.iter().any(|name| name.starts_with("as_int$")),
+        "a true assertion derives: {stats:?}"
+    );
+    // A false assertion is a type error in the rebind's own words, never a
+    // permissive fallback.
+    let error = Compiler::default()
+        .compile_unlinked(&rebind("True"))
+        .expect_err("a false rebind assertion rejects");
+    assert!(
+        error
+            .to_string()
+            .contains("rebind: the input type does not match"),
+        "{error}"
+    );
+
+    let constrained = |argument: &str| {
+        format!(
+            "def small[n: Int]() -> Int where (n < 4, \"n must stay below four\"):\n    comptime if n == 0:\n        return 100\n    else:\n        return 200\n\ndef main():\n    print(small[{argument}]())\n"
+        )
+    };
+    let (output, stats) = run_source(&constrained("3"));
+    assert_eq!(output, "200\n");
+    assert!(
+        stats.derived.iter().any(|name| name.starts_with("small$")),
+        "{stats:?}"
+    );
+    let error = Compiler::default()
+        .compile_unlinked(&constrained("7"))
+        .expect_err("a violated where clause rejects");
+    assert!(
+        matches!(error, CompilerError::Comptime(_))
+            && error.to_string().contains("n must stay below four"),
+        "a sourced constraint failure, not a clone body type error: {error}"
+    );
+}
+
+#[test]
+fn template_loop_instances_remap_owners() {
+    // One template occurrence becomes several instance occurrences when a
+    // `comptime for` unrolls. Every copy must name the instance's own `sum`,
+    // and two instances must not share a binding identity.
+    let source = "def total[n: Int]() -> Int:\n    var sum = 0\n    comptime for i in range(n):\n        comptime if i == 1:\n            sum += 10\n        else:\n            sum += 1\n    return sum\n\ndef main():\n    print(total[0]())\n    print(total[1]())\n    print(total[3]())\n";
+    let compiler = Compiler::default();
+    let program = compiler.compile_unlinked(source).expect("compile");
+    let stats = program.template_stats();
+    assert!(
+        stats
+            .inferred_clones
+            .iter()
+            .all(|name| !name.starts_with("total$")),
+        "every trip count derives: {stats:?}"
+    );
+    let checked = program.checked();
+    let mut declared = Vec::new();
+    let mut updates_per_instance = Vec::new();
+    for statement in checked.statements() {
+        let mojito::ast::StmtKind::Def { name, body, .. } = &statement.kind else {
+            continue;
+        };
+        if !name.starts_with("total$") {
+            continue;
+        }
+        let owner = body
+            .iter()
+            .find(|statement| matches!(statement.kind, mojito::ast::StmtKind::VarDecl { .. }))
+            .and_then(|statement| checked.tables().declaration_at(&statement.source_span()))
+            .and_then(|declaration| declaration.binding)
+            .expect("the instance declares its own 'sum'");
+        let updates: Vec<_> = body
+            .iter()
+            .filter_map(|statement| match &statement.kind {
+                mojito::ast::StmtKind::AugAssign { place, .. } => Some(place),
+                _ => None,
+            })
+            .map(|place| {
+                let ids = checked.expression_ids_at(&place.source_span());
+                assert_eq!(ids.len(), 1, "each unrolled copy is its own occurrence");
+                checked.expression(ids[0]).expect("checked place").binding
+            })
+            .collect();
+        assert!(
+            updates.iter().all(|binding| *binding == Some(owner)),
+            "every copy of '{name}' updates that instance's 'sum'"
+        );
+        updates_per_instance.push(updates.len());
+        declared.push(owner);
+    }
+    updates_per_instance.sort_unstable();
+    assert_eq!(
+        updates_per_instance,
+        [0, 1, 3],
+        "zero, one, and three trips"
+    );
+    declared.sort_unstable();
+    declared.dedup();
+    assert_eq!(declared.len(), 3, "instances share no binding identity");
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "0\n1\n12\n"
+    );
+}
+
+#[test]
+fn discovery_scan_matches_the_checked_arena() {
+    // Request discovery reads a `DiscoveryResult` instead of the assembled
+    // arena. Every request kind is a function of the expressions visited,
+    // their three recorded types, the declaration types, and the recorded
+    // instantiations — so those must be exactly the arena's, in its order.
+    for benchmark in ["tuple", "tstring", "generic", "stdlib_heavy"] {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("benchmarks/compile")
+            .join(format!("{benchmark}.mojo"));
+        let linked = mojito::link(&path).expect("link");
+        let program = mojito::elaborate(linked).expect("elaborate");
+        let discovery = mojito::checker::check_program_for_discovery(
+            &program,
+            &std::collections::HashMap::new(),
+            &mut mojito::templates::TemplateCatalog::default(),
+        )
+        .expect("check");
+        let mut scanned = Vec::new();
+        discovery.scan_expressions(&mut |expression| {
+            scanned.push((
+                expression.source_span(),
+                discovery.expression_type(expression).cloned(),
+                discovery.expression_place_type(expression).cloned(),
+                discovery.expression_binding_type(expression).cloned(),
+            ));
+        });
+        let declaration_types = discovery.declaration_types();
+        let generic = discovery.generic_instantiations().clone();
+        let methods = discovery.method_instantiations().clone();
+        let structs = discovery.struct_instantiations().to_vec();
+        let leaves = discovery.hash_leaf_types().to_vec();
+
+        let checked = discovery.finalize();
+        let arena: Vec<_> = checked
+            .expressions()
+            .iter()
+            .map(|node| {
+                (
+                    node.syntax.source_span(),
+                    node.ty.clone(),
+                    node.place_ty.clone(),
+                    node.binding_ty.clone(),
+                )
+            })
+            .collect();
+        assert!(!arena.is_empty(), "{benchmark}");
+        assert_eq!(scanned, arena, "{benchmark}: expressions and their types");
+        let arena_declarations: Vec<_> = checked
+            .declarations()
+            .iter()
+            .filter_map(|declaration| declaration.ty.clone())
+            .collect();
+        assert_eq!(declaration_types, arena_declarations, "{benchmark}");
+        assert_eq!(&generic, checked.generic_instantiations(), "{benchmark}");
+        assert_eq!(&methods, checked.method_instantiations(), "{benchmark}");
+        assert_eq!(structs, checked.struct_instantiations(), "{benchmark}");
+        assert_eq!(leaves, checked.hash_leaf_types(), "{benchmark}");
+    }
+}

@@ -2418,6 +2418,7 @@ impl Checker {
                 deletability.declarations.insert(site);
             }
         }
+        let module_level = self.function_bases.is_empty() && !lambda;
         self.push_scope();
         self.function_bases.push(self.scopes.len() - 1);
         if let Some(policy) = capture_policy {
@@ -2572,7 +2573,7 @@ impl Checker {
                 .push(Self::body_return_annotation(ret_anno.as_ref(), name));
             self.named_result_context.push(named_result.is_some());
             if check_body {
-                result = self.check_block(body, Some(&ret_ty), false);
+                result = self.check_def_body(stmt, &decls, &ret_ty, module_level);
             }
             self.named_result_context.pop();
             self.return_annotations.pop();

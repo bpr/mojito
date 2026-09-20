@@ -612,6 +612,35 @@ pub struct Elaborated {
     pub instances: Vec<StructInstanceRequest>,
     pub stub_reaching_structs: HashSet<String>,
     pub unserved_template_uses: Vec<UnservedTemplateUse>,
+    /// How each generated `def` clone came from its template.
+    pub def_traces: Vec<DefInstanceTrace>,
+}
+
+/// The declaration-level expansion trace of one generated `def` clone.
+///
+/// It says which prepared declaration the clone instantiates, and what each
+/// of that declaration's compile-time parameters became. A consumer
+/// identifies the clone by `clone_module` and `clone_name` exactly as written
+/// here, never by demangling a symbol. The occurrence-level trace is the
+/// syntax identity each clone node keeps from the template node it was copied
+/// from.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DefInstanceTrace {
+    /// The source tag stamped on every node of the clone.
+    pub clone_module: String,
+    pub clone_name: String,
+    pub template_module: Option<String>,
+    pub template_name: String,
+    pub template_span: mojito_common::token::Span,
+    /// Type parameters baked into the clone, with the source type written in
+    /// their place, in name order.
+    pub type_bindings: Vec<(String, Type)>,
+    /// Value parameters folded into the clone as literals.
+    pub value_bindings: Vec<(String, CtValue)>,
+    /// Type packs expanded into the clone's signature.
+    pub pack_bindings: Vec<String>,
+    /// Parameters the clone still declares.
+    pub residual: Vec<String>,
 }
 
 /// A reference to a template that stays on its abstract path and can run a
@@ -815,6 +844,7 @@ pub fn elaborate_prepared(
                 .push(request);
         }
     }
+    let indexes = mojito_common::timing::span("indexes");
     let conformance =
         mojito_checker::checker::ConformanceOracle::from_program(program).map_err(|error| {
             ComptimeError::NotComptime(format!(
@@ -885,9 +915,11 @@ pub fn elaborate_prepared(
         tuple_transforms,
         materialized_callables,
         fuel: Cell::new(FUEL),
+        def_traces: RefCell::new(Vec::new()),
         top_consts: RefCell::new(HashMap::new()),
         generic_aliases: RefCell::new(HashMap::new()),
     };
+    drop(indexes);
     let mut env = HashMap::new();
     let mut elaborated = elab.block(program, &mut env, false)?;
     // A module constant declared after its use crosses here.
@@ -901,6 +933,7 @@ pub fn elaborate_prepared(
         instances,
         stub_reaching_structs,
         unserved_template_uses,
+        def_traces: _,
     } = elab.monomorphize(materialized, tuple_requests, tstring_requests, def_requests)?;
     for statement in &mut result {
         if let Some(source) = statement.module.clone() {
@@ -936,6 +969,7 @@ pub fn elaborate_prepared(
         instances,
         stub_reaching_structs,
         unserved_template_uses,
+        def_traces: elab.def_traces.take(),
     })
 }
 
@@ -959,6 +993,18 @@ use params::*;
 use simd_width::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use synth::*;
+
+/// A statement elaboration rebuilt from `source` with new contents. It keeps
+/// the source's syntax identity: that is the occurrence-level expansion trace
+/// a checked template's instances are matched by.
+const fn rebuilt(source: &Stmt, kind: StmtKind) -> Stmt {
+    Stmt {
+        kind,
+        span: source.span,
+        module: None,
+        syntax_id: source.syntax_id,
+    }
+}
 
 fn mk(kind: StmtKind, span: Span) -> Stmt {
     Stmt {
@@ -1661,6 +1707,8 @@ struct Elab<'a> {
     /// so that its instances reach the callee's clone.
     stub_reaching: RefCell<HashSet<String>>,
     fuel: Cell<usize>,
+    /// The declaration-level trace of every `def` clone generated so far.
+    def_traces: RefCell<Vec<DefInstanceTrace>>,
     top_consts: RefCell<HashMap<String, CtValue>>,
     /// Module-scope generic `comptime` aliases in declaration order, name →
     /// (parameters, body). The declarations pass through elaboration for the

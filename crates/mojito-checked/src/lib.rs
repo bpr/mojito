@@ -3,3 +3,4 @@
 //! invariant 4).
 
 pub mod checked;
+pub mod templates;

@@ -263,6 +263,8 @@ assets/ok/origin_placeholder_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/os_dir_operations.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/os_path_functions.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overload_transfer_effect_isolation.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/overload_var_copy_beside_generic.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/overload_var_copy_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overloading_arity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overloading_literal_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overloading_owned_parameter.mojo	-	ineligible	no-scalar-entry-shape
@@ -278,6 +280,7 @@ assets/ok/pack_overload_arity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_overload_beside_keyed.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_overload_bounds.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_overload_by_value_tiebreak.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pack_overload_empty_collector_arity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_overload_keyword_only.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_overload_leading_type.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_overload_method_arity.mojo	-	ineligible	no-scalar-entry-shape
@@ -492,6 +495,12 @@ assets/ok/stropping.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_value_param_frozen.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/telemetry.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tempfile_mkdtemp.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_inner_request.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_overload_binding.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_scalar_loop.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_two_arms.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_two_types.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_where_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/temporary_argument_field_deinit.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/temporary_receiver_deinit.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/temporary_receiver_view.mojo	-	ineligible	no-scalar-entry-shape

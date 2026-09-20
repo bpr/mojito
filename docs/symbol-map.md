@@ -251,8 +251,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   nested-def capture-access checks (a compile-time binding of a validated
   body — a `comptime for` variable or a value parameter — captures nothing).
 - `checker/comptime_validation.rs` owns source validation of compile-time
-  control flow: `validate_comptime_templates` (in `checker.rs`) runs a
-  discarded checker in `source_validation` mode over the prepared program,
+  control flow: `validate_comptime_templates_into` (in `checker.rs`) runs a
+  checker in `source_validation` mode over the prepared program, lending it
+  the compilation's template catalog (`validate_comptime_templates` is the
+  verdict-only wrapper),
   where `check_comptime_condition` types a `comptime if` condition (a
   generic constraint, a concrete `conforms_to`, or a `Bool` value),
   `check_comptime_for` checks a loop body under its element type,
@@ -264,12 +266,35 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   re-exports `validates_body` as `validates_comptime_body`, the body gate
   `explicit_destroy::check` reuses for its `DestroyScope::ValidatedTemplates`
   run.
+- `checker/template_facts.rs` owns checked templates on the checker side.
+  `Checker::check_def_body` is every `def` body's entry: it serves a clone
+  from a certified template (`derivable_facts`, `realize_instance_facts`,
+  `install_body_facts`), otherwise infers the body, and retains a
+  module-level generic body's facts (`capture_body_facts`,
+  `template_certificate`, `record_template`). `span_table` maps every
+  `FactTable` onto the checker's storage, `BodyShape` is the grammar of the
+  derivation classes, and `overload_rebinding_only` is the one difference
+  verification mode accepts. `note_effect_query` records the callee effect
+  summaries a body read, which are its dependencies. The vocabulary
+  (`CheckedTemplate`, `CheckedBodyFacts`, `TemplateCatalog`, `InstanceTrace`,
+  `OccurrenceId`, `TemplateObligation`, and the exhaustive
+  `derive_adjustment`) is `crates/mojito-checked/src/templates.rs`. The
+  declaration-level trace is `comptime.rs`'s `DefInstanceTrace`, recorded by
+  `specialize.rs:generate_def_spec`; the occurrence-level trace is
+  `ast.rs:rekey_syntax`'s `SyntaxOrigins` plus `comptime.rs:rebuilt`.
+  `compiler.rs:instance_traces` carries one to the other. The design record
+  is `docs/notes/instantiation-from-template.md`.
+- `checked.rs`'s `DiscoveryResult` is what a discovery round's check returns
+  (`checker.rs:check_program_for_discovery`): `CheckedProgram::new`'s inputs,
+  owned, with `scan_expressions` for the request collectors and `finalize`
+  for the round that converges.
 - `explicit_destroy.rs` owns the explicit-destruction analysis, run from
   `checker.rs`'s `run_explicit_destroy` twice: once over the elaborated
   program (`DestroyScope::Program`) and once over source validation's
-  symbolic template bodies (`DestroyScope::ValidatedTemplates`), whose
-  `ComptimeIf` arms `join_comptime` merges as alternatives rather than
-  `join`/`ensure_same`'s branches. `LINEAR_TYPE_PARAMETER` (`$linear`) keys
+  symbolic template bodies (`DestroyScope::ValidatedTemplates`), where
+  `check_comptime_if` joins the arms of a condition naming a parameter as
+  branches (`join_parametric`) and the arms of any other condition as
+  alternatives (`join_comptime`). `LINEAR_TYPE_PARAMETER` (`$linear`) keys
   the obligation of a value typed by a non-`Deinitable` type parameter;
   `Env.linear_temporaries` carries the call results the checker recorded as
   owned-but-unconsumed (`places.rs`'s `record_linear_temporary` and

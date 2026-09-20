@@ -2,7 +2,7 @@
 
 use crate::ast::ExprKind;
 use crate::backend::BackendKind;
-use crate::checked::CheckedProgram;
+use crate::checked::{CheckedProgram, DiscoveryResult};
 use crate::comptime::{
     ComptimeError, DefSpecializationRequest, Elaborated, MethodSpecializationRequest,
     NESTED_MARKER_INFIX, StructInstanceRequest, TStringSpecializationRequest,
@@ -21,7 +21,7 @@ use crate::module::{
 use crate::runtime::RuntimeError;
 use crate::runtime::Value;
 use crate::timing;
-use crate::{Stmt, ast::StmtKind, check_program, parse};
+use crate::{Stmt, ast::StmtKind, parse};
 use crate::{Ty, TyArg};
 use std::fmt;
 use std::path::Path;
@@ -33,8 +33,15 @@ pub struct CompiledProgram {
     checked: CheckedProgram,
     mir: MirProgram,
     elaborated: OnceLock<MirProgram>,
+    template_stats: crate::templates::TemplateStats,
 }
 impl CompiledProgram {
+    /// Which generic bodies this compilation inferred, and which clones it
+    /// served from a checked template instead.
+    pub const fn template_stats(&self) -> &crate::templates::TemplateStats {
+        &self.template_stats
+    }
+
     /// The semantically checked program carried by this ownership-verified
     /// pipeline result.
     pub const fn checked(&self) -> &CheckedProgram {
@@ -252,7 +259,14 @@ impl Compiler {
             let _prepare = timing::span("prepare");
             prepare(linked.to_vec()).map_err(CompilerError::Comptime)?
         };
-        crate::checker::validate_comptime_templates(&prepared).map_err(CompilerError::Type)?;
+        // The checked templates of this compilation, and the traces of the
+        // elaboration about to be checked. `MOJITO_VERIFY_TEMPLATE_FACTS`
+        // keeps every clone check and compares it with the derived facts.
+        let mut templates_catalog = crate::templates::TemplateCatalog::new(
+            std::env::var_os("MOJITO_VERIFY_TEMPLATE_FACTS").is_some_and(|value| !value.is_empty()),
+        );
+        crate::checker::validate_comptime_templates_into(&prepared, &mut templates_catalog)
+            .map_err(CompilerError::Type)?;
         // The abstract references of the elaboration `checked` was checked
         // from, and the generic structs whose erased method bodies can reach
         // a compile-time-keyed stub.
@@ -264,6 +278,7 @@ impl Compiler {
                 instances: minted,
                 stub_reaching_structs: stub_reaching,
                 unserved_template_uses: unserved,
+                def_traces,
             } = {
                 let _elaborate = timing::span("discovery.initial.elaborate");
                 elaborate_prepared(&prepared, &[], &[], &[], &[], &[], &[])
@@ -275,8 +290,14 @@ impl Compiler {
             if !self.allow_executable_module_scope {
                 validate_module_scope(&discovery).map_err(CompilerError::Type)?;
             }
+            templates_catalog.set_traces(instance_traces(def_traces));
             let _check = timing::span("discovery.initial.check");
-            check_program(&discovery).map_err(CompilerError::Type)?
+            crate::checker::check_program_for_discovery(
+                &discovery,
+                &std::collections::HashMap::new(),
+                &mut templates_catalog,
+            )
+            .map_err(CompilerError::Type)?
         };
         let mut converged = false;
         for round in 0..=SPECIALIZATION_ROUNDS {
@@ -390,6 +411,7 @@ impl Compiler {
                 instances: minted,
                 stub_reaching_structs: stub_reaching,
                 unserved_template_uses: unserved,
+                def_traces,
             } = {
                 let _elaborate = timing::span("elaborate");
                 elaborate_prepared(
@@ -416,10 +438,12 @@ impl Compiler {
             if !self.allow_executable_module_scope {
                 validate_module_scope(&elaborated).map_err(CompilerError::Type)?;
             }
+            templates_catalog.set_traces(instance_traces(def_traces));
             let _check = timing::span("check");
-            checked = crate::checker::check_program_with_materialized_callables(
+            checked = crate::checker::check_program_for_discovery(
                 &elaborated,
                 &tuple_materialized_callables(&tuple_requests),
+                &mut templates_catalog,
             )
             .map_err(CompilerError::Type)?;
         }
@@ -429,6 +453,13 @@ impl Compiler {
                 callee: last_new_callee,
             });
         }
+        // Only the converged round is assembled into the executable handoff:
+        // every earlier round was checked for its requests alone.
+        let checked = {
+            let _arena = timing::span("arena");
+            timing::count("arena_builds", 1);
+            checked.finalize()
+        };
         reject_unserved_template_calls(&checked, linked, &unserved_template_uses)?;
         let mir = {
             let _lower = timing::span("mir.lower");
@@ -446,6 +477,7 @@ impl Compiler {
             checked,
             mir,
             elaborated: OnceLock::new(),
+            template_stats: templates_catalog.stats().clone(),
         })
     }
     /// Execute an ownership-verified program using the configured backend.
@@ -478,16 +510,16 @@ impl Compiler {
     }
 }
 
-fn tuple_specialization_requests(checked: &CheckedProgram) -> Vec<TupleSpecializationRequest> {
+fn tuple_specialization_requests(checked: &DiscoveryResult) -> Vec<TupleSpecializationRequest> {
     let mut element_sets = Vec::<Vec<Ty>>::new();
     let mut calls = Vec::<(Vec<Ty>, crate::token::SourceSpan)>::new();
     let mut transforms = Vec::<(Vec<Ty>, TupleTransformRequest)>::new();
 
-    for expression in checked.expressions() {
-        if let Some(ty) = &expression.ty {
+    checked.scan_expressions(&mut |expression| {
+        if let Some(ty) = checked.expression_type(expression) {
             collect_public_tuple_types(ty, &mut element_sets);
             if matches!(
-                &expression.syntax.kind,
+                &expression.kind,
                 ExprKind::Call {
                     name,
                     param_args,
@@ -495,30 +527,25 @@ fn tuple_specialization_requests(checked: &CheckedProgram) -> Vec<TupleSpecializ
                 } if name == "Tuple" && param_args.is_empty()
             ) && let Some(elements) = closed_public_tuple_elements(ty)
             {
-                calls.push((elements, expression.syntax.source_span().without_syntax()));
+                calls.push((elements, expression.source_span().without_syntax()));
             }
         }
         if let ExprKind::MethodCall {
+            object,
             method,
             args,
             kwargs,
             ..
-        } = &expression.syntax.kind
+        } = &expression.kind
             && kwargs.is_empty()
-            && let Some(receiver) = expression
-                .children
-                .first()
-                .and_then(|id| checked.expression(*id))
-                .and_then(|receiver| receiver.ty.as_ref())
+            && let Some(receiver) = checked
+                .expression_type(object)
                 .and_then(closed_public_tuple_elements)
         {
-            let transform = match method.as_str() {
-                "reverse" if args.is_empty() => Some(TupleTransformRequest::Reverse),
-                "concat" if args.len() == 1 => expression
-                    .children
-                    .get(1)
-                    .and_then(|id| checked.expression(*id))
-                    .and_then(|argument| argument.ty.as_ref())
+            let transform = match (method.as_str(), args.as_slice()) {
+                ("reverse", []) => Some(TupleTransformRequest::Reverse),
+                ("concat", [argument]) => checked
+                    .expression_type(argument)
                     .and_then(closed_public_tuple_elements)
                     .map(TupleTransformRequest::Concat),
                 _ => None,
@@ -530,17 +557,15 @@ fn tuple_specialization_requests(checked: &CheckedProgram) -> Vec<TupleSpecializ
                 }
             }
         }
-        if let Some(ty) = &expression.place_ty {
+        if let Some(ty) = checked.expression_place_type(expression) {
             collect_public_tuple_types(ty, &mut element_sets);
         }
-        if let Some(ty) = &expression.binding_ty {
+        if let Some(ty) = checked.expression_binding_type(expression) {
             collect_public_tuple_types(ty, &mut element_sets);
         }
-    }
-    for declaration in checked.declarations() {
-        if let Some(ty) = &declaration.ty {
-            collect_public_tuple_types(ty, &mut element_sets);
-        }
+    });
+    for ty in checked.declaration_types() {
+        collect_public_tuple_types(&ty, &mut element_sets);
     }
 
     let mut requests = element_sets
@@ -558,6 +583,41 @@ fn tuple_specialization_requests(checked: &CheckedProgram) -> Vec<TupleSpecializ
         }),
     );
     requests
+}
+
+/// The elaborator's declaration-level clone traces in the checker's terms.
+/// The driver carries them across because neither phase may name the other's
+/// vocabulary here: the elaborator records what it generated, and the checker
+/// decides what that lets it derive.
+fn instance_traces(
+    traces: Vec<crate::comptime::DefInstanceTrace>,
+) -> Vec<(
+    crate::templates::InstanceName,
+    crate::templates::InstanceTrace,
+)> {
+    traces
+        .into_iter()
+        .filter(|trace| trace.pack_bindings.is_empty())
+        .map(|trace| {
+            (
+                crate::templates::InstanceName {
+                    module: Some(trace.clone_module),
+                    name: trace.clone_name,
+                },
+                crate::templates::InstanceTrace {
+                    template: crate::templates::TemplateId {
+                        module: trace.template_module,
+                        owner: None,
+                        name: trace.template_name,
+                        declaration: trace.template_span,
+                    },
+                    type_bindings: trace.type_bindings,
+                    value_bindings: trace.value_bindings,
+                    residual: trace.residual,
+                },
+            )
+        })
+        .collect()
 }
 
 /// Reject a reference the discovery fixpoint left on an abstract path that
@@ -615,7 +675,7 @@ fn reject_unserved_template_calls(
 /// abstract erased path, which is always correct. The result is sorted so
 /// request seeding, and therefore specialization order, is deterministic.
 fn def_specialization_requests(
-    checked: &CheckedProgram,
+    checked: &DiscoveryResult,
     templates: &std::collections::HashSet<String>,
 ) -> Vec<DefSpecializationRequest> {
     use std::collections::hash_map::Entry;
@@ -685,7 +745,7 @@ fn def_specialization_requests(
 /// such a method pays no discovery round. Conflicting recordings for one
 /// occurrence drop it, as for defs.
 fn method_specialization_requests(
-    checked: &CheckedProgram,
+    checked: &DiscoveryResult,
     variadic_templates: &std::collections::HashSet<String>,
     user_structs: &std::collections::HashSet<String>,
 ) -> Vec<MethodSpecializationRequest> {
@@ -810,7 +870,7 @@ fn scalar_range_template_names(linked: &[Stmt]) -> std::collections::HashMap<&'s
 /// [`def_specialization_requests`]. Occurrence conflicts share the caller's
 /// def-request conflict handling.
 fn scalar_range_requests(
-    checked: &CheckedProgram,
+    checked: &DiscoveryResult,
     templates: &std::collections::HashMap<&'static str, String>,
 ) -> Vec<DefSpecializationRequest> {
     let mut requests: Vec<DefSpecializationRequest> = checked
@@ -848,7 +908,7 @@ fn scalar_range_requests(
 /// The checker-recorded generic-struct applications that are closed and
 /// therefore replayable as per-instantiation method clones. A symbolic value
 /// argument (`Array[Int, n]` inside a generic body) is not an instance.
-fn struct_instance_requests(checked: &CheckedProgram) -> Vec<StructInstanceRequest> {
+fn struct_instance_requests(checked: &DiscoveryResult) -> Vec<StructInstanceRequest> {
     checked
         .struct_instantiations()
         .iter()
@@ -916,22 +976,23 @@ fn public_tuple_elements(ty: &Ty) -> Option<Vec<Ty>> {
 /// Open occurrences (a t-string inside a still-abstract generic template body)
 /// produce no request this round; when the enclosing template is specialized,
 /// the cloned body's t-string checks concretely and the fixpoint collects it.
-fn tstring_specialization_requests(checked: &CheckedProgram) -> Vec<TStringSpecializationRequest> {
+fn tstring_specialization_requests(checked: &DiscoveryResult) -> Vec<TStringSpecializationRequest> {
     let mut requests = Vec::new();
-    for expression in checked.expressions() {
-        if matches!(&expression.syntax.kind, ExprKind::TString { .. })
-            && let Some(ty) = &expression.ty
-            && let Some(elements) = closed_tstring_elements(ty)
+    checked.scan_expressions(&mut |expression| {
+        if matches!(&expression.kind, ExprKind::TString { .. })
+            && let Some(elements) = checked
+                .expression_type(expression)
+                .and_then(closed_tstring_elements)
         {
             let request = TStringSpecializationRequest::new(
                 elements,
-                expression.syntax.source_span().without_syntax(),
+                expression.source_span().without_syntax(),
             );
             if !requests.contains(&request) {
                 requests.push(request);
             }
         }
-    }
+    });
     requests
 }
 

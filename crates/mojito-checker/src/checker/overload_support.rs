@@ -612,34 +612,49 @@ pub(super) fn overload_rank(
     signature_len: usize,
     generic: bool,
 ) -> usize {
+    const SIGNATURE_LENGTH_MAX: usize = 255;
     conversions * CONVERSION_RANK
         + usize::from(variadic) * VARIADIC_RANK
-        + signature_len * SIGNATURE_LENGTH_RANK
+        + signature_len.min(SIGNATURE_LENGTH_MAX) * SIGNATURE_LENGTH_RANK
         + usize::from(generic)
 }
 
-/// How one variadic candidate binds a call's arguments, which decides between
-/// candidates tied on every other rank term. Current Mojo prefers, in order:
-/// a collector that takes at least one argument; fewer implicit copies into a
-/// `var` parameter; more arguments bound by value; fewer `ref` parameters.
-/// An argument is bound by value when a read parameter of a trivially
-/// register-passable type takes it, or a `var` parameter of any other type
-/// takes a non-literal rvalue. So `f(1, 2, 3)` selects `f(a, b: Int, *rest)`
-/// over `f(a, *rest)`, `f(1, 2)` selects `f(a, *rest)` because the other's
-/// collector would be empty, and `f(1, s, 3)` is ambiguous beside
-/// `f(a, b: String, *rest)`: a `String` binds by reference either way.
-pub(super) struct VariadicBinding {
-    collector_len: usize,
+/// How one candidate binds a call's arguments. A place handed to a `var`
+/// parameter must be copied, and current Mojo charges that copy on every
+/// candidate: `h(s)` selects `h[T: Writable](a: T)` over `h(var a: String)`,
+/// while `h(String("t"))` selects the `var` one. The copy ranks below one
+/// conversion and below the variadic bit, and above the signature length.
+///
+/// The remaining terms decide between variadic candidates tied on every other
+/// rank term, in order: a collector that takes at least one argument (which
+/// outranks the copies); then more arguments bound by value; then fewer `ref`
+/// parameters. An argument is bound by value when a read parameter of a
+/// trivially register-passable type takes it, or a `var` parameter of any
+/// other type takes a non-literal rvalue. So `f(1, 2, 3)` selects
+/// `f(a, b: Int, *rest)` over `f(a, *rest)`, `f(1, 2)` selects
+/// `f(a, *rest)` because the other's collector would be empty, and
+/// `f(1, s, 3)` is ambiguous beside `f(a, b: String, *rest)`: a `String`
+/// binds by reference either way.
+///
+/// Those three stay variadic-only because the pin follows different rules
+/// outside a pack: it selects `h(var a: Int)` for `h(x + 1)` beside
+/// `h[T: Writable](a: T)`, where the by-value term would select the generic
+/// candidate, and it accepts `q(7)` beside a read overload, where the
+/// undecided rule would report ambiguity.
+pub(super) struct ArgumentBinding {
+    collector: Option<usize>,
     copies: usize,
     by_value: usize,
     parametric_refs: usize,
     undecided: bool,
 }
 
-impl VariadicBinding {
-    pub(super) const fn new(collector_len: usize) -> Self {
+impl ArgumentBinding {
+    /// A binding for a candidate whose `*args` collector takes `collector`
+    /// arguments, or `None` for a candidate that has no collector.
+    pub(super) const fn new(collector: Option<usize>) -> Self {
         Self {
-            collector_len,
+            collector,
             copies: 0,
             by_value: 0,
             parametric_refs: 0,
@@ -668,21 +683,25 @@ impl VariadicBinding {
         }
     }
 
-    /// The rank this binding adds, below every other term and above the
-    /// generic bit.
+    /// The rank this binding adds: the copies, which rank above the signature
+    /// length on every candidate, plus the collector, by-value and `ref`
+    /// terms a variadic candidate alone pays, below the signature length and
+    /// above the generic bit.
     pub(super) fn rank(&self) -> usize {
         const REFS_MAX: usize = 7;
         const BY_VALUE_MAX: usize = 31;
-        const COPIES_MAX: usize = 15;
+        const COPIES_MAX: usize = 31;
+        let copies = self.copies.min(COPIES_MAX) * COPY_RANK;
+        let Some(collector_len) = self.collector else {
+            return copies;
+        };
         let refs = self.parametric_refs.min(REFS_MAX);
         let by_value = BY_VALUE_MAX - self.by_value.min(BY_VALUE_MAX);
-        let copies = self.copies.min(COPIES_MAX);
-        let empty = usize::from(self.collector_len == 0);
-        (usize::from(self.undecided) * UNDECIDED_BINDING)
+        copies
+            + (usize::from(collector_len == 0) * EMPTY_COLLECTOR_RANK)
+            + (usize::from(self.undecided) * UNDECIDED_BINDING)
             + (refs << 2)
             + (by_value << 5)
-            + (copies << 10)
-            + (empty << 14)
     }
 }
 
@@ -735,11 +754,12 @@ pub(super) fn select_callable_overload(
         .collect::<Vec<_>>();
     if best_matches.len() != 1 {
         // A read and an owned overload of one parameter type tie on argument
-        // scoring; at every parameter where the tied candidates disagree on
-        // ownership, the argument decides: an owned value (`x^`, an rvalue)
-        // selects `var`, a place selects the read overload. A candidate
-        // without that parameter, whose collector takes the argument, does
-        // not disagree.
+        // scoring whenever the argument is owned: `ArgumentBinding` prices the
+        // place handed to a `var` parameter, and nothing prices the owned
+        // value handed to a read one. So at every parameter where the tied
+        // candidates disagree on ownership, the argument decides: an owned
+        // value (`x^`, an rvalue) selects `var`. A candidate without that
+        // parameter, whose collector takes the argument, does not disagree.
         let survivors: Vec<usize> = best_matches
             .iter()
             .enumerate()
@@ -874,6 +894,10 @@ pub(super) fn overload_candidates(existing: &Ty, new_ty: &Ty) -> Option<Vec<Ty>>
 /// The bit of a variadic binding's rank that marks it undecided.
 const UNDECIDED_BINDING: usize = 1 << 1;
 
+/// The rank bits `ArgumentBinding::rank` owns below the signature length: the
+/// by-value, `ref`, undecided and generic terms.
+const BINDING_RANK_MASK: usize = SIGNATURE_LENGTH_RANK - 1;
+
 /// Whether an argument hands over a value the callee may own: an explicit
 /// transfer `x^` or an rvalue, never a place.
 fn argument_is_owned(argument: &Expr) -> bool {
@@ -881,11 +905,14 @@ fn argument_is_owned(argument: &Expr) -> bool {
 }
 
 /// Whether the candidates that tie with the best one on every term above the
-/// variadic binding include an undecided binding. Such a set has no selection
-/// the pinned Mojo is known to agree with, so the call is ambiguous.
+/// binding's low word — the conversions, the variadic bit, the collector, the
+/// copies and the signature length — include an undecided binding. Such a set
+/// has no selection the pinned Mojo is known to agree with, so the call is
+/// ambiguous. A candidate that loses on any of those terms is decided by them
+/// and never joins the tie.
 fn variadic_tie_is_undecided(scores: impl Iterator<Item = usize>, best: usize) -> bool {
     let tied: Vec<usize> = scores
-        .filter(|score| score / SIGNATURE_LENGTH_RANK == best / SIGNATURE_LENGTH_RANK)
+        .filter(|score| score & !BINDING_RANK_MASK == best & !BINDING_RANK_MASK)
         .collect();
     tied.len() > 1 && tied.iter().any(|score| score & UNDECIDED_BINDING != 0)
 }

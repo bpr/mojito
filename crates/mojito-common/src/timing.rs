@@ -12,7 +12,8 @@
 //! Output is the machine-readable `timing\t<path>\t<inclusive_us>` record
 //! the native bench driver already parses, extended with `\t<self_us>\t
 //! <count>` columns, plus `count\t<path>\t<n>` lines; it goes to stderr so
-//! program output stays byte-identical.
+//! program output stays byte-identical. `MOJITO_TIMING_NOTES=1` adds
+//! `note\t<path>\t<kind>\t<subject>` lines naming individual declarations.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -23,6 +24,10 @@ use std::time::Instant;
 /// Turn timing collection on for the rest of the process.
 pub fn enable() {
     ENABLED.store(true, Ordering::Relaxed);
+    NOTES.store(
+        std::env::var_os("MOJITO_TIMING_NOTES").is_some(),
+        Ordering::Relaxed,
+    );
 }
 
 /// Whether spans are being recorded.
@@ -51,6 +56,26 @@ pub fn count(name: &'static str, n: u64) {
     }
 }
 
+/// Whether per-declaration notes are recorded.
+///
+/// Timing must be on and `MOJITO_TIMING_NOTES` set. Notes name declarations,
+/// so they stay out of the default report, whose lines a bench driver
+/// compares across runs.
+#[inline]
+pub fn notes_enabled() -> bool {
+    enabled() && NOTES.load(Ordering::Relaxed)
+}
+
+/// Record one `note\t<path>\t<kind>\t<subject>` line under the innermost
+/// open span. `subject` is built only when notes are on.
+#[inline]
+pub fn note(kind: &'static str, subject: impl FnOnce() -> String) {
+    if notes_enabled() {
+        let subject = subject();
+        EVENTS.with(|events| events.borrow_mut().push(Event::Note { kind, subject }));
+    }
+}
+
 /// Fold the recorded events into per-path records, in first-entry order.
 /// Spans still open (an early `return` in the caller) are closed at `now`.
 pub fn report() -> String {
@@ -63,6 +88,7 @@ pub fn report() -> String {
     let mut records: HashMap<String, Record> = HashMap::new();
     let mut counters: Vec<(String, u64)> = Vec::new();
     let mut counter_index: HashMap<String, usize> = HashMap::new();
+    let mut notes = String::new();
     let mut stack: Vec<OpenSpan> = Vec::new();
     for event in events {
         match event {
@@ -86,6 +112,10 @@ pub fn report() -> String {
                 });
             }
             Event::Exit { at } => close(&mut stack, &mut records, at),
+            Event::Note { kind, subject } => {
+                let path = stack.last().map_or("", |open| open.path.as_str());
+                let _ = writeln!(notes, "note\t{path}\t{kind}\t{subject}");
+            }
             Event::Count { name, n } => {
                 let path = match stack.last() {
                     Some(open) => format!("{}.{name}", open.path),
@@ -115,6 +145,7 @@ pub fn report() -> String {
     for (path, n) in &counters {
         let _ = writeln!(out, "count\t{path}\t{n}");
     }
+    out.push_str(&notes);
     out
 }
 
@@ -134,6 +165,7 @@ impl Drop for Span {
 }
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
+static NOTES: AtomicBool = AtomicBool::new(false);
 
 thread_local! {
     static EVENTS: RefCell<Vec<Event>> = const { RefCell::new(Vec::new()) };
@@ -151,6 +183,10 @@ enum Event {
     Count {
         name: &'static str,
         n: u64,
+    },
+    Note {
+        kind: &'static str,
+        subject: String,
     },
 }
 

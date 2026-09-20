@@ -52,125 +52,153 @@ name, so one overloaded name may hold two classes and the checker's recorded
 instantiation says which declaration serves each call. The fifth step let
 two type-pack declarations share a name: any overloaded name with a template
 among its declarations is a family, and a request also spells the selected
-overload's `*args` collector. Each task pays off
+overload's `*args` collector. The sixth step made a checked template the
+authority for the instantiations it covers: source validation and the abstract
+check retain a body's facts, the elaborator leaves a trace from each clone to
+its template, and a covered clone inherits those facts by substitution instead
+of being inferred (`docs/notes/instantiation-from-template.md`). Coverage is
+narrow on purpose, and the entries below widen it. Each task pays off
 by itself, and together they are what moving toward Mojo's shape needs.
 
+This section holds only work that moves the check order: checking a template
+with its parameters symbolic, or deriving an instantiation from a checked
+template. A defect found while doing that work is filed by its kind, not
+where it was found. A divergence from the pin goes to section 3, however
+small it is and whatever it depends on.
+
 Unlike sections 2 and 3, this section is sorted in **dependency order**: each
-entry names what it depends on, and an entry with no dependency sits as early
-as its size allows. The **Model:** bullet carries the complexity estimate and
-says whether the entry can be done as-is or must be planned first.
+entry names what it depends on. Size does not move an entry up. The **Model:**
+bullet carries the complexity estimate and says whether the entry can be done
+as-is or must be planned first.
 
-- [ ] **An implicit copy into a `var` parameter does not count in overload
-  ranking**
+- [ ] **A generic struct's method clones are inferred, never derived**
 
-  Problem: `h(s)` against `h(var a: String)` beside `h[T: Writable](a: T)`
-  prints `2` at the pinned Mojo and `1` in Mojito, a silent wrong answer.
-  - A place passed to a `var` parameter must be copied, and the pin ranks that
-    copy below one conversion and above the generic tie-break.
-  - An rvalue needs no copy, and both compilers then select the `var` overload.
-  - `VariadicBinding` (`checker/overload_support.rs`) already counts the copy,
-    but only between tied variadic candidates.
-  - Pinned by `conformance/probes/overload_var_copy_beside_generic.mojo`.
+  Problem: the checked-template mechanism covers module-level `def`s only, and
+  almost all of the bundled library's generic code is struct methods.
+  - Hello World infers 3828 clone bodies per compilation and derives none.
+    Every one is a method of a struct instance (`--timings`,
+    `body_inference.clone`).
+  - The elaborator leaves a declaration-level trace for a `def` clone only
+    (`DefInstanceTrace`, `specialize.rs:generate_def_spec`). Instance clones
+    and per-call method clones leave none.
+  - The checker serves a body from a template only in `check_def_body`.
+    `declarations.rs:check_method_inner` still calls `check_block` directly.
+  - A method template also needs `self`, the struct's own binders, and the
+    method ordinal in its identity (`TemplateId::owner` is already there).
+  - The design record is
+    [`docs/notes/instantiation-from-template.md`](notes/instantiation-from-template.md).
+  - Depends on nothing. It is the entry that turns the mechanism into a
+    measurable saving.
+  - Model: Fable, plan first. It touches the elaborator's three method-clone
+    paths and the checker's method entry.
+
+- [ ] **A call that records a contract, a conversion, or an origin has no
+  derivation recipe**
+
+  Problem: an instance inherits a template's facts only when every fact table
+  the body touched has a recipe, and most call facts do not.
+  - Tables with a recipe are listed in the design record. `SelectedCalls`,
+    every conversion table, `CallTransfers`, `CallResultOrigins`, the
+    reference-result tables, and every `SemanticAdjustment` except
+    `MaterializeLiteral` refuse the body
+    (`templates.rs:derive_adjustment`, `template_facts.rs:derivable_table`).
+  - A method call through a trait bound records a `CheckedCallContract` whose
+    target an instance must realize against the concrete implementation. The
+    built-in `len` is the one realized operation today
+    (`realize_builtin_len`).
+  - A callee whose transfer or call-through summary is not empty also refuses.
+    Replaying a stabilized summary on remapped places is the missing recipe.
+  - Each recipe needs its soundness argument written beside
+    `template_certificate`, and a verification-mode run over a probe.
+  - Depends on the method-clone entry only for payoff, not for correctness.
+  - Model: Fable, plan first. One recipe per table is small. Choosing which
+    concrete-dependent decisions a clone check makes after selection is not.
+
+- [ ] **A surviving trait-bound template with a local or a branch keeps the
+  clone check**
+
+  Problem: `BodyShape` admits locals, assignments, and compile-time control
+  flow only in a body source validation produced.
+  - `def outer[T: Copyable](x: T) -> Int` with `var selected = pick(x)` is
+    outside every class, so its instances are inferred.
+  - That is also what keeps the overload re-ranking divergence alive (section
+    3, "A clone that is still checked re-ranks an overloaded call").
+  - A local of a parameter type needs the `Deinitable`/linear binding facts
+    substituted and re-judged per instance
+    (`explicit_destroy_deletability`), which is why the first classes return
+    scalars only.
+  - Runtime `if`/`while`/`for` need no new trace, only grammar and the
+    iteration-protocol recipe.
   - Depends on nothing.
-  - Model: Opus, plan first. A copy term in `overload_rank` reaches every
-    overloaded call with a `var` parameter, the bundled stdlib's included, so
-    the plan must bound that fallout and probe where the term sits against
-    the variadic bit and the signature length.
+  - Model: Fable, plan first.
 
-- [ ] **A list literal beside a `List` parameter and a pack is not ambiguous**
+- [ ] **A folded compile-time value that survives into an instance breaks its
+  trace**
 
-  Problem: `g(x, [1, 2], x)` against `g[*Ts](a: Int, *rest: *Ts)` beside
-  `g[*Ts](a: Int, b: List[Int], *rest: *Ts)` prints `2` in Mojito, while the
-  pinned Mojo reports "ambiguous call to 'g'".
-  - Mojito charges the literal's conversion to the second overload only. A
-    string literal is already charged on the pack side too
-    (`pack_element_conversion_count`).
-  - Charging a list literal one conversion on the pack side does not tie the
-    candidates, so the regular binding costs something else first.
-  - Mojito accepts a program the pin rejects, so this is a divergence.
-  - Pinned by `conformance/probes/pack_overload_list_literal_ambiguity.mojo`.
+  Problem: the elaborator writes a fresh literal where a value parameter or a
+  `comptime for` variable stood, so that instance occurrence has no template
+  occurrence behind it and the derivation refuses.
+  - `def total[n: Int]() -> Int` with `sum += i` inside `comptime for i in
+    range(n)` keeps the clone check. The same body with `sum += 1` derives
+    (`assets/ok/template_scalar_loop.mojo`).
+  - The fold is `rewrite.rs:rewrite_expr`, which replaces the identifier with
+    `CtValue::materialize`'s new node.
+  - The recipe is known: keep the identifier's identity on the literal, give
+    it the literal's type plus `MaterializeLiteral` to the template's recorded
+    type, and check the value fits.
   - Depends on nothing.
-  - Model: Opus, as-is.
+  - Model: Opus, plan first. A kept identity on a folded node must be checked
+    against every consumer of `SyntaxId::fresh()` in the elaborator.
 
-- [ ] **A place passed to a `ref` parameter may alias a pack element**
+- [ ] **A local declared inside an unrolled loop has no per-copy binding**
 
-  Problem: `r(x, x)` against `r[*Ts](ref b: Int, *rest: *Ts)` prints `1` in
-  Mojito, while the pinned Mojo reports "aliasing values passed mutably to 'b'
-  argument and passed immutably to 'rest' argument".
-  - The pin infers the `ref` parameter mutable from the mutable place, and a
-    pack element is held by reference.
-  - With a regular `c: Int` in place of the pack both compilers accept the
-    call, because a trivial read parameter takes a copy.
-  - Mojito accepts a program the pin rejects, so this is a divergence.
-  - Pinned by `conformance/probes/ref_argument_aliases_pack_element.mojo`.
+  Problem: an unrolled `comptime for` copies its body once per iteration, and
+  a derivation mints one binding per template local, not one per copy.
+  - `BodyShape` therefore rejects a `var` inside a `comptime for`, and the
+    body keeps the clone check.
+  - `OccurrenceId::copy` already tells the copies apart. The missing piece is
+    a `TemplateOwner::Local` that carries the copy of its declaration.
   - Depends on nothing.
-  - Model: Opus, plan first. The plan must say whether the within-call
-    exclusivity check or the `ref` mutability inference is what is missing.
+  - Model: Opus, plan first.
 
-- [ ] **Two type-pack `__init__` overloads cannot be constructed**
+- [ ] **Every discovery round still infers every uncovered body again**
 
-  Problem: `H(x, x, x)` for a struct with `__init__[*Ts](out self, a: Int,
-  *rest: *Ts)` beside `__init__[*Ts](out self, a: Int, b: Int, *rest: *Ts)`
-  prints `3` at the pin and fails in Mojito with "checked constructor
-  'H.__init__$ov$…' is missing from MIR".
-  - The checker selects the same constructor the pin does. The selected clone
-    never reaches MIR.
-  - The rejection is safe, but it is a VM-phase message for a program the pin
-    runs.
-  - Pinned by `conformance/probes/pack_overload_constructor_missing_mir.mojo`.
-  - Depends on nothing.
-  - Model: Opus, plan first. Free functions and methods are served from the
-    checker's recorded selection; the plan must find why constructors are not.
+  Problem: a compilation checks the whole elaborated program once per
+  discovery round and once per transfer-effect round, and a checked template
+  saves only the bodies it covers.
+  - Hello World runs three rounds of two transfer passes, about one second of
+    body inference each.
+  - The plan's persistent elaboration session and expansion worklist did not
+    land, on measurement: the elaborator's per-round invariant state costs
+    about 5 ms and elaboration is about 2.5% of a compilation
+    (`discovery.*.elaborate.indexes` in `--timings`).
+  - The lever is reuse of an unchanged body's facts across passes, which the
+    catalog already does for a certified template
+    (`template_bodies.reused`). Extending it to every body needs a recipe for
+    every fact table, under the identity substitution.
+  - The arena is already built once per compilation rather than once per
+    round (`DiscoveryResult`).
+  - Depends on the recipe entry above.
+  - Model: Fable, plan first.
 
-- [ ] **A trivial value handed to a `var` parameter beside a pack is always
-  ambiguous**
+- [ ] **Parameter expressions have no symbolic form**
 
-  Problem: `g(x, x + 1, x)` against `g[*Ts](a: Int, *rest: *Ts)` beside
-  `g[*Ts](a: Int, var b: Int, *rest: *Ts)` prints `3` at the pin, while Mojito
-  reports an ambiguous call.
-  - The pin selects the first overload for `Int(2)`, `v^`, and `True`, the
-    second for `x + 1`, and calls a bare `2` ambiguous. No rule was recovered.
-  - `VariadicBinding::bind` marks the case undecided, and an undecided tie is
-    reported ambiguous, so Mojito never selects a different overload than the
-    pin.
-  - A place argument is settled: the implicit copy costs and both print `2`.
-  - Pinned by `conformance/probes/pack_overload_var_trivial_undecided.mojo`.
-  - Depends on nothing.
-  - Model: Opus, plan first. The plan must find the rule with more probes, or
-    move the entry to `docs/non-goals.md` as a kept over-rejection.
-
-- [ ] **A compile-time-keyed `def` cannot be passed as a function value**
-
-  Problem: `apply(as_int, 3)`, where `as_int[T]` holds a `comptime if` or a
-  `rebind` and `apply` declares a callable bound, runs at the pin and reports
-  "Undefined variable 'as_int'" in Mojito.
-  - The template is dropped or stubbed, and only its `$`-mangled clones carry
-    a name; a bare reference resolves to neither.
-  - The rejection is safe (no wrong answer), but the message names nothing
-    the source wrote.
-  - Depends on nothing.
-  - Model: Fable, plan first. The plan must say which clone a bare reference
-    names, and what the rejection says when none can be chosen.
-
-- [ ] **A `def`'s own type pack cannot be queried in a runtime position**
-
-  Problem: `return 1 + Us.length` fails with "Undefined variable 'Us'", while
-  the pinned Mojo runs it.
-  - A free `def count[*Us](var *extra: *Us)` and a method-own pack on any
-    struct fail the same way.
-  - A compile-time position (`comptime for i in range(Us.length)`) works, and
-    so does a variadic struct's own pack (`Self.Ts.length`) in a runtime
-    position.
-  - Only `generate_struct_spec` binds a pack into the substitutions that
-    `fold_pack_typelist_use` (`comptime/rewrite.rs`) reads during
-    materialization. `def` specialization never does.
-  - Pinned by `conformance/fixtures/pack_length_runtime_position.mojo`
-    (`pack-length-runtime-position`, `mojo-only`).
-  - Depends on nothing. It stays in the elaborator, so it does not wait for
-    the symbolic pack work below.
-  - Model: Opus, plan first. The binding site is known, but the plan must
-    enumerate the clone paths that share it (free `def`, method-own pack,
-    nested forwarding) and the materialization rewrite each one runs.
+  Problem: `CtValue` carries concrete values plus an opaque symbolic `Param`,
+  so two parameter expressions can only be compared by making them concrete.
+  - `SIMD[dt, n + 1]` and `SIMD[dt, 1 + n]` cannot be judged equal today.
+  - Symbolic branch checking over a `DType` or vector width needs this, and
+    so does any parametric IR.
+  - Upstream stores parameter expressions as uniqued typed attributes and
+    decides equality by canonicalization rather than evaluation.
+  - Shape the representation like a Pliron attribute, uniqued and
+    canonicalized, so a later dialect move is a re-homing and not a redesign.
+  - Depends on nothing. It gates the `DType`/vector validation entry and the
+    Pliron parametric layer.
+  - Model: Fable, plan first. A representation change under `CtValue`,
+    `CtExpr`, the checker's constraint evaluation, and the elaborator's
+    evaluator, with no single lever. Astra for the plan if it is to be shaped
+    as the attribute layer of a future dialect rather than as a checker-only
+    normal form.
 
 - [ ] **A pack-keyed template body is not validated symbolically**
 
@@ -208,30 +236,16 @@ says whether the entry can be done as-is or must be planned first.
     and writing methods, `Variant`'s `isa`/`unsafe_get` on
     `__VariantStorage[*Self.Ts]`, `TString.write_to`, and
     `FormatStruct.params`/`fields`. Those bodies are the acceptance list.
+  - A body this entry validates also becomes certifiable: source validation
+    is the producer of a keyed body's checked template
+    (`TemplateProducer::SourceValidation`), and a validation run that ends
+    without a verdict withdraws every certificate it produced
+    (`TemplateCatalog::abort_validation`).
   - Depends on nothing. Unblocks constructor inference below.
   - Model: Fable, plan first. A new type form, conformance assumptions taken
     from where clauses, and builtin storage operations over a symbolic pack
     span the checker; the plan's job is to keep the stdlib compiling at every
     step.
-
-- [ ] **Parameter expressions have no symbolic form**
-
-  Problem: `CtValue` carries concrete values plus an opaque symbolic `Param`,
-  so two parameter expressions can only be compared by making them concrete.
-  - `SIMD[dt, n + 1]` and `SIMD[dt, 1 + n]` cannot be judged equal today.
-  - Symbolic branch checking over a `DType` or vector width needs this, and
-    so does any parametric IR.
-  - Upstream stores parameter expressions as uniqued typed attributes and
-    decides equality by canonicalization rather than evaluation.
-  - Shape the representation like a Pliron attribute, uniqued and
-    canonicalized, so a later dialect move is a re-homing and not a redesign.
-  - Depends on nothing. It gates the `DType`/vector validation entry and the
-    Pliron parametric layer.
-  - Model: Fable, plan first. A representation change under `CtValue`,
-    `CtExpr`, the checker's constraint evaluation, and the elaborator's
-    evaluator, with no single lever. Astra for the plan if it is to be shaped
-    as the attribute layer of a future dialect rather than as a checker-only
-    normal form.
 
 - [ ] **A `DType`- or vector-keyed template body is not validated symbolically**
 
@@ -410,8 +424,7 @@ whatever its model, because it batches every change that needs a new
   complete (`docs/mojo-nightly.md`). The next re-pin recreates this
   section's checkbox.
 
-The three checkboxes below, and the bullets inside the two standing ones,
-are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
+The checkboxes below, and the bullets inside the standing ones, are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
 
 - [ ] **A parametric nested `def` named as a value reports its marker**
 
@@ -426,6 +439,20 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     for the binding and an `invalid call to '__call__'` for the argument.
   - Pre-existing for a nested `def` the pass already registered; the nested
     compile-time-keyed work widened the class it reaches.
+  - Model: Opus, as-is.
+
+- [ ] **A list literal beside a `List` parameter and a pack is not ambiguous**
+
+  Problem: `g(x, [1, 2], x)` against `g[*Ts](a: Int, *rest: *Ts)` beside
+  `g[*Ts](a: Int, b: List[Int], *rest: *Ts)` prints `2` in Mojito, while the
+  pinned Mojo reports "ambiguous call to 'g'".
+  - Mojito charges the literal's conversion to the second overload only. A
+    string literal is already charged on the pack side too
+    (`pack_element_conversion_count`).
+  - Charging a list literal one conversion on the pack side does not tie the
+    candidates, so the regular binding costs something else first.
+  - Mojito accepts a program the pin rejects, so this is a divergence.
+  - Pinned by `conformance/probes/pack_overload_list_literal_ambiguity.mojo`.
   - Model: Opus, as-is.
 
 - [ ] **Explicit type arguments on a static method of a non-parametric
@@ -519,6 +546,17 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
   - Model: Opus, plan first. The plan names every elaborator path that
     evaluates a retained template body.
 
+- [ ] **`reflect[T]` of a non-struct type is rejected**
+
+  Problem: the pinned Mojo answers `reflect[Int].field_count()` with 0, and
+  Mojito rejects it with "requires a struct type".
+  - `comptime/eval.rs` raises it for every reflection method over a type that
+    is not a struct.
+  - `conformance/probes/template_fallback_reflection.mojo` records the
+    observation, made 2026-09-20.
+  - **Model:** Opus, plan first. Which handle methods answer for a scalar, and
+    with what, needs a probe per method before the lever is chosen.
+
 - [ ] **Constructing a struct's own type parameter fails in every instance
   clone**
 
@@ -592,6 +630,147 @@ are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
     list the rest. The native lowering matches with wildcards, so its sites
     need a manual `rg` pass.
   - Model: Opus, plan first.
+
+- [ ] **A constructor overload set drops every generic candidate before it is
+  ranked**
+
+  Problem: `C(s)` for a struct with `__init__(out self, var a: String)` beside
+  `__init__[T: Writable](out self, a: T)` prints `2` at the pin, where the
+  place costs the first candidate a copy, and `1` in Mojito.
+  - `decls_are_concrete` (`checker/declarations.rs`) retains only the concrete
+    candidates whenever one matches, at both constructor selection sites.
+  - The filter is there so a per-call clone of a generic constructor beats the
+    template it was minted from (`Variant`, `Cell`). It cannot tell that clone
+    from a separately declared concrete overload.
+  - Unlike the rank terms, the filter also overrides conversion cost, so a
+    generic candidate needing fewer conversions loses too.
+  - Pinned by `conformance/probes/overload_var_copy_constructor.mojo`.
+  - Model: Opus, plan first. The plan must say how a clone is told from a
+    declared overload — the minting record, or a marker on the clone.
+
+- [ ] **Methods cannot overload on the parameter convention alone**
+
+  Problem: `m(self, var a: String)` beside `m(self, a: String)` prints `2`
+  then `1` at the pin, while Mojito reports "'m' is already declared in this
+  scope". A free function accepts the same pair.
+  - `same_method_shape` (`checker/traits.rs`) compares parameter types and
+    ignores conventions, so the second declaration reads as a redeclaration.
+  - The lowered method name has no owned-parameter qualifier either, so the
+    two would collide even if the checker admitted them.
+  - Ranking already decides such a pair: the place costs the `var` candidate
+    a copy, and an owned argument selects it at the tie.
+  - Pinned by `conformance/probes/overload_convention_only_method.mojo`.
+  - Model: Opus, plan first. The plan must say what the lowered name gains,
+    and whether trait requirements compare conventions the same way.
+
+- [ ] **A trivial rvalue handed to a `var` parameter beside a read overload is
+  accepted**
+
+  Problem: `q(x + 1)` against `q(var a: Int)` beside `q(a: Int)` is "ambiguous
+  call to 'q'" at the pin, while Mojito selects the `var` overload.
+  - The pin accepts the literal `q(7)`, the place `q(x)` and the transfer
+    `q(x^)` in the same program, so only the non-literal trivial rvalue is
+    ambiguous. No rule was recovered.
+  - This is the non-variadic sibling of the type-pack entry below, and the two
+    disagree: beside a pack the pin calls a bare literal ambiguous, here it
+    accepts one.
+  - `ArgumentBinding`'s `undecided` bit models the pack rule and is deliberately
+    kept off non-variadic candidates, since applying it would reject `q(7)`.
+  - Pinned by `conformance/probes/overload_var_trivial_rvalue.mojo`.
+  - Model: Opus, plan first. The plan must find the rule with more probes, or
+    move the entry to `docs/non-goals.md` as a kept divergence.
+
+- [ ] **A place passed to a `ref` parameter may alias a pack element**
+
+  Problem: `r(x, x)` against `r[*Ts](ref b: Int, *rest: *Ts)` prints `1` in
+  Mojito, while the pinned Mojo reports "aliasing values passed mutably to 'b'
+  argument and passed immutably to 'rest' argument".
+  - The pin infers the `ref` parameter mutable from the mutable place, and a
+    pack element is held by reference.
+  - With a regular `c: Int` in place of the pack both compilers accept the
+    call, because a trivial read parameter takes a copy.
+  - Mojito accepts a program the pin rejects, so this is a divergence.
+  - Pinned by `conformance/probes/ref_argument_aliases_pack_element.mojo`.
+  - Model: Opus, plan first. The plan must say whether the within-call
+    exclusivity check or the `ref` mutability inference is what is missing.
+
+- [ ] **Two type-pack `__init__` overloads cannot be constructed**
+
+  Problem: `H(x, x, x)` for a struct with `__init__[*Ts](out self, a: Int,
+  *rest: *Ts)` beside `__init__[*Ts](out self, a: Int, b: Int, *rest: *Ts)`
+  prints `3` at the pin and fails in Mojito with "checked constructor
+  'H.__init__$ov$…' is missing from MIR".
+  - The checker selects the same constructor the pin does. The selected clone
+    never reaches MIR.
+  - The rejection is safe, but it is a VM-phase message for a program the pin
+    runs.
+  - Pinned by `conformance/probes/pack_overload_constructor_missing_mir.mojo`.
+  - Model: Opus, plan first. Free functions and methods are served from the
+    checker's recorded selection; the plan must find why constructors are not.
+
+- [ ] **A trivial value handed to a `var` parameter beside a pack is always
+  ambiguous**
+
+  Problem: `g(x, x + 1, x)` against `g[*Ts](a: Int, *rest: *Ts)` beside
+  `g[*Ts](a: Int, var b: Int, *rest: *Ts)` prints `3` at the pin, while Mojito
+  reports an ambiguous call.
+  - The pin selects the first overload for `Int(2)`, `v^`, and `True`, the
+    second for `x + 1`, and calls a bare `2` ambiguous. No rule was recovered.
+  - `VariadicBinding::bind` marks the case undecided, and an undecided tie is
+    reported ambiguous, so Mojito never selects a different overload than the
+    pin.
+  - A place argument is settled: the implicit copy costs and both print `2`.
+  - Pinned by `conformance/probes/pack_overload_var_trivial_undecided.mojo`.
+  - Model: Opus, plan first. The plan must find the rule with more probes, or
+    move the entry to `docs/non-goals.md` as a kept over-rejection.
+
+- [ ] **A `def`'s own type pack cannot be queried in a runtime position**
+
+  Problem: `return 1 + Us.length` fails with "Undefined variable 'Us'", while
+  the pinned Mojo runs it.
+  - A free `def count[*Us](var *extra: *Us)` and a method-own pack on any
+    struct fail the same way.
+  - A compile-time position (`comptime for i in range(Us.length)`) works, and
+    so does a variadic struct's own pack (`Self.Ts.length`) in a runtime
+    position.
+  - Only `generate_struct_spec` binds a pack into the substitutions that
+    `fold_pack_typelist_use` (`comptime/rewrite.rs`) reads during
+    materialization. `def` specialization never does.
+  - Pinned by `conformance/fixtures/pack_length_runtime_position.mojo`
+    (`pack-length-runtime-position`, `mojo-only`).
+  - It stays in the elaborator, so it does not wait for section 1's symbolic
+    pack work.
+  - Model: Opus, plan first. The binding site is known, but the plan must
+    enumerate the clone paths that share it (free `def`, method-own pack,
+    nested forwarding) and the materialization rewrite each one runs.
+
+- [ ] **A compile-time-keyed `def` cannot be passed as a function value**
+
+  Problem: `apply(as_int, 3)`, where `as_int[T]` holds a `comptime if` or a
+  `rebind` and `apply` declares a callable bound, runs at the pin and reports
+  "Undefined variable 'as_int'" in Mojito.
+  - The template is dropped or stubbed, and only its `$`-mangled clones carry
+    a name; a bare reference resolves to neither.
+  - The rejection is safe (no wrong answer), but the message names nothing
+    the source wrote.
+  - Model: Fable, plan first. The plan must say which clone a bare reference
+    names, and what the rejection says when none can be chosen.
+
+- [ ] **A clone that is still checked re-ranks an overloaded call**
+
+  Problem: the pinned Mojo binds a call inside a generic body once, while it
+  checks the body, and Mojito ranks the overload set again for every
+  instantiation that takes the clone check.
+  - `def outer[T: Copyable](x: T) -> Int` holding `var selected = pick(x)`
+    prints 1 for `outer(3)` where the pin prints 2:
+    `conformance/probes/template_overload_rebound_in_clone.mojo`.
+  - An instance derived from its checked template already inherits the
+    template's choice (`assets/ok/template_overload_binding.mojo`,
+    `overload-bound-in-generic-body`).
+  - The remaining shapes are the ones outside the derivation classes: a body
+    with a local or a branch, and every struct method. Section 1 carries those
+    entries, and each one that lands narrows this.
+  - **Model:** Fable. It closes only as section 1's coverage entries land.
 
 - [ ] **Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
   any order)*
@@ -1309,8 +1488,10 @@ Every entry is written for a human reader who has not seen the code.
   first, then Fable — at both the checkbox and the bullet level. A strict dependency that forces another
   order is stated in the entry that carries it.
 - Section 1 carries the same **Model:** bullet but is sorted in dependency
-  order, each entry naming what it depends on; Astra is named where the plan
+  order, each entry naming what it depends on. Astra is named where the plan
   itself is the broad-scope problem.
+- Section 1 holds only check-order work. A residue found during that work is
+  filed by its kind: a divergence from the pin goes to section 3.
 
 ## Working Rule
 

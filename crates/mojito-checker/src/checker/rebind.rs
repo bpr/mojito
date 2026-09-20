@@ -138,7 +138,7 @@ impl Checker {
     /// type when the span carries no retyping.
     pub(super) fn apply_rebind_target(&self, expr: &Expr, ty: Ty) -> Result<Ty, TypeError> {
         match self.rebind_targets.operands.get(&expr.source_span()) {
-            Some(target) => self.rebound_ty(target, &ty),
+            Some(target) => self.rebound_ty(target, &ty, &expr.source_span()),
             None => Ok(ty),
         }
     }
@@ -183,7 +183,7 @@ impl Checker {
             if self.rebinds_by_value(operand) {
                 return Err(TypeError::ImmutableBinding(name.to_string()));
             }
-            self.rebound_ty(rebind, operand)
+            self.rebound_ty(rebind, operand, &statement.source_span())
         };
         Ok(Some(match target {
             Ty::Ref(mut reference) => {
@@ -237,8 +237,16 @@ impl Checker {
     /// `Dest` for an operand of type `ty`. Under source validation the target
     /// stands in for the still-symbolic operand type; the executable check
     /// requires the two to be the same type.
-    fn rebound_ty(&self, target: &ParamArg, ty: &Ty) -> Result<Ty, TypeError> {
+    fn rebound_ty(&self, target: &ParamArg, ty: &Ty, site: &SourceSpan) -> Result<Ty, TypeError> {
         let dest = self.rebind_target_ty(target)?;
+        self.rebind_assertions.borrow_mut().insert(
+            site.clone(),
+            mojito_checked::templates::RebindAssertion {
+                operand: ty.clone(),
+                dest: dest.clone(),
+                by_value: self.rebinds_by_value(ty),
+            },
+        );
         if !self.source_validation && *ty != dest {
             return Err(TypeError::TypeMismatch {
                 expected: dest.to_string(),

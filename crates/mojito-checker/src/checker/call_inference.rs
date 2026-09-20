@@ -872,7 +872,7 @@ impl Checker {
 
     /// Record a direct callable's runtime parameters for the call at `span`;
     /// a callable struct value records none.
-    fn record_call_parameter_names(&self, span: &SourceSpan, callee: &Ty) {
+    pub(super) fn record_call_parameter_names(&self, span: &SourceSpan, callee: &Ty) {
         if let Ty::Func {
             names,
             params,
@@ -1397,17 +1397,16 @@ impl Checker {
         Ok((
             result,
             overload_rank(score, variadic.is_some() || has_kw_collector, 0, false)
-                + variadic.as_ref().map_or(0, |_| {
-                    self.variadic_binding(
-                        overflow.len(),
+                + self
+                    .argument_binding(
+                        variadic.as_ref().map(|_| overflow.len()),
                         &slots,
                         &conventions,
                         &params,
                         args,
                         kwargs,
                     )
-                    .rank()
-                }),
+                    .rank(),
             error.map(|error| *error),
             bool_bindings,
         ))
@@ -1688,10 +1687,16 @@ impl Checker {
                 variadic.is_some() || kw_variadic.is_some(),
                 decls.len(),
                 true,
-            ) + variadic.as_ref().map_or(0, |_| {
-                self.variadic_binding(overflow.len(), &slots, conventions, params, args, kwargs)
-                    .rank()
-            }),
+            ) + self
+                .argument_binding(
+                    variadic.as_ref().map(|_| overflow.len()),
+                    &slots,
+                    conventions,
+                    params,
+                    args,
+                    kwargs,
+                )
+                .rank(),
             error,
             bool_bindings,
         ))
@@ -1703,7 +1708,7 @@ impl Checker {
     /// arguments (`def_request_values`), so an occurrence whose clone exists
     /// needs no discovery round. Anything that does not resolve to a declared
     /// concrete function keeps the request path.
-    fn existing_def_clone(
+    pub(super) fn existing_def_clone(
         &self,
         name: &str,
         decls: &[ParamDecl],
@@ -1768,18 +1773,22 @@ impl Checker {
         }
     }
 
-    /// How a variadic candidate binds the call's arguments to its regular
-    /// parameters, for the tie-break `VariadicBinding` owns.
-    pub(in crate::checker) fn variadic_binding(
+    /// How a candidate binds the call's arguments to its regular parameters,
+    /// for the terms `ArgumentBinding` owns. `collector` is how many
+    /// arguments the candidate's `*args` collector takes, or `None` when it
+    /// has none: a candidate without a collector pays only the copies, so its
+    /// parameter types are never asked whether they are trivially
+    /// register-passable.
+    pub(in crate::checker) fn argument_binding(
         &self,
-        collector_len: usize,
+        collector: Option<usize>,
         slots: &[ArgSlot],
         conventions: &[Option<ArgConvention>],
         params: &[Ty],
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
-    ) -> VariadicBinding {
-        let mut binding = VariadicBinding::new(collector_len);
+    ) -> ArgumentBinding {
+        let mut binding = ArgumentBinding::new(collector);
         for (index, slot) in slots.iter().enumerate() {
             let argument = match slot {
                 ArgSlot::Positional(position) => &args[*position],
@@ -1788,9 +1797,10 @@ impl Checker {
             };
             binding.bind(
                 conventions.get(index).copied().flatten(),
-                params
-                    .get(index)
-                    .is_some_and(|param| self.is_trivial_register_passable(param)),
+                collector.is_some()
+                    && params
+                        .get(index)
+                        .is_some_and(|param| self.is_trivial_register_passable(param)),
                 argument,
             );
         }

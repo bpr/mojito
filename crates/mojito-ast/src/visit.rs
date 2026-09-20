@@ -1,7 +1,7 @@
 //! Read-only traversal of the source AST.
 //!
 //! The `walk_*` functions visit every child of a node in source order and
-//! report each expression and type to a [`Visitor`] before descending into
+//! report each statement, expression, and type to a [`Visitor`] before descending into
 //! it. A construct that binds names — a `def`, method, lambda, or callable
 //! type with its own parameters, a struct or generic alias with parameters, a
 //! loop, comprehension, `except`, or `with` binder — asks
@@ -16,6 +16,9 @@ use crate::ast::{
 
 /// Callbacks for a read-only walk. Every method has a no-op default.
 pub trait Visitor {
+    /// A statement, reported before its children.
+    fn visit_stmt(&mut self, _statement: &Stmt) {}
+
     /// An expression, reported before its children.
     fn visit_expr(&mut self, _expr: &Expr) {}
 
@@ -37,6 +40,7 @@ pub fn walk_block<V: Visitor>(visitor: &mut V, statements: &[Stmt]) {
 }
 
 pub fn walk_stmt<V: Visitor>(visitor: &mut V, statement: &Stmt) {
+    visitor.visit_stmt(statement);
     match &statement.kind {
         StmtKind::VarDecl { ty, value, .. } => {
             if let Some(ty) = ty {

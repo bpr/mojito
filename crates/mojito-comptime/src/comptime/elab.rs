@@ -129,7 +129,8 @@ impl Elab<'_> {
                 if !env[name].is_runtime_collection()
                     && let Some(value) = env[name].materialize(span)
                 {
-                    out.push(mk(
+                    out.push(rebuilt(
+                        stmt,
                         StmtKind::Comptime {
                             name: name.clone(),
                             type_params: type_params.clone(),
@@ -137,7 +138,6 @@ impl Elab<'_> {
                             where_clauses: where_clauses.clone(),
                             value,
                         },
-                        span,
                     ));
                 }
             }
@@ -176,13 +176,13 @@ impl Elab<'_> {
                     .as_ref()
                     .map(|ty| self.resolve_reflected_type(ty, env))
                     .transpose()?;
-                out.push(mk(
+                out.push(rebuilt(
+                    stmt,
                     StmtKind::VarDecl {
                         name: name.clone(),
                         ty,
                         value: value.clone(),
                     },
-                    span,
                 ));
             }
             StmtKind::If { branches, orelse } => {
@@ -191,18 +191,18 @@ impl Elab<'_> {
                     .map(|(c, b)| Ok((c.clone(), self.block(b, env, in_fn)?)))
                     .collect::<Result<Vec<_>, ComptimeError>>()?;
                 let orelse = self.opt_block(orelse, env, in_fn)?;
-                out.push(mk(StmtKind::If { branches, orelse }, span));
+                out.push(rebuilt(stmt, StmtKind::If { branches, orelse }));
             }
             StmtKind::While { cond, body, orelse } => {
                 let body = self.block(body, env, in_fn)?;
                 let orelse = self.opt_block(orelse, env, in_fn)?;
-                out.push(mk(
+                out.push(rebuilt(
+                    stmt,
                     StmtKind::While {
                         cond: cond.clone(),
                         body,
                         orelse,
                     },
-                    span,
                 ));
             }
             StmtKind::For {
@@ -214,7 +214,8 @@ impl Elab<'_> {
             } => {
                 let body = self.block(body, env, in_fn)?;
                 let orelse = self.opt_block(orelse, env, in_fn)?;
-                out.push(mk(
+                out.push(rebuilt(
+                    stmt,
                     StmtKind::For {
                         var: var.clone(),
                         binding: *binding,
@@ -222,7 +223,6 @@ impl Elab<'_> {
                         body,
                         orelse,
                     },
-                    span,
                 ));
             }
             StmtKind::Try {
@@ -238,14 +238,14 @@ impl Elab<'_> {
                 };
                 let orelse = self.opt_block(orelse, env, in_fn)?;
                 let finalbody = self.opt_block(finalbody, env, in_fn)?;
-                out.push(mk(
+                out.push(rebuilt(
+                    stmt,
                     StmtKind::Try {
                         body,
                         except,
                         orelse,
                         finalbody,
                     },
-                    span,
                 ));
             }
             // The context-manager protocol is a checker desugar (the manager
@@ -253,12 +253,12 @@ impl Elab<'_> {
             // body and keep the statement, like `While`.
             StmtKind::With { items, body } => {
                 let body = self.block(body, env, in_fn)?;
-                out.push(mk(
+                out.push(rebuilt(
+                    stmt,
                     StmtKind::With {
                         items: items.clone(),
                         body,
                     },
-                    span,
                 ));
             }
             StmtKind::Def {
@@ -282,7 +282,8 @@ impl Elab<'_> {
                     return Ok(());
                 }
                 let body = self.block(body, env, true)?;
-                out.push(mk(
+                out.push(rebuilt(
+                    stmt,
                     StmtKind::Def {
                         name: name.clone(),
                         decorators: decorators.clone(),
@@ -297,7 +298,6 @@ impl Elab<'_> {
                         where_clauses: where_clauses.clone(),
                         body,
                     },
-                    span,
                 ));
             }
             StmtKind::Struct {
@@ -389,7 +389,8 @@ impl Elab<'_> {
                         methods.extend(clones);
                     }
                 }
-                out.push(mk(
+                out.push(rebuilt(
+                    stmt,
                     StmtKind::Struct {
                         name: name.clone(),
                         decorators: decorators.clone(),
@@ -404,7 +405,6 @@ impl Elab<'_> {
                         fieldwise_init: *fieldwise_init,
                         template_shell: *template_shell,
                     },
-                    span,
                 ));
             }
             _ => out.push(stmt.clone()),

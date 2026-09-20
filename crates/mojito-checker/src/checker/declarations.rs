@@ -7,19 +7,29 @@ pub(super) fn definitely_returns(body: &[Stmt]) -> bool {
     body.iter().any(stmt_returns)
 }
 
-/// Whether a constructor declares no compile-time parameter that a per-call
-/// clone would bake: only callable-bounded parameters (`F: def() -> Int`)
+/// How many compile-time parameters a per-call clone of a declaration bakes,
+/// which is what the overload rank charges a candidate for its signature
+/// length. A callable-bounded parameter (`F: def() -> Int`) is not one: it
 /// may remain on a concrete clone.
-pub(super) fn constructor_is_concrete(decls: &[ParamDecl]) -> bool {
-    decls.iter().all(|decl| {
-        matches!(
-            decl,
-            ParamDecl::Type {
-                callable_bound: Some(_),
-                ..
-            }
-        )
-    })
+pub(super) fn baked_decl_count(decls: &[ParamDecl]) -> usize {
+    decls
+        .iter()
+        .filter(|decl| {
+            !matches!(
+                decl,
+                ParamDecl::Type {
+                    callable_bound: Some(_),
+                    ..
+                }
+            )
+        })
+        .count()
+}
+
+/// Whether a declaration bakes no compile-time parameter, so a per-call clone
+/// of it is a concrete same-name overload.
+pub(super) fn decls_are_concrete(decls: &[ParamDecl]) -> bool {
+    baked_decl_count(decls) == 0
 }
 
 /// Solve the type parameters a callable-bounded parameter's contract names
@@ -1404,6 +1414,19 @@ impl Checker {
         // top-level `def` body is. In particular, an explicit capture list on a
         // method-local function may name `self`, parameters, and method locals.
         self.function_bases.push(self.scopes.len() - 1);
+        let callable = self
+            .transfer_frames
+            .borrow()
+            .last()
+            .map(|frame| frame.callable.clone())
+            .unwrap_or_default();
+        Self::count_body_inference(
+            template_facts::BodyClass::of(
+                callable.contains('$'),
+                !self.enclosing_type_params.is_empty(),
+            ),
+            || callable,
+        );
         let result = self.check_block(&m.body, Some(ret_ty), false);
         self.function_bases.pop();
         self.return_annotations.pop();
@@ -1786,14 +1809,10 @@ impl Checker {
                 // A per-call clone of a generic constructor is a concrete
                 // same-name overload; it wins over the generic template it
                 // was minted from whenever it matches at all.
-                if matches
-                    .iter()
-                    .any(|m| constructor_is_concrete(&m.param_decls))
-                    && matches
-                        .iter()
-                        .any(|m| !constructor_is_concrete(&m.param_decls))
+                if matches.iter().any(|m| decls_are_concrete(&m.param_decls))
+                    && matches.iter().any(|m| !decls_are_concrete(&m.param_decls))
                 {
-                    matches.retain(|m| constructor_is_concrete(&m.param_decls));
+                    matches.retain(|m| decls_are_concrete(&m.param_decls));
                 }
                 let selected = select_method_overload("__init__", matches, None).map_err(
                     |kind| TypeError::BadCall {
@@ -2092,7 +2111,16 @@ impl Checker {
                         // Rank matches the non-generic path: a variadic candidate
                         // loses to a fixed-arity one at equal conversion cost, so a
                         // zero-argument call prefers the empty ctor over `*values`.
-                        let rank = overload_rank(score, sig.variadic.is_some(), 0, false);
+                        // The implicit copies a place costs a `var` parameter count
+                        // here too, so `C[Int](s)` ranks as `C(s)` does; this path
+                        // has no trivially-register-passable classification, so the
+                        // binding's variadic tie-breaks stay out of it.
+                        let mut binding = ArgumentBinding::new(None);
+                        for (expression, _, convention) in &bound {
+                            binding.bind(*convention, false, expression);
+                        }
+                        let rank =
+                            overload_rank(score, sig.variadic.is_some(), 0, false) + binding.rank();
                         matches.push((
                             rank,
                             sig.clone(),
@@ -2115,12 +2143,12 @@ impl Checker {
                 let mut matches = matches;
                 if matches
                     .iter()
-                    .any(|(_, sig, ..)| constructor_is_concrete(&sig.decls))
+                    .any(|(_, sig, ..)| decls_are_concrete(&sig.decls))
                     && matches
                         .iter()
-                        .any(|(_, sig, ..)| !constructor_is_concrete(&sig.decls))
+                        .any(|(_, sig, ..)| !decls_are_concrete(&sig.decls))
                 {
-                    matches.retain(|(_, sig, ..)| constructor_is_concrete(&sig.decls));
+                    matches.retain(|(_, sig, ..)| decls_are_concrete(&sig.decls));
                 }
                 let best = matches.iter().map(|(rank, ..)| *rank).min().unwrap_or(best);
                 let mut best_matches = matches

@@ -75,6 +75,18 @@ fn vm(source: &str) -> String {
     backend.output()
 }
 
+/// Run `source` through the production pipeline and return its captured
+/// output. The stage-composed `vm` helper above does not own the
+/// discovery/specialization handoff, so a program reaching a generic method's
+/// clone needs the whole-program driver.
+fn compiled(source: &str) -> String {
+    let dir = TempDir::new();
+    let entry = dir.write("main.mojo", source);
+    let compiler = Compiler::default();
+    let program = compiler.compile_path(&entry).expect("compile error");
+    compiler.execute(&program).expect("runtime error").output
+}
+
 /// The lowered MIR function names for `source`, in emission order (duplicates
 /// preserved — a repeated name is a symbol collision).
 fn lowered_names(source: &str) -> Vec<String> {
@@ -525,6 +537,29 @@ fn concrete_overload_beats_generic_on_an_exact_argument() {
         "def f[T: AnyType](x: T) -> Int:\n    return 0\n\ndef f(x: Int) -> Int:\n    return 1\n\ndef main():\n    var i: Int = 7\n    print(f(i))\n",
     );
     assert_eq!(out, "1\n");
+}
+
+#[test]
+fn a_copy_into_a_var_parameter_outranks_the_generic_preference() {
+    // A place must be copied into `var a`, which costs more than preferring
+    // the concrete candidate, so the generic overload runs; an rvalue needs no
+    // copy and the `var` overload runs (assets/ok/overload_var_copy_beside_generic.mojo
+    // pins the same pair against the pinned Mojo, with `String` and `Writable`).
+    let out = vm(
+        "@fieldwise_init\nstruct Thing(Copyable, Movable):\n    var n: Int\n\ndef h(var a: Thing) -> Int:\n    return 1\n\ndef h[T: AnyType](a: T) -> Int:\n    return 2\n\ndef main():\n    var t = Thing(1)\n    print(h(t))\n    print(h(Thing(2)))\n",
+    );
+    assert_eq!(out, "2\n1\n");
+}
+
+#[test]
+fn a_method_ranks_the_copy_and_the_generic_preference_as_a_function_does() {
+    // The same pair declared as methods: the copy decides the place call and
+    // the method's own compile-time parameters decide the rvalue one
+    // (assets/ok/overload_var_copy_method.mojo).
+    let out = compiled(
+        "@fieldwise_init\nstruct Thing(Copyable, Movable):\n    var n: Int\n\nstruct S:\n    var v: Int\n    def __init__(out self):\n        self.v = 0\n    def m(self, var a: Thing) -> Int:\n        return 1\n    def m[T: AnyType](self, a: T) -> Int:\n        return 2\n\ndef main():\n    var t = Thing(1)\n    var x = S()\n    print(x.m(t))\n    print(x.m(Thing(2)))\n",
+    );
+    assert_eq!(out, "2\n1\n");
 }
 
 #[test]
