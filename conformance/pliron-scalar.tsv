@@ -496,6 +496,8 @@ assets/ok/struct_value_param_frozen.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/telemetry.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tempfile_mkdtemp.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_inner_request.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_calls.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_getter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_overload_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_scalar_loop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_two_arms.mojo	-	ineligible	no-scalar-entry-shape

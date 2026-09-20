@@ -212,6 +212,17 @@ to evolve under the `0.x` compatibility rules.
   `MOJITO_VERIFY_TEMPLATE_FACTS=1` infers every derivable body as well and
   requires the facts to agree. The design record is
   `docs/notes/instantiation-from-template.md`.
+- A generic struct's per-instantiation method clones now derive from their
+  checked template too, for scalar getters: reads of `self`'s scalar fields,
+  the built-in `len` over a field, and argument-free method calls on `self` or
+  a field, whose target an instance realizes through its own clone. A derived
+  clone records the generic-struct applications its body reaches, so discovery
+  requests the same instances as before. `stdlib_heavy` derives about one
+  instance-clone check in ten; wall time is unchanged so far.
+- `--timings` no longer counts a module-qualified bundled struct's methods as
+  clones: "generated" is what the elaborator lists (`GeneratedDeclarations`),
+  not a `$` in a name. `template_census.*` reports what keeps each generic
+  body from being captured.
 - The discovery loop builds the checked expression arena once per compilation
   instead of once per round: a round's check returns a
   `DiscoveryResult` that the request collectors read directly. Hello World

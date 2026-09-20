@@ -614,6 +614,50 @@ pub struct Elaborated {
     pub unserved_template_uses: Vec<UnservedTemplateUse>,
     /// How each generated `def` clone came from its template.
     pub def_traces: Vec<DefInstanceTrace>,
+    /// How each per-instantiation method clone came from its template.
+    pub method_traces: Vec<MethodInstanceTrace>,
+    /// Every declaration this elaboration generated rather than kept: a
+    /// consumer asks this list, never a `$` in a name, since a
+    /// module-qualified source name carries one too.
+    pub generated: GeneratedDeclarations,
+}
+
+/// The declarations an elaboration generated.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GeneratedDeclarations {
+    /// `def` clones, by output name.
+    pub defs: Vec<String>,
+    /// Structs specialized whole (`Tuple$…`), by output name. Every member of
+    /// one is generated.
+    pub structs: Vec<String>,
+    /// Per-call method clones, as (owner, clone name). A per-instantiation
+    /// clone is recognized by its explicit receiver type instead.
+    pub methods: Vec<(String, String)>,
+}
+
+/// The declaration-level expansion trace of one per-instantiation method
+/// clone.
+///
+/// The clone is appended to its template struct's own method list
+/// (`get$y3:Int` on `Box`), so it is identified by that struct, its name, the
+/// source tag stamped on its body, and the byte range of its body's first
+/// statement — same-name overloads clone under one name and one tag, and a
+/// `Method` has no range of its own. Only whole-instance clones are traced: a
+/// per-call clone also bakes the method's own parameters and leaves no trace
+/// yet.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MethodInstanceTrace {
+    pub owner: String,
+    pub owner_module: Option<String>,
+    pub clone_name: String,
+    /// The source tag stamped on every node of the clone's body.
+    pub clone_module: String,
+    pub template_name: String,
+    /// The first statement of the template method's body, which the clone's
+    /// first statement shares.
+    pub body: mojito_common::token::Span,
+    /// The struct's type parameters, with the source type written for each.
+    pub type_bindings: Vec<(String, Type)>,
 }
 
 /// The declaration-level expansion trace of one generated `def` clone.
@@ -916,6 +960,8 @@ pub fn elaborate_prepared(
         materialized_callables,
         fuel: Cell::new(FUEL),
         def_traces: RefCell::new(Vec::new()),
+        method_traces: RefCell::new(Vec::new()),
+        generated: RefCell::new(GeneratedDeclarations::default()),
         top_consts: RefCell::new(HashMap::new()),
         generic_aliases: RefCell::new(HashMap::new()),
     };
@@ -934,6 +980,8 @@ pub fn elaborate_prepared(
         stub_reaching_structs,
         unserved_template_uses,
         def_traces: _,
+        method_traces: _,
+        generated: _,
     } = elab.monomorphize(materialized, tuple_requests, tstring_requests, def_requests)?;
     for statement in &mut result {
         if let Some(source) = statement.module.clone() {
@@ -964,12 +1012,16 @@ pub fn elaborate_prepared(
     // overwritten by the uniform module stamp above.
     let mut unserved_template_uses = unserved_template_uses;
     unserved_template_uses.extend(elab.monomorphize_nested_program(&mut result)?);
+    let mut generated = elab.generated.take();
+    generated.methods.extend(per_call_clones);
     Ok(Elaborated {
         program: result,
         instances,
         stub_reaching_structs,
         unserved_template_uses,
         def_traces: elab.def_traces.take(),
+        method_traces: elab.method_traces.take(),
+        generated,
     })
 }
 
@@ -1709,6 +1761,10 @@ struct Elab<'a> {
     fuel: Cell<usize>,
     /// The declaration-level trace of every `def` clone generated so far.
     def_traces: RefCell<Vec<DefInstanceTrace>>,
+    /// The same for every whole-instance method clone.
+    method_traces: RefCell<Vec<MethodInstanceTrace>>,
+    /// The `def` clones and whole-struct specializations generated so far.
+    generated: RefCell<GeneratedDeclarations>,
     top_consts: RefCell<HashMap<String, CtValue>>,
     /// Module-scope generic `comptime` aliases in declaration order, name →
     /// (parameters, body). The declarations pass through elaboration for the

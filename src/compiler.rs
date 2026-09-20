@@ -132,6 +132,10 @@ pub struct Compiler {
     link_options: LinkOptions,
     backend: BackendKind,
     allow_executable_module_scope: bool,
+    /// Infer every body a checked template would serve as well, and require
+    /// the derived and inferred facts to agree. `None` defers to the
+    /// `MOJITO_VERIFY_TEMPLATE_FACTS` environment variable.
+    verify_template_facts: Option<bool>,
 }
 /// Reject runtime statements at module scope, matching Mojo's source rules.
 /// Declarations, imports, compile-time constants, and `pass` are permitted.
@@ -176,7 +180,16 @@ impl Compiler {
             link_options,
             backend,
             allow_executable_module_scope: false,
+            verify_template_facts: None,
         }
+    }
+    /// Turn template-fact verification on or off, whatever the environment
+    /// says: every derivable body is then also inferred, and the two fact
+    /// bundles must agree.
+    #[must_use]
+    pub const fn with_template_verification(mut self, verify: bool) -> Self {
+        self.verify_template_facts = Some(verify);
+        self
     }
     /// Permit executable module-scope statements for isolated compiler tests.
     /// This accepts a non-Mojo snippet dialect and must not be used by the CLI or
@@ -263,7 +276,10 @@ impl Compiler {
         // elaboration about to be checked. `MOJITO_VERIFY_TEMPLATE_FACTS`
         // keeps every clone check and compares it with the derived facts.
         let mut templates_catalog = crate::templates::TemplateCatalog::new(
-            std::env::var_os("MOJITO_VERIFY_TEMPLATE_FACTS").is_some_and(|value| !value.is_empty()),
+            self.verify_template_facts.unwrap_or_else(|| {
+                std::env::var_os("MOJITO_VERIFY_TEMPLATE_FACTS")
+                    .is_some_and(|value| !value.is_empty())
+            }),
         );
         crate::checker::validate_comptime_templates_into(&prepared, &mut templates_catalog)
             .map_err(CompilerError::Type)?;
@@ -279,6 +295,8 @@ impl Compiler {
                 stub_reaching_structs: stub_reaching,
                 unserved_template_uses: unserved,
                 def_traces,
+                method_traces,
+                generated,
             } = {
                 let _elaborate = timing::span("discovery.initial.elaborate");
                 elaborate_prepared(&prepared, &[], &[], &[], &[], &[], &[])
@@ -290,7 +308,8 @@ impl Compiler {
             if !self.allow_executable_module_scope {
                 validate_module_scope(&discovery).map_err(CompilerError::Type)?;
             }
-            templates_catalog.set_traces(instance_traces(def_traces));
+            templates_catalog.set_traces(instance_traces(def_traces, method_traces));
+            templates_catalog.set_generated(generated_names(generated));
             let _check = timing::span("discovery.initial.check");
             crate::checker::check_program_for_discovery(
                 &discovery,
@@ -412,6 +431,8 @@ impl Compiler {
                 stub_reaching_structs: stub_reaching,
                 unserved_template_uses: unserved,
                 def_traces,
+                method_traces,
+                generated,
             } = {
                 let _elaborate = timing::span("elaborate");
                 elaborate_prepared(
@@ -438,7 +459,8 @@ impl Compiler {
             if !self.allow_executable_module_scope {
                 validate_module_scope(&elaborated).map_err(CompilerError::Type)?;
             }
-            templates_catalog.set_traces(instance_traces(def_traces));
+            templates_catalog.set_traces(instance_traces(def_traces, method_traces));
+            templates_catalog.set_generated(generated_names(generated));
             let _check = timing::span("check");
             checked = crate::checker::check_program_for_discovery(
                 &elaborated,
@@ -590,22 +612,26 @@ fn tuple_specialization_requests(checked: &DiscoveryResult) -> Vec<TupleSpeciali
 /// vocabulary here: the elaborator records what it generated, and the checker
 /// decides what that lets it derive.
 fn instance_traces(
-    traces: Vec<crate::comptime::DefInstanceTrace>,
+    defs: Vec<crate::comptime::DefInstanceTrace>,
+    methods: Vec<crate::comptime::MethodInstanceTrace>,
 ) -> Vec<(
     crate::templates::InstanceName,
     crate::templates::InstanceTrace,
 )> {
-    traces
+    use crate::templates::{InstanceName, InstanceTrace, TemplateId};
+    let defs = defs
         .into_iter()
         .filter(|trace| trace.pack_bindings.is_empty())
         .map(|trace| {
             (
-                crate::templates::InstanceName {
+                InstanceName {
                     module: Some(trace.clone_module),
+                    owner: None,
                     name: trace.clone_name,
+                    body: None,
                 },
-                crate::templates::InstanceTrace {
-                    template: crate::templates::TemplateId {
+                InstanceTrace {
+                    template: TemplateId {
                         module: trace.template_module,
                         owner: None,
                         name: trace.template_name,
@@ -616,8 +642,39 @@ fn instance_traces(
                     residual: trace.residual,
                 },
             )
-        })
-        .collect()
+        });
+    let methods = methods.into_iter().map(|trace| {
+        (
+            InstanceName {
+                module: Some(trace.clone_module),
+                owner: Some(trace.owner.clone()),
+                name: trace.clone_name,
+                body: Some(trace.body),
+            },
+            InstanceTrace {
+                template: TemplateId {
+                    module: trace.owner_module,
+                    owner: Some(trace.owner),
+                    name: trace.template_name,
+                    declaration: trace.body,
+                },
+                type_bindings: trace.type_bindings,
+                value_bindings: Vec::new(),
+                residual: Vec::new(),
+            },
+        )
+    });
+    defs.chain(methods).collect()
+}
+
+fn generated_names(
+    generated: crate::comptime::GeneratedDeclarations,
+) -> crate::templates::GeneratedNames {
+    crate::templates::GeneratedNames {
+        defs: generated.defs.into_iter().collect(),
+        structs: generated.structs.into_iter().collect(),
+        methods: generated.methods.into_iter().collect(),
+    }
 }
 
 /// Reject a reference the discovery fixpoint left on an abstract path that

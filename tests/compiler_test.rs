@@ -1048,6 +1048,16 @@ fn clone_return_values<'a>(
         .collect()
 }
 
+/// How many times `name` was inferred and retained as a checked template.
+/// Bundled method templates are certified too, so a test counts its own.
+fn certified_count(stats: &mojito::templates::TemplateStats, name: &str) -> usize {
+    stats
+        .certified
+        .iter()
+        .filter(|certified| *certified == name)
+        .count()
+}
+
 #[test]
 fn template_two_types_infers_the_template_once() {
     let compiler = Compiler::default();
@@ -1055,13 +1065,17 @@ fn template_two_types_infers_the_template_once() {
         .compile_unlinked(TEMPLATE_TWO_TYPES)
         .expect("compile");
     let stats = program.template_stats();
-    assert_eq!(stats.certified, ["tag"], "one template inference");
+    assert_eq!(certified_count(stats, "tag"), 1, "one template inference");
     assert!(
-        stats.reused.iter().all(|name| name == "tag") && !stats.reused.is_empty(),
+        stats.reused.iter().any(|name| name == "tag"),
         "later passes reuse the template's own facts: {stats:?}"
     );
-    let derived: std::collections::HashSet<&str> =
-        stats.derived.iter().map(String::as_str).collect();
+    let derived: std::collections::HashSet<&str> = stats
+        .derived
+        .iter()
+        .map(String::as_str)
+        .filter(|name| name.starts_with("tag$"))
+        .collect();
     assert_eq!(derived.len(), 2, "both instances derive: {stats:?}");
     assert!(
         stats
@@ -1166,7 +1180,7 @@ fn template_bounded_len_realizes_per_instance() {
     let source = "def is_empty[T: Sized](x: T) -> Bool:\n    return len(x) == 0\n\nstruct Bag(Sized):\n    var items: List[Int]\n\n    def __init__(out self):\n        self.items = List[Int]()\n\n    def __len__(self) -> Int:\n        return len(self.items)\n\ndef main():\n    var xs: List[Int] = [1, 2, 3]\n    print(is_empty(xs))\n    var b: Bag = Bag()\n    print(is_empty(b))\n";
     let (output, stats) = run_source(source);
     assert_eq!(output, "False\nTrue\n");
-    assert_eq!(stats.certified, ["is_empty"]);
+    assert_eq!(certified_count(&stats, "is_empty"), 1);
     assert!(
         stats
             .inferred_clones
@@ -1195,7 +1209,7 @@ fn template_two_arms_select_checked_facts() {
     let compiler = Compiler::default();
     let program = compiler.compile_unlinked(source).expect("compile");
     let stats = program.template_stats();
-    assert_eq!(stats.certified, ["choose"], "{stats:?}");
+    assert_eq!(certified_count(stats, "choose"), 1);
     assert!(
         stats
             .inferred_clones
@@ -1394,4 +1408,124 @@ fn discovery_scan_matches_the_checked_arena() {
         assert_eq!(structs, checked.struct_instantiations(), "{benchmark}");
         assert_eq!(leaves, checked.hash_leaf_types(), "{benchmark}");
     }
+}
+
+/// Compile `source` as a linked entry module. An unlinked source has no
+/// module path, and an instance seen only there mints no method clones.
+fn compile_entry(compiler: &Compiler, source: &str) -> mojito::compiler::CompiledProgram {
+    compiler
+        .compile_source(source, std::path::Path::new("template_methods.mojo"))
+        .expect("compile")
+}
+
+const METHOD_GETTERS: &str = "@fieldwise_init\nstruct Counter[T: Copyable & Movable & Deinitable](Copyable):\n    var item: Self.T\n    var count: Int\n    var active: Bool\n\n    def size(self) -> Int:\n        return self.count\n\n    def doubled(self, extra: Int) -> Int:\n        return self.count + self.count + extra\n\n    def is_active(self) -> Bool:\n        return self.active\n\ndef main():\n    var a = Counter(7, 3, True)\n    var b = Counter(String(\"x\"), 5, False)\n    print(a.size(), a.doubled(1), a.is_active())\n    print(b.size(), b.doubled(2), b.is_active())\n";
+
+#[test]
+fn template_method_instances_derive() {
+    // A generic struct's method is inferred once, with the struct's
+    // parameters symbolic. Each per-instantiation clone (`size$y3:Int`)
+    // inherits the checked template's facts instead of being inferred.
+    let compiler = Compiler::default();
+    let program = compile_entry(&compiler, METHOD_GETTERS);
+    let stats = program.template_stats();
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "3 7 True\n5 12 False\n"
+    );
+    for method in ["Counter.size", "Counter.doubled", "Counter.is_active"] {
+        assert!(
+            stats.certified.iter().any(|name| name == method),
+            "{method} is a checked template: {stats:?}"
+        );
+        let clone = format!("{method}$");
+        let derived: std::collections::HashSet<&String> = stats
+            .derived
+            .iter()
+            .filter(|name| name.starts_with(&clone))
+            .collect();
+        assert_eq!(
+            derived.len(),
+            2,
+            "{method} derives for both instances; refused: {:?}",
+            stats.refused
+        );
+        assert!(
+            stats
+                .inferred_clones
+                .iter()
+                .all(|name| !name.starts_with(&clone)),
+            "no clone of {method} is inferred: {stats:?}"
+        );
+    }
+}
+
+/// The per-instantiation method clones of a compiled program, as
+/// `Owner.clone` names, and the instances its checked facts request.
+fn clones_and_requests(program: &mojito::compiler::CompiledProgram) -> (Vec<String>, Vec<String>) {
+    let mut clones: Vec<String> = program
+        .checked()
+        .statements()
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            mojito::ast::StmtKind::Struct { name, methods, .. } => Some((name, methods)),
+            _ => None,
+        })
+        .flat_map(|(owner, methods)| {
+            methods
+                .iter()
+                .filter(|method| method.self_ty.is_some())
+                .map(move |method| format!("{owner}.{}", method.name))
+        })
+        .collect();
+    clones.sort();
+    let mut requests: Vec<String> = program
+        .checked()
+        .struct_instantiations()
+        .iter()
+        .map(|instantiation| format!("{instantiation:?}"))
+        .collect();
+    requests.sort();
+    (clones, requests)
+}
+
+#[test]
+fn template_method_requests_match_an_inferred_run() {
+    // A derived clone must request exactly what an inferred clone requests,
+    // or discovery converges on a different program. `Outer[Int].size`
+    // reaches `Inner[Int].size` through a field, and `twice` reaches
+    // `Outer[Int].size` through `self`: both calls are retargeted per
+    // instance, and both receivers are recorded as applications.
+    let source = "@fieldwise_init\nstruct Inner[T: Copyable & Movable & Deinitable](Copyable):\n    var item: Self.T\n    var count: Int\n\n    def size(self) -> Int:\n        return self.count\n\n@fieldwise_init\nstruct Outer[T: Copyable & Movable & Deinitable](Copyable):\n    var inner: Inner[Self.T]\n\n    def size(self) -> Int:\n        return self.inner.size()\n\n    def twice(self) -> Int:\n        return self.size() * 2\n\ndef main():\n    var a = Outer(Inner(7, 3))\n    var b = Outer(Inner(String(\"x\"), 5))\n    print(a.twice(), b.twice())\n";
+    let derived = compile_entry(
+        &Compiler::default().with_template_verification(false),
+        source,
+    );
+    // Verification infers every derivable body and keeps the inferred facts;
+    // it fails the compilation if they differ from the derived ones.
+    let inferred = compile_entry(
+        &Compiler::default().with_template_verification(true),
+        source,
+    );
+    assert!(
+        derived
+            .template_stats()
+            .derived
+            .iter()
+            .any(|name| name.starts_with("Outer.twice$")),
+        "the retargeted call derives: {:?}",
+        derived.template_stats()
+    );
+    assert_eq!(
+        clones_and_requests(&derived),
+        clones_and_requests(&inferred)
+    );
+    let compiler = Compiler::default();
+    assert_eq!(
+        compiler.execute(&derived).expect("execute").output,
+        "6 10\n"
+    );
+    assert_eq!(
+        compiler.execute(&inferred).expect("execute").output,
+        "6 10\n"
+    );
 }

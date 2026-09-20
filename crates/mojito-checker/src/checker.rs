@@ -840,10 +840,18 @@ pub struct Checker {
     /// target, and whether the rebind is by value. A checked template keeps
     /// these as the equalities its instances owe.
     rebind_assertions: RefCell<HashMap<SourceSpan, mojito_checked::templates::RebindAssertion>>,
+    /// The module and name of the struct whose method is being checked, for
+    /// the method's identity as a checked template or a clone of one.
+    method_site: Option<(Option<String>, String)>,
     /// Per body being inferred, innermost last: each callee whose transfer
     /// or call-through summary the body read, and whether it was empty. A
-    /// retained template depends on exactly these summaries.
-    effect_query_frames: RefCell<Vec<Vec<(String, bool)>>>,
+    /// retained template depends on exactly these summaries. `None` is a
+    /// body nothing will capture, which records no reads.
+    effect_query_frames: RefCell<Vec<Option<EffectQueries>>>,
+    /// Per body being inferred, innermost last: each generic-struct
+    /// application the body reached, before `record_struct_instantiation`
+    /// filters it. `None` is a body nothing will capture.
+    struct_application_frames: RefCell<Vec<Option<StructApplications>>>,
 }
 
 impl Checker {
@@ -986,7 +994,9 @@ impl Checker {
             template_catalog: RefCell::new(mojito_checked::templates::TemplateCatalog::default()),
             syntax_origins: mojito_ast::ast::SyntaxOrigins::default(),
             rebind_assertions: RefCell::new(HashMap::new()),
+            method_site: None,
             effect_query_frames: RefCell::new(Vec::new()),
+            struct_application_frames: RefCell::new(Vec::new()),
         }
     }
 
@@ -2470,6 +2480,12 @@ type CallResultOrigin = (
     mojito_types::origin::Origin,
     Option<mojito_types::origin::Mutability>,
 );
+
+/// Each callee whose effect summary one body read, and whether it was empty.
+type EffectQueries = Vec<(String, bool)>;
+
+/// Each generic-struct application one body reached, as written.
+type StructApplications = Vec<(String, Vec<TyArg>)>;
 
 /// One runtime parameter of a selected callee, recorded per call site.
 #[derive(Debug, Clone, PartialEq)]

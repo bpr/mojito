@@ -793,6 +793,11 @@ impl Checker {
         if source.is_none() || super::overload_support::is_bundled_module_source(source) {
             return;
         }
+        // A checked template keeps the application as written: its instances
+        // substitute into it and record their own.
+        if let Some(Some(frame)) = self.struct_application_frames.borrow_mut().last_mut() {
+            frame.push((template.to_string(), arguments.to_vec()));
+        }
         let Some(arguments) = self.instance_arguments(template, arguments) else {
             return;
         };

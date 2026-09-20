@@ -935,6 +935,9 @@ impl Checker {
     ) -> Result<(), TypeError> {
         self.parametric_write_frames.borrow_mut().push(Vec::new());
         let decls = self.classify_params(&m.type_params)?;
+        let saved_site = self
+            .method_site
+            .replace((module.cloned(), declaration.to_string()));
         self.tparams.push(type_scope(&decls));
         let saved = self.enclosing_type_params.clone();
         let saved_struct_count = self.enclosing_struct_type_params.replace(saved.len());
@@ -1019,6 +1022,7 @@ impl Checker {
         self.enclosing_type_params = saved;
         self.enclosing_struct_type_params.set(saved_struct_count);
         self.tparams.pop();
+        self.method_site = saved_site;
         let propagated = self
             .parametric_write_frames
             .borrow_mut()
@@ -1414,20 +1418,15 @@ impl Checker {
         // top-level `def` body is. In particular, an explicit capture list on a
         // method-local function may name `self`, parameters, and method locals.
         self.function_bases.push(self.scopes.len() - 1);
-        let callable = self
-            .transfer_frames
-            .borrow()
-            .last()
-            .map(|frame| frame.callable.clone())
-            .unwrap_or_default();
-        Self::count_body_inference(
-            template_facts::BodyClass::of(
-                callable.contains('$'),
-                !self.enclosing_type_params.is_empty(),
-            ),
-            || callable,
-        );
-        let result = self.check_block(&m.body, Some(ret_ty), false);
+        // The struct this method belongs to identifies it as a checked
+        // template or as a clone of one. A method checked outside a struct
+        // declaration has no such identity and is simply inferred.
+        let result = match self.method_site.clone() {
+            Some((module, owner)) => {
+                self.check_method_body(&owner, module.as_ref(), self_ty, m, ret_ty)
+            }
+            None => self.check_block(&m.body, Some(ret_ty), false),
+        };
         self.function_bases.pop();
         self.return_annotations.pop();
         self.return_ref_contracts.pop();

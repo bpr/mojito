@@ -72,10 +72,76 @@ pub(super) struct BodyFactBaseline {
 
 /// The binding identities of a declaration's own parameters.
 pub(super) struct BodyParams {
+    /// A method's `self`.
+    receiver: Option<OwnerId>,
     /// Runtime parameters, in declaration order.
     runtime: Vec<Option<OwnerId>>,
     /// Value parameters, bound as locals while the body checks symbolically.
     compile_time: Vec<(String, OwnerId)>,
+}
+
+/// What one body inference read or reached that no occurrence-keyed table
+/// holds.
+#[derive(Default)]
+struct BodyReads {
+    /// Each callee whose transfer or call-through summary was read, and
+    /// whether it was empty.
+    effect_queries: Vec<(String, bool)>,
+    /// Each generic-struct application reached, before any filter.
+    struct_applications: Vec<(String, Vec<mojito_types::types::TyArg>)>,
+}
+
+/// One declaration body as the template mechanism sees it.
+struct BodySite<'a> {
+    /// The name diagnostics, counters, and statistics use.
+    display: String,
+    body: &'a [Stmt],
+    /// Its identity as a template.
+    template_id: TemplateId,
+    /// Its identity as a clone, which a trace may name.
+    instance: InstanceName,
+    role: BodyRole,
+    /// The declaration's compile-time binders: a method's are its struct's
+    /// followed by its own.
+    decls: &'a [ParamDecl],
+    ret_ty: &'a Ty,
+    /// Whether the mechanism sees it at all: a nested `def` does not.
+    participates: bool,
+    /// Whether a clone still declares a compile-time parameter of its own.
+    residual_binders: bool,
+    declaration: BodyDeclaration<'a>,
+    /// The arguments of the type `self` has here, for a method of a struct.
+    receiver_arguments: Option<Vec<mojito_types::types::TyArg>>,
+}
+
+/// What a body is to the template mechanism.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BodyRole {
+    /// A generic declaration whose facts may be retained and served back: it
+    /// is neither generated nor a validated template's stub.
+    Template,
+    /// A declaration the elaborator generated, which a trace may tie to a
+    /// template.
+    Generated,
+    /// Anything else, which is simply inferred.
+    Other,
+}
+
+impl BodyRole {
+    const fn of(generic: bool, generated: bool, stub: bool) -> Self {
+        if generated {
+            Self::Generated
+        } else if generic && !stub {
+            Self::Template
+        } else {
+            Self::Other
+        }
+    }
+}
+
+enum BodyDeclaration<'a> {
+    Def(&'a Stmt),
+    Method(&'a mojito_ast::ast::Method),
 }
 
 /// One statement or expression occurrence of a body.
@@ -90,6 +156,8 @@ struct Occurrence {
     arguments: Vec<SyntaxId>,
     /// Whether this is a bare identifier.
     identifier: bool,
+    /// A method call's receiver occurrence and method name.
+    method_call: Option<(SyntaxId, String)>,
 }
 
 impl Checker {
@@ -100,13 +168,6 @@ impl Checker {
 
     /// Check a module-level or nested `def` body, or serve it from a checked
     /// template.
-    ///
-    /// A clone the elaborator traced to a certified template has the
-    /// template's facts installed and is not inferred. Any other body is
-    /// inferred by `check_block`; a module-level generic one then has its
-    /// facts retained for its instances. With fact verification on, a
-    /// derivable clone is inferred as well and the two fact bundles must
-    /// agree.
     pub(super) fn check_def_body(
         &mut self,
         stmt: &Stmt,
@@ -115,43 +176,162 @@ impl Checker {
         module_level: bool,
     ) -> Result<(), TypeError> {
         let StmtKind::Def {
-            name, params, body, ..
+            name,
+            params,
+            type_params,
+            body,
+            ..
         } = &stmt.kind
         else {
             return Err(TypeError::InvariantViolation(
                 "check_def_body requires a function declaration".to_string(),
             ));
         };
-        let param_owners = BodyParams {
+        let generated = self.template_catalog.borrow().generated_def(name);
+        let template_id = TemplateId {
+            module: stmt.module.clone(),
+            owner: None,
+            name: name.clone(),
+            declaration: stmt.span,
+        };
+        // In an elaborated program, a declaration source validation already
+        // recorded is that template's trapping stub, not a template.
+        let stub =
+            !self.source_validation && self.template_catalog.borrow().validated(&template_id);
+        let site = BodySite {
+            display: name.clone(),
+            body,
+            template_id,
+            instance: InstanceName {
+                module: stmt.module.clone(),
+                owner: None,
+                name: name.clone(),
+                body: None,
+            },
+            role: BodyRole::of(module_level && !decls.is_empty(), generated, stub),
+            decls,
+            ret_ty,
+            participates: module_level,
+            residual_binders: !type_params.is_empty(),
+            declaration: BodyDeclaration::Def(stmt),
+            receiver_arguments: None,
+        };
+        let params = BodyParams {
+            receiver: None,
             runtime: params
                 .iter()
                 .map(|param| self.lookup_owner(&param.name))
                 .collect(),
-            compile_time: decls
-                .iter()
-                .filter_map(|decl| match decl {
-                    ParamDecl::Value { name, .. } => {
-                        let name = name.trim_start_matches('*');
-                        self.lookup_owner(name)
-                            .map(|owner| (name.to_string(), owner))
-                    }
-                    ParamDecl::Type { .. } => None,
-                })
-                .collect(),
+            compile_time: self.compile_time_owners(decls),
         };
-        let generated = name.contains('$');
-        // In an elaborated program, a declaration source validation already
-        // recorded is that template's trapping stub, not a template.
-        let stub = !self.source_validation
-            && self.template_catalog.borrow().validated(&TemplateId {
-                module: stmt.module.clone(),
-                owner: None,
-                name: name.clone(),
-                declaration: stmt.span,
-            });
-        let template = module_level && !decls.is_empty() && !generated && !stub;
-        let derived = if module_level && !self.source_validation {
-            self.derivable_facts(stmt, template, &param_owners)
+        self.check_body(&site, &params)
+    }
+
+    /// Check a struct method's body, or serve it from a checked template.
+    ///
+    /// `owner` and `module` name the declaring struct, `receiver` is the type
+    /// `self` has in this body (the instance, for a per-instantiation clone),
+    /// and `decls` are the struct's binders followed by the method's own.
+    pub(super) fn check_method_body(
+        &mut self,
+        owner: &str,
+        module: Option<&String>,
+        receiver: &Ty,
+        m: &mojito_ast::ast::Method,
+        ret_ty: &Ty,
+    ) -> Result<(), TypeError> {
+        let Some(first) = m.body.first() else {
+            return self.check_block(&m.body, Some(ret_ty), false);
+        };
+        let method_decls = self.classify_params(&m.type_params)?;
+        let mut decls = self.self_decls.clone();
+        decls.extend(method_decls.iter().cloned());
+        // A per-instantiation clone carries its receiver type. Every other
+        // generated method is one the elaborator listed: a per-call clone, or
+        // a member of a struct it specialized whole (`Tuple$…`).
+        let generated = m.self_ty.is_some()
+            || self
+                .template_catalog
+                .borrow()
+                .generated_method(owner, &m.name);
+        if m.self_ty.is_some() {
+            timing::count("body_sites.instance_clone", 1);
+        }
+        let template_id = TemplateId {
+            module: module.cloned(),
+            owner: Some(owner.to_string()),
+            name: m.name.clone(),
+            declaration: first.span,
+        };
+        let stub =
+            !self.source_validation && self.template_catalog.borrow().validated(&template_id);
+        let site = BodySite {
+            display: format!("{owner}.{}", m.name),
+            body: &m.body,
+            template_id,
+            instance: InstanceName {
+                module: first.module.clone(),
+                owner: Some(owner.to_string()),
+                name: m.name.clone(),
+                body: Some(first.span),
+            },
+            role: BodyRole::of(!decls.is_empty(), generated, stub),
+            decls: &decls,
+            ret_ty,
+            participates: true,
+            residual_binders: !m.type_params.is_empty(),
+            declaration: BodyDeclaration::Method(m),
+            receiver_arguments: match receiver {
+                Ty::Struct(_, arguments) => Some(arguments.clone()),
+                _ => None,
+            },
+        };
+        let params = BodyParams {
+            receiver: m.has_self.then(|| self.lookup_owner("self")).flatten(),
+            runtime: m
+                .params
+                .iter()
+                .map(|param| self.lookup_owner(&param.name))
+                .collect(),
+            compile_time: self.compile_time_owners(&method_decls),
+        };
+        self.check_body(&site, &params)
+    }
+
+    /// The binding identities of a declaration's own value parameters.
+    fn compile_time_owners(&self, decls: &[ParamDecl]) -> Vec<(String, OwnerId)> {
+        decls
+            .iter()
+            .filter_map(|decl| match decl {
+                ParamDecl::Value { name, .. } => {
+                    let name = name.trim_start_matches('*');
+                    self.lookup_owner(name)
+                        .map(|owner| (name.to_string(), owner))
+                }
+                ParamDecl::Type { .. } => None,
+            })
+            .collect()
+    }
+
+    /// Infer one body, or serve it from a checked template.
+    ///
+    /// A clone the elaborator traced to a certified template has the
+    /// template's facts installed and is not inferred. Any other body is
+    /// inferred by `check_block`; a generic one then has its facts retained
+    /// for its instances. With fact verification on, a derivable body is
+    /// inferred as well and the two fact bundles must agree.
+    fn check_body(
+        &mut self,
+        site: &BodySite<'_>,
+        param_owners: &BodyParams,
+    ) -> Result<(), TypeError> {
+        let name = &site.display;
+        let body = site.body;
+        let (decls, ret_ty) = (site.decls, site.ret_ty);
+        let template = site.role == BodyRole::Template;
+        let generated = site.role == BodyRole::Generated;
+        let derived = if site.participates && !self.source_validation {
+            self.derivable_facts(site, param_owners)
         } else {
             None
         };
@@ -159,7 +339,7 @@ impl Checker {
         if let Some((facts, spans)) = &derived
             && !verify
         {
-            self.install_body_facts(facts, spans, &param_owners)?;
+            self.install_body_facts(facts, spans, param_owners)?;
             let counter = if template {
                 "template_bodies.reused"
             } else {
@@ -176,19 +356,58 @@ impl Checker {
             }
             return Ok(());
         }
-        let baseline = self.body_fact_baseline();
+        // Capturing a body walks every fact table for every occurrence, so
+        // the syntax is judged first: a generic declaration outside every
+        // class is retained as such without being captured.
+        let shape = template.then(|| self.certificate(site, None));
+        let admitted = matches!(shape, Some(TemplateCoverage::Certified(_)));
+        let census = site.participates && !decls.is_empty() && timing::enabled();
+        let baseline = (derived.is_some() || admitted || census || timing::notes_enabled())
+            .then(|| self.body_fact_baseline());
         Self::count_body_inference(BodyClass::of(generated, !decls.is_empty()), || name.clone());
-        self.effect_query_frames.borrow_mut().push(Vec::new());
-        let inferred = self.check_block(body, Some(ret_ty), false);
-        let effect_queries = self
-            .effect_query_frames
+        self.effect_query_frames
             .borrow_mut()
-            .pop()
-            .unwrap_or_default();
+            .push(baseline.is_some().then(Vec::new));
+        self.struct_application_frames
+            .borrow_mut()
+            .push(baseline.is_some().then(Vec::new));
+        let inferred = self.check_block(body, Some(ret_ty), false);
+        let reads = BodyReads {
+            effect_queries: self
+                .effect_query_frames
+                .borrow_mut()
+                .pop()
+                .flatten()
+                .unwrap_or_default(),
+            struct_applications: self
+                .struct_application_frames
+                .borrow_mut()
+                .pop()
+                .flatten()
+                .unwrap_or_default(),
+        };
+        // An application a nested body reached is the enclosing body's too.
+        if let Some(Some(outer)) = self.struct_application_frames.borrow_mut().last_mut() {
+            outer.extend(reads.struct_applications.iter().cloned());
+        }
         inferred?;
+        let traced = !template && self.instance_trace(site).is_some();
+        if traced {
+            self.template_catalog
+                .borrow_mut()
+                .stats_mut()
+                .inferred_clones
+                .push(name.clone());
+        }
+        let Some(baseline) = baseline else {
+            if let Some(outside) = shape {
+                self.retain_template(site, CheckedBodyFacts::default(), outside);
+            }
+            return Ok(());
+        };
         if let Some((facts, _)) = &derived {
             let inferred = self
-                .capture_body_facts(body, &param_owners, &baseline, &effect_queries)
+                .capture_body_facts(body, param_owners, &baseline, &reads)
                 .map_err(|reason| {
                     TypeError::InvariantViolation(format!(
                         "template fact verification: '{name}' was derived but its own check is \
@@ -203,12 +422,13 @@ impl Checker {
                 // The one expected difference: the clone check ranked an
                 // overload set again on concrete arguments, which the
                 // template's selection forbids. The derived facts stand.
-                self.replace_body_facts(body, facts, &param_owners)?;
+                self.replace_body_facts(body, facts, param_owners)?;
                 timing::count("template_derivations.overload_rebinding", 1);
             } else if inferred != *facts {
                 return Err(TypeError::InvariantViolation(format!(
                     "template fact verification: derived facts for '{name}' differ from its own \
-                     check\n derived: {facts:?}\n inferred: {inferred:?}"
+                     check:\n{}",
+                    facts.difference(&inferred)
                 )));
             }
             timing::count("template_derivations.verified", 1);
@@ -218,27 +438,22 @@ impl Checker {
                 .verified
                 .push(name.clone());
         }
-        if !template && self.instance_trace(stmt).is_some() {
-            self.template_catalog
-                .borrow_mut()
-                .stats_mut()
-                .inferred_clones
-                .push(name.clone());
+        if census {
+            self.census(site, param_owners, &baseline, &reads);
         }
-        if template && derived.is_none() {
-            self.record_template(
-                stmt,
-                decls,
-                ret_ty,
-                &param_owners,
-                &baseline,
-                &effect_queries,
-            );
-        } else if module_level && timing::notes_enabled() && self.instance_trace(stmt).is_some() {
+        if timing::notes_enabled() && matches!(shape, Some(TemplateCoverage::Incomplete(_))) {
+            timing::note("template_capture.body", || name.clone());
+            let _ = self.capture_body_facts(body, param_owners, &baseline, &reads);
+        }
+        if derived.is_none()
+            && let Some(shape) = shape
+        {
+            self.record_template(site, param_owners, &baseline, &reads, shape);
+        } else if (traced || template) && timing::notes_enabled() {
             // Capture emits the `template_capture.tables` note: what this
             // body recorded, for comparing a clone with its template.
             timing::note("template_capture.body", || name.clone());
-            let _ = self.capture_body_facts(body, &param_owners, &baseline, &effect_queries);
+            let _ = self.capture_body_facts(body, param_owners, &baseline, &reads);
         }
         Ok(())
     }
@@ -246,7 +461,7 @@ impl Checker {
     /// Record that the body being inferred read `callee`'s transfer or
     /// call-through summary, and whether it was empty.
     pub(super) fn note_effect_query(&self, callee: &str, empty: bool) {
-        if let Some(frame) = self.effect_query_frames.borrow_mut().last_mut() {
+        if let Some(Some(frame)) = self.effect_query_frames.borrow_mut().last_mut() {
             frame.push((callee.to_string(), empty));
         }
     }
@@ -260,16 +475,10 @@ impl Checker {
     }
 
     /// The trace of a declaration the elaborator generated, if it left one.
-    fn instance_trace(&self, stmt: &Stmt) -> Option<InstanceTrace> {
-        let StmtKind::Def { name, .. } = &stmt.kind else {
-            return None;
-        };
+    fn instance_trace(&self, site: &BodySite<'_>) -> Option<InstanceTrace> {
         self.template_catalog
             .borrow()
-            .trace(&InstanceName {
-                module: stmt.module.clone(),
-                name: name.clone(),
-            })
+            .trace(&site.instance)
             .cloned()
     }
 
@@ -281,44 +490,57 @@ impl Checker {
     /// clone the reason is counted.
     fn derivable_facts(
         &self,
-        stmt: &Stmt,
-        template: bool,
+        site: &BodySite<'_>,
         param_owners: &BodyParams,
     ) -> Option<(CheckedBodyFacts, HashMap<OccurrenceId, SourceSpan>)> {
-        let StmtKind::Def {
-            name,
-            type_params,
-            body,
-            ..
-        } = &stmt.kind
-        else {
-            return None;
-        };
+        let name = &site.display;
+        let template = site.role == BodyRole::Template;
         let trace = if template {
             InstanceTrace {
-                template: TemplateId {
-                    module: stmt.module.clone(),
-                    owner: None,
-                    name: name.clone(),
-                    declaration: stmt.span,
-                },
+                template: site.template_id.clone(),
                 type_bindings: Vec::new(),
                 value_bindings: Vec::new(),
                 residual: Vec::new(),
             }
         } else {
-            self.instance_trace(stmt)?
+            self.instance_trace(site)?
         };
-        let catalog = self.template_catalog.borrow();
+        let refusals = RefCell::new(Vec::new());
         let refuse = |reason: &'static str| {
             if !template {
                 timing::count("template_derivations.ineligible", 1);
                 timing::note("template_derivations.ineligible", || {
                     format!("{name}: {reason}")
                 });
+                refusals
+                    .borrow_mut()
+                    .push((name.clone(), reason.to_string()));
             }
             None
         };
+        let derived = self.derive(site, param_owners, &trace, template, &refuse);
+        self.template_catalog
+            .borrow_mut()
+            .stats_mut()
+            .refused
+            .extend(refusals.into_inner());
+        derived
+    }
+
+    /// [`Self::derivable_facts`] once the body's trace is known.
+    fn derive(
+        &self,
+        site: &BodySite<'_>,
+        param_owners: &BodyParams,
+        trace: &InstanceTrace,
+        template: bool,
+        refuse: &dyn Fn(
+            &'static str,
+        ) -> Option<(CheckedBodyFacts, HashMap<OccurrenceId, SourceSpan>)>,
+    ) -> Option<(CheckedBodyFacts, HashMap<OccurrenceId, SourceSpan>)> {
+        let name = &site.display;
+        let body = site.body;
+        let catalog = self.template_catalog.borrow();
         let Some(checked) = catalog.template(&trace.template) else {
             return refuse("its template has no retained facts");
         };
@@ -328,11 +550,12 @@ impl Checker {
         // Both enabled classes bake every parameter: a clone that keeps a
         // binder, or folds a value, is outside them.
         let baked = trace.residual.is_empty()
-            && type_params.is_empty()
+            && !site.residual_binders
             && match class {
                 TemplateClass::ClosedScalarBody
                 | TemplateClass::FixedCalls
-                | TemplateClass::BoundedOperations => trace.value_bindings.is_empty(),
+                | TemplateClass::BoundedOperations
+                | TemplateClass::MethodScalarBody => trace.value_bindings.is_empty(),
                 // The folded values selected the arms; no retained
                 // occurrence names one.
                 TemplateClass::ScalarBranches => true,
@@ -343,7 +566,7 @@ impl Checker {
         if param_owners.runtime.iter().any(Option::is_none) {
             return refuse("a parameter has no binding identity");
         }
-        let Ok(substitution) = self.instance_substitution(&trace) else {
+        let Ok(substitution) = self.instance_substitution(site, checked, trace) else {
             return refuse("an instance argument does not resolve");
         };
         let occurrences = self.body_occurrences(body);
@@ -391,17 +614,48 @@ impl Checker {
         }
     }
 
-    /// The checked type each baked type parameter stands for in a clone:
-    /// the source type the elaborator wrote, resolved as the clone's own
-    /// annotations are.
+    /// The checked type each baked type parameter stands for in a clone.
+    ///
+    /// A `def` clone's are the source types the elaborator wrote, resolved as
+    /// the clone's own annotations are. A method clone's are the arguments of
+    /// the receiver type the checker already resolved for it, in the struct's
+    /// binder order: the raw request passes through origin erasure and
+    /// literal defaulting before the clone is minted, so only the resolved
+    /// receiver says what `Self.T` is inside the clone.
     fn instance_substitution(
         &self,
+        site: &BodySite<'_>,
+        template: &CheckedTemplate,
         trace: &InstanceTrace,
     ) -> Result<HashMap<String, Ty>, TypeError> {
-        trace
-            .type_bindings
+        let Some(arguments) = &site.receiver_arguments else {
+            return trace
+                .type_bindings
+                .iter()
+                .map(|(name, source)| Ok((name.clone(), self.ty_from_anno(source)?)))
+                .collect();
+        };
+        if site.role == BodyRole::Template {
+            return Ok(HashMap::new());
+        }
+        let unresolved = || {
+            TypeError::InvariantViolation(
+                "a method clone's receiver does not bind its struct's parameters".to_string(),
+            )
+        };
+        if arguments.len() != template.param_decls.len() {
+            return Err(unresolved());
+        }
+        template
+            .param_decls
             .iter()
-            .map(|(name, source)| Ok((name.clone(), self.ty_from_anno(source)?)))
+            .zip(arguments)
+            .map(|(decl, argument)| match (decl, argument) {
+                (ParamDecl::Type { name, .. }, mojito_types::types::TyArg::Ty(ty)) => {
+                    Ok((name.trim_start_matches('*').to_string(), ty.clone()))
+                }
+                _ => Err(unresolved()),
+            })
             .collect()
     }
 
@@ -520,6 +774,11 @@ impl Checker {
             return Err("an occurrence still names a folded compile-time parameter");
         }
         for (id, _) in &template.call_parameters {
+            // A method call records its (empty) parameters here too. Its
+            // callee is realized from its contract below.
+            if template.selected_calls.iter().any(|(call, _)| call == id) {
+                continue;
+            }
             let selected = template_callee(template, *id)
                 .ok_or("a call's selected callee is not a module-scope declaration")?;
             let written = occurrences
@@ -605,6 +864,19 @@ impl Checker {
         for call in &template.builtin_len_calls {
             self.realize_builtin_len(&mut facts, *call, occurrences)?;
         }
+        facts.struct_applications = template
+            .struct_applications
+            .iter()
+            .map(|(name, arguments)| {
+                (
+                    name.clone(),
+                    mojito_types::types::map_tyargs(arguments, &substitute),
+                )
+            })
+            .collect();
+        for index in 0..facts.selected_calls.len() {
+            self.realize_method_call(&mut facts, index, occurrences)?;
+        }
         facts.effect_free_callees.sort();
         let summaries_empty = facts.effect_free_callees.iter().all(|callee| {
             self.transfer_effects
@@ -629,6 +901,89 @@ impl Checker {
         Ok(facts)
     }
 
+    /// Realize one trivial method call for an instance: its target alone.
+    ///
+    /// A clone check retargets a method call on a closed struct instance to
+    /// that instance's clone of the method, when the elaborator has minted
+    /// one (`instance_method_clone`), and records the clone as the call's
+    /// target, its overload target, and the key of the effect summaries it
+    /// reads. Nothing else in a [`trivial_method_contract`] can change. The
+    /// callee must be the one method of its name, with no binders of its own
+    /// and no availability condition, so there is nothing to select again and
+    /// nothing an instance could be denied; and an instance that has clones
+    /// but not this one (withheld, or a collapsed overload family) refuses.
+    fn realize_method_call(
+        &self,
+        facts: &mut CheckedBodyFacts,
+        index: usize,
+        occurrences: &[Occurrence],
+    ) -> Result<(), &'static str> {
+        let id = facts.selected_calls[index].0;
+        let (receiver, method) = occurrences
+            .iter()
+            .find(|occurrence| occurrence.id == id)
+            .and_then(|occurrence| occurrence.method_call.clone())
+            .ok_or("a selected call is not a method call in the instance")?;
+        let receiver = OccurrenceId {
+            syntax: receiver,
+            copy: id.copy,
+        };
+        let Some(Ty::Struct(owner, arguments)) = facts
+            .expression_types
+            .iter()
+            .find(|(site, _)| *site == receiver)
+            .map(|(_, ty)| ty.clone())
+        else {
+            return Err("a method call's receiver is not a nominal struct");
+        };
+        let info = self
+            .structs
+            .get(&owner)
+            .ok_or("a method call's receiver struct is not declared")?;
+        let sole = |name: &str| {
+            info.methods
+                .get(name)
+                .and_then(|family| match family.as_slice() {
+                    [only] => Some(only),
+                    _ => None,
+                })
+        };
+        let declared = sole(&method).ok_or("a called method is overloaded or missing")?;
+        if !declared.decls.is_empty() || !declared.availability.is_empty() {
+            return Err("a called method has binders or an availability condition");
+        }
+        let clone_name =
+            mojito_symbol::symbol::instance_method_clone_name(&method, &info.decls, &arguments);
+        let realized = if let Some(clone) = self.instance_method_clone(&owner, &method, &arguments)
+        {
+            sole(&clone).ok_or("a called method's clone is overloaded")?;
+            clone
+        } else {
+            // No clone of this method. If the instance has clones of others,
+            // this one was withheld from it or collapsed.
+            let suffix = clone_name
+                .as_deref()
+                .and_then(|clone| clone.strip_prefix(method.as_str()));
+            if suffix.is_some_and(|suffix| info.methods.keys().any(|name| name.ends_with(suffix))) {
+                return Err("the instance has clones, but not of a called method");
+            }
+            method
+        };
+        let target = format!("{owner}.{realized}");
+        facts.selected_calls[index].1.target.clone_from(&target);
+        if let Some(entry) = facts
+            .overload_targets
+            .iter_mut()
+            .find(|(site, _)| *site == id)
+        {
+            entry.1.clone_from(&target);
+        }
+        if !facts.effect_free_callees.contains(&target) {
+            facts.effect_free_callees.push(target);
+        }
+        Ok(())
+    }
+
     /// Realize one built-in `len(x)` for an instance, as `infer_len` decides
     /// it on a concrete argument.
     ///
@@ -636,7 +991,8 @@ impl Checker {
     /// owes the witness that bound promised — a `__len__` returning `Int`,
     /// which `len_result_for_type` finds — and takes the one fact `infer_len`
     /// adds for a concrete type: a named nominal-struct place is read in
-    /// place rather than copied. A missing witness refuses the derivation,
+    /// place rather than copied. A borrow the template already recorded (a
+    /// reference-valued operand) is kept. A missing witness refuses the derivation,
     /// so the clone check reports it in its own words.
     fn realize_builtin_len(
         &self,
@@ -671,10 +1027,11 @@ impl Checker {
             .any(|occurrence| occurrence.id == argument && occurrence.identifier);
         let in_place =
             named && matches!(&ty, Ty::Struct(name, _) if self.structs.contains_key(name));
-        facts
-            .borrowed_read_call_places
-            .retain(|place| *place != argument);
-        if in_place {
+        // The template's own entry stands: a reference-valued operand is
+        // read through its handle whatever the instance, and a nominal type
+        // stays nominal under substitution. Only the nominal-place rule can
+        // newly hold for an instance.
+        if in_place && !facts.borrowed_read_call_places.contains(&argument) {
             facts.borrowed_read_call_places.push(argument);
             let order = |id: &OccurrenceId| occurrences.iter().position(|found| found.id == *id);
             facts.borrowed_read_call_places.sort_by_key(order);
@@ -686,37 +1043,66 @@ impl Checker {
     /// facts, with the certificate its class earns.
     fn record_template(
         &self,
-        stmt: &Stmt,
-        decls: &[ParamDecl],
-        ret_ty: &Ty,
+        site: &BodySite<'_>,
         param_owners: &BodyParams,
         baseline: &BodyFactBaseline,
-        effect_queries: &[(String, bool)],
+        reads: &BodyReads,
+        shape: TemplateCoverage,
     ) {
-        let StmtKind::Def { name, body, .. } = &stmt.kind else {
-            return;
-        };
-        let captured = self
-            .capture_body_facts(body, param_owners, baseline, effect_queries)
-            .and_then(|facts| {
-                // Two template occurrences sharing one identity could not be
-                // told apart from an instance's loop copies.
-                if facts.occurrences.iter().all(|id| id.copy == 0) {
-                    Ok(facts)
-                } else {
-                    Err(IncompleteReason::AmbiguousOccurrence)
+        let (facts, coverage) = match shape {
+            outside @ TemplateCoverage::Incomplete(_) => (CheckedBodyFacts::default(), outside),
+            TemplateCoverage::Certified(_) => {
+                let captured = self
+                    .capture_body_facts(site.body, param_owners, baseline, reads)
+                    .and_then(|facts| {
+                        // Two template occurrences sharing one identity could
+                        // not be told apart from an instance's loop copies.
+                        if facts.occurrences.iter().all(|id| id.copy == 0) {
+                            Ok(facts)
+                        } else {
+                            Err(IncompleteReason::AmbiguousOccurrence)
+                        }
+                    });
+                match captured {
+                    Ok(facts) => {
+                        let coverage = self.certificate(site, Some(&facts));
+                        (facts, coverage)
+                    }
+                    Err(reason) => (
+                        CheckedBodyFacts::default(),
+                        TemplateCoverage::Incomplete(reason),
+                    ),
                 }
-            });
-        let (facts, coverage) = match captured {
-            Ok(facts) => {
-                let coverage = self.template_certificate(stmt, decls, ret_ty, &facts);
-                (facts, coverage)
             }
-            Err(reason) => (
-                CheckedBodyFacts::default(),
-                TemplateCoverage::Incomplete(reason),
-            ),
         };
+        self.retain_template(site, facts, coverage);
+    }
+
+    /// The certificate of a body's class. With no facts it judges the
+    /// declaration's syntax alone: `Certified` then means only that the body
+    /// is worth capturing.
+    fn certificate(
+        &self,
+        site: &BodySite<'_>,
+        facts: Option<&CheckedBodyFacts>,
+    ) -> TemplateCoverage {
+        let (decls, ret_ty) = (site.decls, site.ret_ty);
+        match site.declaration {
+            BodyDeclaration::Def(stmt) => self.template_certificate(stmt, decls, ret_ty, facts),
+            BodyDeclaration::Method(method) => {
+                self.method_certificate(method, decls, ret_ty, facts)
+            }
+        }
+    }
+
+    /// Put a template in the catalog, counted by its coverage.
+    fn retain_template(
+        &self,
+        site: &BodySite<'_>,
+        facts: CheckedBodyFacts,
+        coverage: TemplateCoverage,
+    ) {
+        let name = &site.display;
         match &coverage {
             TemplateCoverage::Certified(_) => {
                 self.template_catalog
@@ -734,18 +1120,13 @@ impl Checker {
             }
         }
         self.template_catalog.borrow_mut().record(CheckedTemplate {
-            id: TemplateId {
-                module: stmt.module.clone(),
-                owner: None,
-                name: name.clone(),
-                declaration: stmt.span,
-            },
+            id: site.template_id.clone(),
             producer: if self.source_validation {
                 TemplateProducer::SourceValidation
             } else {
                 TemplateProducer::ExecutableCheck
             },
-            param_decls: decls.to_vec(),
+            param_decls: site.decls.to_vec(),
             facts,
             coverage,
             obligations: vec![
@@ -799,7 +1180,7 @@ impl Checker {
         stmt: &Stmt,
         decls: &[ParamDecl],
         ret_ty: &Ty,
-        facts: &CheckedBodyFacts,
+        facts: Option<&CheckedBodyFacts>,
     ) -> TemplateCoverage {
         let outside =
             |what| TemplateCoverage::Incomplete(IncompleteReason::OutsideEnabledClass(what));
@@ -875,11 +1256,15 @@ impl Checker {
                 .map(|parameter| parameter.name.as_str())
                 .collect(),
             keyed,
+            receiver: false,
             locals: RefCell::new(Vec::new()),
         };
         if !shape.block(body, false) {
             return outside("the body is not scalar returns over direct calls and 'len'");
         }
+        let Some(facts) = facts else {
+            return TemplateCoverage::Certified(TemplateClass::ClosedScalarBody);
+        };
         let effects_closed = facts
             .expression_effects
             .iter()
@@ -939,6 +1324,239 @@ impl Checker {
         })
     }
 
+    /// The certificate a freshly captured method of a generic struct earns.
+    ///
+    /// [`TemplateClass::MethodScalarBody`]: a method with a plain read `self`
+    /// and no binders of its own, on a struct whose binders are plain type
+    /// parameters, returning a concrete scalar over closed scalars, runtime
+    /// parameters, and reads of `self`'s scalar fields. It calls nothing.
+    ///
+    /// What a clone check would repeat is covered as follows.
+    ///
+    /// - Types: a field read is the field's declared type under the struct's
+    ///   arguments in a template and a clone alike, and the class admits the
+    ///   read only when that type is already a closed scalar. `self` itself
+    ///   substitutes to the clone's resolved receiver.
+    /// - Copies: a scalar field copied out is implicitly copyable under every
+    ///   instance; realization still re-judges each copied place.
+    /// - The generated-declaration leniency a clone's name switches on bears
+    ///   on origin-bearing return annotations only, and the result is a
+    ///   scalar.
+    /// - Nothing outside the fact tables: the body wrote through no origin
+    ///   parameter, transferred nothing, and recorded no request.
+    fn method_certificate(
+        &self,
+        method: &mojito_ast::ast::Method,
+        decls: &[ParamDecl],
+        ret_ty: &Ty,
+        facts: Option<&CheckedBodyFacts>,
+    ) -> TemplateCoverage {
+        let outside =
+            |what| TemplateCoverage::Incomplete(IncompleteReason::OutsideEnabledClass(what));
+        if self.source_validation {
+            return outside("a compile-time-keyed method has no class yet");
+        }
+        let lifecycle = matches!(
+            mojito_symbol::symbol::lifecycle_method_name(method),
+            "__init__" | "__copyinit__" | "__moveinit__" | "__deinit__" | "__del__"
+        );
+        if !method.has_self
+            || method.self_convention.is_some()
+            || method.self_origin.is_some()
+            || lifecycle
+        {
+            return outside("the receiver is not a plain read 'self'");
+        }
+        if !method.type_params.is_empty()
+            || !method.decorators.is_empty()
+            || !method.where_clauses.is_empty()
+            || method.raises
+            || method.raises_type.is_some()
+        {
+            return outside("the method has binders, decorators, constraints, or raises");
+        }
+        let plain_struct = decls.iter().all(|decl| {
+            matches!(
+                decl,
+                ParamDecl::Type {
+                    variadic: false,
+                    callable_bound: None,
+                    ..
+                }
+            )
+        });
+        if !plain_struct {
+            return outside("a struct parameter is not a plain type parameter");
+        }
+        let plain_params = method.params.iter().all(|parameter| {
+            parameter.kind == mojito_ast::ast::ParamKind::Regular
+                && parameter.convention.is_none()
+                && parameter.default.is_none()
+                && parameter.origin.is_none()
+        });
+        if !plain_params {
+            return outside("a parameter is not an immutable regular parameter");
+        }
+        if !closed_scalar(ret_ty) {
+            return outside("the return type is not a concrete scalar");
+        }
+        let shape = BodyShape {
+            origins: &self.syntax_origins,
+            facts,
+            params: method
+                .params
+                .iter()
+                .map(|parameter| parameter.name.as_str())
+                .collect(),
+            keyed: false,
+            receiver: true,
+            locals: RefCell::new(Vec::new()),
+        };
+        if !shape.block(&method.body, false) {
+            return outside("the body is not scalar returns over parameters and 'self' fields");
+        }
+        let Some(facts) = facts else {
+            return TemplateCoverage::Certified(TemplateClass::MethodScalarBody);
+        };
+        // The grammar admitted every method call it judged trivial. Nothing
+        // else may have selected a callee or read an effect summary.
+        let targets: Vec<&str> = facts
+            .selected_calls
+            .iter()
+            .map(|(_, contract)| contract.target.as_str())
+            .collect();
+        let at_method_call =
+            |id: &OccurrenceId| facts.selected_calls.iter().any(|(call, _)| call == id);
+        let stray_call = facts
+            .call_parameters
+            .iter()
+            .any(|(id, parameters)| !at_method_call(id) || !parameters.is_empty())
+            || !facts.generic_instantiations.is_empty()
+            || !facts
+                .overload_targets
+                .iter()
+                .all(|(id, _)| at_method_call(id))
+            || !facts
+                .effect_free_callees
+                .iter()
+                .all(|callee| targets.contains(&callee.as_str()));
+        if stray_call {
+            return outside("the body calls something other than a trivial method");
+        }
+        let effects_closed = facts
+            .expression_effects
+            .iter()
+            .all(|(_, effects)| *effects == mojito_checked::checked::EffectFacts::default());
+        let adjustments_derive = facts.operation_adjustments.iter().all(|(_, adjustment)| {
+            mojito_checked::templates::derive_adjustment(adjustment, &Ty::clone).is_some()
+        });
+        if !effects_closed || !adjustments_derive {
+            return outside("an expression has an effect or an adjustment with no recipe");
+        }
+        let wrote_through_origin = self
+            .parametric_write_frames
+            .borrow()
+            .last()
+            .is_some_and(|frame| !frame.is_empty());
+        if wrote_through_origin {
+            return outside("the body writes through an origin parameter");
+        }
+        TemplateCoverage::Certified(TemplateClass::MethodScalarBody)
+    }
+
+    /// Report, for one generic body, everything that keeps it from being
+    /// captured: the census that orders which recipes to write next.
+    ///
+    /// Counters are `template_census.<class>.bodies`, `.capturable`,
+    /// `.blocked_by.<reason>` (the body has that reason) and
+    /// `.sole_blocker.<reason>` (it has no other).
+    fn census(
+        &self,
+        site: &BodySite<'_>,
+        param_owners: &BodyParams,
+        baseline: &BodyFactBaseline,
+        reads: &BodyReads,
+    ) {
+        if !timing::enabled() {
+            return;
+        }
+        let class = if site.role == BodyRole::Generated {
+            "clone"
+        } else {
+            "template"
+        };
+        let occurrences = self.body_occurrences(site.body);
+        let mut reasons: Vec<String> = self
+            .unkeyed_fact_entries()
+            .into_iter()
+            .zip(baseline.unkeyed)
+            .filter(|(now, before)| now != before)
+            .map(|((store, _), _)| format!("store:{store}"))
+            .collect();
+        if reads.effect_queries.iter().any(|(_, empty)| !empty)
+            || self
+                .transfer_frames
+                .borrow()
+                .last()
+                .is_some_and(|frame| !frame.effects.is_empty() || !frame.call_throughs.is_empty())
+        {
+            reasons.push("effects".to_string());
+        }
+        for (index, table) in FactTable::ALL.into_iter().enumerate() {
+            let entries = self.span_table(table);
+            let recorded = occurrences
+                .iter()
+                .filter(|occurrence| entries.has(&occurrence.span))
+                .count();
+            if entries.entries() != baseline.tables[index] + recorded {
+                reasons.push(format!("outside:{table:?}"));
+            } else if recorded > 0 && !derivable_table(table) {
+                reasons.push(format!("table:{table:?}"));
+            }
+        }
+        // The adjustment table has a recipe per variant, not per table.
+        let mut adjustments: Vec<String> = occurrences
+            .iter()
+            .filter_map(|occurrence| {
+                let adjustments = self.operation_adjustments.borrow();
+                let adjustment = adjustments.get(&occurrence.span)?;
+                mojito_checked::templates::derive_adjustment(adjustment, &Ty::clone)
+                    .is_none()
+                    .then(|| {
+                        let spelled = format!("{adjustment:?}");
+                        let variant = spelled
+                            .split(|c: char| !c.is_alphanumeric())
+                            .next()
+                            .unwrap_or_default();
+                        format!("adjustment:{variant}")
+                    })
+            })
+            .collect();
+        adjustments.sort();
+        adjustments.dedup();
+        reasons.extend(adjustments);
+        if reasons.is_empty()
+            && self
+                .capture_body_facts(site.body, param_owners, baseline, reads)
+                .is_err()
+        {
+            reasons.push("binding".to_string());
+        }
+        timing::note("template_census.body", || {
+            format!("{class} {}: {}", site.display, reasons.join(" "))
+        });
+        timing::count_named(|| format!("template_census.{class}.bodies"), 1);
+        if reasons.is_empty() {
+            timing::count_named(|| format!("template_census.{class}.capturable"), 1);
+        }
+        for reason in &reasons {
+            timing::count_named(|| format!("template_census.{class}.blocked_by.{reason}"), 1);
+        }
+        if let [only] = reasons.as_slice() {
+            timing::count_named(|| format!("template_census.{class}.sole_blocker.{only}"), 1);
+        }
+    }
+
     /// Every statement and expression occurrence of a body in pre-order, by
     /// the identity it had before the final re-key and its copy number.
     fn body_occurrences(&self, body: &[Stmt]) -> Vec<Occurrence> {
@@ -969,6 +1587,7 @@ impl Checker {
                     callee: None,
                     arguments: Vec::new(),
                     identifier: false,
+                    method_call: None,
                 });
             }
 
@@ -989,6 +1608,12 @@ impl Checker {
                         _ => Vec::new(),
                     },
                     identifier: matches!(expr.kind, ExprKind::Identifier(_)),
+                    method_call: match &expr.kind {
+                        ExprKind::MethodCall { object, method, .. } => {
+                            Some((self.origins.origin(object.syntax_id), method.clone()))
+                        }
+                        _ => None,
+                    },
                 });
             }
         }
@@ -1012,7 +1637,7 @@ impl Checker {
         body: &[Stmt],
         param_owners: &BodyParams,
         baseline: &BodyFactBaseline,
-        effect_queries: &[(String, bool)],
+        reads: &BodyReads,
     ) -> Result<CheckedBodyFacts, IncompleteReason> {
         let occurrences = self.body_occurrences(body);
         timing::note("template_capture.tables", || {
@@ -1037,7 +1662,7 @@ impl Checker {
         {
             return Err(IncompleteReason::UnkeyedFact(store));
         }
-        if effect_queries.iter().any(|(_, empty)| !empty)
+        if reads.effect_queries.iter().any(|(_, empty)| !empty)
             || self
                 .transfer_frames
                 .borrow()
@@ -1066,6 +1691,9 @@ impl Checker {
                 .iter()
                 .position(|param| *param == Some(owner))
                 .map(TemplateOwner::Param)
+                .or_else(|| {
+                    (param_owners.receiver == Some(owner)).then_some(TemplateOwner::Receiver)
+                })
                 .or_else(|| {
                     param_owners
                         .compile_time
@@ -1101,7 +1729,8 @@ impl Checker {
                 .map(|(id, owner)| local_owner(owner).map(|owner| (id, owner)))
                 .collect::<Result<Vec<_>, _>>()
         };
-        let mut effect_free_callees: Vec<String> = effect_queries
+        let mut effect_free_callees: Vec<String> = reads
+            .effect_queries
             .iter()
             .map(|(callee, _)| callee.clone())
             .collect();
@@ -1140,6 +1769,18 @@ impl Checker {
                 self.read_temporary_arguments.borrow().contains(span)
             }),
             effect_free_callees,
+            selected_calls: values(&occurrences, &self.selected_calls.borrow()),
+            // Recording is idempotent, and a clone check reaches a retargeted
+            // receiver's application twice, so only the set matters.
+            struct_applications: reads.struct_applications.iter().fold(
+                Vec::new(),
+                |mut distinct, application| {
+                    if !distinct.contains(application) {
+                        distinct.push(application.clone());
+                    }
+                    distinct
+                },
+            ),
             builtin_len_calls: occurrences
                 .iter()
                 .filter(|occurrence| {
@@ -1210,6 +1851,9 @@ impl Checker {
                 .copied()
                 .flatten()
                 .ok_or_else(|| corrupt("a parameter binding")),
+            TemplateOwner::Receiver => param_owners
+                .receiver
+                .ok_or_else(|| corrupt("the receiver binding")),
             TemplateOwner::CompileTimeParam(_) => {
                 Err(corrupt("the fold of a compile-time parameter"))
             }
@@ -1328,6 +1972,17 @@ impl Checker {
                 .bindings
                 .insert(span(id)?);
         }
+        for (id, contract) in &facts.selected_calls {
+            self.selected_calls
+                .borrow_mut()
+                .insert(span(id)?, contract.clone());
+        }
+        // The body's own source decides, exactly as it does for an inferred
+        // body, whether an application it reaches is user-reachable.
+        let source = spans.values().next().and_then(|span| span.source.clone());
+        for (template, arguments) in &facts.struct_applications {
+            self.record_struct_instantiation(template, arguments, source.as_deref());
+        }
         for callee in &facts.effect_free_callees {
             self.effect_observations
                 .borrow_mut()
@@ -1438,10 +2093,6 @@ impl Checker {
     fn unkeyed_fact_entries(&self) -> [(&'static str, usize); UNKEYED_STORES] {
         let deletability = self.explicit_destroy_deletability.borrow();
         [
-            (
-                "struct instantiations",
-                self.struct_instantiations.borrow().len(),
-            ),
             ("hash leaf types", self.hash_leaf_types.borrow().len()),
             ("declaration types", self.declaration_types.borrow().len()),
             ("generic parameters", self.generic_parameters.borrow().len()),
@@ -1529,7 +2180,7 @@ impl Checker {
 }
 
 /// How many fact stores `unkeyed_fact_entries` watches.
-const UNKEYED_STORES: usize = 8;
+const UNKEYED_STORES: usize = 7;
 
 /// An occurrence-keyed fact table, whatever it stores per occurrence.
 trait SpanKeyed {
@@ -1586,6 +2237,7 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::UnconsumedTemporaries
         | FactTable::RebindAssertions
         | FactTable::CopyPlaceValueUses
+        | FactTable::SelectedCalls
         | FactTable::InteriorInvalidations
         | FactTable::DeletableBindings => true,
         FactTable::ContextualBases
@@ -1605,7 +2257,6 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::WithDesugars
         | FactTable::DeclarationCaptures
         | FactTable::ComprehensionBindings
-        | FactTable::SelectedCalls
         | FactTable::SubscriptDescriptors
         | FactTable::IterationProtocols
         | FactTable::ExplicitDestroyCalls
@@ -1727,6 +2378,7 @@ fn template_callee(facts: &CheckedBodyFacts, call: OccurrenceId) -> Option<&str>
         .and_then(|(_, owner)| match owner {
             TemplateOwner::Global(name) => Some(name.as_str()),
             TemplateOwner::Param(_)
+            | TemplateOwner::Receiver
             | TemplateOwner::Local(_)
             | TemplateOwner::CompileTimeParam(_) => None,
         })
@@ -1773,11 +2425,14 @@ fn call_parameter_facts(callee: &Ty) -> Vec<CallParameterFact> {
 /// inference recorded.
 struct BodyShape<'a> {
     origins: &'a mojito_ast::ast::SyntaxOrigins,
-    facts: &'a CheckedBodyFacts,
+    /// `None` judges the syntax alone, before anything is captured.
+    facts: Option<&'a CheckedBodyFacts>,
     params: Vec<&'a str>,
     /// Whether source validation produced the facts: only a body it checks
     /// may hold compile-time control flow, locals, and assignments.
     keyed: bool,
+    /// Whether the body is a method's, which may read `self`'s fields.
+    receiver: bool,
     /// The scalar locals declared so far.
     locals: RefCell<Vec<String>>,
 }
@@ -1828,6 +2483,42 @@ impl BodyShape<'_> {
         admitted
     }
 
+    /// Whether the call at `expr` recorded a trivial contract naming exactly
+    /// `method` on the receiver's own struct, and nothing a derivation lacks.
+    fn trivial_call(
+        &self,
+        facts: &CheckedBodyFacts,
+        expr: &Expr,
+        object: &Expr,
+        method: &str,
+    ) -> bool {
+        let id = self.occurrence(expr);
+        let receiver = self.occurrence(object);
+        let owner = facts
+            .expression_types
+            .iter()
+            .find(|(site, _)| *site == receiver)
+            .and_then(|(_, ty)| match ty {
+                Ty::Struct(owner, _) => Some(owner),
+                _ => None,
+            });
+        facts
+            .selected_calls
+            .iter()
+            .find(|(site, _)| *site == id)
+            .is_some_and(|(_, contract)| {
+                mojito_checked::templates::trivial_method_contract(contract)
+                    && owner.is_some_and(|owner| contract.target == format!("{owner}.{method}"))
+            })
+    }
+
+    /// Whether `expr` is `self.<field>` in a method body.
+    fn receiver_field(&self, expr: &Expr) -> bool {
+        self.receiver
+            && matches!(&expr.kind, ExprKind::Member { object, .. }
+                if matches!(&object.kind, ExprKind::Identifier(name) if name == "self"))
+    }
+
     fn local(&self, name: &str) -> bool {
         self.locals.borrow().iter().any(|local| local == name)
     }
@@ -1836,6 +2527,27 @@ impl BodyShape<'_> {
         match &expr.kind {
             ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) => true,
             ExprKind::Identifier(name) => self.params.contains(&name.as_str()) || self.local(name),
+            // A field of `self`, admitted where its recorded type is a closed
+            // scalar: every use site of `expression` also demands `scalar`.
+            ExprKind::Member { .. } => self.receiver_field(expr) && self.scalar(expr),
+            // A call of a method on `self` or on one of its fields, with no
+            // arguments, whose recorded contract nothing but the target can
+            // change per instance (`trivial_method_contract`).
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+                kwargs,
+            } => {
+                let on_self = matches!(&object.kind, ExprKind::Identifier(name) if name == "self");
+                self.receiver
+                    && (on_self || self.receiver_field(object))
+                    && args.is_empty()
+                    && kwargs.is_empty()
+                    && self
+                        .facts
+                        .is_none_or(|facts| self.trivial_call(facts, expr, object, method))
+            }
             ExprKind::Prefix(_, value) => self.expression(value) && self.scalar(value),
             ExprKind::Infix(_, left, right) => {
                 self.expression(left)
@@ -1850,16 +2562,22 @@ impl BodyShape<'_> {
                 ..
             } => {
                 let id = self.occurrence(expr);
-                let direct = self
+                let known = self.facts.is_none_or(|facts| {
+                    facts.call_parameters.iter().any(|(call, _)| *call == id)
+                        || (facts.builtin_len_calls.contains(&id) && args.len() == 1)
+                });
+                // The built-in `len` reads its operand in place and realizes
+                // its witness per instance, so a method may hand it a field of
+                // `self` of any type, not only a scalar one.
+                let builtin_len = self
                     .facts
-                    .call_parameters
-                    .iter()
-                    .any(|(call, _)| *call == id);
-                let builtin_len = self.facts.builtin_len_calls.contains(&id) && args.len() == 1;
-                (direct || builtin_len)
+                    .is_some_and(|facts| facts.builtin_len_calls.contains(&id));
+                known
                     && param_args.is_empty()
                     && kwargs.is_empty()
-                    && args.iter().all(|argument| self.expression(argument))
+                    && args.iter().all(|argument| {
+                        self.expression(argument) || (builtin_len && self.receiver_field(argument))
+                    })
             }
             _ => false,
         }
@@ -1873,13 +2591,16 @@ impl BodyShape<'_> {
         }
     }
 
-    /// Whether the recorded type of `expr` is a closed scalar.
+    /// Whether the recorded type of `expr` is a closed scalar. With no facts
+    /// yet, the syntax alone never rules a type out.
     fn scalar(&self, expr: &Expr) -> bool {
         let id = self.occurrence(expr);
-        self.facts
-            .expression_types
-            .iter()
-            .any(|(site, ty)| *site == id && closed_scalar_or_literal(ty))
+        self.facts.is_none_or(|facts| {
+            facts
+                .expression_types
+                .iter()
+                .any(|(site, ty)| *site == id && closed_scalar_or_literal(ty))
+        })
     }
 }
 

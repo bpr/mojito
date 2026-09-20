@@ -336,39 +336,83 @@ verification mode and timing notes off. These are single observations for
 comparing counts, not medians, and are not comparable with the release
 figures above.
 
-| Program | Total before | Total after | Arena builds | Clone body inferences | Instances derived |
-|---|---:|---:|---:|---:|---:|
-| `benchmarks/compile/hello.mojo` | 10.58 s | 9.90 s | 3 to 1 | 3828 | 0 |
-| `benchmarks/compile/stdlib_heavy.mojo` | 17.83 s | 16.68 s | 3 to 1 | 6122 | 0 |
-| `benchmarks/compile/generic.mojo` | 11.10 s | 10.55 s | 3 to 1 | 4324 to 4308 | 16 |
-| `benchmarks/compile/tuple.mojo` | 10.76 s | 10.02 s | 3 to 1 | 4038 | 0 |
-| `benchmarks/compile/tstring.mojo` | 10.78 s | 10.08 s | 3 to 1 | 3948 | 0 |
+| Program | Total before | With one arena build | Arena builds |
+|---|---:|---:|---:|
+| `benchmarks/compile/hello.mojo` | 10.58 s | 9.90 s | 3 to 1 |
+| `benchmarks/compile/stdlib_heavy.mojo` | 17.83 s | 16.68 s | 3 to 1 |
+| `benchmarks/compile/generic.mojo` | 11.10 s | 10.55 s | 3 to 1 |
+| `benchmarks/compile/tuple.mojo` | 10.76 s | 10.02 s | 3 to 1 |
+| `benchmarks/compile/tstring.mojo` | 10.78 s | 10.08 s | 3 to 1 |
 
-Body inference visits are summed over every check pass of one compilation:
-Hello World runs three discovery rounds of two transfer passes each. Per pass
-it infers about 640 clone bodies, 240 template bodies, and 7 plain ones, and
-source validation classes 436 declarations as surviving trait-bound
-templates, 52 as concrete-only, and none as validated keyed.
+The saving is the arena. `CheckedProgram::new` cost about 0.49 s per round,
+0.43 s of it building checked expressions, and two of three builds are gone.
 
-What the numbers say:
+### Body inference by kind
 
-- The saving is the arena. `CheckedProgram::new` cost about 0.49 s per round,
-  0.43 s of it building checked expressions, and two of three builds are gone.
-- Derivation covers no bundled-library body. The library's generic code is
-  struct methods, whose clones are not traced, and its compile-time control
-  flow is in `Tuple` and `Variant`, which are concrete-only. `generic.mojo` is
-  the one benchmark with covered user templates.
-- The remaining cost is body inference of uncovered clones, about one second
-  per transfer pass. `docs/roadmap.md` section 1 carries the entries that
-  attack it, and `docs/notes/instantiation-from-template.md` is the design
-  record.
+Summed over every check pass of one compilation (three discovery rounds of two
+transfer passes each). A body is *generated* when the elaborator lists it
+(`GeneratedDeclarations`) or it carries an explicit receiver type. The first
+version of this counter tested for a `$` in the name, which a module-qualified
+source name such as `__module$std$string$String` carries too. It therefore
+reported 3828 "clone" inferences for Hello World, most of them methods of
+ordinary bundled structs. The figures below replace it.
+
+| Program | Plain | Template | Generated | Instance-clone checks | Derived | Template bodies reused |
+|---|---:|---:|---:|---:|---:|---:|
+| `hello.mojo` | 2100 | 1801 | 1320 | 0 | 0 | 95 |
+| `stdlib_heavy.mojo` | 2100 | 1831 | 3360 | 2254 | 242 | 95 |
+| `generic.mojo` | 2118 | 1803 | 1746 | 474 | 70 | 105 |
+
+- Hello World mints no per-instantiation method clones: a program without its
+  own instantiations has none. Its generated bodies are members of structs the
+  elaborator specialized whole (`Tuple$…`, the `DType`-keyed ranges, the
+  hasher) and per-call clones, all from concrete-only templates.
+- `stdlib_heavy.mojo` checks an instance clone 2254 times and derives 242 of
+  them, 10.7%. Wall time is unchanged within noise (16.9 to 17.1 s): the
+  bodies that derive today are the smallest ones.
+
+### Census of method bodies (`stdlib_heavy.mojo`, last discovery round, one pass)
+
+`--timings` reports, per generic body, everything that keeps it from being
+captured (`template_census.*`; `MOJITO_TIMING_NOTES=1` names each body).
+
+| | Bodies | Capturable with today's recipes |
+|---|---:|---:|
+| Generic method templates | 302 | 97 |
+| Per-instantiation clones | 392 | 42 |
+
+What blocks the clone bodies, by how many bodies each reason appears in:
+
+| Reason | Bodies | Sole blocker of |
+|---|---:|---:|
+| `DiscardedReferenceResults` | 235 | 18 |
+| `SelectedCalls` beyond a trivial contract | 148 | 15 |
+| `ConstructionImmutableBinders` | 103 | 23 |
+| adjustment `PointerOffset` | 85 | 0 |
+| adjustment `PointerStorageTake` | 70 | 4 |
+| `ReferenceValueUses` | 60 | 9 |
+| a callee effect summary that is not empty | 39 | 0 |
+| adjustment `PointerStorageDestroy` | 38 | 0 |
+| adjustment `ReferenceResult` | 37 | 0 |
+
+The best recipe sets by how many clone bodies they would make capturable:
+one table, 54 (`ConstructionImmutableBinders`); two, 107
+(`DiscardedReferenceResults`, `SelectedCalls`); three, 137 (both plus
+`ConstructionImmutableBinders`); five, 190 (those plus `PointerOffset` and
+`PointerStorageTake`). Capturable is necessary, not sufficient: a body also
+has to be inside a class whose soundness argument covers its syntax.
+
+The remaining cost is body inference of uncovered bodies, about one second per
+transfer pass. `docs/roadmap.md` section 1 carries the entries that attack it,
+and `docs/notes/instantiation-from-template.md` is the design record.
 
 The counters are `body_inference.{plain,template,clone}`,
+`body_sites.instance_clone`,
 `templates.{surviving_trait_bound,validated_keyed,concrete_only,validation_aborted}`,
 `template_facts_recorded`, `template_capture_incomplete.*`,
 `template_derivations.{installed,ineligible,verified,overload_rebinding}`,
-`template_bodies.reused`, and `arena_builds`. `MOJITO_TIMING_NOTES=1` names
-each declaration.
+`template_bodies.reused`, `template_census.*`, and `arena_builds`.
+`MOJITO_TIMING_NOTES=1` names each declaration.
 
 ## Where to look first
 

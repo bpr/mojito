@@ -10,7 +10,9 @@
 //!
 //! The design record is `docs/notes/instantiation-from-template.md`.
 
-use crate::checked::{EffectFacts, GenericInstantiation, SemanticAdjustment};
+use crate::checked::{
+    CheckedCallBoundary, CheckedCallContract, EffectFacts, GenericInstantiation, SemanticAdjustment,
+};
 use mojito_common::token::{Span, SyntaxId};
 use mojito_types::types::{ParamDecl, Ty};
 
@@ -237,6 +239,48 @@ pub fn derive_adjustment(
     }
 }
 
+/// Whether a method call's contract holds nothing an instance could change
+/// but its target.
+///
+/// That is a call with no arguments, on a plain read receiver, that neither
+/// raises, adapts its result, returns a reference, captures, nor carries
+/// compile-time parameters, and whose result is a closed type. Every field is
+/// named, so a new one must be given a rule here before this crate builds.
+pub fn trivial_method_contract(contract: &CheckedCallContract) -> bool {
+    let CheckedCallContract {
+        target: _,
+        raises,
+        result_ty,
+        result_adapter,
+        receiver_requires_place,
+        receiver_elided,
+        receiver_convention,
+        arguments,
+        captures,
+        reference_result,
+        parameter_arguments,
+        param_decls,
+        boundary:
+            CheckedCallBoundary {
+                arguments: boundary_arguments,
+                invalidations,
+            },
+    } = contract;
+    raises.is_none()
+        && !mojito_types::types::is_symbolic(result_ty)
+        && result_adapter.is_none()
+        && !receiver_requires_place
+        && !receiver_elided
+        && receiver_convention.is_none()
+        && arguments.is_empty()
+        && captures.is_empty()
+        && reference_result.is_none()
+        && parameter_arguments.is_empty()
+        && param_decls.is_empty()
+        && boundary_arguments.is_empty()
+        && invalidations.is_empty()
+}
+
 /// Why a body's facts cannot be derived, so its instances are checked as
 /// clones. A reason is never a verdict on the program: a failed constraint is
 /// an error, not a fallback.
@@ -322,6 +366,10 @@ pub enum TemplateClass {
     /// checked once; an instance inherits the facts of the arms the
     /// elaborator selected and owes the `rebind` equalities they hold.
     ScalarBranches,
+    /// A method of a generic struct with a plain read `self` and no binders
+    /// of its own, returning a scalar over closed scalars, runtime
+    /// parameters, and reads of `self`'s scalar fields.
+    MethodScalarBody,
 }
 
 /// Whether a template's facts may stand in for a clone's check.
@@ -360,6 +408,8 @@ pub struct TemplateInvalidation {
 pub enum TemplateOwner {
     /// The declaration's runtime parameter at this index.
     Param(usize),
+    /// A method's `self`.
+    Receiver,
     /// The n-th local the body declares, in checking order.
     Local(u32),
     /// A module-scope binding, by name. An instance's call may name a clone
@@ -444,6 +494,15 @@ pub struct CheckedBodyFacts {
     /// Calls of the built-in `len`, which an instance realizes against its
     /// concrete argument type.
     pub builtin_len_calls: Vec<OccurrenceId>,
+    /// The contract of each method call. Only a [`trivial_method_contract`]
+    /// derives: an instance then realizes its target alone.
+    pub selected_calls: Vec<(OccurrenceId, CheckedCallContract)>,
+    /// Every generic-struct application the body reached as a constructor
+    /// target or a method-call receiver, in checking order and before any
+    /// filter. An instance records the substituted applications itself, which
+    /// is what mints the instances only its body reaches. They are not keyed
+    /// by occurrence, so a class that drops occurrences must hold none.
+    pub struct_applications: Vec<(String, Vec<mojito_types::types::TyArg>)>,
     pub rebind_assertions: Vec<(OccurrenceId, RebindAssertion)>,
     /// Places copied at a consuming position. An instance owes the copy: its
     /// concrete type must be implicitly copyable.
@@ -458,6 +517,175 @@ pub struct CheckedBodyFacts {
 }
 
 impl CheckedBodyFacts {
+    /// The fields in which this (derived) bundle differs from an `other`
+    /// (inferred) one, each with both values: what verification mode reports.
+    pub fn difference(&self, other: &Self) -> String {
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        if self.occurrences != other.occurrences {
+            let _ = writeln!(
+                out,
+                " occurrences:\n  derived:  {:?}\n  inferred: {:?}",
+                self.occurrences, other.occurrences
+            );
+        }
+        if self.expression_types != other.expression_types {
+            let _ = writeln!(
+                out,
+                " expression_types:\n  derived:  {:?}\n  inferred: {:?}",
+                self.expression_types, other.expression_types
+            );
+        }
+        if self.expression_place_types != other.expression_place_types {
+            let _ = writeln!(
+                out,
+                " expression_place_types:\n  derived:  {:?}\n  inferred: {:?}",
+                self.expression_place_types, other.expression_place_types
+            );
+        }
+        if self.binding_types != other.binding_types {
+            let _ = writeln!(
+                out,
+                " binding_types:\n  derived:  {:?}\n  inferred: {:?}",
+                self.binding_types, other.binding_types
+            );
+        }
+        if self.expression_bindings != other.expression_bindings {
+            let _ = writeln!(
+                out,
+                " expression_bindings:\n  derived:  {:?}\n  inferred: {:?}",
+                self.expression_bindings, other.expression_bindings
+            );
+        }
+        if self.statement_bindings != other.statement_bindings {
+            let _ = writeln!(
+                out,
+                " statement_bindings:\n  derived:  {:?}\n  inferred: {:?}",
+                self.statement_bindings, other.statement_bindings
+            );
+        }
+        if self.expression_effects != other.expression_effects {
+            let _ = writeln!(
+                out,
+                " expression_effects:\n  derived:  {:?}\n  inferred: {:?}",
+                self.expression_effects, other.expression_effects
+            );
+        }
+        if self.operation_adjustments != other.operation_adjustments {
+            let _ = writeln!(
+                out,
+                " operation_adjustments:\n  derived:  {:?}\n  inferred: {:?}",
+                self.operation_adjustments, other.operation_adjustments
+            );
+        }
+        if self.generic_instantiations != other.generic_instantiations {
+            let _ = writeln!(
+                out,
+                " generic_instantiations:\n  derived:  {:?}\n  inferred: {:?}",
+                self.generic_instantiations, other.generic_instantiations
+            );
+        }
+        if self.overload_targets != other.overload_targets {
+            let _ = writeln!(
+                out,
+                " overload_targets:\n  derived:  {:?}\n  inferred: {:?}",
+                self.overload_targets, other.overload_targets
+            );
+        }
+        if self.call_parameters != other.call_parameters {
+            let _ = writeln!(
+                out,
+                " call_parameters:\n  derived:  {:?}\n  inferred: {:?}",
+                self.call_parameters, other.call_parameters
+            );
+        }
+        if self.borrowed_read_call_places != other.borrowed_read_call_places {
+            let _ = writeln!(
+                out,
+                " borrowed_read_call_places:\n  derived:  {:?}\n  inferred: {:?}",
+                self.borrowed_read_call_places, other.borrowed_read_call_places
+            );
+        }
+        if self.read_temporary_arguments != other.read_temporary_arguments {
+            let _ = writeln!(
+                out,
+                " read_temporary_arguments:\n  derived:  {:?}\n  inferred: {:?}",
+                self.read_temporary_arguments, other.read_temporary_arguments
+            );
+        }
+        if self.effect_free_callees != other.effect_free_callees {
+            let _ = writeln!(
+                out,
+                " effect_free_callees:\n  derived:  {:?}\n  inferred: {:?}",
+                self.effect_free_callees, other.effect_free_callees
+            );
+        }
+        if self.builtin_len_calls != other.builtin_len_calls {
+            let _ = writeln!(
+                out,
+                " builtin_len_calls:\n  derived:  {:?}\n  inferred: {:?}",
+                self.builtin_len_calls, other.builtin_len_calls
+            );
+        }
+        if self.selected_calls != other.selected_calls {
+            let _ = writeln!(
+                out,
+                " selected_calls:\n  derived:  {:?}\n  inferred: {:?}",
+                self.selected_calls, other.selected_calls
+            );
+        }
+        if self.struct_applications != other.struct_applications {
+            let _ = writeln!(
+                out,
+                " struct_applications:\n  derived:  {:?}\n  inferred: {:?}",
+                self.struct_applications, other.struct_applications
+            );
+        }
+        if self.rebind_assertions != other.rebind_assertions {
+            let _ = writeln!(
+                out,
+                " rebind_assertions:\n  derived:  {:?}\n  inferred: {:?}",
+                self.rebind_assertions, other.rebind_assertions
+            );
+        }
+        if self.copy_place_value_uses != other.copy_place_value_uses {
+            let _ = writeln!(
+                out,
+                " copy_place_value_uses:\n  derived:  {:?}\n  inferred: {:?}",
+                self.copy_place_value_uses, other.copy_place_value_uses
+            );
+        }
+        if self.interior_invalidations != other.interior_invalidations {
+            let _ = writeln!(
+                out,
+                " interior_invalidations:\n  derived:  {:?}\n  inferred: {:?}",
+                self.interior_invalidations, other.interior_invalidations
+            );
+        }
+        if self.unconsumed_temporaries != other.unconsumed_temporaries {
+            let _ = writeln!(
+                out,
+                " unconsumed_temporaries:\n  derived:  {:?}\n  inferred: {:?}",
+                self.unconsumed_temporaries, other.unconsumed_temporaries
+            );
+        }
+        if self.deletable_bindings != other.deletable_bindings {
+            let _ = writeln!(
+                out,
+                " deletable_bindings:\n  derived:  {:?}\n  inferred: {:?}",
+                self.deletable_bindings, other.deletable_bindings
+            );
+        }
+        if self.locals != other.locals {
+            let _ = writeln!(
+                out,
+                " locals:\n  derived:  {:?}\n  inferred: {:?}",
+                self.locals, other.locals
+            );
+        }
+        out
+    }
+
     /// A template's facts laid out over an instance's occurrences, in the
     /// instance's pre-order.
     ///
@@ -506,6 +734,8 @@ impl CheckedBodyFacts {
             // Realization recomputes these from the calls that remain.
             effect_free_callees: Vec::new(),
             builtin_len_calls: flagged(&self.builtin_len_calls),
+            selected_calls: at(&self.selected_calls, occurrences),
+            struct_applications: self.struct_applications.clone(),
             rebind_assertions: at(&self.rebind_assertions, occurrences),
             copy_place_value_uses: flagged(&self.copy_place_value_uses),
             interior_invalidations: at(&self.interior_invalidations, occurrences),
@@ -533,6 +763,8 @@ impl CheckedBodyFacts {
             + self.read_temporary_arguments.len()
             + self.effect_free_callees.len()
             + self.builtin_len_calls.len()
+            + self.selected_calls.len()
+            + self.struct_applications.len()
             + self.rebind_assertions.len()
             + self.copy_place_value_uses.len()
             + self.interior_invalidations.len()
@@ -589,14 +821,31 @@ pub struct InstanceTrace {
 /// so neither is a cache key.
 #[derive(Debug, Default)]
 pub struct TemplateCatalog {
-    templates: Vec<CheckedTemplate>,
-    traces: Vec<(InstanceName, InstanceTrace)>,
+    templates: std::collections::HashMap<TemplateId, CheckedTemplate>,
+    traces: std::collections::HashMap<InstanceName, InstanceTrace>,
+    generated: GeneratedNames,
     /// Set when a source validation run ended without a verdict: nothing
     /// that run recorded may be certified.
     validation_aborted: bool,
     /// Compare each derived bundle with the clone check's own facts.
     verify: bool,
     stats: TemplateStats,
+}
+
+/// The declarations the elaboration being checked generated, as the
+/// elaborator reported them.
+///
+/// A generated declaration is never a template. This list is the only test:
+/// a `$` in a name proves nothing, since a module-qualified source name
+/// (`__module$std$string$String`) carries one too. A per-instantiation method
+/// clone is recognized by its explicit receiver type and is not listed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GeneratedNames {
+    pub defs: std::collections::HashSet<String>,
+    /// Structs specialized whole, every member of which is generated.
+    pub structs: std::collections::HashSet<String>,
+    /// Per-call method clones, as (owner, clone name).
+    pub methods: std::collections::HashSet<(String, String)>,
 }
 
 /// What the catalog did over one compilation, by declaration name. A name
@@ -616,14 +865,22 @@ pub struct TemplateStats {
     pub inferred_clones: Vec<String>,
     /// Derived bundles that matched the clone check in verification mode.
     pub verified: Vec<String>,
+    /// Traced clones a derivation refused, each with the reason.
+    pub refused: Vec<(String, String)>,
 }
 
-/// An elaborated clone's declaration identity: the module tag the elaborator
-/// stamped it with, and its output name.
+/// An elaborated clone's declaration identity.
+///
+/// A `def` clone is the module tag the elaborator stamped it with and its
+/// output name. A method clone also names its struct, and the byte range of
+/// its body's first statement: same-name overloads clone under one name and
+/// one tag, and `Method` carries no range of its own.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct InstanceName {
     pub module: Option<String>,
+    pub owner: Option<String>,
     pub name: String,
+    pub body: Option<Span>,
 }
 
 impl TemplateCatalog {
@@ -655,7 +912,7 @@ impl TemplateCatalog {
     /// nothing about the bodies it did reach.
     pub fn abort_validation(&mut self) {
         self.validation_aborted = true;
-        for template in &mut self.templates {
+        for template in self.templates.values_mut() {
             if template.producer == TemplateProducer::SourceValidation {
                 template.coverage =
                     TemplateCoverage::Incomplete(IncompleteReason::ValidationAborted);
@@ -674,35 +931,45 @@ impl TemplateCatalog {
     /// Record a template, replacing an earlier record of the same
     /// declaration.
     pub fn record(&mut self, template: CheckedTemplate) {
-        match self
-            .templates
-            .iter_mut()
-            .find(|existing| existing.id == template.id)
-        {
-            Some(existing) => *existing = template,
-            None => self.templates.push(template),
-        }
+        self.templates.insert(template.id.clone(), template);
     }
 
     pub fn template(&self, id: &TemplateId) -> Option<&CheckedTemplate> {
-        self.templates.iter().find(|template| template.id == *id)
+        self.templates.get(id)
     }
 
-    pub fn templates(&self) -> &[CheckedTemplate] {
-        &self.templates
+    pub fn templates(&self) -> impl Iterator<Item = &CheckedTemplate> {
+        self.templates.values()
     }
 
     /// Replace the clone traces with those of the elaboration about to be
     /// checked. Traces never outlive their elaboration: the next round names
     /// its own clones.
     pub fn set_traces(&mut self, traces: Vec<(InstanceName, InstanceTrace)>) {
-        self.traces = traces;
+        self.traces = traces.into_iter().collect();
+    }
+
+    /// Replace the generated-declaration list with that of the elaboration
+    /// about to be checked.
+    pub fn set_generated(&mut self, generated: GeneratedNames) {
+        self.generated = generated;
+    }
+
+    pub fn generated_def(&self, name: &str) -> bool {
+        self.generated.defs.contains(name)
+    }
+
+    /// Whether `owner.method` is generated: a member of a struct specialized
+    /// whole, or a per-call clone.
+    pub fn generated_method(&self, owner: &str, method: &str) -> bool {
+        self.generated.structs.contains(owner)
+            || self
+                .generated
+                .methods
+                .contains(&(owner.to_string(), method.to_string()))
     }
 
     pub fn trace(&self, instance: &InstanceName) -> Option<&InstanceTrace> {
-        self.traces
-            .iter()
-            .find(|(name, _)| name == instance)
-            .map(|(_, trace)| trace)
+        self.traces.get(instance)
     }
 }

@@ -267,11 +267,20 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `explicit_destroy::check` reuses for its `DestroyScope::ValidatedTemplates`
   run.
 - `checker/template_facts.rs` owns checked templates on the checker side.
-  `Checker::check_def_body` is every `def` body's entry: it serves a clone
+  `Checker::check_def_body` is every `def` body's entry and
+  `check_method_body` every struct method's (from
+  `declarations.rs:bind_and_check_method`, under `Checker::method_site`); both
+  build a `BodySite` for `check_body`, which serves a clone
   from a certified template (`derivable_facts`, `realize_instance_facts`,
   `install_body_facts`), otherwise infers the body, and retains a
   module-level generic body's facts (`capture_body_facts`,
-  `template_certificate`, `record_template`). `span_table` maps every
+  `template_certificate`, `method_certificate`, `record_template`).
+  `realize_method_call` retargets a trivial method call through
+  `generics.rs:instance_method_clone`, `realize_builtin_len` takes the `len`
+  witness, and `census` reports what keeps each generic body from being
+  captured. `struct_application_frames`, pushed in
+  `generics.rs:record_struct_instantiation`, is how a template keeps the
+  struct applications its instances must request. `span_table` maps every
   `FactTable` onto the checker's storage, `BodyShape` is the grammar of the
   derivation classes, and `overload_rebinding_only` is the one difference
   verification mode accepts. `note_effect_query` records the callee effect
@@ -280,7 +289,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `OccurrenceId`, `TemplateObligation`, and the exhaustive
   `derive_adjustment`) is `crates/mojito-checked/src/templates.rs`. The
   declaration-level trace is `comptime.rs`'s `DefInstanceTrace`, recorded by
-  `specialize.rs:generate_def_spec`; the occurrence-level trace is
+  `specialize.rs:generate_def_spec`, and `MethodInstanceTrace`, recorded by
+  `generate_instance_clones`; `GeneratedDeclarations` lists what an
+  elaboration generated; the occurrence-level trace is
   `ast.rs:rekey_syntax`'s `SyntaxOrigins` plus `comptime.rs:rebuilt`.
   `compiler.rs:instance_traces` carries one to the other. The design record
   is `docs/notes/instantiation-from-template.md`.

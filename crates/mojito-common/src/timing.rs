@@ -15,6 +15,7 @@
 //! program output stays byte-identical. `MOJITO_TIMING_NOTES=1` adds
 //! `note\t<path>\t<kind>\t<subject>` lines naming individual declarations.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -52,6 +53,21 @@ pub fn round(name: &'static str, n: usize) -> Span {
 #[inline]
 pub fn count(name: &'static str, n: u64) {
     if enabled() {
+        EVENTS.with(|events| {
+            events.borrow_mut().push(Event::Count {
+                name: Cow::Borrowed(name),
+                n,
+            });
+        });
+    }
+}
+
+/// [`count`] under a name built at run time, such as one per fact table.
+/// `name` is called only when timing is on.
+#[inline]
+pub fn count_named(name: impl FnOnce() -> String, n: u64) {
+    if enabled() {
+        let name = Cow::Owned(name());
         EVENTS.with(|events| events.borrow_mut().push(Event::Count { name, n }));
     }
 }
@@ -181,7 +197,7 @@ enum Event {
         at: Instant,
     },
     Count {
-        name: &'static str,
+        name: Cow<'static, str>,
         n: u64,
     },
     Note {

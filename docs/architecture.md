@@ -1273,6 +1273,10 @@ certification, realization, and installation are
 and its soundness argument, is
 [`docs/notes/instantiation-from-template.md`](notes/instantiation-from-template.md).
 
+- **What is a template.** A module-level generic `def`, or a method of a
+  generic struct. A method has no source range of its own, so it is named by
+  its struct and the range of its body's first statement. Both reach the
+  mechanism through one `BodySite` (`check_def_body`, `check_method_body`).
 - **One producer per body.** The executable check retains the template of a
   trait-bound generic that survives elaboration. Source validation retains
   the template of a body it checks and the elaborator then stubs.
@@ -1284,14 +1288,21 @@ and its soundness argument, is
   keep the clone check.
 - **The trace is explicit.** The elaborator records which prepared declaration
   each `def` clone instantiates and what each compile-time parameter became
-  (`DefInstanceTrace`). A clone node keeps the syntax identity of the template
+  (`DefInstanceTrace`), the same for each per-instantiation method clone
+  (`MethodInstanceTrace`), and everything it generated
+  (`GeneratedDeclarations`). Only that list, or a clone's explicit receiver
+  type, says a declaration is generated: a module-qualified source name
+  carries a `$` too. A clone node keeps the syntax identity of the template
   node it was copied from, and `rekey_syntax` returns the identity each
   re-keyed node had before (`SyntaxOrigins`). No correspondence is inferred
   from a mangled name.
 - **An instance still owes its obligations.** Realization substitutes, then
   discharges the `rebind` equalities, the implicit copies, the clone lookup
-  of each retained application, the built-in `len` witness, and the empty
-  effect summaries. A failed obligation refuses the derivation, so the clone
+  of each retained application, the built-in `len` witness, the retarget of
+  each trivial method call (`instance_method_clone`), and the empty effect
+  summaries. It also records the generic-struct applications the body
+  reaches, substituted, so a derived clone requests the instances an inferred
+  one would. A failed obligation refuses the derivation, so the clone
   check reports it in its own words. A refusal never accepts a program.
 - **Selection is bound once.** A derived instance inherits the overload its
   template selected and never ranks the set again, as the pinned Mojo binds a

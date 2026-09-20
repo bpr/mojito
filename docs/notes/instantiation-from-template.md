@@ -27,22 +27,29 @@ HIR or MIR.
 | Template vocabulary: `TemplateId`, `CheckedTemplate`, `CheckedBodyFacts`, `TemplateCoverage`, `TemplateClass`, `TemplateObligation`, `TemplateCatalog`, `InstanceTrace`, `OccurrenceId`, `FactTable` | `crates/mojito-checked/src/templates.rs` |
 | Exhaustive `SemanticAdjustment` policy | `templates.rs:derive_adjustment` |
 | Capture, certificate, realization, installation, verification | `crates/mojito-checker/src/checker/template_facts.rs` |
-| Body entry point | `template_facts.rs:Checker::check_def_body`, called from `statements.rs:check_def_inner` |
+| Body entry points | `template_facts.rs:Checker::check_def_body` (from `statements.rs:check_def_inner`) and `check_method_body` (from `declarations.rs:bind_and_check_method`), both over one `BodySite` |
 | Occurrence-level trace | `crates/mojito-ast/src/ast.rs:rekey_syntax` returning `SyntaxOrigins` |
-| Declaration-level trace | `crates/mojito-comptime/src/comptime.rs:DefInstanceTrace`, recorded by `specialize.rs:generate_def_spec` |
+| Declaration-level trace | `crates/mojito-comptime/src/comptime.rs:DefInstanceTrace` (`specialize.rs:generate_def_spec`) and `MethodInstanceTrace` (`generate_instance_clones`) |
+| What the elaborator generated | `comptime.rs:GeneratedDeclarations`, carried as `templates.rs:GeneratedNames` |
 | Statement identity through elaboration | `comptime.rs:rebuilt` |
 | Catalog lifetime, trace hand-over, one finalization | `src/compiler.rs:compile_linked`, `instance_traces` |
 | Discovery without the arena | `crates/mojito-checked/src/checked.rs:DiscoveryResult`, `checker.rs:check_program_for_discovery` |
 
 ## What a checked template is
 
+A template is a module-level generic `def` or a method of a generic struct. A
+`Method` has no source range of its own, so a method template is identified by
+its module, its struct, its name, and the range of its body's first statement
+(`TemplateId::owner`); two overloads of one name are two templates.
+
 A `CheckedTemplate` is one generic declaration's parameter declarations, the
 facts its single body inference recorded, a coverage certificate, and the
 obligations every instance still owes. The facts are keyed by the body's own
 syntax occurrences, never by a checker run's spans, and bindings are named in
-template-local terms (`TemplateOwner`): a runtime parameter by index, a local
-by declaration order, a module-scope declaration by name. Checker owner
-identities are per-run counters and mean nothing in another run.
+template-local terms (`TemplateOwner`): a runtime parameter by index, a
+method's `self`, a local by declaration order, a module-scope declaration by
+name. Checker owner identities are per-run counters and mean nothing in
+another run.
 
 There is one producer per body:
 
@@ -68,9 +75,27 @@ them:
 - A table that grew by more than the body's own occurrences explain refuses it
   (`FactOutsideBody`): some fact was keyed by synthesized syntax.
 - Growth in a store that is not keyed by occurrence refuses it
-  (`UnkeyedFact`): struct instantiations, hash leaf types, nested declaration
-  types and effects, transferred origins, deletable declarations.
+  (`UnkeyedFact`): hash leaf types, nested declaration types and effects,
+  transferred origins, deletable declarations.
 - A callee effect summary that was read and was not empty refuses it.
+
+Two things a body reaches are not facts at an occurrence, so capture reads
+them from a per-body frame instead of from table growth. The frames exist only
+for a body that will be captured.
+
+- **Effect summaries read** (`effect_query_frames`). The observation map is
+  first-seen per check, so its growth would miss the second reader of a callee.
+- **Generic-struct applications reached** (`struct_application_frames`,
+  pushed in `generics.rs:record_struct_instantiation` before its filters). A
+  template records `List[T]`, which discovery ignores as open, where its clone
+  records `List[Int]`, which mints that instance. A derived clone therefore
+  substitutes the template's applications and records them itself, under its
+  own source. They are kept as a set: recording is idempotent, and a clone
+  check reaches a retargeted receiver's application twice.
+
+Capturing walks every fact table for every occurrence, so the syntax is judged
+first (`certificate(site, None)`): a generic declaration outside every class is
+retained as such without being captured.
 
 A new fact table must be added to `FactTable`, which forces a policy decision
 in `span_table`, `derivable_table`, and `remove_occurrence_facts`.
@@ -81,9 +106,9 @@ has no wildcard.
 Tables with a recipe today: expression types, place types, binding types,
 expression and statement bindings, expression effects, operation adjustments
 (`MaterializeLiteral` only), generic instantiations, overload targets, call
-parameters, borrowed read call places, read temporary arguments, unconsumed
-temporaries, deletable bindings, copied places, interior invalidations, and
-rebind assertions.
+parameters, selected calls (a `trivial_method_contract` only), borrowed read
+call places, read temporary arguments, unconsumed temporaries, deletable
+bindings, copied places, interior invalidations, and rebind assertions.
 
 ## The expansion trace
 
@@ -95,6 +120,19 @@ symbol.
   each baked type parameter, each folded value parameter, and the parameters
   the clone still declares. The driver converts these to `InstanceTrace` and
   hands them to the catalog before each check.
+- **Declaration level, methods.** A per-instantiation clone is appended to its
+  template struct's own method list (`get$y3:Int` on `Box`, with
+  `Method::self_ty = Some(Box[Int])`). `generate_instance_clones` records a
+  `MethodInstanceTrace`, and the clone is named by its struct, its name, its
+  body's source tag, and the range of its body's first statement
+  (`InstanceName`): same-name overloads clone under one name and one tag. A
+  per-call clone, which also bakes the method's own parameters, leaves no
+  trace yet.
+- **What was generated.** `GeneratedDeclarations` lists every `def` clone,
+  every struct specialized whole (`Tuple$…`), and every per-call method clone.
+  That list, or an explicit receiver type, is the only test for "generated": a
+  `$` in a name proves nothing, since a module-qualified source name
+  (`__module$std$string$String`) carries one too.
 - **Occurrence level.** A clone node keeps the syntax identity of the template
   node it was copied from. `rekey_syntax` makes identities unique for the
   final tree and now returns `SyntaxOrigins`, the identity each re-keyed node
@@ -127,6 +165,7 @@ bound. `BodyShape` is the grammar; `template_certificate` is the argument.
 | `ClosedScalarBody` | `return`s of closed scalar expressions | The body names nothing, so every fact is closed and inherited unchanged. |
 | `FixedCalls` | plus direct calls of module-scope functions, passing literals, parameters, and further such calls | Selection is retained. No conversion, copy, or adjustment was recorded, so every argument matched its parameter exactly and still does after substitution. Borrows depend on slots and conventions, not types. The callee's effect summaries were empty and are re-read. |
 | `BoundedOperations` | plus the built-in `len` over a parameter whose bound promises a length | The bound proved the call. The instance owes the witness, which `len_result_for_type` finds, and takes the read-in-place fact `infer_len` adds for a nominal struct. |
+| `MethodScalarBody` | a method with a plain read `self` and no binders of its own, on a struct of plain type parameters: `return`s over closed scalars, parameters, reads of `self`'s scalar fields, the built-in `len` over a field, and argument-free method calls on `self` or a field with a trivial contract | A field read has the field's declared type under the struct's arguments in a template and a clone alike. The generated-declaration leniency a clone's name switches on bears on origin-bearing return annotations only, and the result is a scalar. A trivial call can change per instance only in its target. |
 | `ScalarBranches` | source-validated bodies: `comptime if` arms, scalar `comptime for` loops, scalar locals and assignments, erased `rebind`s | Every arm was checked once. The instance keeps the occurrences the elaborator selected. |
 
 Locals are admitted only in a keyed body and never inside a `comptime for`: a
@@ -137,8 +176,12 @@ recipe mints those yet. The loop variable may only key a condition.
 
 `realize_instance_facts` substitutes and then discharges, in this order:
 
-1. **Substitution.** Each baked type parameter stands for the source type the
-   elaborator wrote, resolved as the clone's own annotations are
+1. **Substitution.** For a `def` clone, each baked type parameter stands for
+   the source type the elaborator wrote, resolved as the clone's own
+   annotations are. For a method clone it is the arguments of the receiver
+   type the checker already resolved for it: the raw request passes through
+   origin erasure and literal defaulting before a clone is minted, so only the
+   resolved receiver says what `Self.T` is inside it
    (`instance_substitution`). A callee's declared parameter types are in the
    callee's binder scope and are never substituted (`CallParameterFact`).
 2. **`rebind` equalities.** Source validation takes `Dest` on faith. The
@@ -153,8 +196,21 @@ recipe mints those yet. The loop variable may only key a condition.
    closed application already has a clone (`existing_def_clone`). When the
    elaborator already retargeted the call, the written name must be exactly
    that clone, and the call takes the clone's own declared parameters.
-6. **Built-in `len`.** See `BoundedOperations` above.
-7. **Effect summaries.** Every callee's transfer and call-through summaries
+6. **Built-in `len`.** See `BoundedOperations` above. A borrow the template
+   already recorded for the operand (a reference-valued one) is kept; only the
+   nominal-place rule can newly hold for an instance.
+7. **Trivial method calls.** `trivial_method_contract` names every field of
+   `CheckedCallContract`: no arguments, a plain read receiver, no raise, no
+   result adapter, no reference result, no captures, no compile-time
+   parameters, a closed result. `realize_method_call` then repeats the clone
+   check's retarget, `instance_method_clone`, and writes the clone as the
+   call's target, its overload target, and its effect-summary key. The callee
+   must be the one method of its name, with no binders and no availability
+   condition. An instance that has clones but not this one (withheld, or a
+   collapsed overload family) refuses.
+8. **Struct applications.** Substituted, then recorded by installation under
+   the body's own source.
+9. **Effect summaries.** Every callee's transfer and call-through summaries
    must still be empty. Installation records the same empty observation a
    clone check would, so the transfer fixpoint re-runs if one grows.
 
@@ -231,35 +287,50 @@ call, as before.
 `templates.{surviving_trait_bound,validated_keyed,concrete_only,validation_aborted}`,
 `template_facts_recorded`, `template_fact_entries`,
 `template_capture_incomplete.*`, `template_derivations.{installed,ineligible,verified,overload_rebinding}`,
-`template_bodies.reused`, and `arena_builds`. `MOJITO_TIMING_NOTES=1` adds
-`note` lines naming each declaration, and what a traced clone recorded.
+`template_bodies.reused`, `body_sites.instance_clone`, `template_census.*`, and
+`arena_builds`. `MOJITO_TIMING_NOTES=1` adds `note` lines naming each
+declaration, what a generic body recorded, and what keeps it from being
+captured. `TemplateStats::refused` carries each refusal and its reason.
+A verification mismatch names only the fields that differ
+(`CheckedBodyFacts::difference`).
 
 ## Measured coverage, 2026-09-20
 
-Debug profile, one run each, verification off. Body inference visits are
-summed over every check pass of the compilation.
+`docs/performance.md` (*Checked templates and the discovery result*) has the
+tables. In short, for one debug-profile run each:
 
-| Program | Total before | Total after | Arena builds | Clone inferences | Derived |
-|---|---:|---:|---:|---:|---:|
-| `benchmarks/compile/hello.mojo` | 10.58 s | 9.90 s | 3 to 1 | 3828 | 0 |
-| `benchmarks/compile/stdlib_heavy.mojo` | 17.83 s | 16.68 s | 3 to 1 | 6122 | 0 |
-| `benchmarks/compile/generic.mojo` | 11.10 s | 10.55 s | 3 to 1 | 4324 to 4308 | 16 |
+- Building the arena once saves about 6% (Hello World 10.58 s to 9.90 s).
+- `stdlib_heavy.mojo` checks a per-instantiation method clone 2254 times per
+  compilation and derives 242 of them (10.7%); `generic.mojo` derives 70 of
+  474. Wall time is unchanged within noise, because the bodies that derive
+  today are the smallest.
+- Hello World mints no per-instantiation clones at all. Its generated bodies
+  are members of structs specialized whole and per-call clones, from
+  concrete-only templates.
+- The census (`template_census.*`) says three recipes —
+  `DiscardedReferenceResults`, non-trivial `SelectedCalls`, and
+  `ConstructionImmutableBinders` — would make 137 of 392 clone bodies
+  capturable, and adding `PointerOffset` and `PointerStorageTake` 190.
 
-The time saved is the arena, not derivation. The bundled library has no
-module-level generic function in an enabled class: its generic code is struct
-methods, whose clones are not traced yet, and its compile-time control flow
-lives in `Tuple` and `Variant`, which are concrete-only. Derivation pays off
-in user code today and is the mechanism the remaining roadmap entries widen.
+An earlier version of the `body_inference.clone` counter tested for a `$` in a
+name and so counted ordinary bundled structs' methods as clones. The figures
+it produced (3828 for Hello World) were wrong and are withdrawn.
 
 ## What is not covered
 
 Each of these keeps the clone check. The roadmap carries one entry per item.
 
-- Struct method clones, which are most of the library's clone inferences.
+- A method body beyond `MethodScalarBody`: a non-scalar result, a `mut` or
+  consuming receiver, a lifecycle method, a call with arguments, a local, a
+  branch, or a loop.
+- Per-call method clones and members of a struct specialized whole, which
+  leave no trace.
 - Bodies with locals, control flow, or non-scalar results in a surviving
-  trait-bound template.
+  trait-bound `def` template.
 - Any call that records a conversion, an adjustment, an origin, a transfer, or
-  a selected method contract.
+  a contract that is not trivial. A `T: Bound` receiver is a re-selection in a
+  clone (conformer union in the template, concrete dispatch in the clone), not
+  a substitution.
 - A folded value parameter or loop variable that survives into an instance.
 - A local declared inside a `comptime for`.
 - Packs, `DType` and vector parameters, reflection, struct-valued parameters,
@@ -268,7 +339,7 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
 The persistent elaboration session and the expansion worklist (plan slices 8a
 and 8b) did not land. Measurement says why: the elaborator's per-round
 invariant state costs about 5 ms, and elaboration is about 2.5% of a
-compilation. The cost is body inference of uncovered clones in every transfer
+compilation. The cost is body inference of uncovered bodies in every transfer
 round, which a scheduler does not reduce.
 
 ## Re-homing

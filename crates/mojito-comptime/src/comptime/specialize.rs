@@ -54,6 +54,8 @@ impl Elab<'_> {
                 stub_reaching_structs: HashSet::new(),
                 unserved_template_uses: Vec::new(),
                 def_traces: Vec::new(),
+                method_traces: Vec::new(),
+                generated: super::GeneratedDeclarations::default(),
             });
         }
         if !tuple_requests.is_empty() && !self.struct_template("Tuple") {
@@ -386,6 +388,8 @@ impl Elab<'_> {
                 .collect(),
             unserved_template_uses,
             def_traces: Vec::new(),
+            method_traces: Vec::new(),
+            generated: super::GeneratedDeclarations::default(),
         })
     }
 
@@ -745,6 +749,12 @@ impl Elab<'_> {
             // after all such calls have been rewritten.
             if job.whole_pack_abi {
                 select_top_level_whole_pack_abi(&mut spec)?;
+            }
+            {
+                let mut generated = self.generated.borrow_mut();
+                if let StmtKind::Struct { name, .. } = &spec.kind {
+                    generated.structs.push(name.clone());
+                }
             }
             mono.generated.entry(job.orig).or_default().push(spec);
         }
@@ -1143,6 +1153,7 @@ impl Elab<'_> {
         mojito_ast::ast::stamp_source(std::slice::from_mut(&mut specialization), &tag);
         let mut type_bindings: Vec<_> = type_substitutions.into_iter().collect();
         type_bindings.sort_by(|left, right| left.0.cmp(&right.0));
+        self.generated.borrow_mut().defs.push(output_name.clone());
         self.def_traces.borrow_mut().push(super::DefInstanceTrace {
             clone_module: tag,
             clone_name: output_name,
@@ -2416,6 +2427,28 @@ impl Elab<'_> {
             };
             clone.where_clauses.clear();
             clone.self_ty = Some(receiver.clone());
+            if let Some(first) = method.body.first() {
+                self.method_traces
+                    .borrow_mut()
+                    .push(super::MethodInstanceTrace {
+                        owner: name.to_string(),
+                        owner_module: template.module.clone(),
+                        clone_module: super::clone_source_tag(
+                            template.module.as_deref(),
+                            name,
+                            &clone.name,
+                        ),
+                        clone_name: clone.name.clone(),
+                        template_name: method.name.clone(),
+                        body: first.span,
+                        type_bindings: bindings
+                            .iter()
+                            .filter_map(|binding| {
+                                Some((binding.name.clone(), binding.source.clone()?))
+                            })
+                            .collect(),
+                    });
+            }
             clones.push(clone);
         }
         // Overloads that differ only through the struct's parameters

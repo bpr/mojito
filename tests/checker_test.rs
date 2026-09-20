@@ -6624,12 +6624,12 @@ fn template_catalog_does_not_certify_aborted_validation() {
         "the shell-member error must be recorded as an abort"
     );
     assert!(
-        catalog.templates().iter().all(|template| !matches!(
+        catalog.templates().all(|template| !matches!(
             template.coverage,
             mojito::templates::TemplateCoverage::Certified(_)
         )),
         "an aborted run certifies nothing: {:?}",
-        catalog.templates()
+        catalog.templates().collect::<Vec<_>>()
     );
 
     let complete = "def second[flag: Bool]() -> Int:\n    comptime if flag:\n        return 1\n    else:\n        return 2\n\ndef main():\n    print(second[False]())\n";
@@ -6639,4 +6639,36 @@ fn template_catalog_does_not_certify_aborted_validation() {
     let mut catalog = mojito::templates::TemplateCatalog::default();
     mojito::checker::validate_comptime_templates_into(&prepared, &mut catalog).expect("validation");
     assert!(!catalog.validation_aborted());
+}
+
+#[test]
+fn method_templates_are_identified_by_their_struct_and_body() {
+    // A `Method` has no source range of its own, so a method template is
+    // named by its struct, its name, and the range of its body's first
+    // statement: two overloads of one name are two templates.
+    let source = "@fieldwise_init\nstruct Box[T: Copyable & Movable & Deinitable](Copyable):\n    var item: Self.T\n    var count: Int\n\n    def pick(self) -> Int:\n        return self.count\n\n    def pick(self, extra: Int) -> Int:\n        return self.count + extra\n\ndef main():\n    var b = Box(1, 2)\n    print(b.pick(), b.pick(3))\n";
+    let linked = mojito::link_source(source, std::path::Path::new("method_templates.mojo"))
+        .expect("link error");
+    let program = mojito::elaborate(linked).expect("elaborate");
+    let mut catalog = mojito::templates::TemplateCatalog::default();
+    mojito::checker::check_program_with_templates(
+        &program,
+        &std::collections::HashMap::<String, mojito::Ty>::new(),
+        &mut catalog,
+    )
+    .expect("check");
+    let picks: Vec<_> = catalog
+        .templates()
+        .filter(|template| {
+            template.id.owner.as_deref() == Some("Box") && template.id.name == "pick"
+        })
+        .collect();
+    assert_eq!(picks.len(), 2, "one template per overload");
+    assert_ne!(picks[0].id.declaration, picks[1].id.declaration);
+    assert!(picks.iter().all(|template| matches!(
+        template.coverage,
+        mojito::templates::TemplateCoverage::Certified(
+            mojito::templates::TemplateClass::MethodScalarBody
+        )
+    )));
 }

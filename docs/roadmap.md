@@ -56,8 +56,9 @@ overload's `*args` collector. The sixth step made a checked template the
 authority for the instantiations it covers: source validation and the abstract
 check retain a body's facts, the elaborator leaves a trace from each clone to
 its template, and a covered clone inherits those facts by substitution instead
-of being inferred (`docs/notes/instantiation-from-template.md`). Coverage is
-narrow on purpose, and the entries below widen it. Each task pays off
+of being inferred (`docs/notes/instantiation-from-template.md`). The seventh
+step extended that to a generic struct's per-instantiation method clones.
+Coverage is narrow on purpose, and the entries below widen it. Each task pays off
 by itself, and together they are what moving toward Mojo's shape needs.
 
 This section holds only work that moves the check order: checking a template
@@ -71,26 +72,49 @@ entry names what it depends on. Size does not move an entry up. The **Model:**
 bullet carries the complexity estimate and says whether the entry can be done
 as-is or must be planned first.
 
-- [ ] **A generic struct's method clones are inferred, never derived**
+- [ ] **Most of a generic struct's method clones are still inferred**
 
-  Problem: the checked-template mechanism covers module-level `def`s only, and
-  almost all of the bundled library's generic code is struct methods.
-  - Hello World infers 3828 clone bodies per compilation and derives none.
-    Every one is a method of a struct instance (`--timings`,
-    `body_inference.clone`).
-  - The elaborator leaves a declaration-level trace for a `def` clone only
-    (`DefInstanceTrace`, `specialize.rs:generate_def_spec`). Instance clones
-    and per-call method clones leave none.
-  - The checker serves a body from a template only in `check_def_body`.
-    `declarations.rs:check_method_inner` still calls `check_block` directly.
-  - A method template also needs `self`, the struct's own binders, and the
-    method ordinal in its identity (`TemplateId::owner` is already there).
+  Problem: a per-instantiation method clone derives from its checked template
+  only when its body is a scalar getter, and that is one clone check in ten.
+  - `benchmarks/compile/stdlib_heavy.mojo` checks an instance clone 2254 times
+    per compilation and derives 242 (`--timings`, `body_sites.instance_clone`
+    and `template_derivations.installed`). Wall time does not move yet.
+  - The covered class is `MethodScalarBody`: a plain read `self`, a scalar
+    result, reads of scalar fields, the built-in `len` over a field, and
+    argument-free method calls whose contract only the target can change
+    (`template_facts.rs:method_certificate`, `templates.rs:trivial_method_contract`).
+  - The census says which recipes to write next
+    (`docs/performance.md`, *Census of method bodies*). Three tables make 137 of
+    392 clone bodies capturable: `DiscardedReferenceResults`, `SelectedCalls`
+    beyond a trivial contract, and `ConstructionImmutableBinders`. Adding the
+    `PointerOffset` and `PointerStorageTake` adjustments makes it 190.
+  - Capturable is not derivable. Each widening also needs its class grammar
+    and the argument that no checker decision in it depends on the instance
+    without leaving a fact. Verification mode
+    (`MOJITO_VERIFY_TEMPLATE_FACTS=1`) found one such decision already, the
+    built-in `len`'s reference-operand borrow.
+  - A `mut` receiver, a non-scalar result, a local, and a branch are all
+    outside the grammar today, whatever their tables.
   - The design record is
     [`docs/notes/instantiation-from-template.md`](notes/instantiation-from-template.md).
-  - Depends on nothing. It is the entry that turns the mechanism into a
-    measurable saving.
-  - Model: Fable, plan first. It touches the elaborator's three method-clone
-    paths and the checker's method entry.
+  - Depends on the recipe entry below for anything that calls with arguments.
+  - Model: Fable, plan first. One class at a time, each with a probe.
+
+- [ ] **A per-call method clone and a whole-struct specialization leave no
+  trace**
+
+  Problem: the elaborator traces a `def` clone and a per-instantiation method
+  clone to their templates, and nothing else it generates.
+  - A per-call clone (`kind$y3:Int$y4:Bool`) also bakes the method's own
+    parameters. `specialize.rs:per_call_method_clones` has four callers and
+    records no `MethodInstanceTrace`.
+  - A member of a struct specialized whole (`Tuple$…`, a `DType`-keyed range)
+    comes from a concrete-only template, so it also waits on the pack and
+    `DType` validation entries below.
+  - Hello World's 1320 generated body inferences are all of these two kinds.
+  - Depends on the symbolic-validation entries for the whole-struct half. The
+    per-call half depends on nothing.
+  - Model: Opus, plan first, for the per-call trace.
 
 - [ ] **A call that records a contract, a conversion, or an origin has no
   derivation recipe**
