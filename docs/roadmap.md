@@ -60,22 +60,84 @@ entry names what it depends on, and an entry with no dependency sits as early
 as its size allows. The **Model:** bullet carries the complexity estimate and
 says whether the entry can be done as-is or must be planned first.
 
-- [ ] **A variadic overload the pin calls ambiguous is accepted**
+- [ ] **An implicit copy into a `var` parameter does not count in overload
+  ranking**
 
-  Problem: `g(x, s, x)` against `g[*Ts](a: Int, *rest: *Ts)` beside
-  `g[*Ts](a: Int, b: String, *rest: *Ts)` prints `3` in Mojito, while the
-  pinned Mojo reports "ambiguous call to 'g'".
-  - The same shape with `b: Int` is not ambiguous at the pin: it selects the
-    overload that binds `b`, which is the rule `variadic_absorption_rank`
-    (`checker/overload_support.rs`) implements.
-  - Literal and variable arguments behave the same, so the conversion count
-    is not what differs. The regular parameter's type is.
-  - Mojito accepts a program the pin rejects, so this is a divergence, not a
-    safe rejection.
-  - Pinned by `conformance/probes/pack_overload_string_regular_ambiguity.mojo`.
+  Problem: `h(s)` against `h(var a: String)` beside `h[T: Writable](a: T)`
+  prints `2` at the pinned Mojo and `1` in Mojito, a silent wrong answer.
+  - A place passed to a `var` parameter must be copied, and the pin ranks that
+    copy below one conversion and above the generic tie-break.
+  - An rvalue needs no copy, and both compilers then select the `var` overload.
+  - `VariadicBinding` (`checker/overload_support.rs`) already counts the copy,
+    but only between tied variadic candidates.
+  - Pinned by `conformance/probes/overload_var_copy_beside_generic.mojo`.
   - Depends on nothing.
-  - Model: Opus, plan first. The plan must find the pin's rule with more
-    probes before touching the rank.
+  - Model: Opus, plan first. A copy term in `overload_rank` reaches every
+    overloaded call with a `var` parameter, the bundled stdlib's included, so
+    the plan must bound that fallout and probe where the term sits against
+    the variadic bit and the signature length.
+
+- [ ] **A list literal beside a `List` parameter and a pack is not ambiguous**
+
+  Problem: `g(x, [1, 2], x)` against `g[*Ts](a: Int, *rest: *Ts)` beside
+  `g[*Ts](a: Int, b: List[Int], *rest: *Ts)` prints `2` in Mojito, while the
+  pinned Mojo reports "ambiguous call to 'g'".
+  - Mojito charges the literal's conversion to the second overload only. A
+    string literal is already charged on the pack side too
+    (`pack_element_conversion_count`).
+  - Charging a list literal one conversion on the pack side does not tie the
+    candidates, so the regular binding costs something else first.
+  - Mojito accepts a program the pin rejects, so this is a divergence.
+  - Pinned by `conformance/probes/pack_overload_list_literal_ambiguity.mojo`.
+  - Depends on nothing.
+  - Model: Opus, as-is.
+
+- [ ] **A place passed to a `ref` parameter may alias a pack element**
+
+  Problem: `r(x, x)` against `r[*Ts](ref b: Int, *rest: *Ts)` prints `1` in
+  Mojito, while the pinned Mojo reports "aliasing values passed mutably to 'b'
+  argument and passed immutably to 'rest' argument".
+  - The pin infers the `ref` parameter mutable from the mutable place, and a
+    pack element is held by reference.
+  - With a regular `c: Int` in place of the pack both compilers accept the
+    call, because a trivial read parameter takes a copy.
+  - Mojito accepts a program the pin rejects, so this is a divergence.
+  - Pinned by `conformance/probes/ref_argument_aliases_pack_element.mojo`.
+  - Depends on nothing.
+  - Model: Opus, plan first. The plan must say whether the within-call
+    exclusivity check or the `ref` mutability inference is what is missing.
+
+- [ ] **Two type-pack `__init__` overloads cannot be constructed**
+
+  Problem: `H(x, x, x)` for a struct with `__init__[*Ts](out self, a: Int,
+  *rest: *Ts)` beside `__init__[*Ts](out self, a: Int, b: Int, *rest: *Ts)`
+  prints `3` at the pin and fails in Mojito with "checked constructor
+  'H.__init__$ov$…' is missing from MIR".
+  - The checker selects the same constructor the pin does. The selected clone
+    never reaches MIR.
+  - The rejection is safe, but it is a VM-phase message for a program the pin
+    runs.
+  - Pinned by `conformance/probes/pack_overload_constructor_missing_mir.mojo`.
+  - Depends on nothing.
+  - Model: Opus, plan first. Free functions and methods are served from the
+    checker's recorded selection; the plan must find why constructors are not.
+
+- [ ] **A trivial value handed to a `var` parameter beside a pack is always
+  ambiguous**
+
+  Problem: `g(x, x + 1, x)` against `g[*Ts](a: Int, *rest: *Ts)` beside
+  `g[*Ts](a: Int, var b: Int, *rest: *Ts)` prints `3` at the pin, while Mojito
+  reports an ambiguous call.
+  - The pin selects the first overload for `Int(2)`, `v^`, and `True`, the
+    second for `x + 1`, and calls a bare `2` ambiguous. No rule was recovered.
+  - `VariadicBinding::bind` marks the case undecided, and an undecided tie is
+    reported ambiguous, so Mojito never selects a different overload than the
+    pin.
+  - A place argument is settled: the implicit copy costs and both print `2`.
+  - Pinned by `conformance/probes/pack_overload_var_trivial_undecided.mojo`.
+  - Depends on nothing.
+  - Model: Opus, plan first. The plan must find the rule with more probes, or
+    move the entry to `docs/non-goals.md` as a kept over-rejection.
 
 - [ ] **A compile-time-keyed `def` cannot be passed as a function value**
 

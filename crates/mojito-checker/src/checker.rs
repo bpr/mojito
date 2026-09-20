@@ -2400,11 +2400,12 @@ pub enum StorageStrictness {
     Full,
 }
 
-const CONVERSION_RANK: usize = 1 << 24;
+const CONVERSION_RANK: usize = 1 << 25;
 
-const VARIADIC_RANK: usize = 1 << 16;
+const VARIADIC_RANK: usize = 1 << 24;
 
-const SIGNATURE_LENGTH_RANK: usize = 1 << 8;
+/// Leaves the low sixteen bits to `VariadicBinding::rank` and the generic bit.
+const SIGNATURE_LENGTH_RANK: usize = 1 << 16;
 
 /// Source-level arguments attached to a method invocation. Keeping the runtime
 /// and compile-time argument lists together prevents the two method-resolution

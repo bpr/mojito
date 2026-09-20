@@ -1245,7 +1245,12 @@ At a call site the checker:
 2. filters candidates by call shape, explicit type/value arguments, and argument
    type compatibility
 3. ranks surviving candidates lexicographically by conversion count, variadic
-   use, parameter-signature length, and generic/concrete tie-break
+   use, parameter-signature length, how a variadic candidate binds the
+   arguments (`VariadicBinding`: a non-empty collector, then fewer implicit
+   copies into `var` parameters, then more arguments bound by value, then
+   fewer `ref` parameters), and generic/concrete tie-break. A string literal
+   a type pack absorbs counts the conversion its materialization to `String`
+   costs a regular parameter
 4. accepts the unique lowest-score candidate
 5. rejects no-match and tied-best cases
 

@@ -1,8 +1,9 @@
 # Two type-pack overloads of one name that differ in how many regular
 # parameters precede the collector. The checker selects between them — a
 # candidate whose collector takes at least one argument wins, then the one
-# binding the most regular parameters — and the elaborator serves each call
-# from that recorded selection rather than from the first declaration.
+# binding the most arguments by value, which an `Int` parameter does — and the
+# elaborator serves each call from that recorded selection rather than from
+# the first declaration.
 # requires: discovery
 
 

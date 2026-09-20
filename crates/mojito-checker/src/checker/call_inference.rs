@@ -1397,7 +1397,17 @@ impl Checker {
         Ok((
             result,
             overload_rank(score, variadic.is_some() || has_kw_collector, 0, false)
-                + variadic_absorption_rank(variadic.as_ref().map(|_| overflow.len())),
+                + variadic.as_ref().map_or(0, |_| {
+                    self.variadic_binding(
+                        overflow.len(),
+                        &slots,
+                        &conventions,
+                        &params,
+                        args,
+                        kwargs,
+                    )
+                    .rank()
+                }),
             error.map(|error| *error),
             bool_bindings,
         ))
@@ -1513,6 +1523,7 @@ impl Checker {
                 // Each pack element was checked independently against the pack's
                 // bounds during inference; there is intentionally no single
                 // substituted element type to coerce every argument into.
+                conversions += pack_element_conversion_count(aty);
                 continue;
             }
             let expected = resolve(pty)?;
@@ -1677,7 +1688,10 @@ impl Checker {
                 variadic.is_some() || kw_variadic.is_some(),
                 decls.len(),
                 true,
-            ) + variadic_absorption_rank(variadic.as_ref().map(|_| overflow.len())),
+            ) + variadic.as_ref().map_or(0, |_| {
+                self.variadic_binding(overflow.len(), &slots, conventions, params, args, kwargs)
+                    .rank()
+            }),
             error,
             bool_bindings,
         ))
@@ -1752,6 +1766,35 @@ impl Checker {
                 context: format!("forwarded keyword arguments to '{callee}'"),
             }),
         }
+    }
+
+    /// How a variadic candidate binds the call's arguments to its regular
+    /// parameters, for the tie-break `VariadicBinding` owns.
+    pub(in crate::checker) fn variadic_binding(
+        &self,
+        collector_len: usize,
+        slots: &[ArgSlot],
+        conventions: &[Option<ArgConvention>],
+        params: &[Ty],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> VariadicBinding {
+        let mut binding = VariadicBinding::new(collector_len);
+        for (index, slot) in slots.iter().enumerate() {
+            let argument = match slot {
+                ArgSlot::Positional(position) => &args[*position],
+                ArgSlot::Keyword(position) => &kwargs[*position].value,
+                ArgSlot::Default => continue,
+            };
+            binding.bind(
+                conventions.get(index).copied().flatten(),
+                params
+                    .get(index)
+                    .is_some_and(|param| self.is_trivial_register_passable(param)),
+                argument,
+            );
+        }
+        binding
     }
 
     /// Bind a callee's own origin binders named by its parameters — a

@@ -618,18 +618,79 @@ pub(super) fn overload_rank(
         + usize::from(generic)
 }
 
-/// The rank a variadic candidate adds for how it uses its collector, below
-/// every other term. Current Mojo prefers, among otherwise tied variadic
-/// candidates, one whose collector takes at least one argument, and then the
-/// one that binds the most arguments to regular parameters: `f(1, 2, 3)`
-/// selects `f(a, b, *rest)` over `f(a, *rest)`, while `f(1, 2)` selects
-/// `f(a, *rest)` because the other's collector would be empty.
-pub(super) fn variadic_absorption_rank(absorbed: Option<usize>) -> usize {
-    const EMPTY_COLLECTOR: usize = 127;
-    absorbed.map_or(0, |count| match count {
-        0 => EMPTY_COLLECTOR,
-        _ => count.min(EMPTY_COLLECTOR - 1),
-    }) << 1
+/// How one variadic candidate binds a call's arguments, which decides between
+/// candidates tied on every other rank term. Current Mojo prefers, in order:
+/// a collector that takes at least one argument; fewer implicit copies into a
+/// `var` parameter; more arguments bound by value; fewer `ref` parameters.
+/// An argument is bound by value when a read parameter of a trivially
+/// register-passable type takes it, or a `var` parameter of any other type
+/// takes a non-literal rvalue. So `f(1, 2, 3)` selects `f(a, b: Int, *rest)`
+/// over `f(a, *rest)`, `f(1, 2)` selects `f(a, *rest)` because the other's
+/// collector would be empty, and `f(1, s, 3)` is ambiguous beside
+/// `f(a, b: String, *rest)`: a `String` binds by reference either way.
+pub(super) struct VariadicBinding {
+    collector_len: usize,
+    copies: usize,
+    by_value: usize,
+    parametric_refs: usize,
+    undecided: bool,
+}
+
+impl VariadicBinding {
+    pub(super) const fn new(collector_len: usize) -> Self {
+        Self {
+            collector_len,
+            copies: 0,
+            by_value: 0,
+            parametric_refs: 0,
+            undecided: false,
+        }
+    }
+
+    /// Record one argument bound to a regular parameter of the given
+    /// convention, whose resolved type is or is not trivially
+    /// register-passable. A trivial value handed to a `var` parameter from
+    /// anything but a place follows no rule the pinned Mojo lets a probe
+    /// recover, so it leaves the candidate undecided.
+    pub(super) fn bind(
+        &mut self,
+        convention: Option<ArgConvention>,
+        trivial: bool,
+        argument: &Expr,
+    ) {
+        match convention {
+            None | Some(ArgConvention::Imm) => self.by_value += usize::from(trivial),
+            Some(ArgConvention::Var) if !argument_is_owned(argument) => self.copies += 1,
+            Some(ArgConvention::Var) if trivial => self.undecided = true,
+            Some(ArgConvention::Var) => self.by_value += usize::from(!is_literal(argument)),
+            Some(ArgConvention::Ref) => self.parametric_refs += 1,
+            Some(ArgConvention::Mut | ArgConvention::Out | ArgConvention::Deinit) => {}
+        }
+    }
+
+    /// The rank this binding adds, below every other term and above the
+    /// generic bit.
+    pub(super) fn rank(&self) -> usize {
+        const REFS_MAX: usize = 7;
+        const BY_VALUE_MAX: usize = 31;
+        const COPIES_MAX: usize = 15;
+        let refs = self.parametric_refs.min(REFS_MAX);
+        let by_value = BY_VALUE_MAX - self.by_value.min(BY_VALUE_MAX);
+        let copies = self.copies.min(COPIES_MAX);
+        let empty = usize::from(self.collector_len == 0);
+        (usize::from(self.undecided) * UNDECIDED_BINDING)
+            + (refs << 2)
+            + (by_value << 5)
+            + (copies << 10)
+            + (empty << 14)
+    }
+}
+
+/// The conversion cost of an argument a type pack absorbs. The pack element
+/// is the argument's materialized type, so a string literal costs what its
+/// conversion to `String` costs a regular parameter.
+pub(super) fn pack_element_conversion_count(actual: &Ty) -> usize {
+    usize::from(matches!(actual, Ty::StringLiteral))
 }
 
 /// The conversion cost of one argument: 0 for an exact match or a numeric
@@ -665,6 +726,9 @@ pub(super) fn select_callable_overload(
         .map(|candidate| candidate.score)
         .min()
         .ok_or(OverloadSelect::NoMatch)?;
+    if variadic_tie_is_undecided(matches.iter().map(|candidate| candidate.score), best) {
+        return Err(OverloadSelect::Ambiguous);
+    }
     let mut best_matches = matches
         .into_iter()
         .filter(|candidate| candidate.score == best)
@@ -673,21 +737,25 @@ pub(super) fn select_callable_overload(
         // A read and an owned overload of one parameter type tie on argument
         // scoring; at every parameter where the tied candidates disagree on
         // ownership, the argument decides: an owned value (`x^`, an rvalue)
-        // selects `var`, a place selects the read overload.
+        // selects `var`, a place selects the read overload. A candidate
+        // without that parameter, whose collector takes the argument, does
+        // not disagree.
         let survivors: Vec<usize> = best_matches
             .iter()
             .enumerate()
             .filter(|(_, candidate)| {
                 candidate.owned.iter().enumerate().all(|(index, owned)| {
-                    best_matches
-                        .iter()
-                        .all(|other| other.owned.get(index) == Some(owned))
-                        || candidate
-                            .owned_arguments
+                    best_matches.iter().all(|other| {
+                        other
+                            .owned
                             .get(index)
-                            .copied()
-                            .unwrap_or(false)
-                            == *owned
+                            .is_none_or(|other_owned| other_owned == owned)
+                    }) || candidate
+                        .owned_arguments
+                        .get(index)
+                        .copied()
+                        .unwrap_or(false)
+                        == *owned
                 })
             })
             .map(|(index, _)| index)
@@ -741,10 +809,7 @@ pub(super) fn owned_arguments(
                         .find(|kwarg| &kwarg.name == name)
                         .map(|kwarg| &kwarg.value)
                 })
-                .is_some_and(|argument| {
-                    matches!(argument.kind, ExprKind::Transfer(_))
-                        || place_root_name(argument).is_none()
-                })
+                .is_some_and(argument_is_owned)
         })
         .collect()
 }
@@ -759,6 +824,12 @@ pub(super) fn select_method_overload(
         .map(|candidate| candidate.conversion_score)
         .min()
         .ok_or(OverloadSelect::NoMatch)?;
+    if variadic_tie_is_undecided(
+        matches.iter().map(|candidate| candidate.conversion_score),
+        best,
+    ) {
+        return Err(OverloadSelect::Ambiguous);
+    }
     let mut best_matches = matches
         .into_iter()
         .filter(|candidate| candidate.conversion_score == best)
@@ -798,4 +869,34 @@ pub(super) fn overload_candidates(existing: &Ty, new_ty: &Ty) -> Option<Vec<Ty>>
         Ty::Overload(candidates) => Some(candidates.clone()),
         _ => None,
     }
+}
+
+/// The bit of a variadic binding's rank that marks it undecided.
+const UNDECIDED_BINDING: usize = 1 << 1;
+
+/// Whether an argument hands over a value the callee may own: an explicit
+/// transfer `x^` or an rvalue, never a place.
+fn argument_is_owned(argument: &Expr) -> bool {
+    matches!(argument.kind, ExprKind::Transfer(_)) || place_root_name(argument).is_none()
+}
+
+/// Whether the candidates that tie with the best one on every term above the
+/// variadic binding include an undecided binding. Such a set has no selection
+/// the pinned Mojo is known to agree with, so the call is ambiguous.
+fn variadic_tie_is_undecided(scores: impl Iterator<Item = usize>, best: usize) -> bool {
+    let tied: Vec<usize> = scores
+        .filter(|score| score / SIGNATURE_LENGTH_RANK == best / SIGNATURE_LENGTH_RANK)
+        .collect();
+    tied.len() > 1 && tied.iter().any(|score| score & UNDECIDED_BINDING != 0)
+}
+
+const fn is_literal(argument: &Expr) -> bool {
+    matches!(
+        argument.kind,
+        ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Str(_)
+            | ExprKind::ListLit(_)
+    )
 }

@@ -462,7 +462,17 @@ impl Checker {
         }
         Ok(MethodCallScore {
             rank: overload_rank(score, variadic.is_some() || kw_variadic.is_some(), 0, false)
-                + variadic_absorption_rank(variadic.as_ref().map(|_| overflow.len())),
+                + variadic.map_or(0, |_| {
+                    self.variadic_binding(
+                        overflow.len(),
+                        &slots,
+                        &signature.conventions,
+                        params,
+                        args,
+                        kwargs,
+                    )
+                    .rank()
+                }),
             slots,
             positional_overflow: overflow,
             keyword_overflow,
