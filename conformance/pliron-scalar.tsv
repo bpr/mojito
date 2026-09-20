@@ -500,11 +500,14 @@ assets/ok/template_method_borrowed_parameter.mojo	-	ineligible	no-scalar-entry-s
 assets/ok/template_method_calls.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_getter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_moves.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_origin_parameter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_place_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_reference_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_reference_local.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_reference_receiver.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_reference_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_statements.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_subscript_store.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_overload_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_overload_binding_local.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_scalar_loop.mojo	-	ineligible	no-scalar-entry-shape

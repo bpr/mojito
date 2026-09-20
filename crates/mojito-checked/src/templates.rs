@@ -307,9 +307,10 @@ pub fn trivial_method_contract(call: &TemplateCallContract) -> bool {
 ///
 /// The receiver is read or mutated in place, never consumed or bound by a
 /// `ref` whose mutability origin solving decides. Every argument is supplied
-/// (no default is evaluated in the callee's scope), binds a closed scalar
-/// parameter by value, and is adapted at most by materializing a literal to a
-/// closed type: no conversion, no place, no invalidation. The call neither
+/// (no default is evaluated in the callee's scope) and either binds a closed
+/// scalar parameter by value, adapted at most by materializing a literal to a
+/// closed type, or is the caller's place kept for a `mut` or `ref` parameter
+/// ([`kept_place_argument`]), which is never adapted. The call neither
 /// raises, adapts its result, returns a reference, captures, nor carries
 /// compile-time parameters. Whether the receiver needs a place is the
 /// callee's declaration, which an instance's clone keeps. Every field is
@@ -332,6 +333,22 @@ pub fn closed_reference_contract(call: &TemplateCallContract) -> bool {
     call.reference_result.is_some()
         && call.contract.receiver_requires_place
         && closed_contract(call, true)
+}
+
+/// Whether a call keeps the caller's place for this argument: what a `mut`
+/// parameter, or a `ref` one that the call reads, records.
+///
+/// The callee's declared convention decides it, and the generations a `mut`
+/// argument invalidates lie below the argument's own binding, which a
+/// template keeps by owner. The parameter's type is for the body's grammar
+/// to judge: a kept place is neither copied, moved, nor converted.
+pub const fn kept_place_argument(argument: &crate::checked::CheckedCallArgument) -> bool {
+    use mojito_ast::ast::ArgConvention;
+    argument.requires_place
+        && matches!(
+            argument.convention,
+            Some(ArgConvention::Mut | ArgConvention::Imm | ArgConvention::Ref)
+        )
 }
 
 /// What [`closed_method_contract`] and [`closed_reference_contract`] share.
@@ -373,19 +390,26 @@ fn closed_contract(call: &TemplateCallContract, reference: bool) -> bool {
             None | Some(ArgConvention::Imm | ArgConvention::Mut)
         ) || (reference && *receiver_convention == Some(ArgConvention::Ref)))
         && arguments.iter().all(|argument| {
-            argument.source != CheckedCallArgumentSource::Default
-                && closed_scalar(&argument.parameter_ty)
+            let by_value = closed_scalar(&argument.parameter_ty)
                 && !argument.requires_place
                 && matches!(
                     argument.convention,
                     None | Some(ArgConvention::Imm | ArgConvention::Var)
-                )
+                );
+            argument.source != CheckedCallArgumentSource::Default
+                && (by_value || kept_place_argument(argument))
         })
         && captures.is_empty()
         && reference_result.is_none()
         && parameter_arguments.is_empty()
         && param_decls.is_empty()
         && boundary_arguments.iter().all(|argument| {
+            let kept = arguments
+                .iter()
+                .any(|bound| bound.source == argument.source && kept_place_argument(bound));
+            if kept {
+                return argument.adjustments.is_empty();
+            }
             argument.invalidations.is_empty()
                 && argument.adjustments.iter().all(|adjustment| {
                     matches!(adjustment, CheckedCallValueAdjustment::MaterializeLiteral { target }
@@ -494,7 +518,7 @@ pub enum TemplateClass {
 /// They are independent of one another: a body may call a sibling without
 /// moving a value of a parameter type, and the reverse.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct MethodFeatures(u8);
+pub struct MethodFeatures(u16);
 
 impl MethodFeatures {
     /// A receiver other than a plain read `self`, or statements beyond a
@@ -521,9 +545,18 @@ impl MethodFeatures {
     /// through that binding.
     pub const REFERENCE_LOCALS: Self = Self(1 << 6);
     /// A field read or a closed method call through a reference: a reference
-    /// call's result or a `ref` local whose referent is a struct. This is the
-    /// last bit of the `u8`; the next feature widens it.
+    /// call's result or a `ref` local whose referent is a struct.
     pub const REFERENCE_RECEIVERS: Self = Self(1 << 7);
+    /// A store through a subscript of a field of `self`: a scalar field of
+    /// the element a reference getter yields, or a scalar element a closed
+    /// setter takes.
+    pub const SUBSCRIPT_STORES: Self = Self(1 << 8);
+    /// A place handed to a `mut` or bare `ref` parameter of a method call: a
+    /// local, a parameter, or a field of `self`.
+    pub const PLACE_ARGUMENTS: Self = Self(1 << 9);
+    /// A `ref` parameter with an origin clause, and the origin binders of the
+    /// method that names it.
+    pub const ORIGIN_PARAMETERS: Self = Self(1 << 10);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
@@ -681,6 +714,10 @@ pub enum TemplateObligation {
     ReferenceResultReads,
 }
 
+/// One subscript's index shape, a slice kind per sliced index, and whether
+/// its setter takes the assigned value by keyword.
+pub type SubscriptDescriptors = (Vec<Option<mojito_types::types::SliceKind>>, bool);
+
 /// The facts one body check recorded, keyed by the body's own syntax
 /// occurrences rather than by a checker run's spans.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -765,6 +802,14 @@ pub struct CheckedBodyFacts {
     /// judges each reference result again at its own referent
     /// ([`TemplateObligation::ReferenceResultReads`]).
     pub copyable_reference_result_reads: Vec<OccurrenceId>,
+    /// The index shape of each subscript a store goes through, and whether
+    /// its setter takes the value by keyword. The subscript's syntax and the
+    /// setter's declaration decide both, so an instance inherits the entry.
+    pub subscript_descriptors: Vec<(OccurrenceId, SubscriptDescriptors)>,
+    /// Arguments a call keeps as the caller's place, for a `mut` or `ref`
+    /// parameter. The callee's declared convention decides it, so an instance
+    /// inherits the set.
+    pub call_place_uses: Vec<OccurrenceId>,
     /// Every `^` transfer, from the syntax alone. An instance owes `Movable`
     /// at each one whose type mentioned a parameter
     /// ([`TemplateObligation::Movable`]).
@@ -1003,6 +1048,20 @@ impl CheckedBodyFacts {
                 self.copyable_reference_result_reads, other.copyable_reference_result_reads
             );
         }
+        if self.subscript_descriptors != other.subscript_descriptors {
+            let _ = writeln!(
+                out,
+                " subscript_descriptors:\n  derived:  {:?}\n  inferred: {:?}",
+                self.subscript_descriptors, other.subscript_descriptors
+            );
+        }
+        if self.call_place_uses != other.call_place_uses {
+            let _ = writeln!(
+                out,
+                " call_place_uses:\n  derived:  {:?}\n  inferred: {:?}",
+                self.call_place_uses, other.call_place_uses
+            );
+        }
         if self.transfers != other.transfers {
             let _ = writeln!(
                 out,
@@ -1094,6 +1153,8 @@ impl CheckedBodyFacts {
             reference_binding_types: at(&self.reference_binding_types, occurrences),
             reference_place_types: at(&self.reference_place_types, occurrences),
             copyable_reference_result_reads: flagged(&self.copyable_reference_result_reads),
+            subscript_descriptors: at(&self.subscript_descriptors, occurrences),
+            call_place_uses: flagged(&self.call_place_uses),
             transfers: flagged(&self.transfers),
             locals: self.locals,
         }
@@ -1134,6 +1195,8 @@ impl CheckedBodyFacts {
             + self.reference_binding_types.len()
             + self.reference_place_types.len()
             + self.copyable_reference_result_reads.len()
+            + self.subscript_descriptors.len()
+            + self.call_place_uses.len()
             + self.transfers.len()
     }
 }

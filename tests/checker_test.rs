@@ -6679,7 +6679,7 @@ fn method_template_classes_name_what_the_body_holds() {
     // features say which arguments its certificate rests on. A call through
     // a bound stays outside every class.
     use mojito::templates::{MethodFeatures, TemplateClass, TemplateCoverage};
-    let source = "@fieldwise_init\nstruct Slot[T: Movable & Deinitable & Equatable](Movable):\n    var item: Self.T\n    var uses: Int\n\n    def count(self) -> Int:\n        return self.uses\n\n    def bump(mut self, step: Int):\n        self.uses += step\n\n    def replace(mut self, var item: Self.T):\n        self.item = item^\n        self.bump(1)\n\n    def same(self, other: Self.T) -> Bool:\n        return self.item == other\n\n    def peek(ref self) -> ref[origin_of(self.item)] Self.T:\n        return self.item\n\n    def tally(self, mut into: Int):\n        into += self.uses\n\n    def held(self) -> Int:\n        ref me = self\n        return me.uses\n\n    def through(self) -> Int:\n        ref me = self\n        return me.count()\n\ndef main():\n    var s = Slot(1, 0)\n    s.replace(2)\n    print(s.count(), s.same(2), s.peek())\n";
+    let source = "@fieldwise_init\nstruct Slot[T: Movable & Deinitable & Equatable](Movable):\n    var item: Self.T\n    var uses: Int\n\n    def count(self) -> Int:\n        return self.uses\n\n    def bump(mut self, step: Int):\n        self.uses += step\n\n    def replace(mut self, var item: Self.T):\n        self.item = item^\n        self.bump(1)\n\n    def same(self, other: Self.T) -> Bool:\n        return self.item == other\n\n    def peek(ref self) -> ref[origin_of(self.item)] Self.T:\n        return self.item\n\n    def tally(self, mut into: Int):\n        into += self.uses\n\n    def held(self) -> Int:\n        ref me = self\n        return me.uses\n\n    def through(self) -> Int:\n        ref me = self\n        return me.count()\n\n    def filled(self) -> Int:\n        var n = 0\n        self.tally(n)\n        return n\n\n    def first[o: Origin](self, ref[o] other: Self.T) -> ref[o] Self.T:\n        return other\n\n    def write[o: MutOrigin](self, ref[o] into: Int):\n        into += self.uses\n\ndef main():\n    var s = Slot(1, 0)\n    s.replace(2)\n    print(s.count(), s.same(2), s.peek())\n";
     let linked = mojito::link_source(source, std::path::Path::new("method_classes.mojo"))
         .expect("link error");
     let program = mojito::elaborate(linked).expect("elaborate");
@@ -6731,6 +6731,19 @@ fn method_template_classes_name_what_the_body_holds() {
         panic!("Slot.through is certified: {:?}", coverage("through"));
     };
     assert!(through.contains(MethodFeatures::REFERENCE_RECEIVERS));
+    let TemplateCoverage::Certified(TemplateClass::MethodBody(filled)) = coverage("filled") else {
+        panic!("Slot.filled is certified: {:?}", coverage("filled"));
+    };
+    assert!(filled.contains(MethodFeatures::PLACE_ARGUMENTS));
+    let TemplateCoverage::Certified(TemplateClass::MethodBody(first)) = coverage("first") else {
+        panic!("Slot.first is certified: {:?}", coverage("first"));
+    };
+    assert!(first.contains(MethodFeatures::ORIGIN_PARAMETERS));
+    assert!(
+        matches!(coverage("write"), TemplateCoverage::Incomplete(_)),
+        "Slot.write stores through its origin binder: {:?}",
+        coverage("write")
+    );
     assert!(
         matches!(coverage("same"), TemplateCoverage::Incomplete(_)),
         "Slot.same is outside every class: {:?}",

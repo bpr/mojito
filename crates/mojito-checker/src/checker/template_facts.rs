@@ -553,8 +553,16 @@ impl Checker {
         };
         // Both enabled classes bake every parameter: a clone that keeps a
         // binder, or folds a value, is outside them.
-        let baked = trace.residual.is_empty()
-            && !site.residual_binders
+        // An origin binder is the exception: a clone keeps it, bound
+        // symbolically as the template's is, and no fact reads it.
+        let origin_binders = matches!(class, TemplateClass::MethodBody(features)
+                if features.contains(MethodFeatures::ORIGIN_PARAMETERS))
+            && matches!(site.declaration, BodyDeclaration::Method(method)
+            if method.type_params.iter().all(origin_binder)
+                && trace.residual.iter().all(|name| {
+                    method.type_params.iter().any(|binder| binder.name == *name)
+                }));
+        let baked = ((trace.residual.is_empty() && !site.residual_binders) || origin_binders)
             && match class {
                 TemplateClass::ClosedScalarBody
                 | TemplateClass::FixedCalls
@@ -1038,23 +1046,25 @@ impl Checker {
             .structs
             .get(&owner)
             .ok_or("a method call's receiver struct is not declared")?;
+        let selected = &facts.selected_calls[index].1.contract.target;
+        // A subscript that is the target of a store selected the setter.
+        let method = if method == "__getitem__" && names_method(selected, &owner, "__setitem__") {
+            "__setitem__".to_string()
+        } else {
+            method
+        };
         let family = info
             .methods
             .get(&method)
             .ok_or("a called method is missing")?;
         let self_ty = self.self_instance_ty(&owner);
-        let selected = &facts.selected_calls[index].1.contract.target;
         let clone_name =
             mojito_symbol::symbol::instance_method_clone_name(&method, &info.decls, &arguments);
         // A receiver whose type was already closed in the template (`List[Pair]`)
         // selected its clone there, on the arguments a clone check ranks too.
-        let selected_clone = clone_name.as_deref().is_some_and(|clone| {
-            selected
-                .strip_prefix(owner.as_str())
-                .and_then(|rest| rest.strip_prefix('.'))
-                .and_then(|rest| rest.strip_prefix(clone))
-                .is_some_and(|overload| overload.is_empty() || overload.starts_with('$'))
-        });
+        let selected_clone = clone_name
+            .as_deref()
+            .is_some_and(|clone| names_method(selected, &owner, clone));
         if selected_clone {
             let target = selected.clone();
             if !facts.effect_free_callees.contains(&target) {
@@ -1109,9 +1119,27 @@ impl Checker {
             }
             selected.clone()
         };
+        // A parameter type mentions a struct parameter only on a call of
+        // `self`'s own method, whose binders are the caller's.
+        let on_self =
+            fact_at(&facts.expression_bindings, receiver) == Some(&TemplateOwner::Receiver);
         let contract = &mut facts.selected_calls[index].1.contract;
         contract.target.clone_from(&target);
         contract.result_ty = mojito_types::types::substitute(&contract.result_ty, substitution);
+        for argument in &mut contract.arguments {
+            argument.parameter_ty =
+                mojito_types::types::substitute(&argument.parameter_ty, substitution);
+        }
+        if on_self
+            && let Some((_, parameters)) = facts
+                .call_parameters
+                .iter_mut()
+                .find(|(site, _)| *site == id)
+        {
+            for parameter in parameters {
+                parameter.ty = mojito_types::types::substitute(&parameter.ty, substitution);
+            }
+        }
         if let Some(reference) = &mut facts.selected_calls[index].1.reference_result {
             reference.referent = mojito_types::types::substitute(&reference.referent, substitution);
         }
@@ -1423,6 +1451,8 @@ impl Checker {
             handles: RefCell::new(Vec::new()),
             references: RefCell::new(Vec::new()),
             receivers: RefCell::new(Vec::new()),
+            subscripts: RefCell::new(Vec::new()),
+            places: RefCell::new(Vec::new()),
         };
         if !shape.block(body, false) {
             return outside("the body is not scalar returns over direct calls and 'len'");
@@ -1622,12 +1652,12 @@ impl Checker {
         // A `where` clause is the declaration's constraint: the elaborator
         // mints a clone only where it evaluates true, and a trace exists only
         // for a minted clone (`TemplateObligation::DeclarationConstraints`).
-        if !method.type_params.is_empty()
+        if !method.type_params.iter().all(origin_binder)
             || !(method.decorators.is_empty() || is_static)
             || method.raises
             || method.raises_type.is_some()
         {
-            return outside("the method has binders, decorators, or raises");
+            return outside("the method has binders other than origins, decorators, or raises");
         }
         let plain_struct = decls.iter().all(|decl| {
             matches!(
@@ -1642,10 +1672,13 @@ impl Checker {
         if !plain_struct {
             return outside("a struct parameter is not a plain type parameter");
         }
-        // A `mut` or bare `ref` parameter is bound from its declared
-        // convention alone, and is rooted at its own binding under every
-        // instance. What its caller owes lives in the signature, which is
-        // checked per clone.
+        // A `mut` or `ref` parameter is bound from its declared convention
+        // alone, and is rooted at its own binding under every instance. What
+        // its caller owes lives in the signature, which is checked per clone:
+        // that holds an origin clause too, which names a binder, `self`, or
+        // another parameter and never a struct parameter's type. A struct
+        // that declares an origin parameter is outside `plain_struct`, and no
+        // clone is minted for one.
         let plain_params = method.params.iter().all(|parameter| {
             parameter.kind == mojito_ast::ast::ParamKind::Regular
                 && matches!(
@@ -1653,13 +1686,19 @@ impl Checker {
                     None | Some(ArgConvention::Var | ArgConvention::Mut | ArgConvention::Ref)
                 )
                 && parameter.default.is_none()
-                && parameter.origin.is_none()
+                && (parameter.origin.is_none() || parameter.convention == Some(ArgConvention::Ref))
         });
         if !plain_params {
             return outside(
-                "a parameter has a default, an origin, or an 'out' or 'deinit' convention",
+                "a parameter has a default, an origin on a convention other than 'ref', or an \
+                 'out' or 'deinit' convention",
             );
         }
+        let origin_parameter = !method.type_params.is_empty()
+            || method
+                .params
+                .iter()
+                .any(|parameter| parameter.origin.is_some());
         let params_passed = |conventions: &[ArgConvention]| {
             method
                 .params
@@ -1701,6 +1740,8 @@ impl Checker {
             features: std::cell::Cell::new(
                 if plain_read && closed_scalar(ret_ty) && !owned_parameter {
                     MethodFeatures::default()
+                } else if origin_parameter {
+                    MethodFeatures::STATEMENTS.union(MethodFeatures::ORIGIN_PARAMETERS)
                 } else {
                     MethodFeatures::STATEMENTS
                 },
@@ -1709,6 +1750,8 @@ impl Checker {
             handles: RefCell::new(Vec::new()),
             references: RefCell::new(Vec::new()),
             receivers: RefCell::new(Vec::new()),
+            subscripts: RefCell::new(Vec::new()),
+            places: RefCell::new(Vec::new()),
         };
         if !shape.block(&method.body, false) {
             return outside("the body is outside the method grammar");
@@ -2253,6 +2296,8 @@ impl Checker {
                     .contains(span)
             }),
             linear_temporaries: keyed(&|span| self.linear_temporaries.borrow().contains(span)),
+            subscript_descriptors: values(&occurrences, &self.subscript_descriptors.borrow()),
+            call_place_uses: keyed(&|span| self.call_place_uses.borrow().contains(span)),
             transfers: occurrences
                 .iter()
                 .filter(|occurrence| occurrence.transfer)
@@ -2482,6 +2527,14 @@ impl Checker {
             self.borrowed_reference_receivers
                 .borrow_mut()
                 .insert(span(id)?);
+        }
+        for (id, descriptors) in &facts.subscript_descriptors {
+            self.subscript_descriptors
+                .borrow_mut()
+                .insert(span(id)?, descriptors.clone());
+        }
+        for id in &facts.call_place_uses {
+            self.call_place_uses.borrow_mut().insert(span(id)?);
         }
         for id in &facts.read_temporary_arguments {
             self.read_temporary_arguments.borrow_mut().insert(span(id)?);
@@ -2842,6 +2895,8 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::InteriorReferences
         | FactTable::CopyableReferenceResultReads
         | FactTable::BorrowedReferenceReceivers
+        | FactTable::SubscriptDescriptors
+        | FactTable::CallPlaceUses
         | FactTable::DeletableBindings
         | FactTable::LinearBindings
         | FactTable::LinearTemporaries => true,
@@ -2861,10 +2916,8 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::WithDesugars
         | FactTable::DeclarationCaptures
         | FactTable::ComprehensionBindings
-        | FactTable::SubscriptDescriptors
         | FactTable::IterationProtocols
         | FactTable::ExplicitDestroyCalls
-        | FactTable::CallPlaceUses
         | FactTable::ImplicitlyCopiedConsumingReceivers
         | FactTable::TruthinessConditions => false,
     }
@@ -3212,6 +3265,34 @@ fn template_callee(facts: &CheckedBodyFacts, call: OccurrenceId) -> Option<&str>
         })
 }
 
+/// Whether a method's binder is an origin the body may only read through.
+///
+/// It names where a `ref` parameter's referent lives. It is inferred at every
+/// call, erased before execution, and no clone is minted per origin, so a
+/// clone's check binds it symbolically as the template's does. A `mut` one
+/// lets the body write through it, which is judged per instantiation.
+fn origin_binder(binder: &mojito_ast::ast::TypeParam) -> bool {
+    matches!(binder.bounds.as_slice(), [bound] if bound == "Origin")
+        && binder
+            .origin_mutability
+            .as_ref()
+            .is_none_or(|mutability| matches!(mutability.kind, ExprKind::Bool(false)))
+        && binder.value_type.is_none()
+        && binder.callable_bound.is_none()
+        && binder.default.is_none()
+        && !binder.infer_only
+}
+
+/// Whether the lowered callee `target` is `owner`'s `method`, or a clone or
+/// an overload of it.
+fn names_method(target: &str, owner: &str, method: &str) -> bool {
+    target
+        .strip_prefix(owner)
+        .and_then(|rest| rest.strip_prefix('.'))
+        .and_then(|rest| rest.strip_prefix(method))
+        .is_some_and(|overload| overload.is_empty() || overload.starts_with('$'))
+}
+
 /// The fact a table holds at `id`.
 fn fact_at<V>(table: &[(OccurrenceId, V)], id: OccurrenceId) -> Option<&V> {
     table
@@ -3296,6 +3377,10 @@ struct BodyShape<'a> {
     references: RefCell<Vec<OccurrenceId>>,
     /// The references admitted as a method call's receiver.
     receivers: RefCell<Vec<OccurrenceId>>,
+    /// The subscripts admitted as the base of a store.
+    subscripts: RefCell<Vec<OccurrenceId>>,
+    /// The arguments admitted as a place a call keeps.
+    places: RefCell<Vec<OccurrenceId>>,
 }
 
 /// What a local of a certified body is.
@@ -3392,7 +3477,8 @@ impl BodyShape<'_> {
             StmtKind::SetPlace { place, value } if !self.keyed => {
                 let scalar =
                     self.scalar_field_place(place) && self.expression(value) && self.scalar(value);
-                (scalar || self.whole_store(place, value)) && self.holds(MethodFeatures::STATEMENTS)
+                (scalar || self.whole_store(place, value) || self.element_store(place, value))
+                    && self.holds(MethodFeatures::STATEMENTS)
             }
             // A discarded value. That it is not read is the statement's
             // syntax; what the call itself recorded is the call's to answer.
@@ -3433,8 +3519,9 @@ impl BodyShape<'_> {
     }
 
     /// The value of a `return` in a method that returns a reference: a field
-    /// of `self`, a pointer slot, or a reference a call on a field yields, of
-    /// exactly the declared referent type, so neither check converts it.
+    /// of `self`, a pointer slot, a `ref` local, a `mut` or `ref` parameter, or
+    /// a reference a call on a field yields, of exactly the declared referent
+    /// type, so neither check converts it.
     ///
     /// The `return` keeps the place as a handle because the declaration
     /// returns a reference, whatever the place's type, and demands neither a
@@ -3443,8 +3530,8 @@ impl BodyShape<'_> {
     /// changes.
     fn returned_place(&self, value: &Expr) -> bool {
         let id = self.occurrence(value);
-        let forwarded =
-            matches!(&value.kind, ExprKind::Identifier(name) if self.reference_local(name));
+        let forwarded = matches!(&value.kind, ExprKind::Identifier(name)
+            if self.reference_local(name) || self.borrowed_params.contains(&name.as_str()));
         let admitted = (forwarded
             || self.receiver_field(value)
             || self.slot(value)
@@ -3516,12 +3603,23 @@ impl BodyShape<'_> {
     /// each receiver borrowed through a reference, and each reference result,
     /// interior generation, and copyable read at an admitted reference call.
     /// Every other writer of those tables decides on a type or on a
-    /// binding's declaration.
+    /// binding's declaration. Likewise each subscript descriptor sits at a
+    /// subscript admitted as a store's base, and each kept call place at an
+    /// argument admitted as one.
     fn references_recorded(&self, facts: &CheckedBodyFacts) -> bool {
         let handles = self.handles.borrow();
         let references = self.references.borrow();
         let receivers = self.receivers.borrow();
-        facts.borrowed_reference_receivers.len() == receivers.len()
+        let subscripts = self.subscripts.borrow();
+        let places = self.places.borrow();
+        facts.subscript_descriptors.len() == subscripts.len()
+            && facts
+                .subscript_descriptors
+                .iter()
+                .all(|(id, _)| subscripts.contains(id))
+            && facts.call_place_uses.len() == places.len()
+            && facts.call_place_uses.iter().all(|id| places.contains(id))
+            && facts.borrowed_reference_receivers.len() == receivers.len()
             && facts
                 .borrowed_reference_receivers
                 .iter()
@@ -3816,9 +3914,63 @@ impl BodyShape<'_> {
     }
 
     /// A closed scalar field of a writable `self`, as the target of a store.
+    ///
+    /// A field reached through a subscript (`self.entries[i].hits`) makes the
+    /// subscript a place, which records its index shape: one plain index, and
+    /// whether the struct's setter takes the value by keyword. Both are read
+    /// off the syntax and the setter's declaration, so an instance inherits
+    /// the entry.
     fn scalar_field_place(&self, place: &Expr) -> bool {
-        ((self.self_writable && self.receiver_field(place)) || self.reference_member(place))
+        let admitted = ((self.self_writable && self.receiver_field(place))
+            || self.reference_member(place))
+            && self.scalar(place);
+        let through = match &place.kind {
+            ExprKind::Member { object, .. } if matches!(object.kind, ExprKind::Index { .. }) => {
+                Some(object)
+            }
+            _ => None,
+        };
+        if admitted && let Some(object) = through {
+            self.subscript(self.occurrence(object));
+        }
+        admitted && (through.is_none() || self.holds(MethodFeatures::SUBSCRIPT_STORES))
+    }
+
+    /// A closed scalar stored to an element of a field of a writable `self`,
+    /// where the field's struct declares a setter (`self.counts[i] = n`).
+    ///
+    /// The store is a call of `__setitem__` recorded at the subscript, under
+    /// the closed contract a sibling call has: the index and the value bind
+    /// closed scalar parameters by value, so an instance changes its target
+    /// alone.
+    fn element_store(&self, place: &Expr, value: &Expr) -> bool {
+        let ExprKind::Index { object, index } = &place.kind else {
+            return false;
+        };
+        let admitted = self.self_writable
+            && self.receiver_field(object)
+            && [&**index, value]
+                .into_iter()
+                .all(|operand| self.expression(operand) && self.scalar(operand))
             && self.scalar(place)
+            && self.facts.is_none_or(|facts| {
+                self.named_contract(facts, place, object, "__setitem__")
+                    .is_some_and(mojito_checked::templates::closed_method_contract)
+            });
+        if admitted {
+            self.subscript(self.occurrence(place));
+        }
+        admitted
+            && self.holds(MethodFeatures::SIBLING_CALLS)
+            && self.holds(MethodFeatures::SUBSCRIPT_STORES)
+    }
+
+    /// Note that the subscript `id` is the base of a store.
+    fn subscript(&self, id: OccurrenceId) {
+        let mut subscripts = self.subscripts.borrow_mut();
+        if !subscripts.contains(&id) {
+            subscripts.push(id);
+        }
     }
 
     /// A nested block: its locals go out of scope with it.
@@ -3863,14 +4015,66 @@ impl BodyShape<'_> {
         else {
             return None;
         };
-        fact_at(&facts.selected_calls, self.occurrence(expr)).filter(|call| {
+        fact_at(&facts.selected_calls, self.occurrence(expr))
+            .filter(|call| names_method(&call.contract.target, owner, method))
+    }
+
+    /// One argument of a method call: a closed scalar bound by value, or a
+    /// place the call keeps for a `mut` or bare `ref` parameter.
+    ///
+    /// A kept place is a local, a parameter, or a field of `self`, of exactly
+    /// the parameter's type, so nothing converts it. Which arguments a call
+    /// keeps is the callee's declared convention, and whether two of them
+    /// conflict is judged on their places, so neither changes per instance.
+    /// A parameter type that mentions a struct parameter is admitted only on
+    /// a call of `self`'s own method, where callee and caller share one
+    /// binder scope and an instance substitutes it. A field of `self` is
+    /// kept only beside a receiver the call reads.
+    fn argument(&self, call: &Expr, argument: &Expr, on_self: bool) -> bool {
+        let named = match &argument.kind {
+            ExprKind::Identifier(name) => {
+                self.declared(name) || self.params.contains(&name.as_str())
+            }
+            _ => self.receiver_field(argument),
+        };
+        let Some(facts) = self.facts else {
+            return self.expression(argument) || (!self.keyed && named);
+        };
+        let id = self.occurrence(argument);
+        let contract = fact_at(&facts.selected_calls, self.occurrence(call));
+        let parameter = contract.and_then(|call| {
+            let bound = call.arguments.iter().find(|bound| bound.value == id)?;
             call.contract
-                .target
-                .strip_prefix(owner.as_str())
-                .and_then(|rest| rest.strip_prefix('.'))
-                .and_then(|rest| rest.strip_prefix(method))
-                .is_some_and(|overload| overload.is_empty() || overload.starts_with('$'))
-        })
+                .arguments
+                .iter()
+                .find(|parameter| parameter.source == bound.source)
+        });
+        if !facts.call_place_uses.contains(&id) {
+            return self.expression(argument)
+                && self.scalar(argument)
+                && parameter.is_none_or(|parameter| !parameter.requires_place);
+        }
+        let read_receiver = contract.is_some_and(|call| {
+            matches!(
+                call.contract.receiver_convention,
+                None | Some(mojito_ast::ast::ArgConvention::Imm)
+            )
+        });
+        let admitted = !self.keyed
+            && named
+            && (read_receiver || !self.receiver_field(argument))
+            && parameter.is_some_and(|parameter| {
+                mojito_checked::templates::kept_place_argument(parameter)
+                    && (on_self || !mojito_types::types::is_symbolic(&parameter.parameter_ty))
+                    && fact_at(&facts.expression_types, id) == Some(&parameter.parameter_ty)
+            });
+        if admitted {
+            let mut places = self.places.borrow_mut();
+            if !places.contains(&id) {
+                places.push(id);
+            }
+        }
+        admitted && self.holds(MethodFeatures::PLACE_ARGUMENTS)
     }
 
     /// Whether `expr` is `self.<field>` in a method body.
@@ -3938,7 +4142,7 @@ impl BodyShape<'_> {
                     && args
                         .iter()
                         .chain(kwargs.iter().map(|keyword| &keyword.value))
-                        .all(|argument| self.expression(argument) && self.scalar(argument))
+                        .all(|argument| self.argument(expr, argument, on_self))
                     && self
                         .facts
                         .is_none_or(|facts| self.sibling_call(facts, expr, object, method))

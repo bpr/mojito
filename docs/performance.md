@@ -360,18 +360,18 @@ ordinary bundled structs. The figures below replace it.
 | Program | Plain | Template | Generated | Instance-clone checks | Derived | Template bodies reused |
 |---|---:|---:|---:|---:|---:|---:|
 | `hello.mojo` | 2100 | 1571 | 1320 | 0 | 0 | 325 |
-| `stdlib_heavy.mojo` | 2100 | 1586 | 2904 | 2254 | 698 | 340 |
-| `generic.mojo` | 2118 | 1573 | 1596 | 474 | 220 | 335 |
+| `stdlib_heavy.mojo` | 2100 | 1581 | 2892 | 2254 | 710 | 345 |
+| `generic.mojo` | 2118 | 1568 | 1590 | 474 | 226 | 340 |
 
 - Hello World mints no per-instantiation method clones: a program without its
   own instantiations has none. Its generated bodies are members of structs the
   elaborator specialized whole (`Tuple$…`, the `DType`-keyed ranges, the
   hasher) and per-call clones, all from concrete-only templates.
-- `stdlib_heavy.mojo` checks an instance clone 2254 times and derives 698 of
-  them, 31%; `generic.mojo` derives 220 of 474, 46%. With scalar getters alone
+- `stdlib_heavy.mojo` checks an instance clone 2254 times and derives 710 of
+  them, 31%; `generic.mojo` derives 226 of 474, 48%. With scalar getters alone
   (`MethodScalarBody`) those were 242 and 70, and wall time did not move.
   Before `ref self` accessors and the `_mojito_abort` statement they were 586
-  and 178.
+  and 178, and before place arguments 698 and 220.
 - The `MethodBody` class moves it. Three interleaved runs each against the
   preceding commit, debug profile, no `--timings`: `stdlib_heavy.mojo` 17.78 to
   17.98 s before and 16.91 to 17.12 s after; `generic.mojo` 11.30 to 11.57 s
@@ -396,30 +396,29 @@ captured (`template_census.*`; `MOJITO_TIMING_NOTES=1` names each body).
 
 | | Bodies inferred | Capturable with today's recipes |
 |---|---:|---:|
-| Generic method templates | 253 | 107 |
-| Per-instantiation clones | 314 | 130 |
+| Generic method templates | 252 | 111 |
+| Per-instantiation clones | 312 | 147 |
 
 A derived body is not inferred, so it is not in the census. Of the 411
-per-instantiation clone bodies of that pass, 122 derive; the census rows are
+per-instantiation clone bodies of that pass, 124 derive; the census rows are
 the generated generic bodies that were inferred.
 
 What blocks the clone bodies, by how many bodies each reason appears in:
 
 | Reason | Bodies | Sole blocker of |
 |---|---:|---:|
-| `ConstructionImmutableBinders` | 103 | 56 |
+| `ConstructionImmutableBinders` | 103 | 62 |
 | a callee effect summary that is not empty | 39 | 27 |
 | a fact keyed outside the body's occurrences | 24 | 0 |
 | `ExplicitDestroyCalls` | 13 | 4 |
-| `CallPlaceUses` | 13 | 4 |
 | adjustment `TypeName` | 11 | 3 |
-| `SubscriptDescriptors` | 10 | 0 |
 
 The four reference facts (`ReferenceValueUses`, the `ReferenceResult`
-adjustment, `InteriorReferences`, `CopyableReferenceResultReads`) have recipes
-and left the table. The best recipe sets by how many more clone bodies they
-would make capturable: one, 56 (`ConstructionImmutableBinders`); two, 83 (plus
-effect summaries). Capturable is necessary, not sufficient: 130 bodies are
+adjustment, `InteriorReferences`, `CopyableReferenceResultReads`),
+`SubscriptDescriptors`, and `CallPlaceUses` have recipes and left the table.
+The best recipe sets by how many more clone bodies they would make capturable:
+one, 62 (`ConstructionImmutableBinders`); two, 89 (plus effect summaries).
+Capturable is necessary, not sufficient: 147 bodies are
 capturable already and are inferred because no class admits their syntax.
 
 What those bodies are made of is the census's second half

@@ -221,8 +221,14 @@ moves out of. Which fields an `__init__` initializes is
 its syntax, and definite initialization is judged outside the body check. A
 bare `ref self` is a receiver like the others: it has parametric mutability, so
 the body cannot write through it, and one binding identity names it under
-every instance. A receiver or parameter origin, the copy and move
-initializers, the method's own binders, and `raises` stay outside. A `where`
+every instance. A `ref` parameter may carry an origin clause, and the method
+may declare the origin binders such a clause names (`[o: Origin]`,
+`ImmOrigin`): a binder is inferred at every call and erased before execution,
+no clone is minted per origin, and a clone keeps the binder and binds it
+symbolically as the template does. A body that writes through a `MutOrigin`
+is judged per instantiation and stays a clone check. A receiver origin, a
+struct's own origin parameter (no clone is minted for such a struct), the
+copy and move initializers, any other binder, and `raises` stay outside. A `where`
 clause is the declaration's constraint: `generate_instance_clones` mints a
 clone only where it evaluates true, a trace exists only for a minted clone, and
 a clone's signature no longer states it.
@@ -240,6 +246,9 @@ they are a set, not a ladder.
 | `REFERENCE_CALLS` | a subscript or a named accessor on a field of `self`, passing closed scalars, whose contract is a `closed_reference_contract`, either returned as above or read by value into the result or an unannotated `var` | Obligation 13 below. The call is never a receiver, an operand, a condition, or an argument, each of which records a borrow of its own. A by-value read is admitted only where the template marked the read copyable. An iterator's `__next__` marks its read by another rule and stays out. |
 | `REFERENCE_LOCALS` | `ref name = place`, where the place is `self`, a field of it, a parameter, a `var` local, or a reference call; then a field read through the binding, the binding copied out whole, a scalar operand, `len` over it, a scalar store through it, or the binding forwarded as the method's own reference result | The declaration decides mutability from the value's reference and the binding it names, re-stamps an origin computed upstream, and runs no check of its own. Its type is a reference whose origin names a binding, so a bundle keeps it by template owner, as it keeps a call's, and an instance substitutes the referent. Every use records the referent. A copy out owes obligation 3, and a copyable read obligation 13. |
 | `REFERENCE_RECEIVERS` | a field read or a closed method call through a reference call's result or a `ref` local whose referent is a struct | A call borrows such a receiver (`BorrowedReferenceReceivers`) because of what the receiver is: a reference result, a `ref` binding, a `ref` field. None of those tests reads the referent. The callee is realized as in obligation 7, from the receiver's own substituted type; a receiver whose type was already closed in the template (`List[Pair]`) selected its clone there. A method of a bare parameter dispatches through the bound and stays out. |
+| `SUBSCRIPT_STORES` | a store through a subscript of a field of a writable `self`: a closed scalar field of the element a reference getter yields (`self.entries[i].hits = 0`, `+= 1`), or a closed scalar element a declared setter takes (`self.counts[i] = n`) | A subscript that is a place records its index shape and whether the setter takes the value by keyword (`SubscriptDescriptors`). The first is the syntax, one plain index; the second is the setter's declaration. The getter is a `REFERENCE_CALLS` call and the setter a closed `SIBLING_CALLS` one, recorded at the subscript and realized by the setter's name. A whole element of a parameter type stays out: `self.items[i] = self.items[j]` is accepted for `Int` and refused for `String`. An augmented element store (`self.counts[i] += 1`) records `AugmentedSubscript`, which has no recipe. |
+| `PLACE_ARGUMENTS` | a local, a parameter, or a field of `self` handed to a `mut` or bare `ref` parameter of a method call | The callee's declared convention decides that the call keeps the caller's place (`CallPlaceUses`), and the generations a `mut` argument invalidates lie below the argument's own binding, kept by template owner. A kept place is neither copied, moved, nor converted, and its recorded type equals the parameter's. Whether two arguments conflict is judged on their places and conventions. A field of `self` is kept only beside a receiver the call reads. A parameter of a struct parameter's type is admitted only on a call of `self`'s own method, where callee and caller share one binder scope, so the instance substitutes it in the contract and in `CallParameters`. |
+| `ORIGIN_PARAMETERS` | a `ref` parameter with an origin clause, the method's origin binders, and the parameter forwarded as the method's own reference result | The clause lives in the signature, which is checked per clone. The body's facts for such a parameter are a bare `ref` one's: its binding, its type, and a copy where it is read by value. |
 
 The compiler-private trap `_mojito_abort("message")` is a statement of any
 non-keyed body: the built-in types its literal and selects nothing. A
@@ -279,9 +288,10 @@ only `Movable` records nothing there, and its `Int` clone would.
    nominal-place rule can newly hold for an instance.
 7. **Closed method calls.** `closed_method_contract` names every field of
    `CheckedCallContract`: a receiver read or mutated in place, every argument
-   supplied and bound by value to a closed scalar parameter, adapted at most by
-   materializing a literal to a closed type, and no raise, result adapter,
-   reference result, captures, or compile-time parameters. A
+   supplied and either bound by value to a closed scalar parameter, adapted at
+   most by materializing a literal to a closed type, or kept as the caller's
+   place for a `mut` or `ref` parameter (`kept_place_argument`), and no raise,
+   result adapter, reference result, captures, or compile-time parameters. A
    `trivial_method_contract` is the case with no arguments, a plain read
    receiver, and a closed result, which is all `MethodScalarBody` admits.
    `realize_method_call` repeats the clone check's retarget: the declared
@@ -292,8 +302,9 @@ only `Movable` records nothing there, and its `Int` clone would.
    overloaded family must declare closed parameter types for the two rankings
    to agree. The result type substitutes. A method call's parameter types are
    already in the receiver's binder scope, unlike a direct call's
-   `CallParameterFact`, so they would substitute too if they were ever
-   symbolic. A clone that exists has met its `where` clauses; a callee with
+   `CallParameterFact`, and the one symbolic case substitutes: a kept place
+   on a call of `self`'s own method, whose `CallParameters` entry shares the
+   caller's binders too. A clone that exists has met its `where` clauses; a callee with
    an availability condition and no clone refuses, as does an instance that
    has clones but not this one (withheld, or a collapsed overload family).
 8. **Struct applications.** Substituted, then recorded by installation under
@@ -424,8 +435,8 @@ tables. In short, for one debug-profile run each:
 
 - Building the arena once saves about 6% (Hello World 10.58 s to 9.90 s).
 - `stdlib_heavy.mojo` checks a per-instantiation method clone 2254 times per
-  compilation and derives 698 of them (31%); `generic.mojo` derives 220 of
-  474 (46%). With `MethodScalarBody` alone those were 242 and 70, and wall
+  compilation and derives 710 of them (31%); `generic.mojo` derives 226 of
+  474 (48%). With `MethodScalarBody` alone those were 242 and 70, and wall
   time did not move. With `MethodBody` it does: 17.9 s to 17.0 s and 11.4 s to
   10.6 s, three interleaved runs each. `ref self` accessors, reference
   results, and the `_mojito_abort` statement took the counts from 586 and 178.
@@ -435,6 +446,10 @@ tables. In short, for one debug-profile run each:
   They derive in user structs today
   (`assets/ok/template_method_reference_{local,receiver}.mojo`,
   `template_method_borrowed_parameter.mojo`).
+  Subscript stores, place arguments, and origin-bearing parameters took the
+  counts from 698 and 220: the bundled gain is the `write_repr_to` forwarders
+  that hand their `mut writer` on, and the rest is user structs
+  (`template_method_{subscript_store,place_argument,origin_parameter}.mojo`).
 - Hello World mints no per-instantiation clones at all. Its generated bodies
   are members of structs specialized whole and per-call clones, from
   concrete-only templates.

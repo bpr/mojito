@@ -64,7 +64,9 @@ pointer slots, and sibling calls that pass scalars. The ninth admitted a
 yields by template owner, so the collection accessors derive. The tenth
 admitted a `ref` declaration, a field read or a closed call through a
 reference, and `mut` and bare `ref` parameters, which pays in user structs and
-moved no bundled body by itself. The entries below widen it further. Each task pays off by itself, and together they are what moving
+moved no bundled body by itself. The eleventh admitted a scalar store through
+a subscript, a place handed to a `mut` or `ref` parameter, and a `ref`
+parameter with an origin clause. The entries below widen it further. Each task pays off by itself, and together they are what moving
 toward Mojo's shape needs.
 
 This section holds only work that moves the check order: checking a template
@@ -78,21 +80,36 @@ entry names what it depends on. Size does not move an entry up. The **Model:**
 bullet carries the complexity estimate and says whether the entry can be done
 as-is or must be planned first.
 
-- [ ] **A store through a call's reference and an origin-bearing parameter keep
-  the clone check**
+- [ ] **A place argument on a field's method is closed types only**
 
-  Problem: a method body derives through a `ref` local and a bare `mut` or
-  `ref` parameter, and three neighbouring shapes still refuse it.
-  - `self.entries[i].hits = 0` records `SubscriptDescriptors`, which has no
-    recipe: 10 clone bodies in `benchmarks/compile/stdlib_heavy.mojo`, the
-    sole blocker of 4. The same store through `ref entry = self.entries[i]`
-    derives.
-  - A parameter with an origin clause (`ref[o] x`, `ref[Self.o] x`) is outside
-    the method grammar, as a receiver origin is.
-  - A sibling call that passes a place to a `mut` or `ref` parameter is not a
-    `closed_method_contract`, which demands every argument bound by value. It
-    records `CallPlaceUses` (13 clone bodies, the sole blocker of 4).
+  Problem: `self.inner.fill(slot)` derives when the `mut` or `ref` parameter's
+  type is closed, and keeps the clone check when it mentions a struct
+  parameter.
+  - On a call of `self`'s own method the callee's binders are the caller's, so
+    the instance substitutes the parameter type. On a field's method they are
+    the field struct's, and `CallParameters` holds the callee's own names.
+  - A `ref` local and a field reached through one are not admitted as a kept
+    place either.
   - Depends on nothing.
+  - Model: Fable, plan first.
+
+- [ ] **An augmented or whole-value store to a subscripted element keeps the
+  clone check**
+
+  Problem: a scalar store through a subscript derives
+  (`self.entries[i].hits = 0`, `self.counts[i] = n`), and two neighbouring
+  stores still refuse it.
+  - `self.counts[i] += 1` records the `AugmentedSubscript` adjustment, which
+    holds a getter contract, an optional setter, and an in-place operator and
+    has no recipe.
+  - `self.index[bucket] = entries^` stores a moved value of a non-scalar type,
+    so the setter's contract is not closed. `Dict._append_new` and
+    `Dict.update` are this shape.
+  - A whole element read from the same list (`self.items[i] = self.items[j]`)
+    is accepted for `Int` and rejected for `String`, so it cannot derive until
+    that divergence closes
+    (`conformance/probes/element_store_from_same_list.mojo`).
+  - Depends on the recipe entry below for non-scalar arguments.
   - Model: Fable, plan first.
 
 - [ ] **A method that constructs a struct keeps the clone check**
@@ -628,6 +645,51 @@ The checkboxes below, and the bullets inside the standing ones, are sorted Opus 
     compares (`indexing.rs`, `origins/interior.rs:record_interior_reference`).
     A named call leaves the returned reference's place without it.
   - Pinned by `conformance/probes/reference_return_forwarded_accessor.mojo`.
+  - Model: Opus, plan first.
+
+- [ ] **A reference returned through an origin binder outlives its argument**
+
+  Problem: `print(words.pick(w))` prints `None` at `w`'s last use, where
+  `pick[o: Origin](self, ref[o] x: Self.T) -> ref[o] Self.T` returns its
+  parameter. It is a silent wrong answer.
+  - The pin keeps `w` alive until the returned reference is read and prints
+    `w`.
+  - Mojito destroys `w` before the read: the result's origin is the binder
+    `o`, and the call does not tie it back to the argument it was inferred
+    from.
+  - An earlier use of the same call prints correctly, because `w` is still
+    live there.
+  - Probe: `conformance/probes/origin_binder_result_keeps_argument.mojo`.
+    `assets/ok/template_method_origin_parameter.mojo` reads `w` afterwards to
+    stay clear of it.
+  - Model: Opus, plan first. The plan must say where a call's inferred origin
+    arguments become loans on its result.
+
+- [ ] **A literal passed to a `ref` parameter stops at run time**
+
+  Problem: `look(3)` against `def look(ref other: Int)` is accepted and then
+  fails with "reference binding to a non-place expression".
+  - The pin materializes the literal and binds the parameter to the temporary.
+  - Probe: `conformance/probes/literal_to_ref_parameter.mojo`.
+  - Model: Opus, plan first.
+
+- [ ] **A reference-returning `def` is not read through as a `print` argument**
+
+  Problem: `print(pick(w))` for a free `def pick[o: Origin](ref[o] x: String)
+  -> ref[o] String` reports that `ref String` does not conform to `Writable`.
+  - The pin reads through the reference, and so does Mojito for the same call
+    on a method.
+  - Probe: `conformance/probes/reference_result_print_argument.mojo`.
+  - Model: Opus, plan first.
+
+- [ ] **An element stored from another element of the same list is rejected
+  by element type**
+
+  Problem: `self.items[i] = self.items[j]` is accepted for `Shelf[Int]` and
+  rejected for `Shelf[String]` as a mutable borrow that is not exclusive.
+  - The pin copies the right-hand element out before it borrows the list for
+    the store, whatever the element type.
+  - Probe: `conformance/probes/element_store_from_same_list.mojo`.
   - Model: Opus, plan first.
 
 - [ ] **A tuple binding with a `Tuple[...]` annotation loses `reverse` and

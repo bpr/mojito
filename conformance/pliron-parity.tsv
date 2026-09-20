@@ -500,11 +500,14 @@ assets/ok/template_method_borrowed_parameter.mojo	main	exe-differential	sanitize
 assets/ok/template_method_calls.mojo	main	exe-differential	sanitized
 assets/ok/template_method_getter.mojo	main	exe-differential	sanitized
 assets/ok/template_method_moves.mojo	main	exe-differential	sanitized
+assets/ok/template_method_origin_parameter.mojo	main	exe-differential	sanitized
+assets/ok/template_method_place_argument.mojo	main	exe-differential	sanitized
 assets/ok/template_method_reference_call.mojo	main	exe-differential	sanitized
 assets/ok/template_method_reference_local.mojo	main	exe-differential	sanitized
 assets/ok/template_method_reference_receiver.mojo	main	exe-differential	sanitized
 assets/ok/template_method_reference_result.mojo	main	exe-differential	sanitized
 assets/ok/template_method_statements.mojo	main	exe-differential	sanitized
+assets/ok/template_method_subscript_store.mojo	main	exe-differential	sanitized
 assets/ok/template_overload_binding.mojo	main	exe-differential	sanitized
 assets/ok/template_overload_binding_local.mojo	main	exe-differential	sanitized
 assets/ok/template_scalar_loop.mojo	main	exe-differential	sanitized
