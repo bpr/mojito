@@ -1459,6 +1459,118 @@ fn template_method_instances_derive() {
     }
 }
 
+/// Compile `source` derived and under fact verification, which fails the
+/// compilation if a derived bundle differs from the body's own check. Both
+/// must run to `expected`, and each of `methods` must derive for `instances`
+/// instances with no clone of it inferred.
+fn assert_methods_derive(source: &str, expected: &str, methods: &[(&str, usize)]) {
+    let compiler = Compiler::default();
+    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
+    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
+    assert_eq!(
+        compiler.execute(&derived).expect("execute").output,
+        expected
+    );
+    assert_eq!(
+        compiler.execute(&verified).expect("execute").output,
+        expected
+    );
+    assert_eq!(
+        clones_and_requests(&derived),
+        clones_and_requests(&verified)
+    );
+    let stats = derived.template_stats();
+    for (method, instances) in methods {
+        let clone = format!("{method}$");
+        let names: std::collections::HashSet<&String> = stats
+            .derived
+            .iter()
+            .filter(|name| name.starts_with(&clone))
+            .collect();
+        assert_eq!(
+            names.len(),
+            *instances,
+            "{method} derives for every instance; refused: {:?}",
+            stats.refused
+        );
+        assert!(
+            stats
+                .inferred_clones
+                .iter()
+                .all(|name| !name.starts_with(&clone)),
+            "no clone of {method} is inferred: {:?}",
+            stats.inferred_clones
+        );
+    }
+}
+
+#[test]
+fn template_method_statements_derive() {
+    // Receivers beyond a read `self`, a `where` clause, scalar locals and
+    // field writes, `if`, `while`, a discarded call, and a sibling call that
+    // passes a scalar.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_statements.mojo"),
+        "4 51\n0 12\n10 20\n10 55\n9 20\n64 64\n9 39\n",
+        &[
+            ("Tally.size", 2),
+            ("Tally.bump", 2),
+            ("Tally.reset", 2),
+            ("Tally.fill", 2),
+            ("Tally.bump_by", 2),
+            ("Tally.triangle", 2),
+            ("Tally.clamped", 2),
+            ("Tally.spend", 2),
+            ("Tally.width", 2),
+        ],
+    );
+}
+
+#[test]
+fn template_method_moves_derive() {
+    // A whole value of a parameter type moved between a `var` parameter, a
+    // local, a field, and the result. `Keep`'s local is linear in the
+    // template and deletable in each instance; `Pair`'s copies are owed per
+    // instance.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_moves.mojo"),
+        "1 3\n1 z\n1 9\n0 4 0 1 x\n4 q 2\n2 1 2\nr l r\n",
+        &[
+            ("Cell.__init__", 2),
+            ("Cell.count", 2),
+            ("Slot.replace", 3),
+            ("Slot.cycle", 3),
+            ("Slot.take", 3),
+            ("Keep.pass_through", 2),
+            ("Pair.left", 2),
+            ("Pair.pick", 2),
+            ("Pair.flip", 2),
+        ],
+    );
+}
+
+#[test]
+fn template_def_with_a_scalar_local_keeps_the_symbolic_choice() {
+    // A surviving trait-bound `def` with a scalar local derives, so its
+    // instances inherit the overload the template bound rather than ranking
+    // the set again on a concrete argument.
+    let (output, stats) = run_source(include_str!(
+        "../assets/ok/template_overload_binding_local.mojo"
+    ));
+    assert_eq!(output, "2\n2\n");
+    assert_eq!(
+        stats
+            .derived
+            .iter()
+            .filter(|name| name.starts_with("outer$"))
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        2,
+        "both instances derive; refused: {:?}",
+        stats.refused
+    );
+}
+
 /// The per-instantiation method clones of a compiled program, as
 /// `Owner.clone` names, and the instances its checked facts request.
 fn clones_and_requests(program: &mojito::compiler::CompiledProgram) -> (Vec<String>, Vec<String>) {

@@ -498,7 +498,10 @@ assets/ok/tempfile_mkdtemp.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_inner_request.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_calls.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_getter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_moves.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_statements.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_overload_binding.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_overload_binding_local.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_scalar_loop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_two_arms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_two_types.mojo	-	ineligible	no-scalar-entry-shape

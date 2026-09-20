@@ -275,10 +275,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `install_body_facts`), otherwise infers the body, and retains a
   module-level generic body's facts (`capture_body_facts`,
   `template_certificate`, `method_certificate`, `record_template`).
-  `realize_method_call` retargets a trivial method call through
-  `generics.rs:instance_method_clone`, `realize_builtin_len` takes the `len`
-  witness, and `census` reports what keeps each generic body from being
-  captured. `struct_application_frames`, pushed in
+  `realize_method_call` retargets a closed method call to the clone member
+  `declarations.rs:method_clone_target` finds (the helper
+  `constructor_clone_target` shares), `realize_builtin_len` takes the `len`
+  witness, `plain_data` is the instance-argument obligation of a
+  `MethodBody`, and `census` reports what keeps each generic body from being
+  captured, with `grammar_features` naming the constructs it holds. `struct_application_frames`, pushed in
   `generics.rs:record_struct_instantiation`, is how a template keeps the
   struct applications its instances must request. `span_table` maps every
   `FactTable` onto the checker's storage, `BodyShape` is the grammar of the
@@ -286,7 +288,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   verification mode accepts. `note_effect_query` records the callee effect
   summaries a body read, which are its dependencies. The vocabulary
   (`CheckedTemplate`, `CheckedBodyFacts`, `TemplateCatalog`, `InstanceTrace`,
-  `OccurrenceId`, `TemplateObligation`, and the exhaustive
+  `OccurrenceId`, `TemplateObligation`, `MethodFeatures`, the template-local
+  `TemplateCallContract` with `closed_method_contract`, and the exhaustive
   `derive_adjustment`) is `crates/mojito-checked/src/templates.rs`. The
   declaration-level trace is `comptime.rs`'s `DefInstanceTrace`, recorded by
   `specialize.rs:generate_def_spec`, and `MethodInstanceTrace`, recorded by

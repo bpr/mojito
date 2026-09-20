@@ -105,10 +105,21 @@ has no wildcard.
 
 Tables with a recipe today: expression types, place types, binding types,
 expression and statement bindings, expression effects, operation adjustments
-(`MaterializeLiteral` only), generic instantiations, overload targets, call
-parameters, selected calls (a `trivial_method_contract` only), borrowed read
-call places, read temporary arguments, unconsumed temporaries, deletable
-bindings, copied places, interior invalidations, and rebind assertions.
+(`MaterializeLiteral`, `PointerOffset`, `PointerStorageTake`,
+`PointerStorageDestroy`, and a moving `PointerWrite`), generic instantiations,
+overload targets, call parameters, selected calls (a `closed_method_contract`
+only), borrowed read call places, read temporary arguments, unconsumed
+temporaries, discarded results, deletable and linear bindings, linear
+temporaries, copied places, interior invalidations, and rebind assertions.
+
+Two things are kept in template-local form because they belong to one checker
+run. A binding identity becomes a `TemplateOwner`. A selected call becomes a
+`TemplateCallContract`: the contract with its boundary emptied, each supplied
+argument named by its occurrence rather than its span, and each invalidated
+place by template owner. Capture also refuses a body whose retained types name
+a place (an origin rooted at a binding identity, in a pointer, a reference, or
+a struct's origin argument), since a type is kept as written and nothing would
+remap the identity inside it.
 
 ## The expansion trace
 
@@ -167,10 +178,43 @@ bound. `BodyShape` is the grammar; `template_certificate` is the argument.
 | `BoundedOperations` | plus the built-in `len` over a parameter whose bound promises a length | The bound proved the call. The instance owes the witness, which `len_result_for_type` finds, and takes the read-in-place fact `infer_len` adds for a nominal struct. |
 | `MethodScalarBody` | a method with a plain read `self` and no binders of its own, on a struct of plain type parameters: `return`s over closed scalars, parameters, reads of `self`'s scalar fields, the built-in `len` over a field, and argument-free method calls on `self` or a field with a trivial contract | A field read has the field's declared type under the struct's arguments in a template and a clone alike. The generated-declaration leniency a clone's name switches on bears on origin-bearing return annotations only, and the result is a scalar. A trivial call can change per instance only in its target. |
 | `ScalarBranches` | source-validated bodies: `comptime if` arms, scalar `comptime for` loops, scalar locals and assignments, erased `rebind`s | Every arm was checked once. The instance keeps the occurrences the elaborator selected. |
+| `MethodBody(features)` | a method beyond `MethodScalarBody`; see below | One argument per feature. |
 
-Locals are admitted only in a keyed body and never inside a `comptime for`: a
-local declared in an unrolled body would need one binding per copy, and no
-recipe mints those yet. The loop variable may only key a condition.
+A body source validation did not produce (every class but `ScalarBranches`)
+may also hold runtime statements over closed scalars: scalar locals and
+assignments, `if`/`elif`/`else`, `while`, `break`, `continue`, a bare
+`return`, and a discarded call or `_ =` value. A runtime statement is checked
+once whatever runs it, so none drops or copies an occurrence. A condition's
+recorded type must be exactly `Bool`, which `expect_bool` accepts without a
+truthiness fact. A keyed body keeps its own rules: a local is never declared
+inside a `comptime for`, where an unrolled body would need one binding per
+copy, and the loop variable may only key a condition.
+
+### `MethodBody`
+
+The declaration may have a `mut`, `var`, or `deinit` receiver, the `out` of an
+`__init__`, or none (`@staticmethod`), a `where` clause, `var` parameters, and
+any result that is not a reference. Which fields an `__init__` initializes is
+its syntax, and definite initialization is judged outside the body check. A
+`ref` receiver, a receiver origin, the copy and move initializers, the
+method's own binders, and `raises` stay outside. A `where`
+clause is the declaration's constraint: `generate_instance_clones` mints a
+clone only where it evaluates true, a trace exists only for a minted clone, and
+a clone's signature no longer states it.
+
+`MethodFeatures` names what the body holds. The features are independent, so
+they are a set, not a ladder.
+
+| Feature | Body | Why an instance needs no inference |
+|---|---|---|
+| `STATEMENTS` | a receiver other than a plain read `self`, or the runtime statements above, plus a store to a closed scalar field of a `mut`/`var` `self` | A stored field is a closed scalar, so the store is a plain scalar write and never an in-place operator of the field's type. Invalidations name `self` and locals by template owner. |
+| `OPAQUE_MOVES` | a whole value of any type moved (`^`) or copied between a parameter, a local, a field of `self`, and the result | The value is never an operand, a receiver, a condition, or an argument, so nothing dispatches on its type. A store or a result has the value's own recorded type, which stays equal under substitution, so neither check converts. What a clone check still decides from the type is owed per instance (obligations 3 and 10 to 12 below). |
+| `POINTER_SLOTS` | over a pointer field of `self` with no tracked provenance: `unsafe_offset(scalar)`, `unsafe_take_pointee()`, `unsafe_deinit_pointee()`, `free`, and the slot `pointer[scalar]` as a store target or a copied place | Such a pointer holds no loan, names no place, and is a pointer under every instance, so its methods are the built-in ones (`infer_pointer_method`), which select no callee and record an adjustment naming at most the pointee. Every other judgment there only produces an error, and the template's is at least as strict. |
+| `SIBLING_CALLS` | a method call on `self` or a field of it, passing closed scalars, whose contract is a `closed_method_contract` | Obligation 7 below. Arguments are closed scalars in both checks, so nothing about them depends on the instance. |
+
+A bare place of a parameter type is admitted at a consuming position only
+where the template recorded the copy (`copy_place_value_uses`). A type that is
+only `Movable` records nothing there, and its `Int` clone would.
 
 ## What an instance still owes
 
@@ -199,20 +243,47 @@ recipe mints those yet. The loop variable may only key a condition.
 6. **Built-in `len`.** See `BoundedOperations` above. A borrow the template
    already recorded for the operand (a reference-valued one) is kept; only the
    nominal-place rule can newly hold for an instance.
-7. **Trivial method calls.** `trivial_method_contract` names every field of
-   `CheckedCallContract`: no arguments, a plain read receiver, no raise, no
-   result adapter, no reference result, no captures, no compile-time
-   parameters, a closed result. `realize_method_call` then repeats the clone
-   check's retarget, `instance_method_clone`, and writes the clone as the
-   call's target, its overload target, and its effect-summary key. The callee
-   must be the one method of its name, with no binders and no availability
-   condition. An instance that has clones but not this one (withheld, or a
-   collapsed overload family) refuses.
+7. **Closed method calls.** `closed_method_contract` names every field of
+   `CheckedCallContract`: a receiver read or mutated in place, every argument
+   supplied and bound by value to a closed scalar parameter, adapted at most by
+   materializing a literal to a closed type, and no raise, result adapter,
+   reference result, captures, or compile-time parameters. A
+   `trivial_method_contract` is the case with no arguments, a plain read
+   receiver, and a closed result, which is all `MethodScalarBody` admits.
+   `realize_method_call` repeats the clone check's retarget: the declared
+   member is the one whose lowered name the template recorded, and the clone
+   member is the one with that signature (`method_clone_target`, shared with
+   `constructor_clone_target`), giving `List.pop$y3:Int$ov$Int`. A clone check
+   ranks the clone family again on its arguments, so every member of an
+   overloaded family must declare closed parameter types for the two rankings
+   to agree. The result type substitutes. A method call's parameter types are
+   already in the receiver's binder scope, unlike a direct call's
+   `CallParameterFact`, so they would substitute too if they were ever
+   symbolic. A clone that exists has met its `where` clauses; a callee with
+   an availability condition and no clone refuses, as does an instance that
+   has clones but not this one (withheld, or a collapsed overload family).
 8. **Struct applications.** Substituted, then recorded by installation under
    the body's own source.
 9. **Effect summaries.** Every callee's transfer and call-through summaries
    must still be empty. Installation records the same empty observation a
    clone check would, so the transfer fixpoint re-runs if one grows.
+10. **`Movable`.** Each `^` transfer of a value whose type mentioned a
+    parameter must be of a `Movable` type for the instance. A parameter is
+    always movable while it is symbolic and the demand only ever produces an
+    error, so no retained fact carries it and verification cannot see it
+    (`assets/type_error/template_method_transfer_requires_movable.mojo`).
+11. **Deletability.** A binding of a bare parameter type is deletable, linear,
+    or neither at the instance's own type, as the declaration's check decides
+    it. A binding whose type is built over a parameter (`Optional[T]`) leaves
+    no entry to judge again and refuses. A linear temporary stays one only
+    while its type is still a parameter, which an instance's never is.
+12. **Plain-data arguments** (`MethodBody` only). Every instance argument
+    carries no loan, holds no reference, and mentions no callable. A clone
+    check decides outward-store transfer effects, view-result borrows, and
+    closure escapes on those properties, and a template, whose parameter is
+    symbolic, records none of them. `type_may_carry_loans` is conservative for
+    a struct whose declared fields have parameter types, so
+    `List[DictEntry[…]]` refuses today.
 
 The declaration's bounds and `where` clauses are not re-checked: the checker
 discharges them at the requesting call, and the elaborator proves a fully
@@ -231,8 +302,10 @@ prints 2, not the 1 that re-ranking the `Int` clone selects. A derived instance
 inherits the template's choice: a call through an overload set keeps the
 member whose lowered symbol the template recorded, and is never ranked again.
 
-An instance that still takes the clone check re-ranks. That is the residue
-filed in roadmap section 3
+An instance that still takes the clone check re-ranks. A `def` with a scalar
+local now derives (`assets/ok/template_overload_binding_local.mojo`); one that
+binds a local of a parameter type does not, and is the residue filed in
+roadmap section 3
 (`conformance/probes/template_overload_rebound_in_clone.mojo`).
 
 ## Reuse across passes
@@ -301,16 +374,21 @@ tables. In short, for one debug-profile run each:
 
 - Building the arena once saves about 6% (Hello World 10.58 s to 9.90 s).
 - `stdlib_heavy.mojo` checks a per-instantiation method clone 2254 times per
-  compilation and derives 242 of them (10.7%); `generic.mojo` derives 70 of
-  474. Wall time is unchanged within noise, because the bodies that derive
-  today are the smallest.
+  compilation and derives 586 of them (26%); `generic.mojo` derives 178 of
+  474 (38%). With `MethodScalarBody` alone those were 242 and 70, and wall
+  time did not move. With `MethodBody` it does: 17.9 s to 17.0 s and 11.4 s to
+  10.6 s, three interleaved runs each.
 - Hello World mints no per-instantiation clones at all. Its generated bodies
   are members of structs specialized whole and per-call clones, from
   concrete-only templates.
-- The census (`template_census.*`) says three recipes —
-  `DiscardedReferenceResults`, non-trivial `SelectedCalls`, and
-  `ConstructionImmutableBinders` — would make 137 of 392 clone bodies
-  capturable, and adding `PointerOffset` and `PointerStorageTake` 190.
+- The census (`template_census.*`) says which table recipes come next:
+  `ConstructionImmutableBinders` alone would make 43 more of the 333 clone
+  bodies still inferred capturable, a callee effect summary that is not empty
+  27 more, and `ReferenceValueUses` 18 more. Its `grammar.*` counters say
+  which constructs keep a body outside every class whatever its tables: a
+  method call passing something other than a scalar (178 bodies), a subscript
+  that is not a pointer slot (139), a non-scalar closed result (137), and a
+  `ref self` (51).
 
 An earlier version of the `body_inference.clone` counter tested for a `$` in a
 name and so counted ordinary bundled structs' methods as clones. The figures
@@ -320,15 +398,19 @@ it produced (3828 for Hello World) were wrong and are withdrawn.
 
 Each of these keeps the clone check. The roadmap carries one entry per item.
 
-- A method body beyond `MethodScalarBody`: a non-scalar result, a `mut` or
-  consuming receiver, a lifecycle method, a call with arguments, a local, a
-  branch, or a loop.
+- A method body beyond `MethodBody`: a `ref` receiver, a copy or move
+  initializer, a reference result, `raises`, the method's own binders, a
+  `for` loop, a construction, a string, a call passing a value that is not a
+  closed scalar, and a local whose type is built over a parameter.
+- An instance whose argument may carry a loan, which includes every struct
+  with a field of a parameter type (`DictEntry[K, V, H]`).
 - Per-call method clones and members of a struct specialized whole, which
   leave no trace.
-- Bodies with locals, control flow, or non-scalar results in a surviving
-  trait-bound `def` template.
+- A local of a parameter type, a `for` loop, or a non-scalar result in a
+  surviving trait-bound `def` template. Scalar locals and runtime `if` and
+  `while` are covered.
 - Any call that records a conversion, an adjustment, an origin, a transfer, or
-  a contract that is not trivial. A `T: Bound` receiver is a re-selection in a
+  a contract that is not closed. A `T: Bound` receiver is a re-selection in a
   clone (conformer union in the template, concrete dispatch in the clone), not
   a substitution.
 - A folded value parameter or loop variable that survives into an instance.

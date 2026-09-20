@@ -1576,10 +1576,27 @@ impl Checker {
         sig: &MethodSig,
         subst: &HashMap<String, Ty>,
     ) -> Option<String> {
+        self.method_clone_target(name, "__init__", arguments, sig, subst)
+    }
+
+    /// The lowered target of `method`'s per-instantiation clone on
+    /// `name[arguments]` that stands for the template signature `sig`: the
+    /// member of the clone family whose signature is `sig` with the
+    /// instance's arguments substituted. `None` when the instance has no
+    /// such clone, the method carries its own compile-time parameters, or no
+    /// one member matches.
+    pub(super) fn method_clone_target(
+        &self,
+        name: &str,
+        method: &str,
+        arguments: &[TyArg],
+        sig: &MethodSig,
+        subst: &HashMap<String, Ty>,
+    ) -> Option<String> {
         if !sig.decls.is_empty() {
             return None;
         }
-        let clone = self.instance_method_clone(name, "__init__", arguments)?;
+        let clone = self.instance_method_clone(name, method, arguments)?;
         let sigs = self.structs.get(name)?.methods.get(&clone)?;
         // A lone clone is not an overload set: its definition keeps the plain
         // clone name, so naming a signature suffix here would target a symbol

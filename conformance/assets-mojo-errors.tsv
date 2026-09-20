@@ -402,6 +402,7 @@ assets/type_error/struct_field_unqualified_param.mojo	compile-reject	agree	error
 assets/type_error/struct_param_bare_bracket_slot.mojo	compile-reject	agree	error: unqualified access to struct parameter 'length'; use 'Self.length' instead
 assets/type_error/struct_value_param_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Tagged[Extent(Int(2), Int(3))]' value to 'Tagged[Extent(Int(3), Int(2))]'
 assets/type_error/symbolic_origin_pointer_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/template_method_transfer_requires_movable.mojo	compile-reject	agree	error: cannot transfer value into destination, because 'T' doesn't conform to 'Movable'
 assets/type_error/trait_comptime_member.mojo	compile-reject	agree	error: 'Box[T]' does not implement all requirements for 'HasElement'
 assets/type_error/transfer_into_mut_parameter.mojo	compile-reject	agree	error: invalid call to 'poke': value passed to mutable argument 't' must be mutable
 assets/type_error/tstring.mojo	compile-reject	agree	error: invalid call to '__make_tstring': an element of 'args' with type 'Opaque' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance

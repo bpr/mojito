@@ -57,9 +57,11 @@ authority for the instantiations it covers: source validation and the abstract
 check retain a body's facts, the elaborator leaves a trace from each clone to
 its template, and a covered clone inherits those facts by substitution instead
 of being inferred (`docs/notes/instantiation-from-template.md`). The seventh
-step extended that to a generic struct's per-instantiation method clones.
-Coverage is narrow on purpose, and the entries below widen it. Each task pays off
-by itself, and together they are what moving toward Mojo's shape needs.
+step extended that to a generic struct's per-instantiation method clones. The
+eighth widened the method class to runtime statements, whole-value moves,
+pointer slots, and sibling calls that pass scalars. The entries below widen it
+further. Each task pays off by itself, and together they are what moving
+toward Mojo's shape needs.
 
 This section holds only work that moves the check order: checking a template
 with its parameters symbolic, or deriving an instantiation from a checked
@@ -72,33 +74,69 @@ entry names what it depends on. Size does not move an entry up. The **Model:**
 bullet carries the complexity estimate and says whether the entry can be done
 as-is or must be planned first.
 
-- [ ] **Most of a generic struct's method clones are still inferred**
+- [ ] **A method that takes `ref self` or returns a reference keeps the clone
+  check**
 
-  Problem: a per-instantiation method clone derives from its checked template
-  only when its body is a scalar getter, and that is one clone check in ten.
-  - `benchmarks/compile/stdlib_heavy.mojo` checks an instance clone 2254 times
-    per compilation and derives 242 (`--timings`, `body_sites.instance_clone`
-    and `template_derivations.installed`). Wall time does not move yet.
-  - The covered class is `MethodScalarBody`: a plain read `self`, a scalar
-    result, reads of scalar fields, the built-in `len` over a field, and
-    argument-free method calls whose contract only the target can change
-    (`template_facts.rs:method_certificate`, `templates.rs:trivial_method_contract`).
-  - The census says which recipes to write next
-    (`docs/performance.md`, *Census of method bodies*). Three tables make 137 of
-    392 clone bodies capturable: `DiscardedReferenceResults`, `SelectedCalls`
-    beyond a trivial contract, and `ConstructionImmutableBinders`. Adding the
-    `PointerOffset` and `PointerStorageTake` adjustments makes it 190.
-  - Capturable is not derivable. Each widening also needs its class grammar
-    and the argument that no checker decision in it depends on the instance
-    without leaving a fact. Verification mode
-    (`MOJITO_VERIFY_TEMPLATE_FACTS=1`) found one such decision already, the
-    built-in `len`'s reference-operand borrow.
-  - A `mut` receiver, a non-scalar result, a local, and a branch are all
-    outside the grammar today, whatever their tables.
+  Problem: the method class refuses a `ref` receiver, a receiver origin, and a
+  reference result, and those are the accessors every collection read goes
+  through.
+  - `List.__getitem__`, `List.unsafe_get`, `Optional.value`, and
+    `Dict.__getitem__` are all of this shape. 51 of the 333 clone bodies
+    `benchmarks/compile/stdlib_heavy.mojo` still infers take `ref self`
+    (`--timings`, `template_census.clone.grammar.self:ref`).
+  - The facts have no recipe: `ReferenceValueUses` (60 bodies), the
+    `ReferenceResult` adjustment (37), `InteriorReferences` (22), and
+    `CopyableReferenceResultReads` (16).
+  - A reference type holds an origin, and an origin rooted at a binding
+    identity sits inside the type. Capture refuses such a type today
+    (`template_facts.rs:names_place`). The recipe needs types remapped by
+    template owner.
+  - `CopyableReferenceResultReads` takes a type-dependent entry
+    (`inference.rs`, gated on `is_implicitly_copyable` of the referent), so it
+    needs an obligation, not an identity copy.
   - The design record is
     [`docs/notes/instantiation-from-template.md`](notes/instantiation-from-template.md).
-  - Depends on the recipe entry below for anything that calls with arguments.
-  - Model: Fable, plan first. One class at a time, each with a probe.
+  - Depends on nothing.
+  - Model: Fable, plan first.
+
+- [ ] **A method that constructs a struct keeps the clone check**
+
+  Problem: a construction is outside the method grammar, and the one table it
+  always fills has no recipe.
+  - `List.copy`, `Optional.copy`, `Set.copy`, `Dict.keys`, and `Dict.__iter__`
+    are one construction each.
+  - `ConstructionImmutableBinders` blocks 103 clone bodies and is the sole
+    blocker of 43, the best single recipe left (`docs/performance.md`, *Census
+    of method bodies*).
+  - A construction also records a `generic_instantiations` entry and an
+    overload target naming the `__init__` clone. `constructor_clone_target`
+    already finds that clone, through the helper the sibling-call recipe
+    shares (`declarations.rs:method_clone_target`).
+  - A constructor argument is a call argument, so anything but a closed scalar
+    waits on the recipe entry below.
+  - Depends on the recipe entry below for non-scalar arguments.
+  - Model: Fable, plan first.
+
+- [ ] **A struct with a field of a parameter type is never a plain-data
+  argument**
+
+  Problem: a `MethodBody` derivation refuses an instance whose argument may
+  carry a loan, and `type_may_carry_loans` says that of every struct that
+  declares a field of a parameter type.
+  - `List[DictEntry[Int, String, H]]` refuses for that reason: 36 clone bodies
+    per pass in `benchmarks/compile/stdlib_heavy.mojo`
+    (`template_derivations.ineligible`, "an instance argument carries a
+    loan").
+  - The predicate reads the struct's declared fields, where `K` and `V` are
+    still parameters (`origins/ref_params.rs:type_may_carry_loans`). It never
+    substitutes the application's arguments.
+  - The refusal is correct today: a clone check asks the same predicate and
+    does its loan bookkeeping for such a type.
+  - Substituting the arguments before judging the fields narrows both the
+    clone check and the obligation at once.
+  - Depends on nothing.
+  - Model: Opus, plan first. The lever is one predicate. The fallout is every
+    origin test that relied on the conservative answer.
 
 - [ ] **A per-call method clone and a whole-struct specialization leave no
   trace**
@@ -121,11 +159,15 @@ as-is or must be planned first.
 
   Problem: an instance inherits a template's facts only when every fact table
   the body touched has a recipe, and most call facts do not.
-  - Tables with a recipe are listed in the design record. `SelectedCalls`,
-    every conversion table, `CallTransfers`, `CallResultOrigins`, the
-    reference-result tables, and every `SemanticAdjustment` except
-    `MaterializeLiteral` refuse the body
+  - Tables with a recipe are listed in the design record. Every conversion
+    table, `CallTransfers`, `CallResultOrigins`, and every
+    `SemanticAdjustment` except `MaterializeLiteral` and the pointer-slot four
+    refuse the body
     (`templates.rs:derive_adjustment`, `template_facts.rs:derivable_table`).
+  - A method call derives only under `templates.rs:closed_method_contract`:
+    on `self` or a field of it, every argument a closed scalar bound by value.
+    178 of the 333 clone bodies still inferred hold a call that passes
+    something else (`template_census.clone.grammar.expr:MethodCall+args`).
   - A method call through a trait bound records a `CheckedCallContract` whose
     target an instance must realize against the concrete implementation. The
     built-in `len` is the one realized operation today
@@ -134,25 +176,26 @@ as-is or must be planned first.
     Replaying a stabilized summary on remapped places is the missing recipe.
   - Each recipe needs its soundness argument written beside
     `template_certificate`, and a verification-mode run over a probe.
-  - Depends on the method-clone entry only for payoff, not for correctness.
+  - Depends on nothing.
   - Model: Fable, plan first. One recipe per table is small. Choosing which
     concrete-dependent decisions a clone check makes after selection is not.
 
-- [ ] **A surviving trait-bound template with a local or a branch keeps the
-  clone check**
+- [ ] **A surviving trait-bound template with a local of a parameter type
+  keeps the clone check**
 
-  Problem: `BodyShape` admits locals, assignments, and compile-time control
-  flow only in a body source validation produced.
-  - `def outer[T: Copyable](x: T) -> Int` with `var selected = pick(x)` is
-    outside every class, so its instances are inferred.
+  Problem: a `def` template may hold scalar locals and runtime `if` and
+  `while`, but a whole value of a parameter type may move only inside a
+  method body.
+  - `def outer[T: ImplicitlyCopyable & Deinitable](x: T) -> Int` with
+    `var kept = x` is outside every class, so its instances are inferred.
   - That is also what keeps the overload re-ranking divergence alive (section
     3, "A clone that is still checked re-ranks an overloaded call").
-  - A local of a parameter type needs the `Deinitable`/linear binding facts
-    substituted and re-judged per instance
-    (`explicit_destroy_deletability`), which is why the first classes return
-    scalars only.
-  - Runtime `if`/`while`/`for` need no new trace, only grammar and the
-    iteration-protocol recipe.
+  - The method class already has the three obligations this needs: the copy at
+    a copied place, `Movable` at a transfer, and the deletability of a local
+    of a bare parameter type (`template_facts.rs:whole_value`).
+  - A `def` has no plain-data obligation yet, and its parameter may be
+    instantiated with a type that carries a loan or is a callable.
+  - A runtime `for` needs the iteration-protocol recipe.
   - Depends on nothing.
   - Model: Fable, plan first.
 
@@ -785,15 +828,18 @@ The checkboxes below, and the bullets inside the standing ones, are sorted Opus 
   Problem: the pinned Mojo binds a call inside a generic body once, while it
   checks the body, and Mojito ranks the overload set again for every
   instantiation that takes the clone check.
-  - `def outer[T: Copyable](x: T) -> Int` holding `var selected = pick(x)`
-    prints 1 for `outer(3)` where the pin prints 2:
+  - `def outer[T: ImplicitlyCopyable & Deinitable](x: T) -> Int` holding
+    `var kept = x` and `return pick(kept)` prints 1 for `outer(3)` where the
+    pin prints 2:
     `conformance/probes/template_overload_rebound_in_clone.mojo`.
   - An instance derived from its checked template already inherits the
     template's choice (`assets/ok/template_overload_binding.mojo`,
-    `overload-bound-in-generic-body`).
-  - The remaining shapes are the ones outside the derivation classes: a body
-    with a local or a branch, and every struct method. Section 1 carries those
-    entries, and each one that lands narrows this.
+    `overload-bound-in-generic-body`), also with a scalar local or a branch
+    (`assets/ok/template_overload_binding_local.mojo`).
+  - The remaining shapes are the ones outside the derivation classes: a `def`
+    with a local of a parameter type, and a struct method that calls a
+    module-scope overload set. Section 1 carries those entries, and each one
+    that lands narrows this.
   - **Model:** Fable. It closes only as section 1's coverage entries land.
 
 - [ ] **Mojito-specific shortcuts to move toward Mojo's shape** *(standing,

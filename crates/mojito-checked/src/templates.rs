@@ -11,7 +11,8 @@
 //! The design record is `docs/notes/instantiation-from-template.md`.
 
 use crate::checked::{
-    CheckedCallBoundary, CheckedCallContract, EffectFacts, GenericInstantiation, SemanticAdjustment,
+    CheckedCallArgumentSource, CheckedCallBoundary, CheckedCallContract,
+    CheckedCallValueAdjustment, EffectFacts, GenericInstantiation, SemanticAdjustment,
 };
 use mojito_common::token::{Span, SyntaxId};
 use mojito_types::types::{ParamDecl, Ty};
@@ -165,6 +166,29 @@ pub fn derive_adjustment(
             (!mojito_types::types::is_symbolic(&target))
                 .then_some(SemanticAdjustment::MaterializeLiteral(target))
         }
+        // Element arithmetic names no type, and a take, a destroy, or a
+        // moving write names only the pointee, which substitutes. Each is
+        // selected by the method's name on a receiver that is a pointer under
+        // every instance. A copying write also marks a reference-result read,
+        // a table that takes type-dependent entries too, so it has no recipe.
+        SemanticAdjustment::PointerOffset => Some(SemanticAdjustment::PointerOffset),
+        SemanticAdjustment::PointerStorageTake { element } => {
+            Some(SemanticAdjustment::PointerStorageTake {
+                element: substitute(element),
+            })
+        }
+        SemanticAdjustment::PointerStorageDestroy { element } => {
+            Some(SemanticAdjustment::PointerStorageDestroy {
+                element: substitute(element),
+            })
+        }
+        SemanticAdjustment::PointerWrite {
+            element,
+            copy: false,
+        } => Some(SemanticAdjustment::PointerWrite {
+            element: substitute(element),
+            copy: false,
+        }),
         SemanticAdjustment::ResolveCallable(..)
         | SemanticAdjustment::ConstructTypeParam { .. }
         | SemanticAdjustment::ReifyTypeArgument { .. }
@@ -222,9 +246,6 @@ pub fn derive_adjustment(
         | SemanticAdjustment::VariantTake { .. }
         | SemanticAdjustment::VariantReplace { .. }
         | SemanticAdjustment::PointerToPlace { .. }
-        | SemanticAdjustment::PointerStorageTake { .. }
-        | SemanticAdjustment::PointerStorageDestroy { .. }
-        | SemanticAdjustment::PointerOffset
         | SemanticAdjustment::PointerOriginCast { .. }
         | SemanticAdjustment::UninitStorageMake { .. }
         | SemanticAdjustment::UninitStorageWrite { .. }
@@ -232,11 +253,35 @@ pub fn derive_adjustment(
         | SemanticAdjustment::VariantDeinitWith { .. }
         | SemanticAdjustment::UninitStorageTake { .. }
         | SemanticAdjustment::UninitStorageDestroy { .. }
-        | SemanticAdjustment::PointerWrite { .. }
+        | SemanticAdjustment::PointerWrite { copy: true, .. }
         | SemanticAdjustment::SliceDescriptors { .. }
         | SemanticAdjustment::InteriorReference { .. }
         | SemanticAdjustment::InvalidateInteriors { .. } => None,
     }
+}
+
+/// One selected method call in template-local terms.
+///
+/// A [`CheckedCallContract`]'s boundary names each argument by the span of
+/// its source occurrence and each invalidated place by a binding identity,
+/// and both belong to one checker run. Here the contract's own boundary is
+/// left empty, and what it held is kept by occurrence and template owner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplateCallContract {
+    pub contract: CheckedCallContract,
+    pub arguments: Vec<TemplateArgumentBoundary>,
+    /// Receiver and call-site generation changes.
+    pub invalidations: Vec<TemplateInvalidation>,
+}
+
+/// One [`crate::checked::CheckedCallArgumentBoundary`] in template-local
+/// terms.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplateArgumentBoundary {
+    pub source: CheckedCallArgumentSource,
+    pub value: OccurrenceId,
+    pub adjustments: Vec<CheckedCallValueAdjustment>,
+    pub invalidations: Vec<TemplateInvalidation>,
 }
 
 /// Whether a method call's contract holds nothing an instance could change
@@ -244,41 +289,84 @@ pub fn derive_adjustment(
 ///
 /// That is a call with no arguments, on a plain read receiver, that neither
 /// raises, adapts its result, returns a reference, captures, nor carries
-/// compile-time parameters, and whose result is a closed type. Every field is
+/// compile-time parameters, and whose result is a closed type.
+pub fn trivial_method_contract(call: &TemplateCallContract) -> bool {
+    closed_method_contract(call)
+        && !mojito_types::types::is_symbolic(&call.contract.result_ty)
+        && !call.contract.receiver_requires_place
+        && call.contract.receiver_convention.is_none()
+        && call.contract.arguments.is_empty()
+        && call.invalidations.is_empty()
+}
+
+/// Whether a method call's contract changes per instance only in its target
+/// and, by substitution, its result type.
+///
+/// The receiver is read or mutated in place, never consumed or bound by a
+/// `ref` whose mutability origin solving decides. Every argument is supplied
+/// (no default is evaluated in the callee's scope), binds a closed scalar
+/// parameter by value, and is adapted at most by materializing a literal to a
+/// closed type: no conversion, no place, no invalidation. The call neither
+/// raises, adapts its result, returns a reference, captures, nor carries
+/// compile-time parameters. Whether the receiver needs a place is the
+/// callee's declaration, which an instance's clone keeps. Every field is
 /// named, so a new one must be given a rule here before this crate builds.
-pub fn trivial_method_contract(contract: &CheckedCallContract) -> bool {
-    let CheckedCallContract {
-        target: _,
-        raises,
-        result_ty,
-        result_adapter,
-        receiver_requires_place,
-        receiver_elided,
-        receiver_convention,
-        arguments,
-        captures,
-        reference_result,
-        parameter_arguments,
-        param_decls,
-        boundary:
-            CheckedCallBoundary {
-                arguments: boundary_arguments,
-                invalidations,
+pub fn closed_method_contract(call: &TemplateCallContract) -> bool {
+    use mojito_ast::ast::ArgConvention;
+    let TemplateCallContract {
+        contract:
+            CheckedCallContract {
+                target: _,
+                raises,
+                result_ty: _,
+                result_adapter,
+                receiver_requires_place: _,
+                receiver_elided,
+                receiver_convention,
+                arguments,
+                captures,
+                reference_result,
+                parameter_arguments,
+                param_decls,
+                // Kept template-locally, in `call.arguments` and
+                // `call.invalidations`.
+                boundary:
+                    CheckedCallBoundary {
+                        arguments: _,
+                        invalidations: _,
+                    },
             },
-    } = contract;
+        arguments: boundary_arguments,
+        invalidations: _,
+    } = call;
+    let closed_scalar = |ty: &Ty| matches!(ty, Ty::Int | Ty::UInt | Ty::Bool | Ty::Float64);
     raises.is_none()
-        && !mojito_types::types::is_symbolic(result_ty)
         && result_adapter.is_none()
-        && !receiver_requires_place
         && !receiver_elided
-        && receiver_convention.is_none()
-        && arguments.is_empty()
+        && matches!(
+            receiver_convention,
+            None | Some(ArgConvention::Imm | ArgConvention::Mut)
+        )
+        && arguments.iter().all(|argument| {
+            argument.source != CheckedCallArgumentSource::Default
+                && closed_scalar(&argument.parameter_ty)
+                && !argument.requires_place
+                && matches!(
+                    argument.convention,
+                    None | Some(ArgConvention::Imm | ArgConvention::Var)
+                )
+        })
         && captures.is_empty()
         && reference_result.is_none()
         && parameter_arguments.is_empty()
         && param_decls.is_empty()
-        && boundary_arguments.is_empty()
-        && invalidations.is_empty()
+        && boundary_arguments.iter().all(|argument| {
+            argument.invalidations.is_empty()
+                && argument.adjustments.iter().all(|adjustment| {
+                    matches!(adjustment, CheckedCallValueAdjustment::MaterializeLiteral { target }
+                        if closed_scalar(target))
+                })
+        })
 }
 
 /// Why a body's facts cannot be derived, so its instances are checked as
@@ -370,6 +458,45 @@ pub enum TemplateClass {
     /// of its own, returning a scalar over closed scalars, runtime
     /// parameters, and reads of `self`'s scalar fields.
     MethodScalarBody,
+    /// A method of a generic struct beyond [`Self::MethodScalarBody`]: what
+    /// its body holds is named by its [`MethodFeatures`], each of which the
+    /// certificate argues for separately.
+    MethodBody(MethodFeatures),
+}
+
+/// The constructs a [`TemplateClass::MethodBody`] holds beyond scalar `return`s.
+///
+/// They are independent of one another: a body may call a sibling without
+/// moving a value of a parameter type, and the reverse.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MethodFeatures(u8);
+
+impl MethodFeatures {
+    /// A receiver other than a plain read `self`, or statements beyond a
+    /// scalar `return`: scalar locals, scalar field writes, `if`, `while`.
+    pub const STATEMENTS: Self = Self(1);
+    /// A value whose type mentions a struct parameter, moved or copied whole
+    /// between a parameter, a local, a field of `self`, and the result.
+    pub const OPAQUE_MOVES: Self = Self(1 << 1);
+    /// Element arithmetic, takes, destroys, and writes through a pointer
+    /// field of `self`.
+    pub const POINTER_SLOTS: Self = Self(1 << 2);
+    /// A method call on `self` or one of its fields whose contract is closed
+    /// but carries arguments or a `mut` receiver.
+    pub const SIBLING_CALLS: Self = Self(1 << 3);
+
+    #[must_use]
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    pub const fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
 }
 
 /// Whether a template's facts may stand in for a clone's check.
@@ -462,6 +589,22 @@ pub enum TemplateObligation {
     /// Every place copied at a consuming position must be implicitly copyable
     /// at the instance's type, as `check_consuming` demands of a clone.
     ImplicitCopies,
+    /// Every argument of a [`TemplateClass::MethodBody`] instance is plain
+    /// data: it carries no loan, holds no reference, and mentions no callable.
+    /// A clone check decides outward-store transfer effects, view-result
+    /// borrows, and closure escapes on exactly those properties, and a
+    /// template, whose parameter is symbolic, records none of them.
+    PlainDataArguments,
+    /// Every `^` transfer of a value whose type mentioned a parameter must be
+    /// of a `Movable` type for the instance. A parameter is always movable
+    /// while it is symbolic, and the demand only ever produces an error, so
+    /// no fact a template retains carries it.
+    Movable,
+    /// Each binding of a bare parameter type is deletable, linear, or neither
+    /// according to the instance's own type, as the declaration's check
+    /// decides it; a linear temporary stays one only while its type is still
+    /// a parameter.
+    Deletability,
 }
 
 /// The facts one body check recorded, keyed by the body's own syntax
@@ -494,9 +637,10 @@ pub struct CheckedBodyFacts {
     /// Calls of the built-in `len`, which an instance realizes against its
     /// concrete argument type.
     pub builtin_len_calls: Vec<OccurrenceId>,
-    /// The contract of each method call. Only a [`trivial_method_contract`]
-    /// derives: an instance then realizes its target alone.
-    pub selected_calls: Vec<(OccurrenceId, CheckedCallContract)>,
+    /// The contract of each method call. Only a [`closed_method_contract`]
+    /// derives: an instance then realizes its target and substitutes its
+    /// result type.
+    pub selected_calls: Vec<(OccurrenceId, TemplateCallContract)>,
     /// Every generic-struct application the body reached as a constructor
     /// target or a method-call receiver, in checking order and before any
     /// filter. An instance records the substituted applications itself, which
@@ -511,7 +655,21 @@ pub struct CheckedBodyFacts {
     /// binding.
     pub interior_invalidations: Vec<(OccurrenceId, Vec<TemplateInvalidation>)>,
     pub unconsumed_temporaries: Vec<OccurrenceId>,
+    /// Values an expression statement or a `_ =` assignment discards. The
+    /// statement's syntax alone decides it, so an instance inherits the set.
+    pub discarded_reference_results: Vec<OccurrenceId>,
     pub deletable_bindings: Vec<OccurrenceId>,
+    /// Bindings of a bare parameter type whose bounds do not prove
+    /// `Deinitable`. An instance judges each binding again at its own type
+    /// ([`TemplateObligation::Deletability`]).
+    pub linear_bindings: Vec<OccurrenceId>,
+    /// Call results of a bare parameter type the body owns and cannot
+    /// destroy. An instance's type is never a parameter, so it keeps none.
+    pub linear_temporaries: Vec<OccurrenceId>,
+    /// Every `^` transfer, from the syntax alone. An instance owes `Movable`
+    /// at each one whose type mentioned a parameter
+    /// ([`TemplateObligation::Movable`]).
+    pub transfers: Vec<OccurrenceId>,
     /// How many locals the body declares.
     pub locals: u32,
 }
@@ -669,11 +827,39 @@ impl CheckedBodyFacts {
                 self.unconsumed_temporaries, other.unconsumed_temporaries
             );
         }
+        if self.discarded_reference_results != other.discarded_reference_results {
+            let _ = writeln!(
+                out,
+                " discarded_reference_results:\n  derived:  {:?}\n  inferred: {:?}",
+                self.discarded_reference_results, other.discarded_reference_results
+            );
+        }
         if self.deletable_bindings != other.deletable_bindings {
             let _ = writeln!(
                 out,
                 " deletable_bindings:\n  derived:  {:?}\n  inferred: {:?}",
                 self.deletable_bindings, other.deletable_bindings
+            );
+        }
+        if self.linear_bindings != other.linear_bindings {
+            let _ = writeln!(
+                out,
+                " linear_bindings:\n  derived:  {:?}\n  inferred: {:?}",
+                self.linear_bindings, other.linear_bindings
+            );
+        }
+        if self.linear_temporaries != other.linear_temporaries {
+            let _ = writeln!(
+                out,
+                " linear_temporaries:\n  derived:  {:?}\n  inferred: {:?}",
+                self.linear_temporaries, other.linear_temporaries
+            );
+        }
+        if self.transfers != other.transfers {
+            let _ = writeln!(
+                out,
+                " transfers:\n  derived:  {:?}\n  inferred: {:?}",
+                self.transfers, other.transfers
             );
         }
         if self.locals != other.locals {
@@ -734,13 +920,26 @@ impl CheckedBodyFacts {
             // Realization recomputes these from the calls that remain.
             effect_free_callees: Vec::new(),
             builtin_len_calls: flagged(&self.builtin_len_calls),
-            selected_calls: at(&self.selected_calls, occurrences),
+            // A call and its arguments are copied together.
+            selected_calls: at(&self.selected_calls, occurrences)
+                .into_iter()
+                .map(|(id, mut call)| {
+                    for argument in &mut call.arguments {
+                        argument.value.copy = id.copy;
+                    }
+                    (id, call)
+                })
+                .collect(),
             struct_applications: self.struct_applications.clone(),
             rebind_assertions: at(&self.rebind_assertions, occurrences),
             copy_place_value_uses: flagged(&self.copy_place_value_uses),
             interior_invalidations: at(&self.interior_invalidations, occurrences),
             unconsumed_temporaries: flagged(&self.unconsumed_temporaries),
+            discarded_reference_results: flagged(&self.discarded_reference_results),
             deletable_bindings: flagged(&self.deletable_bindings),
+            linear_bindings: flagged(&self.linear_bindings),
+            linear_temporaries: flagged(&self.linear_temporaries),
+            transfers: flagged(&self.transfers),
             locals: self.locals,
         }
     }
@@ -769,7 +968,11 @@ impl CheckedBodyFacts {
             + self.copy_place_value_uses.len()
             + self.interior_invalidations.len()
             + self.unconsumed_temporaries.len()
+            + self.discarded_reference_results.len()
             + self.deletable_bindings.len()
+            + self.linear_bindings.len()
+            + self.linear_temporaries.len()
+            + self.transfers.len()
     }
 }
 

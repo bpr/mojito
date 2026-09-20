@@ -1297,10 +1297,12 @@ and its soundness argument, is
   re-keyed node had before (`SyntaxOrigins`). No correspondence is inferred
   from a mangled name.
 - **An instance still owes its obligations.** Realization substitutes, then
-  discharges the `rebind` equalities, the implicit copies, the clone lookup
-  of each retained application, the built-in `len` witness, the retarget of
-  each trivial method call (`instance_method_clone`), and the empty effect
-  summaries. It also records the generic-struct applications the body
+  discharges the `rebind` equalities, the implicit copies, `Movable` at each
+  transfer, the deletability of each local of a parameter type, the clone
+  lookup of each retained application, the built-in `len` witness, the
+  retarget of each closed method call (`method_clone_target`), and the empty
+  effect summaries. A method beyond a scalar getter also owes that every
+  instance argument is plain data. It also records the generic-struct applications the body
   reaches, substituted, so a derived clone requests the instances an inferred
   one would. A failed obligation refuses the derivation, so the clone
   check reports it in its own words. A refusal never accepts a program.

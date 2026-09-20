@@ -359,48 +359,66 @@ ordinary bundled structs. The figures below replace it.
 
 | Program | Plain | Template | Generated | Instance-clone checks | Derived | Template bodies reused |
 |---|---:|---:|---:|---:|---:|---:|
-| `hello.mojo` | 2100 | 1801 | 1320 | 0 | 0 | 95 |
-| `stdlib_heavy.mojo` | 2100 | 1831 | 3360 | 2254 | 242 | 95 |
-| `generic.mojo` | 2118 | 1803 | 1746 | 474 | 70 | 105 |
+| `hello.mojo` | 2100 | 1656 | 1320 | 0 | 0 | 240 |
+| `stdlib_heavy.mojo` | 2100 | 1676 | 3016 | 2254 | 586 | 250 |
+| `generic.mojo` | 2118 | 1658 | 1638 | 474 | 178 | 250 |
 
 - Hello World mints no per-instantiation method clones: a program without its
   own instantiations has none. Its generated bodies are members of structs the
   elaborator specialized whole (`Tuple$…`, the `DType`-keyed ranges, the
   hasher) and per-call clones, all from concrete-only templates.
-- `stdlib_heavy.mojo` checks an instance clone 2254 times and derives 242 of
-  them, 10.7%. Wall time is unchanged within noise (16.9 to 17.1 s): the
-  bodies that derive today are the smallest ones.
+- `stdlib_heavy.mojo` checks an instance clone 2254 times and derives 586 of
+  them, 26%; `generic.mojo` derives 178 of 474, 38%. With scalar getters alone
+  (`MethodScalarBody`) those were 242 and 70, and wall time did not move.
+- The `MethodBody` class moves it. Three interleaved runs each against the
+  preceding commit, debug profile, no `--timings`: `stdlib_heavy.mojo` 17.78 to
+  17.98 s before and 16.91 to 17.12 s after; `generic.mojo` 11.30 to 11.57 s
+  before and 10.53 to 10.82 s after. `--timings` itself costs about four
+  seconds on `stdlib_heavy.mojo`, before and after, most of it the census.
 
 ### Census of method bodies (`stdlib_heavy.mojo`, last discovery round, one pass)
 
 `--timings` reports, per generic body, everything that keeps it from being
 captured (`template_census.*`; `MOJITO_TIMING_NOTES=1` names each body).
 
-| | Bodies | Capturable with today's recipes |
+| | Bodies inferred | Capturable with today's recipes |
 |---|---:|---:|
-| Generic method templates | 302 | 97 |
-| Per-instantiation clones | 392 | 42 |
+| Generic method templates | 271 | 108 |
+| Per-instantiation clones | 333 | 124 |
+
+A derived body is not inferred, so it is not in the census. Of the 411
+per-instantiation clone bodies of that pass, 103 derive; the census rows are
+the generated generic bodies that were inferred.
 
 What blocks the clone bodies, by how many bodies each reason appears in:
 
 | Reason | Bodies | Sole blocker of |
 |---|---:|---:|
-| `DiscardedReferenceResults` | 235 | 18 |
-| `SelectedCalls` beyond a trivial contract | 148 | 15 |
-| `ConstructionImmutableBinders` | 103 | 23 |
-| adjustment `PointerOffset` | 85 | 0 |
-| adjustment `PointerStorageTake` | 70 | 4 |
-| `ReferenceValueUses` | 60 | 9 |
-| a callee effect summary that is not empty | 39 | 0 |
-| adjustment `PointerStorageDestroy` | 38 | 0 |
+| `ConstructionImmutableBinders` | 103 | 43 |
+| `ReferenceValueUses` | 60 | 18 |
+| a callee effect summary that is not empty | 39 | 27 |
 | adjustment `ReferenceResult` | 37 | 0 |
+| a fact keyed outside the body's occurrences | 24 | 0 |
+| `InteriorReferences` | 22 | 0 |
+| `CopyableReferenceResultReads` | 16 | 0 |
+| `ExplicitDestroyCalls` | 13 | 4 |
+| `CallPlaceUses` | 13 | 4 |
 
-The best recipe sets by how many clone bodies they would make capturable:
-one table, 54 (`ConstructionImmutableBinders`); two, 107
-(`DiscardedReferenceResults`, `SelectedCalls`); three, 137 (both plus
-`ConstructionImmutableBinders`); five, 190 (those plus `PointerOffset` and
-`PointerStorageTake`). Capturable is necessary, not sufficient: a body also
-has to be inside a class whose soundness argument covers its syntax.
+The best recipe sets by how many more clone bodies they would make capturable:
+one, 43 (`ConstructionImmutableBinders`); two, 70 (plus effect summaries);
+three, 92 (plus `ReferenceValueUses`). Capturable is necessary, not
+sufficient: 124 bodies are capturable already and are inferred because no
+class admits their syntax.
+
+What those bodies are made of is the census's second half
+(`template_census.<class>.grammar.<construct>`): every construct a method's
+declaration and body hold, whatever class admits it. Among the 333 clone
+bodies, the constructs no class admits in any form are a string literal (54
+bodies), a `ref self` (51), the method's own binders (40), a `mut` parameter
+(37), a `ref` declaration (28), and `raises` with `raise` (21). The rest are
+admitted only in part: a method call with arguments (178, admitted when every
+argument is a closed scalar), a subscript (139, admitted on a pointer slot), a
+non-scalar closed result (137), and a `^` transfer (123).
 
 The remaining cost is body inference of uncovered bodies, about one second per
 transfer pass. `docs/roadmap.md` section 1 carries the entries that attack it,

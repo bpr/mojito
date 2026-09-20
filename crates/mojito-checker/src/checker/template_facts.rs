@@ -17,8 +17,9 @@ use super::{Checker, callable_lowered_name};
 use mojito_ast::ast::{Expr, ExprKind, Stmt, StmtKind};
 use mojito_checked::templates::{
     CallParameterFact, CheckedBodyFacts, CheckedTemplate, FactTable, IncompleteReason,
-    InstanceName, InstanceTrace, OccurrenceId, TemplateClass, TemplateCoverage, TemplateId,
-    TemplateInvalidation, TemplateObligation, TemplateOwner, TemplateProducer,
+    InstanceName, InstanceTrace, MethodFeatures, OccurrenceId, TemplateArgumentBoundary,
+    TemplateCallContract, TemplateClass, TemplateCoverage, TemplateId, TemplateInvalidation,
+    TemplateObligation, TemplateOwner, TemplateProducer,
 };
 use mojito_common::error::TypeError;
 use mojito_common::timing;
@@ -158,6 +159,8 @@ struct Occurrence {
     identifier: bool,
     /// A method call's receiver occurrence and method name.
     method_call: Option<(SyntaxId, String)>,
+    /// Whether this is a `^` transfer.
+    transfer: bool,
 }
 
 impl Checker {
@@ -555,7 +558,8 @@ impl Checker {
                 TemplateClass::ClosedScalarBody
                 | TemplateClass::FixedCalls
                 | TemplateClass::BoundedOperations
-                | TemplateClass::MethodScalarBody => trace.value_bindings.is_empty(),
+                | TemplateClass::MethodScalarBody
+                | TemplateClass::MethodBody(_) => trace.value_bindings.is_empty(),
                 // The folded values selected the arms; no retained
                 // occurrence names one.
                 TemplateClass::ScalarBranches => true,
@@ -569,6 +573,11 @@ impl Checker {
         let Ok(substitution) = self.instance_substitution(site, checked, trace) else {
             return refuse("an instance argument does not resolve");
         };
+        if matches!(class, TemplateClass::MethodBody(_))
+            && !substitution.values().all(|ty| self.plain_data(ty))
+        {
+            return refuse("an instance argument carries a loan, a reference, or a callable");
+        }
         let occurrences = self.body_occurrences(body);
         // Every occurrence of the body is one the template checked. A class
         // without compile-time control flow keeps them all, once each; a
@@ -612,6 +621,13 @@ impl Checker {
             )),
             Err(reason) => refuse(reason),
         }
+    }
+
+    /// [`TemplateObligation::PlainDataArguments`] for one instance argument.
+    fn plain_data(&self, ty: &Ty) -> bool {
+        !self.type_may_carry_loans(ty)
+            && !self.type_contains_reference(ty)
+            && !mentions_callable(ty)
     }
 
     /// The checked type each baked type parameter stands for in a clone.
@@ -763,6 +779,41 @@ impl Checker {
         if !copies {
             return Err("a copied place is not implicitly copyable for the instance");
         }
+        // `Movable`, which a symbolic parameter always is.
+        let movable = template.transfers.iter().all(|transfer| {
+            fact_at(&template.expression_types, *transfer)
+                .filter(|ty| mojito_types::types::is_symbolic(ty))
+                .is_none_or(|ty| self.is_movable(&substitute(ty)))
+        });
+        if !movable {
+            return Err("a transferred value is not movable for the instance");
+        }
+        // The declaration's own judgment of each binding whose type was a
+        // parameter, at the instance's type. One built over a parameter has
+        // no entry to judge again.
+        for (id, declared) in &template.binding_types {
+            if !mojito_types::types::is_symbolic(declared) {
+                continue;
+            }
+            if !matches!(declared, Ty::Param { .. }) {
+                return Err("a binding's type is built over a parameter");
+            }
+            let realized = substitute(declared);
+            facts.deletable_bindings.retain(|binding| binding != id);
+            facts.linear_bindings.retain(|binding| binding != id);
+            if self.is_deinitable(&realized) {
+                facts.deletable_bindings.push(*id);
+            } else if matches!(realized, Ty::Param { .. }) {
+                facts.linear_bindings.push(*id);
+            }
+        }
+        let order = |id: &OccurrenceId| occurrences.iter().position(|found| found.id == *id);
+        facts.deletable_bindings.sort_by_key(order);
+        facts.linear_bindings.sort_by_key(order);
+        facts.linear_temporaries.retain(|temporary| {
+            fact_at(&facts.expression_types, *temporary)
+                .is_some_and(|ty| matches!(ty, Ty::Param { .. }))
+        });
         renumber_locals(&mut facts);
         let folded = |owner: &TemplateOwner| matches!(owner, TemplateOwner::CompileTimeParam(_));
         if facts
@@ -875,7 +926,7 @@ impl Checker {
             })
             .collect();
         for index in 0..facts.selected_calls.len() {
-            self.realize_method_call(&mut facts, index, occurrences)?;
+            self.realize_method_call(&mut facts, index, occurrences, substitution)?;
         }
         facts.effect_free_callees.sort();
         let summaries_empty = facts.effect_free_callees.iter().all(|callee| {
@@ -901,22 +952,31 @@ impl Checker {
         Ok(facts)
     }
 
-    /// Realize one trivial method call for an instance: its target alone.
+    /// Realize one closed method call for an instance: its target, and its
+    /// result type by substitution.
     ///
     /// A clone check retargets a method call on a closed struct instance to
     /// that instance's clone of the method, when the elaborator has minted
     /// one (`instance_method_clone`), and records the clone as the call's
     /// target, its overload target, and the key of the effect summaries it
-    /// reads. Nothing else in a [`trivial_method_contract`] can change. The
-    /// callee must be the one method of its name, with no binders of its own
-    /// and no availability condition, so there is nothing to select again and
-    /// nothing an instance could be denied; and an instance that has clones
-    /// but not this one (withheld, or a collapsed overload family) refuses.
+    /// reads. Nothing else in a [`closed_method_contract`] can change.
+    ///
+    /// The template's selection stands: the declared member is the one whose
+    /// lowered name the template recorded, and the clone member is the one
+    /// with that signature (`method_clone_target`). A clone check ranks the
+    /// clone family again, on arguments that are closed scalars in both
+    /// checks, so every member of an overloaded family must declare closed
+    /// parameter types for the two rankings to agree. The callee has no
+    /// binders of its own. A clone that exists has met its `where` clauses; a
+    /// callee with an availability condition and no clone is left to the
+    /// clone check, as is an instance that has clones but not this one
+    /// (withheld, or a collapsed overload family).
     fn realize_method_call(
         &self,
         facts: &mut CheckedBodyFacts,
         index: usize,
         occurrences: &[Occurrence],
+        substitution: &HashMap<String, Ty>,
     ) -> Result<(), &'static str> {
         let id = facts.selected_calls[index].0;
         let (receiver, method) = occurrences
@@ -928,11 +988,8 @@ impl Checker {
             syntax: receiver,
             copy: id.copy,
         };
-        let Some(Ty::Struct(owner, arguments)) = facts
-            .expression_types
-            .iter()
-            .find(|(site, _)| *site == receiver)
-            .map(|(_, ty)| ty.clone())
+        let Some(Ty::Struct(owner, arguments)) =
+            fact_at(&facts.expression_types, receiver).cloned()
         else {
             return Err("a method call's receiver is not a nominal struct");
         };
@@ -940,24 +997,47 @@ impl Checker {
             .structs
             .get(&owner)
             .ok_or("a method call's receiver struct is not declared")?;
-        let sole = |name: &str| {
-            info.methods
-                .get(name)
-                .and_then(|family| match family.as_slice() {
-                    [only] => Some(only),
-                    _ => None,
+        let family = info
+            .methods
+            .get(&method)
+            .ok_or("a called method is missing")?;
+        let self_ty = self.self_instance_ty(&owner);
+        let selected = &facts.selected_calls[index].1.contract.target;
+        let declared = match family.as_slice() {
+            [only] => only,
+            members => members
+                .iter()
+                .find(|member| {
+                    super::overload_support::method_lowered_name(
+                        &owner,
+                        &method,
+                        member,
+                        self_ty.as_ref(),
+                    ) == *selected
                 })
+                .ok_or("a called method's selected overload is not declared")?,
         };
-        let declared = sole(&method).ok_or("a called method is overloaded or missing")?;
-        if !declared.decls.is_empty() || !declared.availability.is_empty() {
-            return Err("a called method has binders or an availability condition");
+        if !declared.decls.is_empty() {
+            return Err("a called method has binders of its own");
+        }
+        let closed_family = family.len() == 1
+            || family.iter().all(|member| {
+                member
+                    .params
+                    .iter()
+                    .all(|ty| !mojito_types::types::is_symbolic(ty))
+            });
+        if !closed_family {
+            return Err("an overloaded callee declares a parameter of a parameter type");
         }
         let clone_name =
             mojito_symbol::symbol::instance_method_clone_name(&method, &info.decls, &arguments);
-        let realized = if let Some(clone) = self.instance_method_clone(&owner, &method, &arguments)
+        let target = if self
+            .instance_method_clone(&owner, &method, &arguments)
+            .is_some()
         {
-            sole(&clone).ok_or("a called method's clone is overloaded")?;
-            clone
+            self.method_clone_target(&owner, &method, &arguments, declared, substitution)
+                .ok_or("a called method's clone family has no member for the selected overload")?
         } else {
             // No clone of this method. If the instance has clones of others,
             // this one was withheld from it or collapsed.
@@ -967,10 +1047,14 @@ impl Checker {
             if suffix.is_some_and(|suffix| info.methods.keys().any(|name| name.ends_with(suffix))) {
                 return Err("the instance has clones, but not of a called method");
             }
-            method
+            if !declared.availability.is_empty() && !substitution.is_empty() {
+                return Err("a called method has an availability condition and no clone");
+            }
+            selected.clone()
         };
-        let target = format!("{owner}.{realized}");
-        facts.selected_calls[index].1.target.clone_from(&target);
+        let contract = &mut facts.selected_calls[index].1.contract;
+        contract.target.clone_from(&target);
+        contract.result_ty = mojito_types::types::substitute(&contract.result_ty, substitution);
         if let Some(entry) = facts
             .overload_targets
             .iter_mut()
@@ -1119,6 +1203,10 @@ impl Checker {
                 timing::note(reason.counter(), || format!("{name}: {reason}"));
             }
         }
+        let method_body = matches!(
+            coverage,
+            TemplateCoverage::Certified(TemplateClass::MethodBody(_))
+        );
         self.template_catalog.borrow_mut().record(CheckedTemplate {
             id: site.template_id.clone(),
             producer: if self.source_validation {
@@ -1129,11 +1217,18 @@ impl Checker {
             param_decls: site.decls.to_vec(),
             facts,
             coverage,
-            obligations: vec![
+            obligations: [
                 TemplateObligation::DeclarationConstraints,
                 TemplateObligation::RebindEqualities,
                 TemplateObligation::ImplicitCopies,
-            ],
+            ]
+            .into_iter()
+            .chain([
+                TemplateObligation::Movable,
+                TemplateObligation::Deletability,
+            ])
+            .chain(method_body.then_some(TemplateObligation::PlainDataArguments))
+            .collect(),
         });
     }
 
@@ -1257,6 +1352,9 @@ impl Checker {
                 .collect(),
             keyed,
             receiver: false,
+            self_writable: false,
+            moved_result: None,
+            features: std::cell::Cell::default(),
             locals: RefCell::new(Vec::new()),
         };
         if !shape.block(body, false) {
@@ -1344,6 +1442,40 @@ impl Checker {
     ///   scalar.
     /// - Nothing outside the fact tables: the body wrote through no origin
     ///   parameter, transferred nothing, and recorded no request.
+    ///
+    /// [`TemplateClass::MethodBody`] widens that along four independent
+    /// [`MethodFeatures`]. The receiver may be `mut`, `var`, `deinit`, the
+    /// `out` of an `__init__`, or absent (`@staticmethod`), and the method
+    /// may carry a `where` clause: the elaborator mints a clone only where
+    /// the clause holds, and a clone's signature no longer states it. A `ref`
+    /// receiver, the copy and move initializers, an origin, a reference
+    /// result, binders, and `raises` stay outside.
+    ///
+    /// - `STATEMENTS`: a runtime statement is checked once whatever runs it,
+    ///   so `if`, `while`, `break`, `continue`, and a bare `return` neither
+    ///   drop nor copy an occurrence. A condition's recorded type is exactly
+    ///   `Bool`, which `expect_bool` accepts without a truthiness fact. A
+    ///   stored field is a closed scalar, so the store is never an in-place
+    ///   operator of the field's type. Invalidations name `self` and locals
+    ///   by template owner.
+    /// - `OPAQUE_MOVES`: a value of any type is moved or copied whole between
+    ///   a parameter, a local, a field of `self`, and the result, and is
+    ///   never an operand, a receiver, a condition, or an argument, so
+    ///   nothing dispatches on its type. A store or a result has the value's
+    ///   own recorded type, which stays equal under substitution, so neither
+    ///   check converts. What a clone check still decides from the type is
+    ///   owed per instance: the copy of a place (admitted only where the
+    ///   template recorded it), `Movable` at a transfer, whether a local can
+    ///   be destroyed, and that an argument is plain data
+    ///   ([`TemplateObligation`]).
+    /// - `POINTER_SLOTS`: a pointer field with no tracked provenance holds no
+    ///   loan, names no place, and is a pointer under every instance, so its
+    ///   methods are the built-in ones and record an adjustment naming at
+    ///   most the pointee (`derive_adjustment`). Every other judgment there
+    ///   only produces an error, and the template's is at least as strict.
+    /// - `SIBLING_CALLS`: see [`Self::realize_method_call`] and
+    ///   `closed_method_contract`. Arguments are closed scalars in both
+    ///   checks; a callee summary that is not empty refuses.
     fn method_certificate(
         &self,
         method: &mojito_ast::ast::Method,
@@ -1351,29 +1483,47 @@ impl Checker {
         ret_ty: &Ty,
         facts: Option<&CheckedBodyFacts>,
     ) -> TemplateCoverage {
+        use mojito_ast::ast::ArgConvention;
         let outside =
             |what| TemplateCoverage::Incomplete(IncompleteReason::OutsideEnabledClass(what));
         if self.source_validation {
             return outside("a compile-time-keyed method has no class yet");
         }
-        let lifecycle = matches!(
-            mojito_symbol::symbol::lifecycle_method_name(method),
-            "__init__" | "__copyinit__" | "__moveinit__" | "__deinit__" | "__del__"
-        );
-        if !method.has_self
-            || method.self_convention.is_some()
+        // `__init__(out self, …)` is an ordinary owned receiver here: which
+        // fields a body initializes is its syntax, and definite initialization
+        // is judged outside the body check. The copy and move initializers
+        // take `existing`, whose conventions this class does not admit.
+        let lifecycle = mojito_symbol::symbol::lifecycle_method_name(method);
+        let initializer = matches!(lifecycle, "__copyinit__" | "__moveinit__");
+        let constructs =
+            lifecycle == "__init__" && method.self_convention == Some(ArgConvention::Out);
+        let is_static = !method.has_self
+            && matches!(method.decorators.as_slice(), [decorator]
+                if decorator.path == ["staticmethod"]
+                    && decorator.args.is_empty()
+                    && decorator.kwargs.is_empty());
+        let plain_read =
+            method.has_self && matches!(method.self_convention, None | Some(ArgConvention::Imm));
+        let owned_receiver = method.has_self
+            && matches!(
+                method.self_convention,
+                Some(ArgConvention::Mut | ArgConvention::Var | ArgConvention::Deinit)
+            );
+        if !(plain_read || owned_receiver || is_static || constructs)
             || method.self_origin.is_some()
-            || lifecycle
+            || initializer
         {
-            return outside("the receiver is not a plain read 'self'");
+            return outside("the receiver is a 'ref' one, or carries an origin");
         }
+        // A `where` clause is the declaration's constraint: the elaborator
+        // mints a clone only where it evaluates true, and a trace exists only
+        // for a minted clone (`TemplateObligation::DeclarationConstraints`).
         if !method.type_params.is_empty()
-            || !method.decorators.is_empty()
-            || !method.where_clauses.is_empty()
+            || !(method.decorators.is_empty() || is_static)
             || method.raises
             || method.raises_type.is_some()
         {
-            return outside("the method has binders, decorators, constraints, or raises");
+            return outside("the method has binders, decorators, or raises");
         }
         let plain_struct = decls.iter().all(|decl| {
             matches!(
@@ -1390,16 +1540,24 @@ impl Checker {
         }
         let plain_params = method.params.iter().all(|parameter| {
             parameter.kind == mojito_ast::ast::ParamKind::Regular
-                && parameter.convention.is_none()
+                && matches!(parameter.convention, None | Some(ArgConvention::Var))
                 && parameter.default.is_none()
                 && parameter.origin.is_none()
         });
         if !plain_params {
-            return outside("a parameter is not an immutable regular parameter");
+            return outside("a parameter is not an immutable or 'var' regular parameter");
         }
-        if !closed_scalar(ret_ty) {
-            return outside("the return type is not a concrete scalar");
+        let returns_reference = self
+            .return_ref_contracts
+            .last()
+            .is_some_and(Option::is_some);
+        if returns_reference {
+            return outside("the method returns a reference");
         }
+        let owned_parameter = method
+            .params
+            .iter()
+            .any(|parameter| parameter.convention.is_some());
         let shape = BodyShape {
             origins: &self.syntax_origins,
             facts,
@@ -1409,28 +1567,48 @@ impl Checker {
                 .map(|parameter| parameter.name.as_str())
                 .collect(),
             keyed: false,
-            receiver: true,
+            receiver: method.has_self,
+            self_writable: matches!(
+                method.self_convention,
+                Some(ArgConvention::Mut | ArgConvention::Var | ArgConvention::Out)
+            ),
+            moved_result: Some(ret_ty),
+            features: std::cell::Cell::new(
+                if plain_read && closed_scalar(ret_ty) && !owned_parameter {
+                    MethodFeatures::default()
+                } else {
+                    MethodFeatures::STATEMENTS
+                },
+            ),
             locals: RefCell::new(Vec::new()),
         };
         if !shape.block(&method.body, false) {
-            return outside("the body is not scalar returns over parameters and 'self' fields");
+            return outside("the body is outside the method grammar");
         }
-        let Some(facts) = facts else {
-            return TemplateCoverage::Certified(TemplateClass::MethodScalarBody);
+        let class = || {
+            let features = shape.features.get();
+            TemplateCoverage::Certified(if features.is_empty() {
+                TemplateClass::MethodScalarBody
+            } else {
+                TemplateClass::MethodBody(features)
+            })
         };
-        // The grammar admitted every method call it judged trivial. Nothing
+        let Some(facts) = facts else {
+            return class();
+        };
+        // The grammar admitted every method call it judged closed. Nothing
         // else may have selected a callee or read an effect summary.
         let targets: Vec<&str> = facts
             .selected_calls
             .iter()
-            .map(|(_, contract)| contract.target.as_str())
+            .map(|(_, call)| call.contract.target.as_str())
             .collect();
         let at_method_call =
             |id: &OccurrenceId| facts.selected_calls.iter().any(|(call, _)| call == id);
         let stray_call = facts
             .call_parameters
             .iter()
-            .any(|(id, parameters)| !at_method_call(id) || !parameters.is_empty())
+            .any(|(id, _)| !at_method_call(id))
             || !facts.generic_instantiations.is_empty()
             || !facts
                 .overload_targets
@@ -1461,15 +1639,17 @@ impl Checker {
         if wrote_through_origin {
             return outside("the body writes through an origin parameter");
         }
-        TemplateCoverage::Certified(TemplateClass::MethodScalarBody)
+        class()
     }
 
     /// Report, for one generic body, everything that keeps it from being
     /// captured: the census that orders which recipes to write next.
     ///
     /// Counters are `template_census.<class>.bodies`, `.capturable`,
-    /// `.blocked_by.<reason>` (the body has that reason) and
-    /// `.sole_blocker.<reason>` (it has no other).
+    /// `.blocked_by.<reason>` (the body has that reason),
+    /// `.sole_blocker.<reason>` (it has no other), and, for a method,
+    /// `.grammar.<construct>` for each construct its declaration and body
+    /// hold, whatever class admits it (`grammar_features`).
     fn census(
         &self,
         site: &BodySite<'_>,
@@ -1545,6 +1725,15 @@ impl Checker {
         timing::note("template_census.body", || {
             format!("{class} {}: {}", site.display, reasons.join(" "))
         });
+        if let BodyDeclaration::Method(method) = site.declaration {
+            let features = grammar_features(method, site.ret_ty);
+            timing::note("template_census.grammar", || {
+                format!("{class} {}: {}", site.display, features.join(" "))
+            });
+            for feature in &features {
+                timing::count_named(|| format!("template_census.{class}.grammar.{feature}"), 1);
+            }
+        }
         timing::count_named(|| format!("template_census.{class}.bodies"), 1);
         if reasons.is_empty() {
             timing::count_named(|| format!("template_census.{class}.capturable"), 1);
@@ -1588,6 +1777,7 @@ impl Checker {
                     arguments: Vec::new(),
                     identifier: false,
                     method_call: None,
+                    transfer: false,
                 });
             }
 
@@ -1614,6 +1804,7 @@ impl Checker {
                         }
                         _ => None,
                     },
+                    transfer: matches!(expr.kind, ExprKind::Transfer(_)),
                 });
             }
         }
@@ -1684,6 +1875,21 @@ impl Checker {
                 return Err(IncompleteReason::UnsupportedTable(table));
             }
         }
+        // A type is retained as written, and a binding identity inside one
+        // would never be remapped for an instance.
+        let types = [
+            &*self.expression_types.borrow(),
+            &*self.expression_place_types.borrow(),
+            &*self.binding_types.borrow(),
+        ];
+        if occurrences.iter().any(|occurrence| {
+            types
+                .iter()
+                .filter_map(|table| table.get(&occurrence.span))
+                .any(names_place)
+        }) {
+            return Err(IncompleteReason::ExternalBinding);
+        }
         let owner_end = self.next_owner.get();
         let local_owner = |owner: OwnerId| {
             param_owners
@@ -1716,6 +1922,20 @@ impl Checker {
                 })
                 .ok_or(IncompleteReason::ExternalBinding)
         };
+        let local_invalidations =
+            |invalidations: Vec<mojito_checked::checked::InteriorInvalidation>| {
+                invalidations
+                    .into_iter()
+                    .map(|invalidation| {
+                        Ok(TemplateInvalidation {
+                            root: local_owner(invalidation.base.root)?,
+                            path: invalidation.base.path,
+                            except: invalidation.except.map(&local_owner).transpose()?,
+                            include_base_generation: invalidation.include_base_generation,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, IncompleteReason>>()
+            };
         let keyed = |lookup: &dyn Fn(&SourceSpan) -> bool| -> Vec<OccurrenceId> {
             occurrences
                 .iter()
@@ -1769,7 +1989,41 @@ impl Checker {
                 self.read_temporary_arguments.borrow().contains(span)
             }),
             effect_free_callees,
-            selected_calls: values(&occurrences, &self.selected_calls.borrow()),
+            selected_calls: values(&occurrences, &self.selected_calls.borrow())
+                .into_iter()
+                .map(|(id, mut contract)| {
+                    let boundary = std::mem::take(&mut contract.boundary);
+                    let arguments = boundary
+                        .arguments
+                        .into_iter()
+                        .map(|argument| {
+                            // An argument the call synthesized is no
+                            // occurrence of the body.
+                            let value = occurrences
+                                .iter()
+                                .find(|occurrence| occurrence.span == argument.value_source)
+                                .map(|occurrence| occurrence.id)
+                                .ok_or(IncompleteReason::FactOutsideBody(
+                                    FactTable::SelectedCalls,
+                                ))?;
+                            Ok(TemplateArgumentBoundary {
+                                source: argument.source,
+                                value,
+                                adjustments: argument.adjustments,
+                                invalidations: local_invalidations(argument.invalidations)?,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, IncompleteReason>>()?;
+                    Ok((
+                        id,
+                        TemplateCallContract {
+                            contract,
+                            arguments,
+                            invalidations: local_invalidations(boundary.invalidations)?,
+                        },
+                    ))
+                })
+                .collect::<Result<Vec<_>, IncompleteReason>>()?,
             // Recording is idempotent, and a clone check reaches a retargeted
             // receiver's application twice, so only the set matters.
             struct_applications: reads.struct_applications.iter().fold(
@@ -1795,22 +2049,14 @@ impl Checker {
             interior_invalidations: values(&occurrences, &self.interior_invalidations.borrow())
                 .into_iter()
                 .map(|(id, invalidations)| {
-                    invalidations
-                        .into_iter()
-                        .map(|invalidation| {
-                            Ok(TemplateInvalidation {
-                                root: local_owner(invalidation.base.root)?,
-                                path: invalidation.base.path,
-                                except: invalidation.except.map(&local_owner).transpose()?,
-                                include_base_generation: invalidation.include_base_generation,
-                            })
-                        })
-                        .collect::<Result<Vec<_>, IncompleteReason>>()
-                        .map(|invalidations| (id, invalidations))
+                    local_invalidations(invalidations).map(|invalidations| (id, invalidations))
                 })
                 .collect::<Result<Vec<_>, _>>()?,
             unconsumed_temporaries: keyed(&|span| {
                 self.unconsumed_temporaries.borrow().contains(span)
+            }),
+            discarded_reference_results: keyed(&|span| {
+                self.discarded_reference_results.borrow().contains(span)
             }),
             deletable_bindings: keyed(&|span| {
                 self.explicit_destroy_deletability
@@ -1818,6 +2064,18 @@ impl Checker {
                     .bindings
                     .contains(span)
             }),
+            linear_bindings: keyed(&|span| {
+                self.explicit_destroy_deletability
+                    .borrow()
+                    .linear_bindings
+                    .contains(span)
+            }),
+            linear_temporaries: keyed(&|span| self.linear_temporaries.borrow().contains(span)),
+            transfers: occurrences
+                .iter()
+                .filter(|occurrence| occurrence.transfer)
+                .map(|occurrence| occurrence.id)
+                .collect(),
             locals: owner_end - baseline.owner_start,
             occurrences: occurrences
                 .into_iter()
@@ -1945,8 +2203,8 @@ impl Checker {
         for id in &facts.copy_place_value_uses {
             self.copy_place_value_uses.borrow_mut().insert(span(id)?);
         }
-        for (id, invalidations) in &facts.interior_invalidations {
-            let invalidations = invalidations
+        let placed = |invalidations: &[TemplateInvalidation]| {
+            invalidations
                 .iter()
                 .map(|invalidation| {
                     Ok(mojito_checked::checked::InteriorInvalidation {
@@ -1958,13 +2216,20 @@ impl Checker {
                         include_base_generation: invalidation.include_base_generation,
                     })
                 })
-                .collect::<Result<Vec<_>, TypeError>>()?;
+                .collect::<Result<Vec<_>, TypeError>>()
+        };
+        for (id, invalidations) in &facts.interior_invalidations {
             self.interior_invalidations
                 .borrow_mut()
-                .insert(span(id)?, invalidations);
+                .insert(span(id)?, placed(invalidations)?);
         }
         for id in &facts.unconsumed_temporaries {
             self.unconsumed_temporaries.borrow_mut().insert(span(id)?);
+        }
+        for id in &facts.discarded_reference_results {
+            self.discarded_reference_results
+                .borrow_mut()
+                .insert(span(id)?);
         }
         for id in &facts.deletable_bindings {
             self.explicit_destroy_deletability
@@ -1972,10 +2237,38 @@ impl Checker {
                 .bindings
                 .insert(span(id)?);
         }
-        for (id, contract) in &facts.selected_calls {
-            self.selected_calls
+        for id in &facts.linear_bindings {
+            self.explicit_destroy_deletability
                 .borrow_mut()
-                .insert(span(id)?, contract.clone());
+                .linear_bindings
+                .insert(span(id)?);
+        }
+        for id in &facts.linear_temporaries {
+            self.linear_temporaries.borrow_mut().insert(span(id)?);
+        }
+        for (id, call) in &facts.selected_calls {
+            let arguments = call
+                .arguments
+                .iter()
+                .map(|argument| {
+                    Ok(mojito_checked::checked::CheckedCallArgumentBoundary {
+                        source: argument.source,
+                        value_source: span(&argument.value)?,
+                        adjustments: argument.adjustments.clone(),
+                        invalidations: placed(&argument.invalidations)?,
+                    })
+                })
+                .collect::<Result<Vec<_>, TypeError>>()?;
+            self.selected_calls.borrow_mut().insert(
+                span(id)?,
+                mojito_checked::checked::CheckedCallContract {
+                    boundary: mojito_checked::checked::CheckedCallBoundary {
+                        arguments,
+                        invalidations: placed(&call.invalidations)?,
+                    },
+                    ..call.contract.clone()
+                },
+            );
         }
         // The body's own source decides, exactly as it does for an inferred
         // body, whether an application it reaches is user-reachable.
@@ -2239,7 +2532,10 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::CopyPlaceValueUses
         | FactTable::SelectedCalls
         | FactTable::InteriorInvalidations
-        | FactTable::DeletableBindings => true,
+        | FactTable::DiscardedReferenceResults
+        | FactTable::DeletableBindings
+        | FactTable::LinearBindings
+        | FactTable::LinearTemporaries => true,
         FactTable::ContextualBases
         | FactTable::MethodInstantiations
         | FactTable::CallTransfers
@@ -2262,13 +2558,10 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::ExplicitDestroyCalls
         | FactTable::ReferenceValueUses
         | FactTable::CopyableReferenceResultReads
-        | FactTable::DiscardedReferenceResults
         | FactTable::BorrowedReferenceReceivers
         | FactTable::CallPlaceUses
-        | FactTable::LinearTemporaries
         | FactTable::ImplicitlyCopiedConsumingReceivers
-        | FactTable::TruthinessConditions
-        | FactTable::LinearBindings => false,
+        | FactTable::TruthinessConditions => false,
     }
 }
 
@@ -2355,10 +2648,17 @@ fn renumber_locals(facts: &mut CheckedBodyFacts) {
     {
         renumber(owner);
     }
+    let call_invalidations = facts.selected_calls.iter_mut().flat_map(|(_, call)| {
+        call.arguments
+            .iter_mut()
+            .flat_map(|argument| &mut argument.invalidations)
+            .chain(&mut call.invalidations)
+    });
     for invalidation in facts
         .interior_invalidations
         .iter_mut()
         .flat_map(|(_, invalidations)| invalidations)
+        .chain(call_invalidations)
     {
         renumber(&mut invalidation.root);
         if let Some(except) = &mut invalidation.except {
@@ -2366,6 +2666,146 @@ fn renumber_locals(facts: &mut CheckedBodyFacts) {
         }
     }
     facts.locals = u32::try_from(declared.len()).unwrap_or(u32::MAX);
+}
+
+/// The constructs a method's declaration and body hold, by name and without
+/// judging any of them: what the census reports so the next class can be
+/// chosen from what bodies are made of rather than from their first refusal.
+fn grammar_features(method: &mojito_ast::ast::Method, ret_ty: &Ty) -> Vec<String> {
+    #[derive(Default)]
+    struct Constructs(Vec<String>);
+
+    /// The variant name a `Debug` rendering leads with. Rendering stops at
+    /// the first character past it, so a subtree is never formatted.
+    fn variant(node: &dyn std::fmt::Debug) -> String {
+        struct Leading(String);
+
+        impl std::fmt::Write for Leading {
+            fn write_str(&mut self, rendered: &str) -> std::fmt::Result {
+                let name = rendered
+                    .find(|c: char| !c.is_alphanumeric())
+                    .unwrap_or(rendered.len());
+                self.0.push_str(&rendered[..name]);
+                if name == rendered.len() {
+                    Ok(())
+                } else {
+                    Err(std::fmt::Error)
+                }
+            }
+        }
+
+        let mut leading = Leading(String::new());
+        // The error is how rendering is cut short.
+        let _ = std::fmt::write(&mut leading, format_args!("{node:?}"));
+        leading.0
+    }
+
+    impl mojito_ast::visit::Visitor for Constructs {
+        fn visit_stmt(&mut self, statement: &Stmt) {
+            self.0.push(format!("stmt:{}", variant(&statement.kind)));
+        }
+
+        fn visit_expr(&mut self, expr: &Expr) {
+            let arguments = match &expr.kind {
+                ExprKind::MethodCall { args, kwargs, .. } | ExprKind::Call { args, kwargs, .. } => {
+                    args.len() + kwargs.len()
+                }
+                _ => 0,
+            };
+            let suffix = if arguments > 0 { "+args" } else { "" };
+            self.0.push(format!("expr:{}{suffix}", variant(&expr.kind)));
+        }
+    }
+
+    let receiver = match (method.has_self, method.self_convention) {
+        (false, _) => "static".to_string(),
+        (true, None) => "read".to_string(),
+        (true, Some(convention)) => format!("{convention:?}").to_lowercase(),
+    };
+    let result = if closed_scalar(ret_ty) {
+        "scalar"
+    } else if *ret_ty == Ty::None {
+        "none"
+    } else if mojito_types::types::is_symbolic(ret_ty) {
+        "symbolic"
+    } else {
+        "closed"
+    };
+    let mut features = vec![format!("self:{receiver}"), format!("result:{result}")];
+    let declared = [
+        (method.self_origin.is_some(), "self:origin"),
+        (!method.where_clauses.is_empty(), "where"),
+        (method.raises || method.raises_type.is_some(), "raises"),
+        (!method.type_params.is_empty(), "binders"),
+        (!method.decorators.is_empty(), "decorated"),
+    ];
+    features.extend(
+        declared
+            .into_iter()
+            .filter(|(held, _)| *held)
+            .map(|(_, name)| name.to_string()),
+    );
+    for parameter in &method.params {
+        if let Some(convention) = parameter.convention {
+            features.push(format!("param:{convention:?}").to_lowercase());
+        }
+        if parameter.kind != mojito_ast::ast::ParamKind::Regular {
+            features.push("param:variadic".to_string());
+        }
+        if parameter.default.is_some() {
+            features.push("param:default".to_string());
+        }
+        if parameter.origin.is_some() {
+            features.push("param:origin".to_string());
+        }
+    }
+    let mut constructs = Constructs::default();
+    mojito_ast::visit::walk_block(&mut constructs, &method.body);
+    features.extend(constructs.0);
+    features.sort();
+    features.dedup();
+    features
+}
+
+/// Whether a type names a checker-local place: an origin rooted at a binding
+/// identity, in a pointer, a reference, or a struct's origin argument.
+fn names_place(ty: &Ty) -> bool {
+    use mojito_types::origin::{Origin, PointerOrigin};
+    fn rooted(origin: &Origin) -> bool {
+        match origin {
+            Origin::Place(_) => true,
+            Origin::Union(members) => members.iter().any(rooted),
+            Origin::Param(_)
+            | Origin::SelfParam
+            | Origin::Static
+            | Origin::Untracked { .. }
+            | Origin::Unbound => false,
+        }
+    }
+    mojito_types::types::mentions(ty, &|ty| {
+        match ty {
+        Ty::Pointer { origin, .. } => matches!(origin, PointerOrigin::Place { .. }),
+        Ty::Ref(reference) => rooted(&reference.origin) || names_place(&reference.referent),
+        Ty::Struct(_, arguments) => arguments.iter().any(|argument| {
+            matches!(argument, mojito_types::types::TyArg::Origin(origin) if rooted(origin))
+        }),
+        _ => false,
+    }
+    })
+}
+
+/// Whether a type is, holds, or is applied to a callable.
+fn mentions_callable(ty: &Ty) -> bool {
+    match ty {
+        Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_) => true,
+        Ty::Struct(_, arguments) => arguments.iter().any(|argument| {
+            matches!(argument, mojito_types::types::TyArg::Ty(element) if mentions_callable(element))
+        }),
+        Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
+            elements.iter().any(mentions_callable)
+        }
+        _ => false,
+    }
 }
 
 /// The module-scope declaration a template's direct call selected: the
@@ -2382,6 +2822,14 @@ fn template_callee(facts: &CheckedBodyFacts, call: OccurrenceId) -> Option<&str>
             | TemplateOwner::Local(_)
             | TemplateOwner::CompileTimeParam(_) => None,
         })
+}
+
+/// The fact a table holds at `id`.
+fn fact_at<V>(table: &[(OccurrenceId, V)], id: OccurrenceId) -> Option<&V> {
+    table
+        .iter()
+        .find(|(site, _)| *site == id)
+        .map(|(_, fact)| fact)
 }
 
 /// Replace the fact at `id`, keeping the table's occurrence order.
@@ -2428,19 +2876,35 @@ struct BodyShape<'a> {
     /// `None` judges the syntax alone, before anything is captured.
     facts: Option<&'a CheckedBodyFacts>,
     params: Vec<&'a str>,
-    /// Whether source validation produced the facts: only a body it checks
-    /// may hold compile-time control flow, locals, and assignments.
+    /// Whether source validation produced the facts. A body it checks may
+    /// hold compile-time control flow over scalar locals and assignments,
+    /// under that check's own rules; any other body may hold runtime
+    /// statements instead: scalar locals and assignments, `if`, `while`, and
+    /// a bare `return`, each checked once.
     keyed: bool,
     /// Whether the body is a method's, which may read `self`'s fields.
     receiver: bool,
-    /// The scalar locals declared so far.
-    locals: RefCell<Vec<String>>,
+    /// Whether `self` is a `mut` or `var` receiver, whose scalar fields the
+    /// body may write.
+    self_writable: bool,
+    /// The declared result, when the body may move a whole value of any type
+    /// into it: a method that returns no reference.
+    moved_result: Option<&'a Ty>,
+    /// What the body held beyond scalar `return`s.
+    features: std::cell::Cell<MethodFeatures>,
+    /// The locals declared so far, and whether each is a closed scalar.
+    locals: RefCell<Vec<(String, bool)>>,
 }
 
 impl BodyShape<'_> {
     fn statement(&self, statement: &Stmt, in_loop: bool) -> bool {
         match &statement.kind {
-            StmtKind::Return(Some(value)) => self.expression(value) && self.scalar(value),
+            StmtKind::Return(Some(value)) => {
+                (self.expression(value) && self.scalar(value))
+                    || self
+                        .moved_result
+                        .is_some_and(|result| self.whole_value(value) && self.typed(value, result))
+            }
             StmtKind::Pass => true,
             // A condition is typed, never evaluated, by the check that
             // produced these facts, and no instance keeps its occurrences.
@@ -2457,20 +2921,230 @@ impl BodyShape<'_> {
             StmtKind::ComptimeFor { body, .. } if self.keyed => self.block(body, true),
             StmtKind::VarDecl { name, value, .. } if self.keyed && !in_loop => {
                 let scalar = self.expression(value) && self.scalar(value);
-                self.locals.borrow_mut().push(name.clone());
+                self.locals.borrow_mut().push((name.clone(), true));
                 scalar
             }
-            StmtKind::Assign { name, value } if self.keyed => {
-                self.local(name) && self.expression(value) && self.scalar(value)
+            // A runtime statement is checked once, whatever runs it, so it
+            // neither drops nor copies an occurrence. A scalar local is one
+            // binding wherever it is declared.
+            StmtKind::VarDecl { name, ty, value } if !self.keyed => {
+                let scalar = self.expression(value) && self.scalar(value);
+                let moved = !scalar
+                    && ty.is_none()
+                    && self.moved_result.is_some()
+                    && self.whole_value(value)
+                    && self.judged_binding(value);
+                self.locals.borrow_mut().push((name.clone(), scalar));
+                (scalar || moved) && self.holds(MethodFeatures::STATEMENTS)
             }
-            StmtKind::AugAssign { place, value, .. } if self.keyed => {
-                matches!(&place.kind, ExprKind::Identifier(name) if self.local(name))
+            StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue if !self.keyed => {
+                self.holds(MethodFeatures::STATEMENTS)
+            }
+            StmtKind::If { branches, orelse } if !self.keyed => {
+                branches
+                    .iter()
+                    .all(|(condition, arm)| self.condition(condition) && self.block(arm, in_loop))
+                    && orelse.as_ref().is_none_or(|arm| self.block(arm, in_loop))
+                    && self.holds(MethodFeatures::STATEMENTS)
+            }
+            StmtKind::While {
+                cond,
+                body,
+                orelse: None,
+            } if !self.keyed => {
+                self.condition(cond)
+                    && self.block(body, in_loop)
+                    && self.holds(MethodFeatures::STATEMENTS)
+            }
+            // A scalar field of a writable `self`: the store is a plain
+            // scalar write, never an in-place operator of the field's type.
+            StmtKind::SetPlace { place, value } if !self.keyed => {
+                let scalar =
+                    self.scalar_field_place(place) && self.expression(value) && self.scalar(value);
+                (scalar || self.whole_store(place, value)) && self.holds(MethodFeatures::STATEMENTS)
+            }
+            // A discarded value. That it is not read is the statement's
+            // syntax; what the call itself recorded is the call's to answer.
+            StmtKind::Expr(value) => {
+                let call = matches!(
+                    value.kind,
+                    ExprKind::Call { .. } | ExprKind::MethodCall { .. }
+                ) && self.expression(value)
+                    && self.closed(value);
+                call || (self.moved_result.is_some() && self.pointer_statement(value))
+            }
+            StmtKind::Assign { name, value } if name == "_" => {
+                self.expression(value) && self.scalar(value)
+            }
+            StmtKind::Assign { name, value } => {
+                self.local(name)
+                    && self.expression(value)
+                    && self.scalar(value)
+                    && (self.keyed || self.holds(MethodFeatures::STATEMENTS))
+            }
+            StmtKind::AugAssign { place, value, .. } => {
+                let local = matches!(&place.kind, ExprKind::Identifier(name) if self.local(name));
+                (local || (!self.keyed && self.scalar_field_place(place)))
                     && self.scalar(place)
                     && self.expression(value)
                     && self.scalar(value)
+                    && (self.keyed || self.holds(MethodFeatures::STATEMENTS))
             }
             _ => false,
         }
+    }
+
+    /// Note that the body holds `feature`.
+    fn holds(&self, feature: MethodFeatures) -> bool {
+        self.features.set(self.features.get().union(feature));
+        true
+    }
+
+    /// A runtime condition: a scalar expression whose recorded type is
+    /// exactly `Bool`, which `expect_bool` accepts without a truthiness fact.
+    fn condition(&self, expr: &Expr) -> bool {
+        let id = self.occurrence(expr);
+        self.expression(expr)
+            && self.facts.is_none_or(|facts| {
+                facts
+                    .expression_types
+                    .iter()
+                    .any(|(site, ty)| *site == id && *ty == Ty::Bool)
+            })
+    }
+
+    /// A whole value of any type, moved or copied out of a parameter, a
+    /// local, or a field of `self`. It is never an operand, a receiver, a
+    /// condition, or an argument, so nothing dispatches on its type.
+    ///
+    /// A `^` transfer owes `Movable` at the instance's type. A bare place is
+    /// admitted only where the template recorded the copy, which the instance
+    /// then owes: a type that is not copyable records nothing there, and its
+    /// clone check would.
+    fn whole_value(&self, expr: &Expr) -> bool {
+        let source = |place: &Expr| match &place.kind {
+            ExprKind::Identifier(name) => {
+                self.params.contains(&name.as_str()) || self.declared(name)
+            }
+            ExprKind::Member { .. } => self.receiver_field(place),
+            _ => false,
+        };
+        let admitted = match &expr.kind {
+            ExprKind::Transfer(inner) => source(inner) || self.call_result(inner),
+            _ if self.call_result(expr) => true,
+            // The pointee, taken out of its slot: a temporary.
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+                kwargs,
+            } => {
+                method == "unsafe_take_pointee"
+                    && args.is_empty()
+                    && kwargs.is_empty()
+                    && self.pointer(object)
+            }
+            _ => {
+                let id = self.occurrence(expr);
+                (source(expr) || self.slot(expr))
+                    && self
+                        .facts
+                        .is_none_or(|facts| facts.copy_place_value_uses.contains(&id))
+            }
+        };
+        admitted && self.holds(MethodFeatures::OPAQUE_MOVES)
+    }
+
+    /// The result of a sibling call, of any type: a temporary, whose type is
+    /// the contract's substituted result.
+    fn call_result(&self, expr: &Expr) -> bool {
+        matches!(&expr.kind, ExprKind::MethodCall { method, .. }
+            if !matches!(method.as_str(), "unsafe_take_pointee" | "unsafe_offset"))
+            && self.expression(expr)
+    }
+
+    /// A pointer into storage `self` owns: a field of `self` whose recorded
+    /// type is a pointer with no tracked provenance, or an element offset
+    /// from one. Such a pointer holds no loan and names no place, and it is a
+    /// pointer under every instance, so its methods are the built-in ones.
+    fn pointer(&self, expr: &Expr) -> bool {
+        let admitted = match &expr.kind {
+            ExprKind::Member { .. } => {
+                self.receiver_field(expr)
+                    && self.facts.is_none_or(|facts| {
+                        fact_at(&facts.expression_types, self.occurrence(expr)).is_some_and(|ty| {
+                            matches!(ty, Ty::Pointer { origin, .. } if origin.as_origin().is_none())
+                        })
+                    })
+            }
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+                kwargs,
+            } => {
+                method == "unsafe_offset"
+                    && kwargs.is_empty()
+                    && matches!(args.as_slice(), [offset]
+                        if self.expression(offset) && self.scalar(offset))
+                    && self.pointer(object)
+            }
+            _ => false,
+        };
+        admitted && self.holds(MethodFeatures::POINTER_SLOTS)
+    }
+
+    /// One element slot of such a pointer, `pointer[scalar]`.
+    fn slot(&self, expr: &Expr) -> bool {
+        matches!(&expr.kind, ExprKind::Index { object, index }
+            if self.pointer(object) && self.expression(index) && self.scalar(index))
+    }
+
+    /// A statement-level pointer operation that yields nothing: destroying
+    /// the pointee, or freeing the allocation.
+    fn pointer_statement(&self, expr: &Expr) -> bool {
+        matches!(&expr.kind, ExprKind::MethodCall { object, method, args, kwargs }
+            if matches!(method.as_str(), "unsafe_deinit_pointee" | "unsafe_free" | "free")
+                && args.is_empty()
+                && kwargs.is_empty()
+                && self.pointer(object))
+    }
+
+    /// A whole value stored to a field of a writable `self` whose declared
+    /// type is the value's own, so neither check converts it.
+    fn whole_store(&self, place: &Expr, value: &Expr) -> bool {
+        let scalar = || self.expression(value) && self.scalar(value);
+        self.moved_result.is_some()
+            && ((self.self_writable && self.receiver_field(place)) || self.slot(place))
+            && (self.whole_value(value) || scalar())
+            && self.facts.is_none_or(|facts| {
+                let stored = fact_at(&facts.expression_place_types, self.occurrence(place));
+                stored.is_some()
+                    && stored == fact_at(&facts.expression_types, self.occurrence(value))
+            })
+    }
+
+    /// Whether the recorded type of `expr` is exactly `ty`.
+    fn typed(&self, expr: &Expr, ty: &Ty) -> bool {
+        self.facts
+            .is_none_or(|facts| fact_at(&facts.expression_types, self.occurrence(expr)) == Some(ty))
+    }
+
+    /// Whether the binding `value` initializes has a type an instance can
+    /// judge again: a bare parameter, whose deletability realization decides
+    /// at the instance's type, or a closed type, which both checks judge
+    /// alike. A type built over a parameter leaves no such entry.
+    fn judged_binding(&self, value: &Expr) -> bool {
+        self.facts.is_none_or(|facts| {
+            fact_at(&facts.binding_types, self.occurrence(value)).is_some_and(|ty| {
+                matches!(ty, Ty::Param { .. }) || !mojito_types::types::is_symbolic(ty)
+            })
+        })
+    }
+
+    /// A closed scalar field of a writable `self`, as the target of a store.
+    fn scalar_field_place(&self, place: &Expr) -> bool {
+        self.self_writable && self.receiver_field(place) && self.scalar(place)
     }
 
     /// A nested block: its locals go out of scope with it.
@@ -2483,33 +3157,35 @@ impl BodyShape<'_> {
         admitted
     }
 
-    /// Whether the call at `expr` recorded a trivial contract naming exactly
-    /// `method` on the receiver's own struct, and nothing a derivation lacks.
-    fn trivial_call(
+    /// Whether the call at `expr` recorded a closed contract naming `method`
+    /// on the receiver's own struct, and nothing a derivation lacks. A call
+    /// that is not trivial is a sibling call, which only a method body holds.
+    fn sibling_call(
         &self,
         facts: &CheckedBodyFacts,
         expr: &Expr,
         object: &Expr,
         method: &str,
     ) -> bool {
-        let id = self.occurrence(expr);
-        let receiver = self.occurrence(object);
-        let owner = facts
-            .expression_types
-            .iter()
-            .find(|(site, _)| *site == receiver)
-            .and_then(|(_, ty)| match ty {
-                Ty::Struct(owner, _) => Some(owner),
-                _ => None,
-            });
-        facts
-            .selected_calls
-            .iter()
-            .find(|(site, _)| *site == id)
-            .is_some_and(|(_, contract)| {
-                mojito_checked::templates::trivial_method_contract(contract)
-                    && owner.is_some_and(|owner| contract.target == format!("{owner}.{method}"))
-            })
+        let Some(Ty::Struct(owner, _)) = fact_at(&facts.expression_types, self.occurrence(object))
+        else {
+            return false;
+        };
+        fact_at(&facts.selected_calls, self.occurrence(expr)).is_some_and(|call| {
+            let named = call
+                .contract
+                .target
+                .strip_prefix(owner.as_str())
+                .and_then(|rest| rest.strip_prefix('.'))
+                .and_then(|rest| rest.strip_prefix(method))
+                .is_some_and(|overload| overload.is_empty() || overload.starts_with('$'));
+            let trivial = mojito_checked::templates::trivial_method_contract(call);
+            named
+                && (trivial
+                    || (!self.keyed
+                        && mojito_checked::templates::closed_method_contract(call)
+                        && self.holds(MethodFeatures::SIBLING_CALLS)))
+        })
     }
 
     /// Whether `expr` is `self.<field>` in a method body.
@@ -2519,8 +3195,17 @@ impl BodyShape<'_> {
                 if matches!(&object.kind, ExprKind::Identifier(name) if name == "self"))
     }
 
+    /// Whether `name` is a scalar local.
     fn local(&self, name: &str) -> bool {
-        self.locals.borrow().iter().any(|local| local == name)
+        self.locals
+            .borrow()
+            .iter()
+            .any(|(local, scalar)| local == name && *scalar)
+    }
+
+    /// Whether `name` is a local of any type.
+    fn declared(&self, name: &str) -> bool {
+        self.locals.borrow().iter().any(|(local, _)| local == name)
     }
 
     fn expression(&self, expr: &Expr) -> bool {
@@ -2530,9 +3215,9 @@ impl BodyShape<'_> {
             // A field of `self`, admitted where its recorded type is a closed
             // scalar: every use site of `expression` also demands `scalar`.
             ExprKind::Member { .. } => self.receiver_field(expr) && self.scalar(expr),
-            // A call of a method on `self` or on one of its fields, with no
-            // arguments, whose recorded contract nothing but the target can
-            // change per instance (`trivial_method_contract`).
+            // A call of a method on `self` or on one of its fields, passing
+            // scalars, whose recorded contract changes per instance only in
+            // its target and its substituted result (`closed_method_contract`).
             ExprKind::MethodCall {
                 object,
                 method,
@@ -2542,11 +3227,14 @@ impl BodyShape<'_> {
                 let on_self = matches!(&object.kind, ExprKind::Identifier(name) if name == "self");
                 self.receiver
                     && (on_self || self.receiver_field(object))
-                    && args.is_empty()
-                    && kwargs.is_empty()
+                    && (!self.keyed || (args.is_empty() && kwargs.is_empty()))
+                    && args
+                        .iter()
+                        .chain(kwargs.iter().map(|keyword| &keyword.value))
+                        .all(|argument| self.expression(argument) && self.scalar(argument))
                     && self
                         .facts
-                        .is_none_or(|facts| self.trivial_call(facts, expr, object, method))
+                        .is_none_or(|facts| self.sibling_call(facts, expr, object, method))
             }
             ExprKind::Prefix(_, value) => self.expression(value) && self.scalar(value),
             ExprKind::Infix(_, left, right) => {
@@ -2589,6 +3277,17 @@ impl BodyShape<'_> {
             syntax: self.origins.origin(expr.syntax_id),
             copy: 0,
         }
+    }
+
+    /// Whether the recorded type of `expr` mentions no parameter.
+    fn closed(&self, expr: &Expr) -> bool {
+        let id = self.occurrence(expr);
+        self.facts.is_none_or(|facts| {
+            facts
+                .expression_types
+                .iter()
+                .any(|(site, ty)| *site == id && !mojito_types::types::is_symbolic(ty))
+        })
     }
 
     /// Whether the recorded type of `expr` is a closed scalar. With no facts
