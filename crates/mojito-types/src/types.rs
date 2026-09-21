@@ -2863,6 +2863,26 @@ pub fn is_symbolic(ty: &Ty) -> bool {
     }
 }
 
+/// Whether `ty` mentions a parameter that nothing inside it binds.
+///
+/// This is the *closedness* question, which is not [`is_symbolic`]'s: a
+/// generic callable value binds the parameters its own signature mentions, so
+/// `def[T](T) -> T` is closed — it is a compile-time type constant, and
+/// `DependentType::resolve` unwraps it — even though a `Ty::Param` named `T`
+/// occurs inside it. A binder nested below another's signature is left to
+/// [`is_symbolic`]'s conservative answer.
+pub fn has_free_parameters(ty: &Ty) -> bool {
+    let Ty::GenericFunc { decls, .. } = ty else {
+        return is_symbolic(ty);
+    };
+    let bound: Vec<&str> = decls.iter().map(ParamDecl::name).collect();
+    mentions(ty, &|inner| match inner {
+        Ty::Param { name, .. } => !bound.contains(&name.as_str()),
+        Ty::Infer | Ty::Assoc { .. } | Ty::Dependent(_) | Ty::SelfType => true,
+        _ => false,
+    })
+}
+
 /// The [`is_symbolic`] companion for compile-time values: a value parameter, or
 /// any collection or type handle carrying one.
 pub fn ct_value_is_symbolic(value: &CtValue) -> bool {

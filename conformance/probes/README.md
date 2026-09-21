@@ -55,6 +55,14 @@ record is `docs/notes/param-expr-attributes.md`). One shape stays open.
 |---|---|---|
 | `param_expr_simd_hooks.mojo` | Do symbolic SIMD widths canonicalize (`SIMD[dt, n + 1]` as `SIMD[dt, 1 + n]`, `SIMD[DType.int64, Self.length]`)? (Observed at `a79fbdf59f2`, 2026-09-20.) | **differs**: the pin runs it, Mojito's `Ty::Simd` needs a concrete width — `docs/roadmap.md` §1, the `DType`/vector validation entry |
 
+## Tuple element mutability (re-run at every re-pin)
+
+Found while restoring the public Tuple's structural surface, 2026-09-20.
+
+| Probe | Question | Expected on both |
+|---|---|---|
+| `tuple_element_write.mojo` | Is `t[0] = 9` a write through `Tuple`'s compile-time-index hook? | **differs**: the pin prints `9`, Mojito rejects ("Tuple elements are immutable") — `docs/roadmap.md` §3, `tuple-element-write` |
+
 ## Pack-keyed template bodies (re-run at every re-pin)
 
 A body keyed on a variadic pack is validated from its template, with the

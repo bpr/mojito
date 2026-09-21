@@ -1196,6 +1196,21 @@ The checkboxes below, and the bullets inside the standing ones, are sorted Opus 
     - Model: Opus, plan first. The lever is named, but the rejection reaches
       wide fixture fallout, so it wants its own pass with the fallout
       enumerated first.
+  - `tuple-element-write`: `t[0] = 9` on a `Tuple` runs upstream and prints
+    `9`, while Mojito rejects it with "invalid assignment target: Tuple
+    elements are immutable". Upstream's `__getitem__[idx](ref self)` returns
+    `ref [self]`, so the subscript is a mutable place.
+    - The rejection is a checker rule that predates the
+      reference-returning `__getitem_param__` the bundled
+      `std/builtin/tuple.mojo` now declares, so the declaration and the rule
+      disagree about the same hook.
+    - Withdrawing it also decides `std/collections/pack_tuple.mojo`, whose
+      accessor returns a copied value precisely to keep the write rejected
+      (`self_hosted_pack_tuple_preserves_tuple_restrictions`).
+    - Pinned by `conformance/probes/tuple_element_write.mojo`.
+    - Model: Opus, plan first. The lever is one rule, but making tuple
+      elements writable changes what every tuple place means to ownership
+      analysis, so the plan enumerates that fallout first.
   - `native-arithmetic-edge-cases`: seven corpus fixtures compute different
     numbers from the pin, found by the 2026-09-12 stdout sweep and listed in
     [`conformance/assets-mojo-output-diffs.tsv`](../conformance/assets-mojo-output-diffs.tsv)
@@ -1542,6 +1557,14 @@ The checkboxes below, and the bullets inside the standing ones, are sorted Opus 
      - A standalone nullary vector construction `SIMD[d, w]()` rejects
        (`SIMD construction expects w element(s) or 1 to splat, got 0`).
        Only a Tuple element defaults to zero lanes.
+     - `Tuple.reverse` and `Tuple.concat` are typed in Rust from the element
+       list (`checker/method_calls/builtin_types.rs`), not declared in
+       `std/builtin/tuple.mojo`. The nominal declaration answers a Tuple
+       method call first, and this surface serves only what it does not
+       declare. Upstream writes both in Mojo over `Self.Ts.reverse()` and
+       `TypeList._concat`, which Mojito has no spelling for, so porting them
+       waits on type-level pack algebra. Pinned by
+       `checker_test::accepts_tuple_constructors_and_structural_operations`.
 
   4. **Everyday spellings that still reject** — checker context and stdlib
      API shapes.

@@ -604,7 +604,10 @@ impl Checker {
                                 .to_string(),
                     });
                 }
-                Ok(nominal_tuple_type(elements.iter().rev().cloned().collect()))
+                // The result names the materialized specialization when
+                // discovery has one, so an explicitly annotated binding and
+                // the subscript it feeds agree on the receiver declaration.
+                Ok(self.public_tuple_type(elements.iter().rev().cloned().collect()))
             }
             "concat" => {
                 if !param_args.is_empty() {
@@ -644,7 +647,7 @@ impl Checker {
                 }
                 let mut result = elements.to_vec();
                 result.extend(other.into_iter().cloned());
-                Ok(nominal_tuple_type(result))
+                Ok(self.public_tuple_type(result))
             }
             "consume_elements" | "deinit_with" => {
                 if !args.is_empty() {

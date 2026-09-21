@@ -61,12 +61,13 @@ fn one_transfer() -> TransferSet {
 /// rejects stay distinct.
 #[test]
 fn param_expr_canonicalization_contract() {
+    use InfixOp::{Add, FloorDiv, Mul, Pow, Shl, Sub};
+
     let context = ParamContext::new();
     let n = int_param(&context, "f", 0, "n");
     let m = int_param(&context, "f", 1, "m");
     let lit = |value| literal(&context, value);
     let op = |op, left: &ParamExpr, right: &ParamExpr| infix(&context, op, left, right);
-    use InfixOp::{Add, FloorDiv, Mul, Pow, Shl, Sub};
 
     // Reordered, distributed, collected.
     assert_eq!(op(Add, &n, &lit(1)), op(Add, &lit(1), &n));
@@ -422,7 +423,7 @@ fn finite_selection_folds_to_its_type() {
     let selection = context
         .select(vec![Ty::Int, Ty::Bool], &index)
         .expect("selection builds");
-    let dependent = DependentType::resolve(selection.clone());
+    let dependent = DependentType::resolve(selection);
     assert!(matches!(dependent, Ty::Dependent(_)));
     let mut bindings = ParamBindings::new();
     bindings.bind_name("i", literal(&context, 1));

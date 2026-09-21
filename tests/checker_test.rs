@@ -6746,8 +6746,9 @@ fn method_template_classes_name_what_the_body_holds() {
             .find(|template| {
                 template.id.owner.as_deref() == Some("Slot") && template.id.name == method
             })
-            .map(|template| template.coverage.clone())
             .unwrap_or_else(|| panic!("no template for Slot.{method}"))
+            .coverage
+            .clone()
     };
     assert_eq!(
         coverage("count"),

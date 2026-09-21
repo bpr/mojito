@@ -277,7 +277,7 @@ impl ParamContext {
     /// A type-valued expression over an existing [`Ty`]. A closed type folds
     /// to a Type constant; a type with free parameters is a shape.
     pub fn type_shape(&self, ty: Ty) -> ParamExpr {
-        if crate::types::is_symbolic(&ty) {
+        if crate::types::has_free_parameters(&ty) {
             self.make(MetaTy::Type, ParamKind::TypeShape(Box::new(ty)))
         } else {
             self.make(

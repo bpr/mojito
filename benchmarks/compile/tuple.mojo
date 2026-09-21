@@ -9,7 +9,7 @@ struct Pair[*Ts: Copyable & Movable](Copyable, Movable):
         self.storage = Tuple(*args^)
 
     def __getitem__[i: Int](self) -> Self.Ts[i]:
-        return self.storage[i]
+        return self.storage[i].copy()
 
     def __len__(self) -> Int:
         return len(self.storage)

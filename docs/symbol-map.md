@@ -331,7 +331,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   type still mentions something only an instantiation can resolve. MIR's
   `lower_expr/expr.rs` uses it to turn `size_of` of an unspecialized type into
   `MirInstr::Unsupported`, and `mojito-vm`'s abstract-call adapters use it
-  where `vm_type_is_symbolic` used to.
+  where `vm_type_is_symbolic` used to. Its neighbour `types::has_free_parameters`
+  answers the different *closedness* question `ParamContext::type_shape` turns
+  on: a generic callable value binds the parameters its own signature
+  mentions, so `def[T](T) -> T` folds to a compile-time type constant instead
+  of staying an open shape.
 - `checker/rebind.rs` owns `rebind[Dest](value)`: `erase_rebinds` replaces
   each well-formed call by its operand before checking and records the
   retyping in `Checker.rebind_targets`; `apply_rebind_target` (from

@@ -414,7 +414,10 @@ fn nested_whole_pack_forwarding_preserves_fixed_prefix_and_keyword_tail() {
 
 #[test]
 fn top_level_whole_pack_forwarding_preserves_fixed_prefix_and_linear_values() {
-    let src = "struct Item(Movable):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def __init__(out self, *, deinit move: Self):\n        self.value = move.value\n    def __deinit__(deinit self):\n        print(\"drop\", self.value)\n\ndef score[*Ts: Movable & Deinitable](head: Int, var *values: *Ts) -> Int:\n    return head + values[0].value\n\ndef inner_relay[*Ts: Movable & Deinitable](var *values: *Ts) -> Int:\n    return score(2, *values^)\n\ndef relay[*Ts: Movable & Deinitable](var *values: *Ts) -> Int:\n    return inner_relay(*values^)\n\ndef main():\n    print(relay(Item(40)))\n";
+    // A top-level pack body is validated from its template, so the element is
+    // opaque and `rebind[Item]` is what licenses the field read. Verified on
+    // the pin 2026-09-20: both print `drop 40` then `42`.
+    let src = "struct Item(Movable):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def __init__(out self, *, deinit move: Self):\n        self.value = move.value\n    def __deinit__(deinit self):\n        print(\"drop\", self.value)\n\ndef score[*Ts: Movable & Deinitable](head: Int, var *values: *Ts) -> Int:\n    return head + rebind[Item](values[0]).value\n\ndef inner_relay[*Ts: Movable & Deinitable](var *values: *Ts) -> Int:\n    return score(2, *values^)\n\ndef relay[*Ts: Movable & Deinitable](var *values: *Ts) -> Int:\n    return inner_relay(*values^)\n\ndef main():\n    print(relay(Item(40)))\n";
     assert_eq!(run(src).unwrap(), "drop 40\n42\n");
 }
 
@@ -605,10 +608,18 @@ fn comptime_for_over_a_list_and_string_concat() {
 #[test]
 fn comptime_for_variable_does_not_index_a_runtime_tuple() {
     // The body is checked once with the loop variable symbolic, as upstream
-    // does, so `t[i]` has no single element type and the walk is rejected.
+    // does, so `t[i]` is the dependent element at `i` rather than any one
+    // element type, and `print` rejects it for the same reason the pin does:
+    // "an element of 'values' with type 'Int, String, Bool[SIMDLength(
+    // paramfor_next_value[_ZeroStartingRange](iter))]' does not conform to
+    // trait 'Writable'" (observed 2026-09-20 against `dd957314`).
     let src = "def main():\n    var t: Tuple[Int, String, Bool] = (1, \"two\", True)\n    comptime for i in range(3):\n        print(t[i])\n";
     let err = run(src).unwrap_err();
-    assert!(err.contains("a compile-time Int index"), "{err}");
+    assert!(err.contains("an element of 'values'"), "{err}");
+    assert!(
+        err.contains("does not conform to trait 'Writable'"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -841,7 +852,11 @@ fn heterogeneous_pack_bound_oracle_uses_nominal_user_conformance() {
 
 #[test]
 fn heterogeneous_pack_indexes_expose_concrete_element_types() {
-    let src = "def first_plus_one[*Types: Copyable](*args: *Types) -> Int:\n    comptime if Types[0] == Int:\n        return args[0] + 1\n    else:\n        return 0\n\ndef main():\n    print(first_plus_one(4, \"tail\"))\n    print(first_plus_one(\"head\", 4))\n";
+    // A folded `comptime if Types[0] == Int` does not narrow the element: it
+    // keeps its dependent type, and `rebind[Int]` is the explicit retyping
+    // both compilers demand (`assets/ok/pack_element_rebind.mojo`). Verified
+    // on the pin 2026-09-20: both print `5` then `0`.
+    let src = "def first_plus_one[*Types: Copyable](*args: *Types) -> Int:\n    comptime if Types[0] == Int:\n        return rebind[Int](args[0]) + 1\n    else:\n        return 0\n\ndef main():\n    print(first_plus_one(4, \"tail\"))\n    print(first_plus_one(\"head\", 4))\n";
     assert_eq!(run(src).unwrap(), "5\n0\n");
 }
 
@@ -1084,7 +1099,7 @@ fn variadic_struct_dependent_getitem_unrolls_per_element() {
     // unrolls into one concrete accessor per pack element at specialization;
     // `p[k]` requires a compile-time-constant index, has the exact element
     // type, and dispatches the checker-resolved accessor.
-    let src = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem__[i: Int](self) -> Self.Ts[i]:\n        return self.storage[i]\n\n    def __len__(self) -> Int:\n        return len(self.storage)\n\ndef main():\n    var p = Pair[Int, String, Bool](7, \"mid\", True)\n    var n: Int = p[0]\n    var s: String = p[1]\n    var b: Bool = p[2]\n    print(n)\n    print(s)\n    print(b)\n    print(len(p))\n";
+    let src = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem__[i: Int](self) -> Self.Ts[i]:\n        return self.storage[i].copy()\n\n    def __len__(self) -> Int:\n        return len(self.storage)\n\ndef main():\n    var p = Pair[Int, String, Bool](7, \"mid\", True)\n    var n: Int = p[0]\n    var s: String = p[1]\n    var b: Bool = p[2]\n    print(n)\n    print(s)\n    print(b)\n    print(len(p))\n";
     assert_eq!(run_compiled(src).unwrap(), "7\nmid\nTrue\n3\n");
 }
 
@@ -1112,13 +1127,13 @@ fn general_getitem_param_hook_uses_a_checked_value_parameter() {
 #[test]
 fn variadic_struct_dependent_getitem_dispatches_per_instantiation() {
     // Two specializations resolve their own accessor families independently.
-    let src = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem__[i: Int](self) -> Self.Ts[i]:\n        return self.storage[i]\n\ndef main():\n    var a = Pair[Int, Bool](1, True)\n    var b = Pair[String, Int](\"s\", 5)\n    print(a[0] + b[1])\n    print(b[0])\n";
+    let src = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem__[i: Int](self) -> Self.Ts[i]:\n        return self.storage[i].copy()\n\ndef main():\n    var a = Pair[Int, Bool](1, True)\n    var b = Pair[String, Int](\"s\", 5)\n    print(a[0] + b[1])\n    print(b[0])\n";
     assert_eq!(run_compiled(src).unwrap(), "6\ns\n");
 }
 
 #[test]
 fn variadic_struct_dependent_getitem_rejects_bad_indices() {
-    let template = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem__[i: Int](self) -> Self.Ts[i]:\n        return self.storage[i]\n\n";
+    let template = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem__[i: Int](self) -> Self.Ts[i]:\n        return self.storage[i].copy()\n\n";
     // A runtime-varying index cannot select among heterogeneous elements.
     let runtime = format!(
         "{template}def main():\n    var p = Pair[Int, Bool](1, True)\n    var i = 0\n    print(p[i])\n"

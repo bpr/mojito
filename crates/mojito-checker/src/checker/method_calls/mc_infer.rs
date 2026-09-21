@@ -1510,6 +1510,18 @@ impl Checker {
                         return self.infer_field_invocation(span, object, &field_ty, args, kwargs);
                     }
                 }
+                // The public Tuple's structural surface (`reverse`, `concat`,
+                // the consuming teardowns) is typed from the element list
+                // rather than declared in `std/builtin/tuple.mojo`, whose
+                // upstream bodies need type-level pack algebra Mojito has no
+                // spelling for yet (`docs/roadmap.md` §4, *Variadic packs and
+                // tuples*). The nominal declaration answers first; this
+                // serves what it does not declare.
+                if let Some(elements) = tuple_elements(&obj_ty) {
+                    reject_kwargs(kwargs)?;
+                    let elements = elements.into_iter().cloned().collect::<Vec<_>>();
+                    return self.infer_tuple_method(&span, object, method, &elements, call);
+                }
                 return Err(TypeError::NoSuchMethod {
                     object_type: obj_ty.to_string(),
                     method: method.to_string(),

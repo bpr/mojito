@@ -2469,6 +2469,34 @@ impl Checker {
         }
     }
 
+    /// Whether a nearer type parameter shadows the pack `*Ts`: a nested
+    /// `def[Ts: AnyType]` binds the bare name to something that is not a
+    /// pack, so a `*Ts` inside it does not reach the enclosing pack. Both
+    /// compilers reject that spread at the declaration.
+    fn pack_is_shadowed(&self, starred: &str) -> bool {
+        // `local_type_aliases` is searched ahead of `tparams`, so a binding in
+        // any alias scope is nearer than one in any parameter scope.
+        let nearest = |name: &str| {
+            self.local_type_aliases
+                .iter()
+                .rposition(|scope| scope.contains_key(name))
+                .map(|scope| (1u8, scope))
+                .or_else(|| {
+                    self.tparams
+                        .iter()
+                        .rposition(|scope| scope.contains_key(name))
+                        .map(|scope| (0u8, scope))
+                })
+        };
+        let bare = nearest(starred.trim_start_matches('*'));
+        match (bare, nearest(starred)) {
+            // A pack declared bare alongside its starred name is not a shadow.
+            (Some(bare), Some(pack)) => bare > pack,
+            (Some(_), None) => true,
+            (None, _) => false,
+        }
+    }
+
     /// The pack a spread type argument (`*Self.Ts`, or a `def`'s own `*Ts`)
     /// names while that pack is still a parameter, as its `Ty::Param`.
     pub(super) fn pack_spread_argument(
@@ -2481,6 +2509,9 @@ impl Checker {
         // the bare spelling still names that pack.
         let pack = |name: &String| {
             name.starts_with('*').then(|| {
+                if self.pack_is_shadowed(name) {
+                    return Err(TypeError::UnknownType(name.clone()));
+                }
                 self.lookup_tparam(name).map_or_else(
                     || self.ty_from_anno(&SourceType::SelfParam(name.clone())),
                     Ok,
