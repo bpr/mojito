@@ -6,9 +6,9 @@
 # Self.Ts[i] == T` folds, and the call retargets to the clone by name. Static
 # methods, constructors with an infer-only `T` solved through a callable bound
 # (`F: def() -> T`), and inferred (unspelled) type arguments all take that
-# path. The accessors that narrow a pack element to the method's own `T` need
-# upstream's `rebind`, so they live in
-# `conformance/fixtures/pack_element_type_narrowing.mojo` instead.
+# path. An accessor that reads a pack element as the method's own `T` needs
+# upstream's `rebind` (`assets/ok/pack_element_rebind.mojo`); the unrebound
+# form is rejected (`conformance/fixtures/pack_element_type_narrowing.mojo`).
 struct Bag[*Ts: Movable](
     Copyable where Ts.all_conforms_to[Copyable](),
     Deinitable where Ts.all_conforms_to[Deinitable](),

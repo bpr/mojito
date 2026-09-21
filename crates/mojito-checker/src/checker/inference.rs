@@ -831,6 +831,14 @@ impl Checker {
                         "lambda reached inference before scoped checking".to_string(),
                     )
                 }),
+            // The elaborator expands a spread per specialization. A spread
+            // of a pack that is still a parameter, among other arguments or
+            // into a callee with no symbolic rule, is no verdict on the body.
+            ExprKind::Spread(spread) if self.spreads_unbound_pack(spread) => {
+                Err(TypeError::SymbolicPackBoundary(
+                    "a call spreading the unbound pack among its arguments".to_string(),
+                ))
+            }
             ExprKind::Spread(_) => Err(TypeError::Unsupported(
                 "call spread outside a specialized type pack".to_string(),
             )),
@@ -840,6 +848,15 @@ impl Checker {
                 args,
                 kwargs,
             } => {
+                // A `TypeList` proposition over a pack that is still a
+                // parameter (`Self.Ts.contains[T]()`) is a `Bool` each
+                // instantiation folds.
+                if let ExprKind::Member { object, .. } = &callee.kind
+                    && self.unbound_pack_named(object).is_some()
+                    && self.compile_typelist_proposition(expr)?.is_some()
+                {
+                    return Ok(Ty::Bool);
+                }
                 if let Some(value) = self.dtype_float_query(callee, param_args, args, kwargs) {
                     self.operation_adjustments.borrow_mut().insert(
                         expr.source_span(),
@@ -1070,7 +1087,14 @@ impl Checker {
                 param_args,
                 args,
                 kwargs,
-            } => self.infer_call(expr.source_span(), name, param_args, args, kwargs),
+            } => match self
+                .infer_unbound_pack_construction(name, param_args, args, kwargs)
+                .or_else(|| {
+                    self.infer_validated_variadic_construction(expr, name, param_args, args, kwargs)
+                }) {
+                Some(constructed) => constructed,
+                None => self.infer_call(expr.source_span(), name, param_args, args, kwargs),
+            },
             ExprKind::Member { object, field } => {
                 self.infer_member(expr.source_span(), object, field)
             }
@@ -1360,7 +1384,9 @@ impl Checker {
         match &index.kind {
             ExprKind::Identifier(name)
                 if self.structs.contains_key(name)
-                    || (scalar_type_name(name).is_some() && self.lookup(name).is_none()) =>
+                    || ((scalar_type_name(name).is_some()
+                        || self.lookup_tparam(name).is_some())
+                        && self.lookup(name).is_none()) =>
             {
                 Some(mojito_ast::ast::ParamArg::Value(index.clone()))
             }
@@ -1492,19 +1518,9 @@ impl Checker {
                 self.require_variant_set_deinitable(&alternatives)?;
                 self.check_place(object)?;
                 let factory = self.infer(&kwarg.value)?;
-                let factory_ret = match &factory {
-                    Ty::Func {
-                        params,
-                        raises: false,
-                        ret,
-                        ..
-                    } if params.is_empty() => Some(ret.as_ref()),
-                    _ => None,
-                };
+                let factory_ret = placement_factory_result(&factory);
                 let index = factory_ret.and_then(|ret| {
-                    alternatives
-                        .iter()
-                        .position(|alternative| coerces(ret, alternative))
+                    variant_position(&alternatives, |alternative| coerces(ret, alternative))
                 });
                 let Some(index) = index else {
                     return Err(TypeError::TypeMismatch {
@@ -1680,22 +1696,20 @@ impl Checker {
                     }
                     let input = self.type_param_argument(&param_args[0], "Variant.replace")?;
                     let output = self.type_param_argument(&param_args[1], "Variant.replace")?;
-                    let input_index = alternatives
-                        .iter()
-                        .position(|alternative| alternative == &input)
-                        .ok_or_else(|| TypeError::TypeMismatch {
-                            expected: format!("one of {}", Ty::Variant(alternatives.clone())),
-                            found: input.to_string(),
-                            context: "Variant replacement input type".to_string(),
-                        })?;
-                    let output_index = alternatives
-                        .iter()
-                        .position(|alternative| alternative == &output)
-                        .ok_or_else(|| TypeError::TypeMismatch {
-                            expected: format!("one of {}", Ty::Variant(alternatives.clone())),
-                            found: output.to_string(),
-                            context: "Variant replacement output type".to_string(),
-                        })?;
+                    let input_index =
+                        variant_position(&alternatives, |alternative| alternative == &input)
+                            .ok_or_else(|| TypeError::TypeMismatch {
+                                expected: format!("one of {}", Ty::Variant(alternatives.clone())),
+                                found: input.to_string(),
+                                context: "Variant replacement input type".to_string(),
+                            })?;
+                    let output_index =
+                        variant_position(&alternatives, |alternative| alternative == &output)
+                            .ok_or_else(|| TypeError::TypeMismatch {
+                                expected: format!("one of {}", Ty::Variant(alternatives.clone())),
+                                found: output.to_string(),
+                                context: "Variant replacement output type".to_string(),
+                            })?;
                     self.check_place(object)?;
                     if field == "replace" && !self.is_deinitable(&input) {
                         return Err(TypeError::TraitNotSatisfied {
@@ -1779,7 +1793,16 @@ impl Checker {
             found: found.to_string(),
             context: "'Variant.deinit_with' handler".to_string(),
         };
-        match &handler_ty {
+        // A handler typed by a callable-bounded parameter has its bound's
+        // contract.
+        let contract = match &handler_ty {
+            Ty::Param {
+                callable_bound: Some(bound),
+                ..
+            } => bound.as_ref(),
+            other => other,
+        };
+        match contract {
             Ty::Func {
                 params,
                 conventions,
@@ -1796,12 +1819,10 @@ impl Checker {
                 ) {
                     return Err(reject(&handler_ty));
                 }
-                alternatives
-                    .iter()
-                    .position(|alternative| alternative == &params[0])
+                variant_position(alternatives, |alternative| alternative == &params[0])
                     .ok_or_else(|| reject(&handler_ty))
             }
-            other => Err(reject(other)),
+            _ => Err(reject(&handler_ty)),
         }
     }
 
@@ -1818,9 +1839,7 @@ impl Checker {
             });
         }
         let requested = self.type_param_argument(&args[0], "Variant operation")?;
-        alternatives
-            .iter()
-            .position(|alternative| alternative == &requested)
+        variant_position(alternatives, |alternative| alternative == &requested)
             .map(|index| (index, requested.clone()))
             .ok_or_else(|| TypeError::TypeMismatch {
                 expected: format!("one of {}", Ty::Variant(alternatives.to_vec())),
@@ -2565,19 +2584,9 @@ impl Checker {
                 ));
             };
             let factory = self.infer(&kwarg.value)?;
-            let factory_ret = match &factory {
-                Ty::Func {
-                    params,
-                    raises: false,
-                    ret,
-                    ..
-                } if params.is_empty() => Some(ret.as_ref()),
-                _ => None,
-            };
+            let factory_ret = placement_factory_result(&factory);
             let index = factory_ret.and_then(|ret| {
-                alternatives
-                    .iter()
-                    .position(|alternative| coerces(ret, alternative))
+                variant_position(&alternatives, |alternative| coerces(ret, alternative))
             });
             let Some(index) = index else {
                 return Err(TypeError::TypeMismatch {
@@ -2614,6 +2623,11 @@ impl Checker {
             ));
         };
         let actual = self.infer(&args[0])?;
+        // Over a pack that is still a parameter, which alternative the
+        // payload is belongs to each instantiation.
+        if mojito_types::types::pack_spread(&alternatives).is_some() {
+            return Ok(Ty::Variant(alternatives));
+        }
         let exact: Vec<_> = alternatives
             .iter()
             .enumerate()
@@ -2806,4 +2820,35 @@ fn with_contextual_root(expression: &Expr, base: &str) -> Expr {
     let mut rewritten = expression.clone();
     replace(&mut rewritten, base);
     rewritten
+}
+
+/// The position of the alternative `selects` accepts. Over a pack that is
+/// still a parameter membership is each instantiation's fact, so the first
+/// position stands in: only the type discipline is checked there.
+fn variant_position(alternatives: &[Ty], selects: impl Fn(&Ty) -> bool) -> Option<usize> {
+    if mojito_types::types::pack_spread(alternatives).is_some() {
+        return Some(0);
+    }
+    alternatives.iter().position(selects)
+}
+
+/// The result type of an `init_with` placement factory: a zero-parameter,
+/// non-raising callable, or a type parameter bounded by one.
+fn placement_factory_result(factory: &Ty) -> Option<&Ty> {
+    let callable = match factory {
+        Ty::Param {
+            callable_bound: Some(bound),
+            ..
+        } => bound.as_ref(),
+        other => other,
+    };
+    match callable {
+        Ty::Func {
+            params,
+            raises: false,
+            ret,
+            ..
+        } if params.is_empty() => Some(ret.as_ref()),
+        _ => None,
+    }
 }

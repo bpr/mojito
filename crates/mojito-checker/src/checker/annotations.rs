@@ -228,6 +228,30 @@ pub(super) fn method_owner(self_ty: &Ty, method: &str) -> String {
     }
 }
 
+/// The variadic type packs a declaration's own binders open, as the
+/// parameter-list references an element of the pack indexes.
+pub(super) fn pack_scope(owner: &str, decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
+    decls
+        .iter()
+        .enumerate()
+        .filter_map(|(slot, decl)| match decl {
+            ParamDecl::Type {
+                name,
+                variadic: true,
+                ..
+            } => Some((
+                name.trim_start_matches('*').to_string(),
+                ParamContext::detached().decl_ref(
+                    mojito_types::param_expr::ParamId::new(&binder_owner(owner), slot),
+                    name.trim_start_matches('*'),
+                    mojito_types::param_expr::MetaTy::type_list(),
+                ),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
 /// The value-parameter scope a declaration's own binders open.
 pub(super) fn value_scope(owner: &str, decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
     decls

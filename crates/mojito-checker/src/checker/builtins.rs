@@ -483,7 +483,8 @@ impl Checker {
             {
                 continue;
             }
-            if matches!(ty, Ty::Struct(..) | Ty::Param { .. }) {
+            if matches!(ty, Ty::Struct(..) | Ty::Param { .. }) || self.opaque_element(&ty).is_some()
+            {
                 if self.conforms_to(&ty, "Writable") {
                     continue;
                 }
@@ -531,11 +532,13 @@ impl Checker {
                 got: args.len(),
             });
         }
+        // A builtin reads an argument's capabilities off its bounds, which an
+        // element of an unbound pack has through its view.
         args.iter()
             .map(|a| {
                 let ty = self.infer(a)?;
                 self.borrow_reference_result_argument(a);
-                Ok(ty)
+                Ok(self.opaque_element(&ty).unwrap_or(ty))
             })
             .collect()
     }
@@ -693,6 +696,12 @@ impl Checker {
     /// Type `len(x)`: every possible type of a dependent input must fulfill the
     /// same `Sized`/`__len__ -> Int` contract.
     pub(super) fn infer_len(&self, args: &[Expr]) -> Result<Ty, TypeError> {
+        // `len(Ts)` of a pack that is still a parameter.
+        if let [pack] = args
+            && self.unbound_pack_named(pack).is_some()
+        {
+            return Ok(Ty::Int);
+        }
         let tys = self.builtin_args("len", 1, args)?;
         if let Some(message) = string_len_unavailable(&tys[0]) {
             return Err(TypeError::Unsupported(message));
@@ -855,6 +864,7 @@ impl Checker {
             });
         }
         let arg_ty = self.infer(&args[0])?;
+        let arg_ty = self.opaque_element(&arg_ty).unwrap_or(arg_ty);
         // `Int(pointer)` is the address conversion (upstream `Pointer.__int__`);
         // a null pointer converts to 0, which is how the libc-facing stdlib
         // tests an optional result.

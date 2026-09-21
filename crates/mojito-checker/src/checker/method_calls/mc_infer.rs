@@ -4,6 +4,19 @@
 use super::*;
 
 impl Checker {
+    /// Infer a method call. An element of an unbound pack dispatches through
+    /// its bounded view, and the result gets the dependent element back.
+    pub(in crate::checker) fn infer_method_call(
+        &self,
+        span: SourceSpan,
+        object: &Expr,
+        method: &str,
+        call: MethodCallArguments<'_>,
+    ) -> Result<Ty, TypeError> {
+        self.infer_method_call_viewed(span, object, method, call)
+            .map(|result| self.restore_pack_elements(result))
+    }
+
     /// Type a method call `object.method(args)`. On a generic struct value the
     /// method's parameter and return types are substituted at the receiver's
     /// type arguments; on a bounded type parameter (`x: T` with `T: SomeTrait`)
@@ -14,7 +27,7 @@ impl Checker {
         clippy::too_many_lines,
         reason = "TODO: split this pass"
     )]
-    pub(in crate::checker) fn infer_method_call(
+    fn infer_method_call_viewed(
         &self,
         span: SourceSpan,
         object: &Expr,
@@ -316,6 +329,8 @@ impl Checker {
             return result;
         }
         let obj_ty = self.infer(object)?;
+        // An element of an unbound pack dispatches through its bounds.
+        let obj_ty = self.opaque_element(&obj_ty).unwrap_or(obj_ty);
         // `Int.__mlir_index__()` is upstream's identity conversion to the
         // index type (spelled inside a user `Indexer`'s own
         // `__mlir_index__`); the VM represents the index as `Int`.
@@ -928,6 +943,20 @@ impl Checker {
             reject_kwargs(kwargs)?;
             return self.infer_tuple_method(&span, object, method, elements, call);
         }
+        // A heterogeneous pack that is still a parameter answers its length;
+        // any other member waits for the specialization's concrete storage.
+        if let Ty::VariadicPack(element) = &obj_ty
+            && mojito_types::types::pack_spread(std::slice::from_ref(element)).is_some()
+        {
+            reject_kwargs(kwargs)?;
+            return if method == "__len__" && args.is_empty() && param_args.is_empty() {
+                Ok(Ty::Int)
+            } else {
+                Err(TypeError::SymbolicPackBoundary(format!(
+                    "method '{method}' of an unbound pack"
+                )))
+            };
+        }
         // Built-in `Pointer` methods: the public unsafe_* operation
         // vocabulary. `unsafe_write(copy=v)` is the one keyword shape; every
         // other pointer method rejects kwargs inside.
@@ -1007,6 +1036,7 @@ impl Checker {
                                     argument.clone(),
                                 );
                             }
+                            method_arguments.extend(positional_pack_binding(&info.decls, targs));
                             if let Err(failure) =
                                 self.method_constraint_result(sig, &method_arguments)
                             {
@@ -1047,9 +1077,12 @@ impl Checker {
                                     keyword_element: kw_variadic.clone(),
                                     conventions: sig.conventions.clone(),
                                     self_convention: sig.self_convention,
-                                    return_type: substitute(
-                                        &substitute_at(&sig.ret, info, targs),
-                                        &method_subst,
+                                    return_type: self.close_pack_elements(
+                                        substitute(
+                                            &substitute_at(&sig.ret, info, targs),
+                                            &method_subst,
+                                        ),
+                                        &method_arguments,
                                     ),
                                     result_adapter: None,
                                     raises: sig.raises,

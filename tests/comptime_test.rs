@@ -131,13 +131,79 @@ fn comptime_if_arms_are_block_scoped_and_dead_arms_have_no_effect() {
 
 #[test]
 fn comptime_if_arms_use_tuple_members_and_value_parameters() {
-    // A `Tuple` member has no symbolic signature under validation, so the arm
-    // is left to the executable check; a value parameter is a compile-time
-    // binding in a default and in a nested function, not a capture.
+    // A `Tuple` over concrete types is an ordinary struct application under
+    // validation: its constructor, subscript, `len`, `in`, and `==` type from
+    // the template's signatures with the pack bound to the element list. A
+    // value parameter is a compile-time binding in a default and in a nested
+    // function, not a capture.
     let tuple = "def f[n: Int]():\n    comptime if n == 0:\n        var inferred = Tuple(1, \"one\")\n        var typed = Tuple[Float64, String](2, \"two\")\n        var pair = (3, True)\n        print(inferred[1], typed[0], pair[1], len(pair), 3 in pair, pair == (3, True))\n\ndef main():\n    f[0]()\n";
     assert_eq!(run(tuple).unwrap(), "one 2.0 True 2 True True\n");
     let nested = "def outer[n: Int]() -> Int:\n    comptime if n >= 0:\n        pass\n    def scaled() -> Int:\n        return n * 10\n    return scaled()\n\ndef main():\n    print(outer[2]())\n";
     assert_eq!(run(nested).unwrap(), "20\n");
+}
+
+#[test]
+fn pack_keyed_bodies_are_validated_with_the_element_opaque() {
+    // An untaken arm of a pack-keyed body is judged from the template: the
+    // element under a `comptime for` index has only the pack's bound.
+    let def_pack = "def show[*Ts: Writable](*args: *Ts):\n    comptime for i in range(args.__len__()):\n        comptime if i > 100:\n            args[i].nonexistent()\n        print(args[i])\n\ndef main():\n    show(1, \"two\")\n";
+    let err = run(def_pack).unwrap_err();
+    assert!(
+        err.contains("type 'Ts[i]' has no method 'nonexistent'"),
+        "{err}"
+    );
+    // A struct's pack, never instantiated.
+    let bag = "struct Bag[*Ts: Movable](\n    Deinitable where Ts.all_conforms_to[Deinitable](),\n    Movable,\n):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple[*Self.Ts](*args^)\n\n";
+    let main = "\ndef main():\n    print(1)\n";
+    let untaken = format!(
+        "{bag}    def poke(self):\n        comptime for i in range(Self.Ts.length):\n            comptime if i > 100:\n                self.storage[i].nonexistent()\n{main}"
+    );
+    let err = run(&untaken).unwrap_err();
+    assert!(err.contains("has no method 'nonexistent'"), "{err}");
+    // The declared bound and a conjunctive method `where` license a trait
+    // use; nothing else does.
+    let licensed = format!(
+        "{bag}    def show(self) where conforms_to(Self.Ts.values, Writable):\n        comptime for i in range(Self.Ts.length):\n            print(self.storage[i])\n\n    def show_all(self) where Self.Ts.all_conforms_to[Writable]():\n        comptime for i in range(Self.Ts.length):\n            print(self.storage[i])\n{main}"
+    );
+    assert_eq!(run(&licensed).unwrap(), "1\n");
+    for clause in [
+        "",
+        " where Self.Ts.all_conforms_to[Writable]() or Self.Ts.all_conforms_to[Hashable]()",
+    ] {
+        let unlicensed = format!(
+            "{bag}    def show(self){clause}:\n        comptime for i in range(Self.Ts.length):\n            print(self.storage[i])\n{main}"
+        );
+        let err = run(&unlicensed).unwrap_err();
+        assert!(
+            err.contains("does not conform to trait 'Writable'"),
+            "{clause}: {err}"
+        );
+    }
+    // No guard narrows an element, a constant index keeps it dependent, and a
+    // membership condition leaves both arms to check.
+    let narrowed = format!(
+        "{bag}    def count[T: Equatable](self, value: T) -> Int:\n        comptime for i in range(Self.Ts.length):\n            comptime if Self.Ts[i] == T:\n                if self.storage[i] == value:\n                    return 1\n        return 0\n{main}"
+    );
+    let err = run(&narrowed).unwrap_err();
+    assert!(
+        err.contains("operator '==' is not defined for Ts[i] and T"),
+        "{err}"
+    );
+    let constant = format!(
+        "{bag}    def first(self) -> Int:\n        return rebind[Int](self.storage[0]) + self.storage[0]\n{main}"
+    );
+    assert!(run(&constant).is_err());
+    let membership = format!(
+        "{bag}    def has[T: AnyType](self) -> Int:\n        comptime if Self.Ts.contains[T]():\n            return 1\n        else:\n            return \"no\"\n{main}"
+    );
+    let err = run(&membership).unwrap_err();
+    assert!(err.contains("expected Int, found StringLiteral"), "{err}");
+    let mixed = "struct Lead[*Ts: Movable & Deinitable](Movable):\n    var storage: Tuple[Int, *Self.Ts]\n\ndef main():\n    print(1)\n";
+    let err = run(mixed).unwrap_err();
+    assert!(
+        err.contains("a variadic pack spread must be the only argument"),
+        "{err}"
+    );
 }
 
 #[test]

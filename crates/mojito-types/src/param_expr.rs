@@ -319,6 +319,49 @@ impl ParamContext {
         Ok(self.make(MetaTy::Type, ParamKind::Select { elements, index }))
     }
 
+    /// `param_list.get`: element `index` of a parameter list. A constant list
+    /// of types is a finite [`Self::select`], so a bound pack and a checked
+    /// type sequence share one normal form; a list that is still a parameter
+    /// keeps the residual node.
+    pub fn list_get(&self, list: &ParamExpr, index: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        let list = self.intern(list);
+        if let Some(CtValue::Tuple(values)) = list.as_constant()
+            && let Some(elements) = values
+                .iter()
+                .map(|value| match value {
+                    CtValue::Type(ty) => Some((**ty).clone()),
+                    _ => None,
+                })
+                .collect::<Option<Vec<Ty>>>()
+        {
+            return self.select(elements, index);
+        }
+        let MetaTy::ParamList(element) = list.meta() else {
+            return Err(ParamError::TypeMismatch {
+                operation: "parameter list element".to_string(),
+                expected: "a parameter list".to_string(),
+                found: list.meta().to_string(),
+            });
+        };
+        let index = self.intern(index);
+        if !index.meta().is_integer() {
+            return Err(ParamError::TypeMismatch {
+                operation: "parameter list element".to_string(),
+                expected: "an Int parameter list index".to_string(),
+                found: index.meta().to_string(),
+            });
+        }
+        if let Some(position) = index.as_constant().and_then(fold::integer_value)
+            && position.is_negative()
+        {
+            return Err(ParamError::Arithmetic(format!(
+                "parameter list index {position} is negative"
+            )));
+        }
+        let meta = (**element).clone();
+        Ok(self.make(meta, ParamKind::ListGet { list, index }))
+    }
+
     /// One of today's bound-pack constraint leaves, carried for the checker's
     /// concrete tuple/pack logic to resolve. It adds no symbolic pack support.
     pub fn pack_query(&self, pack: &str, query: PackQuery) -> ParamExpr {
@@ -404,6 +447,9 @@ impl ParamContext {
             }
             ParamKind::Select { elements, index } => {
                 self.select(elements.clone(), &self.fold(index)?)?
+            }
+            ParamKind::ListGet { list, index } => {
+                self.list_get(&self.fold(list)?, &self.fold(index)?)?
             }
             _ => expr.clone(),
         })
@@ -835,6 +881,10 @@ impl ParamContext {
                     .collect::<Result<_, _>>()?;
                 self.select(elements, &index)?
             }
+            ParamKind::ListGet { list, index } => self.list_get(
+                &self.replace_at(list, bindings, depth, memo)?,
+                &self.replace_at(index, bindings, depth, memo)?,
+            )?,
             ParamKind::PackQuery { pack, query } => {
                 let query = match query {
                     PackQuery::Contains(element) => {
@@ -864,7 +914,9 @@ impl ParamContext {
             }
             _ => value.clone(),
         };
-        if value.meta() != reference.meta() && !value.meta().is_unresolved_struct(reference.meta())
+        if value.meta() != reference.meta()
+            && !value.meta().is_unresolved_struct(reference.meta())
+            && !value.meta().is_list_of(reference.meta())
         {
             return Err(ParamError::TypeMismatch {
                 operation: format!("binding of '{reference}'"),
@@ -896,6 +948,10 @@ impl ParamContext {
                 &self.shift(left, cutoff, by)?,
                 &self.shift(right, cutoff, by)?,
             ),
+            ParamKind::ListGet { list, index } => self.list_get(
+                &self.shift(list, cutoff, by)?,
+                &self.shift(index, cutoff, by)?,
+            )?,
             _ => expr.clone(),
         })
     }
@@ -1052,6 +1108,10 @@ impl ParamExpr {
                 subject.visit(visitor);
             }
             ParamKind::Select { index, .. } => index.visit(visitor),
+            ParamKind::ListGet { list, index } => {
+                list.visit(visitor);
+                index.visit(visitor);
+            }
             ParamKind::PackQuery {
                 query: PackQuery::Contains(element),
                 ..
@@ -1092,8 +1152,9 @@ impl ParamExpr {
             ParamKind::Trivial { .. } => 6,
             ParamKind::TypeShape(_) => 7,
             ParamKind::Select { .. } => 8,
-            ParamKind::PackQuery { .. } => 9,
-            ParamKind::Hole { .. } => 10,
+            ParamKind::ListGet { .. } => 9,
+            ParamKind::PackQuery { .. } => 10,
+            ParamKind::Hole { .. } => 11,
         }
     }
 }
@@ -1208,6 +1269,9 @@ pub enum ParamKind {
     TypeShape(Box<Ty>),
     /// Finite type selection by an integer expression.
     Select { elements: Vec<Ty>, index: ParamExpr },
+    /// `param_list.get`: one element of a parameter list that is still a
+    /// parameter. A constant list is a [`Self::Select`] instead.
+    ListGet { list: ParamExpr, index: ParamExpr },
     /// A bound-pack query the checker's concrete pack logic resolves.
     PackQuery { pack: String, query: PackQuery },
     /// Reserved typed unknown/unbound state; see [`ParamContext::hole`].
@@ -1444,8 +1508,7 @@ pub enum MetaTy {
     List(Vec<Self>),
     Dict(Vec<(Self, Self)>),
     Set(Vec<Self>),
-    /// Reserved for the pack follow-on: an ordered list of one element
-    /// meta-type. Nothing constructs it from source yet.
+    /// An ordered list of one element meta-type: a variadic pack's binder.
     ParamList(Box<Self>),
 }
 
@@ -1507,8 +1570,23 @@ impl MetaTy {
         }
     }
 
+    /// The binder meta-type of a variadic type pack.
+    pub fn type_list() -> Self {
+        Self::ParamList(Box::new(Self::Type))
+    }
+
     pub fn is_integer(&self) -> bool {
         matches!(self.as_value(), Some(Ty::Int | Ty::UInt | Ty::IntLiteral))
+    }
+
+    /// A constant aggregate bound to a parameter list: every member has the
+    /// list's element meta-type.
+    fn is_list_of(&self, declared: &Self) -> bool {
+        matches!(
+            (self, declared),
+            (Self::Tuple(members), Self::ParamList(element))
+                if members.iter().all(|member| member == &**element)
+        )
     }
 
     fn is_literal(&self) -> bool {
@@ -2279,6 +2357,7 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
             }
             write!(f, "][{index}]")
         }
+        ParamKind::ListGet { list, index } => write!(f, "{list}[{index}]"),
         ParamKind::PackQuery { pack, query } => match query {
             PackQuery::Length => write!(f, "TypeList[{pack}.values]().length"),
             PackQuery::Conforms(trait_name) => {

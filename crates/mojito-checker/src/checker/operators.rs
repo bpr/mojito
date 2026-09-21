@@ -80,8 +80,11 @@ impl Checker {
             NotIn, Or, Pow, Shl, Shr, Sub,
         };
 
+        // An element of an unbound pack takes its operators from its bounds.
         let lt = self.infer(left)?;
+        let lt = self.opaque_element(&lt).unwrap_or(lt);
         let rt = self.infer(right)?;
+        let rt = self.opaque_element(&rt).unwrap_or(rt);
 
         // Membership `in` / `not in` — the right operand is a container.
         if matches!(op, In | NotIn) {
@@ -362,8 +365,9 @@ impl Checker {
             let environment: HashMap<String, TyArg> = info
                 .decls
                 .iter()
-                .map(|decl| decl.name().to_string())
+                .map(|decl| decl.name().trim_start_matches('*').to_string())
                 .zip(targs.iter().cloned())
+                .chain(positional_pack_binding(&info.decls, targs))
                 .collect();
             if self
                 .method_constraint_result(selected, &environment)
@@ -438,8 +442,9 @@ impl Checker {
             let environment: HashMap<String, TyArg> = info
                 .decls
                 .iter()
-                .map(|decl| decl.name().to_string())
+                .map(|decl| decl.name().trim_start_matches('*').to_string())
                 .zip(targs.iter().cloned())
+                .chain(positional_pack_binding(&info.decls, targs))
                 .collect();
             if self.method_constraint_result(sig, &environment).is_ok() {
                 // The symbol the backends dispatch: the overload key only

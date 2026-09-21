@@ -500,7 +500,21 @@ impl Checker {
         self.vparams.truncate(depth);
         self.vparams.resize_with(depth, HashMap::new);
         self.vparams.push(value_scope(owner, decls));
+        self.pack_params.truncate(depth);
+        self.pack_params.resize_with(depth, HashMap::new);
+        self.pack_params.push(pack_scope(owner, decls));
         self.tparams.push(type_scope(decls));
+    }
+
+    /// The parameter-list reference a bare name denotes when it is a variadic
+    /// type pack of an enclosing declaration, innermost first.
+    pub(super) fn pack_parameter_in_scope(&self, name: &str) -> Option<ParamExpr> {
+        self.pack_params
+            .iter()
+            .take(self.tparams.len())
+            .rev()
+            .find_map(|scope| scope.get(name.trim_start_matches('*')))
+            .map(|reference| self.param_context.intern(reference))
     }
 
     pub(super) fn self_param_ct_value(&self, name: &str) -> Option<CtValue> {
@@ -515,16 +529,20 @@ impl Checker {
                 ParamDecl::Value { name: n, ty, .. } if n == name => {
                     Some(value_parameter(owner, slot, n, ty))
                 }
+                // `Self.Ts` names the struct's pack by its unstarred spelling.
                 ParamDecl::Type {
                     name: n,
                     bounds,
                     callable_bound,
+                    variadic,
                     ..
-                } if n == name => Some(CtValue::Type(Box::new(Ty::Param {
-                    name: n.clone(),
-                    bounds: bounds.clone(),
-                    callable_bound: callable_bound.clone(),
-                }))),
+                } if n == name || (*variadic && n.trim_start_matches('*') == name) => {
+                    Some(CtValue::Type(Box::new(Ty::Param {
+                        name: n.clone(),
+                        bounds: bounds.clone(),
+                        callable_bound: callable_bound.clone(),
+                    })))
+                }
                 _ => None,
             })
     }
@@ -1300,6 +1318,10 @@ impl Checker {
             ExprKind::TypeApply { name, args } => ConstraintOperand::Type(
                 self.ty_from_anno(&SourceType::Named(name.clone(), args.clone()))?,
             ),
+            // A pack element (`Self.Ts[i]`) is a type operand.
+            ExprKind::Index { .. } if let Some(ty) = self.comptime_type_operand(expr)? => {
+                ConstraintOperand::Type(ty)
+            }
             // Arithmetic over value parameters (`n + 1`), through the same
             // builder a dependent type argument uses. A name it cannot type —
             // a parameter whose scope is not open here — is the explicit
@@ -1528,11 +1550,18 @@ impl Checker {
         let unknown = || context.hole(HoleKind::Unknown, MetaTy::bool());
         // A parameter bound to the wrong kind of argument decides the leaf
         // false; only a parameter with no binding at all is unknown.
+        // A pack bound to another declaration's pack that is still a
+        // parameter (`Tuple[*Self.Ts]`): its elements are that pack's.
+        let forwarded = |param: &str| match environment.get(param) {
+            Some(TyArg::Ty(pack @ Ty::Param { name, .. })) if name.starts_with('*') => Some(pack),
+            _ => None,
+        };
         let pack = |param: &str, holds: &dyn Fn(&[Ty]) -> bool| match (
             bound_pack_types(environment, param),
             environment.contains_key(param),
         ) {
             (Some(types), _) => context.boolean(holds(&types)),
+            (None, true) if forwarded(param).is_some() => unknown(),
             (None, true) => context.boolean(false),
             (None, false) => unknown(),
         };
@@ -1564,6 +1593,14 @@ impl Checker {
                 Some(_) => context.boolean(false),
                 None => unknown(),
             },
+            // Every element of a forwarded pack conforms when that pack's
+            // bound or an enclosing `where` guarantees the trait; otherwise
+            // nothing is known of them.
+            ConformsPack { param, trait_name }
+                if forwarded(param).is_some_and(|pack| self.conforms_to(pack, trait_name)) =>
+            {
+                context.boolean(true)
+            }
             ConformsPack { param, trait_name } => pack(param, &|types| {
                 types.iter().all(|ty| self.conforms_to(ty, trait_name))
             }),
@@ -1770,6 +1807,25 @@ pub(super) fn assoc_body_source_type(value: &Expr) -> Result<SourceType, TypeErr
     }
 }
 
+/// The pack a `.values` projection names: `Ts.values` (a `def`'s own pack)
+/// or `Self.Ts.values` (a struct's pack inside its members).
+pub(super) fn pack_values_projection(expression: &Expr) -> Option<&str> {
+    let ExprKind::Member { object, field } = &expression.kind else {
+        return None;
+    };
+    if field != "values" {
+        return None;
+    }
+    match &object.kind {
+        ExprKind::Identifier(pack) => Some(pack),
+        ExprKind::Member {
+            object: base,
+            field: pack,
+        } if matches!(&base.kind, ExprKind::Identifier(name) if name == "Self") => Some(pack),
+        _ => None,
+    }
+}
+
 /// The parameter kind of one associated-type parameter, classified from its raw
 /// declaration (origin parameters are erased by `classify_params`, so the arity
 /// and template lowering read the raw `TypeParam` directly).
@@ -1788,25 +1844,6 @@ pub(super) fn assoc_param_kind(param: &mojito_ast::ast::TypeParam) -> AssocParam
         AssocParamKind::Value
     } else {
         AssocParamKind::Type
-    }
-}
-
-/// The pack a `.values` projection names: `Ts.values` (a `def`'s own pack)
-/// or `Self.Ts.values` (a struct's pack inside its members).
-fn pack_values_projection(expression: &Expr) -> Option<&str> {
-    let ExprKind::Member { object, field } = &expression.kind else {
-        return None;
-    };
-    if field != "values" {
-        return None;
-    }
-    match &object.kind {
-        ExprKind::Identifier(pack) => Some(pack),
-        ExprKind::Member {
-            object: base,
-            field: pack,
-        } if matches!(&base.kind, ExprKind::Identifier(name) if name == "Self") => Some(pack),
-        _ => None,
     }
 }
 

@@ -335,57 +335,72 @@ as-is or must be planned first.
     substitution; the plan's job is to find the coincidence sites before the
     edit does.
 
-- [ ] **A pack-keyed template body is not validated symbolically**
+- [ ] **A body that forwards its pack gets no symbolic verdict**
 
-  Problem: source validation checks a `comptime if` arm only where the
-  checker can bind the declaration's parameters; a body keyed on a variadic
-  pack (a variadic struct's methods, a method-own or free `*Ts`) still checks
-  only per instantiation, so an untaken arm there is still never reported.
-  - `conformance/fixtures/pack_element_type_narrowing.mojo`
-    (`pack-element-type-narrowing`, `mojito-only`) pins the visible half:
-    inside a folded `comptime if Self.Ts[i] == T` arm Mojito still reads
-    `self.storage[i]` as a `T`, where upstream keeps `Ts.values[i]` and
-    demands `rebind[T](...)`. `assets/ok/pack_element_rebind.mojo` is the
-    spelling both compilers accept.
-  - The representation hook is landed: `DependentType::Parameter` wraps a
-    Type-meta-type `ParamExpr`, `MetaTy::ParamList` is reserved, and
-    `param_list.{size, get, concat, reduce, tabulate}` are documented but
-    unbuilt (`docs/notes/param-expr-attributes.md`). `get(list, index)` lands
-    in that wrapper rather than as a made-up nominal type.
-  - The lever is an opaque pack element in the checker: `Self.Ts[i]` under a
-    symbolic index becomes a `Ty::Param` whose bounds are the pack's declared
-    bound plus the enclosing method's `conforms_to(Self.Ts.values, …)` /
-    `all_conforms_to` assumptions. `check_def_inner`'s `opaque_params` is the
-    existing precedent for one such element.
-  - The template-shell boundary to lift is `concrete_only_struct` /
-    `concrete_only_def` in `checker/comptime_validation.rs`, and the
-    per-instantiation stub path in the elaborator stays as the executable
-    route.
-  - A validated body that reaches a template-shell member ends validation
-    for the whole program without a verdict (`is_template_shell_member_error`),
-    so no untaken arm anywhere is reported. The members are those of `Tuple`
-    and other shell structs: `Tuple(1, "one")`, `a == b` over tuples,
-    `pair.reverse()`.
-  - A body reading `reflect[...]` is not validated at all (`validates_body`).
-    Lifting the boundary retires both escapes.
-  - The same boundary lets such a body write through a by-value `rebind`.
-    `check_rebind_place` (`checker/rebind.rs`) exempts every `$`-mangled
-    clone, trusting source validation to have judged the template. These
-    templates were never validated.
-  - Every stdlib pack body passes through it: `Tuple`'s comparison, hashing,
-    and writing methods, `Variant`'s `isa`/`unsafe_get` on
-    `__VariantStorage[*Self.Ts]`, `TString.write_to`, and
-    `FormatStruct.params`/`fields`. Those bodies are the acceptance list.
-  - A body this entry validates also becomes certifiable: source validation
-    is the producer of a keyed body's checked template
-    (`TemplateProducer::SourceValidation`), and a validation run that ends
-    without a verdict withdraws every certificate it produced
-    (`TemplateCatalog::abort_validation`).
-  - Depends on nothing. Unblocks constructor inference below.
-  - Model: Fable, plan first. A new type form, conformance assumptions taken
-    from where clauses, and builtin storage operations over a symbolic pack
-    span the checker; the plan's job is to keep the stdlib compiling at every
-    step.
+  Problem: source validation types an element of a variadic pack that is
+  still a parameter, but has no rule for a call that spreads the pack into
+  another callee (`inner(*a)`, `collect(30, *items^, tail=10)`), so that one
+  body is left to its per-instantiation check and an untaken arm in it is
+  never reported.
+  - `conformance/probes/pack_forwarding_untaken_arm.mojo` pins it: the pin
+    rejects, Mojito prints `1` `two`.
+  - The body is counted and named, not silently skipped
+    (`templates.pack_no_verdict` in `--timings`, `TemplateStats::no_verdict`).
+    Only `Tuple(*args^)` and `__RuntimeTuple(*args^)` have a rule
+    (`infer_unbound_pack_construction`).
+  - The lever is call binding over a spread: the callee's own pack binds to
+    the caller's pack, its bound must be implied by the caller's, and the
+    result type closes through `close_pack_elements`.
+  - The by-value `rebind` exemption (`rebinds_by_value`, `checker/rebind.rs`)
+    still trusts every `$`-mangled clone, including a clone of a body that got
+    no verdict. Closing this entry closes that.
+  - Depends on nothing.
+  - Model: Fable, plan first. Structural call binding is owned by
+    `mojito-ast`'s `call.rs`, and a spread is not a slot it knows.
+
+- [ ] **A variadic struct construction in a validated body is not matched
+  against its constructor**
+
+  Problem: inside a validated body, `Pair[Int, Bool](1, True)` types from its
+  type arguments and its arguments are checked only as expressions, so a
+  wrong argument list in an untaken arm is not reported.
+  - The instance and its constructor exist only once the elaborator mints
+    them (`infer_validated_variadic_construction`,
+    `checker/comptime_validation.rs`). The taken arm is still checked against
+    the minted constructor.
+  - A bare `Tuple(1, "one")` is exact: it types as the tuple display it is.
+  - The lever is the checker-owned instantiation the constructor-inference
+    entry below builds.
+  - Depends on that entry.
+  - Model: Fable, plan first.
+
+- [ ] **A body reading `reflect[...]` is not validated symbolically**
+
+  Problem: a body that reads a reflection handle checks only per
+  instantiation (`reads_reflection`, `checker/comptime_validation.rs`), so an
+  untaken arm there is never reported.
+  - Its `comptime for` iterates a struct's field list, which only the
+    elaborator evaluates. A symbolic `T` has no field list.
+  - The bundled hashing and writing defaults over `reflect[Self]` are the
+    acceptance list.
+  - The lever is an opaque field handle, as a pack element is an opaque
+    `param_list.get`.
+  - Depends on nothing.
+  - Model: Fable, plan first. A new symbolic form with no precedent.
+
+- [ ] **A pack-keyed template's instances are never derived from it**
+
+  Problem: a pack-keyed body is validated once, but its certificate is always
+  incomplete, so every instance is still checked as a clone.
+  - A `def`'s pack fails `template_certificate`'s plain-binder test, and a
+    validated method has no class at all (`method_certificate`,
+    `checker/template_facts.rs`).
+  - The body's facts name `Ts[i]` under a `comptime for` variable. A
+    derivation needs the per-iteration substitution the elaborator's unrolling
+    performs, which no fact recipe has.
+  - `conformance/probes/template_fallback_pack.mojo` pins the clone check.
+  - Depends on the recipe entry above.
+  - Model: Fable, plan first.
 
 - [ ] **A `DType`- or vector-keyed template body is not validated symbolically**
 
@@ -406,9 +421,13 @@ as-is or must be planned first.
     `Ty::Simd` typed expression slots and update every visitor, then validate
     widths and dtypes, then lift `simd_width`/`concrete_only_def`, then the
     concrete extraction in lowering.
-  - The same residual-discharge API closes the by-value `rebind` gap in the
-    pack entry above without a second assertion system.
-  - Depends on the pack-keyed entry's opaque-element machinery.
+  - The opaque-element machinery it builds on is landed for packs: a
+    dependent type as the identity, a bounded `Ty::Param` view for its
+    capabilities (`Checker::opaque_element`), and a per-body no-verdict
+    (`Checker::pack_verdict`) instead of a whole-run abort. `Vec[DType…]`
+    members are the one whole-run abort left
+    (`is_template_shell_member_error`).
+  - Depends on nothing.
   - Model: Fable, plan first. Changes the SIMD type's contract across the
     checker, the elaborator's width folding, and native lowering's vector
     types.
@@ -454,8 +473,11 @@ as-is or must be planned first.
     pack inference is added to that, not beside it. The pin does not invert
     `Buf[n + 1]` against `Buf[4]` either
     (`assets/type_error/param_expr_inverse_inference.mojo`).
-  - Depends on the pack-keyed validation entry (the template must type
-    symbolically before its constructor can be unified against).
+  - The template now types symbolically under source validation: a variadic
+    struct registers with its fields, signatures, and bodies over the unbound
+    pack (`docs/architecture.md` §Source validation). Unification against its
+    constructor is what is missing.
+  - Depends on nothing.
   - Model: Fable, plan first. Moves one instantiation decision from the
     elaborator to the checker and touches the discovery loop's request kinds.
 
@@ -973,6 +995,24 @@ The checkboxes below, and the bullets inside the standing ones, are sorted Opus 
   - Pinned by `conformance/probes/pack_overload_var_trivial_undecided.mojo`.
   - Model: Opus, plan first. The plan must find the rule with more probes, or
     move the entry to `docs/non-goals.md` as a kept over-rejection.
+
+- [ ] **A value-returning body that ends in `abort(...)` is rejected**
+
+  Problem: `def f(x: Int) -> Int` whose last statement is `abort("no")` runs
+  at the pin, while Mojito reports "'f' does not return a value on every
+  path".
+  - `conformance/probes/abort_ends_a_returning_body.mojo` pins it.
+  - The return analysis (`stmt_returns`, `checker/declarations.rs`) is
+    syntactic. It knows `return`, `raise`, and the compiler crossing
+    `_mojito_abort`, not a call to the bundled `std.os.abort` that wraps it.
+  - Under source validation a `comptime for` that holds a `return` defers the
+    verdict to the unrolled clone for the same reason: `Bag.get` in
+    `assets/ok/pack_element_rebind.mojo` ends in `abort(...)`. That deferral
+    can tighten once this is fixed.
+  - The lever is a checked fact that a callee never returns, read where the
+    call resolves, not a name test.
+  - Model: Opus, plan first. The plan must say where the fact lives and what
+    MIR emits after such a call.
 
 - [ ] **A `def`'s own type pack cannot be queried in a runtime position**
 

@@ -301,10 +301,11 @@ impl Checker {
         );
         // A variadic struct template is compiled by compile-time specialization
         // (each instantiation is a concrete struct); the unspecialized template
-        // has pack-dependent members and cannot be checked erased. The
-        // elaborator's template shell is the one symbolic registration: a
-        // retained generic body applies the template over its own parameters.
+        // has pack-dependent members and cannot be checked erased, so the
+        // executable check sees only the elaborator's template shell of one.
+        // Source validation registers the template itself, its pack symbolic.
         if !declaration.template_shell
+            && !self.source_validation
             && decls.iter().any(|decl| {
                 matches!(
                     decl,
@@ -1741,6 +1742,9 @@ impl Checker {
     /// parameter must carry `tr` among its bounds (so a bounded `T` can be
     /// forwarded to another `[U: tr]` parameter).
     pub(super) fn conforms_to(&self, ty: &Ty, tr: &str) -> bool {
+        if let Some(element) = self.opaque_element(ty) {
+            return self.conforms_to(&element, tr);
+        }
         if self.has_assumed_conformance(ty, tr) {
             return true;
         }
@@ -1930,16 +1934,16 @@ impl Checker {
         args: &[TyArg],
         expr: &Expr,
     ) -> bool {
+        let pack = positional_pack_binding(&info.decls, args);
         let arguments: HashMap<&str, &TyArg> = info
             .decls
             .iter()
             .zip(args)
             .map(|(decl, arg)| {
-                let name = match decl {
-                    ParamDecl::Type { name, .. } | ParamDecl::Value { name, .. } => name.as_str(),
-                };
-                (name, arg)
+                // A condition names a pack by its unstarred spelling.
+                (decl.name().trim_start_matches('*'), arg)
             })
+            .chain(pack.as_ref().map(|(name, list)| (name.as_str(), list)))
             .collect();
         self.eval_conformance_predicate(expr, &arguments)
     }
@@ -2058,6 +2062,13 @@ impl Checker {
                 kwargs,
                 ..
             } if name == "conforms_to" && kwargs.is_empty() && operands.len() == 2 => {
+                // `conforms_to(Ts.values, Trait)` holds of every element of
+                // the pack the application binds.
+                if super::constraints::pack_values_projection(&operands[0]).is_some() {
+                    return self
+                        .compile_generic_constraint(expr)
+                        .is_ok_and(|constraint| self.eval_generic_constraint(&constraint, args));
+                }
                 let ExprKind::Identifier(type_name) = &operands[0].kind else {
                     return false;
                 };
@@ -2067,7 +2078,17 @@ impl Checker {
                 let trait_name = mojito_ast::ast::canonical_trait_name(trait_name);
                 matches!(args.get(type_name.as_str()), Some(TyArg::Ty(ty)) if self.conforms_to(ty, trait_name))
             }
-            _ => false,
+            // `Ts.all_conforms_to[Trait]()` over a pack the application binds.
+            _ => pack_conformance_atom(expr).is_some_and(|(pack, trait_name)| {
+                args.contains_key(pack)
+                    && self.eval_generic_constraint(
+                        &mojito_types::types::GenericConstraint::ConformsPack {
+                            param: pack.to_string(),
+                            trait_name: trait_name.to_string(),
+                        },
+                        args,
+                    )
+            }),
         }
     }
 
@@ -2234,6 +2255,9 @@ impl Checker {
     /// `ImplicitlyCopyable` conformance **or defines `__copyinit__`**, and a type
     /// parameter only if bounded by Copyable/ImplicitlyCopyable.
     pub(super) fn is_copyable(&self, ty: &Ty) -> bool {
+        if let Some(element) = self.opaque_element(ty) {
+            return self.is_copyable(&element);
+        }
         if self.has_assumed_conformance(ty, "Copyable")
             || self.has_assumed_conformance(ty, "ImplicitlyCopyable")
         {
@@ -2303,6 +2327,9 @@ impl Checker {
     /// copy constructor. Structs opt in by declaring the marker, and fieldwise
     /// conformance requires all fields to be implicitly copyable.
     pub(super) fn is_implicitly_copyable(&self, ty: &Ty) -> bool {
+        if let Some(element) = self.opaque_element(ty) {
+            return self.is_implicitly_copyable(&element);
+        }
         if self.has_assumed_conformance(ty, "ImplicitlyCopyable") {
             return true;
         }
@@ -2393,6 +2420,9 @@ impl Checker {
     /// `is_deinitable`: the default-movable model means generic code moves
     /// unbounded parameters, and only declared opt-outs are enforced.
     pub(super) fn is_movable(&self, ty: &Ty) -> bool {
+        if let Some(element) = self.opaque_element(ty) {
+            return self.is_movable(&element);
+        }
         if self.has_assumed_conformance(ty, "Movable") {
             return true;
         }
@@ -2420,6 +2450,9 @@ impl Checker {
     /// parameter bounded or assumed by it. The general `conforms_to` answers
     /// marker traits shallowly, so it cannot be asked.
     pub(super) fn is_trivial_register_passable(&self, ty: &Ty) -> bool {
+        if let Some(element) = self.opaque_element(ty) {
+            return self.is_trivial_register_passable(&element);
+        }
         super::builtins::is_numeric(ty)
             || matches!(ty, Ty::Bool | Ty::Dtype)
             || super::builtins::simd_valued_ty(ty)
@@ -2548,6 +2581,9 @@ impl Checker {
     }
 
     pub(super) fn is_deinitable(&self, ty: &Ty) -> bool {
+        if let Some(element) = self.opaque_element(ty) {
+            return self.is_deinitable(&element);
+        }
         if self.has_assumed_conformance(ty, "Deinitable") {
             return true;
         }
@@ -2582,6 +2618,9 @@ impl Checker {
     }
 
     pub(super) fn is_hashable(&self, ty: &Ty) -> bool {
+        if let Some(element) = self.opaque_element(ty) {
+            return self.is_hashable(&element);
+        }
         if self.has_assumed_conformance(ty, "Hashable") {
             return true;
         }
@@ -3015,4 +3054,44 @@ type StructMemberTypes = (
 /// `def __mlir_index__(self) -> __mlir_type.index`.
 pub(super) fn is_indexer_requirement(method: &MethodSig) -> bool {
     method.has_self && method.params.is_empty() && method.ret == Ty::Int && method.ret_mlir_index
+}
+
+/// The pack and trait of `Ts.all_conforms_to[Trait]()` (or `Self.Ts…`), read
+/// off syntax: a conformance condition is evaluated where its struct's
+/// parameters are not in scope.
+fn pack_conformance_atom(expr: &Expr) -> Option<(&str, &str)> {
+    use mojito_ast::ast::ParamArg;
+    let ExprKind::Invoke {
+        callee,
+        param_args,
+        args,
+        kwargs,
+    } = &expr.kind
+    else {
+        return None;
+    };
+    let ExprKind::Member { object, field } = &callee.kind else {
+        return None;
+    };
+    if field != "all_conforms_to" || !args.is_empty() || !kwargs.is_empty() {
+        return None;
+    }
+    let pack = match &object.kind {
+        ExprKind::Identifier(pack) => pack.as_str(),
+        ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
+            field.as_str()
+        }
+        _ => return None,
+    };
+    let trait_name = match param_args.as_slice() {
+        [ParamArg::Type(SourceType::Named(name, arguments))] if arguments.is_empty() => name,
+        [
+            ParamArg::Value(Expr {
+                kind: ExprKind::Identifier(name),
+                ..
+            }),
+        ] => name,
+        _ => return None,
+    };
+    Some((pack, mojito_ast::ast::canonical_trait_name(trait_name)))
 }

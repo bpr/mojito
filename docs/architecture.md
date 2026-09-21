@@ -437,9 +437,9 @@ a guard such as `T == Int` narrows nothing, and an unused template still
 checks. A `rebind` takes its target on faith here, where the operand's type
 is still symbolic, exactly as upstream does; the equality is asserted on each
 clone. Bodies without such constructs are declared but left to the
-executable check; bodies keyed on a variadic pack, a `DType`, or a
-vector-typed value parameter register as template shells and keep their
-per-instantiation check (`docs/roadmap.md` §1). Validation then runs the
+executable check; bodies keyed on a `DType` or a vector-typed value parameter
+register as template shells and keep their per-instantiation check
+(`docs/roadmap.md` §1). Validation then runs the
 explicit-destruction analysis over exactly those bodies
 (`explicit_destroy::check` with `DestroyScope::ValidatedTemplates`): a
 compile-time-keyed template is a trapping stub by the time the executable
@@ -453,6 +453,37 @@ arm, as upstream (`explicit_destroy::check_comptime_if`,
 naming no parameter folds to one arm, and its arms join as alternatives. A
 `comptime for` body must leave every outer obligation as it found it.
 
+**A variadic pack is symbolic too.** A body keyed on a pack — a `def`'s or
+method's own `*Ts`, or any method of a variadic struct — is validated like any
+other, whether or not it holds a `comptime` construct. The element at a
+compile-time index (`args[i]`, `self.storage[i]`, `Self.Ts[i]`, a constant
+index included) has the dependent type `param_list.get(Ts, i)`
+(`ParamKind::ListGet` behind `DependentType::Parameter`; a `comptime for`
+variable is the index's binder). That type is the element's identity: it
+substitutes when `Tuple.__getitem_param__[index]` is applied at `i`, renames
+when one struct's pack is forwarded as another's (`Tuple[*Self.Ts]`), and
+folds to the element once the pack binds to a list
+(`Checker::close_pack_elements`). Its capabilities are read through a bounded
+`Ty::Param` view (`Checker::opaque_element`): the pack's declared bounds plus
+every trait a conjunctive `conforms_to(Ts.values, Trait)` or
+`Ts.all_conforms_to[Trait]()` of the enclosing declarations guarantees, and
+nothing else — a struct-header conditional conformance, a disjunction, and a
+`comptime if` guard license nothing, as at the pin. Storage over an unbound
+pack is a list that spreads it (`Ty::Tuple`, `Ty::Variant`, or a `Tuple[...]`
+application whose one argument is the starred `Ty::Param`,
+`types::pack_spread`); a spread beside other arguments is rejected. A
+`TypeList` proposition over the pack is a `Bool` no instantiation has fixed,
+so both arms of `comptime if Self.Ts.contains[T]()` check, and
+`__VariantStorage` operations type from `T` without deciding membership. A
+variadic struct applied to concrete types inside a validated body
+(`Tuple(1, "one")`, `a == b`, `t[0]`) resolves through the same signatures
+with the pack bound to the element list. Where there is no symbolic rule — a
+pack forwarded to another callee — the checker raises
+`TypeError::SymbolicPackBoundary`, and that one body gets no verdict
+(`Checker::pack_verdict`, counted as `templates.pack_no_verdict`): it keeps
+its per-instantiation check, leaves the destruction walk, and the run goes on.
+`docs/notes/param-expr-attributes.md` records the design.
+
 **Validation is a template producer.** `Compiler::compile_linked` runs
 validation once, on the prepared program that every discovery round then
 re-elaborates, and lends it the compilation's `TemplateCatalog`
@@ -461,8 +492,10 @@ is retained there as a `CheckedTemplate`: its facts keyed by its own syntax
 occurrences, with a coverage certificate. The elaborator stubs such a
 template, so validation is the only check it gets, and its instances inherit
 the facts of the arms the elaborator selects instead of being inferred
-(Stage 3, *Checked Templates*). A run that ends without a verdict withdraws
-every certificate it produced. The verdict-only
+(Stage 3, *Checked Templates*). A run that ends without a verdict — it
+reached a member of a `DType`- or vector-keyed template shell — withdraws
+every certificate it produced. A pack-keyed body's certificate is always
+incomplete, so its instances keep the clone check. The verdict-only
 `validate_comptime_templates` remains for clients without a catalog, and
 `comptime::elaborate`, the composed-stage seam, runs the same three steps
 through it.

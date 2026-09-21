@@ -261,12 +261,24 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `check_comptime_for` checks a loop body under its element type,
   `bind_local_comptime` binds function-local `comptime` aliases and
   compile-time-only values, `concrete_only_struct`/`concrete_only_def` and
-  `validates_body` draw the per-instantiation boundary (template shells,
-  pack templates, reflection readers), and `is_template_shell_member_error`
+  `validates_body` draw the per-instantiation boundary (`DType`/vector
+  template shells, reflection readers), and `is_template_shell_member_error`
   names the errors that end validation without a verdict. `checker.rs`
   re-exports `validates_body` as `validates_comptime_body`, the body gate
   `explicit_destroy::check` reuses for its `DestroyScope::ValidatedTemplates`
-  run.
+  run. The same page owns a pack that is still a parameter:
+  `pack_reference`/`unbound_pack_named` resolve it (scopes in
+  `Checker::pack_params`, `annotations::pack_scope`), `pack_element_type`
+  builds the dependent element (`ParamContext::list_get`,
+  `DependentType::pack_element` in `mojito-types`), `opaque_element` is its
+  bounded `Ty::Param` view and `restore_pack_elements` the way back,
+  `close_pack_elements` and `positional_pack_binding` bind a callee's pack at
+  a use (`types::expand_pack_spread` for a spread such as `other: Self`),
+  `infer_unbound_pack_construction` and
+  `infer_validated_variadic_construction` type constructions,
+  `reject_mixed_spread` refuses `Tuple[Int, *Self.Ts]`, and `pack_verdict`
+  turns a `TypeError::SymbolicPackBoundary` into that one body's no-verdict.
+  `types::pack_spread` owns the spread convention.
 - `checker/template_facts.rs` owns checked templates on the checker side.
   `Checker::check_def_body` is every `def` body's entry and
   `check_method_body` every struct method's (from

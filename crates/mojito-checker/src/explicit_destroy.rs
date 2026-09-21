@@ -33,9 +33,14 @@ pub enum DestroyScope<'a> {
     Program,
     /// Only the template bodies source validation checked with the
     /// declaration's parameters symbolic (`validates_body`), which needs the
-    /// bodies a `rebind` keys. Every other body is left to the executable
-    /// check, whose facts this run does not have.
-    ValidatedTemplates(&'a HashSet<SourceSpan>),
+    /// bodies a `rebind` keys, less the pack-keyed bodies it reached no
+    /// verdict on. Every other body is left to the executable check, whose
+    /// facts this run does not have. Both sets key a body at its first
+    /// statement.
+    ValidatedTemplates {
+        rebind_keyed: &'a HashSet<SourceSpan>,
+        no_verdict: &'a HashSet<SourceSpan>,
+    },
 }
 
 /// Per-expression facts the checker recorded for one program, carried on
@@ -79,7 +84,7 @@ pub fn check(
         match &statement.kind {
             StmtKind::Def {
                 type_params, body, ..
-            } if walks_body(scope, type_params, body) => check_def(
+            } if walks_body(scope, &[], type_params, body) => check_def(
                 statement,
                 binding_types,
                 comprehension_bindings,
@@ -101,7 +106,7 @@ pub fn check(
             } => {
                 let owner = root.function_env(type_params);
                 for (method_index, method) in methods.iter().enumerate() {
-                    if !walks_body(scope, &method.type_params, &method.body) {
+                    if !walks_body(scope, type_params, &method.type_params, &method.body) {
                         continue;
                     }
                     let mut params = method
@@ -1242,13 +1247,20 @@ fn check_def(
 /// this pass reads exist for no other body in that run.
 fn walks_body(
     scope: DestroyScope<'_>,
+    enclosing: &[mojito_ast::ast::TypeParam],
     type_params: &[mojito_ast::ast::TypeParam],
     body: &[Stmt],
 ) -> bool {
     match scope {
         DestroyScope::Program => true,
-        DestroyScope::ValidatedTemplates(rebind_keyed) => {
-            crate::checker::validates_comptime_body(type_params, body, rebind_keyed)
+        DestroyScope::ValidatedTemplates {
+            rebind_keyed,
+            no_verdict,
+        } => {
+            crate::checker::validates_comptime_body(enclosing, type_params, body, rebind_keyed)
+                && !body
+                    .first()
+                    .is_some_and(|first| no_verdict.contains(&first.source_span()))
         }
     }
 }

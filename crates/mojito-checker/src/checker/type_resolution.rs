@@ -485,6 +485,11 @@ impl Checker {
                 if args.is_empty() && self.is_enclosing_struct_param(name) {
                     return Err(TypeError::UnqualifiedStructParam(name.clone()));
                 }
+                // A spread the pack-qualification pass normalized to the bare
+                // spelling names the enclosing struct's pack.
+                if args.is_empty() && name.starts_with('*') && self.self_ty.is_some() {
+                    return self.ty_from_anno(&SourceType::SelfParam(name.clone()));
+                }
                 return Err(TypeError::UnknownType(name.clone()));
             }
             // `Self.T` — one of the enclosing struct's *type* parameters (a value
@@ -542,6 +547,13 @@ impl Checker {
             SourceType::Assoc { base, name, .. } => {
                 let base_ty = self.ty_from_anno(base)?;
                 self.associated_type_from_base(&base_ty, name, &[])?
+            }
+            // `Self.Ts[index]` (or a `def`'s own `Ts[index]`) while the pack
+            // is still a parameter: the dependent element type.
+            SourceType::IndexedProjection { base, index }
+                if let Some(pack) = self.unbound_pack_type(base) =>
+            {
+                self.pack_element_type(&pack, index)?
             }
             SourceType::IndexedProjection { base, index } => {
                 // A parameterized associated-type application such as
@@ -1229,6 +1241,18 @@ impl Checker {
                         .map(|element| self.resolve_dependent_ty(element, parameters))
                         .collect::<Result<Vec<_>, _>>()?;
                     self.resolve_dependent_index(elements, index, parameters)?
+                }
+                // An element of a pack that is still a parameter closes as
+                // its pack and index bind.
+                None if dependent.pack_element().is_some() && !parameters.is_empty() => {
+                    let context = &self.param_context;
+                    let bindings = mojito_types::param_expr::ParamBindings::from_named_values(
+                        context, parameters,
+                    );
+                    context
+                        .replace(dependent.expr(), &bindings)
+                        .map(DependentType::resolve)
+                        .map_err(param_error)?
                 }
                 None => ty.clone(),
             },
@@ -2393,6 +2417,10 @@ impl Checker {
     ) -> Result<Vec<Ty>, TypeError> {
         let mut elems = Vec::with_capacity(args.len());
         for arg in args {
+            if let Some(pack) = self.pack_spread_argument(arg) {
+                elems.push(pack?);
+                continue;
+            }
             elems.push(match arg {
                 mojito_ast::ast::ParamArg::Type(t) => self.ty_from_anno(t)?,
                 // A bare-identifier arg is reinterpreted as a type (as elsewhere).
@@ -2414,7 +2442,64 @@ impl Checker {
                 }
             });
         }
+        Self::reject_mixed_spread("Tuple", &elems)?;
         Ok(elems)
+    }
+
+    /// The pack a type names by itself while it is still a parameter: the
+    /// enclosing struct's `Self.Ts`, or a bare `Ts` of an enclosing `def` or
+    /// method.
+    fn unbound_pack_type(&self, base: &SourceType) -> Option<Ty> {
+        match base {
+            SourceType::SelfParam(name) => {
+                let starred = format!("*{}", name.trim_start_matches('*'));
+                self.self_decls
+                    .iter()
+                    .any(|decl| {
+                        matches!(decl, ParamDecl::Type { name, variadic: true, .. } if *name == starred)
+                    })
+                    .then(|| self.ty_from_anno(&SourceType::SelfParam(starred)).ok())
+                    .flatten()
+                    .filter(|ty| matches!(ty, Ty::Param { .. }))
+            }
+            SourceType::Named(name, arguments) if arguments.is_empty() => {
+                self.lookup_tparam(&format!("*{}", name.trim_start_matches('*')))
+            }
+            _ => None,
+        }
+    }
+
+    /// The pack a spread type argument (`*Self.Ts`, or a `def`'s own `*Ts`)
+    /// names while that pack is still a parameter, as its `Ty::Param`.
+    pub(super) fn pack_spread_argument(
+        &self,
+        arg: &mojito_ast::ast::ParamArg,
+    ) -> Option<Result<Ty, TypeError>> {
+        use mojito_ast::ast::ParamArg;
+        // The elaborator's pack-qualification pass owns the rule that a member
+        // spells its struct's pack `Self.Ts`; a spread it has normalized to
+        // the bare spelling still names that pack.
+        let pack = |name: &String| {
+            name.starts_with('*').then(|| {
+                self.lookup_tparam(name).map_or_else(
+                    || self.ty_from_anno(&SourceType::SelfParam(name.clone())),
+                    Ok,
+                )
+            })
+        };
+        match arg {
+            ParamArg::Type(anno @ SourceType::SelfParam(name)) if name.starts_with('*') => {
+                Some(self.ty_from_anno(anno))
+            }
+            ParamArg::Type(SourceType::Named(name, arguments)) if arguments.is_empty() => {
+                pack(name)
+            }
+            ParamArg::Value(Expr {
+                kind: ExprKind::Identifier(name),
+                ..
+            }) => pack(name),
+            _ => None,
+        }
     }
 
     pub(super) fn tuple_type(&self, args: &[mojito_ast::ast::ParamArg]) -> Result<Ty, TypeError> {
@@ -2635,7 +2720,10 @@ impl Checker {
         }
         let mut alternatives = Vec::with_capacity(args.len());
         for arg in args {
-            let alternative = self.type_param_argument(arg, "Variant alternative")?;
+            let alternative = match self.pack_spread_argument(arg) {
+                Some(pack) => pack?,
+                None => self.type_param_argument(arg, "Variant alternative")?,
+            };
             reject_stored_callable_type(&alternative, "a 'Variant' alternative type")?;
             if alternatives.contains(&alternative) {
                 return Err(TypeError::Unsupported(format!(
@@ -2644,6 +2732,7 @@ impl Checker {
             }
             alternatives.push(alternative);
         }
+        Self::reject_mixed_spread("Variant", &alternatives)?;
         Ok(Ty::Variant(alternatives))
     }
 

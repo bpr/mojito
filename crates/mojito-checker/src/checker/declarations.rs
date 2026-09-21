@@ -102,6 +102,11 @@ pub(super) fn stmt_returns(stmt: &Stmt) -> bool {
             orelse.as_ref().is_some_and(|e| definitely_returns(e))
                 && branches.iter().all(|(_, b)| definitely_returns(b))
         }
+        // A `comptime for` reaches here only under source validation. How
+        // often it unrolls, and which of its `comptime if` arms survive, is
+        // each instantiation's fact, so a loop holding a `return` leaves the
+        // fall-through verdict to the executable check of the unrolled clone.
+        StmtKind::ComptimeFor { body, .. } => block_holds_return(body),
         // A `with` body runs exactly once (its desugar is a `try`/`finally`
         // whose cleanup cannot divert control), so it diverges iff the body does.
         StmtKind::With { body, .. } => definitely_returns(body),
@@ -2547,6 +2552,22 @@ impl Checker {
                             })
                         })
                         .collect::<Result<Vec<_>, TypeError>>()?;
+                    // A spread of a pack that is still a parameter forwards
+                    // that pack whole, as `Self`'s own argument spells it.
+                    let spread: Vec<Ty> = values
+                        .iter()
+                        .filter_map(|value| match value {
+                            CtValue::Type(ty) => Some((**ty).clone()),
+                            _ => None,
+                        })
+                        .collect();
+                    Self::reject_mixed_spread(name, &spread)?;
+                    if let [CtValue::Type(pack)] = values.as_slice()
+                        && mojito_types::types::pack_spread(std::slice::from_ref(&**pack)).is_some()
+                    {
+                        tyargs.push(TyArg::Ty((**pack).clone()));
+                        continue;
+                    }
                     let value = CtValue::Tuple(values);
                     value_environment.insert(
                         decl.name().trim_start_matches('*').to_string(),
@@ -2938,3 +2959,17 @@ impl Checker {
 /// bound from the arguments, or the origin-binding failure that rejected the
 /// candidate (`None` when the arguments simply did not match its slots).
 type BoundConstructorParams = Result<(Vec<Ty>, ConstructorOriginBindings), Option<TypeError>>;
+
+/// Whether a `return` occurs anywhere below. A nested function's own
+/// `return` counts too, which only defers more to the executable check.
+fn block_holds_return(body: &[Stmt]) -> bool {
+    struct Finder(bool);
+    impl mojito_ast::visit::Visitor for Finder {
+        fn visit_stmt(&mut self, stmt: &Stmt) {
+            self.0 |= matches!(stmt.kind, StmtKind::Return(_));
+        }
+    }
+    let mut finder = Finder(false);
+    mojito_ast::visit::walk_block(&mut finder, body);
+    finder.0
+}

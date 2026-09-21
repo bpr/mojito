@@ -1576,6 +1576,14 @@ impl Checker {
             Ty::Tuple(elements) => Some(elements.iter().collect()),
             _ => None,
         });
+        // Storage over a pack that is still a parameter: the dependent
+        // element at a compile-time index.
+        if let Some([Ty::Param { name, .. }]) = tuple_elements.as_deref()
+            && name.starts_with('*')
+            && let Some(elems) = &tuple_elements
+        {
+            return self.pack_element_type(elems[0], index);
+        }
         if let Some(elems) = tuple_elements {
             let exact = self.eval_ct(index).map_err(|_| TypeError::TypeMismatch {
                 expected: "a compile-time Int index".to_string(),
@@ -1602,6 +1610,13 @@ impl Checker {
         // A homogeneous runtime variadic collector is compiler-private Tuple
         // storage with one repeated element type. Unlike a heterogeneous pack,
         // its index may vary at runtime without changing the result type.
+        // A heterogeneous pack that is still a parameter (`*args: *Ts`) has
+        // one dependent element type per compile-time index.
+        if let Ty::VariadicPack(element) = &obj_ty
+            && let Some(pack) = mojito_types::types::pack_spread(std::slice::from_ref(element))
+        {
+            return self.pack_element_type(pack, index);
+        }
         if let Ty::VariadicPack(element) = &obj_ty {
             let idx_ty = self.infer(index)?;
             if !self.is_index_type(&idx_ty) {
@@ -2059,6 +2074,11 @@ impl Checker {
                 .borrow_mut()
                 .insert(object.source_span(), parameter);
             return Ok(ty);
+        }
+        // `Ts.length` of a pack that is still a parameter is an `Int` no
+        // instance has fixed yet.
+        if field == "length" && self.unbound_pack_named(object).is_some() {
+            return Ok(Ty::Int);
         }
         let obj_ty = self.infer(object)?;
         // Projecting a field through a reference-returning expression borrows

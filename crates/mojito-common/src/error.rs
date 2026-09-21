@@ -392,6 +392,10 @@ pub enum TypeError {
     /// A compiler phase received state that violates a contract established by
     /// an earlier phase. This is a Mojito bug, not an error in the source file.
     InvariantViolation(String),
+    /// Source validation met a use of an unbound variadic pack it has no
+    /// symbolic rule for. It is no verdict on the program: validation leaves
+    /// that one body to the per-instantiation check.
+    SymbolicPackBoundary(String),
     /// A call whose arguments don't match the callee's parameters in a way arity
     /// alone doesn't capture: an unknown keyword name, a parameter bound twice
     /// (positionally and by keyword, or a duplicate keyword), or a required
@@ -829,6 +833,9 @@ impl fmt::Display for TypeError {
             Self::Unsupported(what) => write!(f, "unsupported feature: {what}"),
             Self::InvariantViolation(detail) => {
                 write!(f, "compiler invariant violated: {detail}")
+            }
+            Self::SymbolicPackBoundary(what) => {
+                write!(f, "no symbolic rule for an unbound variadic pack: {what}")
             }
             Self::BadCall { func, reason } => {
                 write!(f, "invalid call to '{func}': {reason}")

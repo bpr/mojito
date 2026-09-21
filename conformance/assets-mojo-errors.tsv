@@ -321,6 +321,8 @@ assets/type_error/owned_pointer_linear_pointee_must_be_consumed.mojo	compile-rej
 assets/type_error/owned_pointer_take_is_renamed.mojo	compile-reject	agree	error: 'OwnedPointer[Int]' value has no attribute 'take'
 assets/type_error/pack_alias_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
 assets/type_error/pack_bound_violation.mojo	compile-reject	agree	error: 'Pair' parameter 'Ts' has 'Copyable & Deinitable' type, but value has type 'AnyStruct[NoCopy]'
+assets/type_error/pack_element_missing_bound.mojo	compile-reject	agree	error: invalid call to 'write': an element of 'args' with type 'Ts.values[SIMDLength(paramfor_next_value[_ZeroStartingRange](iter))]' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
+assets/type_error/pack_element_narrowing_without_rebind.mojo	compile-reject	agree	error: 'Ts.values[SIMDLength(paramfor_next_value[_ZeroStartingRange](iter))]' does not implement the '__eq__' method
 assets/type_error/pack_field_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
 assets/type_error/pack_init_spread_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
 assets/type_error/pack_method_body_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
@@ -430,6 +432,8 @@ assets/type_error/typelist_index_out_of_range.mojo	runs	subset	the pin runs it;M
 assets/type_error/typelist_size_removed_alias.mojo	compile-reject	agree	error: 'TypeList[Int, Bool]' value has no attribute 'size'
 assets/type_error/uninit_storage_compiler_private.mojo	compile-reject	agree	error: use of unknown declaration '__UninitStorage'
 assets/type_error/untaken_comptime_if_generic_member.mojo	compile-reject	agree	error: 'T' value has no attribute 'nonexistent'
+assets/type_error/untaken_comptime_if_pack_def.mojo	compile-reject	agree	error: 'Ts.values[SIMDLength(paramfor_next_value[_ZeroStartingRange](iter))]' value has no attribute 'nonexistent'
+assets/type_error/untaken_comptime_if_pack_struct.mojo	compile-reject	agree	error: 'Ts.values[SIMDLength(paramfor_next_value[_ZeroStartingRange](iter))]' value has no attribute 'nonexistent'
 assets/type_error/untaken_comptime_if_type_error.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["hello"]' value to 'Int'
 assets/type_error/untracked_pointer_field_tracked_argument.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/var_less_introduction.mojo	runs	subset	the pin runs it; Mojito rejects: var count

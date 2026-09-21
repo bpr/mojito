@@ -655,6 +655,13 @@ impl Decoder {
                     self.unknown(fields, &["pack", "query"]);
                     Some(self.context.pack_query(&pack, query))
                 }
+                "param_list_get" => {
+                    self.error(
+                        value.span,
+                        "an element of an unbound variadic pack cannot cross MIR",
+                    );
+                    None
+                }
                 // A hole is a boundary error at MIR, never a parsed form.
                 "param_hole" => {
                     self.error(

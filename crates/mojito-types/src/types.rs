@@ -92,8 +92,9 @@ impl PartialEq for TransferSet {
 /// denotes once substitution closes it ([`DependentType::resolve`]).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DependentType {
-    /// A type-valued parameter expression. Today's producer is finite type
-    /// selection (`ParamKind::Select`); a pack's `get` lands here later.
+    /// A type-valued parameter expression: a finite type selection
+    /// (`ParamKind::Select`), or one element of a variadic pack that is still
+    /// a parameter (`ParamKind::ListGet`).
     Parameter(ParamExpr),
 }
 
@@ -112,6 +113,16 @@ impl DependentType {
         let Self::Parameter(expr) = self;
         match expr.kind() {
             ParamKind::Select { elements, index } => Some((elements, index)),
+            _ => None,
+        }
+    }
+
+    /// The pack and index this type is an element of, when the pack is
+    /// still a parameter.
+    pub fn pack_element(&self) -> Option<(&ParamExpr, &ParamExpr)> {
+        let Self::Parameter(expr) = self;
+        match expr.kind() {
+            ParamKind::ListGet { list, index } => Some((list, index)),
             _ => None,
         }
     }
@@ -566,6 +577,71 @@ pub fn unqualified_type_name(ty: &Ty) -> String {
                 .join(", ")
         ),
         other => other.to_string(),
+    }
+}
+
+/// The variadic pack a type-argument list spreads, if it is exactly one.
+///
+/// The pack is still a parameter (`Tuple[*Self.Ts]` inside the template that
+/// declares `*Ts`), and its starred spelling is its `Ty::Param` name.
+pub fn pack_spread(elements: &[Ty]) -> Option<&Ty> {
+    match elements {
+        [pack @ Ty::Param { name, .. }] if name.starts_with('*') => Some(pack),
+        _ => None,
+    }
+}
+
+/// `ty` with every spread of the pack `pack` replaced by `elements`.
+///
+/// A spread is a whole argument list (see [`pack_spread`]), so this is the
+/// one place a single type becomes several: `Tuple[*Ts]` at `Ts = [Int,
+/// Bool]` is `Tuple[Int, Bool]`.
+pub fn expand_pack_spread(ty: &Ty, pack: &str, elements: &[Ty]) -> Ty {
+    let spreads = |list: &[Ty]| {
+        matches!(pack_spread(list), Some(Ty::Param { name, .. })
+            if name.trim_start_matches('*') == pack)
+    };
+    let expand = |list: &[Ty]| -> Vec<Ty> {
+        if spreads(list) {
+            elements.to_vec()
+        } else {
+            list.iter()
+                .map(|ty| expand_pack_spread(ty, pack, elements))
+                .collect()
+        }
+    };
+    match ty {
+        Ty::Struct(name, arguments) => {
+            let spread = pack_spread_argument(arguments)
+                .is_some_and(|spread| spreads(std::slice::from_ref(spread)));
+            let arguments = if spread {
+                elements.iter().cloned().map(TyArg::Ty).collect()
+            } else {
+                map_tyargs(arguments, |ty| expand_pack_spread(ty, pack, elements))
+            };
+            Ty::Struct(name.clone(), arguments)
+        }
+        Ty::Tuple(list) => Ty::Tuple(expand(list)),
+        Ty::RuntimePack(list) => Ty::RuntimePack(expand(list)),
+        Ty::Variant(list) => Ty::Variant(expand(list)),
+        Ty::Pointer { element, origin } => Ty::Pointer {
+            element: Box::new(expand_pack_spread(element, pack, elements)),
+            origin: origin.clone(),
+        },
+        Ty::Ref(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = Box::new(expand_pack_spread(&reference.referent, pack, elements));
+            Ty::Ref(reference)
+        }
+        _ => ty.clone(),
+    }
+}
+
+/// [`pack_spread`] over a type-argument list.
+pub fn pack_spread_argument(arguments: &[TyArg]) -> Option<&Ty> {
+    match arguments {
+        [TyArg::Ty(pack)] => pack_spread(std::slice::from_ref(pack)),
+        _ => None,
     }
 }
 

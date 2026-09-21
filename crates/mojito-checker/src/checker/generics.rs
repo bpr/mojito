@@ -136,6 +136,22 @@ pub(super) fn unify(
 /// `TyArg::Val` bindings — `other: Self` on an `Array[Int, 3]` receiver
 /// becomes `Array[Int, 3]`, not `Array[Int, length]`.
 pub(super) fn substitute_at(ty: &Ty, info: &StructInfo, targs: &[TyArg]) -> Ty {
+    // A pack applied element by element (`Tuple[Int, Bool]`) binds every
+    // spread of it (`other: Self`) to those elements, not to the first.
+    let expanded = match positional_pack_binding(&info.decls, targs) {
+        Some((pack, TyArg::Val(CtValue::Tuple(types)))) => {
+            let elements: Vec<Ty> = types
+                .iter()
+                .filter_map(|value| match value {
+                    CtValue::Type(ty) => Some((**ty).clone()),
+                    _ => None,
+                })
+                .collect();
+            mojito_types::types::expand_pack_spread(ty, &pack, &elements)
+        }
+        _ => ty.clone(),
+    };
+    let ty = &expanded;
     let substituted = substitute_assoc(
         ty,
         &AssocBindings {

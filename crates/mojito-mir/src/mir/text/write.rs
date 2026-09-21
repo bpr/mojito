@@ -1865,6 +1865,12 @@ fn param_expr(value: &ParamExpr) -> String {
                 ("index", param_expr(index)),
             ],
         ),
+        // An element of an unbound pack is a source-validation type and never
+        // crosses into MIR; the parser rejects the form.
+        ParamKind::ListGet { list, index } => record(
+            "param_list_get",
+            &[("list", param_expr(list)), ("index", param_expr(index))],
+        ),
         ParamKind::PackQuery { pack, query } => record(
             "param_pack_query",
             &[("pack", symbol(pack)), ("query", pack_query(query))],

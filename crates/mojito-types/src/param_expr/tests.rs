@@ -472,3 +472,54 @@ fn replacement_keeps_opaque_atoms_unfolded_and_evaluation_folds_them() {
         Some(&CtValue::Int(9))
     );
 }
+
+/// `param_list.get` over a pack that is still a parameter is a residual
+/// dependent type; binding the pack gives the finite selection, and binding
+/// the index too gives the element.
+#[test]
+fn pack_element_resolves_as_its_pack_and_index_bind() {
+    let context = ParamContext::new();
+    let pack = context.register(ParamId::new("S", 0), "Ts", MetaTy::type_list());
+    let index = int_param(&context, "S.get", 0, "i");
+    let element = context.list_get(&pack, &index).expect("element builds");
+    assert_eq!(element.meta(), &MetaTy::Type);
+    assert_eq!(element.to_string(), "Ts[i]");
+    let dependent = DependentType::resolve(element.clone());
+    let Ty::Dependent(wrapper) = &dependent else {
+        panic!("an unbound pack element stays dependent: {dependent}");
+    };
+    assert!(wrapper.pack_element().is_some());
+    assert_eq!(element, context.list_get(&pack, &index).expect("rebuilds"));
+
+    let types = CtValue::Tuple(vec![
+        CtValue::Type(Box::new(Ty::Int)),
+        CtValue::Type(Box::new(Ty::Bool)),
+    ]);
+    let mut pack_only = ParamBindings::new();
+    pack_only.bind_name("Ts", context.constant(types).expect("constant"));
+    let selected = context.replace(&element, &pack_only).expect("replacement");
+    assert!(
+        matches!(selected.kind(), ParamKind::Select { .. }),
+        "{selected}"
+    );
+
+    let mut both = pack_only.clone();
+    both.bind_name("i", literal(&context, 1));
+    assert_eq!(
+        crate::types::replace_parameters(&context, &dependent, &both, 0),
+        Ok(Ty::Bool)
+    );
+
+    // One pack forwarded as another keeps the residual element.
+    let outer = context.register(ParamId::new("Outer", 0), "Us", MetaTy::type_list());
+    let mut forwarded = ParamBindings::new();
+    forwarded.bind_name("Ts", outer);
+    let renamed = context.replace(&element, &forwarded).expect("replacement");
+    assert_eq!(renamed.to_string(), "Us[i]");
+
+    let mut out_of_range = pack_only;
+    out_of_range.bind_name("i", literal(&context, 2));
+    assert!(context.replace(&element, &out_of_range).is_err());
+    assert!(context.list_get(&index, &index).is_err());
+    assert!(context.list_get(&pack, &literal(&context, -1)).is_err());
+}

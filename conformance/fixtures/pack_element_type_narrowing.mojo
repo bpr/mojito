@@ -1,16 +1,14 @@
-# Mojito narrows a variadic pack element to the enclosing method's own type
-# parameter inside a folded `comptime if Self.Ts[i] == T` branch: the element
-# read `self.storage[i]` is already a `T` there, so a `ref[origin_of(self)] T`
-# accessor returns it and an `==` against a `T` argument type-checks.
+# A folded `comptime if Self.Ts[i] == T` guard does not narrow a variadic pack
+# element to the enclosing method's own type parameter: the element read
+# `self.storage[i]` keeps its dependent type `Self.Ts[i]`, so returning it as a
+# `T` and comparing it with a `T` argument are both type errors.
 #
-# The pinned Mojo keeps the element at its dependent pack type
-# (`Ts.values[...]`) and demands an explicit `rebind[T](...)`; it also rejects
-# returning a reference into `self.storage` under `origin_of(self)`. Mojito
-# implements `rebind` (`assets/ok/pack_element_rebind.mojo` is the spelling
-# both compilers accept) but does not yet validate a variadic template's
-# bodies symbolically (`docs/roadmap.md` §1), so this file still runs on
-# Mojito and is rejected upstream (`cases.tsv` row
-# `pack-element-type-narrowing`).
+# Both compilers reject this file from the template (`cases.tsv` row
+# `pack-element-type-narrowing`): the pinned Mojo names the element
+# `Ts.values[...]`, Mojito `Ts[i]`. `rebind[T](...)` is the explicit retyping,
+# and `assets/ok/pack_element_rebind.mojo` is the spelling both accept. The
+# pin also rejects `get`'s `ref[origin_of(self)]` into `self.storage`; that
+# spelling is not what this case claims.
 from std.os import abort
 
 struct Bag[*Ts: Movable](

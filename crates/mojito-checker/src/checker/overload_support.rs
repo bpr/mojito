@@ -205,12 +205,20 @@ pub(super) fn guaranteed_conformance_atoms(
                 output.push(atom);
             }
         }
+        // `conforms_to(Ts.values, Trait)` and `Ts.all_conforms_to[Trait]()`
+        // guarantee the trait of every element, recorded under the pack's name.
+        GenericConstraint::ConformsPack { param, trait_name } => {
+            let atom = (param.clone(), trait_name.clone());
+            if !output.contains(&atom) {
+                output.push(atom);
+            }
+        }
         GenericConstraint::And(left, right) => {
             guaranteed_conformance_atoms(left, output);
             guaranteed_conformance_atoms(right, output);
         }
-        // A disjunction, negation, comparison, or symbolic pack predicate does
-        // not unconditionally refine one ordinary type parameter.
+        // A disjunction, negation, comparison, or other pack predicate does
+        // not unconditionally refine a type parameter.
         _ => {}
     }
 }

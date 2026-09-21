@@ -98,12 +98,16 @@ pub fn check_program(stmts: &[Stmt]) -> Result<mojito_checked::checked::CheckedP
 ///
 /// Validation produces no other checked facts: the checker it runs is
 /// discarded, so nothing recorded for an untaken arm can reach lowering. Bodies that
-/// only check concretely — a variadic template shell's, one keyed on a
-/// `DType`/vector value parameter, or one reading a reflection handle —
-/// keep their per-instantiation check. A member of a template-shell struct
-/// (`Tuple(1, "one")`, `a == b` over tuples) has no symbolic signature here,
-/// so reaching one ends validation without a verdict and leaves the program
-/// to the executable check.
+/// only check concretely — one keyed on a `DType`/vector value parameter, or
+/// one reading a reflection handle — keep their per-instantiation check. A
+/// member of a template-shell struct (a `DType`-keyed `Vec[DType.float64](…)`)
+/// has no symbolic signature here, so reaching one ends validation without a
+/// verdict and leaves the program to the executable check.
+///
+/// A body keyed on a variadic pack is validated with the element at a
+/// symbolic index opaque (`Checker::opaque_element`). Where that has no rule
+/// — a pack forwarded to another callee — the one body gets no verdict
+/// (`Checker::pack_verdict`) and the run goes on.
 pub fn validate_comptime_templates(stmts: &[Stmt]) -> Result<(), TypeError> {
     validate_comptime_templates_into(
         stmts,
@@ -141,7 +145,10 @@ pub fn validate_comptime_templates_into(
             &checker,
             &expanded,
             &explicit_destroy_types(&checker),
-            crate::explicit_destroy::DestroyScope::ValidatedTemplates(&checker.rebind_keyed_bodies),
+            crate::explicit_destroy::DestroyScope::ValidatedTemplates {
+                rebind_keyed: &checker.rebind_keyed_bodies,
+                no_verdict: &checker.no_verdict_bodies,
+            },
         )
     });
     match checked {
@@ -347,11 +354,13 @@ pub fn check_program_for_discovery<S: std::hash::BuildHasher>(
 /// The source-validation body gate, which `explicit_destroy` reuses to walk
 /// exactly the bodies a validation run checked.
 pub(crate) fn validates_comptime_body(
+    enclosing: &[mojito_ast::ast::TypeParam],
     type_params: &[mojito_ast::ast::TypeParam],
     body: &[Stmt],
     rebind_keyed: &HashSet<SourceSpan>,
 ) -> bool {
     comptime_validation::validates_body(
+        enclosing,
         type_params,
         body,
         rebind::body_keys_rebind(body, rebind_keyed),
@@ -510,6 +519,12 @@ pub struct Checker {
     /// Value parameters in scope by bare name, innermost last: the typed
     /// references a dependent parameter expression resolves its names to.
     vparams: Vec<HashMap<String, ParamExpr>>,
+    /// Variadic type packs in scope by bare name, level for level beside
+    /// `tparams`: the parameter-list references a pack element indexes.
+    pack_params: Vec<HashMap<String, ParamExpr>>,
+    /// The dependent pack element each bounded view of one stands for, by the
+    /// view's parameter name (see `opaque_element`).
+    pack_element_views: RefCell<HashMap<String, Ty>>,
     /// The compilation's parameter-expression context, shared with every
     /// checker run and the elaborator of the same compilation.
     param_context: ParamContext,
@@ -550,6 +565,9 @@ pub struct Checker {
     /// compile-time-keyed ones; empty in the executable check, which sees
     /// only clones.
     rebind_keyed_bodies: HashSet<SourceSpan>,
+    /// The pack-keyed bodies this validation run reached no verdict on
+    /// (`pack_verdict`), keyed at the body's first statement.
+    no_verdict_bodies: HashSet<SourceSpan>,
     /// Per-scope compile-time bindings of a validated body: `comptime for`
     /// variables and the declaration's value parameters. The elaborator
     /// substitutes each as a literal, so a nested function or lambda reading
@@ -920,6 +938,8 @@ impl Checker {
             traits: HashMap::new(),
             tparams: Vec::new(),
             vparams: Vec::new(),
+            pack_params: Vec::new(),
+            pack_element_views: RefCell::new(HashMap::new()),
             param_context: ParamContext::detached(),
             self_decls: Vec::new(),
             assumed_conformances: Vec::new(),
@@ -929,6 +949,7 @@ impl Checker {
             local_comptime_values: vec![HashMap::new()],
             rebind_targets: RebindTargets::default(),
             rebind_keyed_bodies: HashSet::new(),
+            no_verdict_bodies: HashSet::new(),
             compile_time_bindings: vec![HashSet::new()],
             enclosing_type_params: Vec::new(),
             self_ty: None,

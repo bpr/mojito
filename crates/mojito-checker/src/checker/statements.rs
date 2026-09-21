@@ -2072,6 +2072,7 @@ impl Checker {
         let check_body = !self.source_validation
             || !self.function_bases.is_empty()
             || validates_body(
+                &[],
                 type_params,
                 body,
                 body_keys_rebind(body, &self.rebind_keyed_bodies),
@@ -2582,7 +2583,12 @@ impl Checker {
                 .push(Self::body_return_annotation(ret_anno.as_ref(), name));
             self.named_result_context.push(named_result.is_some());
             if check_body {
-                result = self.check_def_body(stmt, &decls, &ret_ty, module_level);
+                let scopes = self.scopes.len();
+                if module_level {
+                    self.pack_element_views.borrow_mut().clear();
+                }
+                let checked = self.check_def_body(stmt, &decls, &ret_ty, module_level);
+                result = self.pack_verdict(name, body, scopes, checked);
             }
             self.named_result_context.pop();
             self.return_annotations.pop();

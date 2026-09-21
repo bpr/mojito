@@ -1321,7 +1321,8 @@ fn tuple_specialization_ct_expr_is_closed(
             ParamKind::PackQuery { pack, .. } => {
                 type_binders.contains(pack.trim_start_matches('*'))
             }
-            ParamKind::Hole { .. } => false,
+            // An element of a pack that is still a parameter names no instance.
+            ParamKind::Hole { .. } | ParamKind::ListGet { .. } => false,
             // A signature slot is bound by the contract that holds it.
             ParamKind::IndexRef { .. }
             | ParamKind::Op { .. }

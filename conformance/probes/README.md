@@ -55,6 +55,25 @@ record is `docs/notes/param-expr-attributes.md`). One shape stays open.
 |---|---|---|
 | `param_expr_simd_hooks.mojo` | Do symbolic SIMD widths canonicalize (`SIMD[dt, n + 1]` as `SIMD[dt, 1 + n]`, `SIMD[DType.int64, Self.length]`)? (Observed at `a79fbdf59f2`, 2026-09-20.) | **differs**: the pin runs it, Mojito's `Ty::Simd` needs a concrete width — `docs/roadmap.md` §1, the `DType`/vector validation entry |
 
+## Pack-keyed template bodies (re-run at every re-pin)
+
+A body keyed on a variadic pack is validated from its template, with the
+element at a symbolic index opaque. Observed 2026-09-20 against
+`Mojo 1.1.0.dev2026082605 (dd957314)`; both compilers agree on every row.
+
+| Probe | Question | Expected on both |
+|---|---|---|
+| `pack_body_untaken_arm.mojo` | Is an untaken arm of a never-instantiated pack body (a struct's pack, a `def`'s own) checked? | reject (no such member on the element) |
+| `pack_element_bound_source.mojo` | Which sources license a trait use of an element: the pack's bound, a method `where conforms_to(Ts.values, …)`, a method `where Ts.all_conforms_to[…]()`? | runs, prints `1` `two` three times |
+| `pack_element_header_conformance_only.mojo` | Does a struct-header conditional conformance license the method that implements it? | reject (the method needs its own `where`) |
+| `pack_element_where_disjunction.mojo` | Does a disjunctive `where` license an element use? | reject |
+| `pack_constant_index_symbolic_pack.mojo` | What is `self.storage[0]` over an unbound pack? | reject (the element stays dependent, never `Int`) |
+| `pack_runtime_index.mojo` | A runtime index into `*args: *Ts`. | reject |
+| `pack_contains_marker.mojo` | Are both arms of `comptime if Self.Ts.contains[T]()` checked with `T` symbolic? | reject (the untaken arm's type error) |
+| `pack_mixed_spread.mojo` | `Tuple[Int, *Self.Ts]`: a spread beside a fixed argument. | reject |
+| `pack_forwarding_untaken_arm.mojo` | Is a body that forwards its pack (`inner(*a)`) checked from the template? | **differs**: the pin rejects the untaken arm, Mojito reaches no verdict on that body and prints `1` `two` — `docs/roadmap.md` §1 |
+| `abort_ends_a_returning_body.mojo` | Does a trailing `abort(...)` end a value-returning body? | **differs**: the pin prints `1`, Mojito rejects ("does not return a value on every path") — `docs/roadmap.md` §3 |
+
 ## Re-probes of enforced claims
 
 These rejections were enforced by the slice-A alignment sweep and confirmed

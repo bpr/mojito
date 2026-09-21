@@ -1300,6 +1300,9 @@ pub struct TemplateStats {
     pub verified: Vec<String>,
     /// Traced clones a derivation refused, each with the reason.
     pub refused: Vec<(String, String)>,
+    /// Pack-keyed bodies source validation left to the per-instantiation
+    /// check, each with the use of the unbound pack it has no rule for.
+    pub no_verdict: Vec<(String, String)>,
 }
 
 /// An elaborated clone's declaration identity.

@@ -6608,11 +6608,11 @@ fn collector_position_distinguishes_overloads() {
 
 #[test]
 fn template_catalog_does_not_certify_aborted_validation() {
-    // `Tuple(1, "one")` is a member of a template-shell struct, which has no
-    // symbolic signature: validation stops there without a verdict, before
-    // it reaches `second`. Neither the partial traversal nor the `Ok(())`
-    // it returns may certify a body.
-    let source = "def first[flag: Bool]() -> Int:\n    comptime if flag:\n        var pair = Tuple(1, \"one\")\n        return 1\n    else:\n        return 2\n\ndef second[flag: Bool]() -> Int:\n    comptime if flag:\n        return 1\n    else:\n        return 2\n\ndef main():\n    print(first[True]())\n    print(second[False]())\n";
+    // A `DType`-keyed struct registers as a template shell, which has no
+    // symbolic signature: validation stops at its constructor without a
+    // verdict, before it reaches `second`. Neither the partial traversal nor
+    // the `Ok(())` it returns may certify a body.
+    let source = "struct Vec[dt: DType](Movable):\n    var x: Scalar[Self.dt]\n\n    def __init__(out self, x: Scalar[Self.dt]):\n        self.x = x\n\ndef first[flag: Bool]() -> Int:\n    comptime if flag:\n        var v = Vec[DType.float64](1.5)\n        return 1\n    else:\n        return 2\n\ndef second[flag: Bool]() -> Int:\n    comptime if flag:\n        return 1\n    else:\n        return 2\n\ndef main():\n    print(first[True]())\n    print(second[False]())\n";
     let linked = mojito::link_source(source, std::path::Path::new("aborted_validation.mojo"))
         .expect("link error");
     let prepared = mojito::comptime::prepare(linked).expect("prepare");
@@ -6632,13 +6632,63 @@ fn template_catalog_does_not_certify_aborted_validation() {
         catalog.templates().collect::<Vec<_>>()
     );
 
-    let complete = "def second[flag: Bool]() -> Int:\n    comptime if flag:\n        return 1\n    else:\n        return 2\n\ndef main():\n    print(second[False]())\n";
+    // A variadic struct is no shell: `Tuple(1, "one")` types, the run reaches
+    // a verdict, and the invalid untaken arm beside it is reported.
+    let complete = "def first[flag: Bool]() -> Int:\n    comptime if flag:\n        var pair = Tuple(1, \"one\")\n        return 1\n    else:\n        return 2\n\ndef second[flag: Bool]() -> Int:\n    comptime if flag:\n        return 1\n    else:\n        return 2\n\ndef main():\n    print(first[True]())\n    print(second[False]())\n";
     let linked = mojito::link_source(complete, std::path::Path::new("complete_validation.mojo"))
         .expect("link error");
     let prepared = mojito::comptime::prepare(linked).expect("prepare");
     let mut catalog = mojito::templates::TemplateCatalog::default();
     mojito::checker::validate_comptime_templates_into(&prepared, &mut catalog).expect("validation");
     assert!(!catalog.validation_aborted());
+    assert!(catalog.stats().no_verdict.is_empty());
+
+    let invalid = complete.replace(
+        "        return 2\n\ndef main",
+        "        return \"two\"\n\ndef main",
+    );
+    let linked = mojito::link_source(&invalid, std::path::Path::new("invalid_beside_tuple.mojo"))
+        .expect("link error");
+    let prepared = mojito::comptime::prepare(linked).expect("prepare");
+    let mut catalog = mojito::templates::TemplateCatalog::default();
+    let error = mojito::checker::validate_comptime_templates_into(&prepared, &mut catalog)
+        .expect_err("the untaken arm of `second` is invalid");
+    assert!(
+        error
+            .to_string()
+            .contains("expected Int, found StringLiteral"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_pack_body_without_a_symbolic_rule_gets_no_verdict_alone() {
+    // Forwarding a pack that is still a parameter has no symbolic rule, so
+    // `outer` is left to its per-instantiation check. That is no verdict on
+    // `outer` only: the run continues and still judges `second`.
+    let source = "def inner[*Ts: Writable](*a: *Ts):\n    comptime for i in range(a.__len__()):\n        print(a[i])\n\ndef outer[*Ts: Writable](*a: *Ts):\n    inner(*a)\n\ndef second[flag: Bool]() -> Int:\n    comptime if flag:\n        return 1\n    else:\n        return \"two\"\n\ndef main():\n    outer(1, \"two\")\n";
+    let linked = mojito::link_source(source, std::path::Path::new("pack_no_verdict.mojo"))
+        .expect("link error");
+    let prepared = mojito::comptime::prepare(linked).expect("prepare");
+    let mut catalog = mojito::templates::TemplateCatalog::default();
+    let error = mojito::checker::validate_comptime_templates_into(&prepared, &mut catalog)
+        .expect_err("`second` is still judged");
+    assert!(
+        error
+            .to_string()
+            .contains("expected Int, found StringLiteral"),
+        "{error}"
+    );
+    assert!(!catalog.validation_aborted());
+    assert_eq!(
+        catalog
+            .stats()
+            .no_verdict
+            .iter()
+            .map(|(body, _)| body.as_str())
+            .collect::<Vec<_>>(),
+        ["outer"]
+    );
 }
 
 #[test]

@@ -322,12 +322,52 @@ prerequisite. The KGEN definitions consulted are `KGENAttrs.td`,
 `KGENAttrInterfaces.td`, `KGENEnums.td`, `KGENTypes.td`,
 `ParameterEvaluator.h`, `ParameterReplacer.h`, and `UnifiedFolding.h`.
 
-Hooks left for adjacent work: the reserved `MetaTy::ParamList` and the
-`Select`/`DependentType::Parameter` wrapper for packs (`param_list.get`);
-typed value/dtype expressions for the `Ty::Simd` migration; the residual
+`param_list.get` is landed (`ParamKind::ListGet`, built by
+`ParamContext::list_get`); see *Pack elements* below. Hooks left for adjacent
+work: `param_list.{size, concat, reduce, tabulate}`; typed value/dtype
+expressions for the `Ty::Simd` migration; the residual
 discharge API for the by-value `rebind` gap; the four-outcome unifier
 (`solve_value_args` binds a direct reference and leaves any other residual as
 an equation) for variadic-constructor inference.
+
+## Pack elements
+
+A variadic pack that is still a parameter is a binder of meta-type
+`ParamList(Type)`, the first constructor of `MetaTy::ParamList`. Its element
+at a compile-time index is `param_list.get(pack, index)`, wrapped in
+`DependentType::Parameter` like a finite `Select`. Construction canonicalizes:
+a constant type list is a `Select` (one normal form for a bound pack and a
+checked type sequence), which folds to the element at a constant index; a
+list that is still a parameter keeps the residual node, a constant index
+included, because the pin types `self.storage[0]` over an unbound pack as
+`Ts.values[0]`, never as a concrete type. A `comptime for` variable is the
+index's binder, owned by its loop. The node never crosses the MIR waist: the
+text writer prints `param_list_get` and the parser rejects it.
+
+Three decisions shaped the checker side.
+
+- **Identity and capabilities are separate.** The dependent type is what
+  substitutes, renames, and compares. A bounded `Ty::Param` *view*
+  (`Checker::opaque_element`) is what conformance, method lookup, operators,
+  builtins, and the lifecycle predicates read, so the existing `Ty::Param`
+  rules apply unchanged. A result computed over a view gets its element back
+  (`restore_pack_elements`). The alternative, teaching every `Ty::Param` site
+  the dependent form, touches well over a hundred matches.
+- **A spread is one starred `Ty::Param`.** `Tuple[*Self.Ts]`,
+  `__RuntimeTuple[*Self.Ts]`, and `__VariantStorage[*Self.Ts]` hold the pack's
+  own `Ty::Param` as their only element (`types::pack_spread`), which is how a
+  struct's `Self` already spelled its pack argument. A new `Ty` variant would
+  have touched every type visitor in six crates. The pin rejects a spread
+  beside other arguments, so the one-element rule loses nothing.
+- **No verdict is per body and typed.** Where the symbolic path has no rule,
+  the checker raises `TypeError::SymbolicPackBoundary` and that body alone is
+  left to the executable check. Matching error text against shell names, and
+  abandoning the whole run, is kept only for `DType`- and vector-keyed shells.
+
+What the pin licenses, probed in `conformance/probes/pack_*.mojo`: the pack's
+declared bound and a conjunctive method `where` (either spelling) license a
+trait use of an element; a struct-header conditional conformance, a
+disjunction, and a `comptime if` guard do not.
 
 ## Measurements
 

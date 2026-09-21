@@ -25,25 +25,62 @@ impl Checker {
             *overload_indices
                 .get_mut(&method_name)
                 .expect("inserted above") += 1;
-            // A method keyed on its own pack (`def params[*Ts: Writable](self,
-            // *args: *Ts)`) checks only per specialization, like a pack def.
             if !validates_body(
+                declaration.type_params,
                 &m.type_params,
                 &m.body,
                 body_keys_rebind(&m.body, &self.rebind_keyed_bodies),
             ) {
                 continue;
             }
-            self.check_method(
+            let scopes = self.scopes.len();
+            self.pack_element_views.borrow_mut().clear();
+            let checked = self.check_method(
                 self_ty,
                 m,
                 declaration.module.clone().as_ref(),
                 declaration.name,
                 method_index,
                 overload_index,
+            );
+            self.pack_verdict(
+                &format!("{}.{method_name}", declaration.name),
+                &m.body,
+                scopes,
+                checked,
             )?;
         }
         Ok(())
+    }
+
+    /// Keep a pack-keyed body's validation result, unless it ended at a use
+    /// of the unbound pack with no symbolic rule: that is no verdict, so the
+    /// body is recorded and left to its per-instantiation check. `scopes` is
+    /// the scope depth before the body, restored past the abandoned check.
+    pub(super) fn pack_verdict(
+        &mut self,
+        name: &str,
+        body: &[Stmt],
+        scopes: usize,
+        checked: Result<(), TypeError>,
+    ) -> Result<(), TypeError> {
+        match checked {
+            Err(TypeError::SymbolicPackBoundary(what)) if self.source_validation => {
+                while self.scopes.len() > scopes {
+                    self.pop_scope();
+                }
+                timing::count("templates.pack_no_verdict", 1);
+                self.no_verdict_bodies
+                    .extend(body.first().map(Stmt::source_span));
+                self.template_catalog
+                    .borrow_mut()
+                    .stats_mut()
+                    .no_verdict
+                    .push((name.to_string(), what));
+                Ok(())
+            }
+            checked => checked,
+        }
     }
 
     /// A `comptime if` condition must be a compile-time `Bool`: a generic
@@ -133,12 +170,34 @@ impl Checker {
         if let Some(bindings) = self.compile_time_bindings.last_mut() {
             bindings.insert(var.to_string());
         }
+        let binds_index = element == Ty::Int;
+        let shadowed = binds_index
+            .then(|| comptime_index_binder(var, &iter))
+            .and_then(|binder| {
+                self.innermost_value_scope()
+                    .and_then(|scope| scope.insert(var.to_string(), binder))
+            });
         let result = self
             .declare_immutable(var, element)
             .and_then(|()| self.check_block(body, ret, in_loop));
+        if binds_index && let Some(scope) = self.innermost_value_scope() {
+            match shadowed {
+                Some(previous) => scope.insert(var.to_string(), previous),
+                None => scope.remove(var),
+            };
+        }
         self.pop_scope();
         *self.uninitialized.borrow_mut() = before;
         result
+    }
+
+    /// The value-parameter scope beside the innermost open type-parameter
+    /// scope. A level past it is dead: `tparams.pop()` closes both.
+    fn innermost_value_scope(&mut self) -> Option<&mut HashMap<String, ParamExpr>> {
+        self.tparams
+            .len()
+            .checked_sub(1)
+            .and_then(|level| self.vparams.get_mut(level))
     }
 
     /// Bind a `comptime NAME = value` constant under source validation. A
@@ -245,6 +304,19 @@ impl Checker {
                     index: index.clone(),
                 })?)
             }
+            // `Ts[i]` over a `def`'s or method's own pack.
+            ExprKind::Index { object, index }
+                if matches!(&object.kind, ExprKind::Identifier(_))
+                    && self.unbound_pack_named(object).is_some() =>
+            {
+                let ExprKind::Identifier(name) = &object.kind else {
+                    unreachable!("guarded above");
+                };
+                Some(self.ty_from_anno(&SourceType::IndexedProjection {
+                    base: Box::new(SourceType::Named(name.clone(), Vec::new())),
+                    index: index.clone(),
+                })?)
+            }
             _ => None,
         })
     }
@@ -275,10 +347,295 @@ impl Checker {
             .ok_or_else(|| TypeError::UndefinedVariable(name.clone()))
     }
 
+    /// The parameter-list reference of the variadic pack a spread names: a
+    /// pack of an enclosing `def` or method first, then the enclosing
+    /// struct's own.
+    pub(super) fn pack_reference(&self, pack: &str) -> Option<ParamExpr> {
+        let bare = pack.trim_start_matches('*');
+        self.pack_parameter_in_scope(bare).or_else(|| {
+            let owner = match &self.self_ty {
+                Some(Ty::Struct(owner, _)) => owner.as_str(),
+                _ => "Self",
+            };
+            pack_scope(owner, &self.self_decls)
+                .remove(bare)
+                .map(|reference| self.param_context.intern(&reference))
+        })
+    }
+
+    /// The pack an expression names by itself: a bare `Ts` of an enclosing
+    /// `def` or method, or the enclosing struct's `Self.Ts`.
+    pub(super) fn unbound_pack_named(&self, expr: &Expr) -> Option<ParamExpr> {
+        match &expr.kind {
+            ExprKind::Identifier(name) if self.lookup(name).is_none() => {
+                self.pack_parameter_in_scope(name)
+            }
+            ExprKind::Member { object, field }
+                if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
+                    && self.self_decls.iter().any(|decl| {
+                        matches!(decl, ParamDecl::Type { name, variadic: true, .. }
+                            if name.trim_start_matches('*') == field)
+                    }) =>
+            {
+                self.pack_reference(field)
+            }
+            _ => None,
+        }
+    }
+
+    /// The type of element `index` of a variadic pack that is still a
+    /// parameter: the dependent `Ts[index]`, whose index is a compile-time
+    /// expression over the parameters and `comptime for` variables in scope.
+    pub(super) fn pack_element_type(&self, pack: &Ty, index: &Expr) -> Result<Ty, TypeError> {
+        let Ty::Param { name, .. } = pack else {
+            return Err(TypeError::InvariantViolation(format!(
+                "'{pack}' is not a variadic pack parameter"
+            )));
+        };
+        let list = self.pack_reference(name).ok_or_else(|| {
+            TypeError::SymbolicPackBoundary(format!("pack '{name}' is not in scope"))
+        })?;
+        let index = self
+            .compile_dependent_ct_expr(index)
+            .map_err(|_| TypeError::TypeMismatch {
+                expected: "a compile-time Int index".to_string(),
+                found: "a runtime value".to_string(),
+                context: "variadic-pack index".to_string(),
+            })?;
+        self.param_context
+            .list_get(&list, &index)
+            .map(mojito_types::types::DependentType::resolve)
+            .map_err(param_error)
+    }
+
+    /// Whether a spread's operand (`*args`, `*args^`) is a binding of a pack
+    /// that is still a parameter.
+    pub(super) fn spreads_unbound_pack(&self, spread: &Expr) -> bool {
+        let source = match &spread.kind {
+            ExprKind::Transfer(inner) => inner,
+            _ => spread,
+        };
+        matches!(&source.kind, ExprKind::Identifier(binding)
+            if matches!(self.lookup(binding), Some(Ty::VariadicPack(element))
+                if mojito_types::types::pack_spread(std::slice::from_ref(&**element)).is_some()))
+    }
+
+    /// A construction from a whole pack that is still a parameter
+    /// (`Tuple(*args^)`, `__RuntimeTuple(*args^)`): storage over that pack.
+    /// The elaborator expands a spread per specialization, so any other
+    /// callee of one has no symbolic rule. `None` when the call spreads no
+    /// unbound pack.
+    pub(super) fn infer_unbound_pack_construction(
+        &self,
+        name: &str,
+        param_args: &[ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Option<Result<Ty, TypeError>> {
+        let [
+            Expr {
+                kind: ExprKind::Spread(spread),
+                ..
+            },
+        ] = args
+        else {
+            return None;
+        };
+        let source = match &spread.kind {
+            ExprKind::Transfer(inner) => inner,
+            _ => spread,
+        };
+        let ExprKind::Identifier(binding) = &source.kind else {
+            return None;
+        };
+        let Some(Ty::VariadicPack(element)) = self.lookup(binding) else {
+            return None;
+        };
+        let pack = mojito_types::types::pack_spread(std::slice::from_ref(&**element))?.clone();
+        let boundary = || {
+            TypeError::SymbolicPackBoundary(format!(
+                "'{name}' called with a spread of the unbound pack '{binding}'"
+            ))
+        };
+        if !kwargs.is_empty() {
+            return Some(Err(boundary()));
+        }
+        let constructed = match name {
+            "__RuntimeTuple" => Ty::Tuple(vec![pack]),
+            mojito_types::types::TUPLE_TYPE_NAME => mojito_types::types::tuple_type(vec![pack]),
+            _ => return Some(Err(boundary())),
+        };
+        if param_args.is_empty() {
+            return Some(Ok(constructed));
+        }
+        Some(
+            self.ty_from_anno(&SourceType::Named(name.to_string(), param_args.to_vec()))
+                .and_then(|declared| {
+                    if declared == constructed {
+                        Ok(constructed)
+                    } else {
+                        Err(TypeError::TypeMismatch {
+                            expected: declared.to_string(),
+                            found: constructed.to_string(),
+                            context: format!("spread of '{binding}'"),
+                        })
+                    }
+                }),
+        )
+    }
+
+    /// A construction of a variadic struct over concrete types inside a
+    /// validated body (`Tuple(1, "one")`, `Pair[Int, Bool](1, True)`). The
+    /// instance and its constructor exist only once the elaborator mints
+    /// them, so validation types the construction from its type arguments —
+    /// a bare `Tuple(...)` as the tuple display it is — and checks the
+    /// arguments as expressions; matching them against the instance's
+    /// constructor is the executable check's. `None` outside validation and
+    /// for every other callee.
+    pub(super) fn infer_validated_variadic_construction(
+        &self,
+        call: &Expr,
+        name: &str,
+        param_args: &[ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Option<Result<Ty, TypeError>> {
+        if !self.source_validation || self.lookup(name).is_some() {
+            return None;
+        }
+        let variadic = self.structs.get(name).is_some_and(|info| {
+            info.decls
+                .iter()
+                .any(|decl| matches!(decl, ParamDecl::Type { variadic: true, .. }))
+        });
+        if !variadic {
+            return None;
+        }
+        if param_args.is_empty() {
+            if name != mojito_types::types::TUPLE_TYPE_NAME || !kwargs.is_empty() {
+                return None;
+            }
+            let mut display = Expr::new(ExprKind::TupleLit(args.to_vec()), call.span);
+            display.source.clone_from(&call.source);
+            return Some(self.infer(&display));
+        }
+        Some(
+            args.iter()
+                .chain(kwargs.iter().map(|kwarg| &kwarg.value))
+                .try_for_each(|argument| self.infer(argument).map(|_| ()))
+                .and_then(|()| {
+                    self.ty_from_anno(&SourceType::Named(name.to_string(), param_args.to_vec()))
+                }),
+        )
+    }
+
+    /// Close the pack elements a callee's type names (`Self.Ts[index]`)
+    /// under a use's arguments: a value argument binds its parameter, a
+    /// concrete pack its list, and a pack forwarded as a spread the caller's
+    /// own pack. A type with no pack element is returned as it is.
+    pub(super) fn close_pack_elements(&self, ty: Ty, arguments: &HashMap<String, TyArg>) -> Ty {
+        let names_element =
+            |ty: &Ty| matches!(ty, Ty::Dependent(dependent) if dependent.pack_element().is_some());
+        if !mojito_types::types::mentions(&ty, &names_element) {
+            return ty;
+        }
+        let values: HashMap<String, CtValue> = arguments
+            .iter()
+            .filter_map(|(name, argument)| match argument {
+                TyArg::Val(value) => Some((name.clone(), value.clone())),
+                TyArg::Ty(Ty::Param { name: pack, .. }) if pack.starts_with('*') => self
+                    .pack_reference(pack)
+                    .map(|reference| (name.clone(), CtValue::Expr(reference))),
+                TyArg::Ty(_) | TyArg::Origin(_) => None,
+            })
+            .collect();
+        self.resolve_dependent_ty(&ty, &values).unwrap_or(ty)
+    }
+
+    /// The bounded type parameter an element of an unbound variadic pack
+    /// behaves as: the pack's declared bounds, plus every trait the enclosing
+    /// declarations' `where` clauses guarantee of its elements. The dependent
+    /// type stays the element's identity; this is what its capabilities are
+    /// read from.
+    pub(super) fn opaque_element(&self, ty: &Ty) -> Option<Ty> {
+        let Ty::Dependent(dependent) = ty else {
+            return None;
+        };
+        let (list, _) = dependent.pack_element()?;
+        let pack = list.as_decl_ref()?.name.to_string();
+        let declared = self.lookup_tparam(&format!("*{pack}")).or_else(|| {
+            self.self_decls.iter().find_map(|decl| match decl {
+                ParamDecl::Type {
+                    name,
+                    bounds,
+                    callable_bound,
+                    variadic: true,
+                    ..
+                } if name.trim_start_matches('*') == pack => Some(Ty::Param {
+                    name: name.clone(),
+                    bounds: bounds.clone(),
+                    callable_bound: callable_bound.clone(),
+                }),
+                _ => None,
+            })
+        });
+        let mut bounds = match declared {
+            Some(Ty::Param { bounds, .. }) => bounds,
+            _ => Vec::new(),
+        };
+        for (parameter, guaranteed) in self.assumed_conformances.iter().flatten() {
+            if parameter.trim_start_matches('*') == pack && !bounds.contains(guaranteed) {
+                bounds.push(guaranteed.clone());
+            }
+        }
+        // Two packs may share a spelling (`Tuple.Ts`, `Bag.Ts`); a view's name
+        // is its element's alone, so the owner qualifies the later one.
+        let spelled = dependent.expr().to_string();
+        let mut views = self.pack_element_views.borrow_mut();
+        let name = match views.get(&spelled) {
+            Some(viewed) if viewed != ty => {
+                format!("{}.{spelled}", list.as_decl_ref()?.id.owner)
+            }
+            _ => spelled,
+        };
+        views.insert(name.clone(), ty.clone());
+        Some(Ty::Param {
+            name,
+            bounds,
+            callable_bound: None,
+        })
+    }
+
+    /// Reject a type-argument list that spreads a pack beside other
+    /// arguments (`Tuple[Int, *Self.Ts]`), as the pinned Mojo does.
+    pub(super) fn reject_mixed_spread(name: &str, arguments: &[Ty]) -> Result<(), TypeError> {
+        let spreads = arguments
+            .iter()
+            .any(|ty| mojito_types::types::pack_spread(std::slice::from_ref(ty)).is_some());
+        if spreads && arguments.len() > 1 {
+            return Err(TypeError::BadCall {
+                func: name.to_string(),
+                reason: "a variadic pack spread must be the only argument it binds".to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Give a type computed over bounded views of pack elements its
+    /// dependent elements back: a view is how an element's capabilities are
+    /// read, never a type a program's values have.
+    pub(super) fn restore_pack_elements(&self, ty: Ty) -> Ty {
+        let views = self.pack_element_views.borrow();
+        if views.is_empty() {
+            return ty;
+        }
+        substitute(&ty, &views)
+    }
+
     /// Whether a validation error marks the validator's own blind spot
     /// rather than a verdict: a constructor, method, or operator of a struct
-    /// registered only as a template shell (a `Tuple`, a variadic or
-    /// `DType`-keyed struct), whose members exist only per specialization.
+    /// registered only as a template shell (a `DType`-, vector-, or
+    /// struct-value-keyed struct), whose members exist only per specialization.
     /// The executable check still covers the arm elaboration selects.
     pub(super) fn is_template_shell_member_error(&self, error: &TypeError) -> bool {
         let names_shell = |spelling: &str| {
@@ -511,11 +868,13 @@ pub(super) fn count_template_classes(stmts: &[Stmt], rebind_keyed: &HashSet<Sour
             _ => None,
         })
         .collect();
-    let body_class = |type_params: &[mojito_ast::ast::TypeParam], body: &[Stmt]| {
+    let body_class = |enclosing: &[mojito_ast::ast::TypeParam],
+                      type_params: &[mojito_ast::ast::TypeParam],
+                      body: &[Stmt]| {
         let keys_rebind = body_keys_rebind(body, rebind_keyed);
-        if validates_body(type_params, body, keys_rebind) {
+        if validates_body(enclosing, type_params, body, keys_rebind) {
             TemplateClass::ValidatedKeyed
-        } else if keys_rebind || block_has_comptime(body) || is_variadic_template(type_params) {
+        } else if keys_rebind || block_has_comptime(body) {
             TemplateClass::ConcreteOnly
         } else {
             TemplateClass::SurvivingTraitBound
@@ -532,7 +891,7 @@ pub(super) fn count_template_classes(stmts: &[Stmt], rebind_keyed: &HashSet<Sour
                 let class = if concrete_only_def(statement) {
                     TemplateClass::ConcreteOnly
                 } else {
-                    body_class(type_params, body)
+                    body_class(&[], type_params, body)
                 };
                 timing::count(class.counter(), 1);
                 timing::note(class.counter(), || name.clone());
@@ -549,7 +908,7 @@ pub(super) fn count_template_classes(stmts: &[Stmt], rebind_keyed: &HashSet<Sour
                     let class = if shell {
                         TemplateClass::ConcreteOnly
                     } else {
-                        body_class(&method.type_params, &method.body)
+                        body_class(type_params, &method.type_params, &method.body)
                     };
                     timing::count(class.counter(), 1);
                     timing::note(class.counter(), || format!("{name}.{}", method.name));
@@ -560,6 +919,42 @@ pub(super) fn count_template_classes(stmts: &[Stmt], rebind_keyed: &HashSet<Sour
     }
 }
 
+/// The pack binding of a variadic struct applied element by element
+/// (`Tuple[Int, String]`, whose arguments are its element types): the pack's
+/// name and the list of those types. A pack bound whole — a list value, or a
+/// spread of another pack — is its own argument already.
+pub(super) fn positional_pack_binding(
+    decls: &[ParamDecl],
+    arguments: &[TyArg],
+) -> Option<(String, TyArg)> {
+    let [
+        ParamDecl::Type {
+            name,
+            variadic: true,
+            ..
+        },
+    ] = decls
+    else {
+        return None;
+    };
+    if mojito_types::types::pack_spread_argument(arguments).is_some() {
+        return None;
+    }
+    arguments
+        .iter()
+        .map(|argument| match argument {
+            TyArg::Ty(ty) => Some(CtValue::Type(Box::new(ty.clone()))),
+            TyArg::Val(_) | TyArg::Origin(_) => None,
+        })
+        .collect::<Option<Vec<_>>>()
+        .map(|types| {
+            (
+                name.trim_start_matches('*').to_string(),
+                TyArg::Val(CtValue::Tuple(types)),
+            )
+        })
+}
+
 /// Whether a declaration has a `DType` parameter.
 pub(super) fn dtype_keyed(type_params: &[mojito_ast::ast::TypeParam]) -> bool {
     type_params
@@ -568,15 +963,16 @@ pub(super) fn dtype_keyed(type_params: &[mojito_ast::ast::TypeParam]) -> bool {
 }
 
 /// Whether a struct declaration checks only per specialization, so source
-/// validation registers it as a template shell: a variadic pack, a `DType`
-/// parameter, a struct-typed value parameter (`is_value_struct` names the
-/// declared structs), or a vector-typed value parameter — the shapes the
-/// elaborator monomorphizes per application.
+/// validation registers it as a template shell: a `DType` parameter, a
+/// struct-typed value parameter (`is_value_struct` names the declared
+/// structs), or a vector-typed value parameter — shapes the elaborator
+/// monomorphizes per application and the checker has no symbolic form for. A
+/// variadic pack is not one: its element has a dependent type.
 pub(super) fn concrete_only_struct(
     type_params: &[mojito_ast::ast::TypeParam],
     is_value_struct: &dyn Fn(&str) -> bool,
 ) -> bool {
-    is_variadic_template(type_params) || type_params.iter().any(|parameter| {
+    type_params.iter().any(|parameter| {
         matches!(parameter.bounds.as_slice(), [only] if only == "DType" || is_value_struct(only))
             || matches!(&parameter.value_type, Some(SourceType::Named(name, _)) if name == "SIMD")
     })
@@ -622,19 +1018,23 @@ pub(super) fn concrete_only_def(stmt: &Stmt) -> bool {
 }
 
 /// Whether source validation checks a declaration's body: one holding
-/// compile-time control flow, or a `rebind` over the declaration's own
-/// parameters (`keys_rebind`, from `rebind::rebind_keyed_bodies`) — both
-/// leave the template stubbed, so validation is the only check it gets.
-/// Either way a body that checks only per instantiation is left out: a
-/// variadic template, or one reading a reflection handle (`reflect[T]`),
-/// whose field facts only the elaborator evaluates.
+/// compile-time control flow, a `rebind` over the declaration's own
+/// parameters (`keys_rebind`, from `rebind::rebind_keyed_bodies`), or keyed
+/// on a variadic pack — the declaration's own, or that of the struct
+/// `enclosing` it — each leaves the template stubbed, so validation is the
+/// only check it gets. Either way a body that checks
+/// only per instantiation is left out: one reading a reflection handle
+/// (`reflect[T]`), whose field facts only the elaborator evaluates.
 pub(super) fn validates_body(
+    enclosing: &[mojito_ast::ast::TypeParam],
     type_params: &[mojito_ast::ast::TypeParam],
     body: &[Stmt],
     keys_rebind: bool,
 ) -> bool {
-    (block_has_comptime(body) || keys_rebind)
-        && !is_variadic_template(type_params)
+    (block_has_comptime(body)
+        || keys_rebind
+        || is_variadic_template(type_params)
+        || is_variadic_template(enclosing))
         && !reads_reflection(body)
 }
 
@@ -830,4 +1230,18 @@ fn substitute_identifiers<'a>(expr: &Expr, lookup: &dyn Fn(&str) -> Option<&'a E
     let mut rewritten = Expr::new(kind, expr.span);
     rewritten.source.clone_from(&expr.source);
     rewritten
+}
+
+/// The compile-time binder of an integer `comptime for` variable, so a
+/// dependent index over it (`Ts[i]`, `args[i]`) has a node. The loop's
+/// iterable names the binder: each loop owns its variable.
+fn comptime_index_binder(var: &str, iter: &Expr) -> ParamExpr {
+    let span = iter.source_span();
+    let owner = format!(
+        "$comptime_for@{}:{}..{}",
+        span.source.as_deref().unwrap_or_default(),
+        span.span.0,
+        span.span.1
+    );
+    value_parameter_expr(&owner, 0, var, &Ty::Int)
 }
