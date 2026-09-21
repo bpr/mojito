@@ -591,6 +591,17 @@ fn var_less_introduction_is_rejected() {
 }
 
 #[test]
+fn walrus_introduction_is_rejected() {
+    // A walrus only updates a name already in scope, as the pinned Mojo does
+    // since 1.2.0.dev2026092105 ("use of unknown declaration 'n'").
+    assert!(matches!(
+        err("var one: Int = (n := 1)\n"),
+        TypeError::AssignToUndeclared(name) if name == "n"
+    ));
+    ok("var n: Int = 0\nvar one: Int = (n := 1)\nprint(n)\n");
+}
+
+#[test]
 fn var_is_block_scoped_and_bare_assignment_needs_prior_declaration() {
     // Reassigning a declared `var` from inside a branch is fine.
     ok("def f() -> Int:\n    var value = 0\n    if True:\n        value = 7\n    return value\n");
@@ -3280,7 +3291,7 @@ fn expression_surface_type_checks() {
         "expected a TString mismatch, got {error:?}"
     );
     ok_std("print(t\"x{1}\")\n");
-    ok_std("var one: Int = (n := 1)\nprint(n)\n");
+    ok_std("var n: Int = 0\nvar one: Int = (n := 1)\nprint(n)\n");
     // Ternary, chained comparison, and slices are implemented too.
     ok_std("var m: Int = 1 if True else 2\nprint(m)\n");
     ok_std("var t: Bool = 0 < 1 < 2\nprint(t)\n");

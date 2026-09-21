@@ -126,7 +126,7 @@ $1 == "fixture" { if ($0 != "fixture\tfamily\tfirst-error") { print "invalid ass
 {
     if (NF != 3) { print "assets reject row " NR " has " NF " fields, expected 3" > "/dev/stderr"; ok = 0 }
     if (seen[$1]++) { print "duplicate assets reject fixture: " $1 > "/dev/stderr"; ok = 0 }
-    if ($2 !~ /^(alias-keyword|self-qualification|unbound-parameter|missing-import|no-main|iterator-protocol|ledgered|divergence|skip)$/) {
+    if ($2 !~ /^(alias-keyword|self-qualification|unbound-parameter|missing-import|no-main|iterator-protocol|hasher-protocol|layout-alignment|ledgered|divergence|skip)$/) {
         print "invalid assets reject family for " $1 ": " $2 > "/dev/stderr"; ok = 0
     }
     if ($3 == "") { print "assets reject row lacks an error: " $1 > "/dev/stderr"; ok = 0 }

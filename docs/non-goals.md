@@ -64,7 +64,8 @@ Not to be relaxed: Mojito tracks interior references through `Pointer` and
 through views into a container, and traps on unsafe-memory misuse the pinned
 Mojo leaves undefined. The 2026-09-12 error-folder sweep, with its 2026-09-13
 divergence triage, measured the gap at 33 fixtures the pin compiles and runs
-while Mojito rejects or traps
+while Mojito rejects or traps; the 2026-09-21 re-pin left 32, upstream having
+made a var-less introduction an error of its own
 (`conformance/assets-mojo-errors.tsv`, family `subset`). Invariant 1 permits it:
 Mojito may reject valid Mojo.
 
@@ -82,8 +83,6 @@ Mojito may reject valid Mojo.
   `external_call_unknown_callee.mojo` name Mojito's own mechanisms — a VM-CTFE
   value that cannot cross back, and the libc allowlist — which have no upstream
   counterpart to agree with.
-- `assets/type_error/var_less_introduction.mojo` rejects a var-less
-  introduction that the pin only deprecates, with a warning, and runs.
 - `mapping_key_ref_write.mojo` and `set_element_ref_write.mojo` reject a write
   through a `for ref` key or set element. The pin accepts it and then answers
   membership from a stale hash index (`set-ref-write-gap`).

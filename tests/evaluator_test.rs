@@ -1607,9 +1607,9 @@ fn float64_keeps_full_precision_unlike_float32() {
 // --- Walrus ---
 
 #[test]
-fn walrus_binds_and_produces_its_value() {
+fn walrus_updates_and_produces_its_value() {
     assert_eq!(
-        output("def main():\n    var y: Int = (n := 5)\n    print(y, n)\n"),
+        output("def main():\n    var n: Int = 0\n    var y: Int = (n := 5)\n    print(y, n)\n"),
         "5 5\n"
     );
 }

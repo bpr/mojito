@@ -18,7 +18,7 @@ struct NCKey(Hashable, Equatable, Movable, Deinitable):
         self.k = k
 
     def __hash__(self, mut hasher: Some[Hasher]):
-        hasher.update(self.k)
+        self.k.__hash__(hasher)
 
     def __eq__(self, other: Self) -> Bool:
         return self.k == other.k

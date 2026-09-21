@@ -14,21 +14,12 @@ distance from Mojo is a gap to close in stages
 ([`docs/architecture.md`](architecture.md)), not a divergence we have
 accepted.
 
-Sections and their checkboxes are in implementation order; the first unchecked
-box is the default next task. *(recurring)* and *(any order)* sections are
-exempt from the ordering.
-
-Sections 2 and 3 are ordered differently: every checkbox there, and every
-bullet inside a checkbox that holds more than one independent item, names the
-model that should take it. Each Opus entry also says whether it can be started
-as-is or wants a plan first, and they are sorted Opus as-is, then Opus plan
-first, then Fable. Where a
-strict dependency forces a different order, the entry says so.
-
-Sections 1 to 3 are ordered by what the Pliron direction in
-[`docs/pliron-future.md`](pliron-future.md) depends on. Section 1 does not wait
-for sections 2 and 3 to empty, since section 3 reopens at every re-pin; the
-sections can interleave.
+Every section is sorted by dependency first, then by how much the entry moves
+that section's goal. Entries are numbered `<section>.<n>`; the first unchecked
+box is the default next task. The **Model:** bullet is an estimate, not a
+sort key. Sections interleave: section 1 does not wait for the others, and
+section 3 reopens at every re-pin. Section 5's last entry is a release gate
+and stays last.
 
 ## Ordered Work
 
@@ -37,158 +28,14 @@ sections can interleave.
 The assessment is [`docs/pliron-future.md`](pliron-future.md): Pliron cannot
 give Mojito Mojo's shape on its own, because Mojo type-checks parametric code
 before instantiating it while Mojito elaborates first and checks the clones.
-These tasks fix that order. The first step landed as source validation
-(`checker/comptime_validation.rs`): every `comptime if` arm and `comptime for`
-body is checked with the declaration's parameters symbolic before elaboration
-selects, and `rebind[Dest](value)` is implemented. The second step took the
-explicit-destruction analysis with it: every parametric body is now judged
-with its own parameters symbolic, whatever its call sites do, because a
-bound-generic template survives beside its specializations and validation runs
-the analysis over compile-time-keyed bodies. The third step made a `rebind`
-key specialization the way a `comptime if` does, so its assertion is made on
-every instantiation and never against a symbolic parameter. The fourth step
-made the specialization class a property of a declaration rather than of a
-name, so one overloaded name may hold two classes and the checker's recorded
-instantiation says which declaration serves each call. The fifth step let
-two type-pack declarations share a name: any overloaded name with a template
-among its declarations is a family, and a request also spells the selected
-overload's `*args` collector. The sixth step made a checked template the
-authority for the instantiations it covers: source validation and the abstract
-check retain a body's facts, the elaborator leaves a trace from each clone to
-its template, and a covered clone inherits those facts by substitution instead
-of being inferred (`docs/notes/instantiation-from-template.md`). The seventh
-step extended that to a generic struct's per-instantiation method clones. The
-eighth widened the method class to runtime statements, whole-value moves,
-pointer slots, and sibling calls that pass scalars. The ninth admitted a
-`ref self` receiver and a reference result, and keeps the reference a call
-yields by template owner, so the collection accessors derive. The tenth
-admitted a `ref` declaration, a field read or a closed call through a
-reference, and `mut` and bare `ref` parameters, which pays in user structs and
-moved no bundled body by itself. The eleventh admitted a scalar store through
-a subscript, a place handed to a `mut` or `ref` parameter, and a `ref`
-parameter with an origin clause. The twelfth gave parameter expressions a
-typed canonical form (`docs/notes/param-expr-attributes.md`): a value argument
-is an interned node whose normal form is the pin's, so `Buf[n + 1]` is
-`Buf[1 + n]` with `n` symbolic, a free `def`'s value parameter may appear in a
-type argument, and a `where` clause is three-valued. The entries below widen
-it further. Each task pays off by itself, and together they are what moving
-toward Mojo's shape needs.
+These tasks fix that order.
 
-This section holds only work that moves the check order: checking a template
-with its parameters symbolic, or deriving an instantiation from a checked
-template. A defect found while doing that work is filed by its kind, not
-where it was found. A divergence from the pin goes to section 3, however
-small it is and whatever it depends on.
+Scope: only work that moves the check order — checking a template with its
+parameters symbolic, or deriving an instantiation from a checked template. A
+defect found on the way is filed by its kind; a divergence from the pin goes
+to section 3, however small.
 
-Unlike sections 2 and 3, this section is sorted in **dependency order**: each
-entry names what it depends on. Size does not move an entry up. The **Model:**
-bullet carries the complexity estimate and says whether the entry can be done
-as-is or must be planned first.
-
-- [ ] **A place argument on a field's method is closed types only**
-
-  Problem: `self.inner.fill(slot)` derives when the `mut` or `ref` parameter's
-  type is closed, and keeps the clone check when it mentions a struct
-  parameter.
-  - On a call of `self`'s own method the callee's binders are the caller's, so
-    the instance substitutes the parameter type. On a field's method they are
-    the field struct's, and `CallParameters` holds the callee's own names.
-  - A `ref` local and a field reached through one are not admitted as a kept
-    place either.
-  - Depends on nothing.
-  - Model: Fable, plan first.
-
-- [ ] **An augmented or whole-value store to a subscripted element keeps the
-  clone check**
-
-  Problem: a scalar store through a subscript derives
-  (`self.entries[i].hits = 0`, `self.counts[i] = n`), and two neighbouring
-  stores still refuse it.
-  - `self.counts[i] += 1` records the `AugmentedSubscript` adjustment, which
-    holds a getter contract, an optional setter, and an in-place operator and
-    has no recipe.
-  - `self.index[bucket] = entries^` stores a moved value of a non-scalar type,
-    so the setter's contract is not closed. `Dict._append_new` and
-    `Dict.update` are this shape.
-  - A whole element read from the same list (`self.items[i] = self.items[j]`)
-    is accepted for `Int` and rejected for `String`, so it cannot derive until
-    that divergence closes
-    (`conformance/probes/element_store_from_same_list.mojo`).
-  - Depends on the recipe entry below for non-scalar arguments.
-  - Model: Fable, plan first.
-
-- [ ] **A method that constructs a struct keeps the clone check**
-
-  Problem: a construction is outside the method grammar, and the one table it
-  always fills has no recipe.
-  - `List.copy`, `Optional.copy`, `Set.copy`, `Dict.keys`, and `Dict.__iter__`
-    are one construction each.
-  - `ConstructionImmutableBinders` blocks 103 clone bodies and is the sole
-    blocker of 56, the best single recipe left (`docs/performance.md`, *Census
-    of method bodies*).
-  - The 16 iterator makers (`List.__iter__`, `List.__reversed__`,
-    `Optional.__iter__`, `Dict.take_items`) are `ref source = self` and one
-    construction. The `ref` declaration already derives. Their result type
-    carries `origin_of(self)`, a binding inside a type, which a bundle does
-    not keep yet.
-  - A construction also records a `generic_instantiations` entry and an
-    overload target naming the `__init__` clone. `constructor_clone_target`
-    already finds that clone, through the helper the sibling-call recipe
-    shares (`declarations.rs:method_clone_target`).
-  - A constructor argument is a call argument, so anything but a closed scalar
-    waits on the recipe entry below.
-  - Depends on the recipe entry below for non-scalar arguments.
-  - Model: Fable, plan first.
-
-- [ ] **A method that raises keeps the clone check**
-
-  Problem: `raises` and `raise` are outside the method grammar, so a checked
-  accessor is inferred per instantiation beside its unchecked twin.
-  - `Optional.__getitem__` and `Dict.__getitem__` are of this shape: 21 clone
-    bodies per pass (`template_census.clone.grammar.raises`).
-  - The raised value is a construction, so this waits on the construction
-    entry above. `EffectFacts::raises` already substitutes.
-  - Depends on the construction entry above.
-  - Model: Opus, plan first.
-
-- [ ] **A struct with a field of a parameter type is never a plain-data
-  argument**
-
-  Problem: a `MethodBody` derivation refuses an instance whose argument may
-  carry a loan, and `type_may_carry_loans` says that of every struct that
-  declares a field of a parameter type.
-  - `List[DictEntry[Int, String, H]]` refuses for that reason: 36 clone bodies
-    per pass in `benchmarks/compile/stdlib_heavy.mojo`
-    (`template_derivations.ineligible`, "an instance argument carries a
-    loan").
-  - The predicate reads the struct's declared fields, where `K` and `V` are
-    still parameters (`origins/ref_params.rs:type_may_carry_loans`). It never
-    substitutes the application's arguments.
-  - The refusal is correct today: a clone check asks the same predicate and
-    does its loan bookkeeping for such a type.
-  - Substituting the arguments before judging the fields narrows both the
-    clone check and the obligation at once.
-  - Depends on nothing.
-  - Model: Opus, plan first. The lever is one predicate. The fallout is every
-    origin test that relied on the conservative answer.
-
-- [ ] **A per-call method clone and a whole-struct specialization leave no
-  trace**
-
-  Problem: the elaborator traces a `def` clone and a per-instantiation method
-  clone to their templates, and nothing else it generates.
-  - A per-call clone (`kind$y3:Int$y4:Bool`) also bakes the method's own
-    parameters. `specialize.rs:per_call_method_clones` has four callers and
-    records no `MethodInstanceTrace`.
-  - A member of a struct specialized whole (`Tuple$…`, a `DType`-keyed range)
-    comes from a concrete-only template, so it also waits on the pack and
-    `DType` validation entries below.
-  - Hello World's 1320 generated body inferences are all of these two kinds.
-  - Depends on the symbolic-validation entries for the whole-struct half. The
-    per-call half depends on nothing.
-  - Model: Opus, plan first, for the per-call trace.
-
-- [ ] **A call that records a contract, a conversion, or an origin has no
+- [ ] **1.1 A call that records a contract, a conversion, or an origin has no
   derivation recipe**
 
   Problem: an instance inherits a template's facts only when every fact table
@@ -225,7 +72,138 @@ as-is or must be planned first.
   - Model: Fable, plan first. One recipe per table is small. Choosing which
     concrete-dependent decisions a clone check makes after selection is not.
 
-- [ ] **A surviving trait-bound template with a local of a parameter type
+- [ ] **1.2 A place argument on a field's method is closed types only**
+
+  Problem: `self.inner.fill(slot)` derives when the `mut` or `ref` parameter's
+  type is closed, and keeps the clone check when it mentions a struct
+  parameter.
+  - On a call of `self`'s own method the callee's binders are the caller's, so
+    the instance substitutes the parameter type. On a field's method they are
+    the field struct's, and `CallParameters` holds the callee's own names.
+  - A `ref` local and a field reached through one are not admitted as a kept
+    place either.
+  - Depends on nothing.
+  - Model: Fable, plan first.
+
+- [ ] **1.3 An augmented or whole-value store to a subscripted element keeps the
+  clone check**
+
+  Problem: a scalar store through a subscript derives
+  (`self.entries[i].hits = 0`, `self.counts[i] = n`), and two neighbouring
+  stores still refuse it.
+  - `self.counts[i] += 1` records the `AugmentedSubscript` adjustment, which
+    holds a getter contract, an optional setter, and an in-place operator and
+    has no recipe.
+  - `self.index[bucket] = entries^` stores a moved value of a non-scalar type,
+    so the setter's contract is not closed. `Dict._append_new` and
+    `Dict.update` are this shape.
+  - A whole element read from the same list (`self.items[i] = self.items[j]`)
+    is accepted for `Int` and rejected for `String`, so it cannot derive until
+    that divergence closes
+    (`conformance/probes/element_store_from_same_list.mojo`).
+  - Depends on 1.1 for non-scalar arguments.
+  - Model: Fable, plan first.
+
+- [ ] **1.4 A method that constructs a struct keeps the clone check**
+
+  Problem: a construction is outside the method grammar, and the one table it
+  always fills has no recipe.
+  - `List.copy`, `Optional.copy`, `Set.copy`, `Dict.keys`, and `Dict.__iter__`
+    are one construction each.
+  - `ConstructionImmutableBinders` blocks 103 clone bodies and is the sole
+    blocker of 56, the best single recipe left (`docs/performance.md`, *Census
+    of method bodies*).
+  - The 16 iterator makers (`List.__iter__`, `List.__reversed__`,
+    `Optional.__iter__`, `Dict.take_items`) are `ref source = self` and one
+    construction. The `ref` declaration already derives. Their result type
+    carries `origin_of(self)`, a binding inside a type, which a bundle does
+    not keep yet.
+  - A construction also records a `generic_instantiations` entry and an
+    overload target naming the `__init__` clone. `constructor_clone_target`
+    already finds that clone, through the helper the sibling-call recipe
+    shares (`declarations.rs:method_clone_target`).
+  - A constructor argument is a call argument, so anything but a closed scalar
+    waits on 1.1.
+  - Depends on 1.1 for non-scalar arguments.
+  - Model: Fable, plan first.
+
+- [ ] **1.5 A method that raises keeps the clone check**
+
+  Problem: `raises` and `raise` are outside the method grammar, so a checked
+  accessor is inferred per instantiation beside its unchecked twin.
+  - `Optional.__getitem__` and `Dict.__getitem__` are of this shape: 21 clone
+    bodies per pass (`template_census.clone.grammar.raises`).
+  - The raised value is a construction, so this waits on 1.4.
+    `EffectFacts::raises` already substitutes.
+  - Depends on 1.4.
+  - Model: Opus, plan first.
+
+- [ ] **1.6 A struct with a field of a parameter type is never a plain-data
+  argument**
+
+  Problem: a `MethodBody` derivation refuses an instance whose argument may
+  carry a loan, and `type_may_carry_loans` says that of every struct that
+  declares a field of a parameter type.
+  - `List[DictEntry[Int, String, H]]` refuses for that reason: 36 clone bodies
+    per pass in `benchmarks/compile/stdlib_heavy.mojo`
+    (`template_derivations.ineligible`, "an instance argument carries a
+    loan").
+  - The predicate reads the struct's declared fields, where `K` and `V` are
+    still parameters (`origins/ref_params.rs:type_may_carry_loans`). It never
+    substitutes the application's arguments.
+  - The refusal is correct today: a clone check asks the same predicate and
+    does its loan bookkeeping for such a type.
+  - Substituting the arguments before judging the fields narrows both the
+    clone check and the obligation at once.
+  - Depends on nothing.
+  - Model: Opus, plan first. The lever is one predicate. The fallout is every
+    origin test that relied on the conservative answer.
+
+- [ ] **1.7 A folded compile-time value that survives into an instance breaks its
+  trace**
+
+  Problem: the elaborator writes a fresh literal where a value parameter or a
+  `comptime for` variable stood, so that instance occurrence has no template
+  occurrence behind it and the derivation refuses.
+  - `def total[n: Int]() -> Int` with `sum += i` inside `comptime for i in
+    range(n)` keeps the clone check. The same body with `sum += 1` derives
+    (`assets/ok/template_scalar_loop.mojo`).
+  - The fold is `rewrite.rs:rewrite_expr`, which replaces the identifier with
+    `CtValue::materialize`'s new node.
+  - The recipe is known: keep the identifier's identity on the literal, give
+    it the literal's type plus `MaterializeLiteral` to the template's recorded
+    type, and check the value fits.
+  - Depends on nothing.
+  - Model: Opus, plan first. A kept identity on a folded node must be checked
+    against every consumer of `SyntaxId::fresh()` in the elaborator.
+
+- [ ] **1.8 A struct with an origin or a value parameter derives no method**
+
+  Problem: a method derives only on a struct whose parameters are all plain
+  types, so `Span` and `Array` keep the clone check for every method.
+  - `template_facts.rs:method_certificate` refuses the declaration, and
+    `instance_substitution` maps type arguments only.
+  - `Span.__getitem__`, `Array.__getitem__`, and `Array.unsafe_get` are
+    otherwise the returned-place shape that already derives for `List`.
+  - A receiver origin (`ref[o] self`) is refused for the same reason: the
+    binder it names is not a plain type parameter.
+  - An origin argument passes through unchanged. A value argument is folded
+    by the elaborator, which is 1.7.
+  - Depends on 1.7 for a value parameter.
+  - Model: Fable, plan first.
+
+- [ ] **1.9 A local declared inside an unrolled loop has no per-copy binding**
+
+  Problem: an unrolled `comptime for` copies its body once per iteration, and
+  a derivation mints one binding per template local, not one per copy.
+  - `BodyShape` therefore rejects a `var` inside a `comptime for`, and the
+    body keeps the clone check.
+  - `OccurrenceId::copy` already tells the copies apart. The missing piece is
+    a `TemplateOwner::Local` that carries the copy of its declaration.
+  - Depends on nothing.
+  - Model: Opus, plan first.
+
+- [ ] **1.10 A surviving trait-bound template with a local of a parameter type
   keeps the clone check**
 
   Problem: a `def` template may hold scalar locals and runtime `if` and
@@ -244,51 +222,7 @@ as-is or must be planned first.
   - Depends on nothing.
   - Model: Fable, plan first.
 
-- [ ] **A folded compile-time value that survives into an instance breaks its
-  trace**
-
-  Problem: the elaborator writes a fresh literal where a value parameter or a
-  `comptime for` variable stood, so that instance occurrence has no template
-  occurrence behind it and the derivation refuses.
-  - `def total[n: Int]() -> Int` with `sum += i` inside `comptime for i in
-    range(n)` keeps the clone check. The same body with `sum += 1` derives
-    (`assets/ok/template_scalar_loop.mojo`).
-  - The fold is `rewrite.rs:rewrite_expr`, which replaces the identifier with
-    `CtValue::materialize`'s new node.
-  - The recipe is known: keep the identifier's identity on the literal, give
-    it the literal's type plus `MaterializeLiteral` to the template's recorded
-    type, and check the value fits.
-  - Depends on nothing.
-  - Model: Opus, plan first. A kept identity on a folded node must be checked
-    against every consumer of `SyntaxId::fresh()` in the elaborator.
-
-- [ ] **A struct with an origin or a value parameter derives no method**
-
-  Problem: a method derives only on a struct whose parameters are all plain
-  types, so `Span` and `Array` keep the clone check for every method.
-  - `template_facts.rs:method_certificate` refuses the declaration, and
-    `instance_substitution` maps type arguments only.
-  - `Span.__getitem__`, `Array.__getitem__`, and `Array.unsafe_get` are
-    otherwise the returned-place shape that already derives for `List`.
-  - A receiver origin (`ref[o] self`) is refused for the same reason: the
-    binder it names is not a plain type parameter.
-  - An origin argument passes through unchanged. A value argument is folded by
-    the elaborator, which is the folded-value entry above.
-  - Depends on the folded-value entry above for a value parameter.
-  - Model: Fable, plan first.
-
-- [ ] **A local declared inside an unrolled loop has no per-copy binding**
-
-  Problem: an unrolled `comptime for` copies its body once per iteration, and
-  a derivation mints one binding per template local, not one per copy.
-  - `BodyShape` therefore rejects a `var` inside a `comptime for`, and the
-    body keeps the clone check.
-  - `OccurrenceId::copy` already tells the copies apart. The missing piece is
-    a `TemplateOwner::Local` that carries the copy of its declaration.
-  - Depends on nothing.
-  - Model: Opus, plan first.
-
-- [ ] **Every discovery round still infers every uncovered body again**
+- [ ] **1.11 Every discovery round still infers every uncovered body again**
 
   Problem: a compilation checks the whole elaborated program once per
   discovery round and once per transfer-effect round, and a checked template
@@ -305,10 +239,10 @@ as-is or must be planned first.
     every fact table, under the identity substitution.
   - The arena is already built once per compilation rather than once per
     round (`DiscoveryResult`).
-  - Depends on the recipe entry above.
+  - Depends on 1.1.
   - Model: Fable, plan first.
 
-- [ ] **Type parameters are identified by spelling**
+- [ ] **1.12 Type parameters are identified by spelling**
 
   Problem: a value parameter is now owned by its declaration
   (`ParamId { owner, slot }`), but `Ty::Param` still compares by name, so two
@@ -329,13 +263,13 @@ as-is or must be planned first.
   - The lever is a reference wrapper in `Ty::Param` with identity equality and
     a diagnostic name, and `IndexRef`-style slots for a signature's own
     binders, as `canonical_generic_signature` already does for values.
-  - Depends on nothing. The pack and `DType`/vector entries below are easier
+  - Depends on nothing. 1.13 and 1.18 are easier
     after it, and do not need it.
   - Model: Fable, plan first. A comparison change under every checker
     substitution; the plan's job is to find the coincidence sites before the
     edit does.
 
-- [ ] **A body that forwards its pack gets no symbolic verdict**
+- [ ] **1.13 A body that forwards its pack gets no symbolic verdict**
 
   Problem: source validation types an element of a variadic pack that is
   still a parameter, but has no rule for a call that spreads the pack into
@@ -358,7 +292,7 @@ as-is or must be planned first.
   - Model: Fable, plan first. Structural call binding is owned by
     `mojito-ast`'s `call.rs`, and a spread is not a slot it knows.
 
-- [ ] **A variadic struct construction in a validated body is not matched
+- [ ] **1.14 A variadic struct construction in a validated body is not matched
   against its constructor**
 
   Problem: inside a validated body, `Pair[Int, Bool](1, True)` types from its
@@ -369,12 +303,53 @@ as-is or must be planned first.
     `checker/comptime_validation.rs`). The taken arm is still checked against
     the minted constructor.
   - A bare `Tuple(1, "one")` is exact: it types as the tuple display it is.
-  - The lever is the checker-owned instantiation the constructor-inference
-    entry below builds.
-  - Depends on that entry.
+  - The lever is the checker-owned instantiation 1.16 builds.
+  - Depends on 1.13.
   - Model: Fable, plan first.
 
-- [ ] **A body reading `reflect[...]` is not validated symbolically**
+- [ ] **1.15 A pack-keyed template's instances are never derived from it**
+
+  Problem: a pack-keyed body is validated once, but its certificate is always
+  incomplete, so every instance is still checked as a clone.
+  - A `def`'s pack fails `template_certificate`'s plain-binder test, and a
+    validated method has no class at all (`method_certificate`,
+    `checker/template_facts.rs`).
+  - The body's facts name `Ts[i]` under a `comptime for` variable. A
+    derivation needs the per-iteration substitution the elaborator's unrolling
+    performs, which no fact recipe has.
+  - `conformance/probes/template_fallback_pack.mojo` pins the clone check.
+  - Depends on 1.1.
+  - Model: Fable, plan first.
+
+- [ ] **1.16 A variadic struct's type arguments are not inferred from its
+  constructor**
+
+  Problem: `Pair((1, True))` for `struct Pair[*Ts](...)` with
+  `var storage: Tuple[*Self.Ts]` runs at the pin, while Mojito requires
+  `Pair[Int, Bool](...)`
+  (`assets/type_error/pack_struct_needs_explicit_args.mojo`, a `divergence`
+  row of `conformance/assets-mojo-errors.tsv`).
+  - Monomorphization (`crates/mojito-comptime/src/comptime/mono.rs`) runs
+    before type checking, so argument types are only syntactically known
+    there.
+  - Inference needs a checker-owned instantiation: the checker must type the
+    template's constructor symbolically and unify `*Ts` against the
+    argument types, then request the instance the way it already requests
+    inferred bound-generic clones.
+  - Value inference already binds a direct reference and leaves any other
+    residual as an equation (`solve_value_args`, `unify_arg` in native mono);
+    pack inference is added to that, not beside it. The pin does not invert
+    `Buf[n + 1]` against `Buf[4]` either
+    (`assets/type_error/param_expr_inverse_inference.mojo`).
+  - The template now types symbolically under source validation: a variadic
+    struct registers with its fields, signatures, and bodies over the unbound
+    pack (`docs/architecture.md` §Source validation). Unification against its
+    constructor is what is missing.
+  - Depends on nothing.
+  - Model: Fable, plan first. Moves one instantiation decision from the
+    elaborator to the checker and touches the discovery loop's request kinds.
+
+- [ ] **1.17 A body reading `reflect[...]` is not validated symbolically**
 
   Problem: a body that reads a reflection handle checks only per
   instantiation (`reads_reflection`, `checker/comptime_validation.rs`), so an
@@ -388,21 +363,7 @@ as-is or must be planned first.
   - Depends on nothing.
   - Model: Fable, plan first. A new symbolic form with no precedent.
 
-- [ ] **A pack-keyed template's instances are never derived from it**
-
-  Problem: a pack-keyed body is validated once, but its certificate is always
-  incomplete, so every instance is still checked as a clone.
-  - A `def`'s pack fails `template_certificate`'s plain-binder test, and a
-    validated method has no class at all (`method_certificate`,
-    `checker/template_facts.rs`).
-  - The body's facts name `Ts[i]` under a `comptime for` variable. A
-    derivation needs the per-iteration substitution the elaborator's unrolling
-    performs, which no fact recipe has.
-  - `conformance/probes/template_fallback_pack.mojo` pins the clone check.
-  - Depends on the recipe entry above.
-  - Model: Fable, plan first.
-
-- [ ] **A `DType`- or vector-keyed template body is not validated symbolically**
+- [ ] **1.18 A `DType`- or vector-keyed template body is not validated symbolically**
 
   Problem: a body keyed on a `DType` parameter or a vector-typed value
   parameter checks only per instantiation, because `Ty::Simd` holds a
@@ -432,7 +393,22 @@ as-is or must be planned first.
     checker, the elaborator's width folding, and native lowering's vector
     types.
 
-- [ ] **An explicit `DType`-keyed application loses to a keyed overload of
+- [ ] **1.19 A per-call method clone and a whole-struct specialization leave no
+  trace**
+
+  Problem: the elaborator traces a `def` clone and a per-instantiation method
+  clone to their templates, and nothing else it generates.
+  - A per-call clone (`kind$y3:Int$y4:Bool`) also bakes the method's own
+    parameters. `specialize.rs:per_call_method_clones` has four callers and
+    records no `MethodInstanceTrace`.
+  - A member of a struct specialized whole (`Tuple$…`, a `DType`-keyed range)
+    comes from a concrete-only template, so it also waits on 1.13 and 1.18.
+  - Hello World's 1320 generated body inferences are all of these two kinds.
+  - Depends on 1.13 and 1.18 for the whole-struct half; the per-call half
+    depends on nothing.
+  - Model: Opus, plan first, for the per-call trace.
+
+- [ ] **1.20 An explicit `DType`-keyed application loses to a keyed overload of
   the same name**
 
   Problem: `kind[DType.float64](1.5)`, where `def kind[dt: DType](a:
@@ -444,44 +420,15 @@ as-is or must be planned first.
   - The member is then dropped from the round-one program, leaving only the
     keyed sibling's stub for the explicit application to bind against.
   - Keeping it alive instead does not work today: its `Scalar[dt]` signature
-    cannot be checked with `dt` symbolic, which is exactly the
-    `DType`-keyed validation entry above.
+    cannot be checked with `dt` symbolic, which is exactly 1.18.
   - Inferred calls to the *keyed* sibling do now work beside such a member,
     where the whole name used to be rejected.
-  - Depends on the `DType`-keyed symbolic-validation entry above.
+  - Depends on 1.18.
   - Model: Fable, plan first. The lever is the symbolic `Ty::Simd` that entry
     introduces; the plan's job is the round-one survival rule for a member
     of no request-served class.
 
-- [ ] **A variadic struct's type arguments are not inferred from its
-  constructor**
-
-  Problem: `Pair((1, True))` for `struct Pair[*Ts](...)` with
-  `var storage: Tuple[*Self.Ts]` runs at the pin, while Mojito requires
-  `Pair[Int, Bool](...)`
-  (`assets/type_error/pack_struct_needs_explicit_args.mojo`, a `divergence`
-  row of `conformance/assets-mojo-errors.tsv`).
-  - Monomorphization (`crates/mojito-comptime/src/comptime/mono.rs`) runs
-    before type checking, so argument types are only syntactically known
-    there.
-  - Inference needs a checker-owned instantiation: the checker must type the
-    template's constructor symbolically and unify `*Ts` against the
-    argument types, then request the instance the way it already requests
-    inferred bound-generic clones.
-  - Value inference already binds a direct reference and leaves any other
-    residual as an equation (`solve_value_args`, `unify_arg` in native mono);
-    pack inference is added to that, not beside it. The pin does not invert
-    `Buf[n + 1]` against `Buf[4]` either
-    (`assets/type_error/param_expr_inverse_inference.mojo`).
-  - The template now types symbolically under source validation: a variadic
-    struct registers with its fields, signatures, and bodies over the unbound
-    pack (`docs/architecture.md` §Source validation). Unification against its
-    constructor is what is missing.
-  - Depends on nothing.
-  - Model: Fable, plan first. Moves one instantiation decision from the
-    elaborator to the checker and touches the discovery loop's request kinds.
-
-- [ ] **The Pliron pivot has no falsifiable proof yet**
+- [ ] **1.21 The Pliron pivot has no falsifiable proof yet**
 
   Problem: [`docs/pliron-backend-pivot-plan.md`](pliron-backend-pivot-plan.md)
   stages a migration to a required Pliron IR framework, but its Stage A1 slice
@@ -504,12 +451,10 @@ as-is or must be planned first.
 
 ### 2. Native Backend
 
-Sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**). The
-ABI-bump collector is last
-whatever its model, because it batches every change that needs a new
-`MJRT_ABI_VERSION`.
+The ABI-bump collector is last whatever else moves, because it batches every
+change that needs a new `MJRT_ABI_VERSION`.
 
-- [ ] **Front end: a bare literal cannot build a multi-lane SIMD field**
+- [ ] **2.1 Front end: a bare literal cannot build a multi-lane SIMD field**
 
   Problem: `P(1)` for a struct whose field is `SIMD[DType.int32, 4]` is
   rejected with a field type mismatch.
@@ -520,7 +465,7 @@ whatever its model, because it batches every change that needs a new
     fires at every field initialization, so the plan's job is to bound the
     overload-resolution and fixture fallout before the edit.
 
-- [ ] **Operator operands and the bundled `hash` body take lifecycle copies**
+- [ ] **2.2 Operator operands and the bundled `hash` body take lifecycle copies**
 
   Problem: `b == c` on a struct whose copy constructor prints prints
   `copy` for each operand, and `hash(b)` prints it twice, on both backends.
@@ -540,7 +485,7 @@ whatever its model, because it batches every change that needs a new
     the plan bounds the fixture fallout of any `__eq__` that relied on the
     copy.
 
-- [ ] **A value argument forwarded from a caller's parameter is not a native
+- [ ] **2.3 A value argument forwarded from a caller's parameter is not a native
   constant**
 
   Problem: a generic `def` that calls another with a value argument built
@@ -562,7 +507,7 @@ whatever its model, because it batches every change that needs a new
   - Model: Fable, plan first. It changes the MIR call contract and the text
     schema with it.
 
-- [ ] **Native runtime ABI bump: land every change that needs a new
+- [ ] **2.4 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
 
   Problem: each item below changes the native runtime ABI, so it needs an
@@ -618,66 +563,18 @@ whatever its model, because it batches every change that needs a new
   re-probed at every re-pin; every other Mojito-only acceptance is a
   divergence on the ledger below, waiting to be withdrawn. Both keep their
   fixtures under `assets/extensions/`.
-- The `a79fbdf59f2` pass (2026-08-26, Mojo `1.1.0.dev2026082605`) is
-  complete (`docs/mojo-nightly.md`). The next re-pin recreates this
-  section's checkbox.
+- The `26cfe94f40` re-pin (2026-09-21, Mojo `1.2.0.dev2026092105`) closed the
+  one subset change its window forced: a walrus updates and never introduces
+  a binding. The window's unimplemented features are the changeset in
+  [`docs/mojo-nightly.md`](mojo-nightly.md) and are filed separately; the two
+  divergences it found are checkboxes below.
 
-The checkboxes below, and the bullets inside the standing ones, are sorted Opus as-is, Opus plan first, then Fable (see **Entry Style**).
+Sorted by how far the entry is from the pin's answer: a program Mojito runs
+to a wrong result or accepts where the pin rejects comes first, then one it
+rejects where the pin runs it, then a verdict that is right with the wrong
+words. The representation gap and the two standing ledgers are last.
 
-- [ ] **A parametric nested `def` named as a value reports its marker**
-
-  Problem: `apply(inner, 3)` and `var g = inner`, for a nested
-  `def inner[U: Copyable]`, report `Undefined variable
-  'main$110$198$nested$0$inner'`. The pin rejects both too, so the verdict is
-  right and only the message is wrong.
-  - The lexical pass renames the declaration to its marker and rewrites every
-    reference to it, then deletes the template it could not instantiate,
-    leaving the renamed value reference dangling.
-  - The pin's texts are "cannot use parametric function as a runtime closure"
-    for the binding and an `invalid call to '__call__'` for the argument.
-  - Pre-existing for a nested `def` the pass already registered; the nested
-    compile-time-keyed work widened the class it reaches.
-  - Model: Opus, as-is.
-
-- [ ] **A list literal beside a `List` parameter and a pack is not ambiguous**
-
-  Problem: `g(x, [1, 2], x)` against `g[*Ts](a: Int, *rest: *Ts)` beside
-  `g[*Ts](a: Int, b: List[Int], *rest: *Ts)` prints `2` in Mojito, while the
-  pinned Mojo reports "ambiguous call to 'g'".
-  - Mojito charges the literal's conversion to the second overload only. A
-    string literal is already charged on the pack side too
-    (`pack_element_conversion_count`).
-  - Charging a list literal one conversion on the pack side does not tie the
-    candidates, so the regular binding costs something else first.
-  - Mojito accepts a program the pin rejects, so this is a divergence.
-  - Pinned by `conformance/probes/pack_overload_list_literal_ambiguity.mojo`.
-  - Model: Opus, as-is.
-
-- [ ] **Explicit type arguments on a static method of a non-parametric
-  struct are rejected**
-
-  Problem: `P.plain[Int](4)` on `@staticmethod def plain[T: Writable](x: T)`
-  prints `1` at the pin, while Mojito reports "Undefined variable 'P'".
-  - Any generic static on a struct without parameters is affected, whether
-    or not its body holds a `comptime if`.
-  - The inferred spelling `P.plain(4)` works.
-  - The explicit spelling parses as `Invoke` over `Member(P, plain)`. The
-    error is raised before the non-parametric static path in
-    `checker/method_calls/mc_infer.rs` sees the call.
-  - Model: Opus, plan first. The plan must first find which pass infers the
-    bare type name as a value.
-
-- [ ] **A call through a `ref` to a callable value is rejected**
-
-  Problem: `for f in fns: print(f(5))` and `ref g = fns[0]; print(g(1))` run at
-  the pin over a function display, while Mojito reports "'f' has type ref
-  def(Int) thin -> Int and is not callable".
-  - Both thin and capturing elements are affected.
-  - The indexed call `fns[0](5)` already works through element-call dispatch.
-    A `ref`-typed callee has no such path.
-  - Model: Opus, plan first.
-
-- [ ] **A view returned by a method on a `List` element reads freed memory on
+- [ ] **3.1 A view returned by a method on a `List` element reads freed memory on
   the VM**
 
   Problem: `var v = ys[0].rstrip()` followed by `String(v)` fails with "use
@@ -694,36 +591,7 @@ The checkboxes below, and the bullets inside the standing ones, are sorted Opus 
     view-returning method on a subscript, so the plan enumerates that
     fallout first.
 
-- [ ] **A returned reference may declare a wider origin than its place**
-
-  Problem: the pin compares a returned place's origin with the declared one
-  exactly, and Mojito accepts any declared origin the place lies within.
-  - `def peek(ref self) -> ref[origin_of(self)] Self.T` with `return
-    self.item` runs on Mojito. The pin reports "cannot return reference with
-    incompatible origin: 'origin_of(self.item)' vs 'origin_of(self)'".
-  - A `List` subscript is the same: the pin wants
-    `origin_of(self.items)._get_owned_interior["element"]`, and Mojito also
-    takes `origin_of(self.items)` and `origin_of(self)`.
-  - The lever is the return check's `origins/subst.rs:origin_is_within`
-    (`statements.rs`, `StmtKind::Return`).
-  - Pinned by `conformance/probes/reference_return_wider_origin.mojo`.
-  - Model: Opus, plan first. Every fixture and bundled accessor that declares
-    an owner's origin for a field must be found and respelled first.
-
-- [ ] **Forwarding a named accessor's reference result is rejected**
-
-  Problem: `return self.items.unsafe_get(index)` under
-  `ref[origin_of(self.items)._get_owned_interior["element"]]` reports
-  "returned reference escapes storage outside its declared origin", where the
-  pin runs it.
-  - The subscript `return self.items[index]` under the same origin works.
-  - Only the subscript path records the interior generation the return check
-    compares (`indexing.rs`, `origins/interior.rs:record_interior_reference`).
-    A named call leaves the returned reference's place without it.
-  - Pinned by `conformance/probes/reference_return_forwarded_accessor.mojo`.
-  - Model: Opus, plan first.
-
-- [ ] **A reference returned through an origin binder outlives its argument**
+- [ ] **3.2 A reference returned through an origin binder outlives its argument**
 
   Problem: `print(words.pick(w))` prints `None` at `w`'s last use, where
   `pick[o: Origin](self, ref[o] x: Self.T) -> ref[o] Self.T` returns its
@@ -741,7 +609,23 @@ The checkboxes below, and the bullets inside the standing ones, are sorted Opus 
   - Model: Opus, plan first. The plan must say where a call's inferred origin
     arguments become loans on its result.
 
-- [ ] **A literal passed to a `ref` parameter stops at run time**
+- [ ] **3.3 A returned reference may declare a wider origin than its place**
+
+  Problem: the pin compares a returned place's origin with the declared one
+  exactly, and Mojito accepts any declared origin the place lies within.
+  - `def peek(ref self) -> ref[origin_of(self)] Self.T` with `return
+    self.item` runs on Mojito. The pin reports "cannot return reference with
+    incompatible origin: 'origin_of(self.item)' vs 'origin_of(self)'".
+  - A `List` subscript is the same: the pin wants
+    `origin_of(self.items)._get_owned_interior["element"]`, and Mojito also
+    takes `origin_of(self.items)` and `origin_of(self)`.
+  - The lever is the return check's `origins/subst.rs:origin_is_within`
+    (`statements.rs`, `StmtKind::Return`).
+  - Pinned by `conformance/probes/reference_return_wider_origin.mojo`.
+  - Model: Opus, plan first. Every fixture and bundled accessor that declares
+    an owner's origin for a field must be found and respelled first.
+
+- [ ] **3.4 A literal passed to a `ref` parameter stops at run time**
 
   Problem: `look(3)` against `def look(ref other: Int)` is accepted and then
   fails with "reference binding to a non-place expression".
@@ -749,16 +633,7 @@ The checkboxes below, and the bullets inside the standing ones, are sorted Opus 
   - Probe: `conformance/probes/literal_to_ref_parameter.mojo`.
   - Model: Opus, plan first.
 
-- [ ] **A reference-returning `def` is not read through as a `print` argument**
-
-  Problem: `print(pick(w))` for a free `def pick[o: Origin](ref[o] x: String)
-  -> ref[o] String` reports that `ref String` does not conform to `Writable`.
-  - The pin reads through the reference, and so does Mojito for the same call
-    on a method.
-  - Probe: `conformance/probes/reference_result_print_argument.mojo`.
-  - Model: Opus, plan first.
-
-- [ ] **An element stored from another element of the same list is rejected
+- [ ] **3.5 An element stored from another element of the same list is rejected
   by element type**
 
   Problem: `self.items[i] = self.items[j]` is accepted for `Shelf[Int]` and
@@ -768,85 +643,83 @@ The checkboxes below, and the bullets inside the standing ones, are sorted Opus 
   - Probe: `conformance/probes/element_store_from_same_list.mojo`.
   - Model: Opus, plan first.
 
-- [ ] **A tuple binding with a `Tuple[...]` annotation loses `reverse` and
-  `concat`**
+- [ ] **3.6 A place passed to a `ref` parameter may alias a pack element**
 
-  Problem: `var t: Tuple[Int, String] = (1, "x")` followed by `t.reverse()`
-  or `t.concat(Tuple(True))` runs at the pin, while Mojito reports "type
-  'Tuple$t2[y3:Inty6:String][Int, String]' has no method 'reverse'".
-  - The same calls work on an unannotated binding (`var t = (1, "x")`) and
-    on `var t = Tuple(1, "x")`.
-  - The annotation resolves to the minted `Tuple$t2[...]` struct, so method
-    lookup reports the missing member before the builtin tuple path
-    (`infer_tuple_method`, reached from `method_calls/mc_infer.rs`) or a
-    `TupleTransformRequest` for the clone is ever considered.
-  - Found in the 2026-09-17 gate triage; no fixture pins it yet.
-  - Model: Opus, plan first. The plan decides whether the annotation should
-    keep the public `Tuple` spelling or the lookup should fall through, and
-    lists the other members the minted spelling hides.
+  Problem: `r(x, x)` against `r[*Ts](ref b: Int, *rest: *Ts)` prints `1` in
+  Mojito, while the pinned Mojo reports "aliasing values passed mutably to 'b'
+  argument and passed immutably to 'rest' argument".
+  - The pin infers the `ref` parameter mutable from the mutable place, and a
+    pack element is held by reference.
+  - With a regular `c: Int` in place of the pack both compilers accept the
+    call, because a trivial read parameter takes a copy.
+  - Mojito accepts a program the pin rejects, so this is a divergence.
+  - Pinned by `conformance/probes/ref_argument_aliases_pack_element.mojo`.
+  - Model: Opus, plan first. The plan must say whether the within-call
+    exclusivity check or the `ref` mutability inference is what is missing.
 
-- [ ] **A reflection method call in a runtime position is rejected**
+- [ ] **3.7 A list literal beside a `List` parameter and a pack is not ambiguous**
 
-  Problem: `comptime r = reflect[Point]` followed by `print(r.field_count())`
-  prints `2` at the pin, while Mojito reports "Undefined variable 'r'".
-  - Binding the result first works: `comptime count = r.field_count()` then
-    `print(count)`.
-  - The reflection handle erases before the executable check, so a method
-    call on it must fold to its compile-time value where it stands, as the
-    upstream materialization of an `Int` result does.
-  - A direct `reflect[Point].field_count()` in a runtime position fails too,
-    with "type 'reflect[…]' has no method 'field_count'".
-  - Found in the 2026-09-17 gate triage; no fixture pins it yet.
-  - Model: Opus, plan first. The plan lists which handle results are
-    implicitly materializable (an `Int`, a `Bool`) and which still need an
-    explicit crossing (a name list).
+  Problem: `g(x, [1, 2], x)` against `g[*Ts](a: Int, *rest: *Ts)` beside
+  `g[*Ts](a: Int, b: List[Int], *rest: *Ts)` prints `2` in Mojito, while the
+  pinned Mojo reports "ambiguous call to 'g'".
+  - Mojito charges the literal's conversion to the second overload only. A
+    string literal is already charged on the pack side too
+    (`pack_element_conversion_count`).
+  - Charging a list literal one conversion on the pack side does not tie the
+    candidates, so the regular binding costs something else first.
+  - Mojito accepts a program the pin rejects, so this is a divergence.
+  - Pinned by `conformance/probes/pack_overload_list_literal_ambiguity.mojo`.
+  - Model: Opus, as-is.
 
-- [ ] **`reflect[T]` over a function's type parameter is rejected**
+- [ ] **3.8 Methods cannot overload on the parameter convention alone**
 
-  Problem: `def f[T: AnyType]()` holding `comptime r = reflect[T]` and
-  `comptime count = r.field_count()`, called as `f[Point]()`, prints the
-  field count at the pin, while Mojito reports "not a compile-time value:
-  'T' is not a compile-time type".
-  - The error fires even when `f` is never called, so the unspecialized
-    template body is evaluated with `T` unbound.
-  - The failing evaluation is `reflect[...]` in `comptime/eval.rs`, through
-    `param_arg_type`. A template body should defer it the way a `comptime
-    if` on `T` becomes a per-instantiation stub.
-  - `reflect[Point]` over a concrete type in a value-parameterized
-    `def f[n: Int]()` already works.
-  - Found in the 2026-09-17 gate triage; no fixture pins it yet.
-  - Model: Opus, plan first. The plan names every elaborator path that
-    evaluates a retained template body.
+  Problem: `m(self, var a: String)` beside `m(self, a: String)` prints `2`
+  then `1` at the pin, while Mojito reports "'m' is already declared in this
+  scope". A free function accepts the same pair.
+  - `same_method_shape` (`checker/traits.rs`) compares parameter types and
+    ignores conventions, so the second declaration reads as a redeclaration.
+  - The lowered method name has no owned-parameter qualifier either, so the
+    two would collide even if the checker admitted them.
+  - Ranking already decides such a pair: the place costs the `var` candidate
+    a copy, and an owned argument selects it at the tie.
+  - Pinned by `conformance/probes/overload_convention_only_method.mojo`.
+  - Model: Opus, plan first. The plan must say what the lowered name gains,
+    and whether trait requirements compare conventions the same way.
 
-- [ ] **`reflect[T]` of a non-struct type is rejected**
+- [ ] **3.9 A trivial value handed to a `var` parameter beside a pack is always
+  ambiguous**
 
-  Problem: the pinned Mojo answers `reflect[Int].field_count()` with 0, and
-  Mojito rejects it with "requires a struct type".
-  - `comptime/eval.rs` raises it for every reflection method over a type that
-    is not a struct.
-  - `conformance/probes/template_fallback_reflection.mojo` records the
-    observation, made 2026-09-20.
-  - **Model:** Opus, plan first. Which handle methods answer for a scalar, and
-    with what, needs a probe per method before the lever is chosen.
+  Problem: `g(x, x + 1, x)` against `g[*Ts](a: Int, *rest: *Ts)` beside
+  `g[*Ts](a: Int, var b: Int, *rest: *Ts)` prints `3` at the pin, while Mojito
+  reports an ambiguous call.
+  - The pin selects the first overload for `Int(2)`, `v^`, and `True`, the
+    second for `x + 1`, and calls a bare `2` ambiguous. No rule was recovered.
+  - `VariadicBinding::bind` marks the case undecided, and an undecided tie is
+    reported ambiguous, so Mojito never selects a different overload than the
+    pin.
+  - A place argument is settled: the implicit copy costs and both print `2`.
+  - Pinned by `conformance/probes/pack_overload_var_trivial_undecided.mojo`.
+  - Model: Opus, plan first. The plan must find the rule with more probes, or
+    move the entry to `docs/non-goals.md` as a kept over-rejection.
 
-- [ ] **Constructing a struct's own type parameter fails in every instance
-  clone**
+- [ ] **3.10 A trivial rvalue handed to a `var` parameter beside a read overload is
+  accepted**
 
-  Problem: `self.x = Self.T()` in a method of `struct Box[T: Copyable &
-  Deinitable & Defaultable]` is rejected for the instance — "in 'reset'
-  instantiated for 'Box[Float64]': type mismatch for assignment target:
-  expected Float64, found T" — while the pin runs it.
-  - A clone respells `Self.T` in its annotations but not in a construction
-    expression, so the call still types as the template's `T`.
-  - A constructor clone fails the same way, so the shape reaches lifecycle
-    and ordinary bodies alike.
-  - Found while closing the overloaded-constructor-family item; no fixture
-    pins it yet.
-  - Model: Opus, plan first. The plan names the substitution
-    `specialize_method_clone` applies to expressions, not only to
-    annotations.
+  Problem: `q(x + 1)` against `q(var a: Int)` beside `q(a: Int)` is "ambiguous
+  call to 'q'" at the pin, while Mojito selects the `var` overload.
+  - The pin accepts the literal `q(7)`, the place `q(x)` and the transfer
+    `q(x^)` in the same program, so only the non-literal trivial rvalue is
+    ambiguous. No rule was recovered.
+  - This is the non-variadic sibling of 3.9, and the two
+    disagree: beside a pack the pin calls a bare literal ambiguous, here it
+    accepts one.
+  - `ArgumentBinding`'s `undecided` bit models the pack rule and is deliberately
+    kept off non-variadic candidates, since applying it would reject `q(7)`.
+  - Pinned by `conformance/probes/overload_var_trivial_rvalue.mojo`.
+  - Model: Opus, plan first. The plan must find the rule with more probes, or
+    move the entry to `docs/non-goals.md` as a kept divergence.
 
-- [ ] **An exact constructor overload loses to its generic sibling as
+- [ ] **3.11 An exact constructor overload loses to its generic sibling as
   ambiguous**
 
   Problem: `Tag[Int](3)` on a struct declaring `__init__(out self, n: Int)`
@@ -865,7 +738,90 @@ The checkboxes below, and the bullets inside the standing ones, are sorted Opus 
     pins it yet.
   - Model: Opus, plan first.
 
-- [ ] **`repr` of a sized scalar omits or misstates its type name**
+- [ ] **3.12 A constructor overload set drops every generic candidate before it is
+  ranked**
+
+  Problem: `C(s)` for a struct with `__init__(out self, var a: String)` beside
+  `__init__[T: Writable](out self, a: T)` prints `2` at the pin, where the
+  place costs the first candidate a copy, and `1` in Mojito.
+  - `decls_are_concrete` (`checker/declarations.rs`) retains only the concrete
+    candidates whenever one matches, at both constructor selection sites.
+  - The filter is there so a per-call clone of a generic constructor beats the
+    template it was minted from (`Variant`, `Cell`). It cannot tell that clone
+    from a separately declared concrete overload.
+  - Unlike the rank terms, the filter also overrides conversion cost, so a
+    generic candidate needing fewer conversions loses too.
+  - Pinned by `conformance/probes/overload_var_copy_constructor.mojo`.
+  - Model: Opus, plan first. The plan must say how a clone is told from a
+    declared overload — the minting record, or a marker on the clone.
+
+- [ ] **3.13 A clone that is still checked re-ranks an overloaded call**
+
+  Problem: the pinned Mojo binds a call inside a generic body once, while it
+  checks the body, and Mojito ranks the overload set again for every
+  instantiation that takes the clone check.
+  - `def outer[T: ImplicitlyCopyable & Deinitable](x: T) -> Int` holding
+    `var kept = x` and `return pick(kept)` prints 1 for `outer(3)` where the
+    pin prints 2:
+    `conformance/probes/template_overload_rebound_in_clone.mojo`.
+  - An instance derived from its checked template already inherits the
+    template's choice (`assets/ok/template_overload_binding.mojo`,
+    `overload-bound-in-generic-body`), also with a scalar local or a branch
+    (`assets/ok/template_overload_binding_local.mojo`).
+  - The remaining shapes are the ones outside the derivation classes: a `def`
+    with a local of a parameter type, and a struct method that calls a
+    module-scope overload set. Section 1 carries those entries, and each one
+    that lands narrows this.
+  - **Model:** Fable. It closes only as section 1's coverage entries land.
+
+- [ ] **3.14 A user `Hasher` cannot spell `update` the way the pin requires**
+
+  Problem: the `26cfe94f40` pin's `Hasher` requires
+  `update(mut self, value: ImmSpan[Byte, _])`, and Mojito requires
+  `_update_with_bytes(mut self, Span[Byte, _])` beside
+  `update(mut self, Some[Hashable])`. A conformer cannot satisfy both.
+  - The pin rejects `assets/ok/hasher_user_conformer.mojo` and
+    `assets/ok/dict_hasher_forwarding.mojo` with "does not implement all
+    requirements for 'Hasher'"
+    (`conformance/assets-mojo-rejects.tsv`, family `hasher-protocol`).
+  - Upstream's migration for a *call* is `value.__hash__(hasher)`, which both
+    compilers already run; the three fixtures that only called `update` were
+    respelled that way at the re-pin.
+  - The blocker for the rename is that a sized scalar has no `__hash__` in
+    Mojito: `self.v.__hash__(hasher)` on a `UInt8` reports "type 'UInt8' has
+    no method '__hash__'", because a scalar leaf reaches the hasher through
+    the checker's `Hasher.update` intrinsic and `record_hash_leaf`, not
+    through a real `SIMD.__hash__`.
+  - Upstream also replaced the pointer-and-length `hash()` overload with
+    `hash_bytes(ImmSpan[Byte])`, which lands in the same pass.
+  - The levers are `checker/traits.rs` (the `Hasher` requirement set and its
+    shape message), `checker/method_calls/mc_infer.rs` (the intrinsic arms),
+    and `stdlib/std/hashlib/` (`hasher.mojo`, `_ahash.mojo`, `_fnv1a.mojo`
+    plus every `hasher.update(...)` call site).
+  - Model: Fable. It changes a compiler-known trait's contract and needs a
+    scalar `__hash__` before the rename can land.
+
+- [ ] **3.15 `Layout` carries its alignment as a runtime field**
+
+  Problem: `Layout[Int](count=1, alignment=16)` is a runtime keyword argument
+  in Mojito, where the `26cfe94f40` pin takes alignment as a keyword-only
+  compile-time parameter and reports "unexpected keyword argument
+  'alignment'".
+  - Upstream spells it `Layout[Int32, alignment = .of_bytes[64]()](count=8)`,
+    builds the value with a new `Alignment` type (`Alignment.of[T]()` for a
+    natural alignment), and gives `Allocation` and `ManagedAllocation` the
+    same parameter while `ThinAllocation` deliberately has none.
+  - Only compile-time alignments are supported upstream, so the parameter is
+    the whole surface; nothing needs a runtime alignment field.
+  - `assets/ok/layout_allocation.mojo` is the fixture the pin rejects
+    (`conformance/assets-mojo-rejects.tsv`, family `layout-alignment`).
+  - The lever is `stdlib/std/memory/alloc.mojo` (`Layout`, `alloc`,
+    `_RawAlloc`) plus the VM's reservation check.
+  - Model: Opus, plan first. Moving a field to a parameter changes every
+    `Layout` value's type, so the plan must first find what depends on the
+    field.
+
+- [ ] **3.16 `repr` of a sized scalar omits or misstates its type name**
 
   Problem: `repr(Float32(0.5))` and `repr(Int8(3))` print `Float32(0.5)` and
   `Int8(3)` at the pin, but `0.5` and `3` on the VM, and `Float64(0.5)` and
@@ -879,7 +835,233 @@ The checkboxes below, and the bullets inside the standing ones, are sorted Opus 
     stays the float-format divergence the Dragonbox item owns.
   - Model: Opus, as-is.
 
-- [ ] **Upstream `DType` names with no Mojito dtype are rejected**
+- [ ] **3.17 A call through a `ref` to a callable value is rejected**
+
+  Problem: `for f in fns: print(f(5))` and `ref g = fns[0]; print(g(1))` run at
+  the pin over a function display, while Mojito reports "'f' has type ref
+  def(Int) thin -> Int and is not callable".
+  - Both thin and capturing elements are affected.
+  - The indexed call `fns[0](5)` already works through element-call dispatch.
+    A `ref`-typed callee has no such path.
+  - Model: Opus, plan first.
+
+- [ ] **3.18 Forwarding a named accessor's reference result is rejected**
+
+  Problem: `return self.items.unsafe_get(index)` under
+  `ref[origin_of(self.items)._get_owned_interior["element"]]` reports
+  "returned reference escapes storage outside its declared origin", where the
+  pin runs it.
+  - The subscript `return self.items[index]` under the same origin works.
+  - Only the subscript path records the interior generation the return check
+    compares (`indexing.rs`, `origins/interior.rs:record_interior_reference`).
+    A named call leaves the returned reference's place without it.
+  - Pinned by `conformance/probes/reference_return_forwarded_accessor.mojo`.
+  - Model: Opus, plan first.
+
+- [ ] **3.19 A reference-returning `def` is not read through as a `print` argument**
+
+  Problem: `print(pick(w))` for a free `def pick[o: Origin](ref[o] x: String)
+  -> ref[o] String` reports that `ref String` does not conform to `Writable`.
+  - The pin reads through the reference, and so does Mojito for the same call
+    on a method.
+  - Probe: `conformance/probes/reference_result_print_argument.mojo`.
+  - Model: Opus, plan first.
+
+- [ ] **3.20 Constructing a struct's own type parameter fails in every instance
+  clone**
+
+  Problem: `self.x = Self.T()` in a method of `struct Box[T: Copyable &
+  Deinitable & Defaultable]` is rejected for the instance — "in 'reset'
+  instantiated for 'Box[Float64]': type mismatch for assignment target:
+  expected Float64, found T" — while the pin runs it.
+  - A clone respells `Self.T` in its annotations but not in a construction
+    expression, so the call still types as the template's `T`.
+  - A constructor clone fails the same way, so the shape reaches lifecycle
+    and ordinary bodies alike.
+  - Found while closing the overloaded-constructor-family item; no fixture
+    pins it yet.
+  - Model: Opus, plan first. The plan names the substitution
+    `specialize_method_clone` applies to expressions, not only to
+    annotations.
+
+- [ ] **3.21 Two type-pack `__init__` overloads cannot be constructed**
+
+  Problem: `H(x, x, x)` for a struct with `__init__[*Ts](out self, a: Int,
+  *rest: *Ts)` beside `__init__[*Ts](out self, a: Int, b: Int, *rest: *Ts)`
+  prints `3` at the pin and fails in Mojito with "checked constructor
+  'H.__init__$ov$…' is missing from MIR".
+  - The checker selects the same constructor the pin does. The selected clone
+    never reaches MIR.
+  - The rejection is safe, but it is a VM-phase message for a program the pin
+    runs.
+  - Pinned by `conformance/probes/pack_overload_constructor_missing_mir.mojo`.
+  - Model: Opus, plan first. Free functions and methods are served from the
+    checker's recorded selection; the plan must find why constructors are not.
+
+- [ ] **3.22 A `def`'s own type pack cannot be queried in a runtime position**
+
+  Problem: `return 1 + Us.length` fails with "Undefined variable 'Us'", while
+  the pinned Mojo runs it.
+  - A free `def count[*Us](var *extra: *Us)` and a method-own pack on any
+    struct fail the same way.
+  - A compile-time position (`comptime for i in range(Us.length)`) works, and
+    so does a variadic struct's own pack (`Self.Ts.length`) in a runtime
+    position.
+  - Only `generate_struct_spec` binds a pack into the substitutions that
+    `fold_pack_typelist_use` (`comptime/rewrite.rs`) reads during
+    materialization. `def` specialization never does.
+  - Pinned by `conformance/fixtures/pack_length_runtime_position.mojo`
+    (`pack-length-runtime-position`, `mojo-only`).
+  - It stays in the elaborator, so it does not wait for section 1's symbolic
+    pack work.
+  - Model: Opus, plan first. The binding site is known, but the plan must
+    enumerate the clone paths that share it (free `def`, method-own pack,
+    nested forwarding) and the materialization rewrite each one runs.
+
+- [ ] **3.23 A value-returning body that ends in `abort(...)` is rejected**
+
+  Problem: `def f(x: Int) -> Int` whose last statement is `abort("no")` runs
+  at the pin, while Mojito reports "'f' does not return a value on every
+  path".
+  - `conformance/probes/abort_ends_a_returning_body.mojo` pins it.
+  - The return analysis (`stmt_returns`, `checker/declarations.rs`) is
+    syntactic. It knows `return`, `raise`, and the compiler crossing
+    `_mojito_abort`, not a call to the bundled `std.os.abort` that wraps it.
+  - Under source validation a `comptime for` that holds a `return` defers the
+    verdict to the unrolled clone for the same reason: `Bag.get` in
+    `assets/ok/pack_element_rebind.mojo` ends in `abort(...)`. That deferral
+    can tighten once this is fixed.
+  - The lever is a checked fact that a callee never returns, read where the
+    call resolves, not a name test.
+  - Model: Opus, plan first. The plan must say where the fact lives and what
+    MIR emits after such a call.
+
+- [ ] **3.24 Explicit type arguments on a static method of a non-parametric
+  struct are rejected**
+
+  Problem: `P.plain[Int](4)` on `@staticmethod def plain[T: Writable](x: T)`
+  prints `1` at the pin, while Mojito reports "Undefined variable 'P'".
+  - Any generic static on a struct without parameters is affected, whether
+    or not its body holds a `comptime if`.
+  - The inferred spelling `P.plain(4)` works.
+  - The explicit spelling parses as `Invoke` over `Member(P, plain)`. The
+    error is raised before the non-parametric static path in
+    `checker/method_calls/mc_infer.rs` sees the call.
+  - Model: Opus, plan first. The plan must first find which pass infers the
+    bare type name as a value.
+
+- [ ] **3.25 A compile-time-keyed `def` cannot be passed as a function value**
+
+  Problem: `apply(as_int, 3)`, where `as_int[T]` holds a `comptime if` or a
+  `rebind` and `apply` declares a callable bound, runs at the pin and reports
+  "Undefined variable 'as_int'" in Mojito.
+  - The template is dropped or stubbed, and only its `$`-mangled clones carry
+    a name; a bare reference resolves to neither.
+  - The rejection is safe (no wrong answer), but the message names nothing
+    the source wrote.
+  - Model: Fable, plan first. The plan must say which clone a bare reference
+    names, and what the rejection says when none can be chosen.
+
+- [ ] **3.26 An associated alias is not constructible through a parameterized
+  base**
+
+  Problem: `Holder[7].Same()` for `comptime Same = Sized[Self.n]` reports
+  `Undefined variable 'Holder'`, where the pin runs it.
+  - The annotation spelling works: `var made: Holder[7].Same = Sized[7]()`.
+  - The alias now binds the instance's value parameters
+    (`associated_type_from_base`), so only the call path is missing.
+  - Model: Opus, plan first.
+
+- [ ] **3.27 A member-led arithmetic type argument does not parse in an alias
+  body**
+
+  Problem: `comptime Next = Sized[Self.n + 1]` is a parse error (`Expected ']'
+  after a subscript`), where the pin accepts it.
+  - The bracket is parsed as a runtime subscript, whose index grammar stops at
+    the member access. `Sized[(Self.n + 1)]` and `Sized[0 + Self.n]` parse.
+  - The same expression in annotation position (`var x: Sized[Self.n + 1]`)
+    parses, and the checker already types it symbolically.
+  - Model: Opus, plan first. It is the standing Index-versus-TypeApply split;
+    the plan decides whether the alias body re-parses as a type or the
+    subscript grammar widens.
+
+- [ ] **3.28 An arithmetic `where` operand compiles for `def`s and struct methods
+  only**
+
+  Problem: `where n + 1 == m` needs its declaration's value parameters in
+  scope when the clause compiles, and only a free `def` and a struct method
+  open that scope first.
+  - A trait method, a comptime alias, and a Bool-bodied predicate alias
+    report `unsupported generic constraint operand`, as every declaration did
+    before.
+  - The lever is `push_param_scope` around each remaining
+    `compile_where_clause` site (`checker/traits.rs`, `statements.rs`,
+    `conformance.rs`).
+  - Model: Opus, plan first. The sites are known; the predicate alias also
+    needs its substitution (`substitute_predicate`) to carry an expression.
+
+- [ ] **3.29 A tuple binding with a `Tuple[...]` annotation loses `reverse` and
+  `concat`**
+
+  Problem: `var t: Tuple[Int, String] = (1, "x")` followed by `t.reverse()`
+  or `t.concat(Tuple(True))` runs at the pin, while Mojito reports "type
+  'Tuple$t2[y3:Inty6:String][Int, String]' has no method 'reverse'".
+  - The same calls work on an unannotated binding (`var t = (1, "x")`) and
+    on `var t = Tuple(1, "x")`.
+  - The annotation resolves to the minted `Tuple$t2[...]` struct, so method
+    lookup reports the missing member before the builtin tuple path
+    (`infer_tuple_method`, reached from `method_calls/mc_infer.rs`) or a
+    `TupleTransformRequest` for the clone is ever considered.
+  - Found in the 2026-09-17 gate triage; no fixture pins it yet.
+  - Model: Opus, plan first. The plan decides whether the annotation should
+    keep the public `Tuple` spelling or the lookup should fall through, and
+    lists the other members the minted spelling hides.
+
+- [ ] **3.30 A reflection method call in a runtime position is rejected**
+
+  Problem: `comptime r = reflect[Point]` followed by `print(r.field_count())`
+  prints `2` at the pin, while Mojito reports "Undefined variable 'r'".
+  - Binding the result first works: `comptime count = r.field_count()` then
+    `print(count)`.
+  - The reflection handle erases before the executable check, so a method
+    call on it must fold to its compile-time value where it stands, as the
+    upstream materialization of an `Int` result does.
+  - A direct `reflect[Point].field_count()` in a runtime position fails too,
+    with "type 'reflect[…]' has no method 'field_count'".
+  - Found in the 2026-09-17 gate triage; no fixture pins it yet.
+  - Model: Opus, plan first. The plan lists which handle results are
+    implicitly materializable (an `Int`, a `Bool`) and which still need an
+    explicit crossing (a name list).
+
+- [ ] **3.31 `reflect[T]` over a function's type parameter is rejected**
+
+  Problem: `def f[T: AnyType]()` holding `comptime r = reflect[T]` and
+  `comptime count = r.field_count()`, called as `f[Point]()`, prints the
+  field count at the pin, while Mojito reports "not a compile-time value:
+  'T' is not a compile-time type".
+  - The error fires even when `f` is never called, so the unspecialized
+    template body is evaluated with `T` unbound.
+  - The failing evaluation is `reflect[...]` in `comptime/eval.rs`, through
+    `param_arg_type`. A template body should defer it the way a `comptime
+    if` on `T` becomes a per-instantiation stub.
+  - `reflect[Point]` over a concrete type in a value-parameterized
+    `def f[n: Int]()` already works.
+  - Found in the 2026-09-17 gate triage; no fixture pins it yet.
+  - Model: Opus, plan first. The plan names every elaborator path that
+    evaluates a retained template body.
+
+- [ ] **3.32 `reflect[T]` of a non-struct type is rejected**
+
+  Problem: the pinned Mojo answers `reflect[Int].field_count()` with 0, and
+  Mojito rejects it with "requires a struct type".
+  - `comptime/eval.rs` raises it for every reflection method over a type that
+    is not a struct.
+  - `conformance/probes/template_fallback_reflection.mojo` records the
+    observation, made 2026-09-20.
+  - **Model:** Opus, plan first. Which handle methods answer for a scalar, and
+    with what, needs a probe per method before the lever is chosen.
+
+- [ ] **3.33 Upstream `DType` names with no Mojito dtype are rejected**
 
   Problem: `print(DType.uint128)` runs at the pin (`uint128`), while Mojito
   reports "DType.uint128 is not supported yet"
@@ -903,207 +1085,35 @@ The checkboxes below, and the bullets inside the standing ones, are sorted Opus 
     need a manual `rg` pass.
   - Model: Opus, plan first.
 
-- [ ] **A constructor overload set drops every generic candidate before it is
-  ranked**
+- [ ] **3.34 A parametric nested `def` named as a value reports its marker**
 
-  Problem: `C(s)` for a struct with `__init__(out self, var a: String)` beside
-  `__init__[T: Writable](out self, a: T)` prints `2` at the pin, where the
-  place costs the first candidate a copy, and `1` in Mojito.
-  - `decls_are_concrete` (`checker/declarations.rs`) retains only the concrete
-    candidates whenever one matches, at both constructor selection sites.
-  - The filter is there so a per-call clone of a generic constructor beats the
-    template it was minted from (`Variant`, `Cell`). It cannot tell that clone
-    from a separately declared concrete overload.
-  - Unlike the rank terms, the filter also overrides conversion cost, so a
-    generic candidate needing fewer conversions loses too.
-  - Pinned by `conformance/probes/overload_var_copy_constructor.mojo`.
-  - Model: Opus, plan first. The plan must say how a clone is told from a
-    declared overload — the minting record, or a marker on the clone.
+  Problem: `apply(inner, 3)` and `var g = inner`, for a nested
+  `def inner[U: Copyable]`, report `Undefined variable
+  'main$110$198$nested$0$inner'`. The pin rejects both too, so the verdict is
+  right and only the message is wrong.
+  - The lexical pass renames the declaration to its marker and rewrites every
+    reference to it, then deletes the template it could not instantiate,
+    leaving the renamed value reference dangling.
+  - The pin's texts are "cannot use parametric function as a runtime closure"
+    for the binding and an `invalid call to '__call__'` for the argument.
+  - Pre-existing for a nested `def` the pass already registered; the nested
+    compile-time-keyed work widened the class it reaches.
+  - Model: Opus, as-is.
 
-- [ ] **Methods cannot overload on the parameter convention alone**
+- [ ] **3.35 `String` always owns a heap buffer, where upstream's has three
+  representations**
 
-  Problem: `m(self, var a: String)` beside `m(self, a: String)` prints `2`
-  then `1` at the pin, while Mojito reports "'m' is already declared in this
-  scope". A free function accepts the same pair.
-  - `same_method_shape` (`checker/traits.rs`) compares parameter types and
-    ignores conventions, so the second declaration reads as a redeclaration.
-  - The lowered method name has no owned-parameter qualifier either, so the
-    two would collide even if the checker admitted them.
-  - Ranking already decides such a pair: the place costs the `var` candidate
-    a copy, and an owned argument selects it at the tie.
-  - Pinned by `conformance/probes/overload_convention_only_method.mojo`.
-  - Model: Opus, plan first. The plan must say what the lowered name gains,
-    and whether trait requirements compare conventions the same way.
-
-- [ ] **A trivial rvalue handed to a `var` parameter beside a read overload is
-  accepted**
-
-  Problem: `q(x + 1)` against `q(var a: Int)` beside `q(a: Int)` is "ambiguous
-  call to 'q'" at the pin, while Mojito selects the `var` overload.
-  - The pin accepts the literal `q(7)`, the place `q(x)` and the transfer
-    `q(x^)` in the same program, so only the non-literal trivial rvalue is
-    ambiguous. No rule was recovered.
-  - This is the non-variadic sibling of the type-pack entry below, and the two
-    disagree: beside a pack the pin calls a bare literal ambiguous, here it
-    accepts one.
-  - `ArgumentBinding`'s `undecided` bit models the pack rule and is deliberately
-    kept off non-variadic candidates, since applying it would reject `q(7)`.
-  - Pinned by `conformance/probes/overload_var_trivial_rvalue.mojo`.
-  - Model: Opus, plan first. The plan must find the rule with more probes, or
-    move the entry to `docs/non-goals.md` as a kept divergence.
-
-- [ ] **A place passed to a `ref` parameter may alias a pack element**
-
-  Problem: `r(x, x)` against `r[*Ts](ref b: Int, *rest: *Ts)` prints `1` in
-  Mojito, while the pinned Mojo reports "aliasing values passed mutably to 'b'
-  argument and passed immutably to 'rest' argument".
-  - The pin infers the `ref` parameter mutable from the mutable place, and a
-    pack element is held by reference.
-  - With a regular `c: Int` in place of the pack both compilers accept the
-    call, because a trivial read parameter takes a copy.
-  - Mojito accepts a program the pin rejects, so this is a divergence.
-  - Pinned by `conformance/probes/ref_argument_aliases_pack_element.mojo`.
-  - Model: Opus, plan first. The plan must say whether the within-call
-    exclusivity check or the `ref` mutability inference is what is missing.
-
-- [ ] **Two type-pack `__init__` overloads cannot be constructed**
-
-  Problem: `H(x, x, x)` for a struct with `__init__[*Ts](out self, a: Int,
-  *rest: *Ts)` beside `__init__[*Ts](out self, a: Int, b: Int, *rest: *Ts)`
-  prints `3` at the pin and fails in Mojito with "checked constructor
-  'H.__init__$ov$…' is missing from MIR".
-  - The checker selects the same constructor the pin does. The selected clone
-    never reaches MIR.
-  - The rejection is safe, but it is a VM-phase message for a program the pin
-    runs.
-  - Pinned by `conformance/probes/pack_overload_constructor_missing_mir.mojo`.
-  - Model: Opus, plan first. Free functions and methods are served from the
-    checker's recorded selection; the plan must find why constructors are not.
-
-- [ ] **A trivial value handed to a `var` parameter beside a pack is always
-  ambiguous**
-
-  Problem: `g(x, x + 1, x)` against `g[*Ts](a: Int, *rest: *Ts)` beside
-  `g[*Ts](a: Int, var b: Int, *rest: *Ts)` prints `3` at the pin, while Mojito
-  reports an ambiguous call.
-  - The pin selects the first overload for `Int(2)`, `v^`, and `True`, the
-    second for `x + 1`, and calls a bare `2` ambiguous. No rule was recovered.
-  - `VariadicBinding::bind` marks the case undecided, and an undecided tie is
-    reported ambiguous, so Mojito never selects a different overload than the
-    pin.
-  - A place argument is settled: the implicit copy costs and both print `2`.
-  - Pinned by `conformance/probes/pack_overload_var_trivial_undecided.mojo`.
-  - Model: Opus, plan first. The plan must find the rule with more probes, or
-    move the entry to `docs/non-goals.md` as a kept over-rejection.
-
-- [ ] **A value-returning body that ends in `abort(...)` is rejected**
-
-  Problem: `def f(x: Int) -> Int` whose last statement is `abort("no")` runs
-  at the pin, while Mojito reports "'f' does not return a value on every
-  path".
-  - `conformance/probes/abort_ends_a_returning_body.mojo` pins it.
-  - The return analysis (`stmt_returns`, `checker/declarations.rs`) is
-    syntactic. It knows `return`, `raise`, and the compiler crossing
-    `_mojito_abort`, not a call to the bundled `std.os.abort` that wraps it.
-  - Under source validation a `comptime for` that holds a `return` defers the
-    verdict to the unrolled clone for the same reason: `Bag.get` in
-    `assets/ok/pack_element_rebind.mojo` ends in `abort(...)`. That deferral
-    can tighten once this is fixed.
-  - The lever is a checked fact that a callee never returns, read where the
-    call resolves, not a name test.
-  - Model: Opus, plan first. The plan must say where the fact lives and what
-    MIR emits after such a call.
-
-- [ ] **A `def`'s own type pack cannot be queried in a runtime position**
-
-  Problem: `return 1 + Us.length` fails with "Undefined variable 'Us'", while
-  the pinned Mojo runs it.
-  - A free `def count[*Us](var *extra: *Us)` and a method-own pack on any
-    struct fail the same way.
-  - A compile-time position (`comptime for i in range(Us.length)`) works, and
-    so does a variadic struct's own pack (`Self.Ts.length`) in a runtime
-    position.
-  - Only `generate_struct_spec` binds a pack into the substitutions that
-    `fold_pack_typelist_use` (`comptime/rewrite.rs`) reads during
-    materialization. `def` specialization never does.
-  - Pinned by `conformance/fixtures/pack_length_runtime_position.mojo`
-    (`pack-length-runtime-position`, `mojo-only`).
-  - It stays in the elaborator, so it does not wait for section 1's symbolic
-    pack work.
-  - Model: Opus, plan first. The binding site is known, but the plan must
-    enumerate the clone paths that share it (free `def`, method-own pack,
-    nested forwarding) and the materialization rewrite each one runs.
-
-- [ ] **A member-led arithmetic type argument does not parse in an alias
-  body**
-
-  Problem: `comptime Next = Sized[Self.n + 1]` is a parse error (`Expected ']'
-  after a subscript`), where the pin accepts it.
-  - The bracket is parsed as a runtime subscript, whose index grammar stops at
-    the member access. `Sized[(Self.n + 1)]` and `Sized[0 + Self.n]` parse.
-  - The same expression in annotation position (`var x: Sized[Self.n + 1]`)
-    parses, and the checker already types it symbolically.
-  - Model: Opus, plan first. It is the standing Index-versus-TypeApply split;
-    the plan decides whether the alias body re-parses as a type or the
-    subscript grammar widens.
-
-- [ ] **An associated alias is not constructible through a parameterized
-  base**
-
-  Problem: `Holder[7].Same()` for `comptime Same = Sized[Self.n]` reports
-  `Undefined variable 'Holder'`, where the pin runs it.
-  - The annotation spelling works: `var made: Holder[7].Same = Sized[7]()`.
-  - The alias now binds the instance's value parameters
-    (`associated_type_from_base`), so only the call path is missing.
+  Problem: `String(literal)` allocates and copies the literal's bytes, while
+  upstream points at the static bytes and copies only on the first mutation.
+  - Upstream packs a static-constant, an inline (up to 23 bytes), and a
+    reference-counted heap form into the same 24 bytes, flagged in
+    `_capacity_or_data`; Mojito's `{data, size, cap}` has only the heap form.
+  - No program output differs; allocation counts and `capacity()` do.
+  - Port the static form first: every mutator, `__del__`, copy, and move
+    must respect a non-owning flag, on both backends.
   - Model: Opus, plan first.
 
-- [ ] **An arithmetic `where` operand compiles for `def`s and struct methods
-  only**
-
-  Problem: `where n + 1 == m` needs its declaration's value parameters in
-  scope when the clause compiles, and only a free `def` and a struct method
-  open that scope first.
-  - A trait method, a comptime alias, and a Bool-bodied predicate alias
-    report `unsupported generic constraint operand`, as every declaration did
-    before.
-  - The lever is `push_param_scope` around each remaining
-    `compile_where_clause` site (`checker/traits.rs`, `statements.rs`,
-    `conformance.rs`).
-  - Model: Opus, plan first. The sites are known; the predicate alias also
-    needs its substitution (`substitute_predicate`) to carry an expression.
-
-- [ ] **A compile-time-keyed `def` cannot be passed as a function value**
-
-  Problem: `apply(as_int, 3)`, where `as_int[T]` holds a `comptime if` or a
-  `rebind` and `apply` declares a callable bound, runs at the pin and reports
-  "Undefined variable 'as_int'" in Mojito.
-  - The template is dropped or stubbed, and only its `$`-mangled clones carry
-    a name; a bare reference resolves to neither.
-  - The rejection is safe (no wrong answer), but the message names nothing
-    the source wrote.
-  - Model: Fable, plan first. The plan must say which clone a bare reference
-    names, and what the rejection says when none can be chosen.
-
-- [ ] **A clone that is still checked re-ranks an overloaded call**
-
-  Problem: the pinned Mojo binds a call inside a generic body once, while it
-  checks the body, and Mojito ranks the overload set again for every
-  instantiation that takes the clone check.
-  - `def outer[T: ImplicitlyCopyable & Deinitable](x: T) -> Int` holding
-    `var kept = x` and `return pick(kept)` prints 1 for `outer(3)` where the
-    pin prints 2:
-    `conformance/probes/template_overload_rebound_in_clone.mojo`.
-  - An instance derived from its checked template already inherits the
-    template's choice (`assets/ok/template_overload_binding.mojo`,
-    `overload-bound-in-generic-body`), also with a scalar local or a branch
-    (`assets/ok/template_overload_binding_local.mojo`).
-  - The remaining shapes are the ones outside the derivation classes: a `def`
-    with a local of a parameter type, and a struct method that calls a
-    module-scope overload set. Section 1 carries those entries, and each one
-    that lands narrows this.
-  - **Model:** Fable. It closes only as section 1's coverage entries land.
-
-- [ ] **Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
+- [ ] **3.36 Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
   any order)*
 
   Problem: parts of Mojito's stdlib lean on the Rust runtime where upstream
@@ -1133,20 +1143,7 @@ The checkboxes below, and the bullets inside the standing ones, are sorted Opus 
   Four runtime services are deliberately not on that list; they are in
   [`docs/non-goals.md`](non-goals.md).
 
-- [ ] **`String` always owns a heap buffer, where upstream's has three
-  representations**
-
-  Problem: `String(literal)` allocates and copies the literal's bytes, while
-  upstream points at the static bytes and copies only on the first mutation.
-  - Upstream packs a static-constant, an inline (up to 23 bytes), and a
-    reference-counted heap form into the same 24 bytes, flagged in
-    `_capacity_or_data`; Mojito's `{data, size, cap}` has only the heap form.
-  - No program output differs; allocation counts and `capacity()` do.
-  - Port the static form first: every mutator, `__del__`, copy, and move
-    must respect a non-owning flag, on both backends.
-  - Model: Opus, plan first.
-
-- [ ] **Behavioral divergences from the pinned Mojo — burn to zero**
+- [ ] **3.37 Behavioral divergences from the pinned Mojo — burn to zero**
   *(standing)*
 
   Every new divergence lands here with a probe or a `cases.tsv`
@@ -1453,7 +1450,7 @@ The checkboxes below, and the bullets inside the standing ones, are sorted Opus 
 
 ### 4. Grow The CPU Standard Library *(demand-first)*
 
-- [ ] **Collection API parity**
+- [ ] **4.1 Collection API parity**
 
   Goal: grow the tuple, slice, optional/variant, and String surfaces toward
   the audited head (`docs/features.md` records what lands). The tasks below
@@ -1625,7 +1622,7 @@ The checkboxes below, and the bullets inside the standing ones, are sorted Opus 
        Extended_Pictographic or Prepend data. Reverse iteration re-scans
        forward from the nearest CR/LF/Control boundary.
 
-- [ ] **Filesystem and I/O residues**
+- [ ] **4.2 Filesystem and I/O residues**
 
   Behind the landed files, streams, paths, and tempfile stage
   (`docs/features.md`).
@@ -1662,12 +1659,7 @@ The checkboxes below, and the bullets inside the standing ones, are sorted Opus 
        costs Hello World about a second of debug compile time
        (`docs/performance.md`).
 
-- [ ] **Time, random, and testing slices**
-
-  Goal: deterministic testable cores, with host-dependent behavior behind
-  runtime services.
-
-- [ ] **Scalars have no comparison methods**
+- [ ] **4.3 Scalars have no comparison methods**
 
   Problem: `x.ne(y)` on a `Float64` (or any width-1 scalar) is rejected with
   `type 'Float64' has no method 'ne'`, though the pin accepts it.
@@ -1679,45 +1671,14 @@ The checkboxes below, and the bullets inside the standing ones, are sorted Opus 
   - Not a wrong answer, only a missing spelling. Until then, `x < y or x > y`
     is the ordered `ne`; infix `!=` answers `True` for a NaN.
 
-### 5. Packaging, Artifacts, And Developer Tooling *(any order unless noted)*
+- [ ] **4.4 Time, random, and testing slices**
 
-- [ ] **Compile-time performance**
+  Goal: deterministic testable cores, with host-dependent behavior behind
+  runtime services.
 
-  Problem: Hello World is 0.8 s release / 4.6 s debug
-  (`docs/performance.md`; it was 24 s / 52 s before the shared
-  `Arc<CheckedTables>`). Next, in order:
-  1. Avoid the redundant checker passes. Hello World re-elaborates and
-     re-checks once because the request scan always finds the prelude's own
-     Tuple/def requests, and every check runs two transfer rounds.
-  2. `checked_var_types` scans the whole expression table per variable, and
-     `explicit_destroy` re-derives deinitability per struct per pass.
-  3. Only then cache the elaborated/checked stdlib across processes.
+### 5. Packaging, Artifacts, And Developer Tooling
 
-- [ ] **Feature and target options**
-
-  Goal: checked CLI/build configuration recorded in artifacts and
-  diagnostics.
-
-- [ ] **Compiled package artifacts**
-
-  Goal: a versioned `.mojoc` representation (modules stay non-first-class).
-  Per-directory resolution order:
-  1. source package
-  2. `.mojoc`
-  3. source module
-  4. legacy `.mojopkg`
-
-- [ ] **Debugging metadata and inspection**
-
-  Goal: stack/source diagnostics, MIR inspection, and debugger-oriented
-  value rendering.
-
-- [ ] **Testing tools**
-
-  Goal: Mojito-native assertions, expected-error tests, and
-  differential-harness integration.
-
-- [ ] **The corpus sweeps no longer run in the overnight gate**
+- [ ] **5.1 The corpus sweeps no longer run in the overnight gate**
 
   Problem: the two generated pliron manifests and their coverage ratchets
   now only move when someone runs `scripts/check-pliron-heavy` by hand, so a
@@ -1731,7 +1692,7 @@ The checkboxes below, and the bullets inside the standing ones, are sorted Opus 
     unattended when the machine is otherwise idle, and to surface its result
     where the morning triage already looks.
 
-- [ ] **Naming the bundled stdlib with `-I` breaks every program**
+- [ ] **5.2 Naming the bundled stdlib with `-I` breaks every program**
 
   Problem: `mojito run -I stdlib FILE` fails with `static UnsafePointer
   allocation was removed from Mojo` even for a program that only prints, and
@@ -1754,34 +1715,70 @@ The checkboxes below, and the bullets inside the standing ones, are sorted Opus 
   - The default run with no `-I` is unaffected, which is why
     `tests/flat_stdlib_test.rs` passes.
 
-- [ ] **Distribution reproducibility gate** *(last)*
+- [ ] **5.3 Compile-time performance**
+
+  Problem: Hello World is 0.8 s release / 4.6 s debug
+  (`docs/performance.md`; it was 24 s / 52 s before the shared
+  `Arc<CheckedTables>`). Next, in order:
+  1. Avoid the redundant checker passes. Hello World re-elaborates and
+     re-checks once because the request scan always finds the prelude's own
+     Tuple/def requests, and every check runs two transfer rounds.
+  2. `checked_var_types` scans the whole expression table per variable, and
+     `explicit_destroy` re-derives deinitability per struct per pass.
+  3. Only then cache the elaborated/checked stdlib across processes.
+
+- [ ] **5.4 Feature and target options**
+
+  Goal: checked CLI/build configuration recorded in artifacts and
+  diagnostics.
+
+- [ ] **5.5 Compiled package artifacts**
+
+  Goal: a versioned `.mojoc` representation (modules stay non-first-class).
+  Per-directory resolution order:
+  1. source package
+  2. `.mojoc`
+  3. source module
+  4. legacy `.mojopkg`
+
+- [ ] **5.6 Debugging metadata and inspection**
+
+  Goal: stack/source diagnostics, MIR inspection, and debugger-oriented
+  value rendering.
+
+- [ ] **5.7 Testing tools**
+
+  Goal: Mojito-native assertions, expected-error tests, and
+  differential-harness integration.
+
+- [ ] **5.8 Distribution reproducibility gate** *(last)*
 
   Goal: the release check rebuilds, tests, documents, and reproduces
   conformance from the crates.io archive alone.
 
-### 6. Code Organization Follow-Ups *(any order — behavior-preserving)*
+### 6. Code Organization Follow-Ups *(behavior-preserving)*
 
 The 2026-09 module split (`docs/symbol-map.md`) removed every file over
 3,000 lines. What remains needs semantic extraction, not line moves.
 
-- [ ] **Split `expr_unconverted`**
+- [ ] **6.1 Split `expr_unconverted`**
 
   `mir/lower_expr/expr.rs` (about 2,090 lines) is one match over
   `ExprKind`.
   - Extract arm groups into `Flatten` methods.
 
-- [ ] **Split `infer_method_call`**
+- [ ] **6.2 Split `infer_method_call`**
 
   `checker/method_calls/mc_infer.rs` (about 1,530 lines) is one method.
   - Extract receiver-family branches beside `selection`, `statics`, and
     `builtin_types`.
 
-- [ ] **Split `verify_instruction`**
+- [ ] **6.3 Split `verify_instruction`**
 
   `mir/verify/instr.rs` (about 1,320 lines) is one match over `MirInstr`.
   - Extract per-family check helpers.
 
-- [ ] **Shrink the 2 kloc band**
+- [ ] **6.4 Shrink the 2 kloc band**
 
   Split these further only along a cohesive seam, while touching them:
   - `checker/traits.rs` (2,629), `mir/lower_stmt.rs` (2,595),
@@ -1825,21 +1822,13 @@ Every entry is written for a human reader who has not seen the code.
   paragraph.
 - Exception: every change that needs an `MJRT_ABI_VERSION` bump shares
   one checkbox, so the native runtime ABI is bumped once for all of them.
-- Sections 2 and 3 carry a **Model:** bullet on every checkbox, and on every
-  bullet inside a standing checkbox that holds more than one independent
-  item. It is a quick complexity and blast-radius estimate. Fable is for work
-  that changes a contract, spans phases, or has no named lever; Opus is for
-  work whose site and rule are both known.
-- An Opus entry adds "as-is" or "plan first". "Plan first" means the lever is
-  known but the fallout is not enumerated yet.
-- Those two sections are sorted by that estimate — Opus as-is, then Opus plan
-  first, then Fable — at both the checkbox and the bullet level. A strict dependency that forces another
-  order is stated in the entry that carries it.
-- Section 1 carries the same **Model:** bullet but is sorted in dependency
-  order, each entry naming what it depends on. Astra is named where the plan
-  itself is the broad-scope problem.
-- Section 1 holds only check-order work. A residue found during that work is
-  filed by its kind: a divergence from the pin goes to section 3.
+- Entries are numbered `<section>.<n>` and sorted by dependency first, then by
+  how much the entry moves that section's goal. An entry that depends on
+  another names it. Renumber when one lands.
+- Every checkbox carries a **Model:** bullet — a complexity estimate, never a
+  sort key. Fable is for work that changes a contract, spans phases, or has no
+  named lever; Opus is for work whose site and rule are both known, and adds
+  "as-is" or "plan first". Astra is for a plan that is itself the problem.
 
 ## Working Rule
 

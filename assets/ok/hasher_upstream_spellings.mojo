@@ -20,7 +20,7 @@ struct Tag(Copyable, Hashable, Movable):
     var n: Int8
 
     def __hash__(self, mut hasher: Some[Hasher]):
-        hasher.update(self.n)
+        hasher._update_with_simd(self.n)
         hasher._update_with_simd(SIMD[DType.int32, 2](1, 2))
 
 def main():

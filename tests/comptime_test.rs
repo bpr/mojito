@@ -553,13 +553,17 @@ fn nested_whole_pack_forwarding_can_chain_without_copying() {
 }
 
 #[test]
-fn walrus_bindings_shadow_pack_templates_for_the_whole_function() {
+fn a_walrus_cannot_target_a_pack_template_name() {
+    // A walrus updates a variable already in scope, so a pack template's name
+    // is not a target: it never shadowed one, it is simply not a variable. The
+    // pinned Mojo rejects the same programs with "expression must be mutable in
+    // assignment".
     let top_level = "def choose[*Ts: Movable & Deinitable](var *args: *Ts) -> Int:\n    return len(args)\n\ndef main():\n    if True:\n        var ignored = (choose := 5)\n    print(choose(2))\n";
     let nested = "def outer():\n    def choose[*Ts: Movable & Deinitable](var *args: *Ts) -> Int:\n        return len(args)\n    if True:\n        var ignored = (choose := 5)\n    print(choose(2))\n\ndef main():\n    outer()\n";
     for source in [top_level, nested] {
         let error = run(source).unwrap_err();
         assert!(
-            error.contains("'choose' has type Int and is not callable"),
+            error.contains("cannot assign to undeclared variable 'choose'"),
             "got: {error}"
         );
     }

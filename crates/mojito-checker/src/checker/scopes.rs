@@ -72,26 +72,6 @@ impl Checker {
         Ok(())
     }
 
-    pub(super) fn declare_function_implicit(
-        &mut self,
-        name: &str,
-        ty: Ty,
-    ) -> Result<(), TypeError> {
-        let scope_index = self
-            .function_bases
-            .last()
-            .copied()
-            .unwrap_or_else(|| self.scopes.len().saturating_sub(1));
-        if self.scopes[scope_index].contains_key(name) {
-            return Err(TypeError::Redeclaration(name.to_string()));
-        }
-        self.scopes[scope_index].insert(name.to_string(), ty);
-        self.mutable_scopes[scope_index].insert(name.to_string(), true);
-        let owner = self.fresh_owner()?;
-        self.owner_scopes[scope_index].insert(name.to_string(), owner);
-        Ok(())
-    }
-
     pub(super) fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
         self.mutable_scopes.push(HashMap::new());

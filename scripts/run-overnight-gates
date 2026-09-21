@@ -16,7 +16,7 @@ DRY_RUN="${GATES_DRY_RUN:-}"
 LOG_ROOT="target/overnight-gates/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "${LOG_ROOT}"
 RESULTS="${LOG_ROOT}/RESULTS.md"
-MOJO_PIXI_MANIFEST="${MOJO_PIXI_MANIFEST:-${HOME}/src/mojo/envs/mojo-2026082605/pixi.toml}"
+MOJO_PIXI_MANIFEST="${MOJO_PIXI_MANIFEST:-${HOME}/src/mojo/envs/mojo-2026092105/pixi.toml}"
 
 declare -a STEP_NAMES STEP_STATUSES STEP_SECONDS STEP_LOGS
 

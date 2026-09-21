@@ -9,22 +9,22 @@ struct Pair(Hashable, Copyable, Movable):
     var a: Int
     var b: String
     def __hash__[H: Hasher](self, mut hasher: H):
-        hasher.update(self.a)
-        hasher.update(self.b)
+        self.a.__hash__(hasher)
+        self.b.__hash__(hasher)
 
 @fieldwise_init
 struct Tag(Hashable, Copyable, Movable):
     var v: UInt8
     def __hash__(self, mut hasher: Some[Hasher]):
-        hasher.update(self.v)
+        hasher._update_with_simd(self.v)
 
 @fieldwise_init
 struct Explicit(Hashable, Copyable, Movable):
     var x: Int
     var y: Int
     def __hash__(self, mut hasher: Some[Hasher]):
-        hasher.update(self.x)
-        hasher.update(self.y)
+        self.x.__hash__(hasher)
+        self.y.__hash__(hasher)
 
 @fieldwise_init
 struct Reflective(Hashable, Copyable, Movable):

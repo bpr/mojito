@@ -200,6 +200,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The differential pin is now Mojo `1.2.0.dev2026092105` (upstream
+  `26cfe94f40`, 2026-09-21), and two of its changes reach Mojito. A walrus
+  updates a name already in scope and never introduces one, so `(n := 1)` on
+  an unknown `n` is the same error as a var-less `n = 1`; upstream reports
+  "use of unknown declaration 'n'" and made an implicit declaration a hard
+  error in the same window. `String`/`StringSpan` `startswith`/`endswith` now
+  normalize their `start` the way `find` does instead of comparing a found
+  position with the raw argument, so a negative offset counts from the end
+  (`"hello".startswith("llo", -3)` is `True`), the empty affix matches at any
+  offset within the string, and one past the byte length matches nothing.
+  `docs/mojo-nightly.md` carries the audit and what the window leaves
+  unimplemented.
+
 - A checked generic template is now the authority for the instantiations it
   covers. Source validation and the abstract check retain a body's facts
   (`mojito_checked::templates`), the elaborator leaves a trace from each `def`

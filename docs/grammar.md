@@ -780,9 +780,9 @@ Notes:
   The parser lowers each lambda to a hidden nested `def` whose body is
   `return <expr>`, so checking and lowering reuse the nested-closure pipeline.
 - **The walrus / named expression `NAME := e`** binds looser than every operator (so
-  `(n := a + b)` is `n := (a + b)`); the target must be a bare `NAME`. It evaluates
-  the right side once, introduces the target in the containing function scope, and
-  yields the assigned value.
+  `(n := a + b)` is `n := (a + b)`); the target must be a bare `NAME` that is
+  already in scope — a walrus updates a binding, it never introduces one. It
+  evaluates the right side once, assigns it, and yields the assigned value.
 - **`primary` is left-recursive over `.NAME` (field access) and `.NAME(args)` (method
   call)**, which chain (`a.b.c`, `p.m().n`). The plain call form `atom '(' [args] ')'`
   is a *free* call whose callee must be a `NAME` — a free function, a built-in, or a

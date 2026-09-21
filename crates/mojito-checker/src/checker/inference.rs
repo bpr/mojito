@@ -237,22 +237,23 @@ impl Checker {
                 .last()
                 .copied()
                 .unwrap_or_else(|| self.scopes.len().saturating_sub(1));
-            let existing = self.scopes[base..]
+            // A walrus only updates a name already in scope; it never introduces
+            // one, so an unknown target is the same defect as a var-less
+            // assignment.
+            let Some(existing) = self.scopes[base..]
                 .iter()
                 .rev()
                 .find_map(|scope| scope.get(name))
-                .cloned();
-            if let Some(existing) = existing {
-                if !self.value_coerces(&found, &existing) {
-                    return Err(TypeError::TypeMismatch {
-                        expected: existing.to_string(),
-                        found: found.to_string(),
-                        context: format!("walrus assignment to '{name}'"),
-                    });
-                }
-            } else {
-                let declared = self.inferred_binding_ty(&found, name)?;
-                self.declare_function_implicit(name, declared)?;
+                .cloned()
+            else {
+                return Err(TypeError::AssignToUndeclared(name.clone()));
+            };
+            if !self.value_coerces(&found, &existing) {
+                return Err(TypeError::TypeMismatch {
+                    expected: existing.to_string(),
+                    found: found.to_string(),
+                    context: format!("walrus assignment to '{name}'"),
+                });
             }
             return Ok(());
         }

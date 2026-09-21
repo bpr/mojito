@@ -8,7 +8,327 @@ differential runner must likewise report its actual `mojo --version`. Advancing
 the audit boundary records work to do—it does not claim that Mojito already
 implements every change at that boundary.
 
-## Current Audit — `a79fbdf59f2` (2026-08-26)
+## Current Audit — `26cfe94f40` (2026-09-21)
+
+| Role | Immutable revision |
+|---|---|
+| Audited Mojo dev head | [`26cfe94f400b71afd2cccf439fde95488910c48d`](https://github.com/modular/modular/commit/26cfe94f400b71afd2cccf439fde95488910c48d), whose lockfiles pin `Mojo 1.2.0.dev2026092105` |
+| Previous upstream audit boundary | [`a79fbdf59f224d7a2242f2d1c29cf55d93489a91`](https://github.com/modular/modular/commit/a79fbdf59f224d7a2242f2d1c29cf55d93489a91), `Mojo 1.1.0.dev2026082605` |
+| Mojito baseline audited | `2d27884` (working tree at re-pin, 2026-09-21) |
+| Source delta | [Upstream comparison `a79fbdf59f2…26cfe94f40`](https://github.com/modular/modular/compare/a79fbdf59f224d7a2242f2d1c29cf55d93489a91...26cfe94f400b71afd2cccf439fde95488910c48d) |
+
+This window crosses the 1.1.0 release (2026-09-17), so its evidence lives in
+two documents instead of one. The released notes
+([`Mojo/docs/site/releases/v1.1.0.md`](https://github.com/modular/modular/blob/26cfe94f400b71afd2cccf439fde95488910c48d/Mojo/docs/site/releases/v1.1.0.md))
+carry everything from the previous pin up to the release, and the nightly
+changelog was reset at the cutover
+([`Mojo/docs/site/nightly-changelog.md`](https://github.com/modular/modular/blob/26cfe94f400b71afd2cccf439fde95488910c48d/Mojo/docs/site/nightly-changelog.md)),
+so it carries only the four days after it. Upstream also moved the tree in this
+window: `mojo/` is now `Mojo/`, and `mojo/docs/` split into `Mojo/docs/site/`
+and a repo-level `docs/`. Paths named in the historical sections below are the
+old ones. A local pinned worktree lives at `~/src/mojo/repos/modular-26cfe94f`
+and the differential Pixi environment at `~/src/mojo/envs/mojo-2026092105`.
+
+The window is unusually light on language change inside Mojito's subset, and
+heavy on vocabulary that finally expired. Two removals reach the subset
+directly: an implicit variable declaration is now an error rather than a
+warning, and a walrus only *updates* a name already in scope. Three new
+spellings are additive and unimplemented — `where <cond> else "<message>"`,
+a `not <Trait>` conformance opt-out, and `@inline(value)` with the prelude
+`InlineLevel` — and one is experimental, the `__match` / `case` pattern
+matching introduced after the release. `alias` stopped being a reserved word,
+which closes the burn-down family of that name. The library movement is
+ordinary breadth (`hash_bytes`, `Span` initialization helpers, `fill_with=`
+constructors, `deinit()`), with one narrowing that matters for view work:
+`StringSpan` is immutable-only, and `MutStringSpan`/`MutStringSlice` are gone.
+
+**Close-out record (2026-09-21).** The differential conformance run passes
+517/517 `conformance/cases.tsv` cases against the exact audited build:
+`mojo --version` reports `Mojo 1.2.0.dev2026092105 (e9569894)` from the
+`~/src/mojo/envs/mojo-2026092105` Pixi environment (pinning the conda nightly
+that `26cfe94f400b71afd2cccf439fde95488910c48d`'s lockfiles pin); the Mojito
+side is commit `2d27884` plus this uncommitted pass. The first run of the suite
+reported four failures, all of them the window's own drift: `walrus` and
+`implicit-function-scope`/`late-initialization` because upstream turned an
+implicit declaration into an error, and `hashable-user-struct` /
+`dict-hasher-forwarding` because it changed `Hasher.update`. Three rows moved
+(`mojo-only` → `reject` twice, `run` → `mojito-only` once) and four fixtures
+were respelled.
+
+The three `assets/` sweeps ran against the same build. `--extensions` passes:
+the pin still rejects all 68 extension fixtures. `--errors` passes over 417
+fixtures after the ledger refresh — 381 agree, 32 are deliberate strictness,
+3 are divergences, 1 is not comparable — with two verdicts and two diagnostic
+texts changed by the re-pin. The ordinary `_ok` sweep runs 596 fixtures: the
+pin rejects six and Mojito's output differs on 18. Five of those six were the
+hasher change and one the `Layout` alignment parameter; three were respelled
+to a spelling both compilers take (`value.__hash__(hasher)` for a call,
+`_update_with_simd` for a scalar leaf), and the remaining three are
+`conformance/assets-mojo-rejects.tsv` rows with roadmap tasks. The
+eighteenth output divergence was a real Mojito bug the re-pin exposed — the
+affix tests compared a found position against a raw `start` — and is fixed, so
+the ledger's seventeen rows are unchanged.
+
+The full Rust gate ran in the same state (`scripts/check`).
+
+## Prioritized Changeset
+
+The order below is the recommended implementation order. Compatibility aliases
+may be retained deliberately only while upstream itself keeps the deprecated
+form.
+
+### 0. A walrus updates, and never introduces, a binding
+
+Status 2026-09-21: DONE — `(n := 1)` on a name that is not in scope is
+`AssignToUndeclared`, the same defect Mojito already reported for a var-less
+`n = 1`; the pin reports "use of unknown declaration 'n'". `assets/type_error/
+var_less_introduction.mojo` stops being a `subset` row and agrees with the pin,
+and `conformance/fixtures/walrus_expressions.mojo` and
+`assets/runtime_error/walrus.mojo` declare their target first.
+
+Upstream made implicit variable declaration a hard error and restricted the
+walrus to updating an existing variable. Mojito already required `var` for a
+bare assignment, so only the walrus path introduced names.
+
+### 1. `where <condition> else "<message>"` and `not <Trait>`
+
+Two additive spellings for constraints Mojito already has:
+
+- A `where` clause's message is now written `where <cond> else "<message>"`,
+  the preferred alternative to `where (<cond>, "<message>")`, which upstream
+  will deprecate over time. Mojito parses the tuple form only, and reports
+  `Unexpected token Else: Expected ':' before the function body`.
+- A struct opts out of a trait with `not <Trait>` in its conformance list,
+  preferred over `<Trait> where False`, and the opt-out carries the same
+  `else "<message>"` spelling. Mojito parses `Movable where False` only, and
+  reports `Unexpected token Not: Expected a trait name in the conformance
+  list`.
+
+Both are surface spellings over machinery Mojito has, so each is a parser and
+diagnostic change plus the message plumbing, not a semantic one.
+
+### 2. `@inline(value)` and the `InlineLevel` prelude struct
+
+`@inline(.always)`, `.nodebug`, `.never`, and `.automatic` select a function's
+inline level, and the value may be any comptime expression, so one definition
+can inline per instantiation. Two decorators that disagree (`@always_inline`
+with `@no_inline`) are now an error rather than one silently winning. Mojito's
+inline decorators are accepted and ignored below the MIR waist, so this is a
+front-end acceptance question first and a native-backend one only later.
+
+### 3. Experimental `__match` / `case` pattern matching
+
+Introduced after the release for early testing, with literals, or-patterns,
+guards, `var`/`ref`/`as` bindings, tuple and struct patterns, and `EnumLike`
+types such as `Optional`. Exhaustiveness is not checked yet, and the spelling
+stays `__match` while it is experimental. Mojito keeps `match` as an ordinary
+identifier and has no pattern matching; this is the window's one large feature
+and wants its own plan.
+
+### 4. Align in-subset library surfaces
+
+- `StringSpan` provides immutable byte access only: `MutStringSpan` and
+  `MutStringSlice` are removed, and so is `StringSpan`'s `mut` parameter.
+  Mojito's bundled `StringSpan` still carries the mutability parameter.
+- Hashing a byte sequence is `hash_bytes(ImmSpan[Byte])`; the pointer-and-
+  length `hash()` overload is deprecated, and `hash()` keeps its `Hashable`
+  meaning.
+- `TypeList`/`ParameterList` `any_satisfies()`/`all_satisfies()` are now
+  `any()`/`all()`.
+- `List` and `Array[T, N]` gain a `fill_with=` constructor, `List.extend()`
+  and `List.resize()` grow geometrically, and `Counter` accepts any iterable.
+- `deinit()` is a free function for any `Deinitable`; `Span` gains
+  `unsafe_deinit_elements()`, `unsafe_init_with()`, `unsafe_init_copy_from()`,
+  `unsafe_init_move_from()`, and `unsafe_assume_init()`.
+- `CStringSlice` is renamed `CStringSpan` (the old name stays as an alias) and
+  `as_c_string_slice()` is `as_c_string_span()`; `ptr()` replaces
+  `unsafe_ptr()` on always-valid holders.
+- The `simd` module moved from `std.builtin` to `std.simd`. Mojito's `SIMD` is
+  a compiler builtin with no module home, so `from std.simd import SIMD` fails
+  to load; the prelude path is unaffected.
+
+### 5. Vocabulary that expired in this window
+
+- `alias` is an ordinary identifier again — `var alias: Int = 1` compiles at
+  the pin, which Mojito already accepted. The `alias-keyword` burn-down family
+  in `conformance/assets-mojo-errors.tsv` is what this closes.
+- `@parameter if` and `@parameter for` are removed (Mojito never parsed them),
+  along with the legacy `fn`, `alias`, and `__comptime_assert` keywords,
+  `.mojopkg` loading, and the pre-`unsafe_` raw memory spellings. None has a
+  Mojito surface.
+- `TString` no longer carries its format string as a parameter, which is
+  visible in the pin's own diagnostics (`'TString'`, not
+  `'TString[StringSpan("a")]'`), and an origin in a conversion diagnostic now
+  prints as `origin_of(rhs.origin)` rather than `rhs.origin.mut`.
+
+## Confirmed Alignment And Audit-Only Work
+
+Do not create duplicate implementation tasks for changes the stable baseline
+already covers:
+
+- Ordinary initialized values are movable by default. Conditional `Movable`
+  opt-out (`Movable where False`) is now effective at transfer, `var`
+  parameter/receiver, and capture sites (2026-08-09).
+- Fresh local names already require explicit `var`, which is stricter than
+  upstream's current warning. Package members already require explicit imports.
+- Callable structs already need nominal callable-trait conformance;
+  shape-compatible `__call__` alone is insufficient.
+- Candidate implicit conversion already filters to `@implicit` constructors
+  before selection; upstream's latest change is a compile-time performance win,
+  not a semantic gap for Mojito.
+- Custom method receiver types are already rejected; Mojito's parser admits
+  only the ordinary `Self` receiver forms.
+- Int and `Scalar[DType.int]`, current reflection field handles, `StringDict`
+  kwargs storage/forwarding, origin-parameterized borrowed `Iterable`, and
+  monomorphic `IterableOwned.IteratorOwnedType` are present.
+- The two-root namespace-directory example — `foo.bar` and `foo.baz` imported
+  from distinct `-I` roots sharing the `foo` prefix — is pinned permanently by
+  `tests/module_test.rs` `two_roots_share_a_namespace_directory_prefix` and was
+  hand-verified against the audited build (`mojo run -I root_a -I root_b`
+  prints `3`, 2026-08-15). Source-package precedence and package
+  `__init__.mojo` boundaries are unchanged.
+- `range(..., step=0)` is empty in nominal runtime iteration, direct compile-time
+  unrolling, and VM-backed CTFE.
+- `Error` is treated as implicitly copyable by the current checked type facts,
+  and the caught-error `raise e` shape is pinned by the `raise-caught-error`
+  differential case (both compilers relay and print `caught boom`; Mojito's
+  `print(e)` rendering was aligned to the bare message).
+- Unhandled errors already print `unhandled error: …` to **stderr** on both
+  backends (VM CLI via `eprintln!`, native via `mjrt_unhandled_error`),
+  matching upstream's stdout→stderr change in this window.
+- Upstream's range fixes are already covered or moot: `step=0` is empty
+  everywhere; Mojito's `range()` overloads are Int-only (small-scalar strided
+  wraparound cannot arise) and `reversed()` on ranges is a recorded
+  out-of-subset limitation, so the reversed-near-limit and
+  `reversed(reversed(...))` changes have no Mojito surface.
+- `ceildiv` already derives the unsigned ceiling from floor division and
+  remainder (no near-max overflow), and scalar float hashing folds the sign
+  of zero before the value reaches the hasher.
+- Parametric `raises` with any primary-expression type (`raises Self.Assoc`)
+  already parses through `parse_type` in both signatures and function types.
+- The bulk of this window's Removed entries name APIs Mojito never exposed —
+  `InlineArray`, `ImplicitlyDestructible`/`ImplicitlyDeletable`, `ImmutSpan`,
+  `as_immutable()`/`get_immutable()`, `String.as_string_slice()` and
+  `String.set_byte_length()`, the pre-unification pointer aliases
+  (`MutUnsafePointer` family), the raw memory helpers (`memcpy`/`memset`/
+  `memcmp`/`uninit_*_n`/`destroy_n`), the `destroy_pointee`/`init_pointee_*`
+  family and `Pointer.type`, `steal_data`/`OwnedPointer.take`/`Variant.take`
+  (Mojito shipped `into_inner`/`unwrap` vocabulary from day one),
+  `ConditionalType` + `std.utils.type_functions`, `trait_downcast`, the
+  coroutine prelude types, and `.mojopkg` loading. Audit-only: no code change.
+- Bridges that survive this window because upstream still carries the
+  deprecated form: `UnsafePointer` (alias of `Pointer`), Tuple's
+  `element_types` alias for `Ts`, and `@parameter if`/`@parameter for`
+  (which Mojito never parsed — a subset stance, not a bridge). Newly
+  deprecated upstream without Mojito surface: `Pointer.mut_cast`,
+  `unsafe_ptr()` on always-valid holders (→ `ptr()`), and the
+  `is_trivially_*()` function spellings Mojito already rejects in favor of
+  the `IsTrivially*` predicates.
+- From the `26cfe94f40` window: a bare assignment to an undeclared name is a
+  hard error upstream too, so Mojito's long-standing `var` requirement is no
+  longer stricter than the pin; `alias` is an ordinary identifier again, which
+  Mojito always allowed; and the removed `@parameter if` / `@parameter for`
+  forms were never parsed. Upstream's near-miss spelling suggestions, the
+  compile-time wins (implicit-conversion filtering, geometric `List` growth,
+  t-string encoding), and the fixes with no Mojito surface (base64 decoding,
+  macOS `os.stat`, `PythonObject` reference counts, Apple-GPU intrinsics) are
+  audit-only.
+- Deprecation warnings the `26cfe94f40` pin now prints over the `assets/`
+  corpus, each naming a spelling that is scheduled to expire: positional
+  `p[0]` on a `Pointer` (use `unsafe_offset=`), `UnsafePointer` (use
+  `Pointer`), and a redundant trait composition such as `Copyable & Movable`.
+  They are warnings today, so the fixtures still compile; the next window that
+  turns one into an error is the one that reaches Mojito.
+
+## Monitored Or Deferred Movement
+
+These changes should remain visible without displacing the CPU language work:
+
+- `Atomic[T]` now takes a value type instead of a `DType`. Atomics and
+  concurrency remain outside the current parity pass, but primitive
+  concurrency is expected eventually (`docs/architecture.md`), so this shape
+  is worth tracking.
+- `CompilationTarget` is now a public type threaded through `size_of()`,
+  `align_of()`, and `compile_info()`, with `CompilationTarget.current()` and a
+  new `TargetAccelerator` carrying GPU metadata. Mojito's target and layout
+  facts live below the MIR waist in `mojito-native-core`; this is the shape to
+  mirror when that surface becomes user-visible.
+- `Layout` and `Allocation` carry alignment as a keyword-only `Alignment`
+  parameter instead of a runtime field, and only compile-time alignments are
+  supported. Native layout work should follow that split rather than inventing
+  a runtime alignment field.
+- `mojo build`/`mojo run` gained `--mlir-timing`, `--llvm-timing`,
+  `--timing-json`, and `--timing-file`. Mojito has its own `--timings`; the
+  JSON shape is worth matching if the flags ever converge.
+- The `@__doc_inline` decorator documents re-exported symbols in the importing
+  module. Mojito has no documentation extraction, so this is a signal only.
+- Experimental FP6 encodings are packed storage formats without general
+  arithmetic or conversions. Revisit them after ordinary scalar/SIMD parity.
+- `external_call(..., num_fixed_args=N)` runs over Mojito's closed libc callee
+  table (`mojito_types::ffi`; the filesystem, directory, and environment
+  calls the stdlib ports need). Platform C ABI forwarding beyond that table and
+  dynamic library lifetime improvements depend on a real FFI/native boundary.
+  Record them with native backend and ABI work.
+- `size_of` now includes alignment padding. Implement it with observable CPU
+  layout/ABI semantics, not by inventing VM-only sizes.
+- Address-space expansion, GPU/MAX package moves, GPU APIs, and Python
+  interoperability remain outside the current subset. GPU is a stretch goal
+  (`docs/architecture.md`), so these are signals worth keeping visible rather
+  than permanent exclusions.
+- `__generator_type` and coroutine internals are useful signals for possible
+  future generators/coroutines, but are not yet a public parity gate. Keep HIR
+  and MIR extension points general rather than implementing this internal
+  spelling. (This window privatized the coroutine prelude types and the
+  `std.runtime.asyncrt` task API, reinforcing the deferral.)
+- The `Bench`/`Bencher` family finished migrating from compile-time parameter
+  closures to unified runtime-argument closures, and the parametric
+  `benchmark.run[func]()` overloads were removed. Benchmarking is outside the
+  subset; the unified-closure argument shape is the part to watch.
+- `CompilationTarget` gained `is_arm()`/RISC-V predicates and re-based
+  `is_x86()` on the triple; with the redundant `Int` overload removals in
+  `std.bit`/`std.math` (Int is `Scalar[DType.int]`, the SIMD overloads absorb
+  them), these are native-target and stdlib-breadth concerns, not language
+  parity.
+- `strip`/`lstrip`/`rstrip` now take `ImmStringSpan` chars; Mojito's strip
+  family takes `StringSpan` chars (no `Imm*Span` aliases — recorded
+  divergence on the Span origin-slot row).
+- `atol()` now raises across the full out-of-`Int`-range and
+  whitespace-only surface; Mojito has no `atol`/`Int(String)` parsing yet.
+- `@align(N)` beyond natural alignment is now honored for every value
+  including array/List elements — relevant to native-backend layout work,
+  not the VM.
+
+## Open Questions And Probes
+
+Open questions, ambiguities, and known mismatches each get a minimal program
+in [`conformance/probes/`](../conformance/probes/) runnable against both
+compilers, with the question and the follow-up actions documented in the
+file's header. Run the probes (and the re-probe list in that directory's
+README) against the exact audited build at every re-pin.
+
+## Review Policy
+
+Before closing a language-parity milestone:
+
+1. Fetch upstream `main` and record its full commit, commit date, and the Mojo
+   version pinned by its current lockfiles. The rendered nightly page is a
+   discovery aid, not the reproducible audit identity.
+2. Diff from the preceding audit hash. Review every intervening language,
+   library, removal, and fixed-behavior entry across both the active nightly
+   changelog and any release document created by a changelog cutover.
+3. Inspect the changed manual and standard-library declarations. Renames,
+   conditional conformances, and compiler/stdlib handoffs are not always
+   repeated in the condensed changelog.
+4. Update `conformance/parity.tsv` first. A newly introduced mismatch becomes a
+   documented subset/divergence until implementation and differential evidence
+   justify `implemented`/`match`.
+5. Update `roadmap.md`, grammar and architecture documentation, fixtures, and
+   bundled Mojo sources affected by removed or renamed syntax.
+6. Run differential conformance with a Pixi environment containing the exact
+   audited build. Retain `mojo --version`, the upstream hash, and the Mojito hash
+   with the results.
+
+## Historical Audit — `a79fbdf59f2` (2026-08-26)
 
 | Role | Immutable revision |
 |---|---|
@@ -113,17 +433,18 @@ the mechanical families — `Self.Ts` for pack parameters, a `Deinitable` pack
 bound, `std.sys` for `size_of`, `MutUntrackedOrigin` for `unsafe_dangling`, and
 a `main` for the last four module-scope snippets, which the pin rejects outright.
 The sweep also falsified two fixture comments: `var_less_introduction` claimed
-to match upstream, which only deprecates the form, and
+to match upstream, which then only deprecated the form (the `26cfe94f40` pin
+rejects it), and
 `nominal_string_justify_fillchar` attributed its one-byte assertion to upstream,
 which has none.
 
-## Prioritized Changeset
+### Changeset — all four sections closed
 
-The order below is the recommended implementation order. Compatibility aliases
-may be retained deliberately only while upstream itself keeps the deprecated
-form; every bridge listed in section 0 expired upstream inside this window.
+Compatibility aliases were retained deliberately only while upstream itself
+kept the deprecated form; every bridge listed in section 0 expired upstream
+inside that window.
 
-### 0. Remove expired compatibility spellings and the `read` convention
+#### 0. Remove expired compatibility spellings and the `read` convention
 
 Status 2026-08-26: DONE — `read` rejects at every convention position with
 upstream's migration diagnostic (MIR text emits/accepts only `imm`;
@@ -162,7 +483,7 @@ surviving spelling:
   old spelling's fate at the head and mirror it. (Probed 2026-09-08: it
   warns-and-runs, so the bridge stays; the capture model is aligned.)
 
-### 1. Constrain function types with trailing `where` clauses
+#### 1. Constrain function types with trailing `where` clauses
 
 Status 2026-08-26: DONE on inline `def[...]` bounds (clauses lower onto decl
 constraints, alpha-renamed identity, directional binding, call-site
@@ -184,7 +505,7 @@ acceptance check. The `comptime Kernel = def[...] ... where (...)` alias
 spelling stays blocked by the pre-existing function-type comptime-alias gap and
 is recorded as a divergence, not implemented here.
 
-### 2. Contextually inferred member references
+#### 2. Contextually inferred member references
 
 Status 2026-08-26: DONE for the first slice (static-method calls with postfix
 chains in expected-type positions, via the `$contextual` sentinel resolved by
@@ -203,7 +524,7 @@ typed collection-literal elements. Bare `.red` value members require struct
 subset gap); parametric statics and generic expected types are likewise
 recorded as subset gaps rather than half-implemented.
 
-### 3. Align in-subset library surfaces
+#### 3. Align in-subset library surfaces
 
 Status 2026-08-26: DONE except recorded gaps — `List[T: AnyType]` with
 per-API `Movable` gates; Array lexicographic `Comparable` (Defaultable and
@@ -229,144 +550,6 @@ demand-first.
 - `StringDict` conforms to `Writable` when its value type does, and
   `StringDict.__getitem__` accepts a `StringSpan` — demand-first growth on the
   existing StringDict.
-
-## Confirmed Alignment And Audit-Only Work
-
-Do not create duplicate implementation tasks for changes the stable baseline
-already covers:
-
-- Ordinary initialized values are movable by default. Conditional `Movable`
-  opt-out (`Movable where False`) is now effective at transfer, `var`
-  parameter/receiver, and capture sites (2026-08-09).
-- Fresh local names already require explicit `var`, which is stricter than
-  upstream's current warning. Package members already require explicit imports.
-- Callable structs already need nominal callable-trait conformance;
-  shape-compatible `__call__` alone is insufficient.
-- Candidate implicit conversion already filters to `@implicit` constructors
-  before selection; upstream's latest change is a compile-time performance win,
-  not a semantic gap for Mojito.
-- Custom method receiver types are already rejected; Mojito's parser admits
-  only the ordinary `Self` receiver forms.
-- Int and `Scalar[DType.int]`, current reflection field handles, `StringDict`
-  kwargs storage/forwarding, origin-parameterized borrowed `Iterable`, and
-  monomorphic `IterableOwned.IteratorOwnedType` are present.
-- The two-root namespace-directory example — `foo.bar` and `foo.baz` imported
-  from distinct `-I` roots sharing the `foo` prefix — is pinned permanently by
-  `tests/module_test.rs` `two_roots_share_a_namespace_directory_prefix` and was
-  hand-verified against the audited build (`mojo run -I root_a -I root_b`
-  prints `3`, 2026-08-15). Source-package precedence and package
-  `__init__.mojo` boundaries are unchanged.
-- `range(..., step=0)` is empty in nominal runtime iteration, direct compile-time
-  unrolling, and VM-backed CTFE.
-- `Error` is treated as implicitly copyable by the current checked type facts,
-  and the caught-error `raise e` shape is pinned by the `raise-caught-error`
-  differential case (both compilers relay and print `caught boom`; Mojito's
-  `print(e)` rendering was aligned to the bare message).
-- Unhandled errors already print `unhandled error: …` to **stderr** on both
-  backends (VM CLI via `eprintln!`, native via `mjrt_unhandled_error`),
-  matching upstream's stdout→stderr change in this window.
-- Upstream's range fixes are already covered or moot: `step=0` is empty
-  everywhere; Mojito's `range()` overloads are Int-only (small-scalar strided
-  wraparound cannot arise) and `reversed()` on ranges is a recorded
-  out-of-subset limitation, so the reversed-near-limit and
-  `reversed(reversed(...))` changes have no Mojito surface.
-- `ceildiv` already derives the unsigned ceiling from floor division and
-  remainder (no near-max overflow), and scalar float hashing folds the sign
-  of zero before the value reaches the hasher.
-- Parametric `raises` with any primary-expression type (`raises Self.Assoc`)
-  already parses through `parse_type` in both signatures and function types.
-- The bulk of this window's Removed entries name APIs Mojito never exposed —
-  `InlineArray`, `ImplicitlyDestructible`/`ImplicitlyDeletable`, `ImmutSpan`,
-  `as_immutable()`/`get_immutable()`, `String.as_string_slice()` and
-  `String.set_byte_length()`, the pre-unification pointer aliases
-  (`MutUnsafePointer` family), the raw memory helpers (`memcpy`/`memset`/
-  `memcmp`/`uninit_*_n`/`destroy_n`), the `destroy_pointee`/`init_pointee_*`
-  family and `Pointer.type`, `steal_data`/`OwnedPointer.take`/`Variant.take`
-  (Mojito shipped `into_inner`/`unwrap` vocabulary from day one),
-  `ConditionalType` + `std.utils.type_functions`, `trait_downcast`, the
-  coroutine prelude types, and `.mojopkg` loading. Audit-only: no code change.
-- Bridges that survive this window because upstream still carries the
-  deprecated form: `UnsafePointer` (alias of `Pointer`), Tuple's
-  `element_types` alias for `Ts`, and `@parameter if`/`@parameter for`
-  (which Mojito never parsed — a subset stance, not a bridge). Newly
-  deprecated upstream without Mojito surface: `Pointer.mut_cast`,
-  `unsafe_ptr()` on always-valid holders (→ `ptr()`), and the
-  `is_trivially_*()` function spellings Mojito already rejects in favor of
-  the `IsTrivially*` predicates.
-
-## Monitored Or Deferred Movement
-
-These changes should remain visible without displacing the CPU language work:
-
-- `Atomic[T]` now takes a value type instead of a `DType`. Atomics and
-  concurrency remain outside the current parity pass, but primitive
-  concurrency is expected eventually (`docs/architecture.md`), so this shape
-  is worth tracking.
-- Experimental FP6 encodings are packed storage formats without general
-  arithmetic or conversions. Revisit them after ordinary scalar/SIMD parity.
-- `external_call(..., num_fixed_args=N)` runs over Mojito's closed libc callee
-  table (`mojito_types::ffi`; the filesystem, directory, and environment
-  calls the stdlib ports need). Platform C ABI forwarding beyond that table and
-  dynamic library lifetime improvements depend on a real FFI/native boundary.
-  Record them with native backend and ABI work.
-- `size_of` now includes alignment padding. Implement it with observable CPU
-  layout/ABI semantics, not by inventing VM-only sizes.
-- Address-space expansion, GPU/MAX package moves, GPU APIs, and Python
-  interoperability remain outside the current subset. GPU is a stretch goal
-  (`docs/architecture.md`), so these are signals worth keeping visible rather
-  than permanent exclusions.
-- `__generator_type` and coroutine internals are useful signals for possible
-  future generators/coroutines, but are not yet a public parity gate. Keep HIR
-  and MIR extension points general rather than implementing this internal
-  spelling. (This window privatized the coroutine prelude types and the
-  `std.runtime.asyncrt` task API, reinforcing the deferral.)
-- The `Bench`/`Bencher` family finished migrating from compile-time parameter
-  closures to unified runtime-argument closures, and the parametric
-  `benchmark.run[func]()` overloads were removed. Benchmarking is outside the
-  subset; the unified-closure argument shape is the part to watch.
-- `CompilationTarget` gained `is_arm()`/RISC-V predicates and re-based
-  `is_x86()` on the triple; with the redundant `Int` overload removals in
-  `std.bit`/`std.math` (Int is `Scalar[DType.int]`, the SIMD overloads absorb
-  them), these are native-target and stdlib-breadth concerns, not language
-  parity.
-- `strip`/`lstrip`/`rstrip` now take `ImmStringSpan` chars; Mojito's strip
-  family takes `StringSpan` chars (no `Imm*Span` aliases — recorded
-  divergence on the Span origin-slot row).
-- `atol()` now raises across the full out-of-`Int`-range and
-  whitespace-only surface; Mojito has no `atol`/`Int(String)` parsing yet.
-- `@align(N)` beyond natural alignment is now honored for every value
-  including array/List elements — relevant to native-backend layout work,
-  not the VM.
-
-## Open Questions And Probes
-
-Open questions, ambiguities, and known mismatches each get a minimal program
-in [`conformance/probes/`](../conformance/probes/) runnable against both
-compilers, with the question and the follow-up actions documented in the
-file's header. Run the probes (and the re-probe list in that directory's
-README) against the exact audited build at every re-pin.
-
-## Review Policy
-
-Before closing a language-parity milestone:
-
-1. Fetch upstream `main` and record its full commit, commit date, and the Mojo
-   version pinned by its current lockfiles. The rendered nightly page is a
-   discovery aid, not the reproducible audit identity.
-2. Diff from the preceding audit hash. Review every intervening language,
-   library, removal, and fixed-behavior entry across both the active nightly
-   changelog and any release document created by a changelog cutover.
-3. Inspect the changed manual and standard-library declarations. Renames,
-   conditional conformances, and compiler/stdlib handoffs are not always
-   repeated in the condensed changelog.
-4. Update `conformance/parity.tsv` first. A newly introduced mismatch becomes a
-   documented subset/divergence until implementation and differential evidence
-   justify `implemented`/`match`.
-5. Update `roadmap.md`, grammar and architecture documentation, fixtures, and
-   bundled Mojo sources affected by removed or renamed syntax.
-6. Run differential conformance with a Pixi environment containing the exact
-   audited build. Retain `mojo --version`, the upstream hash, and the Mojito hash
-   with the results.
 
 ## Historical Audit — `ae386d1b204` (2026-08-08)
 

@@ -139,7 +139,7 @@ use-after-move	reject	conformance/fixtures/use_after_move.mojo
 file-scope-execution	reject	conformance/fixtures/file_scope_execution.mojo
 raises-effect-unchecked	reject	conformance/fixtures/raises_effect_unchecked.mojo
 print-without-writable	reject	conformance/fixtures/print_without_writable.mojo
-implicit-function-scope	mojo-only	conformance/fixtures/implicit_function_scope.mojo
+implicit-function-scope	reject	conformance/fixtures/implicit_function_scope.mojo
 loop-else	run	conformance/fixtures/loop_else.mojo
 implicit-conversion	run	conformance/fixtures/implicit_conversion.mojo
 explicit-destroy	run	conformance/fixtures/explicit_destroy.mojo
@@ -149,7 +149,7 @@ indexer-normalization	run	conformance/fixtures/indexer_normalization.mojo
 parameter-list-where-removed	reject	conformance/fixtures/parameter_list_where_removed.mojo
 legacy-reflected-field-type	reject	conformance/fixtures/legacy_reflected_field_type.mojo
 reflected-field-handles	run	conformance/fixtures/reflected_field_handles.mojo
-late-initialization	mojo-only	conformance/fixtures/late_initialization.mojo
+late-initialization	reject	conformance/fixtures/late_initialization.mojo
 context-managers	run	conformance/fixtures/context_managers.mojo
 loop-completion	run	conformance/fixtures/loop_completion.mojo
 reference-iteration	run	conformance/fixtures/reference_iteration.mojo
@@ -308,7 +308,7 @@ struct-field-non-deinitable-param	reject	assets/type_error/struct_field_non_dein
 fieldwise-anytype-field	reject	assets/type_error/fieldwise_anytype_field.mojo
 struct-param-bare-bracket-slot	reject	assets/type_error/struct_param_bare_bracket_slot.mojo
 struct-field-in-bracket-slot	reject	assets/type_error/struct_field_in_bracket_slot.mojo
-dict-hasher-forwarding	run	assets/ok/dict_hasher_forwarding.mojo
+dict-hasher-forwarding	mojito-only	assets/ok/dict_hasher_forwarding.mojo
 hashable-user-struct	run	conformance/fixtures/hashable_user_struct.mojo
 parametric-statics	run	assets/ok/parametric_static_methods.mojo
 parametric-static-arity	reject	assets/type_error/parametric_static_arity.mojo

@@ -2,15 +2,24 @@
 # AGENTS.md invariant 1 says this file should be empty; it is the burn-down
 # list, and scripts/sweep-assets-mojo fails when reality and this file differ.
 #
-# Empty since 2026-09-13. Every family this file once carried is closed: a
-# fixture that had an upstream spelling was respelled, and one whose *shape*
-# the pin refuses — origin-parameter erasure, cross-origin field stores,
-# parametric-mut pointer writes, partial field moves, capturing-lambda locals,
-# mut-self callable structs, owned-interior generations, element sub-origin
-# returns, the Mojito-only stdlib modules, `comptime for` over a Tuple — moved
-# to assets/extensions/, where `--extensions` asserts the rejection instead.
+# Empty from 2026-09-13 to the 2026-09-21 re-pin. Every family this file once
+# carried is closed: a fixture that had an upstream spelling was respelled, and
+# one whose *shape* the pin refuses — origin-parameter erasure, cross-origin
+# field stores, parametric-mut pointer writes, partial field moves,
+# capturing-lambda locals, mut-self callable structs, owned-interior
+# generations, element sub-origin returns, the Mojito-only stdlib modules,
+# `comptime for` over a Tuple — moved to assets/extensions/, where
+# `--extensions` asserts the rejection instead.
+#
+# The three rows below are the 2026-09-21 re-pin's own arrivals: two library
+# surfaces the `26cfe94f40` window changed under Mojito's feet. Each has a
+# roadmap task; neither is a shape the pin refuses, so neither belongs in
+# assets/extensions/.
 #
 # The error is the pin's FIRST complaint, so it can mask a later one: lifting
 # a mask moves a row to another family rather than deleting it.
-# swept-count	574
+# swept-count	596
 fixture	family	first-error
+assets/ok/dict_hasher_forwarding.mojo	hasher-protocol	error: 'LoudHasher' does not implement all requirements for 'Hasher'
+assets/ok/hasher_user_conformer.mojo	hasher-protocol	error: 'SumHasher' does not implement all requirements for 'Hasher'
+assets/ok/layout_allocation.mojo	layout-alignment	error: no matching function in initialization

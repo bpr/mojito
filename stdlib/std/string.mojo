@@ -1491,10 +1491,17 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
             at = self._find_from(substr, at + substr._size)
         return total
 
-    # `start`/`end` are byte offsets; `end == -1` means the whole string.
+    # `start`/`end` are byte offsets; `end == -1` means the whole string. An
+    # affix test asks about `start` itself, so it normalizes the offset the way
+    # `find` does rather than comparing a found position with the raw argument:
+    # a negative `start` counts from the end, and one past the byte length
+    # matches nothing, not even the empty affix.
     def startswith(self, prefix: StringSpan, start: Int = 0, end: Int = -1) -> Bool:
         if end == -1:
-            return self.find(prefix, start) == start
+            var at = self._search_start(start)
+            if at + prefix._size > self._size:
+                return False
+            return self._matches_at(prefix, at)
         if start < 0 or end > self._size or end - start < prefix._size:
             return False
         return self._matches_at(prefix, start)
@@ -1503,6 +1510,8 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         if suffix._size > self._size:
             return False
         if end == -1:
+            if self._search_start(start) + suffix._size > self._size:
+                return False
             return self.rfind(suffix, start) + suffix._size == self._size
         if start < 0 or end > self._size or end - start < suffix._size:
             return False
