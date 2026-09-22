@@ -130,6 +130,7 @@ fn metadata_program() -> MirProgram {
             mut_self_methods: HashSet::from(["set".into()]),
             fieldwise_init: true,
             param_decls: vec![ParamDecl::Type {
+                id: mojito::param_expr::ParamId::new("$test:T", 0),
                 name: "T".into(),
                 bounds: vec!["Copyable".into()],
                 callable_bound: None,

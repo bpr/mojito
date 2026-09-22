@@ -70,17 +70,18 @@ impl Checker {
     /// `Ty::Param` at a concrete call site is the erased-dispatch spelling of
     /// a solved argument, not a linear value.
     pub(super) fn record_linear_temporary(&self, expr: &Expr, ty: &Ty) {
-        let Ty::Param { name, .. } = ty else {
+        let Ty::Param { binder, .. } = ty else {
             return;
         };
         let call = matches!(
             expr.kind,
             ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
         );
-        let own_parameter = self
-            .tparams
-            .iter()
-            .any(|scope| scope.contains_key(name.as_str()));
+        let own_parameter = self.tparams.iter().any(|scope| {
+            scope
+                .values()
+                .any(|declared| matches!(declared, Ty::Param { binder: own, .. } if own == binder))
+        });
         if call && own_parameter && !self.is_deinitable(ty) {
             self.linear_temporaries
                 .borrow_mut()

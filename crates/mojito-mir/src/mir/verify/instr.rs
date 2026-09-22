@@ -352,7 +352,7 @@ pub(super) fn verify_instruction(
         }
         MirInstr::ConstructTypeParam { dest, param } => {
             if let Some(found) = reg_ty(dest)
-                && !matches!(found, Ty::Param { name, .. } if name == param)
+                && !matches!(found, Ty::Param { binder, .. } if binder.name.as_ref() == param)
                 && !matches!(found, Ty::Struct(..))
             {
                 errors.push(format!(

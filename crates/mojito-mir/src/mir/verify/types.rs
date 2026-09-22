@@ -4,6 +4,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::param_expr::{ParamBindings, ParamContext};
+use mojito_types::types::TySubst;
 
 /// Compatibility for verification purposes: either direction of the checker's
 /// coercion predicate. Lowering emits checker-approved conversions before
@@ -210,21 +211,20 @@ pub(super) fn contains_runtime_pack(ty: &Ty) -> bool {
 
 pub(super) fn instantiate_checked_type(
     ty: &Ty,
-    type_arguments: &HashMap<String, Ty>,
+    type_arguments: &TySubst,
     value_arguments: &HashMap<String, CtValue>,
     bound_values: &HashSet<String>,
 ) -> Result<Ty, String> {
     Ok(match ty {
         Ty::Param {
-            name,
+            binder,
             bounds,
             callable_bound,
         } => type_arguments
-            .get(name)
-            .or_else(|| type_arguments.get(name.trim_start_matches('*')))
+            .get(&binder.id)
             .cloned()
             .unwrap_or_else(|| Ty::Param {
-                name: name.clone(),
+                binder: binder.clone(),
                 bounds: bounds.clone(),
                 callable_bound: callable_bound.clone(),
             }),

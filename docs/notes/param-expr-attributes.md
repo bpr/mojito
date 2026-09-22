@@ -182,13 +182,43 @@ one identity by construction rather than by renaming.
 
 The checker opens a declaration's value parameters as a scope level beside its
 type parameters (`push_param_scope`; `tparams.pop()` closes both), which is
-what lets a free `def`'s bare `n` resolve in `Buf[n + 1]`. `Ty::Param` is still
-identified by spelling; see the roadmap entry *Type parameters are identified
-by spelling*.
+what lets a free `def`'s bare `n` resolve in `Buf[n + 1]`.
 
-Two readers have no owner to give: the elaborator's declaration metadata
-(`$elaborated`) and a schema 1.0 MIR artifact (`$mir-1.0:<name>`). Both bind
-by name, as they always did.
+A type binder has the same identity. `ParamDecl::{Type, Value}` carry their
+`id`, minted once where the checker classifies a declaration's parameters
+(`classify_params_in_scope`), and `Ty::Param { binder: ParamRef, .. }`
+compares by it while printing its spelling. Every type substitution is a
+`TySubst` (`HashMap<ParamId, Ty>`) built by zipping a declaration's own
+`ParamDecl`s to its arguments, so no builder needs an owner argument; the
+source lookups (`tparams`, `lookup_tparam`) and `where`-clause operands stay
+name-keyed, since a clause names its binder. Checker-made parameters no
+declaration owns carry a synthetic owner (`synthetic_binder`: `Some[Trait]`,
+the intrinsic signatures, a probe; `pack_element_view_binder` for a bounded
+pack-element view; `member_binder` for a parameterized associated member's own
+`[params]`, numbered by source position and re-derived at each application).
+
+Two sites only worked while spellings coincided. The elaborator's source
+rewrite substituted an enclosing binder into a callable contract whose own
+binder had the same spelling (`apply[T, F: def[T](T) -> T]`), so the clone's
+contract lost its binder and a call through `f` could not infer it
+(`rewrite_type` and `substitute_source_type_binding` now shadow a contract's
+own `type_params`); and trait conformance compared method shapes with their
+binders' spellings, rejecting a witness spelled `push[X: Hasher]` for a
+requirement spelled `push[H: Hasher]` (`method_satisfies_requirement` now
+canonicalizes both shapes through `canonical_generic_signature`, whose
+binders are `CONTRACT_BINDER_OWNER` slots).
+`assets/ok/trait_method_binder_spelling.mojo`,
+`assets/ok/same_spelled_type_params.mojo`, and the `comptime_test`
+`callable_contract_binder_shadows_the_enclosing_binder` pin the three; the
+pinned Mojo accepts all three.
+
+The MIR text writer emits a binder's `owner`/`slot` on every `param`,
+`type_param`, and `value_param` record (schema 1.2); a 1.0/1.1 binder reads
+as one identity per spelling (`$mir-1.1:<name>`). The elaborator's
+declaration metadata (`$elaborated`) still has no owner to give, and native
+monomorphization still binds a function's own type binders by spelling; the
+roadmap entry *Binder identity is still by spelling below the checker* lists
+those corners.
 
 ## One folder
 

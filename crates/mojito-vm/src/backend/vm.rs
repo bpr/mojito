@@ -1241,7 +1241,9 @@ impl VmBackend {
                     .param_names
                     .iter()
                     .zip(&signature.param_types)
-                    .find(|(_, ty)| matches!(ty, Ty::Param { name, .. } if name == param))
+                    .find(|(_, ty)| {
+                        matches!(ty, Ty::Param { binder, .. } if binder.name.as_ref() == param)
+                    })
                     .map(|(name, _)| name)?;
                 let slot = definition
                     .var_names

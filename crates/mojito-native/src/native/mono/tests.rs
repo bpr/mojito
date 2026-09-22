@@ -192,7 +192,10 @@ fn generic_dispatch_iteration_unrolls_to_a_typed_concrete_chain() {
 #[test]
 fn structural_inference_rejects_conflicting_solutions() {
     let parameter = Ty::Param {
-        name: "T".into(),
+        binder: mojito_types::param_expr::ParamRef {
+            id: mojito_types::param_expr::ParamId::new("$test:T", 0),
+            name: "T".into(),
+        },
         bounds: vec![],
         callable_bound: None,
     };
@@ -379,7 +382,10 @@ fn substitution_resolves_nested_type_and_value_arguments() {
         "Buffer".into(),
         vec![
             TyArg::Ty(Ty::Param {
-                name: "T".into(),
+                binder: mojito_types::param_expr::ParamRef {
+                    id: mojito_types::param_expr::ParamId::new("$test:T", 0),
+                    name: "T".into(),
+                },
                 bounds: vec![],
                 callable_bound: None,
             }),

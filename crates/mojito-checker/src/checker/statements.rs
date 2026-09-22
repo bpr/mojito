@@ -2091,7 +2091,7 @@ impl Checker {
         let mut erased_origin_constraints = Vec::new();
         // An arithmetic `where` operand names the declaration's own value
         // parameters, so their scope is open while the clauses compile.
-        self.push_param_scope(name, &decls);
+        self.push_param_scope(&decls);
         let compiled = where_clauses
             .iter()
             .map(|condition| self.compile_where_clause(condition))
@@ -2126,7 +2126,7 @@ impl Checker {
         // Type parameters are in scope while resolving the signature and
         // checking the body (as bare `T`), and value parameters as the typed
         // references a dependent parameter expression names (`Buf[n + 1]`).
-        self.push_param_scope(name, &decls);
+        self.push_param_scope(&decls);
 
         let signature = (|| {
             let generated = self.generated_declaration.replace(name.contains('$'));
@@ -2379,7 +2379,7 @@ impl Checker {
                 lambda,
             })
         };
-        self.assume_declared_propositions(name, &decls);
+        self.assume_declared_propositions(&decls);
         self.assumed_conformances.push(function_assumptions);
         // A parameter typed by a dependent pack projection (`values.Ts[index]`
         // in a `Tuple.consume_elements` handler) is opaque inside the user's
@@ -2394,7 +2394,7 @@ impl Checker {
                     && param.kind == mojito_ast::ast::ParamKind::Regular
                     && matches!(ty, Ty::Dependent(_)))
                 .then(|| Ty::Param {
-                    name: dependent_projection_spelling(&param.ty),
+                    binder: synthetic_binder(&dependent_projection_spelling(&param.ty)),
                     bounds: vec!["Movable".to_string()],
                     callable_bound: None,
                 })
@@ -2868,13 +2868,15 @@ impl Checker {
         // accepts. A body that is not a proposition is a value, which
         // elaboration evaluates and folds at each runtime use.
         let body = match super::constraints::assoc_body_source_type(value) {
-            Ok(source_ty) => match self.lower_parameterized_member(type_params, &source_ty) {
-                Ok(template) => AliasBody::Type(Box::new(template)),
-                Err(type_error) => AliasBody::Predicate(Box::new(
-                    self.compile_predicate_alias_body(&decls, value)
-                        .map_err(|_| type_error)?,
-                )),
-            },
+            Ok(source_ty) => {
+                match self.lower_parameterized_member(type_scope(&decls), type_params, &source_ty) {
+                    Ok(template) => AliasBody::Type(Box::new(template)),
+                    Err(type_error) => AliasBody::Predicate(Box::new(
+                        self.compile_predicate_alias_body(&decls, value)
+                            .map_err(|_| type_error)?,
+                    )),
+                }
+            }
             Err(_) => match self.compile_predicate_alias_body(&decls, value) {
                 Ok(constraint) => AliasBody::Predicate(Box::new(constraint)),
                 Err(TypeError::Unsupported(message))

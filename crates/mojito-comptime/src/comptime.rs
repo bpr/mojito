@@ -1265,6 +1265,13 @@ fn substitute_source_type_binding(ty: &mut Type, binding: &str, replacement: &Ty
             raises_type,
             ..
         } => {
+            // The contract's own binder of that spelling shadows the binding.
+            if type_params
+                .iter()
+                .any(|parameter| parameter.name.trim_start_matches('*') == binding)
+            {
+                return;
+            }
             for parameter in type_params {
                 if let Some(value_type) = &mut parameter.value_type {
                     substitute_source_type_binding(value_type, binding, replacement);

@@ -9,7 +9,9 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::ct::CtValue;
-use crate::param_expr::{ParamBindings, ParamContext, ParamError, ParamExpr, ParamKind};
+use crate::param_expr::{
+    ParamBindings, ParamContext, ParamError, ParamExpr, ParamId, ParamKind, ParamRef,
+};
 use mojito_ast::ast::{ArgConvention, Dtype};
 
 /// Descriptor type selected for a slice literal at the checked boundary.
@@ -302,8 +304,11 @@ pub enum Ty {
     /// leaves type-ranked overload resolution as a natural extension.
     Overload(Vec<Self>),
     /// A type parameter (`T`) inside a generic body, carrying its trait bounds.
+    /// The binder is the declaration's parameter by identity (`ParamId`); its
+    /// spelling is diagnostic metadata, so two declarations that both spell
+    /// `T` are different parameters and a `$` clone shares its template's.
     Param {
-        name: String,
+        binder: ParamRef,
         bounds: Vec<String>,
         /// Anonymous callable-trait contract from a declaration such as
         /// `F: def(T) -> T`. Unlike an ordinary trait name, the full checked
@@ -376,6 +381,11 @@ pub enum Ty {
 }
 
 pub const ARRAY_TYPE_NAME: &str = "Array";
+
+/// The owner of a canonicalized generic contract's own binders
+/// ([`canonical_generic_signature`]): slot `i` of every contract is one
+/// identity, so contracts differing only in binder spelling compare equal.
+pub const CONTRACT_BINDER_OWNER: &str = "$contract";
 
 pub const LIST_TYPE_NAME: &str = "List";
 
@@ -664,7 +674,7 @@ pub fn unqualified_type_name(ty: &Ty) -> String {
 /// declares `*Ts`), and its starred spelling is its `Ty::Param` name.
 pub fn pack_spread(elements: &[Ty]) -> Option<&Ty> {
     match elements {
-        [pack @ Ty::Param { name, .. }] if name.starts_with('*') => Some(pack),
+        [pack @ Ty::Param { binder, .. }] if binder.name.starts_with('*') => Some(pack),
         _ => None,
     }
 }
@@ -676,8 +686,8 @@ pub fn pack_spread(elements: &[Ty]) -> Option<&Ty> {
 /// Bool]` is `Tuple[Int, Bool]`.
 pub fn expand_pack_spread(ty: &Ty, pack: &str, elements: &[Ty]) -> Ty {
     let spreads = |list: &[Ty]| {
-        matches!(pack_spread(list), Some(Ty::Param { name, .. })
-            if name.trim_start_matches('*') == pack)
+        matches!(pack_spread(list), Some(Ty::Param { binder, .. })
+            if binder.name.trim_start_matches('*') == pack)
     };
     let expand = |list: &[Ty]| -> Vec<Ty> {
         if spreads(list) {
@@ -877,6 +887,9 @@ pub fn constructible_type_parameter(declaration: &ParamDecl) -> bool {
 pub enum ParamDecl {
     /// A type parameter `T: Trait & ...`.
     Type {
+        /// The binder's identity: its declaration and slot. Every `Ty::Param`
+        /// naming this binder carries the same id.
+        id: ParamId,
         name: String,
         bounds: Vec<String>,
         /// Checked anonymous callable-trait contract, when this parameter was
@@ -891,6 +904,8 @@ pub enum ParamDecl {
     /// declared type is essential: compile-time values participate in generic
     /// identity, but only values representable by this type may bind here.
     Value {
+        /// The binder's identity; a `DeclRef` to this parameter carries it.
+        id: ParamId,
         name: String,
         ty: Box<Ty>,
         default: Option<ParamExpr>,
@@ -1093,7 +1108,25 @@ impl ParamDecl {
             Self::Type { name, .. } | Self::Value { name, .. } => name,
         }
     }
+
+    pub const fn id(&self) -> &ParamId {
+        match self {
+            Self::Type { id, .. } | Self::Value { id, .. } => id,
+        }
+    }
+
+    /// The reference a use of this binder carries: its identity with its
+    /// spelling attached.
+    pub fn binder(&self) -> ParamRef {
+        ParamRef {
+            id: self.id().clone(),
+            name: std::sync::Arc::from(self.name()),
+        }
+    }
 }
+
+/// A type substitution: the solution for each type binder, by identity.
+pub type TySubst = HashMap<ParamId, Ty>;
 
 /// One argument in a struct type's parameter list: a type, a compile-time
 /// value, or an origin.
@@ -1283,7 +1316,7 @@ impl fmt::Display for Ty {
                 }
                 write!(f, ")")
             }
-            Self::Param { name, .. } => write!(f, "{name}"),
+            Self::Param { binder, .. } => write!(f, "{}", binder.name),
             Self::Assoc { base, name, args } => {
                 write!(f, "{base}.{name}")?;
                 if !args.is_empty() {
@@ -1704,7 +1737,7 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
                 crate::types::tstring_elements(to).expect("guard established TString elements");
             from.len() == to.len() && from.iter().zip(to).all(|(from, to)| coerces(from, to))
         }
-        (Ty::Param { name: a, .. }, Ty::Param { name: b, .. }) => a == b,
+        (Ty::Param { binder: a, .. }, Ty::Param { binder: b, .. }) => a == b,
         (Ty::Struct(an, aargs), Ty::Struct(bn, bargs)) => {
             an == bn
                 && aargs.len() == bargs.len()
@@ -2149,16 +2182,19 @@ pub fn canonical_generic_signature(
             })
             .collect()
     };
-    let mut subst = HashMap::new();
-    let mut value_names = HashMap::new();
-    // A value binder's references become signature slots, so two contracts
-    // that differ only in their binders' spelling are one identity.
+    let mut subst = TySubst::new();
+    let mut binder_names: HashMap<String, String> = HashMap::new();
+    // A binder's references become signature slots — a type binder the
+    // contract-owned identity `($contract, index)`, a value binder an index
+    // reference — so two contracts that differ only in their binders'
+    // spelling are one identity.
     let mut value_slots = ParamBindings::new();
     let canonical_decls = decls
         .iter()
         .enumerate()
         .map(|(index, decl)| match decl {
             ParamDecl::Type {
+                id,
                 name,
                 bounds,
                 callable_bound,
@@ -2168,6 +2204,7 @@ pub fn canonical_generic_signature(
                 constraints,
             } => {
                 let canonical_name = format!("${index}");
+                let canonical_id = ParamId::new(CONTRACT_BINDER_OWNER, index);
                 let canonical_callable_bound = callable_bound.as_ref().map(|bound| {
                     Box::new(bind_signature_slots(
                         &substitute(bound, &subst),
@@ -2175,14 +2212,22 @@ pub fn canonical_generic_signature(
                     ))
                 });
                 subst.insert(
-                    name.clone(),
+                    id.clone(),
                     Ty::Param {
-                        name: canonical_name.clone(),
+                        binder: ParamRef {
+                            id: canonical_id.clone(),
+                            name: canonical_name.as_str().into(),
+                        },
                         bounds: bounds.clone(),
                         callable_bound: canonical_callable_bound.clone(),
                     },
                 );
+                binder_names.insert(
+                    name.trim_start_matches('*').to_string(),
+                    canonical_name.clone(),
+                );
                 ParamDecl::Type {
+                    id: canonical_id,
                     name: canonical_name,
                     bounds: bounds.clone(),
                     callable_bound: canonical_callable_bound,
@@ -2196,6 +2241,7 @@ pub fn canonical_generic_signature(
                 }
             }
             ParamDecl::Value {
+                id: _,
                 name,
                 ty,
                 default: _,
@@ -2203,7 +2249,6 @@ pub fn canonical_generic_signature(
                 infer_only: _,
                 variadic,
                 constraints,
-                ..
             } => {
                 let canonical_name = format!("${index}");
                 let canonical_ty = bind_signature_slots(&substitute(ty, &subst), &value_slots);
@@ -2215,11 +2260,12 @@ pub fn canonical_generic_signature(
                         crate::param_expr::MetaTy::value((**ty).clone()),
                     ),
                 );
-                value_names.insert(
+                binder_names.insert(
                     name.trim_start_matches('*').to_string(),
                     canonical_name.clone(),
                 );
                 ParamDecl::Value {
+                    id: ParamId::new(CONTRACT_BINDER_OWNER, index),
                     name: canonical_name,
                     ty: Box::new(canonical_ty),
                     default: None,
@@ -2241,15 +2287,6 @@ pub fn canonical_generic_signature(
     // the fold above (a clause on the last binder may reference any of them);
     // names the contract does not bind (an enclosing declaration's
     // parameters) stay as-is and correctly distinguish contracts.
-    let mut binder_names: HashMap<String, String> = value_names;
-    for (name, ty) in &subst {
-        if let Ty::Param {
-            name: canonical, ..
-        } = ty
-        {
-            binder_names.insert(name.clone(), canonical.clone());
-        }
-    }
     let mut canonical_decls: Vec<ParamDecl> = canonical_decls;
     for decl in &mut canonical_decls {
         match decl {
@@ -2276,15 +2313,12 @@ pub fn canonical_generic_signature(
 ///
 /// Value parameters and arguments are skipped: they never appear in a type.
 /// Empty for a non-generic struct.
-pub fn struct_argument_substitution(
-    decls: &[ParamDecl],
-    arguments: &[TyArg],
-) -> HashMap<String, Ty> {
+pub fn struct_argument_substitution(decls: &[ParamDecl], arguments: &[TyArg]) -> TySubst {
     decls
         .iter()
         .zip(arguments)
         .filter_map(|(decl, argument)| match (decl, argument) {
-            (ParamDecl::Type { name, .. }, TyArg::Ty(ty)) => Some((name.clone(), ty.clone())),
+            (ParamDecl::Type { id, .. }, TyArg::Ty(ty)) => Some((id.clone(), ty.clone())),
             _ => None,
         })
         .collect()
@@ -2292,15 +2326,14 @@ pub fn struct_argument_substitution(
 
 /// Replace every `Ty::Param` in `ty` with its solution from `subst` (leaving an
 /// unsolved parameter untouched). Recurses into struct type arguments.
-#[allow(clippy::implicit_hasher, reason = "TODO: generalize over BuildHasher")]
-pub fn substitute(ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
+pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
     match ty {
         Ty::Param {
-            name,
+            binder,
             bounds,
             callable_bound,
-        } => subst.get(name).cloned().unwrap_or_else(|| Ty::Param {
-            name: name.clone(),
+        } => subst.get(&binder.id).cloned().unwrap_or_else(|| Ty::Param {
+            binder: binder.clone(),
             bounds: bounds.clone(),
             callable_bound: callable_bound
                 .as_ref()
@@ -2311,8 +2344,8 @@ pub fn substitute(ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
         }
         Ty::Dependent(dependent) => {
             let mut bindings = ParamBindings::new();
-            for (name, ty) in subst {
-                bindings.bind_type(name, ty.clone());
+            for (id, ty) in subst {
+                bindings.bind_type(id.clone(), ty.clone());
             }
             ParamContext::detached()
                 .replace(dependent.expr(), &bindings)
@@ -2403,12 +2436,13 @@ pub fn substitute(ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
             // entries removed.
             let mut nested = subst.clone();
             for declaration in decls {
-                nested.remove(declaration.name());
+                nested.remove(declaration.id());
             }
             let decls = decls
                 .iter()
                 .map(|declaration| match declaration {
                     ParamDecl::Type {
+                        id,
                         name,
                         bounds,
                         callable_bound,
@@ -2417,6 +2451,7 @@ pub fn substitute(ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
                         variadic,
                         constraints,
                     } => ParamDecl::Type {
+                        id: id.clone(),
                         name: name.clone(),
                         bounds: bounds.clone(),
                         callable_bound: callable_bound
@@ -2430,6 +2465,7 @@ pub fn substitute(ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
                         constraints: constraints.clone(),
                     },
                     ParamDecl::Value {
+                        id,
                         name,
                         ty,
                         default,
@@ -2438,6 +2474,7 @@ pub fn substitute(ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
                         variadic,
                         constraints,
                     } => ParamDecl::Value {
+                        id: id.clone(),
                         name: name.clone(),
                         ty: Box::new(substitute(ty, &nested)),
                         default: default.clone(),
@@ -2494,8 +2531,8 @@ pub fn substitute(ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
 /// own binders mean; [`rewrite_ty`] visits every type, value argument,
 /// default, and aggregate child.
 pub trait TyRewrite {
-    /// The replacement for the type parameter `name`, if any.
-    fn param(&mut self, _name: &str) -> Option<Ty> {
+    /// The replacement for the type parameter `binder`, if any.
+    fn param(&mut self, _binder: &ParamRef) -> Option<Ty> {
         None
     }
 
@@ -2528,13 +2565,13 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
     };
     Ok(match ty {
         Ty::Param {
-            name,
+            binder,
             bounds,
             callable_bound,
-        } => match rewrite.param(name) {
+        } => match rewrite.param(binder) {
             Some(replacement) => replacement,
             None => Ty::Param {
-                name: name.clone(),
+                binder: binder.clone(),
                 bounds: bounds.clone(),
                 callable_bound: boxed(callable_bound, rewrite)?,
             },
@@ -2876,7 +2913,7 @@ pub fn map_tyargs(args: &[TyArg], mut f: impl FnMut(&Ty) -> Ty) -> Vec<TyArg> {
 pub fn rename_constraint_parameters(
     constraint: &GenericConstraint,
     binder_names: &HashMap<String, String>,
-    subst: &HashMap<String, Ty>,
+    subst: &TySubst,
     value_slots: &ParamBindings,
 ) -> GenericConstraint {
     let rename = |name: &str| -> String {
@@ -3079,9 +3116,9 @@ pub fn has_free_parameters(ty: &Ty) -> bool {
     let Ty::GenericFunc { decls, .. } = ty else {
         return is_symbolic(ty);
     };
-    let bound: Vec<&str> = decls.iter().map(ParamDecl::name).collect();
+    let bound: Vec<&ParamId> = decls.iter().map(ParamDecl::id).collect();
     mentions(ty, &|inner| match inner {
-        Ty::Param { name, .. } => !bound.contains(&name.as_str()),
+        Ty::Param { binder, .. } => !bound.contains(&&binder.id),
         Ty::Infer | Ty::Assoc { .. } | Ty::Dependent(_) | Ty::SelfType => true,
         _ => false,
     })
@@ -3133,8 +3170,8 @@ impl Replacer<'_> {
 }
 
 impl TyRewrite for Replacer<'_> {
-    fn param(&mut self, name: &str) -> Option<Ty> {
-        self.bindings().types().get(name).cloned()
+    fn param(&mut self, binder: &ParamRef) -> Option<Ty> {
+        self.bindings().types().get(&binder.id).cloned()
     }
 
     fn expr(&mut self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {
@@ -3145,6 +3182,7 @@ impl TyRewrite for Replacer<'_> {
     fn enter_signature(&mut self, decls: &[ParamDecl]) {
         let mut inner = self.bindings().clone();
         inner.mask(decls.iter().map(ParamDecl::name));
+        inner.mask_types(decls.iter().map(ParamDecl::id));
         self.scopes.push(inner);
         self.depth += 1;
     }
@@ -3163,6 +3201,7 @@ fn rewrite_decl(decl: &ParamDecl, rewrite: &mut dyn TyRewrite) -> Result<ParamDe
     };
     Ok(match decl {
         ParamDecl::Type {
+            id,
             name,
             bounds,
             callable_bound,
@@ -3171,6 +3210,7 @@ fn rewrite_decl(decl: &ParamDecl, rewrite: &mut dyn TyRewrite) -> Result<ParamDe
             variadic,
             constraints,
         } => ParamDecl::Type {
+            id: id.clone(),
             name: name.clone(),
             bounds: bounds.clone(),
             callable_bound: boxed(callable_bound, rewrite)?,
@@ -3180,6 +3220,7 @@ fn rewrite_decl(decl: &ParamDecl, rewrite: &mut dyn TyRewrite) -> Result<ParamDe
             constraints: constraints.clone(),
         },
         ParamDecl::Value {
+            id,
             name,
             ty,
             default,
@@ -3188,6 +3229,7 @@ fn rewrite_decl(decl: &ParamDecl, rewrite: &mut dyn TyRewrite) -> Result<ParamDe
             variadic,
             constraints,
         } => ParamDecl::Value {
+            id: id.clone(),
             name: name.clone(),
             ty: Box::new(rewrite_ty(ty, rewrite)?),
             default: default

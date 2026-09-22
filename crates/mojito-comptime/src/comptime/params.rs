@@ -75,6 +75,7 @@ pub(super) fn classify_ct_param_with(
         && is_value_struct(only)
     {
         return Some(ParamDecl::Value {
+            id: elaborated_binder(tp, siblings),
             name: tp.name.clone(),
             ty: Box::new(Ty::Struct(only.clone(), Vec::new())),
             default: tp
@@ -98,6 +99,7 @@ pub(super) fn classify_ct_param(tp: &TypeParam, siblings: &[TypeParam]) -> Optio
         && let Some(ty) = ct_param_source_type(source_type)
     {
         return Some(ParamDecl::Value {
+            id: elaborated_binder(tp, siblings),
             name: tp.name.clone(),
             ty: Box::new(ty),
             default: tp
@@ -114,6 +116,7 @@ pub(super) fn classify_ct_param(tp: &TypeParam, siblings: &[TypeParam]) -> Optio
         && let Some(ty) = ct_value_param_type(only)
     {
         return Some(ParamDecl::Value {
+            id: elaborated_binder(tp, siblings),
             name: tp.name.clone(),
             ty: Box::new(ty),
             default: tp
@@ -127,6 +130,7 @@ pub(super) fn classify_ct_param(tp: &TypeParam, siblings: &[TypeParam]) -> Optio
         });
     }
     Some(ParamDecl::Type {
+        id: elaborated_binder(tp, siblings),
         name: tp.name.clone(),
         bounds: tp.bounds.clone(),
         callable_bound: None,
@@ -230,4 +234,15 @@ pub(super) fn simd_source_dims(args: &[ParamArg]) -> Option<(mojito_ast::ast::Dt
     };
     let width = width.wrapping_signed(64)?;
     (width >= 1 && (width & (width - 1)) == 0).then_some((dtype, width))
+}
+
+/// The identity of an elaborator-classified binder: the elaborator's
+/// declaration metadata has no owner to give, so every list is `$elaborated`
+/// and a binder is its slot among its siblings.
+fn elaborated_binder(tp: &TypeParam, siblings: &[TypeParam]) -> mojito_types::param_expr::ParamId {
+    let slot = siblings
+        .iter()
+        .position(|sibling| sibling.name == tp.name)
+        .unwrap_or_default();
+    mojito_types::param_expr::ParamId::new("$elaborated", slot)
 }

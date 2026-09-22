@@ -137,6 +137,6 @@ struct ReferenceCapability<'a> {
 }
 
 struct GenericArgumentMaps {
-    types: HashMap<String, Ty>,
+    types: mojito_types::types::TySubst,
     values: HashMap<String, CtValue>,
 }

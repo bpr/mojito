@@ -596,6 +596,20 @@ pub(super) fn rewrite_type(ty: &mut Type, subs: Subs) {
             raises_type,
             ..
         } => {
+            // The contract's own binders shadow same-spelled outer names
+            // throughout its signature; outer names may still occur in its
+            // bounds and parameter types.
+            let own: Vec<String> = type_params
+                .iter()
+                .map(|parameter| parameter.name.trim_start_matches('*').to_string())
+                .collect();
+            let subs: Subs = &|name: &str| {
+                if own.iter().any(|binder| binder == name) {
+                    None
+                } else {
+                    subs(name)
+                }
+            };
             for parameter in type_params {
                 if let Some(value_type) = &mut parameter.value_type {
                     rewrite_type(value_type, subs);

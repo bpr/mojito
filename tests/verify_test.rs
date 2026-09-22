@@ -485,6 +485,7 @@ fn verifier_checks_store_ref_source_type_and_permission() {
 
 fn value_parameter(name: &str, ty: Ty) -> ParamDecl {
     ParamDecl::Value {
+        id: mojito::param_expr::ParamId::new(&format!("$test:{name}"), 0),
         name: name.to_string(),
         ty: Box::new(ty),
         default: None,

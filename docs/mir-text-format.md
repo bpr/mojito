@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.1
+# Mojito Textual MIR Format, Version 1.2
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.1 is implemented end to end for inspection and loading: canonical
+Version 1.2 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -20,11 +20,12 @@ corpus fixture by the `roundtrip::*` group of `tests/corpus_test.rs`, and
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.1
+mojito-mir 1.2
 ```
 
-The writer emits 1.1. The reader accepts 1.0 and 1.1; *Schema 1.0* below says
-how a 1.0 artifact is read.
+The writer emits 1.2. The reader accepts 1.0, 1.1, and 1.2; *Schema 1.0*
+below says how a 1.0 artifact is read, and *Binder identity* under *Types*
+how a 1.1 binder is.
 
 The two unsigned decimal components are major and minor versions. A consumer
 must reject an unknown major version. Within major version 1, a newer minor may
@@ -40,6 +41,13 @@ expressions — and is therefore not an optional addition: a 1.0 consumer
 rejects a 1.1 artifact at the header, which is the intended failure, and a 1.1
 consumer reads both. Every other spelling, the concrete `ct_*` values
 included, is byte-identical between the two.
+
+Minor version 2 gives every binder record — a `param` type and a
+`type_param`/`value_param` declaration — the `owner` and `slot` fields that
+carry its declaration's identity, the same fields a `param_decl_ref` already
+carries. A 1.1 consumer rejects them as unknown required fields, which is the
+intended failure; a 1.2 consumer reads 1.1 by giving each binder an identity
+per spelling (*Binder identity* under *Types*).
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -311,7 +319,7 @@ generic_func { environment, param_decls, params, names, return_type, required,
                variadic, kw_variadic, positional_only, keyword_only, raises,
                error_type, conventions, ref_params, ref_return, transfers }
 overload([type...])
-param { name, bounds, callable_bound }
+param { owner, slot, name, bounds, callable_bound }
 assoc { base, member, arguments }
 dependent_parameter(param-expr)
 struct_type { name, arguments }
@@ -331,11 +339,22 @@ form only serves lossless round trips, and a closed expression folds back to
 the canonical concrete type on read.
 
 `ParamDecl` is
-`type_param { name, bounds, callable_bound, default, infer_only, variadic, constraints }`
+`type_param { owner, slot, name, bounds, callable_bound, default, infer_only, variadic, constraints }`
 or
-`value_param { name, type, default, callable_default, infer_only, variadic, constraints }`.
+`value_param { owner, slot, name, type, default, callable_default, infer_only, variadic, constraints }`.
 Callable defaults use `default_symbol`, `default_parameter`, or
 `default_if { condition, then_value, else_value }`.
+
+#### Binder identity
+
+A binder's `owner` (a quoted declaration symbol) and `slot` (its position in
+the declaration's parameter list) are its identity, exactly as in
+`param_decl_ref`; `name` is its source spelling and carries no identity. A
+`param` type names the binder it uses by the same two fields, so a use and its
+declaration agree by identity, and two declarations that both spell `T` stay
+apart. In a 1.1 artifact, whose binders carry only a spelling, every binder
+spelled `n` reads as one identity per spelling (owner `$mir-1.1:n`, slot `0`),
+which is what a 1.1 artifact meant.
 
 `GenericConstraint` is a prefix tree. Its tags map one-to-one to the public
 variants: `with_message { condition, message }`, `conforms`, `conforms_pack`,

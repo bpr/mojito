@@ -188,19 +188,8 @@ impl Checker {
                 .or_else(|| {
                     self.self_decls
                         .iter()
-                        .find_map(|declaration| match declaration {
-                            ParamDecl::Type {
-                                name: parameter,
-                                bounds,
-                                callable_bound,
-                                ..
-                            } if parameter == name => Some(Ty::Param {
-                                name: parameter.clone(),
-                                bounds: bounds.clone(),
-                                callable_bound: callable_bound.clone(),
-                            }),
-                            _ => None,
-                        })
+                        .filter(|declaration| declaration.name() == name)
+                        .find_map(type_parameter)
                 });
             if let Some(ref ty @ Ty::Param { ref bounds, .. }) = type_parameter
                 && bounds
@@ -1518,7 +1507,7 @@ impl Checker {
         };
         let mut conversions = 0;
         for ((aty, pty), expression) in arg_tys.iter().zip(&use_params).zip(arg_exprs) {
-            if matches!(pty, Ty::Param { name, .. } if name.starts_with('*')) {
+            if matches!(pty, Ty::Param { binder, .. } if binder.name.starts_with('*')) {
                 // Each pack element was checked independently against the pack's
                 // bounds during inference; there is intentionally no single
                 // substituted element type to coerce every argument into.

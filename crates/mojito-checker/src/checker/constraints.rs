@@ -118,10 +118,15 @@ impl Checker {
         let mut out = HashMap::new();
         let mut constraints = HashMap::new();
         let mut parameterized = HashMap::new();
+        let struct_name = match &self.self_ty {
+            Some(Ty::Struct(name, _)) => name.clone(),
+            _ => "Self".to_string(),
+        };
         for member in associated {
             if out.contains_key(&member.name) || parameterized.contains_key(&member.name) {
                 return Err(TypeError::Redeclaration(member.name.clone()));
             }
+            let member_owner = format!("{struct_name}.{}", member.name);
             if let Some(annotation) = &member.ty {
                 // Resolve and classify the annotation now even when the member's
                 // symbolic body cannot be checked until application. This keeps
@@ -163,7 +168,11 @@ impl Checker {
                     Ok::<_, TypeError>((Some(value), None))
                 } else {
                     let source_ty = assoc_body_source_type(&member.value)?;
-                    let template = self.lower_parameterized_member(&member.params, &source_ty)?;
+                    let template = self.lower_parameterized_member(
+                        member_type_scope(&member_owner, &member.params),
+                        &member.params,
+                        &source_ty,
+                    )?;
                     Ok((None, Some(template)))
                 }
             })();
@@ -180,6 +189,7 @@ impl Checker {
                     parameterized.insert(
                         member.name.clone(),
                         ParameterizedMember {
+                            binder_owner: member_owner.clone(),
                             params: member.params.clone(),
                             template,
                             availability: compiled,
@@ -214,27 +224,14 @@ impl Checker {
     /// concrete resolution substitutes an application's arguments into the result.
     pub(super) fn lower_parameterized_member(
         &mut self,
+        scope: HashMap<String, Ty>,
         params: &[mojito_ast::ast::TypeParam],
         source_ty: &SourceType,
     ) -> Result<Ty, TypeError> {
-        // Member type parameters resolve as `Ty::Param` (via the `tparams` scope,
-        // like a generic def's parameters); origin parameters resolve to
-        // `Origin::Param` via `enclosing_type_params`; value parameters resolve to
-        // a symbolic `CtValue::Expr`.
-        let scope: HashMap<String, Ty> = params
-            .iter()
-            .filter(|p| matches!(assoc_param_kind(p), AssocParamKind::Type))
-            .map(|p| {
-                (
-                    p.name.clone(),
-                    Ty::Param {
-                        name: p.name.clone(),
-                        bounds: p.bounds.clone(),
-                        callable_bound: None,
-                    },
-                )
-            })
-            .collect();
+        // Member type parameters resolve as `Ty::Param` (via the `tparams` scope
+        // the caller built, like a generic def's parameters); origin parameters
+        // resolve to `Origin::Param` via `enclosing_type_params`; value
+        // parameters resolve to a symbolic `CtValue::Expr`.
         self.tparams.push(scope);
         let saved = self.enclosing_type_params.len();
         self.enclosing_type_params.extend(params.iter().cloned());
@@ -495,14 +492,14 @@ impl Checker {
     /// Open the scope of a declaration's own binders: its type parameters and,
     /// level for level beside them, its value parameters. `tparams.pop()`
     /// closes both, since a value scope deeper than the type scopes is dead.
-    pub(super) fn push_param_scope(&mut self, owner: &str, decls: &[ParamDecl]) {
+    pub(super) fn push_param_scope(&mut self, decls: &[ParamDecl]) {
         let depth = self.tparams.len();
         self.vparams.truncate(depth);
         self.vparams.resize_with(depth, HashMap::new);
-        self.vparams.push(value_scope(owner, decls));
+        self.vparams.push(value_scope(decls));
         self.pack_params.truncate(depth);
         self.pack_params.resize_with(depth, HashMap::new);
-        self.pack_params.push(pack_scope(owner, decls));
+        self.pack_params.push(pack_scope(decls));
         self.tparams.push(type_scope(decls));
     }
 
@@ -536,33 +533,16 @@ impl Checker {
     }
 
     pub(super) fn self_param_ct_value(&self, name: &str) -> Option<CtValue> {
-        let owner = match &self.self_ty {
-            Some(Ty::Struct(owner, _)) => owner.as_str(),
-            _ => "Self",
-        };
-        self.self_decls
-            .iter()
-            .enumerate()
-            .find_map(|(slot, decl)| match decl {
-                ParamDecl::Value { name: n, ty, .. } if n == name => {
-                    Some(value_parameter(owner, slot, n, ty))
-                }
-                // `Self.Ts` names the struct's pack by its unstarred spelling.
-                ParamDecl::Type {
-                    name: n,
-                    bounds,
-                    callable_bound,
-                    variadic,
-                    ..
-                } if n == name || (*variadic && n.trim_start_matches('*') == name) => {
-                    Some(CtValue::Type(Box::new(Ty::Param {
-                        name: n.clone(),
-                        bounds: bounds.clone(),
-                        callable_bound: callable_bound.clone(),
-                    })))
-                }
-                _ => None,
-            })
+        self.self_decls.iter().find_map(|decl| match decl {
+            ParamDecl::Value { name: n, ty, .. } if n == name => Some(value_parameter(decl, ty)),
+            // `Self.Ts` names the struct's pack by its unstarred spelling.
+            ParamDecl::Type {
+                name: n, variadic, ..
+            } if n == name || (*variadic && n.trim_start_matches('*') == name) => {
+                type_parameter(decl).map(|ty| CtValue::Type(Box::new(ty)))
+            }
+            _ => None,
+        })
     }
 
     /// The type value a name (with bracket arguments) denotes, `None` when
@@ -1400,8 +1380,8 @@ impl Checker {
     /// of its `where` clauses that is still a proposition once its own
     /// parameters stand for themselves. It is recorded beside the
     /// conformance assumptions about to be pushed, so the same pop closes it.
-    pub(super) fn assume_declared_propositions(&mut self, owner: &str, decls: &[ParamDecl]) {
-        let arguments = params_as_args(owner, decls);
+    pub(super) fn assume_declared_propositions(&mut self, decls: &[ParamDecl]) {
+        let arguments = params_as_args(decls);
         let environment: HashMap<&str, &TyArg> = decls
             .iter()
             .zip(&arguments)
@@ -1426,16 +1406,12 @@ impl Checker {
     /// clauses, over the struct's parameters (`Self.n`) and its own.
     pub(super) fn assume_method_propositions(
         &mut self,
-        owner: &str,
         method: &mojito_ast::ast::Method,
         method_decls: &[ParamDecl],
     ) {
         let struct_decls = self.self_decls.clone();
-        let mut arguments = params_as_args(owner, &struct_decls);
-        arguments.extend(params_as_args(
-            &method_binder_owner(owner, &method.name),
-            method_decls,
-        ));
+        let mut arguments = params_as_args(&struct_decls);
+        arguments.extend(params_as_args(method_decls));
         let environment: HashMap<&str, &TyArg> = struct_decls
             .iter()
             .chain(method_decls)
@@ -1571,7 +1547,9 @@ impl Checker {
         // A pack bound to another declaration's pack that is still a
         // parameter (`Tuple[*Self.Ts]`): its elements are that pack's.
         let forwarded = |param: &str| match environment.get(param) {
-            Some(TyArg::Ty(pack @ Ty::Param { name, .. })) if name.starts_with('*') => Some(pack),
+            Some(TyArg::Ty(pack @ Ty::Param { binder, .. })) if binder.name.starts_with('*') => {
+                Some(pack)
+            }
             _ => None,
         };
         let pack = |param: &str, holds: &dyn Fn(&[Ty]) -> bool| match (

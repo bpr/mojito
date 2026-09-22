@@ -843,7 +843,7 @@ fn value_parameter_locals(decls: &[ParamDecl]) -> Vec<(String, Ty)> {
             } if mojito_types::types::constructible_type_parameter(decl) => Some((
                 name.clone(),
                 Ty::Param {
-                    name: name.clone(),
+                    binder: decl.binder(),
                     bounds: bounds.clone(),
                     callable_bound: callable_bound.clone(),
                 },

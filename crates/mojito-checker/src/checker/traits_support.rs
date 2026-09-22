@@ -241,10 +241,10 @@ pub(super) fn competing_setitem_value_shapes(a: &MethodSig, b: &MethodSig) -> bo
 /// error. `raises Never` is already normalized to a non-raising signature when
 /// `MethodSig` is built.
 pub(super) fn method_satisfies_requirement(got: &MethodSig, required: &MethodSig) -> bool {
-    let mut got_shape = got.clone();
+    let mut got_shape = canonical_method_shape(got);
     got_shape.raises = false;
     got_shape.error = None;
-    let mut required_shape = required.clone();
+    let mut required_shape = canonical_method_shape(required);
     required_shape.raises = false;
     required_shape.error = None;
     if got_shape != required_shape {
@@ -335,3 +335,37 @@ pub(super) const BUILTIN_TRAITS: &[&str] = &[
     "Xorable",
     "Negatable",
 ];
+
+/// A method's contract with its own binders canonicalized to signature slots
+/// (`canonical_generic_signature`): a witness spelled `def push[X: Hasher]`
+/// satisfies a requirement spelled `def push[H: Hasher]`, since a binder's
+/// identity is its declaration's and its spelling is not part of the shape.
+fn canonical_method_shape(method: &MethodSig) -> MethodSig {
+    if method.decls.is_empty() {
+        return method.clone();
+    }
+    let mut types = method.params.clone();
+    types.push(method.ret.clone());
+    types.extend(method.variadic.as_deref().cloned());
+    types.extend(method.kw_variadic.as_deref().cloned());
+    types.extend(method.error.as_deref().cloned());
+    let (decls, mut types) =
+        mojito_types::types::canonical_generic_signature(&method.decls, &types);
+    let mut shape = method.clone();
+    shape.decls = decls;
+    shape.error = method
+        .error
+        .is_some()
+        .then(|| Box::new(types.pop().expect("error type")));
+    shape.kw_variadic = method
+        .kw_variadic
+        .is_some()
+        .then(|| Box::new(types.pop().expect("keyword collector type")));
+    shape.variadic = method
+        .variadic
+        .is_some()
+        .then(|| Box::new(types.pop().expect("collector type")));
+    shape.ret = types.pop().expect("return type");
+    shape.params = types;
+    shape
+}

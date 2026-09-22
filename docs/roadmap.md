@@ -310,31 +310,28 @@ to section 3, however small.
   - Depends on 1.1.
   - Model: Fable, plan first.
 
-- [ ] **1.17 Type parameters are identified by spelling**
+- [ ] **1.17 Binder identity is still by spelling below the checker**
 
-  Problem: a value parameter is now owned by its declaration
-  (`ParamId { owner, slot }`), but `Ty::Param` still compares by name, so two
-  unrelated declarations that both spell `T` share a type parameter.
-  - Every type substitution in the checker is a name map
-    (`substitute(ty, &HashMap<String, Ty>)`), which is why the value half
-    could move alone: `ParamBindings` keeps a by-name adapter beside its
-    identity entries.
-  - Giving value parameters owners exposed two sites that only worked because
-    spellings coincided (fieldwise construction, a non-parameterized
-    associated alias). The type half will expose more of the same.
-  - Two readers still have no owner to give and bind by name: the
-    elaborator's declaration metadata (`$elaborated`) and a schema 1.0 MIR
-    artifact (`$mir-1.0:<name>`).
-  - A CTFE subprogram makes its own `ParamContext` instead of inheriting the
-    compilation's. Equality is structural across contexts, so this costs
-    interning only.
-  - The lever is a reference wrapper in `Ty::Param` with identity equality and
-    a diagnostic name, and `IndexRef`-style slots for a signature's own
-    binders, as `canonical_generic_signature` already does for values.
-  - Depends on nothing. 1.18 is easier after it, and does not need it.
-  - Model: Fable, plan first. A comparison change under every checker
-    substitution; the plan's job is to find the coincidence sites before the
-    edit does.
+  Problem: a type binder is now its declaration's (`Ty::Param { binder }`,
+  `ParamDecl::{Type, Value}.id`), but three readers still bind a type by
+  its spelling and would confuse two declarations that both spell `T`.
+  - Native monomorphization's `Bindings.types` and `Specializer.enclosing_types`
+    (`crates/mojito-native/src/native/mono`) are name maps: the waist's
+    instructions (`ConstructTypeParam { param }`) name a function's own binder
+    by spelling, and `substitute_ty` reads a `Ty::Param` by `binder.name`. A
+    contract binder spelled like the function's own would substitute wrongly.
+  - The Tuple closedness check (`src/compiler.rs`,
+    `tuple_specialization_type_is_closed_in`) and every `where`-clause
+    operand (`GenericConstraint::Conforms { param }`, `ConstraintOperand::Param`)
+    name binders by spelling, so a nested contract's `T` counts as bound by an
+    enclosing `T`.
+  - Every anonymous callable contract's binders share the owner `$callable`,
+    which is the alpha-equivalence contracts need at depth 0; a contract
+    binder bounded by another contract collides one level down.
+  - The elaborator's declaration metadata (`$elaborated`) and a 1.0/1.1 MIR
+    artifact (`$mir-1.1:<name>`) still have no owner to give.
+  - Depends on nothing.
+  - Model: Opus. Each corner is a keyed-map change behind an existing helper.
 
 - [ ] **1.18 A body that forwards its pack gets no symbolic verdict**
 

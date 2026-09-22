@@ -1679,7 +1679,7 @@ pub struct ParamBindings {
     by_id: HashMap<ParamId, ParamExpr>,
     by_name: HashMap<String, ParamExpr>,
     frames: Vec<Vec<Option<ParamExpr>>>,
-    types: HashMap<String, Ty>,
+    types: HashMap<ParamId, Ty>,
 }
 
 impl ParamBindings {
@@ -1712,8 +1712,8 @@ impl ParamBindings {
             .insert(name.trim_start_matches('*').to_string(), value);
     }
 
-    pub fn bind_type(&mut self, name: &str, ty: Ty) {
-        self.types.insert(name.to_string(), ty);
+    pub fn bind_type(&mut self, id: ParamId, ty: Ty) {
+        self.types.insert(id, ty);
     }
 
     /// Bind the slots of the outermost signature binder not yet bound.
@@ -1728,16 +1728,21 @@ impl ParamBindings {
             && self.types.is_empty()
     }
 
-    /// Drop the name and type entries a nested signature's binders shadow.
+    /// Drop the name entries a nested signature's binders shadow.
     pub fn mask<'a>(&mut self, names: impl IntoIterator<Item = &'a str>) {
         for name in names {
-            let name = name.trim_start_matches('*');
-            self.by_name.remove(name);
-            self.types.remove(name);
+            self.by_name.remove(name.trim_start_matches('*'));
         }
     }
 
-    pub const fn types(&self) -> &HashMap<String, Ty> {
+    /// Drop the type entries of a nested signature's own binders.
+    pub fn mask_types<'a>(&mut self, ids: impl IntoIterator<Item = &'a ParamId>) {
+        for id in ids {
+            self.types.remove(id);
+        }
+    }
+
+    pub const fn types(&self) -> &HashMap<ParamId, Ty> {
         &self.types
     }
 

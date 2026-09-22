@@ -59,15 +59,22 @@ impl Decoder {
                 "generic_func" => self.callable_ty(value, fields, true)?,
                 "param" => {
                     let name = self.req(value, fields, "name", Self::symbol)?;
+                    let id = self.binder_id(value, fields, &name)?;
                     let bounds = self.req(value, fields, "bounds", |d, v| Some(d.strings(v)))?;
                     let callable_bound = self
                         .req(value, fields, "callable_bound", |d, v| {
                             Some(d.option_ty(Some(v)))
                         })?
                         .map(Box::new);
-                    self.unknown(fields, &["name", "bounds", "callable_bound"]);
+                    self.unknown(
+                        fields,
+                        &["owner", "slot", "name", "bounds", "callable_bound"],
+                    );
                     Ty::Param {
-                        name,
+                        binder: mojito_types::param_expr::ParamRef {
+                            id,
+                            name: name.into(),
+                        },
                         bounds,
                         callable_bound,
                     }
@@ -308,6 +315,8 @@ impl Decoder {
                 self.unknown(
                     fields,
                     &[
+                        "owner",
+                        "slot",
                         "name",
                         "bounds",
                         "callable_bound",
@@ -318,6 +327,7 @@ impl Decoder {
                     ],
                 );
                 Some(ParamDecl::Type {
+                    id: self.binder_id(value, fields, &name)?,
                     name,
                     bounds,
                     callable_bound,
@@ -347,6 +357,8 @@ impl Decoder {
                 self.unknown(
                     fields,
                     &[
+                        "owner",
+                        "slot",
                         "name",
                         "type",
                         "default",
@@ -357,6 +369,7 @@ impl Decoder {
                     ],
                 );
                 Some(ParamDecl::Value {
+                    id: self.binder_id(value, fields, &name)?,
                     name,
                     ty,
                     default,

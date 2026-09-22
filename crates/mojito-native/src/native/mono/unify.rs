@@ -21,13 +21,13 @@ pub(super) fn push_sugar_arguments(
     arguments: &mut Vec<InstanceArg>,
 ) {
     for ty in &declaration.param_types {
-        if let Ty::Param { name, .. } = peel_refs(ty)
-            && (name.starts_with("Some[") || bindings.self_instance.is_none())
+        if let Ty::Param { binder, .. } = peel_refs(ty)
+            && (binder.name.starts_with("Some[") || bindings.self_instance.is_none())
             && !declaration
                 .param_decls
                 .iter()
-                .any(|decl| decl.name().trim_start_matches('*') == name)
-            && let Some(bound) = bindings.types.get(name.as_str())
+                .any(|decl| decl.name().trim_start_matches('*') == binder.name.as_ref())
+            && let Some(bound) = bindings.types.get(binder.name.as_ref())
             && *bound != Ty::StringLiteral
         {
             arguments.push(InstanceArg::Ty(bound.clone()));
@@ -198,7 +198,7 @@ pub(super) fn bind_ty_args(
 
 pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Result<(), String> {
     match pattern {
-        Ty::Param { name, .. } => bind_type(name, actual, bindings),
+        Ty::Param { binder, .. } => bind_type(&binder.name, actual, bindings),
         Ty::Assoc { .. } => {
             let key = pattern.to_string();
             match bindings.associated.get(&key) {
@@ -332,8 +332,8 @@ pub(super) fn unify_result(
     // result is spelled `ref U`; stripping its handle above leaves `U`.
     // Preserve the established element solution instead of mistaking the
     // flattened handle for a conflicting `T = U` solution.
-    if let Ty::Param { name, .. } = pattern
-        && let Some(Ty::Ref(reference)) = bindings.types.get(name)
+    if let Ty::Param { binder, .. } = pattern
+        && let Some(Ty::Ref(reference)) = bindings.types.get(binder.name.as_ref())
         && ty_equal_modulo_origins(&reference.referent, actual)
     {
         return Ok(());

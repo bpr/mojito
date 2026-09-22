@@ -1434,3 +1434,13 @@ fn struct_header_and_method_own_packs_keep_the_bare_name() {
     let src = "struct Bag[*Ts: Movable](\n    Copyable where Ts.all_conforms_to[Copyable](),\n    Deinitable where Ts.all_conforms_to[Deinitable](),\n    Movable,\n) where (conforms_to(Ts.values, Movable), \"pack elements must be Movable\"):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple[*Self.Ts](*args^)\n\n    def count(self) -> Int where conforms_to(Self.Ts.values, Copyable):\n        return Self.Ts.length\n\n    def tally[*Us: Movable](self, var *extra: *Us) -> Int:\n        var total = Self.Ts.length\n        comptime for i in range(Us.length):\n            total += 1\n        return total\n\ndef main():\n    var b = Bag[Int, Bool](1, True)\n    print(b.count())\n    print(b.tally(7, \"x\", False))\n";
     assert_eq!(run(src).unwrap(), "2\n5\n");
 }
+
+#[test]
+fn callable_contract_binder_shadows_the_enclosing_binder() {
+    // `apply`'s `T` and its contract's `T` are different parameters: the
+    // clone substituting `apply`'s `T` leaves the contract generic, so the
+    // call through `f` still infers the contract's own binder. The pinned
+    // Mojo accepts and prints the same.
+    let src = "def ident[T: Copyable & Deinitable](x: T) -> T:\n    return x.copy()\n\ndef apply[T: Copyable & Deinitable, F: def[T: Copyable & Deinitable](T) -> T](f: F, x: T) -> T:\n    return f(x)\n\ndef outer[T: Copyable & Deinitable](x: T) -> T:\n    return apply(ident, x)\n\ndef main():\n    print(outer(9))\n    print(outer(String(\"q\")))\n    print(apply(ident, 4))\n";
+    assert_eq!(run_compiled(src).unwrap(), "9\nq\n4\n");
+}

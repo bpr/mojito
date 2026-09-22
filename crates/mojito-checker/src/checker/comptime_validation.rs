@@ -353,11 +353,7 @@ impl Checker {
     pub(super) fn pack_reference(&self, pack: &str) -> Option<ParamExpr> {
         let bare = pack.trim_start_matches('*');
         self.pack_parameter_in_scope(bare).or_else(|| {
-            let owner = match &self.self_ty {
-                Some(Ty::Struct(owner, _)) => owner.as_str(),
-                _ => "Self",
-            };
-            pack_scope(owner, &self.self_decls)
+            pack_scope(&self.self_decls)
                 .remove(bare)
                 .map(|reference| self.param_context.intern(&reference))
         })
@@ -387,11 +383,12 @@ impl Checker {
     /// parameter: the dependent `Ts[index]`, whose index is a compile-time
     /// expression over the parameters and `comptime for` variables in scope.
     pub(super) fn pack_element_type(&self, pack: &Ty, index: &Expr) -> Result<Ty, TypeError> {
-        let Ty::Param { name, .. } = pack else {
+        let Ty::Param { binder, .. } = pack else {
             return Err(TypeError::InvariantViolation(format!(
                 "'{pack}' is not a variadic pack parameter"
             )));
         };
+        let name = &binder.name;
         let list = self.pack_reference(name).ok_or_else(|| {
             TypeError::SymbolicPackBoundary(format!("pack '{name}' is not in scope"))
         })?;
@@ -543,8 +540,8 @@ impl Checker {
             .iter()
             .filter_map(|(name, argument)| match argument {
                 TyArg::Val(value) => Some((name.clone(), value.clone())),
-                TyArg::Ty(Ty::Param { name: pack, .. }) if pack.starts_with('*') => self
-                    .pack_reference(pack)
+                TyArg::Ty(Ty::Param { binder, .. }) if binder.name.starts_with('*') => self
+                    .pack_reference(&binder.name)
                     .map(|reference| (name.clone(), CtValue::Expr(reference))),
                 TyArg::Ty(_) | TyArg::Origin(_) => None,
             })
@@ -564,20 +561,13 @@ impl Checker {
         let (list, _) = dependent.pack_element()?;
         let pack = list.as_decl_ref()?.name.to_string();
         let declared = self.lookup_tparam(&format!("*{pack}")).or_else(|| {
-            self.self_decls.iter().find_map(|decl| match decl {
-                ParamDecl::Type {
-                    name,
-                    bounds,
-                    callable_bound,
-                    variadic: true,
-                    ..
-                } if name.trim_start_matches('*') == pack => Some(Ty::Param {
-                    name: name.clone(),
-                    bounds: bounds.clone(),
-                    callable_bound: callable_bound.clone(),
-                }),
-                _ => None,
-            })
+            self.self_decls
+                .iter()
+                .filter(|decl| {
+                    matches!(decl, ParamDecl::Type { variadic: true, .. })
+                        && decl.name().trim_start_matches('*') == pack
+                })
+                .find_map(type_parameter)
         });
         let mut bounds = match declared {
             Some(Ty::Param { bounds, .. }) => bounds,
@@ -600,7 +590,7 @@ impl Checker {
         };
         views.insert(name.clone(), ty.clone());
         Some(Ty::Param {
-            name,
+            binder: pack_element_view_binder(&name),
             bounds,
             callable_bound: None,
         })
@@ -629,7 +619,11 @@ impl Checker {
         if views.is_empty() {
             return ty;
         }
-        substitute(&ty, &views)
+        let elements: TySubst = views
+            .iter()
+            .map(|(name, element)| (pack_element_view_binder(name).id, element.clone()))
+            .collect();
+        substitute(&ty, &elements)
     }
 
     /// Whether a validation error marks the validator's own blind spot
@@ -1145,6 +1139,16 @@ fn substitute_identifiers<'a>(expr: &Expr, lookup: &dyn Fn(&str) -> Option<&'a E
     rewritten
 }
 
+/// The binder of a bounded pack-element view ([`Checker::opaque_element`]):
+/// the view's qualified spelling is its whole identity, so
+/// [`Checker::restore_pack_elements`] finds it again.
+fn pack_element_view_binder(name: &str) -> ParamRef {
+    ParamRef {
+        id: ParamId::new(&format!("$view:{name}"), 0),
+        name: name.into(),
+    }
+}
+
 /// The compile-time binder of an integer `comptime for` variable, so a
 /// dependent index over it (`Ts[i]`, `args[i]`) has a node. The loop's
 /// iterable names the binder: each loop owns its variable.
@@ -1156,5 +1160,5 @@ fn comptime_index_binder(var: &str, iter: &Expr) -> ParamExpr {
         span.span.0,
         span.span.1
     );
-    value_parameter_expr(&owner, 0, var, &Ty::Int)
+    value_binder_expr(ParamId::new(&owner, 0), var, &Ty::Int)
 }

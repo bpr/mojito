@@ -1484,13 +1484,15 @@ fn ty_value(ty: &Ty) -> String {
         ),
         Ty::Overload(values) => positional("overload", &list(values.iter().map(ty_value))),
         Ty::Param {
-            name,
+            binder,
             bounds,
             callable_bound,
         } => record(
             "param",
             &[
-                ("name", symbol(name)),
+                ("owner", quote(&binder.id.owner)),
+                ("slot", binder.id.slot.to_string()),
+                ("name", symbol(&binder.name)),
                 ("bounds", list(bounds.iter().map(|v| symbol(v)))),
                 (
                     "callable_bound",
@@ -1634,6 +1636,7 @@ fn ty_arg(value: &TyArg) -> String {
 fn param_decl(value: &ParamDecl) -> String {
     match value {
         ParamDecl::Type {
+            id,
             name,
             bounds,
             callable_bound,
@@ -1644,6 +1647,8 @@ fn param_decl(value: &ParamDecl) -> String {
         } => record(
             "type_param",
             &[
+                ("owner", quote(&id.owner)),
+                ("slot", id.slot.to_string()),
                 ("name", symbol(name)),
                 ("bounds", list(bounds.iter().map(|v| symbol(v)))),
                 (
@@ -1657,6 +1662,7 @@ fn param_decl(value: &ParamDecl) -> String {
             ],
         ),
         ParamDecl::Value {
+            id,
             name,
             ty,
             default,
@@ -1667,6 +1673,8 @@ fn param_decl(value: &ParamDecl) -> String {
         } => record(
             "value_param",
             &[
+                ("owner", quote(&id.owner)),
+                ("slot", id.slot.to_string()),
                 ("name", symbol(name)),
                 ("type", ty_value(ty)),
                 ("default", option(default.as_ref().map(param_expr))),

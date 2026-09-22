@@ -1352,22 +1352,24 @@ fn checked_declaration_types_are_keyed_by_source_site_not_type_syntax() {
             .param_types[0]
             .clone()
     };
-    assert_eq!(
-        param_type("keep_any"),
-        mojito::Ty::Param {
-            name: "T".into(),
-            bounds: vec!["AnyType".into()],
+    assert_type_parameter(&param_type("keep_any"), "T", &["AnyType"]);
+    assert_type_parameter(&param_type("keep_hashable"), "T", &["Hashable"]);
+}
+
+/// `ty` is the type parameter spelled `name` with exactly `bounds`. Its
+/// identity is its declaration's, which a test cannot spell independently.
+fn assert_type_parameter(ty: &Ty, name: &str, bounds: &[&str]) {
+    match ty {
+        Ty::Param {
+            binder,
+            bounds: found,
             callable_bound: None,
+        } => {
+            assert_eq!(binder.name.as_ref(), name);
+            assert_eq!(found, bounds);
         }
-    );
-    assert_eq!(
-        param_type("keep_hashable"),
-        mojito::Ty::Param {
-            name: "T".into(),
-            bounds: vec!["Hashable".into()],
-            callable_bound: None,
-        }
-    );
+        other => panic!("expected type parameter '{name}', found {other}"),
+    }
 }
 
 #[test]
@@ -1392,13 +1394,13 @@ fn mir_declarations_carry_generic_free_and_method_keyword_collectors() {
             declaration.kw_variadic_convention,
             Some(mojito::ast::ArgConvention::Var)
         );
-        assert_eq!(
-            declaration.kw_variadic,
-            Some(mojito::Ty::Param {
-                name: "T".into(),
-                bounds: vec!["Copyable".into(), "Movable".into(), "Deinitable".into()],
-                callable_bound: None,
-            })
+        assert_type_parameter(
+            declaration
+                .kw_variadic
+                .as_ref()
+                .expect("keyword collector element"),
+            "T",
+            &["Copyable", "Movable", "Deinitable"],
         );
     }
     let pack = collector("pack");
@@ -1415,14 +1417,17 @@ fn mir_declarations_carry_generic_free_and_method_keyword_collectors() {
             .expect("keyword collector body")
             .1
     };
-    let element = mojito::Ty::Param {
-        name: "T".into(),
-        bounds: vec!["Copyable".into(), "Movable".into(), "Deinitable".into()],
-        callable_bound: None,
-    };
-    let body_type =
-        mojito::Ty::Struct("StringDict".into(), vec![mojito::types::TyArg::Ty(element)]);
-    for function in [collector_body("collect"), collector_body("Relay.collect")] {
+    for name in ["collect", "Relay.collect"] {
+        // The collector's storage is keyed by the declaration's own element
+        // parameter, whose identity the declaration carries.
+        let element = collector(name)
+            .kw_variadic
+            .as_ref()
+            .expect("keyword collector element")
+            .clone();
+        let body_type =
+            mojito::Ty::Struct("StringDict".into(), vec![mojito::types::TyArg::Ty(element)]);
+        let function = collector_body(name);
         assert_eq!(function.param_types.last(), Some(&body_type));
         let collector_slot = function.n_params - 1;
         assert_eq!(

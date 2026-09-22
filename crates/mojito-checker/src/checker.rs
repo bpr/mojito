@@ -58,14 +58,15 @@ use mojito_common::error::TypeError;
 use mojito_common::token::SourceSpan;
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{
-    ConstraintVerdict, HoleKind, MetaTy, ParamContext, ParamError, ParamExpr, ParamOp,
+    ConstraintVerdict, HoleKind, MetaTy, ParamContext, ParamError, ParamExpr, ParamId, ParamOp,
+    ParamRef,
 };
 use mojito_types::types::{
     CallableDefault, ConstraintOperand, DependentType, GenericConstraint, ParamDecl, SimdDtype,
-    SimdWidth, SliceKind, Ty, TyArg, array_element, array_parts, array_type, canonical_simd_ty,
-    contains_infer, dict_elements, dict_type, is_scalar_simd, list_element, list_type, range_type,
-    scalar_simd_dtype, set_element, set_type, simd_lane, simd_slots, tuple_elements,
-    tuple_type as nominal_tuple_type,
+    SimdWidth, SliceKind, Ty, TyArg, TySubst, array_element, array_parts, array_type,
+    canonical_simd_ty, contains_infer, dict_elements, dict_type, is_scalar_simd, list_element,
+    list_type, range_type, scalar_simd_dtype, set_element, set_type, simd_lane, simd_slots,
+    tuple_elements, tuple_type as nominal_tuple_type,
 };
 
 /// Type-check a whole program. Convenience wrapper over [`Checker`].
@@ -2195,8 +2196,8 @@ impl StructInfo {
 
     /// The arguments of the struct's own `Self` type: each declared parameter
     /// as itself, then each origin slot as its own binder.
-    fn self_arguments(&self, owner: &str) -> Vec<TyArg> {
-        self_struct_arguments(owner, &self.decls, &self.source_params)
+    fn self_arguments(&self) -> Vec<TyArg> {
+        self_struct_arguments(&self.decls, &self.source_params)
     }
 
     /// The origin tail of an instance's arguments (empty for an erased
@@ -2231,7 +2232,7 @@ fn explicit_destroy_types(
         .structs
         .iter()
         .filter_map(|(name, info)| {
-            let self_ty = Ty::Struct(name.clone(), params_as_args(name, &info.decls));
+            let self_ty = Ty::Struct(name.clone(), params_as_args(&info.decls));
             (!checker.is_deinitable(&self_ty)).then(|| {
                 (
                     name.clone(),
@@ -2336,11 +2337,10 @@ fn struct_origin_slots(
 
 /// See [`StructInfo::self_arguments`].
 fn self_struct_arguments(
-    owner: &str,
     decls: &[ParamDecl],
     source_params: &[mojito_ast::ast::TypeParam],
 ) -> Vec<TyArg> {
-    params_as_args(owner, decls)
+    params_as_args(decls)
         .into_iter()
         .chain(
             struct_origin_slots(source_params)
@@ -2404,6 +2404,9 @@ enum AliasBody {
 /// argument-to-parameter binding can distinguish type, value, and origin kinds.
 #[derive(Clone)]
 struct ParameterizedMember {
+    /// The declaration that owns the member's own binders
+    /// (`annotations::member_binder`): `Struct.member`.
+    binder_owner: String,
     params: Vec<mojito_ast::ast::TypeParam>,
     template: Ty,
     /// Constraints (one per trailing `where` clause) evaluated against both
@@ -2732,7 +2735,7 @@ type MethodInstantiation = (
     Vec<Ty>,
     Option<Ty>,
     Option<Ty>,
-    HashMap<String, Ty>,
+    TySubst,
     HashMap<String, TyArg>,
 );
 
@@ -2826,7 +2829,11 @@ mod dependent_callable_signature_tests {
         let context = ParamContext::new();
         // Each contract owns its binder: alpha-equivalence must come from the
         // signature slots, not from two declarations sharing an identity.
-        let reference = value_parameter_expr(&format!("$contract:{binder}"), 0, binder, &Ty::Int);
+        let reference = value_binder_expr(
+            ParamId::new(&format!("$contract:{binder}"), 0),
+            binder,
+            &Ty::Int,
+        );
         let index = context
             .infix(
                 InfixOp::Add,
@@ -2839,6 +2846,7 @@ mod dependent_callable_signature_tests {
         Ty::GenericFunc {
             environment: mojito_types::origin::CallableEnvironment::Thin,
             decls: vec![ParamDecl::Value {
+                id: ParamId::new(&format!("$contract:{binder}"), 0),
                 name: binder.to_string(),
                 ty: Box::new(Ty::Int),
                 default: None,

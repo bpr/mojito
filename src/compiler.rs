@@ -1114,7 +1114,7 @@ fn tuple_specialization_type_is_closed_in(
 ) -> bool {
     match ty {
         Ty::Infer | Ty::SelfType => false,
-        Ty::Param { name, .. } => type_binders.contains(name.trim_start_matches('*')),
+        Ty::Param { binder, .. } => type_binders.contains(binder.name.trim_start_matches('*')),
         Ty::Assoc { base, .. } => {
             tuple_specialization_type_is_closed_in(base, type_binders, value_binders)
         }
@@ -1562,9 +1562,18 @@ mod tuple_callable_closedness_tests {
     use super::*;
     use crate::types::TransferSet;
 
+    /// A test binder's identity is its spelling, so a callable declaring `T`
+    /// binds a parameter spelled `T` and not one spelled `U`.
+    fn test_binder(name: &str) -> crate::param_expr::ParamId {
+        crate::param_expr::ParamId::new(&format!("$test:{name}"), 0)
+    }
+
     fn type_parameter(name: &str) -> Ty {
         Ty::Param {
-            name: name.to_string(),
+            binder: crate::param_expr::ParamRef {
+                id: test_binder(name),
+                name: name.into(),
+            },
             bounds: vec!["Movable".to_string()],
             callable_bound: None,
         }
@@ -1574,6 +1583,7 @@ mod tuple_callable_closedness_tests {
         Ty::GenericFunc {
             environment: crate::origin::CallableEnvironment::Thin,
             decls: vec![crate::types::ParamDecl::Type {
+                id: test_binder(declared),
                 name: declared.to_string(),
                 bounds: vec!["Movable".to_string()],
                 callable_bound: None,

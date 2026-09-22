@@ -50,24 +50,15 @@ impl Checker {
             && param_args.is_empty()
             && args.is_empty()
             && kwargs.is_empty()
-            && let Some(ParamDecl::Type {
-                name: parameter,
-                bounds,
-                callable_bound,
-                ..
-            }) = self
+            && let Some(ty) = self
                 .self_decls
                 .iter()
-                .find(|declaration| declaration.name() == method)
+                .filter(|declaration| declaration.name() == method)
+                .find_map(type_parameter)
         {
-            let ty = Ty::Param {
-                name: parameter.clone(),
-                bounds: bounds.clone(),
-                callable_bound: callable_bound.clone(),
-            };
             if !self.conforms_to(&ty, "Defaultable") && !self.conforms_to(&ty, "Hasher") {
                 return Err(TypeError::TraitNotSatisfied {
-                    param: parameter.clone(),
+                    param: method.to_string(),
                     ty: ty.to_string(),
                     trait_name: "Defaultable".to_string(),
                     reason: self.trait_failure_reason(&ty, "Defaultable"),
@@ -76,7 +67,7 @@ impl Checker {
             self.operation_adjustments.borrow_mut().insert(
                 span,
                 mojito_checked::checked::SemanticAdjustment::ConstructTypeParam {
-                    param: parameter.clone(),
+                    param: method.to_string(),
                 },
             );
             return Ok(ty);
@@ -1703,8 +1694,7 @@ impl Checker {
                 .iter()
                 .filter(|(_, info)| info.methods.contains_key(method))
                 .filter(|(name, info)| {
-                    let implementation =
-                        Ty::Struct((*name).clone(), params_as_args(name, &info.decls));
+                    let implementation = Ty::Struct((*name).clone(), params_as_args(&info.decls));
                     bounds
                         .iter()
                         .all(|bound| self.conforms_to(&implementation, bound))
@@ -1714,7 +1704,7 @@ impl Checker {
                     if signatures.len() == 1 {
                         return vec![format!("{name}.{method}")];
                     }
-                    let self_ty = Ty::Struct(name.clone(), params_as_args(name, &info.decls));
+                    let self_ty = Ty::Struct(name.clone(), params_as_args(&info.decls));
                     signatures
                         .iter()
                         .map(|signature| {
@@ -2014,7 +2004,7 @@ impl Checker {
             Ty::Struct(sname, targs) => match self.structs.get(sname) {
                 Some(info) => (
                     info.tail_origin_bindings(targs),
-                    Ty::Struct(sname.clone(), info.self_arguments(sname)),
+                    Ty::Struct(sname.clone(), info.self_arguments()),
                 ),
                 None => (HashMap::new(), obj_ty.clone()),
             },

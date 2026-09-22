@@ -546,6 +546,7 @@ fn param_expr_closed_specialization_keys() {
     // A residual value is not silently omitted from a method's value list; a
     // deferred callable slot is the one intentional omission.
     let value_decl = |name: &str| ParamDecl::Value {
+        id: mojito::param_expr::ParamId::new(&format!("$test:{name}"), 0),
         name: name.into(),
         ty: Box::new(Ty::Int),
         default: None,

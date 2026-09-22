@@ -1101,11 +1101,11 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         }
         // A type parameter spells as the bare annotation `T` does.
         Ty::Param {
-            name,
+            binder,
             bounds,
             callable_bound,
         } => {
-            let mut result = encode_identifier(name);
+            let mut result = encode_identifier(&binder.name);
             for bound in bounds {
                 result.push('$');
                 result.push_str(&encode_identifier(bound));

@@ -13,7 +13,7 @@ use super::{Occurrence, fact_at};
 use crate::checker::{Checker, MethodSig, StructInfo};
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
 use mojito_checked::templates::{CheckedBodyFacts, OccurrenceId};
-use mojito_types::types::{ParamDecl, Ty, TyArg, substitute};
+use mojito_types::types::{ParamDecl, Ty, TyArg, TySubst, substitute};
 use std::collections::HashMap;
 
 impl Checker {
@@ -33,7 +33,7 @@ impl Checker {
         facts: &mut CheckedBodyFacts,
         id: OccurrenceId,
         occurrences: &[Occurrence],
-        substitution: &HashMap<String, Ty>,
+        substitution: &TySubst,
     ) -> Result<(), &'static str> {
         let occurrence = occurrences
             .iter()
@@ -143,9 +143,16 @@ impl Checker {
             // overloaded member's lowered name or nothing at all. Its `where`
             // clause, which a clone would have met to exist, is owed here.
             None => {
-                let bound: HashMap<String, TyArg> = struct_substitution
+                let bound: HashMap<String, TyArg> = info
+                    .decls
                     .iter()
-                    .map(|(name, ty)| (name.clone(), TyArg::Ty(ty.clone())))
+                    .zip(&arguments)
+                    .map(|(decl, argument)| {
+                        (
+                            decl.name().trim_start_matches('*').to_string(),
+                            argument.clone(),
+                        )
+                    })
                     .collect();
                 if !substitution.is_empty() && !self.method_constraints_apply(declared, &bound) {
                     return Err("a constructor's availability condition fails for the instance");
@@ -158,17 +165,12 @@ impl Checker {
 
 /// The struct's own type binders bound to the constructed type's arguments,
 /// the scope its constructor's parameter types are declared in.
-fn struct_substitution(
-    info: &StructInfo,
-    arguments: &[TyArg],
-) -> Result<HashMap<String, Ty>, &'static str> {
+fn struct_substitution(info: &StructInfo, arguments: &[TyArg]) -> Result<TySubst, &'static str> {
     info.decls
         .iter()
         .zip(arguments)
         .map(|(decl, argument)| match (decl, argument) {
-            (ParamDecl::Type { name, .. }, TyArg::Ty(ty)) => {
-                Ok((name.trim_start_matches('*').to_string(), ty.clone()))
-            }
+            (ParamDecl::Type { id, .. }, TyArg::Ty(ty)) => Ok((id.clone(), ty.clone())),
             _ => Err("a constructed struct has a parameter that is not a plain type"),
         })
         .collect()
@@ -179,7 +181,7 @@ fn struct_substitution(
 /// reference field takes a handle, whose recorded type is the referent.
 fn realize_fieldwise(
     info: &StructInfo,
-    struct_substitution: &HashMap<String, Ty>,
+    struct_substitution: &TySubst,
     positional: &[Ty],
     keywords: &[(&str, Ty)],
 ) -> Result<(), &'static str> {
@@ -207,7 +209,7 @@ fn realize_fieldwise(
 /// is evaluated in the callee's scope, once, whatever the instance.
 fn exact_binding(
     declared: &MethodSig,
-    struct_substitution: &HashMap<String, Ty>,
+    struct_substitution: &TySubst,
     positional: &[Ty],
     keywords: &[(&str, Ty)],
 ) -> Result<bool, &'static str> {

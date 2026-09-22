@@ -7,17 +7,13 @@ pub(super) use mojito_symbol::symbol::{
 };
 pub use mojito_types::types::{map_tyargs, substitute};
 
-pub(super) fn unify(
-    pattern: &Ty,
-    actual: &Ty,
-    subst: &mut HashMap<String, Ty>,
-) -> Result<(), TypeError> {
+pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<(), TypeError> {
     match pattern {
-        Ty::Param { name, .. } => {
+        Ty::Param { binder, .. } => {
             let solved = default_literal(actual);
-            match subst.get(name) {
+            match subst.get(&binder.id) {
                 None => {
-                    subst.insert(name.clone(), solved);
+                    subst.insert(binder.id.clone(), solved);
                 }
                 Some(existing) if *existing == solved => {}
                 // A literal argument against an already-bound parameter
@@ -30,7 +26,7 @@ pub(super) fn unify(
                     return Err(TypeError::TypeMismatch {
                         expected: existing.to_string(),
                         found: solved.to_string(),
-                        context: format!("type parameter '{name}'"),
+                        context: format!("type parameter '{}'", binder.name),
                     });
                 }
             }
@@ -227,11 +223,11 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
     match ty {
         Ty::SelfType => replacement.clone(),
         Ty::Param {
-            name,
+            binder,
             bounds,
             callable_bound,
         } => Ty::Param {
-            name: name.clone(),
+            binder: binder.clone(),
             bounds: bounds.clone(),
             callable_bound: callable_bound
                 .as_ref()
@@ -330,7 +326,7 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
 /// enclosing struct's and the member's), value parameters by name, and origin
 /// parameters by `OriginParamId`.
 pub(super) struct AssocBindings {
-    pub types: HashMap<String, Ty>,
+    pub types: TySubst,
     pub values: HashMap<String, CtValue>,
     pub origins: HashMap<u32, mojito_types::origin::Origin>,
 }
@@ -1014,8 +1010,8 @@ impl Checker {
         // overflow argument scores and converts against its own element
         // (the specialized-pack shape the selection pass already handles).
         let resolved_variadic = match variadic {
-            Some(Ty::Param { name, .. }) if name.starts_with('*') => {
-                match arguments.get(name.trim_start_matches('*')) {
+            Some(Ty::Param { binder, .. }) if binder.name.starts_with('*') => {
+                match arguments.get(binder.name.trim_start_matches('*')) {
                     Some(TyArg::Val(CtValue::Tuple(values)))
                         if values.iter().all(|value| matches!(value, CtValue::Type(_))) =>
                     {

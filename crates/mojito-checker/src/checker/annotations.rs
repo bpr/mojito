@@ -164,57 +164,101 @@ pub(super) fn scalar_type_name(name: &str) -> Option<Ty> {
 pub(super) fn type_scope(decls: &[ParamDecl]) -> HashMap<String, Ty> {
     decls
         .iter()
-        .filter_map(|d| match d {
-            ParamDecl::Type {
-                name,
-                bounds,
-                callable_bound,
-                ..
-            } => Some((
-                name.clone(),
-                Ty::Param {
-                    name: name.clone(),
-                    bounds: bounds.clone(),
-                    callable_bound: callable_bound.clone(),
-                },
-            )),
-            ParamDecl::Value { .. } => None,
-        })
+        .filter_map(|decl| type_parameter(decl).map(|ty| (decl.name().to_string(), ty)))
         .collect()
+}
+
+/// The `Ty::Param` a type binder's uses carry, `None` for a value binder.
+pub(super) fn type_parameter(decl: &ParamDecl) -> Option<Ty> {
+    match decl {
+        ParamDecl::Type {
+            bounds,
+            callable_bound,
+            ..
+        } => Some(Ty::Param {
+            binder: decl.binder(),
+            bounds: bounds.clone(),
+            callable_bound: callable_bound.clone(),
+        }),
+        ParamDecl::Value { .. } => None,
+    }
 }
 
 /// A struct's own parameters, as the `TyArg`s they contribute to the struct's
 /// `Self` type while its body is checked: a type parameter as `Ty::Param`, a
 /// value parameter as a reference to its declaration.
-pub(super) fn params_as_args(owner: &str, decls: &[ParamDecl]) -> Vec<TyArg> {
+pub(super) fn params_as_args(decls: &[ParamDecl]) -> Vec<TyArg> {
     decls
         .iter()
-        .enumerate()
-        .map(|(slot, decl)| match decl {
-            ParamDecl::Type {
-                name,
-                bounds,
-                callable_bound,
-                ..
-            } => TyArg::Ty(Ty::Param {
-                name: name.clone(),
-                bounds: bounds.clone(),
-                callable_bound: callable_bound.clone(),
-            }),
-            ParamDecl::Value { name, ty, .. } => TyArg::Val(value_parameter(owner, slot, name, ty)),
+        .map(|decl| match decl {
+            ParamDecl::Type { .. } => {
+                TyArg::Ty(type_parameter(decl).expect("a type binder has a type parameter"))
+            }
+            ParamDecl::Value { ty, .. } => TyArg::Val(value_parameter(decl, ty)),
         })
         .collect()
 }
 
-/// The reference to value parameter `slot` of the declaration `owner`, which
-/// [`binder_owner`] or [`method_binder_owner`] names.
-pub(super) fn value_parameter(owner: &str, slot: usize, name: &str, ty: &Ty) -> CtValue {
-    CtValue::Expr(value_parameter_expr(owner, slot, name, ty))
+/// The reference to the value binder `decl`, typed `ty`.
+pub(super) fn value_parameter(decl: &ParamDecl, ty: &Ty) -> CtValue {
+    CtValue::Expr(value_parameter_expr(decl, ty))
 }
 
-pub(super) fn value_parameter_expr(owner: &str, slot: usize, name: &str, ty: &Ty) -> ParamExpr {
+pub(super) fn value_parameter_expr(decl: &ParamDecl, ty: &Ty) -> ParamExpr {
+    value_binder_expr(decl.id().clone(), decl.name(), ty)
+}
+
+/// The binder `slot` of a parameterized associated member or generic alias
+/// `owner` declares: its own `[params]` are numbered by source position.
+pub(super) fn member_binder(owner: &str, slot: usize, name: &str) -> ParamRef {
+    ParamRef {
+        id: ParamId::new(&binder_owner(owner), slot),
+        name: name.into(),
+    }
+}
+
+/// The type-parameter scope a parameterized associated member's own
+/// `[params]` open while its body is lowered ([`member_binder`] numbering).
+pub(super) fn member_type_scope(
+    owner: &str,
+    params: &[mojito_ast::ast::TypeParam],
+) -> HashMap<String, Ty> {
+    params
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| {
+            matches!(
+                super::constraints::assoc_param_kind(p),
+                super::constraints::AssocParamKind::Type
+            )
+        })
+        .map(|(slot, p)| {
+            (
+                p.name.clone(),
+                Ty::Param {
+                    binder: member_binder(owner, slot, &p.name),
+                    bounds: p.bounds.clone(),
+                    callable_bound: None,
+                },
+            )
+        })
+        .collect()
+}
+
+/// A checker-made type parameter no declaration owns: an existential
+/// `Some[Trait]`, a builtin intrinsic's signature, a probe. Its spelling is
+/// its whole identity.
+pub(super) fn synthetic_binder(name: &str) -> ParamRef {
+    ParamRef {
+        id: ParamId::new(&format!("$synthetic:{name}"), 0),
+        name: name.into(),
+    }
+}
+
+/// The reference to the value binder `id` spelled `name`, typed `ty`.
+pub(super) fn value_binder_expr(id: ParamId, name: &str, ty: &Ty) -> ParamExpr {
     ParamContext::detached().decl_ref(
-        mojito_types::param_expr::ParamId::new(&binder_owner(owner), slot),
+        id,
         name.trim_start_matches('*'),
         mojito_types::param_expr::MetaTy::value(ty.clone()),
     )
@@ -252,11 +296,10 @@ pub(super) fn method_owner(self_ty: &Ty, method: &str) -> String {
 
 /// The variadic type packs a declaration's own binders open, as the
 /// parameter-list references an element of the pack indexes.
-pub(super) fn pack_scope(owner: &str, decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
+pub(super) fn pack_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
     decls
         .iter()
-        .enumerate()
-        .filter_map(|(slot, decl)| match decl {
+        .filter_map(|decl| match decl {
             ParamDecl::Type {
                 name,
                 variadic: true,
@@ -264,7 +307,7 @@ pub(super) fn pack_scope(owner: &str, decls: &[ParamDecl]) -> HashMap<String, Pa
             } => Some((
                 name.trim_start_matches('*').to_string(),
                 ParamContext::detached().decl_ref(
-                    mojito_types::param_expr::ParamId::new(&binder_owner(owner), slot),
+                    decl.id().clone(),
                     name.trim_start_matches('*'),
                     mojito_types::param_expr::MetaTy::type_list(),
                 ),
@@ -275,11 +318,10 @@ pub(super) fn pack_scope(owner: &str, decls: &[ParamDecl]) -> HashMap<String, Pa
 }
 
 /// The value-parameter scope a declaration's own binders open.
-pub(super) fn value_scope(owner: &str, decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
+pub(super) fn value_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
     decls
         .iter()
-        .enumerate()
-        .filter_map(|(slot, decl)| match decl {
+        .filter_map(|decl| match decl {
             ParamDecl::Value {
                 name,
                 ty,
@@ -287,16 +329,16 @@ pub(super) fn value_scope(owner: &str, decls: &[ParamDecl]) -> HashMap<String, P
                 ..
             } if !matches!(ty.as_ref(), Ty::Func { .. } | Ty::GenericFunc { .. }) => Some((
                 name.trim_start_matches('*').to_string(),
-                value_parameter_expr(owner, slot, name, ty),
+                value_parameter_expr(decl, ty),
             )),
             _ => None,
         })
         .collect()
 }
 
-/// The substitution mapping a struct's type-parameter names to a value's type
+/// The substitution mapping a struct's type binders to a value's type
 /// arguments (`[T] @ [Int]` ⟹ `{T: Int}`). Value parameters/arguments are
 /// skipped (they never appear in a type). Empty for a non-generic struct.
-pub(super) fn struct_subst(decls: &[ParamDecl], targs: &[TyArg]) -> HashMap<String, Ty> {
+pub(super) fn struct_subst(decls: &[ParamDecl], targs: &[TyArg]) -> TySubst {
     mojito_types::types::struct_argument_substitution(decls, targs)
 }

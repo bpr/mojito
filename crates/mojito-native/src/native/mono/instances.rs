@@ -155,10 +155,12 @@ impl Specializer<'_> {
             }
         }
         for ty in &declaration.param_types {
-            if let Ty::Param { name, .. } = ty
-                && !bindings.types.contains_key(name.as_str())
+            if let Ty::Param { binder, .. } = ty
+                && !bindings.types.contains_key(binder.name.as_ref())
             {
-                bindings.types.insert(name.clone(), Ty::StringLiteral);
+                bindings
+                    .types
+                    .insert(binder.name.to_string(), Ty::StringLiteral);
             }
         }
         let mut arguments = ordered_arguments(&declaration.param_decls, &bindings, &target)?;
@@ -302,10 +304,12 @@ impl Specializer<'_> {
         // The `Some[Writer]` sugar parameter is infer-only (absent from
         // `param_decls`); bind its spelling from the declared type.
         for ty in &declaration.param_types {
-            if let Ty::Param { name, .. } = ty
-                && !bindings.types.contains_key(name.as_str())
+            if let Ty::Param { binder, .. } = ty
+                && !bindings.types.contains_key(binder.name.as_ref())
             {
-                bindings.types.insert(name.clone(), Ty::StringLiteral);
+                bindings
+                    .types
+                    .insert(binder.name.to_string(), Ty::StringLiteral);
             }
         }
         let mut arguments = ordered_arguments(&declaration.param_decls, &bindings, &target)?;

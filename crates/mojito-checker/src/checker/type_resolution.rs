@@ -294,7 +294,7 @@ impl Checker {
                     if BUILTIN_TRAITS.contains(&trait_name) || self.traits.contains_key(trait_name)
                     {
                         return Ok(Ty::Param {
-                            name: format!("Some[{trait_name}]"),
+                            binder: synthetic_binder(&format!("Some[{trait_name}]")),
                             bounds: vec![trait_name.to_string()],
                             callable_bound: None,
                         });
@@ -509,17 +509,14 @@ impl Checker {
                 {
                     return Ok(bound.clone());
                 }
-                match self.self_decls.iter().find(|d| d.name() == name) {
-                    Some(ParamDecl::Type {
-                        bounds,
-                        callable_bound,
-                        ..
-                    }) => Ty::Param {
-                        name: name.clone(),
-                        bounds: bounds.clone(),
-                        callable_bound: callable_bound.clone(),
-                    },
-                    _ => return self.associated_type_for_self(name),
+                match self
+                    .self_decls
+                    .iter()
+                    .find(|d| d.name() == name)
+                    .and_then(type_parameter)
+                {
+                    Some(parameter) => parameter,
+                    None => return self.associated_type_for_self(name),
                 }
             }
             // Bare `Self` — the enclosing struct type or a trait's abstract Self.
@@ -746,7 +743,7 @@ impl Checker {
         args: &[mojito_ast::ast::ParamArg],
         patterns: &[Ty],
         actuals: &[Ty],
-    ) -> Result<(HashMap<String, Ty>, Vec<TyArg>), TypeError> {
+    ) -> Result<(TySubst, Vec<TyArg>), TypeError> {
         let partitioned = self.partition_struct_origin_args(name, source_params, args)?;
         let (subst, mut tyargs) =
             self.resolve_use_params(name, decls, &partitioned.forwarded, patterns, actuals)?;
@@ -1547,8 +1544,8 @@ impl Checker {
         let mut values = HashMap::new();
         for (decl, argument) in alias.decls.iter().zip(&tyargs) {
             match (decl, argument) {
-                (ParamDecl::Type { name, .. }, TyArg::Ty(ty)) => {
-                    types.insert(name.clone(), ty.clone());
+                (ParamDecl::Type { id, .. }, TyArg::Ty(ty)) => {
+                    types.insert(id.clone(), ty.clone());
                 }
                 (ParamDecl::Value { name, .. }, TyArg::Val(value)) => {
                     values.insert(name.clone(), value.clone());
@@ -1614,7 +1611,10 @@ impl Checker {
             let Some(arg) = supplied.next() else { break };
             match arg {
                 TyArg::Ty(ty) => {
-                    types.insert(param.name.clone(), ty.clone());
+                    types.insert(
+                        member_binder(&member.binder_owner, index, &param.name).id,
+                        ty.clone(),
+                    );
                 }
                 TyArg::Val(value) => {
                     values.insert(param.name.clone(), value.clone());
@@ -1664,11 +1664,11 @@ impl Checker {
     pub(super) fn resolve_assoc_ty(&self, ty: &Ty) -> Ty {
         match ty {
             Ty::Param {
-                name,
+                binder,
                 bounds,
                 callable_bound,
             } => Ty::Param {
-                name: name.clone(),
+                binder: binder.clone(),
                 bounds: bounds.clone(),
                 callable_bound: callable_bound
                     .as_ref()
@@ -2734,7 +2734,7 @@ impl Checker {
             return None;
         }
         let info = self.structs.get(name)?;
-        Some(Ty::Struct(name.to_string(), info.self_arguments(name)))
+        Some(Ty::Struct(name.to_string(), info.self_arguments()))
     }
 
     /// Resolve the alternatives of `Variant[T1, ..., Tn]`.  Alternative order

@@ -1000,6 +1000,7 @@ impl Elab<'_> {
                 },
             ] if parameter == "name" => match self.resolve_ct_arg(
                 &ParamDecl::Value {
+                    id: mojito_types::param_expr::ParamId::new("$elaborated", 0),
                     name: "name".to_string(),
                     ty: Box::new(Ty::StringLiteral),
                     default: None,

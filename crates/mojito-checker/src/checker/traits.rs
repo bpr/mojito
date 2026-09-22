@@ -152,7 +152,7 @@ impl Checker {
                         | ParamDecl::Value { constraints, .. } => constraints.push(constraint),
                     }
                 }
-                self.push_param_scope(&method_binder_owner(name, &m.name), &decls);
+                self.push_param_scope(&decls);
                 let signature = (|| {
                     Ok::<_, TypeError>((
                         self.param_tys(&m.params)?,
@@ -421,7 +421,7 @@ impl Checker {
         let generated_tuple = name.starts_with("Tuple$") || name.contains("$Tuple$");
         let self_ty = Ty::Struct(
             name.to_string(),
-            fixed_arguments.unwrap_or_else(|| info.self_arguments(name)),
+            fixed_arguments.unwrap_or_else(|| info.self_arguments()),
         );
         let saved = SavedStructScope {
             forward_types: std::mem::replace(
@@ -613,17 +613,13 @@ impl Checker {
             // `Deinitable` (conditionally, as `Optional`/`List` do), which
             // discharges the field's destructibility to that declaration.
             if !declaration.name.contains('$')
-                && let Ty::Param {
-                    name: parameter,
-                    bounds,
-                    ..
-                } = &ty
+                && let Ty::Param { binder, bounds, .. } = &ty
                 && !self.bounds_prove_deinitable(bounds)
                 && !declaration.conforms.iter().any(|tr| tr == "Deinitable")
             {
                 return Err(TypeError::FieldNotDeinitable {
                     field: f.name.clone(),
-                    ty: parameter.trim_start_matches('*').to_string(),
+                    ty: binder.name.trim_start_matches('*').to_string(),
                 });
             }
             self.declaration_types.borrow_mut().insert(
@@ -705,7 +701,7 @@ impl Checker {
                 },
                 method_decls.clone(),
             );
-            self.push_param_scope(&method_binder_owner(name, &m.name), &method_decls);
+            self.push_param_scope(&method_decls);
             let saved_method_type_params = self.enclosing_type_params.clone();
             let saved_struct_count = self
                 .enclosing_struct_type_params
@@ -1207,7 +1203,7 @@ impl Checker {
                             }))
                         }
                         constraints::AssocParamKind::Type => Some(TyArg::Ty(Ty::Param {
-                            name: param.name.clone(),
+                            binder: synthetic_binder(&format!("$placeholder:{}", param.name)),
                             bounds: param.bounds.clone(),
                             callable_bound: None,
                         })),
@@ -1308,13 +1304,13 @@ impl Checker {
             Ty::Variant(alternatives) => alternatives
                 .iter()
                 .all(|alternative| self.is_copyable_under_assumption(alternative, assumption)),
-            Ty::Param { name, bounds, .. } => {
+            Ty::Param { binder, bounds, .. } => {
                 bounds.iter().any(|bound| {
                     matches!(bound.as_str(), "Copyable" | "ImplicitlyCopyable")
                         || self.trait_refines(bound, "Copyable")
                 }) || ["Copyable", "ImplicitlyCopyable"].iter().any(|required| {
                     let needed = GenericConstraint::Conforms {
-                        param: name.trim_start_matches('*').to_string(),
+                        param: binder.name.trim_start_matches('*').to_string(),
                         trait_name: (*required).to_string(),
                     };
                     assumption.is_some_and(|known| generic_constraint_implies(known, &needed))
@@ -1536,9 +1532,9 @@ impl Checker {
         if self.conforms_to(ty, required) {
             return true;
         }
-        if let Ty::Param { name, .. } = ty {
+        if let Ty::Param { binder, .. } = ty {
             let needed = GenericConstraint::Conforms {
-                param: name.clone(),
+                param: binder.name.to_string(),
                 trait_name: required.to_string(),
             };
             return assumption.is_some_and(|known| generic_constraint_implies(known, &needed));
@@ -1868,10 +1864,10 @@ impl Checker {
     /// checked. No negative or disjunctive fact reaches this table (see
     /// `guaranteed_conformance_atoms`).
     pub(super) fn has_assumed_conformance(&self, ty: &Ty, required: &str) -> bool {
-        let Ty::Param { name, .. } = ty else {
+        let Ty::Param { binder, .. } = ty else {
             return false;
         };
-        let name = name.trim_start_matches('*');
+        let name = binder.name.trim_start_matches('*');
         self.assumed_conformances.iter().rev().any(|scope| {
             scope.iter().any(|(parameter, available)| {
                 parameter.trim_start_matches('*') == name
@@ -2788,7 +2784,7 @@ impl Checker {
         if method == "__hash__" && argc == 1 && bounds.iter().any(|b| b == "Hashable") {
             let mut signature = MethodSig::intrinsic(
                 vec![Ty::Param {
-                    name: "Some[Hasher]".to_string(),
+                    binder: synthetic_binder("Some[Hasher]"),
                     bounds: vec!["Hasher".to_string()],
                     callable_bound: None,
                 }],
@@ -2801,7 +2797,7 @@ impl Checker {
             let signature = match (method, argc) {
                 ("update", 1) => Some((
                     Ty::Param {
-                        name: "Some[Hashable]".to_string(),
+                        binder: synthetic_binder("Some[Hashable]"),
                         bounds: vec!["Hashable".to_string()],
                         callable_bound: None,
                     },
@@ -2810,7 +2806,7 @@ impl Checker {
                 )),
                 ("_update_with_simd", 1) => Some((
                     Ty::Param {
-                        name: "$simd".to_string(),
+                        binder: synthetic_binder("$simd"),
                         bounds: vec!["$SIMD".to_string()],
                         callable_bound: None,
                     },

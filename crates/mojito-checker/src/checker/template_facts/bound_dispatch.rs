@@ -22,7 +22,7 @@ use mojito_checked::templates::{
     BoundBuiltin, CallParameterFact, CheckedBodyFacts, OccurrenceId, TemplateArgumentBoundary,
     TemplateCallContract, TemplateInvalidation,
 };
-use mojito_types::types::{ParamDecl, Ty, TyArg};
+use mojito_types::types::{ParamDecl, Ty, TyArg, TySubst};
 use std::collections::HashMap;
 
 /// What an instance's type selects for a requirement the template dispatched
@@ -41,9 +41,9 @@ enum BoundWitness<'a> {
         target: String,
         /// The witness's own binders, each bound to the caller's argument
         /// type at the parameter that names it.
-        binders: HashMap<String, Ty>,
+        binders: TySubst,
         /// The struct's own substitution under the receiver's arguments.
-        substitution: HashMap<String, Ty>,
+        substitution: TySubst,
     },
 }
 
@@ -352,7 +352,6 @@ impl Checker {
         let mut binders = HashMap::new();
         for decl in &declared.decls {
             let ParamDecl::Type {
-                name,
                 bounds,
                 callable_bound: None,
                 default: None,
@@ -363,7 +362,7 @@ impl Checker {
                 return Err("the instance's witness declares a binder that is not a plain type");
             };
             let mut named = declared.params.iter().enumerate().filter(
-                |(_, ty)| matches!(ty, Ty::Param { name: parameter, .. } if parameter == name),
+                |(_, ty)| matches!(ty, Ty::Param { binder, .. } if binder.id == *decl.id()),
             );
             let (Some((index, _)), None) = (named.next(), named.next()) else {
                 return Err("the instance's witness binder is not named by exactly one parameter");
@@ -379,7 +378,7 @@ impl Checker {
             }) {
                 return Err("an argument does not carry the witness binder's bounds");
             }
-            binders.insert(name.clone(), argument.clone());
+            binders.insert(decl.id().clone(), argument.clone());
         }
         for (index, argument) in arguments.iter().enumerate() {
             let convention = declared.conventions[index];
@@ -594,7 +593,7 @@ impl Checker {
                 arguments: declared
                     .decls
                     .iter()
-                    .filter_map(|decl| binders.get(decl.name()).cloned())
+                    .filter_map(|decl| binders.get(decl.id()).cloned())
                     .map(TyArg::Ty)
                     .collect(),
             };
@@ -619,8 +618,8 @@ impl Checker {
         &self,
         declared: &Ty,
         receiver: &Ty,
-        substitution: &HashMap<String, Ty>,
-        binders: &HashMap<String, Ty>,
+        substitution: &TySubst,
+        binders: &TySubst,
     ) -> Ty {
         let ty = crate::checker::generics::substitute_self(declared, receiver);
         let ty = mojito_types::types::substitute(&ty, substitution);

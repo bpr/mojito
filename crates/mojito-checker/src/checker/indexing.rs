@@ -1578,8 +1578,8 @@ impl Checker {
         });
         // Storage over a pack that is still a parameter: the dependent
         // element at a compile-time index.
-        if let Some([Ty::Param { name, .. }]) = tuple_elements.as_deref()
-            && name.starts_with('*')
+        if let Some([Ty::Param { binder, .. }]) = tuple_elements.as_deref()
+            && binder.name.starts_with('*')
             && let Some(elems) = &tuple_elements
         {
             return self.pack_element_type(elems[0], index);

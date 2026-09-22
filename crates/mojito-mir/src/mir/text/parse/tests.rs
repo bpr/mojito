@@ -6,6 +6,19 @@ fn int_parameter(owner: &str, slot: usize, name: &str) -> ParamExpr {
     ParamContext::detached().decl_ref(ParamId::new(owner, slot), name, MetaTy::int())
 }
 
+/// A test binder's identity: one declaration owns every test binder, each
+/// spelling its own slot, so round trips compare identities as well as names.
+fn test_id(name: &str) -> ParamId {
+    ParamId::new(&format!("$test:{name}"), 0)
+}
+
+fn test_binder(name: &str) -> mojito_types::param_expr::ParamRef {
+    mojito_types::param_expr::ParamRef {
+        id: test_id(name),
+        name: name.into(),
+    }
+}
+
 fn constant(value: CtValue) -> ParamExpr {
     ParamContext::detached()
         .constant(value)
@@ -128,6 +141,7 @@ fn type_families_reprint_byte_identically() {
         environment: CallableEnvironment::Thin,
         decls: vec![
             ParamDecl::Type {
+                id: test_id("T"),
                 name: "T".into(),
                 bounds: vec!["Copyable".into()],
                 callable_bound: None,
@@ -182,6 +196,7 @@ fn type_families_reprint_byte_identically() {
                 ],
             },
             ParamDecl::Value {
+                id: test_id("width"),
                 name: "width".into(),
                 ty: Box::new(Ty::Int),
                 default: Some(
@@ -263,13 +278,13 @@ fn type_families_reprint_byte_identically() {
             vec![
                 Ty::Overload(vec![Ty::Int, Ty::Bool]),
                 Ty::Param {
-                    name: "T".into(),
+                    binder: test_binder("T"),
                     bounds: vec!["Copyable".into(), "Movable".into()],
                     callable_bound: Some(Box::new(func_ty.clone())),
                 },
                 Ty::Assoc {
                     base: Box::new(Ty::Param {
-                        name: "C".into(),
+                        binder: test_binder("C"),
                         bounds: vec!["Iterable".into()],
                         callable_bound: None,
                     }),
@@ -481,6 +496,7 @@ fn sample_subscript_call() -> MirSubscriptCall {
             },
         ],
         param_decls: vec![ParamDecl::Type {
+            id: test_id("T"),
             name: "T".into(),
             bounds: vec!["Copyable".into()],
             callable_bound: None,
@@ -637,6 +653,7 @@ fn instruction_families_reprint_byte_identically() {
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             param_decls: vec![ParamDecl::Value {
+                id: test_id("n"),
                 name: "n".into(),
                 ty: Box::new(Ty::Int),
                 default: None,
@@ -1044,6 +1061,7 @@ fn declaration_metadata_reprints_byte_identically() {
         mut_self_methods: HashSet::from(["append".into(), "clear".into()]),
         fieldwise_init: true,
         param_decls: vec![ParamDecl::Type {
+            id: test_id("T"),
             name: "T".into(),
             bounds: vec!["Copyable".into()],
             callable_bound: None,
@@ -1085,6 +1103,7 @@ fn declaration_metadata_reprints_byte_identically() {
         positional_only: Some(1),
         keyword_only: Some(2),
         param_decls: vec![ParamDecl::Value {
+            id: test_id("n"),
             name: "n".into(),
             ty: Box::new(Ty::Int),
             default: Some(constant(CtValue::Int(2))),

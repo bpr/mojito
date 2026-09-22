@@ -39,18 +39,18 @@ pub(super) fn decls_are_concrete(decls: &[ParamDecl]) -> bool {
 /// `T` (upstream's `Variant(init_with=factory)` inference).
 pub(super) fn unify_through_callable_bounds(
     decls: &[ParamDecl],
-    subst: &mut HashMap<String, Ty>,
+    subst: &mut TySubst,
 ) -> Result<(), TypeError> {
     for decl in decls {
         let ParamDecl::Type {
-            name,
+            id,
             callable_bound: Some(bound),
             ..
         } = decl
         else {
             continue;
         };
-        let Some(actual) = subst.get(name).cloned() else {
+        let Some(actual) = subst.get(id).cloned() else {
             continue;
         };
         // The contract's environment class is validated separately
@@ -469,7 +469,7 @@ impl Checker {
         owner: &str,
         tps: &[mojito_ast::ast::TypeParam],
     ) -> Result<Vec<ParamDecl>, TypeError> {
-        self.push_param_scope(owner, &[]);
+        self.push_param_scope(&[]);
         let classified = self.classify_params_in_scope(owner, tps);
         self.tparams.pop();
         classified
@@ -482,9 +482,13 @@ impl Checker {
     ) -> Result<Vec<ParamDecl>, TypeError> {
         let mut decls = Vec::new();
         let mut seen = HashSet::new();
+        // A binder is owned by the template and numbered by its classified
+        // slot; every reference to it carries this identity.
+        let binder_owner = binder_owner(owner);
+        let binder_id = |slot: usize| ParamId::new(&binder_owner, slot);
         for tp in tps {
             if let Some(scope) = self.vparams.last_mut() {
-                *scope = value_scope(owner, &decls);
+                *scope = value_scope(&decls);
             }
             if !seen.insert(tp.name.clone()) {
                 return Err(TypeError::Redeclaration(tp.name.clone()));
@@ -509,6 +513,7 @@ impl Checker {
                     .map(|expr| self.compile_dependent_ct_expr(expr))
                     .transpose()?;
                 decls.push(ParamDecl::Value {
+                    id: binder_id(decls.len()),
                     name: tp.name.clone(),
                     ty: Box::new(ty),
                     default,
@@ -546,6 +551,7 @@ impl Checker {
                     });
                 }
                 decls.push(ParamDecl::Value {
+                    id: binder_id(decls.len()),
                     name: tp.name.clone(),
                     ty: Box::new(vty),
                     default: tp
@@ -572,6 +578,7 @@ impl Checker {
                 && self.structs.contains_key(only)
             {
                 decls.push(ParamDecl::Value {
+                    id: binder_id(decls.len()),
                     name: tp.name.clone(),
                     ty: Box::new(Ty::Struct(only.clone(), Vec::new())),
                     default: tp
@@ -600,6 +607,7 @@ impl Checker {
                 self.check_trait_name(bound)?;
             }
             decls.push(ParamDecl::Type {
+                id: binder_id(decls.len()),
                 name: tp.name.clone(),
                 bounds: trait_bounds,
                 callable_bound: None,
@@ -630,7 +638,7 @@ impl Checker {
         // (`F: def(T) -> T`), so lower them only after the complete preliminary
         // parameter scope exists. An explicit `thin`/`capturing[...]` spelling is
         // instead a compile-time callable-value parameter in current Mojo.
-        self.push_param_scope(owner, &decls);
+        self.push_param_scope(&decls);
         let result = (|| {
             for source in tps {
                 let Some(callable) = &source.callable_bound else {
@@ -674,6 +682,7 @@ impl Checker {
                         })
                         .transpose()?;
                     decls[index] = ParamDecl::Value {
+                        id: binder_id(index),
                         name: source.name.clone(),
                         ty: Box::new(checked),
                         default: None,
@@ -724,7 +733,7 @@ impl Checker {
                 "a function-type 'where' clause requires a def[...] parameter list".to_string(),
             ));
         }
-        self.push_param_scope("$callable", &decls);
+        self.push_param_scope(&decls);
 
         let mut contextual_callable = callable.clone();
         let SourceType::Func {
@@ -962,14 +971,14 @@ impl Checker {
         let saved_site = self
             .method_site
             .replace((module.cloned(), declaration.to_string()));
-        self.push_param_scope(&method_binder_owner(declaration, &m.name), &decls);
+        self.push_param_scope(&decls);
         let saved = self.enclosing_type_params.clone();
         let saved_struct_count = self.enclosing_struct_type_params.replace(saved.len());
         self.enclosing_type_params.extend(m.type_params.clone());
         let assumptions = self.method_where_assumptions(m);
         let result = match assumptions {
             Ok(assumptions) => {
-                self.assume_method_propositions(declaration, m, &decls);
+                self.assume_method_propositions(m, &decls);
                 self.assumed_conformances.push(assumptions);
                 let result = (|| {
                     for param in 0..m.params.len() {
@@ -1599,7 +1608,7 @@ impl Checker {
         name: &str,
         arguments: &[TyArg],
         sig: &MethodSig,
-        subst: &HashMap<String, Ty>,
+        subst: &TySubst,
     ) -> Option<String> {
         self.method_clone_target(name, "__init__", arguments, sig, subst)
     }
@@ -1616,7 +1625,7 @@ impl Checker {
         method: &str,
         arguments: &[TyArg],
         sig: &MethodSig,
-        subst: &HashMap<String, Ty>,
+        subst: &TySubst,
     ) -> Option<String> {
         if !sig.decls.is_empty() {
             return None;
@@ -1658,7 +1667,7 @@ impl Checker {
         name: &str,
         owner_arguments: &[TyArg],
         sig: &MethodSig,
-        subst: &HashMap<String, Ty>,
+        subst: &TySubst,
     ) {
         if sig.decls.is_empty() {
             return;
@@ -1667,8 +1676,8 @@ impl Checker {
             .decls
             .iter()
             .map(|decl| match decl {
-                ParamDecl::Type { name, .. } => subst
-                    .get(name)
+                ParamDecl::Type { id, .. } => subst
+                    .get(id)
                     .map(|ty| materialized_instantiation_argument(&TyArg::Ty(ty.clone()))),
                 ParamDecl::Value { .. } => None,
             })
@@ -2410,8 +2419,8 @@ impl Checker {
         param_args: &[mojito_ast::ast::ParamArg],
         patterns: &[Ty],
         actuals: &[Ty],
-    ) -> Result<(HashMap<String, Ty>, Vec<TyArg>), TypeError> {
-        let mut subst: HashMap<String, Ty> = HashMap::new();
+    ) -> Result<(TySubst, Vec<TyArg>), TypeError> {
+        let mut subst: TySubst = TySubst::new();
         if decls.is_empty() {
             if !param_args.is_empty() {
                 return Err(TypeError::WrongTypeArgCount {
@@ -2609,8 +2618,8 @@ impl Checker {
                                 context: format!("default for parameter '{}'", decl.name()),
                             })?,
                     )
-                } else if let ParamDecl::Type { name, .. } = decl
-                    && let Some(inferred) = subst.get(name)
+                } else if let ParamDecl::Type { id, .. } = decl
+                    && let Some(inferred) = subst.get(id)
                 {
                     TyArg::Ty(inferred.clone())
                 } else if let ParamDecl::Type {
@@ -2624,8 +2633,8 @@ impl Checker {
                         param: decl.name().to_string(),
                     });
                 };
-                if let (ParamDecl::Type { name, .. }, TyArg::Ty(t)) = (decl, &tyarg) {
-                    subst.insert(name.clone(), t.clone());
+                if let (ParamDecl::Type { id, .. }, TyArg::Ty(t)) = (decl, &tyarg) {
+                    subst.insert(id.clone(), t.clone());
                 }
                 tyargs.push(tyarg);
                 if let Some(TyArg::Val(value)) = tyargs.last() {
@@ -2647,20 +2656,22 @@ impl Checker {
             solve_value_args(pat, act, &mut value_solutions);
         }
         for (pat, act) in patterns.iter().zip(actuals) {
-            if let Ty::Param { name, bounds, .. } = pat
-                && name.starts_with('*')
+            if let Ty::Param { binder, bounds, .. } = pat
+                && binder.name.starts_with('*')
             {
                 for bound in bounds {
                     if !self.conforms_to(act, bound) {
                         return Err(TypeError::TraitNotSatisfied {
-                            param: name.clone(),
+                            param: binder.name.to_string(),
                             ty: act.to_string(),
                             trait_name: bound.clone(),
                             reason: self.trait_failure_reason(act, bound),
                         });
                     }
                 }
-                subst.entry(name.clone()).or_insert_with(|| pat.clone());
+                subst
+                    .entry(binder.id.clone())
+                    .or_insert_with(|| pat.clone());
             } else {
                 unify(pat, act, &mut subst)?;
             }
@@ -2670,9 +2681,10 @@ impl Checker {
             .iter()
             .zip(actuals)
             .filter_map(|(pattern, actual)| match pattern {
-                Ty::Param { name, .. } if name.starts_with('*') => {
-                    Some((name.trim_start_matches('*').to_string(), actual.clone()))
-                }
+                Ty::Param { binder, .. } if binder.name.starts_with('*') => Some((
+                    binder.name.trim_start_matches('*').to_string(),
+                    actual.clone(),
+                )),
                 _ => None,
             })
             .fold(HashMap::new(), |mut packs, (name, ty)| {
@@ -2740,6 +2752,7 @@ impl Checker {
                     }
                 }
                 ParamDecl::Type {
+                    id,
                     name: pname,
                     bounds,
                     default,
@@ -2756,14 +2769,14 @@ impl Checker {
                         continue;
                     }
                     let solved = subst
-                        .get(pname)
+                        .get(id)
                         .cloned()
                         .or_else(|| default.as_ref().map(|default| (**default).clone()))
                         .ok_or_else(|| TypeError::CannotInferTypeParam {
                             name: name.to_string(),
                             param: pname.clone(),
                         })?;
-                    subst.insert(pname.clone(), solved.clone());
+                    subst.insert(id.clone(), solved.clone());
                     for bound in bounds {
                         if !self.conforms_to(&solved, bound) {
                             return Err(TypeError::TraitNotSatisfied {
@@ -2962,7 +2975,7 @@ impl Checker {
     fn constructor_parameter_ty(
         &self,
         pty: &Ty,
-        subst: &HashMap<String, Ty>,
+        subst: &TySubst,
         values: &HashMap<String, CtValue>,
     ) -> Result<Ty, TypeError> {
         let expected = substitute(pty, subst);

@@ -666,6 +666,7 @@ impl Checker {
                     });
                 }
                 let index_decl = ParamDecl::Value {
+                    id: ParamId::new("$builtin:__getitem__", 0),
                     name: "index".to_string(),
                     ty: Box::new(Ty::Int),
                     default: None,
@@ -707,6 +708,7 @@ impl Checker {
                     transfers: TransferSet::default(),
                 };
                 let method_decls = vec![ParamDecl::Value {
+                    id: ParamId::new("$builtin:each", 0),
                     name: "elt_handler".to_string(),
                     ty: Box::new(handler),
                     default: None,

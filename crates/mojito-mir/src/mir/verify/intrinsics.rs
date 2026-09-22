@@ -178,8 +178,8 @@ pub(super) fn generic_argument_maps(
     for (declaration, argument) in declarations.iter().zip(arguments) {
         let name = declaration.name().trim_start_matches('*').to_string();
         match (declaration, argument) {
-            (ParamDecl::Type { .. }, TyArg::Ty(ty)) => {
-                types.insert(name, ty.clone());
+            (ParamDecl::Type { id, .. }, TyArg::Ty(ty)) => {
+                types.insert(id.clone(), ty.clone());
             }
             (
                 ParamDecl::Value { .. } | ParamDecl::Type { variadic: true, .. },

@@ -559,7 +559,12 @@ second expression tree.
   monomorphization) folds it. The pin draws the same line.
 - A reference is owned by its declaration (`ParamId { owner, slot }`), so
   same-spelled parameters of unrelated declarations differ and a `$` clone
-  shares its template's.
+  shares its template's. A type binder is the same identity: `ParamDecl`
+  carries its `id`, `Ty::Param { binder: ParamRef }` compares by it, and every
+  type substitution is a `TySubst` keyed by it; a canonicalized callable
+  contract's binders are `$contract` slots, so contracts differing only in
+  spelling are one identity and a trait witness may spell its binder as it
+  likes.
 - `param_expr::fold` is the one implementation of compile-time scalar
   operators; the checker, the elaborator, and native monomorphization call it.
 

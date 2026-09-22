@@ -387,7 +387,10 @@ impl Flatten<'_> {
                 name: info.source_name.clone(),
                 binding: info.binding,
                 ty: info.callable_ty.clone().unwrap_or_else(|| Ty::Param {
-                    name: "$capture".to_string(),
+                    binder: mojito_types::param_expr::ParamRef {
+                        id: mojito_types::param_expr::ParamId::new("$capture", 0),
+                        name: "$capture".into(),
+                    },
                     bounds: Vec::new(),
                     callable_bound: None,
                 }),

@@ -227,6 +227,26 @@ impl Decoder {
                 None
             })
     }
+    /// The identity of a binder record (`param`, `type_param`, `value_param`):
+    /// its `owner`/`slot` fields, or — in a schema 1.0/1.1 artifact, whose
+    /// binders carry only a spelling — one identity per spelling, so the
+    /// artifact's own uses still find their declaration.
+    pub(super) fn binder_id(
+        &mut self,
+        value: &Value,
+        fields: &[Field],
+        name: &str,
+    ) -> Option<mojito_types::param_expr::ParamId> {
+        if self.field(fields, "owner").is_err() && self.field(fields, "slot").is_err() {
+            return Some(mojito_types::param_expr::ParamId::new(
+                &format!("$mir-1.1:{name}"),
+                0,
+            ));
+        }
+        let owner = self.req(value, fields, "owner", Self::string)?;
+        let slot = self.req(value, fields, "slot", Self::uint)?;
+        Some(mojito_types::param_expr::ParamId::new(&owner, slot))
+    }
     /// A field the canonical emitter always writes; absence is a diagnostic,
     /// never a silent default.
     pub(super) fn required<'a>(

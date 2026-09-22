@@ -565,11 +565,11 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
         construct: what,
     };
     Ok(match ty {
-        Ty::Param { name, .. } => bindings
+        Ty::Param { binder, .. } => bindings
             .types
-            .get(name)
+            .get(binder.name.as_ref())
             .cloned()
-            .ok_or_else(|| unsupported(format!("unresolved type parameter `{name}`")))?,
+            .ok_or_else(|| unsupported(format!("unresolved type parameter `{}`", binder.name)))?,
         Ty::Struct(name, args) => {
             if args.is_empty() {
                 // The bare in-body `self` spelling of a generic owner resolves

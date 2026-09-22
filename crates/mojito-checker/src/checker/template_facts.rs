@@ -27,7 +27,7 @@ use mojito_common::timing;
 use mojito_common::token::SourceSpan;
 use mojito_common::token::SyntaxId;
 use mojito_types::origin::OwnerId;
-use mojito_types::types::{ParamDecl, Ty};
+use mojito_types::types::{ParamDecl, Ty, TySubst};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
@@ -761,12 +761,20 @@ impl Checker {
         site: &BodySite<'_>,
         template: &CheckedTemplate,
         trace: &InstanceTrace,
-    ) -> Result<HashMap<String, Ty>, TypeError> {
+    ) -> Result<TySubst, TypeError> {
         let Some(arguments) = &site.receiver_arguments else {
+            // A binding names the template's own binder; the declaration
+            // carries its identity.
             return trace
                 .type_bindings
                 .iter()
-                .map(|(name, source)| Ok((name.clone(), self.ty_from_anno(source)?)))
+                .filter_map(|(name, source)| {
+                    template
+                        .param_decls
+                        .iter()
+                        .find(|decl| decl.name().trim_start_matches('*') == name)
+                        .map(|decl| Ok((decl.id().clone(), self.ty_from_anno(source)?)))
+                })
                 .collect();
         };
         if site.role == BodyRole::Template {
@@ -794,8 +802,8 @@ impl Checker {
             .iter()
             .zip(arguments)
             .map(|(decl, argument)| match (decl, argument) {
-                (ParamDecl::Type { name, .. }, mojito_types::types::TyArg::Ty(ty)) => {
-                    Ok((name.trim_start_matches('*').to_string(), ty.clone()))
+                (ParamDecl::Type { id, .. }, mojito_types::types::TyArg::Ty(ty)) => {
+                    Ok((id.clone(), ty.clone()))
                 }
                 _ => Err(unresolved()),
             })
@@ -816,7 +824,7 @@ impl Checker {
     fn realize_instance_facts(
         &self,
         template: &CheckedBodyFacts,
-        substitution: &HashMap<String, Ty>,
+        substitution: &TySubst,
         occurrences: &[Occurrence],
     ) -> Result<CheckedBodyFacts, &'static str> {
         let substitute = |ty: &Ty| mojito_types::types::substitute(ty, substitution);
@@ -1121,7 +1129,7 @@ impl Checker {
         facts: &mut CheckedBodyFacts,
         index: usize,
         occurrences: &[Occurrence],
-        substitution: &HashMap<String, Ty>,
+        substitution: &TySubst,
     ) -> Result<(), &'static str> {
         let id = facts.selected_calls[index].0;
         let (receiver, method) = occurrences
@@ -5105,7 +5113,7 @@ impl BodyShape<'_> {
                         },
                     );
                     let writer = Ty::Param {
-                        name: String::new(),
+                        binder: crate::checker::annotations::synthetic_binder("$writer_probe"),
                         bounds: vec!["Writer".to_string()],
                         callable_bound: None,
                     };
