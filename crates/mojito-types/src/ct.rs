@@ -14,7 +14,9 @@
 //! compile-time-only.
 
 use crate::param_expr::ParamExpr;
-use crate::types::{Ty, TyArg, dict_elements, list_element, set_element, tuple_elements};
+use crate::types::{
+    SimdDtype, SimdWidth, Ty, TyArg, dict_elements, list_element, set_element, tuple_elements,
+};
 use mojito_ast::ast::{Expr, ExprKind, KwArg, ParamArg, Type};
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_common::token::Span;
@@ -280,8 +282,8 @@ impl CtValue {
             (
                 value @ Self::Simd { .. },
                 Ty::Simd {
-                    dtype: target,
-                    width,
+                    dtype: SimdDtype::Known(target),
+                    width: SimdWidth::Known(width),
                 },
             ) => {
                 let Self::Simd { dtype, lanes } = &value else {
@@ -548,13 +550,19 @@ fn source_type(ty: &Ty, span: Span) -> Option<Type> {
         Ty::Float64 | Ty::FloatLiteral => Type::Float64,
         Ty::None => Type::None,
         Ty::Dtype => Type::Named("DType".to_string(), Vec::new()),
-        Ty::Simd { dtype, width } => Type::Named(
+        Ty::Simd {
+            dtype: SimdDtype::Known(dtype),
+            width: SimdWidth::Known(width),
+        } => Type::Named(
             "SIMD".to_string(),
             vec![
                 ParamArg::Value(CtValue::Dtype(*dtype).materialize(span)?),
                 ParamArg::Value(CtValue::Int(*width).materialize(span)?),
             ],
         ),
+        // A symbolic slot has no source spelling: its declaration is still
+        // a template.
+        Ty::Simd { .. } => return None,
         Ty::Struct(name, arguments) => Type::Named(
             name.clone(),
             arguments

@@ -530,10 +530,16 @@ impl Flatten<'_> {
         let Some(found) = self.f.reg_types.get(&value.0) else {
             return value;
         };
-        let compatible = match (found, target) {
-            (Ty::IntLiteral, Ty::Int | Ty::UInt | Ty::Float64 | Ty::Simd { width: 1, .. }) => true,
-            (Ty::FloatLiteral, Ty::Float64) => true,
-            (Ty::FloatLiteral, Ty::Simd { dtype, width: 1 }) => dtype.is_float(),
+        let compatible = match found {
+            Ty::IntLiteral => {
+                matches!(target, Ty::Int | Ty::UInt | Ty::Float64)
+                    || mojito_types::types::is_scalar_simd(target)
+            }
+            Ty::FloatLiteral => {
+                matches!(target, Ty::Float64)
+                    || mojito_types::types::scalar_simd_dtype(target)
+                        .is_some_and(mojito_ast::ast::Dtype::is_float)
+            }
             _ => false,
         };
         if !compatible {

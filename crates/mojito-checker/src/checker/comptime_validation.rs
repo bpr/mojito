@@ -634,9 +634,9 @@ impl Checker {
 
     /// Whether a validation error marks the validator's own blind spot
     /// rather than a verdict: a constructor, method, or operator of a struct
-    /// registered only as a template shell (a `DType`-, vector-, or
-    /// struct-value-keyed struct), whose members exist only per specialization.
-    /// The executable check still covers the arm elaboration selects.
+    /// registered only as a template shell (a struct-value-keyed struct),
+    /// whose members exist only per specialization. The executable check
+    /// still covers the arm elaboration selects.
     pub(super) fn is_template_shell_member_error(&self, error: &TypeError) -> bool {
         let names_shell = |spelling: &str| {
             let head = spelling.split('[').next().unwrap_or(spelling).trim();
@@ -656,8 +656,8 @@ impl Checker {
 
     /// Whether a nominal type has no checkable declaration here: unregistered
     /// (a discovery-round abstract scalar range) or registered only as a
-    /// template shell (the same family under source validation). Its
-    /// iteration and subscript contracts come from the family, not from
+    /// template shell (a struct-value-keyed struct under source validation).
+    /// Its iteration and subscript contracts come from the family, not from
     /// method lookup.
     pub(super) fn is_abstract_struct(&self, name: &str) -> bool {
         self.structs
@@ -888,11 +888,7 @@ pub(super) fn count_template_classes(stmts: &[Stmt], rebind_keyed: &HashSet<Sour
                 body,
                 ..
             } if !type_params.is_empty() => {
-                let class = if concrete_only_def(statement) {
-                    TemplateClass::ConcreteOnly
-                } else {
-                    body_class(&[], type_params, body)
-                };
+                let class = body_class(&[], type_params, body);
                 timing::count(class.counter(), 1);
                 timing::note(class.counter(), || name.clone());
             }
@@ -903,7 +899,7 @@ pub(super) fn count_template_classes(stmts: &[Stmt], rebind_keyed: &HashSet<Sour
                 ..
             } if !type_params.is_empty() => {
                 let shell =
-                    concrete_only_struct(type_params, &|bound| declared_structs.contains(bound));
+                    struct_valued_template(type_params, &|bound| declared_structs.contains(bound));
                 for method in methods {
                     let class = if shell {
                         TemplateClass::ConcreteOnly
@@ -955,66 +951,20 @@ pub(super) fn positional_pack_binding(
         })
 }
 
-/// Whether a declaration has a `DType` parameter.
-pub(super) fn dtype_keyed(type_params: &[mojito_ast::ast::TypeParam]) -> bool {
-    type_params
-        .iter()
-        .any(|parameter| matches!(parameter.bounds.as_slice(), [only] if only == "DType"))
-}
-
 /// Whether a struct declaration checks only per specialization, so source
-/// validation registers it as a template shell: a `DType` parameter, a
-/// struct-typed value parameter (`is_value_struct` names the declared
-/// structs), or a vector-typed value parameter — shapes the elaborator
-/// monomorphizes per application and the checker has no symbolic form for. A
-/// variadic pack is not one: its element has a dependent type.
-pub(super) fn concrete_only_struct(
+/// validation registers it as a template shell: one with a struct-typed
+/// value parameter (`is_value_struct` names the declared structs), a shape
+/// the elaborator monomorphizes per application and the checker has no
+/// symbolic form for. A `DType` or vector-width parameter is not one (a
+/// `Ty::Simd` slot may be symbolic), nor is a variadic pack (its element has
+/// a dependent type).
+pub(super) fn struct_valued_template(
     type_params: &[mojito_ast::ast::TypeParam],
     is_value_struct: &dyn Fn(&str) -> bool,
 ) -> bool {
-    type_params.iter().any(|parameter| {
-        matches!(parameter.bounds.as_slice(), [only] if only == "DType" || is_value_struct(only))
-            || matches!(&parameter.value_type, Some(SourceType::Named(name, _)) if name == "SIMD")
-    })
-}
-
-/// Whether a function declaration checks only per specialization — a
-/// `DType` parameter, or a vector width naming one of its own parameters —
-/// so source validation neither declares nor checks it: `Ty::Simd` holds a
-/// concrete element type and width, and the elaborator retargets every call
-/// to a clone before the executable check.
-pub(super) fn concrete_only_def(stmt: &Stmt) -> bool {
-    let StmtKind::Def {
-        type_params,
-        params,
-        ret,
-        body,
-        ..
-    } = &stmt.kind
-    else {
-        return false;
-    };
-    if type_params.is_empty() {
-        return false;
-    }
-    if dtype_keyed(type_params) {
-        return true;
-    }
-    let mut finder = ParamSimdWidthFinder {
-        names: type_params
-            .iter()
-            .map(|parameter| parameter.name.as_str())
-            .collect(),
-        found: false,
-    };
-    for parameter in params {
-        mojito_ast::visit::walk_type(&mut finder, &parameter.ty);
-    }
-    if let Some(ret) = ret {
-        mojito_ast::visit::walk_type(&mut finder, ret);
-    }
-    mojito_ast::visit::walk_block(&mut finder, body);
-    finder.found
+    type_params
+        .iter()
+        .any(|parameter| matches!(parameter.bounds.as_slice(), [only] if is_value_struct(only)))
 }
 
 /// Whether source validation checks a declaration's body: one holding
@@ -1042,43 +992,6 @@ pub(super) fn validates_body(
 /// nested function bodies included.
 pub(super) fn block_has_comptime(stmts: &[Stmt]) -> bool {
     stmts.iter().any(stmt_has_comptime)
-}
-
-/// Finds a `SIMD[_, width]` whose width names one of a declaration's own
-/// parameters, in type or expression position.
-struct ParamSimdWidthFinder<'a> {
-    names: Vec<&'a str>,
-    found: bool,
-}
-
-impl ParamSimdWidthFinder<'_> {
-    fn width_names_param(&self, args: &[ParamArg]) -> bool {
-        matches!(args.get(1), Some(ParamArg::Value(width))
-            if matches!(&width.kind, ExprKind::Identifier(name) if self.names.contains(&name.as_str())))
-    }
-}
-
-impl mojito_ast::visit::Visitor for ParamSimdWidthFinder<'_> {
-    fn visit_expr(&mut self, expr: &Expr) {
-        match &expr.kind {
-            ExprKind::TypeApply { name, args }
-            | ExprKind::Call {
-                name,
-                param_args: args,
-                ..
-            } if name == "SIMD" && self.width_names_param(args) => self.found = true,
-            _ => {}
-        }
-    }
-
-    fn visit_type(&mut self, ty: &SourceType) {
-        if let SourceType::Named(name, args) = ty
-            && name == "SIMD"
-            && self.width_names_param(args)
-        {
-            self.found = true;
-        }
-    }
 }
 
 /// Whether a block names `reflect[...]` anywhere below it.

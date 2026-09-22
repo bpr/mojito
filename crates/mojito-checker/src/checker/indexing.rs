@@ -145,7 +145,7 @@ impl Checker {
                 elements.get(index).cloned()
             }
             Ty::Pointer { element, .. } => Some(*element),
-            Ty::Simd { dtype, .. } => Some(simd_ty(dtype, 1)),
+            Ty::Simd { dtype, .. } => Some(simd_lane(&dtype)),
             _ => None,
         }
     }
@@ -347,7 +347,7 @@ impl Checker {
                         (**element).clone()
                     }
                     // A SIMD lane write `v[i] = e`: the target is the width-1 scalar.
-                    Ty::Simd { dtype, .. } => simd_ty(*dtype, 1),
+                    Ty::Simd { dtype, .. } => simd_lane(dtype),
                     _ => return Err(TypeError::NotIndexable(obj_ty.to_string())),
                 };
                 let idx_ty = self.infer(index)?;
@@ -1721,7 +1721,7 @@ impl Checker {
         }
         // The result of indexing: a SIMD lane, a List element, or a pointer pointee.
         let result = match &obj_ty {
-            Ty::Simd { dtype, .. } => simd_ty(*dtype, 1),
+            Ty::Simd { dtype, .. } => simd_lane(dtype),
             Ty::Pointer { element, origin } => {
                 self.check_pointer_offset(origin, index)?;
                 self.materialize_temporary_holder(object, false);
@@ -2046,8 +2046,11 @@ impl Checker {
             }
             return match self.self_decls.iter().find(|d| d.name() == field) {
                 // A vector-typed value parameter (`AHasher[key: U256]`) reads
-                // as its declared vector; the scalar kinds read as `Int`.
-                Some(ParamDecl::Value { ty, .. }) if matches!(**ty, Ty::Simd { .. }) => {
+                // as its declared vector and a `DType` one as a `DType`; the
+                // scalar kinds read as `Int`.
+                Some(ParamDecl::Value { ty, .. })
+                    if matches!(**ty, Ty::Simd { .. } | Ty::Dtype) =>
+                {
                     Ok((**ty).clone())
                 }
                 Some(ParamDecl::Value { .. }) => Ok(Ty::Int),
@@ -2055,10 +2058,12 @@ impl Checker {
             };
         }
         if let Some(dtype) = self.dtype_constant(object, field) {
-            self.operation_adjustments.borrow_mut().insert(
-                span,
-                mojito_checked::checked::SemanticAdjustment::DtypeConstant { dtype: dtype? },
-            );
+            if let Some(dtype) = dtype?.known() {
+                self.operation_adjustments.borrow_mut().insert(
+                    span,
+                    mojito_checked::checked::SemanticAdjustment::DtypeConstant { dtype },
+                );
+            }
             return Ok(Ty::Dtype);
         }
         // `T.size` where `T` is a generic type parameter and a bound trait
@@ -2097,24 +2102,29 @@ impl Checker {
             return Ok(Ty::Struct("Optional".to_string(), vec![TyArg::Ty(Ty::Int)]));
         }
         // `v.length` on a SIMD value (a native scalar is a width-1 vector)
-        // is upstream's lane-count parameter, folded to an `Int` constant.
+        // is upstream's lane-count parameter, folded to an `Int` constant. A
+        // symbolic width folds nothing: the body keeps its clone check.
         if field == "length"
-            && let Some((_, width)) = mojito_types::types::simd_shape(&obj_ty)
+            && let Some((_, width)) = simd_slots(&obj_ty)
         {
-            self.operation_adjustments.borrow_mut().insert(
-                span,
-                mojito_checked::checked::SemanticAdjustment::SimdLength { width },
-            );
+            if let Some(width) = width.known() {
+                self.operation_adjustments.borrow_mut().insert(
+                    span,
+                    mojito_checked::checked::SemanticAdjustment::SimdLength { width },
+                );
+            }
             return Ok(Ty::Int);
         }
         // `v.dtype` is upstream's lane-dtype parameter, folded to a constant.
         if field == "dtype"
             && let Some(dtype) = simd_dtype(&obj_ty)
         {
-            self.operation_adjustments.borrow_mut().insert(
-                span,
-                mojito_checked::checked::SemanticAdjustment::DtypeConstant { dtype: dtype? },
-            );
+            if let Some(dtype) = dtype?.known() {
+                self.operation_adjustments.borrow_mut().insert(
+                    span,
+                    mojito_checked::checked::SemanticAdjustment::DtypeConstant { dtype },
+                );
+            }
             return Ok(Ty::Dtype);
         }
         if let Ty::Struct(sname, targs) = &obj_ty {
@@ -2145,7 +2155,7 @@ impl Checker {
         &self,
         object: &Expr,
         field: &str,
-    ) -> Option<Result<mojito_ast::ast::Dtype, TypeError>> {
+    ) -> Option<Result<SimdDtype, TypeError>> {
         if field == "dtype"
             && let Some(dtype) = self
                 .member_type_operand(object)
@@ -2160,16 +2170,20 @@ impl Checker {
         if name != "DType" || self.lookup(name).is_some() || self.structs.contains_key(name) {
             return None;
         }
-        Some(mojito_ast::ast::Dtype::from_name(field).ok_or_else(|| {
-            if mojito_ast::ast::UPSTREAM_ONLY_DTYPE_NAMES.contains(&field) {
-                TypeError::Unsupported(format!("DType.{field} is not supported yet"))
-            } else {
-                TypeError::NoSuchField {
-                    object_type: "DType".to_string(),
-                    field: field.to_string(),
-                }
-            }
-        }))
+        Some(
+            mojito_ast::ast::Dtype::from_name(field)
+                .map(SimdDtype::Known)
+                .ok_or_else(|| {
+                    if mojito_ast::ast::UPSTREAM_ONLY_DTYPE_NAMES.contains(&field) {
+                        TypeError::Unsupported(format!("DType.{field} is not supported yet"))
+                    } else {
+                        TypeError::NoSuchField {
+                            object_type: "DType".to_string(),
+                            field: field.to_string(),
+                        }
+                    }
+                }),
+        )
     }
 
     /// The type a member's object names when it is a type operand (`Int32`,
@@ -2193,15 +2207,16 @@ impl Checker {
     }
 
     /// The `DType.<method>[dtype]()` floating-point format query `callee`
-    /// names with `param_args`, folded to its answer. `None` for any other
-    /// callee.
+    /// names with `param_args`, folded to its answer — `None` inside for a
+    /// symbolic dtype, whose constraint and answer are the instantiation's.
+    /// `None` outside for any other callee.
     pub(super) fn dtype_float_query(
         &self,
         callee: &Expr,
         param_args: &[mojito_ast::ast::ParamArg],
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
-    ) -> Option<Result<i64, TypeError>> {
+    ) -> Option<Result<Option<i64>, TypeError>> {
         let ExprKind::Member { object, field } = &callee.kind else {
             return None;
         };
@@ -2228,10 +2243,16 @@ impl Checker {
             }));
         }
         Some(self.dtype_from_arg(argument).and_then(|dtype| {
-            dtype.float_query(field).ok_or_else(|| TypeError::BadCall {
-                func,
-                reason: "constraint failed: dtype must be floating point".to_string(),
-            })
+            let Some(dtype) = dtype.known() else {
+                return Ok(None);
+            };
+            dtype
+                .float_query(field)
+                .map(Some)
+                .ok_or_else(|| TypeError::BadCall {
+                    func,
+                    reason: "constraint failed: dtype must be floating point".to_string(),
+                })
         }))
     }
 }
@@ -2239,11 +2260,11 @@ impl Checker {
 /// The lane dtype a `SIMD` type exposes as `dtype`, where `Int` and `Float64`
 /// are width-1 vectors and `UInt`'s `DType.uint` has no Mojito dtype. `None`
 /// for any other type: a `Bool` or a literal type has no `dtype`.
-pub(super) fn simd_dtype(ty: &Ty) -> Option<Result<mojito_ast::ast::Dtype, TypeError>> {
+pub(super) fn simd_dtype(ty: &Ty) -> Option<Result<SimdDtype, TypeError>> {
     match ty {
-        Ty::Int => Some(Ok(mojito_ast::ast::Dtype::Int)),
-        Ty::Float64 => Some(Ok(mojito_ast::ast::Dtype::Float64)),
-        Ty::Simd { dtype, .. } => Some(Ok(*dtype)),
+        Ty::Int => Some(Ok(SimdDtype::Known(mojito_ast::ast::Dtype::Int))),
+        Ty::Float64 => Some(Ok(SimdDtype::Known(mojito_ast::ast::Dtype::Float64))),
+        Ty::Simd { dtype, .. } => Some(Ok(dtype.clone())),
         Ty::UInt => Some(Err(TypeError::Unsupported(
             "DType.uint is not supported yet".to_string(),
         ))),

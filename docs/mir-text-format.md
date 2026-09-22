@@ -324,7 +324,11 @@ ref { referent, origin, mutability }
 
 `TyArg` tags are `type_arg`, `value_arg`, and `origin_arg`. DTypes and all AST
 operators/conventions use their lowercase source-independent enum names;
-conventions are `read`, `var`, `mut`, `out`, `ref`, and `deinit`.
+conventions are `read`, `var`, `mut`, `out`, `ref`, and `deinit`. A `simd`
+slot is a dtype or an integer, or `ct_expr(<param-expr>)` for a lane still
+symbolic; the verifier keeps a symbolic slot out of every artifact, so that
+form only serves lossless round trips, and a closed expression folds back to
+the canonical concrete type on read.
 
 `ParamDecl` is
 `type_param { name, bounds, callable_bound, default, infer_only, variadic, constraints }`

@@ -13,7 +13,7 @@
 //! byte images written through pointer arguments — on top of Rust's standard
 //! library.
 
-use crate::types::Ty;
+use crate::types::{Ty, scalar_simd_dtype};
 use mojito_ast::ast::Dtype;
 
 /// One C parameter or return kind.
@@ -324,10 +324,10 @@ pub fn accepts_ret(kind: CType, ty: &Ty) -> bool {
     match kind {
         CType::Int | CType::UInt | CType::SizeT | CType::SSizeT | CType::OffT => {
             matches!(ty, Ty::Int | Ty::UInt)
-                || matches!(ty, Ty::Simd { width: 1, dtype } if is_integer_dtype(*dtype))
+                || matches!(scalar_simd_dtype(ty), Some(dtype) if is_integer_dtype(dtype))
         }
         CType::IntPtr => matches!(ty, Ty::Pointer { element, .. }
-            if matches!(**element, Ty::Simd { dtype: Dtype::Int32 | Dtype::UInt32, width: 1 })),
+            if matches!(scalar_simd_dtype(element), Some(Dtype::Int32 | Dtype::UInt32))),
         CType::ConstCharPtr | CType::CharPtr | CType::VoidPtr => {
             matches!(ty, Ty::Pointer { .. })
         }
@@ -342,7 +342,7 @@ pub fn is_c_string_slice_struct(name: &str) -> bool {
 
 const fn is_integer_scalar(ty: &Ty) -> bool {
     matches!(ty, Ty::Int | Ty::UInt | Ty::Bool | Ty::IntLiteral)
-        || matches!(ty, Ty::Simd { width: 1, dtype } if is_integer_dtype(*dtype))
+        || matches!(scalar_simd_dtype(ty), Some(dtype) if is_integer_dtype(dtype))
 }
 
 const fn is_integer_dtype(dtype: Dtype) -> bool {
@@ -350,18 +350,13 @@ const fn is_integer_dtype(dtype: Dtype) -> bool {
 }
 
 const fn is_byte(ty: &Ty) -> bool {
-    matches!(
-        ty,
-        Ty::Simd {
-            dtype: Dtype::Int8 | Dtype::UInt8,
-            width: 1
-        }
-    )
+    matches!(scalar_simd_dtype(ty), Some(Dtype::Int8 | Dtype::UInt8))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::canonical_simd_ty;
 
     #[test]
     fn callee_names_are_unique_and_identifier_safe() {
@@ -393,15 +388,9 @@ mod tests {
 
     #[test]
     fn argument_and_return_acceptance() {
-        let int32 = Ty::Simd {
-            dtype: Dtype::Int32,
-            width: 1,
-        };
+        let int32 = canonical_simd_ty(Dtype::Int32, 1);
         let byte_ptr = Ty::Pointer {
-            element: Box::new(Ty::Simd {
-                dtype: Dtype::UInt8,
-                width: 1,
-            }),
+            element: Box::new(canonical_simd_ty(Dtype::UInt8, 1)),
             origin: crate::origin::PointerOrigin::Untracked { mutable: true },
         };
         assert!(accepts_arg(CType::Int, &int32));

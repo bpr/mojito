@@ -640,7 +640,10 @@ impl FnLowering<'_> {
 /// width-one aliases are scalars and never take the vector-storage path.
 const fn multi_lane_simd(ty: &Ty) -> Option<(Dtype, usize)> {
     match ty {
-        Ty::Simd { dtype, width } if *width > 1 => Some((*dtype, *width as usize)),
+        Ty::Simd {
+            dtype: mojito_types::types::SimdDtype::Known(dtype),
+            width: mojito_types::types::SimdWidth::Known(width),
+        } if *width > 1 => Some((*dtype, *width as usize)),
         _ => None,
     }
 }

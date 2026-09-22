@@ -176,13 +176,16 @@ impl FnLowering<'_> {
                         ty = elements[element].clone();
                         continue;
                     }
-                    if let Ty::Simd { dtype, width } = ty {
+                    if let Some((dtype, width)) = simd_dims(&ty) {
                         if offset != 0 {
                             address = self.gep_byte(ctx, address, offset, dest);
                             offset = 0;
                         }
                         self.emit_simd_index_guard(ctx, *index, width as usize, dest)?;
-                        let element = Ty::Simd { dtype, width: 1 };
+                        let element = Ty::Simd {
+                            dtype: mojito_types::types::SimdDtype::Known(dtype),
+                            width: mojito_types::types::SimdWidth::Known(1),
+                        };
                         let lane = self.layout.layout_of(&element).expect("SIMD lane layout");
                         address = self.simd_lane_address(ctx, address, *index, lane.size, dest)?;
                         ty = element;

@@ -239,7 +239,7 @@ impl FnLowering<'_> {
     ) -> Result<(), PlironError> {
         use mojito_mir::mir::MirIntrinsicSubscript as Sub;
         if matches!(intrinsic, Sub::Simd) {
-            let Some(Ty::Simd { dtype, width }) = self.func.reg_types.get(&base.0).cloned() else {
+            let Some((dtype, width)) = self.func.reg_types.get(&base.0).and_then(simd_dims) else {
                 return Err(self.unsupported_reg("SIMD subscript base type".into(), dest));
             };
             self.emit_simd_index_guard(ctx, index, width as usize, dest)?;

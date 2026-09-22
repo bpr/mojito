@@ -293,14 +293,8 @@ fn type_families_reprint_byte_identically() {
                 func_ty,
                 generic_ty,
                 struct_ty,
-                Ty::Simd {
-                    dtype: Dtype::Float32,
-                    width: 4,
-                },
-                Ty::Simd {
-                    dtype: Dtype::Float16,
-                    width: 2,
-                },
+                mojito_types::types::canonical_simd_ty(Dtype::Float32, 4),
+                mojito_types::types::canonical_simd_ty(Dtype::Float16, 2),
                 Ty::ComptimeList(Box::new(Ty::Int)),
                 Ty::RuntimePack(vec![Ty::Int, Ty::Bool]),
                 Ty::VariadicPack(Box::new(Ty::Int)),
@@ -1202,6 +1196,34 @@ fn sized_callable_text(version: &str, size: &str) -> String {
 fn only_register_type(text: &str) -> Ty {
     let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
     parsed.program.functions[0].1.reg_types[&0].clone()
+}
+
+/// A symbolic SIMD slot spells its parameter expression and reads back to
+/// the same slot; a closed one folds back to the canonical concrete type.
+#[test]
+fn symbolic_simd_slots_round_trip() {
+    let context = ParamContext::detached();
+    let n = int_parameter("f", 0, "n");
+    let width = context
+        .infix(InfixOp::Mul, &n, &constant(CtValue::Int(2)))
+        .expect("Int * Int builds");
+    let dtype = context.decl_ref(ParamId::new("f", 1), "dt", MetaTy::value(Ty::Dtype));
+    let symbolic = Ty::Simd {
+        dtype: mojito_types::types::SimdDtype::Expr(dtype),
+        width: mojito_types::types::SimdWidth::Expr(width),
+    };
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(vec![symbolic.clone()], Vec::new()),
+    )]);
+    let text = write::program(&program);
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    assert_eq!(parsed.program.functions[0].1.reg_types[&0], symbolic);
+    assert_eq!(write::program(&parsed.program), text);
+    let folded = only_register_type(&artifact_with_register_type(
+        "simd { dtype: ct_expr(param_constant(ct_dtype(float64))), width: 1 }",
+    ));
+    assert_eq!(folded, Ty::Float64);
 }
 
 /// Schema 1.1 round trips every constant form and the symbolic forms, a 1.0

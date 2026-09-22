@@ -1017,9 +1017,11 @@ mod native_abi_cross_checks {
                     // alignment, byte-per-lane Bool), never an LLVM vector
                     // type: the backend computes in vectors but stores in
                     // this shape.
-                    Ty::Simd { dtype, width } => {
+                    Ty::Simd { .. } => {
+                        let (dtype, width) =
+                            simd_shape(ty).expect("a layout test names a concrete SIMD type");
                         let lane = match dtype {
-                            Dtype::Bool if *width == 1 => LLVMInt1TypeInContext(self.ctx),
+                            Dtype::Bool if width == 1 => LLVMInt1TypeInContext(self.ctx),
                             Dtype::Bool | Dtype::Int8 | Dtype::UInt8 => {
                                 LLVMInt8TypeInContext(self.ctx)
                             }
@@ -1032,10 +1034,10 @@ mod native_abi_cross_checks {
                             }
                             Dtype::Float64 => LLVMDoubleTypeInContext(self.ctx),
                         };
-                        if *width == 1 {
+                        if width == 1 {
                             lane
                         } else {
-                            LLVMArrayType2(lane, *width as u64)
+                            LLVMArrayType2(lane, width as u64)
                         }
                     }
                     other => panic!("no LLVM realization in this test for {other}"),
@@ -1120,27 +1122,12 @@ mod native_abi_cross_checks {
                 "simd_fields_lane_aligned",
                 vec![
                     Ty::Bool,
-                    Ty::Simd {
-                        dtype: Dtype::Int32,
-                        width: 4,
-                    },
+                    canonical_simd_ty(Dtype::Int32, 4),
                     Ty::Bool,
-                    Ty::Simd {
-                        dtype: Dtype::Float64,
-                        width: 2,
-                    },
-                    Ty::Simd {
-                        dtype: Dtype::Bool,
-                        width: 8,
-                    },
-                    Ty::Simd {
-                        dtype: Dtype::UInt8,
-                        width: 16,
-                    },
-                    Ty::Simd {
-                        dtype: Dtype::Int16,
-                        width: 1,
-                    },
+                    canonical_simd_ty(Dtype::Float64, 2),
+                    canonical_simd_ty(Dtype::Bool, 8),
+                    canonical_simd_ty(Dtype::UInt8, 16),
+                    canonical_simd_ty(Dtype::Int16, 1),
                 ],
             ),
         ];
@@ -1150,26 +1137,11 @@ mod native_abi_cross_checks {
             td.assert_agrees(label, llvm_ty, &expected);
         }
         let scalar_cases = [
-            Ty::Simd {
-                dtype: Dtype::Int32,
-                width: 4,
-            },
-            Ty::Simd {
-                dtype: Dtype::Bool,
-                width: 8,
-            },
-            Ty::Simd {
-                dtype: Dtype::Float32,
-                width: 16,
-            },
-            Ty::Simd {
-                dtype: Dtype::Int,
-                width: 2,
-            },
-            Ty::Simd {
-                dtype: Dtype::Bool,
-                width: 1,
-            },
+            canonical_simd_ty(Dtype::Int32, 4),
+            canonical_simd_ty(Dtype::Bool, 8),
+            canonical_simd_ty(Dtype::Float32, 16),
+            canonical_simd_ty(Dtype::Int, 2),
+            canonical_simd_ty(Dtype::Bool, 1),
             Ty::Int,
             Ty::UInt,
             Ty::Bool,

@@ -61,9 +61,10 @@ use mojito_types::param_expr::{
     ConstraintVerdict, HoleKind, MetaTy, ParamContext, ParamError, ParamExpr, ParamOp,
 };
 use mojito_types::types::{
-    CallableDefault, ConstraintOperand, DependentType, GenericConstraint, ParamDecl, SliceKind, Ty,
-    TyArg, array_element, array_parts, array_type, contains_infer, dict_elements, dict_type,
-    list_element, list_type, range_type, set_element, set_type, tuple_elements,
+    CallableDefault, ConstraintOperand, DependentType, GenericConstraint, ParamDecl, SimdDtype,
+    SimdWidth, SliceKind, Ty, TyArg, array_element, array_parts, array_type, canonical_simd_ty,
+    contains_infer, dict_elements, dict_type, is_scalar_simd, list_element, list_type, range_type,
+    scalar_simd_dtype, set_element, set_type, simd_lane, simd_slots, tuple_elements,
     tuple_type as nominal_tuple_type,
 };
 
@@ -1786,8 +1787,11 @@ impl Checker {
                 }),
             };
         }
-        if let Ty::Simd { dtype, width: 1 } = to
-            && splats_to(from, *dtype)
+        if let Ty::Simd {
+            dtype,
+            width: SimdWidth::Known(1),
+        } = to
+            && splats_to(from, dtype)
         {
             self.record_literal_materializations(expression, from, to)?;
             return Ok(true);
@@ -1819,10 +1823,7 @@ impl Checker {
         to: &Ty,
     ) -> Result<(), TypeError> {
         let scalar_boundary = matches!(from, Ty::IntLiteral | Ty::FloatLiteral)
-            && matches!(
-                to,
-                Ty::Int | Ty::UInt | Ty::Float64 | Ty::Simd { width: 1, .. }
-            );
+            && (matches!(to, Ty::Int | Ty::UInt | Ty::Float64) || is_scalar_simd(to));
         if scalar_boundary {
             if let Some(value) = self.exact_literal_value(expression)
                 && !self.literal_value_fits_target(&value, to)
@@ -1902,11 +1903,22 @@ impl Checker {
         reason = "TODO: make an associated function or use the receiver"
     )]
     fn literal_value_fits_target(&self, value: &CtValue, target: &Ty) -> bool {
+        // A literal's fit into a symbolic lane is the instantiation's to check.
         match (value, target) {
-            (CtValue::IntLiteral(_), Ty::Simd { dtype, width: 1 }) => {
-                int_literal_materializes_to_dtype(*dtype)
-            }
-            (CtValue::FloatLiteral(_), Ty::Simd { dtype, width: 1 }) => dtype.is_float(),
+            (
+                CtValue::IntLiteral(_),
+                Ty::Simd {
+                    dtype,
+                    width: SimdWidth::Known(1),
+                },
+            ) => dtype.licenses(int_literal_materializes_to_dtype),
+            (
+                CtValue::FloatLiteral(_),
+                Ty::Simd {
+                    dtype,
+                    width: SimdWidth::Known(1),
+                },
+            ) => dtype.licenses(Dtype::is_float),
             (value, Ty::Int | Ty::UInt | Ty::Float64) => {
                 value.clone().materialize_as(target).is_some()
             }
@@ -1993,13 +2005,7 @@ impl Checker {
         let ty = self.infer(expr)?;
         if ty == Ty::Bool {
             Ok(())
-        } else if matches!(
-            ty,
-            Ty::Simd {
-                dtype: mojito_ast::ast::Dtype::Bool,
-                width: 1
-            }
-        ) {
+        } else if scalar_simd_dtype(&ty) == Some(Dtype::Bool) {
             // A width-1 bool lane (`if a == b` over `UInt64`s) is Boolable:
             // the condition converts through `Bool(x)` like a struct's
             // `__bool__`, so the branch sees a `Bool` register.

@@ -1893,13 +1893,8 @@ fn bind_spec_param_args<'t>(
 /// instance shares one clone.
 fn closed_instance_argument(ty: &Ty) -> bool {
     match ty {
-        Ty::Int
-        | Ty::UInt
-        | Ty::Bool
-        | Ty::Float64
-        | Ty::StringLiteral
-        | Ty::None
-        | Ty::Simd { .. } => true,
+        Ty::Int | Ty::UInt | Ty::Bool | Ty::Float64 | Ty::StringLiteral | Ty::None => true,
+        Ty::Simd { dtype, width } => !dtype.is_expr() && !width.is_expr(),
         Ty::Struct(_, arguments) => arguments.iter().all(|argument| match argument {
             TyArg::Ty(ty) => closed_instance_argument(ty),
             TyArg::Val(value) => !matches!(value, CtValue::Expr(_) | CtValue::Deferred(_)),

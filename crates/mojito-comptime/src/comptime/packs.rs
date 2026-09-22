@@ -424,12 +424,12 @@ fn default_constructor_call(ty: &Type, semantic: &Ty, span: Span) -> Option<Expr
     // A SIMD element default-constructs to zero lanes: the checker accepts one
     // lane to splat, not a nullary construction, so spell the zero explicitly.
     if let (Ty::Simd { dtype, .. }, Type::Named(name, arguments)) = (semantic, ty) {
-        let zero = if matches!(dtype, mojito_ast::ast::Dtype::Bool) {
-            ExprKind::Bool(false)
-        } else if dtype.is_float() {
-            ExprKind::Float(0.0.into())
-        } else {
-            ExprKind::Int(0.into())
+        let zero = match dtype.known() {
+            Some(mojito_ast::ast::Dtype::Bool) => ExprKind::Bool(false),
+            Some(dtype) if dtype.is_float() => ExprKind::Float(0.0.into()),
+            // An integer literal splats into any numeric lane, a symbolic one
+            // included.
+            _ => ExprKind::Int(0.into()),
         };
         return Some(Expr::new(
             ExprKind::Call {

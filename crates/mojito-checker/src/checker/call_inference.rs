@@ -467,8 +467,8 @@ impl Checker {
                         });
                     }
                     let dtype = self.dtype_from_arg(&param_args[0])?;
-                    self.check_simd_args(dtype, 1, args)?;
-                    return Ok(simd_ty(dtype, 1));
+                    self.check_simd_args(&dtype, &SimdWidth::Known(1), args)?;
+                    return simd_of(dtype, SimdWidth::Known(1));
                 }
                 "List" => return self.infer_list_construction(param_args, args),
                 "Set" => {

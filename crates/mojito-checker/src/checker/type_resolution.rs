@@ -352,7 +352,7 @@ impl Checker {
                             got: args.len(),
                         });
                     }
-                    return Ok(Ty::Simd { dtype, width: 1 });
+                    return Ok(simd_ty(dtype, 1));
                 }
                 if name == "SIMD" {
                     return self.simd_type(args);
@@ -365,7 +365,7 @@ impl Checker {
                             got: args.len(),
                         });
                     }
-                    return Ok(simd_ty(self.dtype_from_arg(&args[0])?, 1));
+                    return simd_of(self.dtype_from_arg(&args[0])?, SimdWidth::Known(1));
                 }
                 if name == "$pack" {
                     return self.tuple_element_types(args).map(Ty::RuntimePack);
@@ -1256,6 +1256,16 @@ impl Checker {
                 }
                 None => ty.clone(),
             },
+            // A symbolic lane dtype or width closes under the use's bindings
+            // and re-canonicalizes: `Scalar[dt]` at `dt = DType.float64` is
+            // `Float64`.
+            Ty::Simd { .. } if !parameters.is_empty() && mojito_types::types::is_symbolic(ty) => {
+                let context = &self.param_context;
+                let bindings =
+                    mojito_types::param_expr::ParamBindings::from_named_values(context, parameters);
+                mojito_types::types::replace_parameters(context, ty, &bindings, 0)
+                    .map_err(param_error)?
+            }
             Ty::Struct(name, arguments) => Ty::Struct(
                 name.clone(),
                 arguments
@@ -1940,18 +1950,7 @@ impl Checker {
                 ParamArg::Type(SourceType::SelfParam(param))
                     if matches!(self.self_param_ct_value(param), Some(CtValue::Expr(_))) =>
                 {
-                    if let Some(Ty::Struct(_, arguments)) = &self.self_ty
-                        && arguments.len() >= self.self_decls.len()
-                        && let Some(index) = self
-                            .self_decls
-                            .iter()
-                            .position(|d| d.name() == param && matches!(d, ParamDecl::Value { .. }))
-                        && let Some(TyArg::Val(bound)) = arguments.get(index)
-                        && !matches!(bound, CtValue::Expr(_))
-                    {
-                        return Ok(TyArg::Val(bound.clone()));
-                    }
-                    self.self_param_ct_value(param)
+                    self.self_param_value(param)
                         .map(TyArg::Val)
                         .ok_or_else(|| TypeError::UnknownSelfParam(param.clone()))
                 }
@@ -2790,11 +2789,11 @@ impl Checker {
     }
 
     /// Resolve `SIMD[DType.<dt>, width]` from its two parameter arguments to its
-    /// `(dtype, width)` (raw — not canonicalized).
+    /// `(dtype, width)` slots (raw — not canonicalized).
     pub(super) fn simd_dims(
         &self,
         args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<(Dtype, i64), TypeError> {
+    ) -> Result<(SimdDtype, SimdWidth), TypeError> {
         if args.len() != 2 {
             return Err(TypeError::WrongTypeArgCount {
                 name: "SIMD".to_string(),
@@ -2807,7 +2806,7 @@ impl Checker {
             &args[1],
             mojito_ast::ast::ParamArg::Value(Expr { kind: ExprKind::Identifier(name), .. }) if name == "_"
         ) {
-            -1
+            SimdWidth::Known(-1)
         } else {
             self.simd_width(&args[1])?
         };
@@ -2818,17 +2817,25 @@ impl Checker {
     /// resolves to `Ty::Float64` (the unification).
     pub(super) fn simd_type(&self, args: &[mojito_ast::ast::ParamArg]) -> Result<Ty, TypeError> {
         let (dtype, width) = self.simd_dims(args)?;
-        Ok(simd_ty(dtype, width))
+        simd_of(dtype, width)
     }
 
-    /// Evaluate a SIMD width argument: a comptime `Int` that is a power of two.
-    pub(super) fn simd_width(&self, arg: &mojito_ast::ast::ParamArg) -> Result<i64, TypeError> {
-        let w = match arg {
+    /// Evaluate a SIMD width argument: a comptime `Int` that is a power of
+    /// two, or — while its declaration is a template — an `Int` expression
+    /// over value parameters in scope (`width`, `2 * n`, `Self.width`), whose
+    /// power-of-two check is the instantiation's.
+    pub(super) fn simd_width(
+        &self,
+        arg: &mojito_ast::ast::ParamArg,
+    ) -> Result<SimdWidth, TypeError> {
+        let value = match arg {
             mojito_ast::ast::ParamArg::Value(expr) => {
-                let value = self.eval_ct(expr)?;
+                self.eval_associated_ct(expr, &HashMap::new())?
+            }
+            mojito_ast::ast::ParamArg::Type(SourceType::SelfParam(param))
+                if let Some(value) = self.self_param_value(param) =>
+            {
                 value
-                    .to_i64()
-                    .ok_or_else(|| TypeError::BadSimdWidth(value.to_string()))?
             }
             // A lowercase name parses as a type argument: the enclosing
             // struct's own value parameter spelled bare, or `Self.<field>`.
@@ -2842,8 +2849,17 @@ impl Checker {
                 return Err(TypeError::BadSimdWidth("a named argument".to_string()));
             }
         };
+        if let CtValue::Expr(expr) = value {
+            if !expr.meta().is_integer() {
+                return Err(TypeError::BadSimdWidth(expr.to_string()));
+            }
+            return Ok(SimdWidth::Expr(expr));
+        }
+        let w = mojito_types::param_expr::fold::integer_value(&value)
+            .and_then(|width| width.to_i64())
+            .ok_or_else(|| TypeError::BadSimdWidth(value.to_string()))?;
         if w >= 1 && (w & (w - 1)) == 0 {
-            Ok(w)
+            Ok(SimdWidth::Known(w))
         } else {
             Err(TypeError::BadSimdWidth(w.to_string()))
         }
@@ -2895,8 +2911,8 @@ fn type_is_symbolic(ty: &Ty) -> bool {
     match ty {
         Ty::Param { .. } | Ty::Assoc { .. } | Ty::Dependent(_) | Ty::SelfType | Ty::Infer => true,
         Ty::Struct(_, arguments) => arguments.iter().any(tyarg_is_symbolic),
-        Ty::Simd { .. }
-        | Ty::Int
+        Ty::Simd { dtype, width } => dtype.is_expr() || width.is_expr(),
+        Ty::Int
         | Ty::UInt
         | Ty::Bool
         | Ty::StringLiteral

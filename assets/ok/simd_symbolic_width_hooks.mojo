@@ -1,13 +1,8 @@
-# PROBE: do symbolic SIMD widths canonicalize (follow-on, NOT implemented by the parameter-expression entry)?
-#
-# Observed 2026-09-20 against `Mojo 1.1.0.dev2026082605 (dd957314)`:
-#   pin:    runs, prints four 7s, four 8s, four zeroes
-#   mojito: `Ty::Simd` requires a concrete width
-#
-# Run:    mojo run param_expr_simd_hooks.mojo
-#         cargo run -- run conformance/probes/param_expr_simd_hooks.mojo
-#
-# When answered: the DType/vector validation entry in `docs/roadmap.md` section 1 migrates `Ty::Simd` onto `ParamExpr`; promote then.
+# A symbolic SIMD width is a parameter expression in the pin's normal form:
+# `SIMD[dt, n + 1]` and `SIMD[dt, 1 + n]` are one type, as are `2 * n` and
+# `n + n`, and a struct's own value parameter keys a member's width
+# (`SIMD[DType.int64, Self.length]`). Promoted from
+# `conformance/probes/param_expr_simd_hooks.mojo`.
 def reordered[dt: DType, n: Int](x: SIMD[dt, n + 1]) -> SIMD[dt, 1 + n]:
     return x
 

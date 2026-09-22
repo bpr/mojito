@@ -1558,8 +1558,8 @@ impl MetaTy {
             CtValue::Set { elements, .. } => Self::Set(all(elements)),
             CtValue::Dtype(_) => Self::value(Ty::Dtype),
             CtValue::Simd { dtype, lanes } => Self::value(Ty::Simd {
-                dtype: *dtype,
-                width: lanes.len() as i64,
+                dtype: crate::types::SimdDtype::Known(*dtype),
+                width: crate::types::SimdWidth::Known(lanes.len() as i64),
             }),
             CtValue::Struct { name, .. } => Self::value(Ty::Struct(name.clone(), Vec::new())),
             CtValue::Type(_) => Self::Type,

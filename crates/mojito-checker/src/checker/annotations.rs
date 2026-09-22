@@ -6,12 +6,13 @@ pub use mojito_types::types::splats_to;
 
 impl Checker {
     /// The dtype a SIMD element-type argument names: a `DType.<name>` member,
-    /// a `SIMD` type's `dtype` (`Float64.dtype`), or a `comptime` binding of
-    /// one.
+    /// a `SIMD` type's `dtype` (`Float64.dtype`), a `comptime` binding of
+    /// one, or — symbolic while its declaration is a template — a `[dt:
+    /// DType]` parameter in scope, bare or as `Self.dt`.
     pub(super) fn dtype_from_arg(
         &self,
         arg: &mojito_ast::ast::ParamArg,
-    ) -> Result<Dtype, TypeError> {
+    ) -> Result<SimdDtype, TypeError> {
         if let mojito_ast::ast::ParamArg::Value(Expr {
             kind: ExprKind::Member { object, field },
             ..
@@ -21,7 +22,7 @@ impl Checker {
                 && ns == "DType"
                 && let Some(dtype) = Dtype::from_name(field)
             {
-                return Ok(dtype);
+                return Ok(SimdDtype::Known(dtype));
             }
             if field == "dtype"
                 && let Some(dtype) = self.dtype_constant(object, field)
@@ -45,9 +46,24 @@ impl Checker {
             kind: ExprKind::Identifier(name),
             ..
         }) = arg
-            && let Some(dtype) = self.comptime_dtypes.get(name)
         {
-            return Ok(*dtype);
+            if let Some(dtype) = self.comptime_dtypes.get(name) {
+                return Ok(SimdDtype::Known(*dtype));
+            }
+            if let Some(expr) = self.value_parameter_in_scope(name)
+                && expr.meta().as_value() == Some(&Ty::Dtype)
+            {
+                return Ok(SimdDtype::Expr(expr));
+            }
+        }
+        if let mojito_ast::ast::ParamArg::Type(SourceType::SelfParam(param)) = arg {
+            match self.self_param_value(param) {
+                Some(CtValue::Dtype(dtype)) => return Ok(SimdDtype::Known(dtype)),
+                Some(CtValue::Expr(expr)) if expr.meta().as_value() == Some(&Ty::Dtype) => {
+                    return Ok(SimdDtype::Expr(expr));
+                }
+                _ => {}
+            }
         }
         Err(TypeError::BadDtype(match arg {
             mojito_ast::ast::ParamArg::Value(Expr {
@@ -69,22 +85,23 @@ impl Checker {
 /// float lanes, and runtime floats adjust precision across float widths. A
 /// float source never converts to an integer lane — spell the truncation
 /// (`Int(x)`) first. `Intable` params/structs are the caller's separate,
-/// `conforms_to`-backed clause (`check_simd_args`).
-pub(super) fn converts_to_lane(ty: &Ty, dtype: Dtype) -> bool {
+/// `conforms_to`-backed clause (`check_simd_args`). A symbolic lane takes
+/// any integer or float source: which conversions the instantiation admits
+/// is its own check.
+pub(super) fn converts_to_lane(ty: &Ty, dtype: &SimdDtype) -> bool {
     if splats_to(ty, dtype) {
         return true;
     }
     let integer_source = matches!(ty, Ty::Int | Ty::UInt)
-        || matches!(ty, Ty::Simd { dtype: d, width: 1 } if !d.is_float() && *d != Dtype::Bool);
-    if dtype == Dtype::Bool {
-        return false;
+        || matches!(scalar_simd_dtype(ty), Some(d) if !d.is_float() && d != Dtype::Bool);
+    let float_source =
+        matches!(ty, Ty::Float64) || matches!(scalar_simd_dtype(ty), Some(d) if d.is_float());
+    match dtype.known() {
+        Some(Dtype::Bool) => false,
+        Some(dtype) if dtype.is_float() => float_source || integer_source,
+        Some(_) => integer_source,
+        None => float_source || integer_source,
     }
-    if dtype.is_float() {
-        let float_source = matches!(ty, Ty::Float64)
-            || matches!(ty, Ty::Simd { dtype: d, width: 1 } if d.is_float());
-        return float_source || integer_source;
-    }
-    integer_source
 }
 
 pub(super) const fn int_literal_materializes_to_dtype(dtype: Dtype) -> bool {
@@ -110,6 +127,11 @@ pub(super) const fn int_literal_materializes_to_dtype(dtype: Dtype) -> bool {
 /// 1]`); everything else is a `Ty::Simd`.
 pub(super) const fn simd_ty(dtype: Dtype, width: i64) -> Ty {
     mojito_types::types::canonical_simd_ty(dtype, width)
+}
+
+/// [`simd_ty`] over slots that may still be symbolic.
+pub(super) fn simd_of(dtype: SimdDtype, width: SimdWidth) -> Result<Ty, TypeError> {
+    mojito_types::types::simd_ty_from_slots(dtype, width).map_err(param_error)
 }
 
 /// The scalar `Ty` a value-parameter type name denotes, or `None` if the name is

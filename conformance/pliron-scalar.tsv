@@ -471,6 +471,8 @@ assets/ok/simd_reductions_float.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_reductions_int.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_shifts_masked.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_shuffle.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_symbolic_surface.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_symbolic_width_hooks.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_to_bits.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_wide_widths.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/size_of_builtin.mojo	-	ineligible	no-scalar-entry-shape

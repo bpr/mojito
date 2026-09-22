@@ -49,11 +49,9 @@ removed outright (`MaybeUninit` carries the same `unsafe_*` vocabulary), and
 
 The parameter-expression entry's own probes were answered and promoted
 (`assets/ok/param_expr_*.mojo`, `assets/type_error/param_expr_*.mojo`; the
-record is `docs/notes/param-expr-attributes.md`). One shape stays open.
-
-| Probe | Question | Expected on both |
-|---|---|---|
-| `param_expr_simd_hooks.mojo` | Do symbolic SIMD widths canonicalize (`SIMD[dt, n + 1]` as `SIMD[dt, 1 + n]`, `SIMD[DType.int64, Self.length]`)? (Observed at `a79fbdf59f2`, 2026-09-20.) | **differs**: the pin runs it, Mojito's `Ty::Simd` needs a concrete width — `docs/roadmap.md` §1, the `DType`/vector validation entry |
+record is `docs/notes/param-expr-attributes.md`), and so was its follow-on
+shape, the symbolic SIMD width (`assets/ok/simd_symbolic_width_hooks.mojo`,
+2026-09-22).
 
 ## Tuple element mutability (re-run at every re-pin)
 

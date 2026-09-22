@@ -136,7 +136,9 @@ pub fn lower_ty(
         Ty::Float64 => Ok(LowerTy::Scalar(ScalarTy::Float64)),
         Ty::Bool => Ok(LowerTy::Scalar(ScalarTy::Bool)),
         Ty::Dtype => Ok(LowerTy::Scalar(ScalarTy::Dtype)),
-        Ty::Simd { dtype, width: 1 } => Ok(LowerTy::Scalar(ScalarTy::of_dtype(*dtype))),
+        ty if let Some(dtype) = scalar_simd_dtype(ty) => {
+            Ok(LowerTy::Scalar(ScalarTy::of_dtype(dtype)))
+        }
         // Literal-typed storage holds the default materialized value; a
         // constant that exceeds it rejects at the storage boundary rather
         // than wrapping (the VM keeps arbitrary precision).

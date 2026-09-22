@@ -247,7 +247,18 @@ pub const fn scalar_copy_ty(ty: &Ty) -> Option<ScalarTy> {
         Ty::Float64 | Ty::FloatLiteral => Some(ScalarTy::Float64),
         Ty::Bool => Some(ScalarTy::Bool),
         Ty::Dtype => Some(ScalarTy::Dtype),
-        Ty::Simd { dtype, width: 1 } => Some(ScalarTy::of_dtype(*dtype)),
+        ty => match scalar_simd_dtype(ty) {
+            Some(dtype) => Some(ScalarTy::of_dtype(dtype)),
+            None => None,
+        },
+    }
+}
+
+/// The concrete lane dtype and width of a `Ty::Simd` register type. A
+/// symbolic slot never reaches lowering: the MIR verifier refuses it.
+pub fn simd_dims(ty: &Ty) -> Option<(Dtype, i64)> {
+    match ty {
+        Ty::Simd { dtype, width } => Some((dtype.known()?, width.known()?)),
         _ => None,
     }
 }
@@ -271,7 +282,7 @@ pub fn scalar_type(
         Ty::Float64 => Ok(ScalarTy::Float64),
         Ty::Bool => Ok(ScalarTy::Bool),
         Ty::Dtype => Ok(ScalarTy::Dtype),
-        Ty::Simd { dtype, width: 1 } => Ok(ScalarTy::of_dtype(*dtype)),
+        ty if let Some(dtype) = scalar_simd_dtype(ty) => Ok(ScalarTy::of_dtype(dtype)),
         Ty::Pointer { .. } | Ty::Ref(_) => Ok(ScalarTy::Ptr),
         other => Err(PlironError {
             function: Some(function.to_string()),

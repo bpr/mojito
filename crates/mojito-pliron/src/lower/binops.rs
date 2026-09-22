@@ -20,7 +20,7 @@ impl FnLowering<'_> {
         // lowering; the other side is a vector of the same shape or a
         // splatting scalar/literal (`runtime::to_int_lanes`).
         for operand in [a, b] {
-            if let Some(Ty::Simd { dtype, width }) = self.func.reg_types.get(&operand.0).cloned()
+            if let Some((dtype, width)) = self.func.reg_types.get(&operand.0).and_then(simd_dims)
                 && width > 1
             {
                 return self.lower_simd_binop(ctx, op, dest, a, b, dtype, width as usize);

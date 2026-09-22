@@ -449,10 +449,7 @@ impl FnLowering<'_> {
                 self.reg_values.insert(dest.0, value);
                 Ok(())
             }
-            Ty::Simd {
-                dtype: Dtype::Float32,
-                ..
-            } => {
+            ty if scalar_simd_dtype(ty) == Some(Dtype::Float32) => {
                 let intrinsic = match method {
                     "__floor__" => "llvm.floor.f32",
                     "__ceil__" => "llvm.ceil.f32",
@@ -464,10 +461,7 @@ impl FnLowering<'_> {
                 self.reg_values.insert(dest.0, result);
                 Ok(())
             }
-            Ty::Simd {
-                dtype: Dtype::Float16,
-                ..
-            } => {
+            ty if scalar_simd_dtype(ty) == Some(Dtype::Float16) => {
                 let intrinsic = match method {
                     "__floor__" => "llvm.floor.f64",
                     "__ceil__" => "llvm.ceil.f64",
@@ -505,11 +499,7 @@ impl FnLowering<'_> {
         operands: [Reg; 3],
         recv_ty: &Ty,
     ) -> Result<(), PlironError> {
-        if let Ty::Simd {
-            dtype: Dtype::Float16,
-            ..
-        } = recv_ty
-        {
+        if scalar_simd_dtype(recv_ty) == Some(Dtype::Float16) {
             let mut values = Vec::with_capacity(operands.len());
             for operand in operands {
                 let value = self.reg_value(ctx, operand, ScalarTy::Sized(Dtype::Float16))?;
@@ -522,19 +512,14 @@ impl FnLowering<'_> {
             return Ok(());
         }
         let (scalar, intrinsic, float_ty): (ScalarTy, &str, TypeHandle) = match recv_ty {
-            Ty::Simd {
-                dtype: Dtype::Float32,
-                ..
-            } => (
+            ty if scalar_simd_dtype(ty) == Some(Dtype::Float32) => (
                 ScalarTy::Sized(Dtype::Float32),
                 "llvm.fma.f32",
                 FP32Type::get(ctx).into(),
             ),
-            Ty::Float64
-            | Ty::Simd {
-                dtype: Dtype::Float64,
-                ..
-            } => (ScalarTy::Float64, "llvm.fma.f64", FP64Type::get(ctx).into()),
+            ty if matches!(ty, Ty::Float64) || scalar_simd_dtype(ty) == Some(Dtype::Float64) => {
+                (ScalarTy::Float64, "llvm.fma.f64", FP64Type::get(ctx).into())
+            }
             other => {
                 return Err(self.unsupported_reg(format!("`__fma__` on `{other}`"), dest));
             }

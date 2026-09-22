@@ -39,7 +39,7 @@ map and dependency DAG live in `docs/architecture.md` §Workspace Layout.
 | Source annotation syntax | `ast::SourceType` (alias of the AST `Type` node) | Parser, checker input, HIR/MIR source metadata. |
 | Source location/provenance | `token::{Span, SourceSpan}` | AST, checker side tables, MIR diagnostics. |
 | Compile-time values | `ct::CtValue` | Elaborator, specialization, checked constants. `CtValue::Expr` is a residual parameter expression and `CtValue::Deferred` a slot outside generic identity; neither is a constant. |
-| Parameter expressions | `param_expr::{ParamContext, ParamExpr, ParamKind, ParamOp, MetaTy, ParamId, ParamRef, ParamBindings, ParamEval, ParamError, ConstraintVerdict, ParamConstraint, identity_eq}` and `param_expr::fold::{fold_infix, fold_neg, compare}` (crate `mojito-types`) | The typed, canonical, per-compilation-interned form of a value argument, a value default, a callable default's condition, and a dependent type (`types::DependentType::Parameter`). `ParamContext` owns construction, canonical form, `replace` (type identity) and `evaluate`/`fold` (a required value); `fold` is the one implementation of compile-time scalar operators. Users: the checker (`constraints.rs`), the elaborator (`eval.rs`), MIR text and the verifier, native monomorphization (`mono/symbolic.rs`), the VM's default resolution, and `symbol::mangle`. `types::{TyRewrite, rewrite_ty, replace_parameters, referenced_parameters}` is the one type traversal behind replacement. Design: `docs/notes/param-expr-attributes.md`. |
+| Parameter expressions | `param_expr::{ParamContext, ParamExpr, ParamKind, ParamOp, MetaTy, ParamId, ParamRef, ParamBindings, ParamEval, ParamError, ConstraintVerdict, ParamConstraint, identity_eq}` and `param_expr::fold::{fold_infix, fold_neg, compare}` (crate `mojito-types`) | The typed, canonical, per-compilation-interned form of a value argument, a value default, a callable default's condition, and a dependent type (`types::DependentType::Parameter`). `ParamContext` owns construction, canonical form, `replace` (type identity) and `evaluate`/`fold` (a required value); `fold` is the one implementation of compile-time scalar operators. Users: the checker (`constraints.rs`), the elaborator (`eval.rs`), MIR text and the verifier, native monomorphization (`mono/symbolic.rs`), the VM's default resolution, and `symbol::mangle`. `types::{TyRewrite, rewrite_ty, replace_parameters, referenced_parameters}` is the one type traversal behind replacement. `Ty::Simd`'s slots are `types::{SimdDtype, SimdWidth}`; `simd_ty_from_slots` is the only constructor of a symbolic vector type, and `simd_shape`, `simd_slots`, `is_scalar_simd`, `scalar_simd_dtype`, and `simd_lane` read the slots. Design: `docs/notes/param-expr-attributes.md`. |
 | Semantic types | `types::{Ty, TyArg, ParamDecl}` | Checker, checked data, MIR declarations, VM coercion. |
 | Runtime values/operations | `runtime::{Value, coerce_checked, apply_infix, apply_prefix}` | VM and VM-backed CTFE. |
 | Backend contract | `backend::{Backend, BackendKind}` | Compiler driver and CLI. |
@@ -260,10 +260,17 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   generic constraint, a concrete `conforms_to`, or a `Bool` value),
   `check_comptime_for` checks a loop body under its element type,
   `bind_local_comptime` binds function-local `comptime` aliases and
-  compile-time-only values, `concrete_only_struct`/`concrete_only_def` and
-  `validates_body` draw the per-instantiation boundary (`DType`/vector
-  template shells, reflection readers), and `is_template_shell_member_error`
-  names the errors that end validation without a verdict. `checker.rs`
+  compile-time-only values, `struct_valued_template` and `validates_body`
+  draw the per-instantiation boundary (struct-value template shells,
+  reflection readers), and `is_template_shell_member_error` names the errors
+  that end validation without a verdict. A `DType`- or width-keyed body is
+  validated with its lane symbolic: `annotations::dtype_from_arg` and
+  `type_resolution::simd_width` resolve a binder in scope (bare, or `Self.x`
+  through `constraints::self_param_value`) to a `SimdDtype::Expr`/
+  `SimdWidth::Expr` slot, `annotations::simd_of` builds the type through
+  `types::simd_ty_from_slots`, and the SIMD sites in `operators.rs`,
+  `method_calls/mc_infer.rs`, `indexing.rs`, and `builtins.rs` gate on
+  `SimdDtype::licenses` and record lane facts only for known slots. `checker.rs`
   re-exports `validates_body` as `validates_comptime_body`, the body gate
   `explicit_destroy::check` reuses for its `DestroyScope::ValidatedTemplates`
   run. The same page owns a pack that is still a parameter:

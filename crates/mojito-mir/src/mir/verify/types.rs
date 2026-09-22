@@ -590,5 +590,19 @@ mod tests {
             super::super::calls::validate_dependent_bindings(&hole)
                 .is_err_and(|finding| finding.contains("cannot cross into MIR"))
         );
+        // A lane dtype or width still symbolic belongs to a validated
+        // template, never to a clone below the waist.
+        let symbolic = Ty::Simd {
+            dtype: mojito_types::types::SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
+            width: mojito_types::types::SimdWidth::Expr(context.decl_ref(
+                mojito_types::param_expr::ParamId::new("f", 0),
+                "width",
+                MetaTy::int(),
+            )),
+        };
+        assert!(
+            super::super::calls::validate_dependent_bindings(&symbolic)
+                .is_err_and(|finding| finding.contains("symbolic SIMD type"))
+        );
     }
 }

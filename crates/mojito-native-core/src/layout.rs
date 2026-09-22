@@ -121,8 +121,13 @@ impl LayoutCx<'_> {
             // storage of its creating `MakeClosure`, not part of the value.
             Ty::Func { .. } => Ok(compose(&[self.pointer(), self.pointer()]).layout),
             Ty::Simd { dtype, width } => {
-                let lane = lane_layout(*dtype);
-                Ok(Layout::new(lane.size * *width as u64, lane.align))
+                let (Some(dtype), Some(width)) = (dtype.known(), width.known()) else {
+                    return Err(LayoutError::Unsupported(format!(
+                        "a symbolic SIMD type has no native layout: {ty}"
+                    )));
+                };
+                let lane = lane_layout(dtype);
+                Ok(Layout::new(lane.size * width as u64, lane.align))
             }
             // Literal-typed storage holds the value at its default
             // materialized width; a value that exceeds it rejects at lowering.
@@ -245,6 +250,7 @@ mod tests {
     use super::*;
     use crate::target::{NativeTarget, Triple};
     use mojito_types::origin::PointerOrigin;
+    use mojito_types::types::{SimdDtype, SimdWidth, canonical_simd_ty};
 
     fn cx(structs: &StructFieldIndex) -> (NativeTarget, &StructFieldIndex) {
         (NativeTarget::new(Triple::X86_64UnknownLinuxGnu), structs)
@@ -271,7 +277,10 @@ mod tests {
 
     #[test]
     fn width_one_simd_scalars_store_at_lane_width() {
-        let scalar = |dtype| Ty::Simd { dtype, width: 1 };
+        let scalar = |dtype| Ty::Simd {
+            dtype: SimdDtype::Known(dtype),
+            width: SimdWidth::Known(1),
+        };
         assert_eq!(layout_of(&scalar(Dtype::Int8)), Ok(Layout::new(1, 1)));
         assert_eq!(layout_of(&scalar(Dtype::UInt8)), Ok(Layout::new(1, 1)));
         assert_eq!(layout_of(&scalar(Dtype::Int16)), Ok(Layout::new(2, 2)));
@@ -301,17 +310,11 @@ mod tests {
     #[test]
     fn multi_lane_simd_is_a_contiguous_scalar_aggregate() {
         assert_eq!(
-            layout_of(&Ty::Simd {
-                dtype: Dtype::Int32,
-                width: 4,
-            }),
+            layout_of(&canonical_simd_ty(Dtype::Int32, 4)),
             Ok(Layout::new(16, 4))
         );
         assert_eq!(
-            layout_of(&Ty::Simd {
-                dtype: Dtype::Float64,
-                width: 3,
-            }),
+            layout_of(&canonical_simd_ty(Dtype::Float64, 3)),
             Ok(Layout::new(24, 8))
         );
     }

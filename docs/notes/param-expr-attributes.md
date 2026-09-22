@@ -246,8 +246,9 @@ test `param_expr_residual_is_not_false` pin this.
 ## Boundaries
 
 - `TyArg::Val` may hold a residual under a checked declaration binder.
-- `Ty::Simd` still holds a concrete dtype and width.
-  `conformance/probes/param_expr_simd_hooks.mojo` is the follow-on shape.
+- `Ty::Simd` holds typed slots (`SimdDtype`, `SimdWidth`): a symbolic lane
+  dtype or width is a parameter expression that never crosses the MIR waist
+  (see *SIMD slots*).
 - MIR keeps scoped references and pure expressions that instance binding
   supports. `validate_dependent_bindings` rejects a hole, an out-of-range or
   mistyped signature slot, and an unbound dependent reference.
@@ -324,8 +325,7 @@ prerequisite. The KGEN definitions consulted are `KGENAttrs.td`,
 
 `param_list.get` is landed (`ParamKind::ListGet`, built by
 `ParamContext::list_get`); see *Pack elements* below. Hooks left for adjacent
-work: `param_list.{size, concat, reduce, tabulate}`; typed value/dtype
-expressions for the `Ty::Simd` migration; the residual
+work: `param_list.{size, concat, reduce, tabulate}`; the residual
 discharge API for the by-value `rebind` gap; the four-outcome unifier
 (`solve_value_args` binds a direct reference and leaves any other residual as
 an equation) for variadic-constructor inference.
@@ -368,6 +368,51 @@ What the pin licenses, probed in `conformance/probes/pack_*.mojo`: the pack's
 declared bound and a conjunctive method `where` (either spelling) license a
 trait use of an element; a struct-header conditional conformance, a
 disjunction, and a `comptime if` guard do not.
+
+## SIMD slots
+
+`Ty::Simd { dtype: SimdDtype, width: SimdWidth }`: each slot is `Known` (a
+`Dtype`, an `i64`; `Known(-1)` is still the `SIMD[dt, _]` inference
+wildcard) or `Expr(ParamExpr)`, the parameter expression a template names —
+a `[dt: DType]` binder bare or as `Self.dt`, `width`, `2 * n`, `Self.width`.
+`types::simd_ty_from_slots` is the only constructor of a symbolic vector
+type: it folds a closed expression to `Known` and two known slots through
+`canonical_simd_ty`, so `Expr` never holds a closed expression and slot
+equality is type identity. `rewrite_ty` rewrites each slot and rebuilds
+through it, which is how `Scalar[Self.dt]` closes to `Float64` at
+`Vec[DType.float64]` and to the caller's `dt` at `Vec[dt]`.
+
+Three decisions shaped this, against the pack precedent above.
+
+- **Typed slots, not a view.** A pack element has a trait bound to view it
+  through; a symbolic lane's capabilities are the SIMD surface itself. Every
+  checker site that gates on the dtype (`&` on an integer lane, `/` on a
+  float one, `select` on a mask, the reductions, `__fma__`) asks
+  `SimdDtype::licenses`, which a known dtype answers and a symbolic one
+  grants: the constraint is the instantiation's to check, as upstream defers
+  `constrained[...]`. A dedicated `Ty` variant or a `Ty::Dependent` encoding
+  would have hidden in the `_ =>` arms of those sites.
+- **Literals splat, scalars do not.** `types::splats_to` admits an integer
+  or float literal into a symbolic lane and refuses `Int`, `Float64`, a
+  sized scalar, and `Bool`, which is what the pin rejects
+  (`assets/type_error/simd_symbolic_scalar_operand_rejected.mojo`).
+- **A lane fact is recorded only when known.** `SimdLength`,
+  `DtypeConstant`, a cast, shuffle, `to_bits`, or float-query adjustment, a
+  hash leaf clone, and a SIMD construction's dimensions are recorded only for
+  known slots. A body typed under a symbolic slot keeps its clone check
+  (`template_certificate` refuses a `DType` binder), so the clone records
+  its own concrete facts. Below the waist a symbolic slot is an error:
+  `validate_dependent_bindings` refuses it, and the text form
+  (`simd { dtype: ct_expr(...), width: ct_expr(...) }`) only serves lossless
+  round trips.
+
+What the pin licenses, probed 2026-09-22 (Mojo 1.2.0.dev2026092105) and
+pinned by `assets/ok/simd_symbolic_surface.mojo` and the eight
+`assets/type_error/{dtype_keyed_*,simd_width_keyed_*,dtype_struct_applied_*,simd_symbolic_*}.mojo`:
+the whole SIMD surface on an unconstrained `Scalar[dt]`; `Scalar[dt]` is
+`SIMD[dt, 1]` and is neither `Float64` nor narrowed inside a `dt ==
+DType.float64` arm; the pin does not infer `width` from a `SIMD[dt, width]`
+argument in a `def`.
 
 ## Measurements
 

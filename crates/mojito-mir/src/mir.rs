@@ -2443,8 +2443,8 @@ fn close_register_types(
                         reg_types.get(&base.0).and_then(|base| match base {
                             Ty::Pointer { element, .. } => Some((**element).clone()),
                             Ty::Simd { dtype, .. } => Some(Ty::Simd {
-                                dtype: *dtype,
-                                width: 1,
+                                dtype: dtype.clone(),
+                                width: mojito_types::types::SimdWidth::Known(1),
                             }),
                             // A tuple element type needs the compile-time
                             // index the checker already validated.
@@ -2508,8 +2508,8 @@ fn close_register_types(
                     } => Some((
                         dest,
                         Some(Ty::Simd {
-                            dtype: *dtype,
-                            width: *width as i64,
+                            dtype: mojito_types::types::SimdDtype::Known(*dtype),
+                            width: mojito_types::types::SimdWidth::Known(*width as i64),
                         }),
                     )),
                     // A shuffle keeps the source dtype at the mask's width.
@@ -2517,14 +2517,14 @@ fn close_register_types(
                         dest, value, mask, ..
                     } => {
                         let dtype = match reg_types.get(&value.0) {
-                            Some(Ty::Simd { dtype, .. }) => Some(*dtype),
+                            Some(Ty::Simd { dtype, .. }) => Some(dtype.clone()),
                             _ => None,
                         };
                         Some((
                             dest,
                             dtype.map(|dtype| Ty::Simd {
                                 dtype,
-                                width: mask.len() as i64,
+                                width: mojito_types::types::SimdWidth::Known(mask.len() as i64),
                             }),
                         ))
                     }

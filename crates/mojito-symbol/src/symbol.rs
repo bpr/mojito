@@ -27,7 +27,9 @@ use mojito_ast::ast::{
     TypeParam,
 };
 use mojito_types::ct::{CtLane, CtValue};
-use mojito_types::types::{ParamDecl, Ty, TyArg, contains_string_literal, default_literal};
+use mojito_types::types::{
+    ParamDecl, Ty, TyArg, canonical_simd_ty, contains_string_literal, default_literal,
+};
 
 /// The lowered symbol of `std._intrinsics._pow_int`.
 ///
@@ -198,10 +200,7 @@ pub fn simd_update_clone_name(leaf: &Ty) -> String {
     // A `Bool` leaf hashes as `Scalar[DType.bool]` (upstream's `Bool.__hash__`
     // passes `Scalar[.bool](self)`); every other leaf is its own vector type.
     let leaf = match default_literal(leaf) {
-        Ty::Bool => Ty::Simd {
-            dtype: mojito_ast::ast::Dtype::Bool,
-            width: 1,
-        },
+        Ty::Bool => canonical_simd_ty(mojito_ast::ast::Dtype::Bool, 1),
         other => other,
     };
     // A hash leaf is a concrete scalar or vector type, so the key is closed;
@@ -1461,11 +1460,7 @@ fn param_arg_width(argument: &ParamArg, comptimes: &HashMap<String, i64>) -> Opt
 /// `int`/`float64` canonicalize to the native scalars, everything else uses
 /// the `Ty::Simd` display (the scalar alias where one exists).
 fn simd_annotation_raw(dtype: mojito_ast::ast::Dtype, width: i64) -> String {
-    match (dtype, width) {
-        (mojito_ast::ast::Dtype::Int, 1) => "Int".to_string(),
-        (mojito_ast::ast::Dtype::Float64, 1) => "Float64".to_string(),
-        _ => Ty::Simd { dtype, width }.to_string(),
-    }
+    canonical_simd_ty(dtype, width).to_string()
 }
 
 fn eval_comptime_int(expr: &Expr, comptimes: &HashMap<String, i64>) -> Option<i64> {

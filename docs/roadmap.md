@@ -331,8 +331,7 @@ to section 3, however small.
   - The lever is a reference wrapper in `Ty::Param` with identity equality and
     a diagnostic name, and `IndexRef`-style slots for a signature's own
     binders, as `canonical_generic_signature` already does for values.
-  - Depends on nothing. 1.18 and 1.23 are easier
-    after it, and do not need it.
+  - Depends on nothing. 1.18 is easier after it, and does not need it.
   - Model: Fable, plan first. A comparison change under every checker
     substitution; the plan's job is to find the coincidence sites before the
     edit does.
@@ -431,37 +430,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Fable, plan first. A new symbolic form with no precedent.
 
-- [ ] **1.23 A `DType`- or vector-keyed template body is not validated symbolically**
-
-  Problem: a body keyed on a `DType` parameter or a vector-typed value
-  parameter checks only per instantiation, because `Ty::Simd` holds a
-  concrete element type and width, so an untaken arm there is still never
-  reported.
-  - The same boundary hides a second gap: a validated body that applies a
-    `DType`-keyed struct (`Vec[DType.float64](...)`) reaches the template
-    shell where the elaborator would have minted the instance.
-  - The lever is a symbolic element type and width on `Ty::Simd`, and the
-    scalar-range family (`std/range.mojo`) plus the SIMD-keyed stdlib
-    methods are the fallout; `dtype_keyed`/`concrete_only_def` mark the
-    boundary today.
-  - A width and a dtype are `ParamExpr`s now
-    (`mojito_types::param_expr`), and the pin accepts the symbolic shapes
-    (`conformance/probes/param_expr_simd_hooks.mojo`). The order is: give
-    `Ty::Simd` typed expression slots and update every visitor, then validate
-    widths and dtypes, then lift `simd_width`/`concrete_only_def`, then the
-    concrete extraction in lowering.
-  - The opaque-element machinery it builds on is landed for packs: a
-    dependent type as the identity, a bounded `Ty::Param` view for its
-    capabilities (`Checker::opaque_element`), and a per-body no-verdict
-    (`Checker::pack_verdict`) instead of a whole-run abort. `Vec[DType…]`
-    members are the one whole-run abort left
-    (`is_template_shell_member_error`).
-  - Depends on nothing.
-  - Model: Fable, plan first. Changes the SIMD type's contract across the
-    checker, the elaborator's width folding, and native lowering's vector
-    types.
-
-- [ ] **1.24 A per-call method clone and a whole-struct specialization leave no
+- [ ] **1.23 A per-call method clone and a whole-struct specialization leave no
   trace**
 
   Problem: the elaborator traces a `def` clone and a per-instantiation method
@@ -470,13 +439,16 @@ to section 3, however small.
     parameters. `specialize.rs:per_call_method_clones` has four callers and
     records no `MethodInstanceTrace`.
   - A member of a struct specialized whole (`Tuple$…`, a `DType`-keyed range)
-    comes from a concrete-only template, so it also waits on 1.18 and 1.23.
+    comes from a template whose validated body is never certified: a `DType`
+    binder fails `template_certificate`'s plain-binder rule
+    (`checker/template_facts.rs`), and a validated method has no class. It
+    waits on 1.18 and on certifying those bodies.
   - Hello World's 1320 generated body inferences are all of these two kinds.
-  - Depends on 1.18 and 1.23 for the whole-struct half; the per-call half
-    depends on nothing.
+  - Depends on 1.18 for the whole-struct half; the per-call half depends on
+    nothing.
   - Model: Opus, plan first, for the per-call trace.
 
-- [ ] **1.25 An explicit `DType`-keyed application loses to a keyed overload of
+- [ ] **1.24 An explicit `DType`-keyed application loses to a keyed overload of
   the same name**
 
   Problem: `kind[DType.float64](1.8)`, where `def kind[dt: DType](a:
@@ -487,16 +459,49 @@ to section 3, however small.
     neither request-served class, so its call is deferred to discovery.
   - The member is then dropped from the round-one program, leaving only the
     keyed sibling's stub for the explicit application to bind against.
-  - Keeping it alive instead does not work today: its `Scalar[dt]` signature
-    cannot be checked with `dt` symbolic, which is exactly 1.23.
+  - Keeping it alive is possible now that its `Scalar[dt]` signature checks
+    with `dt` symbolic.
   - Inferred calls to the *keyed* sibling do now work beside such a member,
     where the whole name used to be rejected.
-  - Depends on 1.23.
-  - Model: Fable, plan first. The lever is the symbolic `Ty::Simd` that entry
-    introduces; the plan's job is the round-one survival rule for a member
-    of no request-served class.
+  - Depends on nothing.
+  - Model: Fable, plan first. The plan's job is the round-one survival rule
+    for a member of no request-served class.
 
-- [ ] **1.26 The Pliron pivot has no falsifiable proof yet**
+- [ ] **1.25 A `[dt: DType]` parameter is not inferred from a `Scalar[dt]`
+  argument**
+
+  Problem: `only_dt(Scalar[DType.int32](3))` for `def only_dt[dt:
+  DType](a: Scalar[dt])` reports "requires compile-time parameter 'dt'",
+  where the pin infers `dt` from the argument's lane.
+  - The pin does *not* infer a width the same way: `total(v)` for `def
+    total[dt: DType, width: Int](v: SIMD[dt, width])` is rejected there
+    ("depends on an unresolved parameter 'width'"), so only the dtype slot
+    is inferable.
+  - The lever is `SimdDtype::Expr` in a pattern against a known lane in the
+    actual, the way `solve_value_args` binds a direct value reference.
+  - Depends on nothing.
+  - Model: Opus, as-is.
+
+- [ ] **1.26 A `comptime` binding of a symbolic dtype does not key a lane**
+
+  Problem: `comptime d = dt` inside a `DType`-keyed body, then `Scalar[d]`,
+  reports "not a valid SIMD element type": the binding table
+  (`Checker::comptime_dtypes`) holds known dtypes only.
+  - `dtype_from_arg` resolves a binder in scope and a `comptime` binding of
+    a known dtype, but not a binding of a symbolic one.
+  - Depends on nothing.
+  - Model: Opus, as-is.
+
+- [ ] **1.27 The `SIMD[dt, _]` width wildcard is a sentinel**
+
+  Problem: an inferred width is `SimdWidth::Known(-1)`, a value no lane
+  count can have, where the parameter-expression layer has a typed hole
+  (`ParamKind::Hole`).
+  - `coerces` and `infer_simd_construction` special-case the sentinel.
+  - Depends on nothing.
+  - Model: Opus, as-is.
+
+- [ ] **1.28 The Pliron pivot has no falsifiable proof yet**
 
   Problem: [`docs/pliron-backend-pivot-plan.md`](pliron-backend-pivot-plan.md)
   stages a migration to a required Pliron IR framework, but its Stage A1 slice
@@ -1197,7 +1202,40 @@ words. The representation gap and the two standing ledgers are last.
     must respect a non-owning flag, on both backends.
   - Model: Opus, plan first.
 
-- [ ] **3.36 Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
+- [ ] **3.36 Shift operators bind looser than the bitwise ones**
+
+  Problem: `a << 1 | b >> 1` parses as `(a << 1 | b) >> 1`, where Python and
+  Mojo bind `<<`/`>>` tighter than `&`, `^`, and `|`, so it prints `7` for
+  `Int32(6)` and `Int32(3)` where the pin prints `13`.
+  - Found by `assets/ok/simd_symbolic_surface.mojo`, whose `guarded`
+    parenthesizes around it.
+  - The lever is the infix precedence table in `crates/mojito-parser`.
+  - Depends on nothing.
+  - Model: Opus, as-is.
+
+- [ ] **3.37 Small SIMD surface gaps the symbolic-lane probes found on concrete
+  types**
+
+  Problem: each of these runs at the pin on a concrete scalar or vector and
+  is rejected by Mojito, so a symbolic template cannot license it either.
+  - `len(v)` on a vector (`len_result_for_type` has no `Ty::Simd` arm),
+    `abs`/`max`/`min` over a scalar alias (`is_numeric` excludes it),
+    `Scalar[dt].MAX`/`.MIN`, and `**` on a lane.
+  - A scalar comparison types as `SIMD[DType.bool, 1]`, which does not
+    coerce to a `Bool` return (`-> Bool: return a == b`); `if a == b:`
+    works through truthiness.
+  - `Float64.cast[...]()`: the canonical width-one `float64` is `Ty::Float64`
+    and has no SIMD methods.
+  - Natively only, `String(v)` of a multi-lane vector is an unsupported
+    type where `print(v)` lowers (`pliron backend: unsupported type`).
+  - On a symbolic lane only, `range(Scalar[dt](0), n)`, `to_bits()` without
+    an explicit target, and a `DType.bool` mask's `fill=` at a symbolic
+    width are reported at the template rather than deferred to the
+    instantiation.
+  - Depends on nothing.
+  - Model: Opus, as-is, one site each.
+
+- [ ] **3.38 Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
   any order)*
 
   Problem: parts of Mojito's stdlib lean on the Rust runtime where upstream
@@ -1227,7 +1265,7 @@ words. The representation gap and the two standing ledgers are last.
   Four runtime services are deliberately not on that list; they are in
   [`docs/non-goals.md`](non-goals.md).
 
-- [ ] **3.37 Behavioral divergences from the pinned Mojo — burn to zero**
+- [ ] **3.39 Behavioral divergences from the pinned Mojo — burn to zero**
   *(standing)*
 
   Every new divergence lands here with a probe or a `cases.tsv`

@@ -60,7 +60,7 @@ use mojito_mir::mir::{
     MirFunctionDeclaration, MirInstr, MirParamArg, MirPlace, MirStructDeclaration, MirTerm, Proj,
     Reg, UseMode,
 };
-use mojito_types::types::Ty;
+use mojito_types::types::{Ty, canonical_simd_ty, scalar_simd_dtype};
 
 use mojito_native::native::layout::{Layout, LayoutCx};
 use mojito_native::native::mangle;

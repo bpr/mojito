@@ -178,10 +178,16 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
                     Ty::Struct(struct_name, struct_args) if struct_args.is_empty() => {
                         name.clone_from(struct_name);
                     }
+                    // A bound vector type is concrete (the elaborator binds
+                    // no symbolic slot), so a symbolic one is left as it is.
                     Ty::Simd { dtype, width } => {
                         if let (Some(dtype), Some(width)) = (
-                            CtValue::Dtype(*dtype).materialize(e.span),
-                            CtValue::Int(*width).materialize(e.span),
+                            dtype
+                                .known()
+                                .and_then(|dtype| CtValue::Dtype(dtype).materialize(e.span)),
+                            width
+                                .known()
+                                .and_then(|width| CtValue::Int(width).materialize(e.span)),
                         ) {
                             *name = "SIMD".to_string();
                             *param_args = vec![ParamArg::Value(dtype), ParamArg::Value(width)];
@@ -239,10 +245,16 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
                         return;
                     }
                     Ty::Simd { dtype, width } => {
-                        let Some(dtype) = CtValue::Dtype(*dtype).materialize(e.span) else {
+                        let Some(dtype) = dtype
+                            .known()
+                            .and_then(|dtype| CtValue::Dtype(dtype).materialize(e.span))
+                        else {
                             return;
                         };
-                        let Some(width) = CtValue::Int(*width).materialize(e.span) else {
+                        let Some(width) = width
+                            .known()
+                            .and_then(|width| CtValue::Int(width).materialize(e.span))
+                        else {
                             return;
                         };
                         e.kind = ExprKind::Call {
@@ -1579,8 +1591,15 @@ fn rewrite_decorators(decorators: &mut [mojito_ast::ast::Decorator], subs: Subs)
 )]
 fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
     match &mut s.kind {
-        StmtKind::VarDecl { value, .. }
-        | StmtKind::RefDecl { value, .. }
+        // A local's annotation is a type position over the clone's bound
+        // parameters (`var x: Scalar[dt] = 2.5`), like a signature's.
+        StmtKind::VarDecl { ty, value, .. } => {
+            if let Some(ty) = ty {
+                rewrite_type(ty, subs);
+            }
+            rewrite_expr(value, subs);
+        }
+        StmtKind::RefDecl { value, .. }
         | StmtKind::Assign { value, .. }
         | StmtKind::Raise(value)
         | StmtKind::Return(Some(value)) => rewrite_expr(value, subs),

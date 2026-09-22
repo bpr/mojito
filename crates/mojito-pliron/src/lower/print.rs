@@ -234,23 +234,25 @@ impl FnLowering<'_> {
                 let value = self.reg_value(ctx, recv, ScalarTy::Float64)?;
                 self.folded_float(ctx, value, ScalarTy::Float64, dest)
             }
-            Ty::Simd { dtype, width: 1 } if dtype.is_narrow_float() => {
-                let value = self.reg_value(ctx, recv, ScalarTy::Sized(*dtype))?;
-                self.folded_float(ctx, value, ScalarTy::Sized(*dtype), dest)
+            ty if let Some(dtype) = scalar_simd_dtype(ty)
+                && dtype.is_narrow_float() =>
+            {
+                let value = self.reg_value(ctx, recv, ScalarTy::Sized(dtype))?;
+                self.folded_float(ctx, value, ScalarTy::Sized(dtype), dest)
             }
-            Ty::Simd { dtype, width } if *width > 1 && dtype.is_float() => {
+            ty if let Some((dtype, width)) = simd_dims(ty)
+                && width > 1
+                && dtype.is_float() =>
+            {
                 // A float vector folds each lane into a fresh copy.
-                let scalar = ScalarTy::of_dtype(*dtype);
+                let scalar = ScalarTy::of_dtype(dtype);
                 let lane_layout = self
                     .layout
-                    .layout_of(&Ty::Simd {
-                        dtype: *dtype,
-                        width: 1,
-                    })
+                    .layout_of(&canonical_simd_ty(dtype, 1))
                     .expect("SIMD lane layout");
                 let layout = self.layout.layout_of(receiver).expect("SIMD layout");
-                let width = *width as usize;
-                let vector = self.simd_load_vector(ctx, recv, *dtype, width, dest)?;
+                let width = width as usize;
+                let vector = self.simd_load_vector(ctx, recv, dtype, width, dest)?;
                 let storage = self.entry_alloca(ctx, layout.size, layout.align);
                 for lane in 0..width {
                     let value = self.simd_extract(ctx, vector, lane, dest);
@@ -483,7 +485,7 @@ impl FnLowering<'_> {
         {
             return self.print_struct_via_write_to(ctx, arg, &name, dest);
         }
-        if let Some(Ty::Simd { dtype, width }) = self.func.reg_types.get(&arg.0).cloned()
+        if let Some((dtype, width)) = self.func.reg_types.get(&arg.0).and_then(simd_dims)
             && width > 1
         {
             return self.print_simd(ctx, arg, dtype, width as usize, dest);

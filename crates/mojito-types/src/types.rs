@@ -144,6 +144,82 @@ impl DependentType {
     }
 }
 
+/// The element type of a [`Ty::Simd`]: a concrete dtype, or a `DType`-valued
+/// parameter expression while the enclosing declaration is still symbolic
+/// (`Scalar[dt]` under source validation).
+///
+/// `Expr` is never a closed expression: [`simd_ty_from_slots`] folds one to
+/// `Known`, so slot equality is type identity.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SimdDtype {
+    Known(Dtype),
+    Expr(ParamExpr),
+}
+
+impl SimdDtype {
+    pub const fn known(&self) -> Option<Dtype> {
+        match self {
+            Self::Known(dtype) => Some(*dtype),
+            Self::Expr(_) => None,
+        }
+    }
+
+    pub const fn is_expr(&self) -> bool {
+        matches!(self, Self::Expr(_))
+    }
+
+    /// Whether a dtype constraint holds here: a known dtype answers
+    /// `predicate`; a symbolic one is licensed, since the constraint is the
+    /// instantiation's to check (upstream defers `constrained[...]` the same
+    /// way).
+    pub fn licenses(&self, predicate: impl FnOnce(Dtype) -> bool) -> bool {
+        self.known().is_none_or(predicate)
+    }
+}
+
+impl fmt::Display for SimdDtype {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Known(dtype) => write!(f, "DType.{}", dtype.name()),
+            Self::Expr(expr) => write!(f, "{expr}"),
+        }
+    }
+}
+
+/// The lane count of a [`Ty::Simd`]: a concrete width, or an `Int`-valued
+/// parameter expression while the enclosing declaration is still symbolic
+/// (`SIMD[dt, width]`, `SIMD[dt, 2 * n]`).
+///
+/// `Known(-1)` is the `SIMD[dt, _]` inference wildcard. `Expr` is never a
+/// closed expression: [`simd_ty_from_slots`] folds one to `Known`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SimdWidth {
+    Known(i64),
+    Expr(ParamExpr),
+}
+
+impl SimdWidth {
+    pub const fn known(&self) -> Option<i64> {
+        match self {
+            Self::Known(width) => Some(*width),
+            Self::Expr(_) => None,
+        }
+    }
+
+    pub const fn is_expr(&self) -> bool {
+        matches!(self, Self::Expr(_))
+    }
+}
+
+impl fmt::Display for SimdWidth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Known(width) => write!(f, "{width}"),
+            Self::Expr(expr) => write!(f, "{expr}"),
+        }
+    }
+}
+
 /// A type in mojito's semantic lattice. Scalars mirror `ast::Type`; `Func` is
 /// synthesized from a `def` signature or lowered from a function-type annotation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -259,10 +335,12 @@ pub enum Ty {
     /// `P[origin_of(ys)]` are different types, as upstream) and erases from
     /// the runtime ABI: mangling, layout, and MIR verification ignore it.
     Struct(String, Vec<TyArg>),
-    /// A SIMD vector type `SIMD[DType.<dtype>, width]`.
+    /// A SIMD vector type `SIMD[DType.<dtype>, width]`. Either slot is a
+    /// parameter expression while the declaration it belongs to is symbolic;
+    /// a symbolic slot never crosses the MIR waist.
     Simd {
-        dtype: Dtype,
-        width: i64,
+        dtype: SimdDtype,
+        width: SimdWidth,
     },
     /// The built-in `Error` type.
     Error,
@@ -517,7 +595,7 @@ pub fn unqualified_type_name(ty: &Ty) -> String {
         Ty::UInt => "SIMD[DType.uint, 1]".to_string(),
         Ty::Float64 | Ty::FloatLiteral => "SIMD[DType.float64, 1]".to_string(),
         Ty::Bool => "Bool".to_string(),
-        Ty::Simd { dtype, width } => format!("SIMD[DType.{}, {}]", dtype.name(), width),
+        Ty::Simd { dtype, width } => format!("SIMD[{dtype}, {width}]"),
         Ty::StringLiteral => "StringLiteral".to_string(),
         Ty::None => "NoneType".to_string(),
         Ty::Struct(name, args) => {
@@ -1222,11 +1300,18 @@ impl fmt::Display for Ty {
             }
             Self::Dependent(dependent) => write!(f, "{}", dependent.expr()),
             Self::SelfType => write!(f, "Self"),
-            Self::Simd { dtype, width: 1 } => match dtype.scalar_alias() {
+            Self::Simd {
+                dtype: SimdDtype::Known(dtype),
+                width: SimdWidth::Known(1),
+            } => match dtype.scalar_alias() {
                 Some(alias) => write!(f, "{alias}"),
                 None => write!(f, "SIMD[DType.{}, 1]", dtype.name()),
             },
-            Self::Simd { dtype, width } => write!(f, "SIMD[DType.{}, {}]", dtype.name(), width),
+            Self::Simd {
+                dtype,
+                width: SimdWidth::Known(1),
+            } => write!(f, "Scalar[{dtype}]"),
+            Self::Simd { dtype, width } => write!(f, "SIMD[{dtype}, {width}]"),
             Self::Error => write!(f, "Error"),
             Self::Pointer { element, origin } => {
                 write!(f, "Pointer[{element}")?;
@@ -1409,8 +1494,53 @@ pub const fn canonical_simd_ty(dtype: Dtype, width: i64) -> Ty {
     match (dtype, width) {
         (Dtype::Int, 1) => Ty::Int,
         (Dtype::Float64, 1) => Ty::Float64,
-        _ => Ty::Simd { dtype, width },
+        _ => Ty::Simd {
+            dtype: SimdDtype::Known(dtype),
+            width: SimdWidth::Known(width),
+        },
     }
+}
+
+/// The SIMD type of two slots that may still be symbolic.
+///
+/// A slot whose expression is a closed constant becomes `Known`, and two
+/// known slots canonicalize through [`canonical_simd_ty`]. This is the only
+/// constructor of a symbolic `Ty::Simd`, so `Expr` never holds a closed
+/// expression.
+pub fn simd_ty_from_slots(dtype: SimdDtype, width: SimdWidth) -> Result<Ty, ParamError> {
+    let dtype = match dtype {
+        SimdDtype::Expr(expr) => match expr.as_constant() {
+            Some(CtValue::Dtype(dtype)) => SimdDtype::Known(*dtype),
+            Some(other) => {
+                return Err(ParamError::TypeMismatch {
+                    operation: "SIMD element type".to_string(),
+                    expected: "DType".to_string(),
+                    found: other.to_string(),
+                });
+            }
+            None => SimdDtype::Expr(expr),
+        },
+        known @ SimdDtype::Known(_) => known,
+    };
+    let width = match width {
+        SimdWidth::Expr(expr) => match expr.as_constant() {
+            Some(value) => SimdWidth::Known(
+                crate::param_expr::fold::integer_value(value)
+                    .and_then(|width| width.to_i64())
+                    .ok_or_else(|| ParamError::TypeMismatch {
+                        operation: "SIMD width".to_string(),
+                        expected: "Int".to_string(),
+                        found: value.to_string(),
+                    })?,
+            ),
+            None => SimdWidth::Expr(expr),
+        },
+        known @ SimdWidth::Known(_) => known,
+    };
+    Ok(match (dtype, width) {
+        (SimdDtype::Known(dtype), SimdWidth::Known(width)) => canonical_simd_ty(dtype, width),
+        (dtype, width) => Ty::Simd { dtype, width },
+    })
 }
 
 /// The type a Hashable builtin leaf contributes to its hasher as: a `DType`
@@ -1434,9 +1564,58 @@ pub const fn simd_shape(ty: &Ty) -> Option<(Dtype, i64)> {
         Ty::Int | Ty::IntLiteral => (Dtype::Int, 1),
         Ty::UInt => (Dtype::UInt64, 1),
         Ty::Float64 | Ty::FloatLiteral => (Dtype::Float64, 1),
-        Ty::Simd { dtype, width } => (*dtype, *width),
+        Ty::Simd {
+            dtype: SimdDtype::Known(dtype),
+            width: SimdWidth::Known(width),
+        } => (*dtype, *width),
         _ => return None,
     })
+}
+
+/// The slots of a SIMD-valued type, symbolic or not — [`simd_shape`] for a
+/// declaration that is still a template.
+pub fn simd_slots(ty: &Ty) -> Option<(SimdDtype, SimdWidth)> {
+    match ty {
+        Ty::Simd { dtype, width } => Some((dtype.clone(), width.clone())),
+        _ => {
+            simd_shape(ty).map(|(dtype, width)| (SimdDtype::Known(dtype), SimdWidth::Known(width)))
+        }
+    }
+}
+
+/// Whether `ty` is a width-one `Ty::Simd` (a scalar alias other than the
+/// native `Int`/`Float64`), whatever its dtype slot.
+pub const fn is_scalar_simd(ty: &Ty) -> bool {
+    matches!(
+        ty,
+        Ty::Simd {
+            width: SimdWidth::Known(1),
+            ..
+        }
+    )
+}
+
+/// The known dtype of a width-one `Ty::Simd`.
+pub const fn scalar_simd_dtype(ty: &Ty) -> Option<Dtype> {
+    match ty {
+        Ty::Simd {
+            dtype: SimdDtype::Known(dtype),
+            width: SimdWidth::Known(1),
+        } => Some(*dtype),
+        _ => None,
+    }
+}
+
+/// The type of one lane of a SIMD type: the canonical width-one type of its
+/// dtype slot.
+pub fn simd_lane(dtype: &SimdDtype) -> Ty {
+    match dtype {
+        SimdDtype::Known(dtype) => canonical_simd_ty(*dtype, 1),
+        SimdDtype::Expr(_) => Ty::Simd {
+            dtype: dtype.clone(),
+            width: SimdWidth::Known(1),
+        },
+    }
 }
 
 /// The runtime type an exact literal materializes to when no context selects
@@ -1608,7 +1787,13 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         }
         (Ty::IntLiteral, Ty::Int | Ty::UInt | Ty::Float64 | Ty::FloatLiteral) => true,
         (Ty::FloatLiteral, Ty::Float64) => true,
-        (literal, Ty::Simd { dtype, width: 1 }) if splats_to(literal, *dtype) => true,
+        (
+            literal,
+            Ty::Simd {
+                dtype,
+                width: SimdWidth::Known(1),
+            },
+        ) if splats_to(literal, dtype) => true,
         (
             Ty::Simd {
                 dtype: from_dtype,
@@ -1616,9 +1801,9 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
             },
             Ty::Simd {
                 dtype: to_dtype,
-                width: -1,
+                width: SimdWidth::Known(-1),
             },
-        ) => from_dtype == to_dtype && *from_width > 0,
+        ) => from_dtype == to_dtype && from_width.known().is_none_or(|width| width > 0),
         // A tuple coerces element-wise (same arity) — so a literal element
         // materializes: `(1, 2.0)` fits `Tuple[Float64, Float64]`.
         (Ty::Tuple(a), Ty::Tuple(b)) => {
@@ -1635,16 +1820,25 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
 /// argument, or the non-SIMD operand of an elementwise operator that splats).
 ///
 /// A numeric literal fits any matching-kind lane; a same-dtype width-1 SIMD
-/// fits.
-pub fn splats_to(ty: &Ty, dtype: Dtype) -> bool {
-    match ty {
-        Ty::IntLiteral => dtype != Dtype::Bool,
-        Ty::FloatLiteral => dtype.is_float(),
-        Ty::Bool => dtype == Dtype::Bool,
-        Ty::Int => dtype == Dtype::Int,
+/// fits. Into a symbolic dtype an integer or floating literal fits (the
+/// literal's fit is the instantiation's to check, as upstream), a concrete
+/// scalar never does, and a width-one vector of the same expression does.
+pub fn splats_to(ty: &Ty, dtype: &SimdDtype) -> bool {
+    match (ty, dtype) {
+        (Ty::IntLiteral, SimdDtype::Known(dtype)) => *dtype != Dtype::Bool,
+        (Ty::FloatLiteral, SimdDtype::Known(dtype)) => dtype.is_float(),
+        (Ty::IntLiteral | Ty::FloatLiteral, SimdDtype::Expr(_)) => true,
+        (Ty::Bool, SimdDtype::Known(dtype)) => *dtype == Dtype::Bool,
+        (Ty::Int, SimdDtype::Known(dtype)) => *dtype == Dtype::Int,
         // `Float64` is `SIMD[DType.float64, 1]`, so it splats into a float64 vector.
-        Ty::Float64 => dtype == Dtype::Float64,
-        Ty::Simd { dtype: d, width: 1 } => *d == dtype,
+        (Ty::Float64, SimdDtype::Known(dtype)) => *dtype == Dtype::Float64,
+        (
+            Ty::Simd {
+                dtype: d,
+                width: SimdWidth::Known(1),
+            },
+            dtype,
+        ) => d == dtype,
         _ => false,
     }
 }
@@ -2447,6 +2641,17 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
             rewrite.exit_signature();
             rebuilt?
         }
+        Ty::Simd { dtype, width } => {
+            let dtype = match dtype {
+                SimdDtype::Expr(expr) => SimdDtype::Expr(rewrite.expr(expr)?),
+                known @ SimdDtype::Known(_) => known.clone(),
+            };
+            let width = match width {
+                SimdWidth::Expr(expr) => SimdWidth::Expr(rewrite.expr(expr)?),
+                known @ SimdWidth::Known(_) => known.clone(),
+            };
+            simd_ty_from_slots(dtype, width)?
+        }
         Ty::Int
         | Ty::UInt
         | Ty::Bool
@@ -2459,7 +2664,6 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
         | Ty::Infer
         | Ty::Dtype
         | Ty::SelfType
-        | Ty::Simd { .. }
         | Ty::Error => ty.clone(),
     })
 }
@@ -2848,6 +3052,7 @@ pub fn is_symbolic(ty: &Ty) -> bool {
             is_symbolic(element)
         }
         Ty::Ref(reference) => is_symbolic(&reference.referent),
+        Ty::Simd { dtype, width } => dtype.is_expr() || width.is_expr(),
         Ty::Dtype
         | Ty::Int
         | Ty::UInt
@@ -2858,7 +3063,6 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         | Ty::Never
         | Ty::IntLiteral
         | Ty::FloatLiteral
-        | Ty::Simd { .. }
         | Ty::Error => false,
     }
 }
@@ -3034,6 +3238,101 @@ fn expr_mentions(expr: &ParamExpr, predicate: &dyn Fn(&Ty) -> bool) -> bool {
             .any(|ty| mentions(ty, predicate));
     });
     found
+}
+
+#[cfg(test)]
+mod simd_slot_tests {
+    use super::*;
+    use crate::param_expr::{MetaTy, ParamId};
+
+    fn dtype_binder(context: &ParamContext) -> ParamExpr {
+        context.decl_ref(ParamId::new("f", 0), "dt", MetaTy::value(Ty::Dtype))
+    }
+
+    fn width_binder(context: &ParamContext) -> ParamExpr {
+        context.decl_ref(ParamId::new("f", 1), "width", MetaTy::int())
+    }
+
+    #[test]
+    fn closed_slots_fold_to_known_and_canonicalize() {
+        let context = ParamContext::detached();
+        let float64 = context
+            .constant(CtValue::Dtype(Dtype::Float64))
+            .expect("a constant");
+        assert_eq!(
+            simd_ty_from_slots(SimdDtype::Expr(float64), SimdWidth::Known(1)).expect("closed"),
+            Ty::Float64
+        );
+        let one = context.constant(CtValue::Int(1)).expect("a constant");
+        assert_eq!(
+            simd_ty_from_slots(SimdDtype::Known(Dtype::Int32), SimdWidth::Expr(one))
+                .expect("closed"),
+            canonical_simd_ty(Dtype::Int32, 1)
+        );
+        let symbolic =
+            simd_ty_from_slots(SimdDtype::Expr(dtype_binder(&context)), SimdWidth::Known(1))
+                .expect("symbolic");
+        assert!(is_symbolic(&symbolic));
+        assert_eq!(symbolic.to_string(), "Scalar[dt]");
+        assert!(simd_shape(&symbolic).is_none());
+        assert!(is_scalar_simd(&symbolic) && scalar_simd_dtype(&symbolic).is_none());
+    }
+
+    #[test]
+    fn literals_splat_into_a_symbolic_lane_and_concrete_scalars_do_not() {
+        let context = ParamContext::detached();
+        let lane = SimdDtype::Expr(dtype_binder(&context));
+        assert!(splats_to(&Ty::IntLiteral, &lane));
+        assert!(splats_to(&Ty::FloatLiteral, &lane));
+        for scalar in [
+            Ty::Int,
+            Ty::Float64,
+            Ty::Bool,
+            canonical_simd_ty(Dtype::Int32, 1),
+        ] {
+            assert!(!splats_to(&scalar, &lane), "{scalar}");
+        }
+        let same = Ty::Simd {
+            dtype: lane.clone(),
+            width: SimdWidth::Known(1),
+        };
+        assert!(splats_to(&same, &lane));
+        assert!(coerces(&Ty::FloatLiteral, &same));
+        assert!(!coerces(&same, &Ty::Float64));
+        let vector = Ty::Simd {
+            dtype: lane.clone(),
+            width: SimdWidth::Expr(width_binder(&context)),
+        };
+        assert!(!coerces(&vector, &canonical_simd_ty(Dtype::Int32, 4)));
+        assert!(coerces(
+            &vector,
+            &Ty::Simd {
+                dtype: lane,
+                width: SimdWidth::Known(-1),
+            }
+        ));
+    }
+
+    #[test]
+    fn replacement_closes_symbolic_slots_through_the_canonical_form() {
+        let context = ParamContext::detached();
+        let scalar = Ty::Simd {
+            dtype: SimdDtype::Expr(dtype_binder(&context)),
+            width: SimdWidth::Expr(width_binder(&context)),
+        };
+        let mut referenced = std::collections::HashSet::new();
+        referenced_parameters(&scalar, &mut referenced);
+        assert!(referenced.contains("dt") && referenced.contains("width"));
+        let values = HashMap::from([
+            ("dt".to_string(), CtValue::Dtype(Dtype::Float64)),
+            ("width".to_string(), CtValue::Int(1)),
+        ]);
+        let bindings = ParamBindings::from_named_values(&context, &values);
+        assert_eq!(
+            replace_parameters(&context, &scalar, &bindings, 0).expect("closed"),
+            Ty::Float64
+        );
+    }
 }
 
 #[cfg(test)]

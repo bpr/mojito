@@ -76,12 +76,8 @@ pub(super) fn subscript_arg_regs(argument: &crate::mir::MirSubscriptArg, out: &m
     }
 }
 
-pub(super) const fn simd_element_type(dtype: mojito_ast::ast::Dtype) -> Ty {
-    match dtype {
-        mojito_ast::ast::Dtype::Int => Ty::Int,
-        mojito_ast::ast::Dtype::Float64 => Ty::Float64,
-        dtype => Ty::Simd { dtype, width: 1 },
-    }
+pub(super) fn simd_element_type(dtype: &mojito_types::types::SimdDtype) -> Ty {
+    mojito_types::types::simd_lane(dtype)
 }
 
 pub(super) fn slice_descriptor_ty(kind: mojito_types::types::SliceKind) -> Ty {
@@ -308,6 +304,12 @@ pub(super) fn validate_dependent_bindings(ty: &Ty) -> Result<(), String> {
             }
             Ty::Assoc { base, .. } => walk(base, bound, frames)?,
             Ty::Ref(reference) => walk(&reference.referent, bound, frames)?,
+            // A lane dtype or width still symbolic belongs to a template
+            // source validation checked; every clone below the waist is
+            // concrete.
+            Ty::Simd { dtype, width } if dtype.is_expr() || width.is_expr() => {
+                return Err(format!("a symbolic SIMD type cannot cross into MIR: {ty}"));
+            }
             _ => {}
         }
         Ok(())

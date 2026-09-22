@@ -441,7 +441,7 @@ impl Checker {
         }
         match self.ty_value_from_name(name, &[]).ok().flatten()? {
             CtValue::Type(ty) => match *ty {
-                Ty::Simd { dtype, width } => Some((dtype, width)),
+                Ty::Simd { .. } => mojito_types::types::simd_shape(&ty),
                 _ => None,
             },
             _ => None,
@@ -515,6 +515,24 @@ impl Checker {
             .rev()
             .find_map(|scope| scope.get(name.trim_start_matches('*')))
             .map(|reference| self.param_context.intern(reference))
+    }
+
+    /// The value `Self.<name>` denotes: the instance's bound value inside a
+    /// per-instantiation clone, else the template's own symbolic binder
+    /// ([`Self::self_param_ct_value`]).
+    pub(super) fn self_param_value(&self, name: &str) -> Option<CtValue> {
+        if let Some(Ty::Struct(_, arguments)) = &self.self_ty
+            && arguments.len() >= self.self_decls.len()
+            && let Some(index) = self
+                .self_decls
+                .iter()
+                .position(|d| d.name() == name && matches!(d, ParamDecl::Value { .. }))
+            && let Some(TyArg::Val(bound)) = arguments.get(index)
+            && !matches!(bound, CtValue::Expr(_))
+        {
+            return Some(bound.clone());
+        }
+        self.self_param_ct_value(name)
     }
 
     pub(super) fn self_param_ct_value(&self, name: &str) -> Option<CtValue> {

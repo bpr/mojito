@@ -207,6 +207,61 @@ fn pack_keyed_bodies_are_validated_with_the_element_opaque() {
 }
 
 #[test]
+fn dtype_keyed_bodies_are_validated_with_the_lane_symbolic() {
+    // An untaken arm of a `DType`- or width-keyed body is judged from the
+    // template, with `Scalar[dt]` / `SIMD[dt, width]` symbolic: a def, a
+    // struct method keyed on `Self.dt`, a struct holding a symbolic vector
+    // field, and a validated body applying a `DType`-keyed struct.
+    let def = "def kind[dt: DType](a: Scalar[dt]) -> Int:\n    comptime if dt == DType.float64:\n        return 1\n    else:\n        var s: String = a\n        return 2\n\ndef main():\n    print(kind[DType.float64](1.5))\n";
+    let err = run(def).unwrap_err();
+    assert!(err.contains("expected String, found Scalar[dt]"), "{err}");
+    let width = "def total[dt: DType, width: Int](v: SIMD[dt, width]) -> Int:\n    comptime if width == 4:\n        return 4\n    else:\n        var s: String = v\n        return 0\n\ndef main():\n    print(total[DType.int32, 4](SIMD[DType.int32, 4](1, 2, 3, 4)))\n";
+    let err = run(width).unwrap_err();
+    assert!(
+        err.contains("expected String, found SIMD[dt, width]"),
+        "{err}"
+    );
+    let vec = "struct Vec[dt: DType](Movable):\n    var x: Scalar[Self.dt]\n\n    def __init__(out self, x: Scalar[Self.dt]):\n        self.x = x\n\n    def get(self) -> Scalar[Self.dt]:\n        return self.x\n\n";
+    let method = format!(
+        "{vec}    def tag(self) -> Int:\n        comptime if Self.dt == DType.float64:\n            return 1\n        else:\n            var s: String = self.x\n            return 2\n\ndef main():\n    print(Vec[DType.float64](1.5).tag())\n"
+    );
+    let err = run(&method).unwrap_err();
+    assert!(err.contains("expected String, found Scalar[dt]"), "{err}");
+    let field = "struct Buf[dt: DType, width: Int](Copyable, Movable):\n    var v: SIMD[Self.dt, Self.width]\n\n    def __init__(out self, v: SIMD[Self.dt, Self.width]):\n        self.v = v\n\n    def tag(self) -> Int:\n        comptime if Self.width == 4:\n            return 4\n        else:\n            var s: String = self.v\n            return 0\n\ndef main():\n    print(Buf[DType.int32, 4](SIMD[DType.int32, 4](1, 2, 3, 4)).tag())\n";
+    let err = run(field).unwrap_err();
+    assert!(
+        err.contains("expected String, found SIMD[dt, width]"),
+        "{err}"
+    );
+    // Applying the struct closes its lane: to `Float64` at a concrete dtype,
+    // to the caller's own symbolic `dt` in a template.
+    let applied = format!(
+        "{vec}def build[T: Copyable](t: T) -> Float64:\n    comptime if T == Int:\n        return Vec[DType.float64](2.0).get()\n    else:\n        var s: String = Vec[DType.float64](2.0).get()\n        return 0.0\n\ndef main():\n    print(build(1))\n"
+    );
+    let err = run(&applied).unwrap_err();
+    assert!(err.contains("expected String, found Float64"), "{err}");
+    let symbolic = format!(
+        "{vec}def make[dt: DType](a: Scalar[dt]) -> Vec[dt]:\n    var v = Vec[dt](a)\n    comptime if dt == DType.float64:\n        return v^\n    else:\n        var s: String = v.get()\n        return v^\n\ndef main():\n    print(make[DType.float64](2.5).get())\n"
+    );
+    let err = run(&symbolic).unwrap_err();
+    assert!(err.contains("expected String, found Scalar[dt]"), "{err}");
+    // A guard narrows nothing: `SIMD[dt, width]` stays its own type inside
+    // the `width == 4` arm, and a concrete scalar never splats into it.
+    let narrowed = "def narrowed[dt: DType, width: Int](v: SIMD[dt, width]):\n    comptime if width == 4:\n        var w: SIMD[dt, 4] = v\n\ndef main():\n    pass\n";
+    let err = run(narrowed).unwrap_err();
+    assert!(
+        err.contains("expected SIMD[dt, 4], found SIMD[dt, width]"),
+        "{err}"
+    );
+    let scalar = "def scaled[dt: DType](a: Scalar[dt]) -> Scalar[dt]:\n    comptime if dt == DType.int32:\n        return a * Int(2)\n    return a + 1.5\n\ndef main():\n    pass\n";
+    let err = run(scalar).unwrap_err();
+    assert!(
+        err.contains("operator '*' is not defined for Scalar[dt] and Int"),
+        "{err}"
+    );
+}
+
+#[test]
 fn rebind_retypes_its_operand_and_checks_the_instantiation() {
     // `rebind[Dest](value)` types as `Dest` while the operand is symbolic and
     // is an identity once instantiated; a mismatched instantiation and a

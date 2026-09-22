@@ -95,11 +95,25 @@ impl Decoder {
                     self.unknown(fields, &["name", "arguments"]);
                     Ty::Struct(name, args)
                 }
+                // Either slot may be a `ct_expr(...)` while symbolic; the
+                // rebuild folds a closed one back to its constant.
                 "simd" => {
-                    let dtype = self.req(value, fields, "dtype", Self::dtype)?;
-                    let width = self.req(value, fields, "width", Self::int64)?;
+                    let dtype = self.req(value, fields, "dtype", |d, v| match &v.kind {
+                        ValueKind::Positional(tag, inner) if tag == "ct_expr" => d
+                            .param_expr(inner)
+                            .map(mojito_types::types::SimdDtype::Expr),
+                        _ => d.dtype(v).map(mojito_types::types::SimdDtype::Known),
+                    })?;
+                    let width = self.req(value, fields, "width", |d, v| match &v.kind {
+                        ValueKind::Positional(tag, inner) if tag == "ct_expr" => d
+                            .param_expr(inner)
+                            .map(mojito_types::types::SimdWidth::Expr),
+                        _ => d.int64(v).map(mojito_types::types::SimdWidth::Known),
+                    })?;
                     self.unknown(fields, &["dtype", "width"]);
-                    Ty::Simd { dtype, width }
+                    mojito_types::types::simd_ty_from_slots(dtype, width)
+                        .map_err(|error| self.error(value.span, error.to_string()))
+                        .ok()?
                 }
                 "pointer" => {
                     let element = Box::new(self.req(value, fields, "element", Self::ty)?);

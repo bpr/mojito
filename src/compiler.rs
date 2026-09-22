@@ -1199,6 +1199,7 @@ fn tuple_specialization_type_is_closed_in(
         Ty::Ref(reference) => {
             tuple_specialization_type_is_closed_in(&reference.referent, type_binders, value_binders)
         }
+        Ty::Simd { dtype, width } => !dtype.is_expr() && !width.is_expr(),
         Ty::Int
         | Ty::UInt
         | Ty::Bool
@@ -1209,7 +1210,6 @@ fn tuple_specialization_type_is_closed_in(
         | Ty::Never
         | Ty::IntLiteral
         | Ty::FloatLiteral
-        | Ty::Simd { .. }
         | Ty::Error => true,
     }
 }

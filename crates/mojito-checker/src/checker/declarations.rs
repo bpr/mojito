@@ -1979,8 +1979,10 @@ impl Checker {
                         .insert(span.clone(), target);
                 }
                 self.record_struct_instantiation(name, &tyargs, span.source.as_deref());
+                let values = solved_value_bindings(&decls, &tyargs);
                 for (i, (aty, pty)) in arg_tys.iter().zip(&params).enumerate() {
-                    let expected = pointer_origins.substitute(&substitute(pty, &subst));
+                    let expected = pointer_origins
+                        .substitute(&self.constructor_parameter_ty(pty, &subst, &values)?);
                     if coerces(aty, &expected) {
                         // A literal argument materializes to the solved
                         // parameter type exactly as it does for a non-generic
@@ -2952,6 +2954,22 @@ impl Checker {
             .map(|parameter| bindings.substitute(parameter))
             .collect();
         Ok(Ok((params, bindings)))
+    }
+
+    /// A constructor parameter type at an application: type parameters by
+    /// `subst`, and the struct's own value binders (`Scalar[Self.dt]`) by
+    /// `values` — to the caller's symbolic `dt` inside a template.
+    fn constructor_parameter_ty(
+        &self,
+        pty: &Ty,
+        subst: &HashMap<String, Ty>,
+        values: &HashMap<String, CtValue>,
+    ) -> Result<Ty, TypeError> {
+        let expected = substitute(pty, subst);
+        if values.is_empty() {
+            return Ok(expected);
+        }
+        self.resolve_dependent_ty(&expected, values)
     }
 }
 

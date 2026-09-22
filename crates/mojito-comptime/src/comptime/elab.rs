@@ -650,7 +650,10 @@ impl Elab<'_> {
         if name == "SIMD"
             && let Some((dtype, width)) = simd_source_dims(args)
         {
-            return Ok(Ty::Simd { dtype, width });
+            return Ok(Ty::Simd {
+                dtype: mojito_types::types::SimdDtype::Known(dtype),
+                width: mojito_types::types::SimdWidth::Known(width),
+            });
         }
         // In type-argument grammar, `types[i]` is represented as a named type
         // application. A reflected `field_types()` result is a compile-time
@@ -812,7 +815,13 @@ impl Elab<'_> {
             match base {
                 Ty::Int => return Ok(CtValue::Dtype(mojito_ast::ast::Dtype::Int)),
                 Ty::Float64 => return Ok(CtValue::Dtype(mojito_ast::ast::Dtype::Float64)),
-                Ty::Simd { dtype, .. } => return Ok(CtValue::Dtype(*dtype)),
+                Ty::Simd { dtype, .. } => {
+                    // A symbolic lane has no constant yet: the elaborator
+                    // only folds a bound instance.
+                    return dtype.known().map(CtValue::Dtype).ok_or_else(|| {
+                        ComptimeError::NotComptime(format!("'{base}' has no concrete dtype"))
+                    });
+                }
                 Ty::UInt => {
                     return Err(ComptimeError::NotComptime(
                         "DType.uint is not supported yet".to_string(),

@@ -395,10 +395,8 @@ impl Checker {
             .infer_impl(expr)
             .and_then(|ty| self.apply_rebind_target(expr, ty));
         if let Ok(ty) = &result {
-            if matches!(
-                ty,
-                Ty::Int | Ty::UInt | Ty::Float64 | Ty::Simd { width: 1, .. }
-            ) && let Some(value) = self.exact_literal_value(expr)
+            if (matches!(ty, Ty::Int | Ty::UInt | Ty::Float64) || is_scalar_simd(ty))
+                && let Some(value) = self.exact_literal_value(expr)
             {
                 let literal_ty = match value {
                     CtValue::IntLiteral(_) => Ty::IntLiteral,
@@ -426,14 +424,16 @@ impl Checker {
                 ..
             } = &expr.kind
             {
+                // A symbolic construction records no dimensions: the body it
+                // sits in keeps its clone check.
                 let dimensions = if name == "SIMD" {
-                    self.simd_dims(param_args).ok().map(|(dtype, width)| {
-                        let width = if width == -1 {
+                    self.simd_dims(param_args).ok().and_then(|(dtype, width)| {
+                        let width = if width == SimdWidth::Known(-1) {
                             i64::try_from(args.len()).unwrap_or(0)
                         } else {
-                            width
+                            width.known()?
                         };
-                        (dtype, width)
+                        Some((dtype.known()?, width))
                     })
                 } else if name == "Scalar" && param_args.len() == 1 {
                     // `Scalar[DType.x](arg)` is width-1 SIMD construction; the
@@ -441,6 +441,7 @@ impl Checker {
                     // scalars, matching `simd_ty`.
                     self.dtype_from_arg(&param_args[0])
                         .ok()
+                        .and_then(|dtype| dtype.known())
                         .map(|dtype| (dtype, 1))
                 } else {
                     Dtype::from_scalar_alias(name).map(|dtype| (dtype, 1))
@@ -859,12 +860,12 @@ impl Checker {
                     return Ok(Ty::Bool);
                 }
                 if let Some(value) = self.dtype_float_query(callee, param_args, args, kwargs) {
-                    self.operation_adjustments.borrow_mut().insert(
-                        expr.source_span(),
-                        mojito_checked::checked::SemanticAdjustment::DtypeFloatQuery {
-                            value: value?,
-                        },
-                    );
+                    if let Some(value) = value? {
+                        self.operation_adjustments.borrow_mut().insert(
+                            expr.source_span(),
+                            mojito_checked::checked::SemanticAdjustment::DtypeFloatQuery { value },
+                        );
+                    }
                     return Ok(Ty::Int);
                 }
                 if let Some(result) = self.infer_variant_storage_invoke(

@@ -73,7 +73,7 @@ impl FnLowering<'_> {
         if matches!(self.func.reg_types.get(&recv.0), Some(Ty::Pointer { .. })) {
             return self.lower_pointer_method(ctx, dest, recv, method, args);
         }
-        if let Some(Ty::Simd { dtype, width }) = self.func.reg_types.get(&recv.0).cloned() {
+        if let Some((dtype, width)) = self.func.reg_types.get(&recv.0).and_then(simd_dims) {
             return self.lower_simd_method(ctx, dest, recv, dtype, width as usize, method, args);
         }
         if matches!(self.func.reg_types.get(&recv.0), Some(Ty::Dtype)) && args.is_empty() {

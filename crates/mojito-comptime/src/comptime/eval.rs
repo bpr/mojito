@@ -1323,7 +1323,7 @@ impl Elab<'_> {
             .or_else(|| self.top_consts.borrow().get(name).cloned())?;
         match bound {
             CtValue::Type(ty) => match *ty {
-                Ty::Simd { dtype, width } => Some((dtype, width)),
+                Ty::Simd { .. } => mojito_types::types::simd_shape(&ty),
                 _ => None,
             },
             _ => None,

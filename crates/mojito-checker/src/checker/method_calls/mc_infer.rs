@@ -401,32 +401,48 @@ impl Checker {
             && args.is_empty()
             && param_args.len() <= 1
             && !matches!(obj_ty, Ty::Bool | Ty::IntLiteral | Ty::FloatLiteral)
-            && let Some((source, width)) = mojito_types::types::simd_shape(&obj_ty)
+            && let Some((source, width)) = simd_slots(&obj_ty)
         {
             reject_kwargs(kwargs)?;
-            let target = match param_args.first() {
-                Some(argument) => self.dtype_from_arg(argument)?,
-                None => unsigned_dtype_of_width(dtype_bit_width(source)),
+            let target = match (param_args.first(), source.known()) {
+                (Some(argument), _) => self.dtype_from_arg(argument)?,
+                (None, Some(source)) => {
+                    SimdDtype::Known(unsigned_dtype_of_width(dtype_bit_width(source)))
+                }
+                // The default target is the source lane's own width, which a
+                // symbolic dtype does not have yet.
+                (None, None) => {
+                    return Err(TypeError::TypeMismatch {
+                        expected: "an explicit target dtype for a symbolic source lane".to_string(),
+                        found: obj_ty.to_string(),
+                        context: "SIMD.to_bits".to_string(),
+                    });
+                }
             };
-            if !matches!(
-                target,
-                Dtype::UInt8 | Dtype::UInt16 | Dtype::UInt32 | Dtype::UInt64
-            ) || dtype_bit_width(target) < dtype_bit_width(source)
-            {
-                return Err(TypeError::TypeMismatch {
-                    expected: "an unsigned dtype at least as wide as the source lane".to_string(),
-                    found: format!("DType.{}", target.name()),
-                    context: "SIMD.to_bits".to_string(),
-                });
+            if let Some(target_dtype) = target.known() {
+                let unsigned = matches!(
+                    target_dtype,
+                    Dtype::UInt8 | Dtype::UInt16 | Dtype::UInt32 | Dtype::UInt64
+                );
+                let narrower = source
+                    .known()
+                    .is_some_and(|source| dtype_bit_width(target_dtype) < dtype_bit_width(source));
+                if !unsigned || narrower {
+                    return Err(TypeError::TypeMismatch {
+                        expected: "an unsigned dtype at least as wide as the source lane"
+                            .to_string(),
+                        found: target.to_string(),
+                        context: "SIMD.to_bits".to_string(),
+                    });
+                }
             }
-            self.operation_adjustments.borrow_mut().insert(
-                span,
-                mojito_checked::checked::SemanticAdjustment::SimdToBits {
-                    dtype: target,
-                    width,
-                },
-            );
-            return Ok(simd_ty(target, width));
+            if let (Some(dtype), Some(width)) = (target.known(), width.known()) {
+                self.operation_adjustments.borrow_mut().insert(
+                    span,
+                    mojito_checked::checked::SemanticAdjustment::SimdToBits { dtype, width },
+                );
+            }
+            return simd_of(target, width);
         }
         // `DType`'s `Bool` queries (`is_integral()`, `is_floating_point()`, …),
         // dispatched by name on both backends.
@@ -443,12 +459,15 @@ impl Checker {
             return Ok(Ty::Bool);
         }
         if let Ty::Simd { dtype, width } = &obj_ty {
-            let (dtype, width) = (*dtype, *width);
+            let (dtype, width) = (dtype.clone(), width.clone());
             reject_kwargs(kwargs)?;
             // Compiler-known SIMD methods: `cast` converts dtypes
             // elementwise, `select` blends through a bool mask, the lane
             // reductions collapse to the canonicalized width-1 scalar
-            // (`reduce_and`/`reduce_or` to `Bool`).
+            // (`reduce_and`/`reduce_or` to `Bool`). A symbolic dtype licenses
+            // every dtype-gated method and a symbolic width records no lane
+            // fact: both are the instantiation's to check, and a body typed
+            // under them keeps its clone check.
             return match method {
                 // `Copyable.copy` on a scalar or vector is the value read
                 // itself (the builtin-copy rule of the nominal resolver).
@@ -466,27 +485,22 @@ impl Checker {
                     // `select`, and no numeric dtype casts to bool yet.
                     // (Not `NoSuchMethod`, which the Invoke path treats as
                     // fall-through to indirect-callable inference.)
-                    if target == Dtype::Bool || dtype == Dtype::Bool {
+                    if target.known() == Some(Dtype::Bool) || dtype.known() == Some(Dtype::Bool) {
                         return Err(TypeError::TypeMismatch {
                             expected: "a non-bool dtype cast".to_string(),
-                            found: format!(
-                                "cast from DType.{} to DType.{}",
-                                dtype.name(),
-                                target.name()
-                            ),
+                            found: format!("cast from {dtype} to {target}"),
                             context: "SIMD.cast".to_string(),
                         });
                     }
-                    self.operation_adjustments.borrow_mut().insert(
-                        span,
-                        mojito_checked::checked::SemanticAdjustment::SimdCast {
-                            dtype: target,
-                            width,
-                        },
-                    );
-                    Ok(simd_ty(target, width))
+                    if let (Some(dtype), Some(width)) = (target.known(), width.known()) {
+                        self.operation_adjustments.borrow_mut().insert(
+                            span,
+                            mojito_checked::checked::SemanticAdjustment::SimdCast { dtype, width },
+                        );
+                    }
+                    simd_of(target, width)
                 }
-                "select" if dtype == Dtype::Bool && args.len() == 2 => {
+                "select" if dtype.licenses(|d| d == Dtype::Bool) && args.len() == 2 => {
                     let true_case = self.infer(&args[0])?;
                     let false_case = self.infer(&args[1])?;
                     // Both cases share one dtype at the mask's width; a
@@ -501,17 +515,17 @@ impl Checker {
                                 dtype: d2,
                                 width: w2,
                             },
-                        ) if d1 == d2 && w1 == w2 && *w1 == width => Some(*d1),
+                        ) if d1 == d2 && w1 == w2 && *w1 == width => Some(d1.clone()),
                         (Ty::Simd { dtype: d, width: w }, other)
                         | (other, Ty::Simd { dtype: d, width: w })
-                            if *w == width && splats_to(other, *d) =>
+                            if *w == width && splats_to(other, d) =>
                         {
-                            Some(*d)
+                            Some(d.clone())
                         }
                         _ => None,
                     };
                     match payload {
-                        Some(d) => Ok(simd_ty(d, width)),
+                        Some(d) => simd_of(d, width),
                         None => Err(TypeError::TypeMismatch {
                             expected: format!("two width-{width} SIMD cases of one dtype"),
                             found: format!("{true_case} and {false_case}"),
@@ -534,7 +548,7 @@ impl Checker {
                         };
                         let value = self.eval_ct(index)?;
                         let lane = value.to_i64().unwrap_or(-1);
-                        if lane < 0 || lane >= width {
+                        if lane < 0 || width.known().is_some_and(|width| lane >= width) {
                             return Err(TypeError::TypeMismatch {
                                 expected: format!("a lane index below {width}"),
                                 found: value.to_string(),
@@ -543,21 +557,23 @@ impl Checker {
                         }
                         mask.push(lane as usize);
                     }
-                    if mask.len() as i64 != width {
-                        return Err(TypeError::TypeMismatch {
-                            expected: format!("{width} lane indices, one per receiver lane"),
-                            found: format!("{} indices", mask.len()),
-                            context: "SIMD.shuffle".to_string(),
-                        });
+                    if let Some(known) = width.known() {
+                        if mask.len() as i64 != known {
+                            return Err(TypeError::TypeMismatch {
+                                expected: format!("{width} lane indices, one per receiver lane"),
+                                found: format!("{} indices", mask.len()),
+                                context: "SIMD.shuffle".to_string(),
+                            });
+                        }
+                        self.operation_adjustments.borrow_mut().insert(
+                            span,
+                            mojito_checked::checked::SemanticAdjustment::SimdShuffle {
+                                mask,
+                                joined: false,
+                            },
+                        );
                     }
-                    self.operation_adjustments.borrow_mut().insert(
-                        span,
-                        mojito_checked::checked::SemanticAdjustment::SimdShuffle {
-                            mask,
-                            joined: false,
-                        },
-                    );
-                    Ok(simd_ty(dtype, width))
+                    simd_of(dtype, width)
                 }
                 // `v.slice[output_width, offset=o]()`: `output_width`
                 // consecutive lanes starting at lane `o` (default 0).
@@ -600,7 +616,11 @@ impl Checker {
                     if output_width < 1 || (output_width & (output_width - 1)) != 0 {
                         return Err(TypeError::BadSimdWidth(output_width.to_string()));
                     }
-                    if offset < 0 || offset + output_width > width {
+                    if offset < 0
+                        || width
+                            .known()
+                            .is_some_and(|width| offset + output_width > width)
+                    {
                         return Err(TypeError::TypeMismatch {
                             expected: format!(
                                 "an output width and offset within the receiver's {width} lanes"
@@ -609,16 +629,18 @@ impl Checker {
                             context: "SIMD.slice".to_string(),
                         });
                     }
-                    self.operation_adjustments.borrow_mut().insert(
-                        span,
-                        mojito_checked::checked::SemanticAdjustment::SimdShuffle {
-                            mask: (offset..offset + output_width)
-                                .map(|lane| lane as usize)
-                                .collect(),
-                            joined: false,
-                        },
-                    );
-                    Ok(simd_ty(dtype, output_width))
+                    if width.known().is_some() {
+                        self.operation_adjustments.borrow_mut().insert(
+                            span,
+                            mojito_checked::checked::SemanticAdjustment::SimdShuffle {
+                                mask: (offset..offset + output_width)
+                                    .map(|lane| lane as usize)
+                                    .collect(),
+                                joined: false,
+                            },
+                        );
+                    }
+                    simd_of(dtype, SimdWidth::Known(output_width))
                 }
                 // `v.join(w)`: the receiver's lanes then `w`'s, at twice the
                 // width; `w` has the receiver's own type.
@@ -631,18 +653,33 @@ impl Checker {
                             context: "SIMD.join".to_string(),
                         });
                     }
-                    let joined = width * 2;
-                    if joined > 1 << 15 {
-                        return Err(TypeError::BadSimdWidth(joined.to_string()));
-                    }
-                    self.operation_adjustments.borrow_mut().insert(
-                        span,
-                        mojito_checked::checked::SemanticAdjustment::SimdShuffle {
-                            mask: (0..joined as usize).collect(),
-                            joined: true,
-                        },
-                    );
-                    Ok(simd_ty(dtype, joined))
+                    let joined = match &width {
+                        SimdWidth::Known(width) => {
+                            let joined = width * 2;
+                            if joined > 1 << 15 {
+                                return Err(TypeError::BadSimdWidth(joined.to_string()));
+                            }
+                            self.operation_adjustments.borrow_mut().insert(
+                                span,
+                                mojito_checked::checked::SemanticAdjustment::SimdShuffle {
+                                    mask: (0..joined as usize).collect(),
+                                    joined: true,
+                                },
+                            );
+                            SimdWidth::Known(joined)
+                        }
+                        // `SIMD[dt, 2 * width]`, in the pin's normal form.
+                        SimdWidth::Expr(width) => {
+                            let context = &self.param_context;
+                            let two = context.constant(CtValue::Int(2)).map_err(param_error)?;
+                            SimdWidth::Expr(
+                                context
+                                    .infix(InfixOp::Mul, width, &two)
+                                    .map_err(param_error)?,
+                            )
+                        }
+                    };
+                    simd_of(dtype, joined)
                 }
                 // The elementwise comparisons. Upstream's infix `<`/`<=`/
                 // `>`/`>=` are `Scalar`-only and its `==`/`!=` compare whole
@@ -651,7 +688,7 @@ impl Checker {
                     let other = self.infer(&args[0])?;
                     let compatible = match &other {
                         Ty::Simd { dtype: d, width: w } => *d == dtype && *w == width,
-                        other => splats_to(other, dtype),
+                        other => splats_to(other, &dtype),
                     };
                     if !compatible {
                         return Err(TypeError::TypeMismatch {
@@ -660,28 +697,34 @@ impl Checker {
                             context: format!("SIMD.{method}"),
                         });
                     }
-                    Ok(simd_ty(Dtype::Bool, width))
+                    simd_of(SimdDtype::Known(Dtype::Bool), width)
                 }
                 "reduce_add" | "reduce_mul" | "reduce_min" | "reduce_max"
-                    if dtype != Dtype::Bool && args.is_empty() =>
+                    if dtype.licenses(|d| d != Dtype::Bool) && args.is_empty() =>
                 {
-                    Ok(simd_ty(dtype, 1))
+                    simd_of(dtype, SimdWidth::Known(1))
                 }
-                "reduce_and" | "reduce_or" if dtype == Dtype::Bool && args.is_empty() => {
+                "reduce_and" | "reduce_or"
+                    if dtype.licenses(|d| d == Dtype::Bool) && args.is_empty() =>
+                {
                     Ok(Ty::Bool)
                 }
                 // A float scalar's rounding dunders and its
                 // fused multiply-add (`k.__fma__(step, start)`, a float range
                 // element) are intrinsics at the scalar's own precision.
                 "__floor__" | "__ceil__" | "__trunc__"
-                    if width == 1
-                        && dtype.is_float()
+                    if width.known() == Some(1)
+                        && dtype.licenses(Dtype::is_float)
                         && args.is_empty()
                         && param_args.is_empty() =>
                 {
                     Ok(obj_ty.clone())
                 }
-                "__fma__" if width == 1 && dtype.is_float() && args.len() == 2 => {
+                "__fma__"
+                    if width.known() == Some(1)
+                        && dtype.licenses(Dtype::is_float)
+                        && args.len() == 2 =>
+                {
                     for argument in args {
                         let found = self.infer(argument)?;
                         if found != obj_ty {
@@ -898,10 +941,7 @@ impl Checker {
                     return Ok(Ty::None);
                 }
                 "finish" if args.is_empty() => {
-                    return Ok(Ty::Simd {
-                        dtype: Dtype::UInt64,
-                        width: 1,
-                    });
+                    return Ok(canonical_simd_ty(Dtype::UInt64, 1));
                 }
                 _ => {}
             }
@@ -929,10 +969,7 @@ impl Checker {
                 "ptr" | "unsafe_ptr" => {
                     reject_kwargs(kwargs)?;
                     return Ok(Ty::Pointer {
-                        element: Box::new(Ty::Simd {
-                            dtype: Dtype::UInt8,
-                            width: 1,
-                        }),
+                        element: Box::new(canonical_simd_ty(Dtype::UInt8, 1)),
                         origin: mojito_types::origin::PointerOrigin::Static,
                     });
                 }

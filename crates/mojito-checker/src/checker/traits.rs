@@ -1429,11 +1429,7 @@ impl Checker {
                     methods.iter().any(|method| {
                         method.params.is_empty()
                             && method.self_convention == Some(ArgConvention::Var)
-                            && method.ret
-                                == Ty::Simd {
-                                    dtype: mojito_ast::ast::Dtype::UInt64,
-                                    width: 1,
-                                }
+                            && method.ret == canonical_simd_ty(mojito_ast::ast::Dtype::UInt64, 1)
                     })
                 });
                 // `_update_with_simd(mut self, value: SIMD[_, _])`: the vector
@@ -2186,11 +2182,7 @@ impl Checker {
                     .get("_update_with_simd")
                     .is_some_and(|methods| {
                         methods.iter().any(|method| {
-                            method.params
-                                == [Ty::Simd {
-                                    dtype: mojito_ast::ast::Dtype::UInt64,
-                                    width: 1,
-                                }]
+                            method.params == [canonical_simd_ty(mojito_ast::ast::Dtype::UInt64, 1)]
                         })
                     });
                 ["__init__", "_update_with_bytes", "_update_with_simd", "update", "finish"]
@@ -2649,7 +2641,9 @@ impl Checker {
     /// hasher needs a `_update_with_simd` clone for it, which the driver
     /// requests from elaboration on the next discovery round.
     pub(super) fn record_hash_leaf(&self, ty: &Ty) {
-        if !matches!(ty, Ty::Simd { width, .. } if *width > 1) {
+        // A symbolic vector names no clone: the template's instantiations
+        // record their own concrete leaves.
+        if !matches!(ty, Ty::Simd { width, .. } if width.known().is_some_and(|width| width > 1)) {
             return;
         }
         let mut recorded = self.hash_leaf_types.borrow_mut();
@@ -2833,10 +2827,7 @@ impl Checker {
             if method == "finish" && argc == 0 {
                 let mut signature = MethodSig::intrinsic(
                     vec![],
-                    Ty::Simd {
-                        dtype: mojito_ast::ast::Dtype::UInt64,
-                        width: 1,
-                    },
+                    canonical_simd_ty(mojito_ast::ast::Dtype::UInt64, 1),
                 );
                 signature.self_convention = Some(ArgConvention::Var);
                 methods.push(signature);

@@ -394,6 +394,12 @@ fn substitute_values_and_origins(
                 _ => recur(&resolved),
             }
         }
+        // A symbolic lane dtype or width closes the same way and
+        // re-canonicalizes (`Scalar[Self.dt]` at `dt = DType.int` is `Int`).
+        Ty::Simd { .. } if mojito_types::types::is_symbolic(ty) => {
+            mojito_types::types::replace_parameters(&context, ty, &bindings, 0)
+                .unwrap_or_else(|_| ty.clone())
+        }
         other => other.clone(),
     }
 }

@@ -31,7 +31,7 @@ pub(super) fn verify_intrinsic_index(
             Some(vec![element.as_ref()])
         }
         (MirIntrinsicSubscript::Simd, Some(Ty::Simd { dtype, .. })) => {
-            let scalar = simd_element_type(*dtype);
+            let scalar = simd_element_type(dtype);
             if let Some(dest) = dest
                 && !types_compatible(dest, &scalar)
             {
@@ -77,7 +77,7 @@ pub(super) fn indexed_place_element_types(base: &Ty) -> Option<Vec<Ty>> {
         Ty::VariadicPack(element) | Ty::ComptimeList(element) | Ty::Pointer { element, .. } => {
             Some(vec![(**element).clone()])
         }
-        Ty::Simd { dtype, .. } => Some(vec![simd_element_type(*dtype)]),
+        Ty::Simd { dtype, .. } => Some(vec![simd_element_type(dtype)]),
         other => tuple_elements(other).map(|elements| elements.into_iter().cloned().collect()),
     }
 }

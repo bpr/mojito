@@ -228,7 +228,7 @@ pub(super) const fn builtin_hashable_ty(ty: &Ty) -> bool {
 /// Whether `ty` is a SIMD value — a native scalar (a width-1 vector) or a
 /// `SIMD[dtype, width]` — the types the hidden `$SIMD` bound admits.
 pub(super) const fn simd_valued_ty(ty: &Ty) -> bool {
-    mojito_types::types::simd_shape(ty).is_some()
+    matches!(ty, Ty::Simd { .. }) || mojito_types::types::simd_shape(ty).is_some()
 }
 
 /// The bit width of one lane of `dtype` (`bool` is one bit).
@@ -775,19 +775,21 @@ impl Checker {
         let mut triggered = false;
         for ty in &tys {
             let this = match ty {
-                Ty::Simd { dtype, width: 1 } => {
-                    triggered = true;
-                    Some(*dtype)
-                }
                 Ty::Float64 => {
                     triggered = true;
                     Some(Dtype::Float64)
                 }
                 Ty::Int => Some(Dtype::Int),
                 Ty::IntLiteral | Ty::FloatLiteral => None,
-                // Not a scalar-range shape at all; the ordinary
-                // no-matching-overload diagnostic stands.
-                _ => return Ok(None),
+                // Not a scalar-range shape at all (a symbolic lane included);
+                // the ordinary no-matching-overload diagnostic stands.
+                ty => match scalar_simd_dtype(ty) {
+                    Some(dtype) => {
+                        triggered = true;
+                        Some(dtype)
+                    }
+                    None => return Ok(None),
+                },
             };
             if let (Some(current), Some(this)) = (&dtype, this)
                 && *current != this
@@ -817,7 +819,7 @@ impl Checker {
         }
         let lane = simd_ty(dtype, 1);
         for (ty, arg) in tys.iter().zip(args) {
-            if !splats_to(ty, dtype) {
+            if !splats_to(ty, &SimdDtype::Known(dtype)) {
                 return Err(TypeError::TypeMismatch {
                     expected: lane.to_string(),
                     found: ty.to_string(),
@@ -907,7 +909,7 @@ impl Checker {
         };
         // A width-1 SIMD value is a scalar alias (`UInt8`, `Byte`, ...);
         // Mojo's scalar conversions accept it.
-        let simd_scalar = matches!(&arg_ty, Ty::Simd { width: 1, .. });
+        let simd_scalar = is_scalar_simd(&arg_ty);
         if !(is_numeric(&arg_ty) || arg_ty == Ty::Bool || bounded || simd_scalar) {
             return Err(TypeError::TypeMismatch {
                 expected: "a numeric or Bool value".to_string(),

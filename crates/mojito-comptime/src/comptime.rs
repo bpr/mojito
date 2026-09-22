@@ -1387,7 +1387,10 @@ fn ct_param_source_type(source: &Type) -> Option<Ty> {
             .map(tuple_type),
         // A vector-typed value parameter (`[key: SIMD[DType.uint64, 4]]`).
         Type::Named(name, args) if name == "SIMD" => {
-            simd_source_dims(args).map(|(dtype, width)| Ty::Simd { dtype, width })
+            simd_source_dims(args).map(|(dtype, width)| Ty::Simd {
+                dtype: mojito_types::types::SimdDtype::Known(dtype),
+                width: mojito_types::types::SimdWidth::Known(width),
+            })
         }
         _ => None,
     }
@@ -1488,11 +1491,13 @@ fn source_type_from_ty_with_origins(
                 })
                 .collect::<Option<Vec<_>>>()?,
         ),
+        // A symbolic slot has no source spelling; the elaborator only spells
+        // bound instances.
         Ty::Simd { dtype, width } => Type::Named(
             "SIMD".to_string(),
             vec![
-                ParamArg::Value(CtValue::Dtype(*dtype).materialize((0, 0))?),
-                ParamArg::Value(CtValue::Int(*width).materialize((0, 0))?),
+                ParamArg::Value(CtValue::Dtype(dtype.known()?).materialize((0, 0))?),
+                ParamArg::Value(CtValue::Int(width.known()?).materialize((0, 0))?),
             ],
         ),
         Ty::Ref(reference) => {
@@ -1689,9 +1694,9 @@ fn is_specializable_declaration_in(
                     || type_params
                         .iter()
                         .any(|parameter| parameter.name.starts_with('*'))
-                    // A `[dtype: DType]` parameter can only check concretely
-                    // (`Ty::Simd` holds a concrete dtype), so the def
-                    // monomorphizes per call.
+                    // A `[dtype: DType]` parameter keys a clone per call:
+                    // source validation checks the template symbolically,
+                    // and only a concrete lane executes.
                     || type_params.iter().any(|parameter| {
                         matches!(parameter.bounds.as_slice(), [only] if only == "DType")
                     })
@@ -1701,9 +1706,9 @@ fn is_specializable_declaration_in(
             type_params
                 .iter()
                 .any(|parameter| parameter.name.starts_with('*'))
-                // DType-, struct-, and vector-typed value parameters can only
-                // check concretely, so the struct monomorphizes per
-                // application.
+                // DType-, struct-, and vector-typed value parameters, and a
+                // parameter used as a lane count, only execute concretely,
+                // so the struct monomorphizes per application.
                 || type_params.iter().any(|parameter| {
                     matches!(parameter.bounds.as_slice(), [only]
                         if only == "DType" || is_value_struct(only))
@@ -1711,6 +1716,7 @@ fn is_specializable_declaration_in(
                             matches!(ct_param_source_type(source), Some(Ty::Simd { .. }))
                         })
                 })
+                || struct_uses_layout_dependent_param(statement)
         }
         _ => false,
     }
@@ -2210,8 +2216,10 @@ fn scalar_type_name(name: &str) -> Option<Ty> {
         // classification keeps the literal type via `ct_value_param_type`.
         // The sized scalar aliases (`Int8`, `UInt64`, `Float32`, ...) are
         // width-1 SIMD types, so `comptime c_int = Int32` is a type value.
-        _ => mojito_ast::ast::Dtype::from_scalar_alias(name)
-            .map(|dtype| Ty::Simd { dtype, width: 1 }),
+        _ => mojito_ast::ast::Dtype::from_scalar_alias(name).map(|dtype| Ty::Simd {
+            dtype: mojito_types::types::SimdDtype::Known(dtype),
+            width: mojito_types::types::SimdWidth::Known(1),
+        }),
     }
 }
 

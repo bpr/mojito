@@ -201,7 +201,11 @@ assets/type_error/dtype_dynamic_parameter_rejected.mojo	compile-reject	agree	err
 assets/type_error/dtype_float_query_non_float_rejected.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/dtype_identity_rejected.mojo	compile-reject	agree	error: 'DType' does not implement the '__is__' method
 assets/type_error/dtype_implicit_bool_rejected.mojo	compile-reject	agree	error: cannot implicitly convert 'DType' value to 'Bool'
+assets/type_error/dtype_keyed_def_untaken_arm.mojo	compile-reject	agree	error: cannot implicitly convert 'Scalar[dt]' value to 'String'
+assets/type_error/dtype_keyed_struct_method_untaken_arm.mojo	compile-reject	agree	error: cannot implicitly convert 'Scalar[dt]' value to 'String'
 assets/type_error/dtype_ordering_rejected.mojo	compile-reject	agree	error: 'DType' does not implement the '__lt__' method
+assets/type_error/dtype_struct_applied_in_validated_body.mojo	compile-reject	agree	error: cannot implicitly convert 'Float64' value to 'String'
+assets/type_error/dtype_struct_applied_symbolically.mojo	compile-reject	agree	error: cannot implicitly convert 'Scalar[dt]' value to 'String'
 assets/type_error/dtype_uint_alias_rejected.mojo	runs	divergence	the pin runs it; Mojito rejects: DType.uint is not supported yet
 assets/type_error/dtype_unknown_member_rejected.mojo	compile-reject	agree	error: 'DType' value has no attribute 'nosuch'
 assets/type_error/dtype_upstream_only_rejected.mojo	runs	divergence	the pin runs it; Mojito rejects: DType.uint128 is not supported yet
@@ -394,6 +398,10 @@ assets/type_error/simd_generic_width_rejected.mojo	compile-reject	agree	error: S
 assets/type_error/simd_shuffle_width_mismatch.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_size_removed_alias.mojo	compile-reject	agree	error: use of unknown declaration 'SIMDSize'
 assets/type_error/simd_subscript_indexer.mojo	compile-reject	agree	error: invalid call to '__getitem__': value passed to 'idx' cannot be converted from 'Offset' to 'Int'
+assets/type_error/simd_symbolic_scalar_operand_rejected.mojo	compile-reject	agree	error: invalid call to '__mul__': value passed to 'rhs' cannot be converted from 'Int' to 'Scalar[dt]'
+assets/type_error/simd_symbolic_width_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[dt, width]' value to 'SIMD[dt, 4]'
+assets/type_error/simd_width_keyed_def_untaken_arm.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[dt, width]' value to 'String'
+assets/type_error/simd_width_keyed_struct_field_untaken_arm.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[dt, width]' value to 'String'
 assets/type_error/size_of_requires_one_type.mojo	compile-reject	agree	error: no matching function in call to 'size_of'
 assets/type_error/span_implicit_return_escape.mojo	runs	subset	the pin runs it;Mojito rejects: escapes storage
 assets/type_error/span_strided_slice_rejected.mojo	compile-reject	agree	error: no matching method in call to '__getitem__'

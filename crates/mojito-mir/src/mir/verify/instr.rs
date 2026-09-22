@@ -68,8 +68,10 @@ pub(super) fn verify_instruction(
                     mask.len()
                 ));
             }
-            if let Some(source @ Ty::Simd { width, .. }) = reg_ty(value) {
-                let lanes = if other.is_some() { width * 2 } else { *width };
+            if let Some(source @ Ty::Simd { width, .. }) = reg_ty(value)
+                && let Some(width) = width.known()
+            {
+                let lanes = if other.is_some() { width * 2 } else { width };
                 if let Some(bad) = mask.iter().find(|lane| **lane as i64 >= lanes) {
                     errors.push(format!(
                         "{prefix}: SIMD shuffle lane {bad} is out of range for {lanes} source lanes"
@@ -327,7 +329,7 @@ pub(super) fn verify_instruction(
         }
         MirInstr::MaterializeLiteral { value, target, .. } => {
             let valid_target = matches!(target, Ty::Int | Ty::UInt | Ty::Float64)
-                || matches!(target, Ty::Simd { width: 1, .. });
+                || mojito_types::types::is_scalar_simd(target);
             if !valid_target {
                 errors.push(format!(
                     "{prefix}: literal materialization has non-scalar target {target}"
@@ -335,13 +337,11 @@ pub(super) fn verify_instruction(
             }
             if let Some(found) = reg_ty(value) {
                 let valid_source = match found {
-                    Ty::IntLiteral => matches!(
-                        target,
-                        Ty::Int | Ty::UInt | Ty::Float64 | Ty::Simd { width: 1, .. }
-                    ),
+                    Ty::IntLiteral => valid_target,
                     Ty::FloatLiteral => {
                         matches!(target, Ty::Float64)
-                            || matches!(target, Ty::Simd { dtype, width: 1 } if dtype.is_float())
+                            || mojito_types::types::scalar_simd_dtype(target)
+                                .is_some_and(mojito_ast::ast::Dtype::is_float)
                     }
                     _ => false,
                 };

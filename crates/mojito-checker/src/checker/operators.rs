@@ -14,8 +14,8 @@ impl Checker {
             }
             // Elementwise negation on numeric SIMD lanes preserves the type;
             // a bool mask does not negate.
-            (PrefixOp::Neg, Ty::Simd { dtype, width }) if *dtype != Dtype::Bool => {
-                return Ok(simd_ty(*dtype, *width));
+            (PrefixOp::Neg, Ty::Simd { dtype, .. }) if dtype.licenses(|d| d != Dtype::Bool) => {
+                return Ok(t);
             }
             (PrefixOp::Not, Ty::Bool) => return Ok(Ty::Bool),
             // Bitwise inversion keeps an integer (or `Bool`) type; float
@@ -23,8 +23,8 @@ impl Checker {
             (PrefixOp::Invert, Ty::Int | Ty::UInt | Ty::IntLiteral | Ty::Bool) => {
                 return Ok(t);
             }
-            (PrefixOp::Invert, Ty::Simd { dtype, width }) if !dtype.is_float() => {
-                return Ok(simd_ty(*dtype, *width));
+            (PrefixOp::Invert, Ty::Simd { dtype, .. }) if dtype.licenses(|d| !d.is_float()) => {
+                return Ok(t);
             }
             _ => {}
         }
@@ -193,10 +193,7 @@ impl Checker {
         // (literals coerced as needed), else None.
         let common = common_numeric(&lt, &rt);
         if let Some(target) = common.as_ref()
-            && matches!(
-                target,
-                Ty::Int | Ty::UInt | Ty::Float64 | Ty::Simd { width: 1, .. }
-            )
+            && (matches!(target, Ty::Int | Ty::UInt | Ty::Float64) || is_scalar_simd(target))
         {
             self.record_literal_materializations(left, &lt, target)?;
             self.record_literal_materializations(right, &rt, target)?;
@@ -596,8 +593,10 @@ impl Checker {
             op: infix_symbol(op).to_string(),
             operands: format!("{lt} and {rt}"),
         };
-        // Determine the common SIMD type, allowing a numeric literal on one side.
-        let simd = match (lt, rt) {
+        // Determine the common SIMD type, allowing a numeric literal on one
+        // side. The slots may be symbolic: identity is structural, and a
+        // dtype gate a symbolic lane cannot answer is the instantiation's.
+        let (dtype, width) = match (lt, rt) {
             (
                 Ty::Simd {
                     dtype: d1,
@@ -607,40 +606,29 @@ impl Checker {
                     dtype: d2,
                     width: w2,
                 },
-            ) if d1 == d2 && w1 == w2 => Ty::Simd {
-                dtype: *d1,
-                width: *w1,
-            },
+            ) if d1 == d2 && w1 == w2 => (d1.clone(), w1.clone()),
             (Ty::Simd { dtype, width }, other) | (other, Ty::Simd { dtype, width })
-                if splats_to(other, *dtype) =>
+                if splats_to(other, dtype) =>
             {
-                Ty::Simd {
-                    dtype: *dtype,
-                    width: *width,
-                }
+                (dtype.clone(), width.clone())
             }
             _ => return Err(bad()),
         };
-        let Ty::Simd { dtype, width } = simd else {
-            return Err(TypeError::InvariantViolation(
-                "SIMD operator inference produced a non-SIMD type".to_string(),
-            ));
-        };
+        let same = || simd_of(dtype.clone(), width.clone());
+        let mask = || simd_of(SimdDtype::Known(Dtype::Bool), width.clone());
         match op {
             // Elementwise arithmetic on numeric lanes preserves the type.
-            Add | Sub | Mul if dtype != Dtype::Bool => Ok(simd_ty(dtype, width)),
+            Add | Sub | Mul if dtype.licenses(|d| d != Dtype::Bool) => same(),
             // Floor division and remainder on integer lanes (upstream defines
             // them on every numeric dtype; float lanes stay a recorded gap).
-            FloorDiv | Mod if dtype != Dtype::Bool && !dtype.is_float() => {
-                Ok(simd_ty(dtype, width))
-            }
-            BitAnd | BitOr | BitXor if !dtype.is_float() => Ok(simd_ty(dtype, width)),
-            Shl | Shr if dtype != Dtype::Bool && !dtype.is_float() => Ok(simd_ty(dtype, width)),
+            FloorDiv | Mod if dtype.licenses(|d| d != Dtype::Bool && !d.is_float()) => same(),
+            BitAnd | BitOr | BitXor if dtype.licenses(|d| !d.is_float()) => same(),
+            Shl | Shr if dtype.licenses(|d| d != Dtype::Bool && !d.is_float()) => same(),
             // True division is defined on float lanes only.
-            Div if dtype.is_float() => Ok(simd_ty(dtype, width)),
+            Div if dtype.licenses(Dtype::is_float) => same(),
             // Equality on any lanes; ordering on numeric lanes — a bool mask.
-            Eq | Ne => Ok(simd_ty(Dtype::Bool, width)),
-            Lt | Gt | Le | Ge if dtype != Dtype::Bool => Ok(simd_ty(Dtype::Bool, width)),
+            Eq | Ne => mask(),
+            Lt | Gt | Le | Ge if dtype.licenses(|d| d != Dtype::Bool) => mask(),
             _ => Err(bad()),
         }
     }
@@ -653,14 +641,15 @@ impl Checker {
         args: &[Expr],
     ) -> Result<Ty, TypeError> {
         let (dtype, mut width) = self.simd_dims(param_args)?;
-        if width == -1 {
-            width = i64::try_from(args.len()).unwrap_or(0);
-            if width < 1 || (width & (width - 1)) != 0 {
-                return Err(TypeError::BadSimdWidth(width.to_string()));
+        if width == SimdWidth::Known(-1) {
+            let inferred = i64::try_from(args.len()).unwrap_or(0);
+            if inferred < 1 || (inferred & (inferred - 1)) != 0 {
+                return Err(TypeError::BadSimdWidth(inferred.to_string()));
             }
+            width = SimdWidth::Known(inferred);
         }
-        self.check_simd_args(dtype, width, args)?;
-        Ok(simd_ty(dtype, width))
+        self.check_simd_args(&dtype, &width, args)?;
+        simd_of(dtype, width)
     }
 
     /// Type upstream's mask splat `SIMD[DType.bool, N](fill=b)`: `Bool` is not
@@ -680,18 +669,22 @@ impl Checker {
         let [fill] = kwargs else {
             return Err(not_a_fill());
         };
-        if fill.name != "fill" || !args.is_empty() || dtype != Dtype::Bool || width < 1 {
+        if fill.name != "fill"
+            || !args.is_empty()
+            || dtype.known() != Some(Dtype::Bool)
+            || width.known().is_none_or(|width| width < 1)
+        {
             return Err(not_a_fill());
         }
         let fill_ty = self.infer(&fill.value)?;
-        if !converts_to_lane(&fill_ty, Dtype::Bool) {
+        if !converts_to_lane(&fill_ty, &dtype) {
             return Err(TypeError::TypeMismatch {
                 expected: "a Bool fill".to_string(),
                 found: fill_ty.to_string(),
                 context: "SIMD fill".to_string(),
             });
         }
-        Ok(simd_ty(dtype, width))
+        simd_of(dtype, width)
     }
 
     /// Type a scalar-alias construction `Int32(x)` = `SIMD[DType.int32, 1](x)`.
@@ -708,19 +701,27 @@ impl Checker {
                 got: param_args.len(),
             });
         }
-        self.check_simd_args(dtype, 1, args)?;
-        Ok(Ty::Simd { dtype, width: 1 })
+        self.check_simd_args(&SimdDtype::Known(dtype), &SimdWidth::Known(1), args)?;
+        Ok(Ty::Simd {
+            dtype: SimdDtype::Known(dtype),
+            width: SimdWidth::Known(1),
+        })
     }
 
     /// Check the element arguments of a SIMD construction: either `width` of them
-    /// (one per lane) or exactly one (splatted), each fitting `dtype`.
+    /// (one per lane) or exactly one (splatted), each fitting `dtype`. A
+    /// symbolic width fixes no count and a symbolic dtype gates nothing: both
+    /// are the instantiation's to check.
     pub(super) fn check_simd_args(
         &self,
-        dtype: Dtype,
-        width: i64,
+        dtype: &SimdDtype,
+        width: &SimdWidth,
         args: &[Expr],
     ) -> Result<(), TypeError> {
-        if args.len() != width as usize && args.len() != 1 {
+        if let Some(width) = width.known()
+            && args.len() != width as usize
+            && args.len() != 1
+        {
             return Err(TypeError::SimdArity {
                 width,
                 got: args.len(),
@@ -728,7 +729,10 @@ impl Checker {
         }
         // `Bool` is not a `Scalar`, so a multi-lane mask splats one `Bool`
         // only through `fill=`.
-        if dtype == Dtype::Bool && width > 1 && args.len() == 1 {
+        if dtype.known() == Some(Dtype::Bool)
+            && width.known().is_some_and(|width| width > 1)
+            && args.len() == 1
+        {
             return Err(TypeError::BadCall {
                 func: "SIMD".to_string(),
                 reason: format!("a {width}-lane DType.bool mask splats one Bool only as 'fill='"),
@@ -740,13 +744,12 @@ impl Checker {
             // parameter or conforming struct) through its `__int__`; the
             // numeric scalars take the exact `converts_to_lane` matrix, so a
             // float source still spells its truncation explicitly.
-            let intable_object = dtype != Dtype::Bool
-                && !dtype.is_float()
+            let intable_object = dtype.licenses(|d| d != Dtype::Bool && !d.is_float())
                 && matches!(&aty, Ty::Param { .. } | Ty::Struct(..))
                 && self.conforms_to(&aty, "Intable");
             if !converts_to_lane(&aty, dtype) && !intable_object {
                 return Err(TypeError::TypeMismatch {
-                    expected: format!("a DType.{} element", dtype.name()),
+                    expected: format!("a {dtype} element"),
                     found: aty.to_string(),
                     context: "SIMD element".to_string(),
                 });

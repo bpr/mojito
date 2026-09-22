@@ -36,6 +36,46 @@ pub(super) fn def_uses_layout_dependent_param(statement: &Stmt) -> bool {
             .any(|inner| stmt_uses_param_simd_width(inner, &names))
 }
 
+/// Whether a generic struct uses one of its own parameters as a `SIMD`/
+/// `Scalar` width (`SIMD[DType.int64, Self.length]`) in a field, a method
+/// signature, or a method body. An erased body has no lane count for it, so
+/// such a struct specializes per application.
+pub(super) fn struct_uses_layout_dependent_param(statement: &Stmt) -> bool {
+    let StmtKind::Struct {
+        type_params,
+        fields,
+        methods,
+        ..
+    } = &statement.kind
+    else {
+        return false;
+    };
+    let names: Vec<&str> = type_params
+        .iter()
+        .map(|parameter| parameter.name.as_str())
+        .collect();
+    if names.is_empty() {
+        return false;
+    }
+    fields
+        .iter()
+        .any(|field| type_uses_param_simd_width(&field.ty, &names))
+        || methods.iter().any(|method| {
+            method
+                .params
+                .iter()
+                .any(|parameter| type_uses_param_simd_width(&parameter.ty, &names))
+                || method
+                    .ret
+                    .as_ref()
+                    .is_some_and(|ty| type_uses_param_simd_width(ty, &names))
+                || method
+                    .body
+                    .iter()
+                    .any(|inner| stmt_uses_param_simd_width(inner, &names))
+        })
+}
+
 pub(super) fn type_uses_param_simd_width(ty: &Type, names: &[&str]) -> bool {
     match ty {
         Type::Named(name, arguments) => arguments
@@ -64,6 +104,8 @@ pub(super) fn param_arg_uses_simd_width(
     names: &[&str],
 ) -> bool {
     match argument {
+        // A struct's own parameter in a width slot is spelled `Self.<name>`.
+        ParamArg::Type(Type::SelfParam(name)) => width_position && names.contains(&name.as_str()),
         ParamArg::Type(inner) => type_uses_param_simd_width(inner, names),
         ParamArg::Value(value) => {
             width_position

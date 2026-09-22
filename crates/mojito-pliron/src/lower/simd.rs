@@ -145,10 +145,8 @@ impl FnLowering<'_> {
             return Err(self.unsupported_reg("bool SIMD dtype cast".into(), dest));
         }
         if width > 1 {
-            let Some(Ty::Simd {
-                dtype: source_dtype,
-                width: source_width,
-            }) = self.func.reg_types.get(&value.0).cloned()
+            let Some((source_dtype, source_width)) =
+                self.func.reg_types.get(&value.0).and_then(simd_dims)
             else {
                 return Err(self.unsupported_reg("SIMD cast source type".into(), dest));
             };
@@ -190,10 +188,8 @@ impl FnLowering<'_> {
         width: usize,
     ) -> Result<(), PlironError> {
         if width > 1 {
-            let Some(Ty::Simd {
-                dtype: source_dtype,
-                width: source_width,
-            }) = self.func.reg_types.get(&value.0).cloned()
+            let Some((source_dtype, source_width)) =
+                self.func.reg_types.get(&value.0).and_then(simd_dims)
             else {
                 return Err(self.unsupported_reg("SIMD to_bits source type".into(), dest));
             };
@@ -258,7 +254,7 @@ impl FnLowering<'_> {
         other: Option<Reg>,
         mask: &[usize],
     ) -> Result<(), PlironError> {
-        let Some(Ty::Simd { dtype, width }) = self.func.reg_types.get(&value.0).cloned() else {
+        let Some((dtype, width)) = self.func.reg_types.get(&value.0).and_then(simd_dims) else {
             return Err(self.unsupported_reg("SIMD shuffle source type".into(), dest));
         };
         let operands = if other.is_some() { 2 } else { 1 };
@@ -441,13 +437,13 @@ impl FnLowering<'_> {
             "__floor__" | "__ceil__" | "__trunc__"
                 if width == 1 && dtype.is_float() && args.is_empty() =>
             {
-                self.lower_round_dir(ctx, dest, recv, &Ty::Simd { dtype, width: 1 }, method)
+                self.lower_round_dir(ctx, dest, recv, &canonical_simd_ty(dtype, 1), method)
             }
             "__fma__" if width == 1 && dtype.is_float() && args.len() == 2 => self.lower_fma(
                 ctx,
                 dest,
                 [recv, args[0], args[1]],
-                &Ty::Simd { dtype, width: 1 },
+                &canonical_simd_ty(dtype, 1),
             ),
             _ => Err(self.unsupported_reg(format!("SIMD method `{method}`"), dest)),
         }
@@ -584,7 +580,7 @@ impl FnLowering<'_> {
         no: Reg,
         width: usize,
     ) -> Result<(), PlironError> {
-        let Some(Ty::Simd { dtype, .. }) = self.func.reg_types.get(&dest.0).cloned() else {
+        let Some((dtype, _)) = self.func.reg_types.get(&dest.0).and_then(simd_dims) else {
             return Err(self.unsupported_reg("SIMD select result type".into(), dest));
         };
         let condition = self.simd_load_vector(ctx, mask, Dtype::Bool, width, dest)?;
@@ -716,7 +712,7 @@ impl FnLowering<'_> {
             1 => place.root_ty.clone(),
             n => place.projection_tys.get(n - 2).cloned(),
         };
-        let Some(Ty::Simd { dtype, width }) = base_ty else {
+        let Some((dtype, width)) = base_ty.as_ref().and_then(simd_dims) else {
             return Ok(false);
         };
         let width = width as usize;
@@ -737,10 +733,7 @@ impl FnLowering<'_> {
         let mut base = place.clone();
         base.proj.pop();
         base.projection_tys.pop();
-        base.ty = Some(Ty::Simd {
-            dtype,
-            width: width as i64,
-        });
+        base.ty = Some(canonical_simd_ty(dtype, width as i64));
         let (address, _) = self.place_address(ctx, &base, src)?;
         self.emit_simd_index_guard(ctx, index, width, src)?;
         let vector = self.simd_load_vector_from(ctx, address, dtype, width, src);
@@ -943,7 +936,8 @@ impl FnLowering<'_> {
         width: usize,
         dest: Reg,
     ) -> Result<Value, PlironError> {
-        if matches!(self.func.reg_types.get(&reg.0), Some(Ty::Simd { width, .. }) if *width > 1) {
+        if matches!(self.func.reg_types.get(&reg.0).and_then(simd_dims), Some((_, width)) if width > 1)
+        {
             return self.simd_load_vector(ctx, reg, dtype, width, dest);
         }
         let lane_ty = ScalarTy::of_dtype(dtype);
@@ -979,7 +973,7 @@ impl FnLowering<'_> {
 
     fn simd_lane_layout(&self, dtype: Dtype) -> Layout {
         self.layout
-            .layout_of(&Ty::Simd { dtype, width: 1 })
+            .layout_of(&canonical_simd_ty(dtype, 1))
             .expect("SIMD lane has a native layout")
     }
 

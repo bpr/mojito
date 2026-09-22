@@ -1516,9 +1516,31 @@ fn ty_value(ty: &Ty) -> String {
                 ("arguments", list(args.iter().map(ty_arg))),
             ],
         ),
+        // A symbolic slot is spelled as its parameter expression; the
+        // verifier keeps one out of every artifact, so the form only serves
+        // lossless round trips.
         Ty::Simd { dtype, width } => record(
             "simd",
-            &[("dtype", dtype.name().into()), ("width", width.to_string())],
+            &[
+                (
+                    "dtype",
+                    match dtype {
+                        mojito_types::types::SimdDtype::Known(dtype) => dtype.name().into(),
+                        mojito_types::types::SimdDtype::Expr(expr) => {
+                            positional("ct_expr", &param_expr(expr))
+                        }
+                    },
+                ),
+                (
+                    "width",
+                    match width {
+                        mojito_types::types::SimdWidth::Known(width) => width.to_string(),
+                        mojito_types::types::SimdWidth::Expr(expr) => {
+                            positional("ct_expr", &param_expr(expr))
+                        }
+                    },
+                ),
+            ],
         ),
         Ty::ComptimeList(value) => positional("comptime_list", &ty_value(value)),
         Ty::Tuple(values) => positional("tuple", &list(values.iter().map(ty_value))),

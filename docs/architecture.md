@@ -437,9 +437,8 @@ a guard such as `T == Int` narrows nothing, and an unused template still
 checks. A `rebind` takes its target on faith here, where the operand's type
 is still symbolic, exactly as upstream does; the equality is asserted on each
 clone. Bodies without such constructs are declared but left to the
-executable check; bodies keyed on a `DType` or a vector-typed value parameter
-register as template shells and keep their per-instantiation check
-(`docs/roadmap.md` §1). Validation then runs the
+executable check; a struct keyed on a struct-typed value parameter registers
+as a template shell and keeps its per-instantiation check. Validation then runs the
 explicit-destruction analysis over exactly those bodies
 (`explicit_destroy::check` with `DestroyScope::ValidatedTemplates`): a
 compile-time-keyed template is a trapping stub by the time the executable
@@ -484,6 +483,30 @@ pack forwarded to another callee — the checker raises
 its per-instantiation check, leaves the destruction walk, and the run goes on.
 `docs/notes/param-expr-attributes.md` records the design.
 
+**A SIMD lane is symbolic too.** A body keyed on a `DType` parameter, or on a
+vector width naming its own parameter (`def total[dt: DType, width:
+Int](v: SIMD[dt, width])`, a struct field `SIMD[Self.dt, Self.width]`), is
+validated like any other. `Ty::Simd` holds typed slots (`SimdDtype`,
+`SimdWidth`): a slot is a known dtype or width, or the parameter expression
+the template names (`dtype_from_arg`, `simd_width` in the checker), and the
+one constructor of a symbolic vector type (`types::simd_ty_from_slots`) folds
+a closed slot to its constant and two known slots to the canonical type, so
+slot equality is type identity in the pin's normal form (`SIMD[dt, n + 1]`
+is `SIMD[dt, 1 + n]`; `v.join(v)` is `SIMD[dt, 2 * width]`; a guard narrows
+nothing). A symbolic lane's capabilities are the SIMD surface itself, not a
+trait bound: every dtype-gated operator and method is licensed through
+`SimdDtype::licenses` (the constraint is the instantiation's to check, as
+upstream defers `constrained[...]`), an integer or float literal splats into
+it where a concrete scalar does not (`types::splats_to`), and a lane fact the
+checker records for lowering (`SimdLength`, `DtypeConstant`, a cast or
+shuffle adjustment) is recorded only when the slot is known — such a body
+keeps its clone check. Applying a `DType`-keyed struct in a validated body
+closes its `Scalar[Self.dt]` members under the application's values, to a
+concrete lane or to the caller's own symbolic `dt`. A symbolic slot never
+crosses the MIR waist: `validate_dependent_bindings` refuses it, the
+elaborator still clones every such body per call or per application, and
+lowering reads only known slots.
+
 **Validation is a template producer.** `Compiler::compile_linked` runs
 validation once, on the prepared program that every discovery round then
 re-elaborates, and lends it the compilation's `TemplateCatalog`
@@ -493,9 +516,9 @@ occurrences, with a coverage certificate. The elaborator stubs such a
 template, so validation is the only check it gets, and its instances inherit
 the facts of the arms the elaborator selects instead of being inferred
 (Stage 3, *Checked Templates*). A run that ends without a verdict — it
-reached a member of a `DType`- or vector-keyed template shell — withdraws
-every certificate it produced. A pack-keyed body's certificate is always
-incomplete, so its instances keep the clone check. The verdict-only
+reached a member of a struct-value-keyed template shell — withdraws every
+certificate it produced. A pack-, `DType`-, or vector-keyed body's
+certificate is always incomplete, so its instances keep the clone check. The verdict-only
 `validate_comptime_templates` remains for clients without a catalog, and
 `comptime::elaborate`, the composed-stage seam, runs the same three steps
 through it.

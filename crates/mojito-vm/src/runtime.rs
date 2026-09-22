@@ -1326,22 +1326,30 @@ pub fn materialize_literal(
             .to_f64()
             .map(Value::Float64)
             .ok_or_else(|| literal_materialization_error(&value, "Float64")),
-        (Value::IntLiteral(value), Ty::Simd { dtype, width: 1 }) if dtype.is_float() => {
+        (Value::IntLiteral(value), target)
+            if let Some(dtype) = mojito_types::types::scalar_simd_dtype(target)
+                && dtype.is_float() =>
+        {
             let lane = dtype
                 .float_literal_lane(&mojito_common::literal::FloatLiteral::from_int(&value))
                 .ok_or_else(|| literal_materialization_error(&value, &format!("{dtype:?}")))?;
-            Ok(simd_value(*dtype, SimdLanes::Float(vec![lane])))
+            Ok(simd_value(dtype, SimdLanes::Float(vec![lane])))
         }
-        (Value::FloatLiteral(value), Ty::Simd { dtype, width: 1 }) if dtype.is_float() => {
+        (Value::FloatLiteral(value), target)
+            if let Some(dtype) = mojito_types::types::scalar_simd_dtype(target)
+                && dtype.is_float() =>
+        {
             let lane = dtype
                 .float_literal_lane(&value)
                 .ok_or_else(|| literal_materialization_error(&value, &format!("{dtype:?}")))?;
-            Ok(simd_value(*dtype, SimdLanes::Float(vec![lane])))
+            Ok(simd_value(dtype, SimdLanes::Float(vec![lane])))
         }
-        (Value::IntLiteral(value), Ty::Simd { dtype, width: 1 }) => {
-            let lane = materialize_literal_int_lane(&value, *dtype)
+        (Value::IntLiteral(value), target)
+            if let Some(dtype) = mojito_types::types::scalar_simd_dtype(target) =>
+        {
+            let lane = materialize_literal_int_lane(&value, dtype)
                 .ok_or_else(|| literal_materialization_error(&value, &format!("{dtype:?}")))?;
-            Ok(simd_value(*dtype, SimdLanes::Int(vec![lane])))
+            Ok(simd_value(dtype, SimdLanes::Int(vec![lane])))
         }
         (value, target) => Err(RuntimeError::TypeError(format!(
             "cannot materialize {} as {target}",
@@ -1367,8 +1375,8 @@ pub fn coerce_checked(value: Value, ty: &mojito_types::types::Ty) -> Value {
             Value::UInt(n) => Value::Float64(n as f64),
             value => value,
         },
-        Ty::Simd { dtype, width: 1 } => {
-            match simd_from_values(*dtype, 1, std::slice::from_ref(&value)) {
+        ty if let Some(dtype) = mojito_types::types::scalar_simd_dtype(ty) => {
+            match simd_from_values(dtype, 1, std::slice::from_ref(&value)) {
                 Ok(materialized) => materialized,
                 Err(_) => value,
             }

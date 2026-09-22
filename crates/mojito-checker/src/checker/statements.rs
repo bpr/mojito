@@ -139,7 +139,7 @@ impl Checker {
     fn validation_shell(&self, statement: &Stmt) -> bool {
         self.source_validation
             && matches!(&statement.kind, StmtKind::Struct { type_params, .. }
-                if concrete_only_struct(type_params, &|bound| self.declared_structs.contains(bound)))
+                if struct_valued_template(type_params, &|bound| self.declared_structs.contains(bound)))
     }
 
     /// Register a module-level `comptime` alias declaration — a generic
@@ -1544,8 +1544,9 @@ impl Checker {
                 // already consumed it for any `comptime for`/`comptime if`.
                 if let ExprKind::Member { object, field } = &value.kind
                     && let Some(dtype) = self.dtype_constant(object, field)
+                    && let Some(dtype) = dtype?.known()
                 {
-                    self.comptime_dtypes.insert(name.clone(), dtype?);
+                    self.comptime_dtypes.insert(name.clone(), dtype);
                 }
                 if let Ok(v) = self.eval_ct(value) {
                     self.comptimes.insert(name.clone(), v);
@@ -1950,12 +1951,6 @@ impl Checker {
     /// exactly as a method's do (`enclosing_origin_param`), indexed after any
     /// enclosing struct and method binders.
     pub(super) fn check_def(&mut self, stmt: &Stmt, lambda: bool) -> Result<(), TypeError> {
-        // A module-level function that checks only per specialization is
-        // the executable pass's alone: source validation cannot resolve its
-        // signature symbolically, and the elaborator retargets every call.
-        if self.source_validation && self.function_bases.is_empty() && concrete_only_def(stmt) {
-            return Ok(());
-        }
         let StmtKind::Def { type_params, .. } = &stmt.kind else {
             return self.check_def_inner(stmt, lambda);
         };

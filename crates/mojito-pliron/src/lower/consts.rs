@@ -69,7 +69,7 @@ impl FnLowering<'_> {
             Ty::Int => ScalarTy::Int,
             Ty::UInt => ScalarTy::UInt,
             Ty::Float64 => ScalarTy::Float64,
-            Ty::Simd { dtype, width: 1 } => ScalarTy::of_dtype(*dtype),
+            ty if let Some(dtype) = scalar_simd_dtype(ty) => ScalarTy::of_dtype(dtype),
             // Literal-typed storage holds the exact value at its default
             // width, rejecting what i64/f64 cannot represent.
             Ty::IntLiteral | Ty::FloatLiteral => {
@@ -167,7 +167,7 @@ impl FnLowering<'_> {
         dest: Reg,
         a: Reg,
     ) -> Result<(), PlironError> {
-        if let Some(Ty::Simd { dtype, width }) = self.func.reg_types.get(&a.0).cloned()
+        if let Some((dtype, width)) = self.func.reg_types.get(&a.0).and_then(simd_dims)
             && width > 1
         {
             return self.lower_simd_unop(ctx, op, dest, a, dtype, width as usize);

@@ -6619,11 +6619,12 @@ fn collector_position_distinguishes_overloads() {
 
 #[test]
 fn template_catalog_does_not_certify_aborted_validation() {
-    // A `DType`-keyed struct registers as a template shell, which has no
-    // symbolic signature: validation stops at its constructor without a
-    // verdict, before it reaches `second`. Neither the partial traversal nor
-    // the `Ok(())` it returns may certify a body.
-    let source = "struct Vec[dt: DType](Movable):\n    var x: Scalar[Self.dt]\n\n    def __init__(out self, x: Scalar[Self.dt]):\n        self.x = x\n\ndef first[flag: Bool]() -> Int:\n    comptime if flag:\n        var v = Vec[DType.float64](1.5)\n        return 1\n    else:\n        return 2\n\ndef second[flag: Bool]() -> Int:\n    comptime if flag:\n        return 1\n    else:\n        return 2\n\ndef main():\n    print(first[True]())\n    print(second[False]())\n";
+    // A struct-value-keyed struct registers as a template shell, whose
+    // members exist only per specialization: a member the shell does not
+    // answer for stops validation without a verdict, before it reaches
+    // `second`. Neither the partial traversal nor the `Ok(())` it returns
+    // may certify a body.
+    let source = "@fieldwise_init\nstruct Extent(ImplicitlyCopyable, Movable):\n    var rows: Int\n\nstruct Tagged[e: Extent](ImplicitlyCopyable, Movable):\n    var scale: Int\n\n    def __init__(out self, scale: Int):\n        self.scale = scale\n\ndef first[flag: Bool]() -> Int:\n    comptime if flag:\n        var t = Tagged[Extent(2)](1)\n        return t.rows()\n    else:\n        return 2\n\ndef second[flag: Bool]() -> Int:\n    comptime if flag:\n        return 1\n    else:\n        return 2\n\ndef main():\n    print(first[True]())\n    print(second[False]())\n";
     let linked = mojito::link_source(source, std::path::Path::new("aborted_validation.mojo"))
         .expect("link error");
     let prepared = mojito::comptime::prepare(linked).expect("prepare");
@@ -6659,6 +6660,39 @@ fn template_catalog_does_not_certify_aborted_validation() {
         "        return \"two\"\n\ndef main",
     );
     let linked = mojito::link_source(&invalid, std::path::Path::new("invalid_beside_tuple.mojo"))
+        .expect("link error");
+    let prepared = mojito::comptime::prepare(linked).expect("prepare");
+    let mut catalog = mojito::templates::TemplateCatalog::default();
+    let error = mojito::checker::validate_comptime_templates_into(&prepared, &mut catalog)
+        .expect_err("the untaken arm of `second` is invalid");
+    assert!(
+        error
+            .to_string()
+            .contains("expected Int, found StringLiteral"),
+        "{error}"
+    );
+}
+
+#[test]
+fn dtype_keyed_struct_validates_beside_an_invalid_arm() {
+    // A `DType`-keyed struct is no shell: its `Scalar[Self.dt]` signature
+    // registers with the lane symbolic, `Vec[DType.float64](1.5)` closes it,
+    // the run reaches a verdict, and the invalid untaken arm beside it is
+    // reported.
+    let source = "struct Vec[dt: DType](Movable):\n    var x: Scalar[Self.dt]\n\n    def __init__(out self, x: Scalar[Self.dt]):\n        self.x = x\n\ndef first[flag: Bool]() -> Int:\n    comptime if flag:\n        var v = Vec[DType.float64](1.5)\n        return 1\n    else:\n        return 2\n\ndef second[flag: Bool]() -> Int:\n    comptime if flag:\n        return 1\n    else:\n        return 2\n\ndef main():\n    print(first[True]())\n    print(second[False]())\n";
+    let linked = mojito::link_source(source, std::path::Path::new("dtype_validation.mojo"))
+        .expect("link error");
+    let prepared = mojito::comptime::prepare(linked).expect("prepare");
+    let mut catalog = mojito::templates::TemplateCatalog::default();
+    mojito::checker::validate_comptime_templates_into(&prepared, &mut catalog).expect("validation");
+    assert!(!catalog.validation_aborted());
+    assert!(catalog.stats().no_verdict.is_empty());
+
+    let invalid = source.replace(
+        "        return 2\n\ndef main",
+        "        return \"two\"\n\ndef main",
+    );
+    let linked = mojito::link_source(&invalid, std::path::Path::new("invalid_beside_dtype.mojo"))
         .expect("link error");
     let prepared = mojito::comptime::prepare(linked).expect("prepare");
     let mut catalog = mojito::templates::TemplateCatalog::default();
