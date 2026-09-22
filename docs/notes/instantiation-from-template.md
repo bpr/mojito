@@ -9,8 +9,8 @@ template the authority for the instantiations it covers, what it covers
 today, and what it does not.
 
 The plan this implements is `instantiation-from-template-plan.md` (untracked,
-repository root). The roadmap entry is the first checkbox of
-`docs/roadmap.md` section 1.
+repository root). The remaining work is `docs/roadmap.md` section 1, one
+entry per uncovered construct.
 
 ## The carrier stays the AST clone
 
@@ -27,6 +27,7 @@ HIR or MIR.
 | Template vocabulary: `TemplateId`, `CheckedTemplate`, `CheckedBodyFacts`, `TemplateCoverage`, `TemplateClass`, `TemplateObligation`, `TemplateCatalog`, `InstanceTrace`, `OccurrenceId`, `FactTable` | `crates/mojito-checked/src/templates.rs` |
 | Exhaustive `SemanticAdjustment` policy | `templates.rs:derive_adjustment` |
 | Capture, certificate, realization, installation, verification | `crates/mojito-checker/src/checker/template_facts.rs` |
+| Re-selection of a call through a bound (`bound_witness`, `realize_bound_dispatch`, `realize_inverted_writes`, `realize_bound_builtin`) | `crates/mojito-checker/src/checker/template_facts/bound_dispatch.rs` |
 | Body entry points | `template_facts.rs:Checker::check_def_body` (from `statements.rs:check_def_inner`) and `check_method_body` (from `declarations.rs:bind_and_check_method`), both over one `BodySite` |
 | Occurrence-level trace | `crates/mojito-ast/src/ast.rs:rekey_syntax` returning `SyntaxOrigins` |
 | Declaration-level trace | `crates/mojito-comptime/src/comptime.rs:DefInstanceTrace` (`specialize.rs:generate_def_spec`) and `MethodInstanceTrace` (`generate_instance_clones`) |
@@ -106,15 +107,29 @@ has no wildcard.
 Tables with a recipe today: expression types, place types, binding types,
 expression and statement bindings, expression effects, operation adjustments
 (`MaterializeLiteral`, `PointerOffset`, `PointerStorageTake`,
-`PointerStorageDestroy`, and a moving `PointerWrite`), generic instantiations,
-overload targets, call parameters, selected calls (a `closed_method_contract`
-or a `closed_reference_contract` only), borrowed read call places, read
-temporary arguments, unconsumed temporaries, discarded results, deletable and
-linear bindings, linear temporaries, copied places, interior invalidations,
-rebind assertions, reference handles (`ReferenceValueUses`, at the value of a
-`return` in a method that returns a reference, and nowhere else), reference
-results (the `ReferenceResult` adjustment, kept apart from the other
-adjustments), interior references, and copyable reference-result reads.
+`PointerStorageDestroy`, a moving `PointerWrite`, and the inverted writes,
+which an instance re-selects), generic instantiations, method instantiations
+(a per-call request whose arguments stay symbolic under the instance),
+overload targets, call parameters, selected calls (a `value_method_contract`,
+a `closed_reference_contract`, or the abstract dispatch of a bound),
+borrowed read call places, read temporary arguments, unconsumed temporaries,
+discarded results, deletable and linear bindings, linear temporaries, copied
+places, interior invalidations, rebind assertions, reference handles
+(`ReferenceValueUses`, at the value of a `return` in a method that returns a
+reference, and nowhere else), reference results (the `ReferenceResult`
+adjustment, kept apart from the other adjustments), interior references, and
+copyable reference-result reads.
+
+Three things are recorded and kept as a fact about the body rather than as
+entries. A call transfer (`CallTransfers`), the origins it merged, and the
+effect the body's own frame then publishes exist only while a value may carry
+a loan, so the bundle keeps one flag (`vanishing_transfers`) and an instance
+owes that none of its values can. A comparison of two parameter-typed places
+records nothing in the template, so the grammar names it (`comparisons`) and
+an instance dispatches it itself. A checker builtin on a bounded parameter
+(`hasher.update(x)`, `writer.write(x)`) selects no callee and records nothing
+that names the call, so the grammar names it too (`bound_builtins`) and an
+instance proves the argument's bound again.
 
 Two things are kept in template-local form because they belong to one checker
 run. A binding identity becomes a `TemplateOwner`. A selected call becomes a
@@ -211,7 +226,8 @@ copy, and the loop variable may only key a condition.
 
 The declaration may have a `mut`, `var`, `deinit`, or `ref` receiver, the
 `out` of an `__init__`, or none (`@staticmethod`), a `where` clause, `var`,
-`mut`, and bare `ref` parameters, and any result, a reference included. A
+`mut`, and bare `ref` parameters, trait-bounded type binders of its own, and
+any result, a reference included. A
 `mut` or `ref` parameter is bound from its declared convention and rooted at
 its own binding under every instance, so the body's facts name it by template
 owner; what its caller owes lives in the signature, which is checked per
@@ -249,6 +265,12 @@ they are a set, not a ladder.
 | `SUBSCRIPT_STORES` | a store through a subscript of a field of a writable `self`: a closed scalar field of the element a reference getter yields (`self.entries[i].hits = 0`, `+= 1`), or a closed scalar element a declared setter takes (`self.counts[i] = n`) | A subscript that is a place records its index shape and whether the setter takes the value by keyword (`SubscriptDescriptors`). The first is the syntax, one plain index; the second is the setter's declaration. The getter is a `REFERENCE_CALLS` call and the setter a closed `SIBLING_CALLS` one, recorded at the subscript and realized by the setter's name. A whole element of a parameter type stays out: `self.items[i] = self.items[j]` is accepted for `Int` and refused for `String`. An augmented element store (`self.counts[i] += 1`) records `AugmentedSubscript`, which has no recipe. |
 | `PLACE_ARGUMENTS` | a local, a parameter, or a field of `self` handed to a `mut` or bare `ref` parameter of a method call | The callee's declared convention decides that the call keeps the caller's place (`CallPlaceUses`), and the generations a `mut` argument invalidates lie below the argument's own binding, kept by template owner. A kept place is neither copied, moved, nor converted, and its recorded type equals the parameter's. Whether two arguments conflict is judged on their places and conventions. A field of `self` is kept only beside a receiver the call reads. A parameter of a struct parameter's type is admitted only on a call of `self`'s own method, where callee and caller share one binder scope, so the instance substitutes it in the contract and in `CallParameters`. |
 | `ORIGIN_PARAMETERS` | a `ref` parameter with an origin clause, the method's origin binders, and the parameter forwarded as the method's own reference result | The clause lives in the signature, which is checked per clone. The body's facts for such a parameter are a bare `ref` one's: its binding, its type, and a copy where it is read by value. |
+| `VALUE_ARGUMENTS` | a whole value of any type handed to a by-value parameter of a method call: a `^` transfer, a sibling call's result, a place the template copied, or a named place a read parameter takes where it lies | The argument's recorded type equals the parameter's, so nothing converts it, before or after substitution. What the call records for it is decided without its type: a read parameter borrows a named place and reads a temporary by the argument's syntax and the callee's conventions, and a `var` parameter takes a transfer or a temporary as it stands. A copied place owes obligation 3 and a transfer obligation 10, as elsewhere. A `ref` local and a reference call's result stay out, since each records a borrow of its own. A callee with a parameter of a struct parameter's type may belong to a field of another struct: it has no binders of its own, so its parameter types were recorded at the receiver's arguments, in the caller's binder scope, and the instance substitutes them in the contract and in `CallParameters` alike. An overloaded family whose members declare parameters of parameter types is admitted when every argument's type is exactly its parameter's: no member outranks an exact match, and a family an instance collapses finds no single clone (`method_clone_target`). |
+| `VANISHING_TRANSFERS` | a call whose callee stores an argument outward (`self.items.append(value^)`), so the template replays a transfer summary at it | A transfer moves the loans its source carries. The template's parameter may carry one (`type_may_carry_loans` is true for a symbolic parameter), so its check records a call transfer, merges the origin, and publishes an effect of its own; every value of a plain-data instance carries none, so `replay_transfer_effects` records nothing and the instance's frame publishes nothing, which is what the clone check records. Obligation 14 below. A call-through residue, a function value's baked effects, and a destination a captured binding names are not transfers and still refuse. |
+| `OPERATOR_DISPATCH` | `==`, `!=`, `<`, `<=`, `>`, `>=` over two places of one type that mentions a struct parameter | The template proves the operator through the bound and records nothing at it; `infer_infix` decides a struct operand's dunder from the operand types alone (`struct_infix_dispatch`). Obligation 15 below. Each operand is a place, so both checks read it where it lies and no borrow or copy is recorded. |
+| `BOUND_DISPATCH` | a method call on a place of a bare parameter type, proved through a bound: `place.copy()`, `item.__hash__(hasher)`, `item.write_to(writer)`, or any requirement whose arguments are closed scalars or named places of a bare parameter type handed to a bounded `mut`/`ref` parameter | The template records the abstract dispatch (`__trait_dispatch.__hash__$ov$…`), or for `write_to` the inverted write, and nothing the receiver's type decides: a kept argument's place use and generation refresh follow from the requirement's convention, which the witness shares. `infer_method_call` decides a concrete receiver's witness from its type alone, and `bound_witness` repeats that decision from the types. Obligation 16 below. The call through the bound read the summaries of every conformer's method of that name, one key per conformer; each was empty, and the instance re-reads only its own target's. |
+| `BOUND_BUILTINS` | `hasher.update(x)`, `hasher._update_with_simd(x)`, or `writer.write(x…)` on a parameter bounded by `Hasher` or `Writer`, whose arguments are closed scalars, string literals, named whole values, `ref` locals, fields read through a reference, pointer slots, or reference calls | The builtin selects no callee and records at an argument only what its syntax decides: a borrow of a named place or a reference result, an unconsumed temporary, a closed literal's materialization. The argument's type it proved through the bound, and the instance proves it again at its own type (obligation 17), which for a hashed value is where the hash leaf is recorded. |
+| `BOUND_BINDERS` | the method's own type binders, each a plain trait-bounded type (`[H: Hasher]`) | A clone keeps such a binder, bound symbolically as the template binds it: no clone is minted per hasher, the VM reifies the binding at run time, and no retained fact substitutes it. The instance's substitution binds the struct's parameters alone (`instance_substitution`), as it does beside an origin binder. |
 
 The compiler-private trap `_mojito_abort("message")` is a statement of any
 non-keyed body: the built-in types its literal and selects nothing. A
@@ -292,6 +314,8 @@ only `Movable` records nothing there, and its `Int` clone would.
    most by materializing a literal to a closed type, or kept as the caller's
    place for a `mut` or `ref` parameter (`kept_place_argument`), and no raise,
    result adapter, reference result, captures, or compile-time parameters. A
+   `value_method_contract` is the same but for a by-value parameter of any
+   type, whose argument then takes no adjustment at all (`VALUE_ARGUMENTS`). A
    `trivial_method_contract` is the case with no arguments, a plain read
    receiver, and a closed result, which is all `MethodScalarBody` admits.
    `realize_method_call` repeats the clone check's retarget: the declared
@@ -300,13 +324,14 @@ only `Movable` records nothing there, and its `Int` clone would.
    `constructor_clone_target`), giving `List.pop$y3:Int$ov$Int`. A clone check
    ranks the clone family again on its arguments, so every member of an
    overloaded family must declare closed parameter types for the two rankings
-   to agree. The result type substitutes. A method call's parameter types are
-   already in the receiver's binder scope, unlike a direct call's
-   `CallParameterFact`, and the one symbolic case substitutes: a kept place
-   on a call of `self`'s own method, whose `CallParameters` entry shares the
-   caller's binders too. A clone that exists has met its `where` clauses; a callee with
-   an availability condition and no clone refuses, as does an instance that
-   has clones but not this one (withheld, or a collapsed overload family).
+   to agree, unless every argument's type is exactly its parameter's, which
+   no member outranks. The result type substitutes. A method call's parameter
+   types are in the receiver's binder scope, whether the receiver is `self`
+   or a field of another struct, unlike a direct call's `CallParameterFact`,
+   so the contract's and the `CallParameters` entry's substitute alike. A
+   clone that exists has met its `where` clauses; a callee with an
+   availability condition and no clone refuses, as does an instance that has
+   clones but not this one (withheld, or a collapsed overload family).
 8. **Struct applications.** Substituted, then recorded by installation under
    the body's own source.
 9. **Effect summaries.** Every callee's transfer and call-through summaries
@@ -345,6 +370,50 @@ only `Movable` records nothing there, and its `Int` clone would.
     (`assets/type_error/template_method_reference_read_requires_copy.mojo` is
     the template's own rejection). `check_reference_result_reads` runs over
     every installed adjustment after the bodies, derived or not.
+14. **Plain-data transfers.** A body that replayed a transfer summary
+    (`vanishing_transfers`) derives only when every retained expression and
+    binding type is closed and holds no loan, reference, or callable in its
+    storage, its fields at their own arguments (`loan_free`; `plain_data`
+    reads a struct's declared fields and would refuse every struct with a
+    field of a parameter type). The template's own body, whose parameter is
+    symbolic, never meets this and is inferred again. Obligation 9 then holds
+    as before: the realized callee's summary must be empty.
+15. **Comparisons.** Each admitted comparison is dispatched on the
+    substituted operand type (`realize_comparison`): a closed scalar records
+    nothing; a nominal struct records the dunder target
+    `struct_infix_dispatch` selects, when the dunder is overloaded or a
+    per-instantiation clone, and the operand's application as a receiver
+    would. A dunder that converts or consumes its operand, `!=` served by
+    `__eq__`, a built-in aggregate, and any other type refuse.
+16. **Bound dispatches.** Each call the template dispatched through a bound
+    is re-selected on the substituted receiver type (`realize_bound_dispatch`,
+    through `bound_witness`): a built-in value's `copy`
+    (`builtin_copy_is_value_read`) loses its contract, target, and parameters
+    and marks the receiver a copied place; a built-in leaf's `__hash__`
+    (`builtin_hashable_ty`) loses the same three and records the leaf; a
+    nominal struct's witness is the lone declaration of the requirement's
+    name whose shape is the requirement's — a read `self`, one parameter per
+    argument with the recorded convention, no variadic, default, `raises`, or
+    reference result — and the contract takes its target (the instance clone
+    where one exists), its result and parameter types under `Self`, the
+    struct's arguments, and the witness's own binders, and the call
+    parameters the abstract call recorded empty. A binder of the witness
+    (`String.__hash__[H]`) is admitted where exactly one parameter is that
+    binder and the argument there is itself a bare parameter, so the binding
+    stays symbolic and the per-call request it records (`MethodInstantiations`)
+    is one discovery leaves alone. An inverted write whose receiver the
+    instance makes a struct other than `String` becomes the struct's own
+    `write_to` call the same way (`realize_inverted_writes`): the adjustment
+    and the receiver's borrow go, and the writer becomes a kept place with
+    its generation refresh. An overloaded requirement, a witness of another
+    shape, a binder an instance would bake, and a type that is neither a
+    built-in nor a declared struct refuse. Bound dispatches are realized
+    before the closed calls, which then leave a nominal target as it stands.
+17. **Bound builtins.** Each `hasher.update(x)` must find its argument's
+    substituted type `Hashable` (`is_hashable`, which records a wide SIMD
+    leaf), each `_update_with_simd(x)` a vector, and each `writer.write(x…)`
+    every argument's type printable (`printable_argument`, the acceptance
+    `infer_print` applies). Nothing is recorded; the demand only refuses.
 
 The declaration's bounds and `where` clauses are not re-checked: the checker
 discharges them at the requesting call, and the elaborator proves a fully
@@ -428,15 +497,15 @@ captured. `TemplateStats::refused` carries each refusal and its reason.
 A verification mismatch names only the fields that differ
 (`CheckedBodyFacts::difference`).
 
-## Measured coverage, 2026-09-20
+## Measured coverage, 2026-09-21
 
 `docs/performance.md` (*Checked templates and the discovery result*) has the
 tables. In short, for one debug-profile run each:
 
 - Building the arena once saves about 6% (Hello World 10.58 s to 9.90 s).
 - `stdlib_heavy.mojo` checks a per-instantiation method clone 2254 times per
-  compilation and derives 710 of them (31%); `generic.mojo` derives 226 of
-  474 (48%). With `MethodScalarBody` alone those were 242 and 70, and wall
+  compilation and derives 802 of them (36%); `generic.mojo` derives 256 of
+  474 (54%). With `MethodScalarBody` alone those were 242 and 70, and wall
   time did not move. With `MethodBody` it does: 17.9 s to 17.0 s and 11.4 s to
   10.6 s, three interleaved runs each. `ref self` accessors, reference
   results, and the `_mojito_abort` statement took the counts from 586 and 178.
@@ -450,17 +519,30 @@ tables. In short, for one debug-profile run each:
   counts from 698 and 220: the bundled gain is the `write_repr_to` forwarders
   that hand their `mut writer` on, and the rest is user structs
   (`template_method_{subscript_store,place_argument,origin_parameter}.mojo`).
+  Whole-value arguments, vanishing transfers, comparisons, and bound copies
+  took them from 710 and 226 to 802 and 256: `Dict.__contains__`,
+  `List.__contains__`, `count`, `try_index`, `__eq__`, `__ne__`, `pop`,
+  `__iadd__`, and `extend(Span)` derive
+  (`template_method_{value_argument,vanishing_transfer,operator_dispatch,bound_copy}.mojo`).
+  Bound dispatches with arguments, the two builtins, and the method's own
+  hasher binder took `stdlib_heavy` from 802 to 860: `List.__hash__`,
+  `List.write_to`, `Dict.write_to`, and `Optional.write_to` derive for every
+  instance, and `Set.write_to` is certified (no instance reaches it there).
+  A user struct that hashes or writes through its parameter derives for an
+  `Int`, a `String`, and a user-struct instance alike
+  (`template_method_bound_dispatch.mojo`).
 - Hello World mints no per-instantiation clones at all. Its generated bodies
   are members of structs specialized whole and per-call clones, from
   concrete-only templates.
 - The census (`template_census.*`) says which table recipes come next:
-  `ConstructionImmutableBinders` alone would make 56 more of the 314 clone
-  bodies still inferred capturable, and a callee effect summary that is not
-  empty 27 more. Its `grammar.*` counters say which constructs keep a body
-  outside every class whatever its tables: a method call passing something
-  other than a scalar (175 bodies), a direct call with arguments (174), a
-  subscript that is neither a pointer slot nor a reference call on a field
-  (129), and a non-scalar closed result (117).
+  `ConstructionImmutableBinders` alone would make 62 more of the 296 clone
+  bodies still inferred capturable, and a call-through residue 27 more. Its
+  `grammar.*` counters say which constructs keep a body outside every class
+  whatever its tables: a direct call with arguments (174 bodies), a method
+  call with arguments (164, now admitted when each is a scalar or a whole
+  value of its parameter's type), a subscript that is neither a pointer slot
+  nor a reference call on a field (118), and a non-scalar closed result
+  (114).
 
 An earlier version of the `body_inference.clone` counter tested for a `$` in a
 name and so counted ordinary bundled structs' methods as clones. The figures
@@ -471,10 +553,10 @@ it produced (3828 for Hello World) were wrong and are withdrawn.
 Each of these keeps the clone check. The roadmap carries one entry per item.
 
 - A method body beyond `MethodBody`: a receiver origin, a copy or move
-  initializer, `raises`, the method's own binders, a parameter with an origin
-  clause, a `for` loop, a construction, a string other than the `_mojito_abort`
-  message, a call passing a value that is not a closed scalar, and a local
-  whose type is built over a parameter.
+  initializer, `raises`, the method's own binders, a `for` loop, a
+  construction, a string other than the `_mojito_abort` message, a call
+  passing a `ref` local or a reference call's result, an argument that
+  converts, and a local whose type is built over a parameter.
 - A reference used as an argument, as the receiver of a method its bare
   parameter type promises through a bound, or as the base of a whole store
   (`self.entries[i].hits = 0` records a subscript descriptor), and one yielded
@@ -487,10 +569,21 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
 - A local of a parameter type, a `for` loop, or a non-scalar result in a
   surviving trait-bound `def` template. Scalar locals and runtime `if` and
   `while` are covered.
-- Any call that records a conversion, an adjustment, an origin, a transfer, or
-  a contract that is not closed. A `T: Bound` receiver is a re-selection in a
-  clone (conformer union in the template, concrete dispatch in the clone), not
-  a substitution.
+- Any call that records a conversion, an adjustment, or an origin, and a
+  transfer that does not vanish: a call-through residue (a body that calls
+  its own callable parameter, `List.deinit_with`, `Optional.map`, and their
+  callers), a function value's baked effects, a destination a captured
+  binding names, and an instance whose values may carry a loan. An
+  arithmetic operator through a bound, a reflected or consuming operator,
+  and `!=` served by `__eq__` are re-selections in a clone with no recipe.
+- A bound dispatch whose instance witness is overloaded, has a `mut` or
+  consuming receiver, takes a binder the instance would bake (a closed
+  hasher type), or is a requirement the type meets without declaring the
+  method (a struct's reflective `__hash__` default); and a
+  `hasher.update(x)` whose receiver is a concrete hasher, which selects a
+  callee. `Dict.__hash__` constructs its `H2()` (`ConstructTypeParam`) and
+  `Optional.__hash__` a `UInt8` tag (`SimdConstructions`), so both keep the
+  clone check for those reasons.
 - A folded value parameter or loop variable that survives into an instance.
 - A local declared inside a `comptime for`.
 - Packs, `DType` and vector parameters, reflection, struct-valued parameters,

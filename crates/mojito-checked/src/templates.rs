@@ -12,7 +12,8 @@
 
 use crate::checked::{
     CheckedCallArgumentSource, CheckedCallBoundary, CheckedCallContract,
-    CheckedCallValueAdjustment, EffectFacts, GenericInstantiation, SemanticAdjustment,
+    CheckedCallValueAdjustment, EffectFacts, GenericInstantiation, MethodInstantiation,
+    SemanticAdjustment,
 };
 use mojito_common::token::{Span, SyntaxId};
 use mojito_types::types::{ParamDecl, Ty};
@@ -189,6 +190,12 @@ pub fn derive_adjustment(
             element: substitute(element),
             copy: false,
         }),
+        // An inverted write names no type. A closed receiver's stands as
+        // recorded; one on a parameter-typed receiver is re-selected on the
+        // instance's type after substitution (`realize_inverted_writes`),
+        // where a nominal struct takes its own `write_to` instead.
+        SemanticAdjustment::InvertedWrite => Some(SemanticAdjustment::InvertedWrite),
+        SemanticAdjustment::InvertedReprWrite => Some(SemanticAdjustment::InvertedReprWrite),
         SemanticAdjustment::ResolveCallable(..)
         | SemanticAdjustment::ConstructTypeParam { .. }
         | SemanticAdjustment::ReifyTypeArgument { .. }
@@ -220,8 +227,6 @@ pub fn derive_adjustment(
         | SemanticAdjustment::ImplicitlyCopyConsumingReceiver
         | SemanticAdjustment::NegatedEquality
         | SemanticAdjustment::ReflectedOperator
-        | SemanticAdjustment::InvertedWrite
-        | SemanticAdjustment::InvertedReprWrite
         | SemanticAdjustment::ReceiverFromFirstArgument { .. }
         | SemanticAdjustment::Truthiness
         | SemanticAdjustment::Move
@@ -316,7 +321,21 @@ pub fn trivial_method_contract(call: &TemplateCallContract) -> bool {
 /// callee's declaration, which an instance's clone keeps. Every field is
 /// named, so a new one must be given a rule here before this crate builds.
 pub fn closed_method_contract(call: &TemplateCallContract) -> bool {
-    call.reference_result.is_none() && closed_contract(call, false)
+    call.reference_result.is_none() && closed_contract(call, false, false)
+}
+
+/// Whether a method call's contract is a [`closed_method_contract`] but for
+/// the types its by-value parameters have.
+///
+/// An argument bound by value to a parameter of any type is still supplied,
+/// still bound without a place, and still unadapted: no conversion, no
+/// materialization, and no invalidation sits at its boundary. So its type
+/// equals the parameter's, which substitution preserves, and an instance
+/// changes the parameter's type alone. What the argument's own expression
+/// owes (a copy, a move, a temporary) is recorded at that expression and is
+/// for the body's grammar to admit.
+pub fn value_method_contract(call: &TemplateCallContract) -> bool {
+    call.reference_result.is_none() && closed_contract(call, false, true)
 }
 
 /// Whether a method call's contract is a [`closed_method_contract`] but for
@@ -332,7 +351,7 @@ pub fn closed_method_contract(call: &TemplateCallContract) -> bool {
 pub fn closed_reference_contract(call: &TemplateCallContract) -> bool {
     call.reference_result.is_some()
         && call.contract.receiver_requires_place
-        && closed_contract(call, true)
+        && closed_contract(call, true, false)
 }
 
 /// Whether a call keeps the caller's place for this argument: what a `mut`
@@ -351,8 +370,10 @@ pub const fn kept_place_argument(argument: &crate::checked::CheckedCallArgument)
         )
 }
 
-/// What [`closed_method_contract`] and [`closed_reference_contract`] share.
-fn closed_contract(call: &TemplateCallContract, reference: bool) -> bool {
+/// What [`closed_method_contract`], [`value_method_contract`], and
+/// [`closed_reference_contract`] share. `values` admits a by-value parameter
+/// of any type, which then takes no adjustment at all.
+fn closed_contract(call: &TemplateCallContract, reference: bool, values: bool) -> bool {
     use mojito_ast::ast::ArgConvention;
     let TemplateCallContract {
         contract:
@@ -390,7 +411,7 @@ fn closed_contract(call: &TemplateCallContract, reference: bool) -> bool {
             None | Some(ArgConvention::Imm | ArgConvention::Mut)
         ) || (reference && *receiver_convention == Some(ArgConvention::Ref)))
         && arguments.iter().all(|argument| {
-            let by_value = closed_scalar(&argument.parameter_ty)
+            let by_value = (values || closed_scalar(&argument.parameter_ty))
                 && !argument.requires_place
                 && matches!(
                     argument.convention,
@@ -407,8 +428,14 @@ fn closed_contract(call: &TemplateCallContract, reference: bool) -> bool {
             let kept = arguments
                 .iter()
                 .any(|bound| bound.source == argument.source && kept_place_argument(bound));
+            let opaque = arguments.iter().any(|bound| {
+                bound.source == argument.source && !closed_scalar(&bound.parameter_ty)
+            });
             if kept {
                 return argument.adjustments.is_empty();
+            }
+            if opaque && !argument.adjustments.is_empty() {
+                return false;
             }
             argument.invalidations.is_empty()
                 && argument.adjustments.iter().all(|adjustment| {
@@ -518,7 +545,7 @@ pub enum TemplateClass {
 /// They are independent of one another: a body may call a sibling without
 /// moving a value of a parameter type, and the reverse.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct MethodFeatures(u16);
+pub struct MethodFeatures(u32);
 
 impl MethodFeatures {
     /// A receiver other than a plain read `self`, or statements beyond a
@@ -557,6 +584,29 @@ impl MethodFeatures {
     /// A `ref` parameter with an origin clause, and the origin binders of the
     /// method that names it.
     pub const ORIGIN_PARAMETERS: Self = Self(1 << 10);
+    /// A whole value of any type handed to a by-value parameter of a method
+    /// call: a moved place, a temporary, a copied place, or a place the call
+    /// reads where it lies.
+    pub const VALUE_ARGUMENTS: Self = Self(1 << 11);
+    /// A call whose callee stores an argument outward, so that the template,
+    /// whose parameter may stand for a loan-carrying type, replays a transfer
+    /// summary there.
+    pub const VANISHING_TRANSFERS: Self = Self(1 << 12);
+    /// A comparison of two places of one type that mentions a struct
+    /// parameter, which an instance dispatches on its own type.
+    pub const OPERATOR_DISPATCH: Self = Self(1 << 13);
+    /// A method call on a place of a bare parameter type, which the template
+    /// proves through the bound and an instance re-selects on its own type:
+    /// `copy()`, `__hash__(hasher)`, `write_to(writer)`, or any other
+    /// requirement whose arguments are scalars or bounded places.
+    pub const BOUND_DISPATCH: Self = Self(1 << 14);
+    /// `hasher.update(value)` and `writer.write(values…)` on a bounded
+    /// parameter: checker builtins that select no callee and record nothing
+    /// about an argument that its syntax does not decide.
+    pub const BOUND_BUILTINS: Self = Self(1 << 15);
+    /// The method's own trait-bounded type binders (`[H: Hasher]`), which a
+    /// clone keeps and binds symbolically as the template does.
+    pub const BOUND_BINDERS: Self = Self(1 << 16);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
@@ -712,6 +762,13 @@ pub enum TemplateObligation {
     /// clone's. One the template marked must stay marked: a by-value read
     /// rests on it.
     ReferenceResultReads,
+    /// Every value in a body that replayed a transfer summary is plain data at
+    /// the instance's types. A transfer moves the loans its source carries,
+    /// and a plain-data value carries none, so the instance's check records
+    /// no transfer, merges no origin, and publishes no effect of its own. A
+    /// template's own body, whose parameter is still symbolic, never meets
+    /// this and is inferred again.
+    PlainDataTransfers,
 }
 
 /// One subscript's index shape, a slice kind per sliced index, and whether
@@ -814,8 +871,39 @@ pub struct CheckedBodyFacts {
     /// at each one whose type mentioned a parameter
     /// ([`TemplateObligation::Movable`]).
     pub transfers: Vec<OccurrenceId>,
+    /// Whether the body replayed a callee's transfer summary: it recorded a
+    /// call transfer, merged a transferred origin, or published an effect on
+    /// its own frame. None of that is retained, because none of it exists for
+    /// an instance ([`TemplateObligation::PlainDataTransfers`]).
+    pub vanishing_transfers: bool,
+    /// Comparisons over two places of one parameter-typed type, at which the
+    /// template recorded nothing. An instance dispatches each on its own
+    /// type and records the dunder it selects.
+    pub comparisons: Vec<OccurrenceId>,
+    /// Calls of a checker builtin on a bounded parameter (`hasher.update(x)`,
+    /// `writer.write(x)`), which select no callee. The template proved each
+    /// argument through the bound; an instance owes the same proof at its own
+    /// type, which for a hashed value also records the hash leaf.
+    pub bound_builtins: Vec<(OccurrenceId, BoundBuiltin)>,
+    /// Per-call clone requests. A template never records one that survives
+    /// realization (`realize_method_call` refuses a callee with binders of
+    /// its own); a bound dispatch whose witness declares binders adds one,
+    /// with the binders bound to the caller's own symbolic types, which
+    /// discovery leaves alone.
+    pub method_instantiations: Vec<(OccurrenceId, MethodInstantiation)>,
     /// How many locals the body declares.
     pub locals: u32,
+}
+
+/// Which checker builtin a [`CheckedBodyFacts::bound_builtins`] entry calls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoundBuiltin {
+    /// `hasher.update(value)`: the value must be `Hashable`.
+    Update,
+    /// `hasher._update_with_simd(value)`: the value must be a vector.
+    UpdateSimd,
+    /// `writer.write(values…)`: every value must be writable.
+    Write,
 }
 
 impl CheckedBodyFacts {
@@ -1069,6 +1157,34 @@ impl CheckedBodyFacts {
                 self.transfers, other.transfers
             );
         }
+        if self.comparisons != other.comparisons {
+            let _ = writeln!(
+                out,
+                " comparisons:\n  derived:  {:?}\n  inferred: {:?}",
+                self.comparisons, other.comparisons
+            );
+        }
+        if self.vanishing_transfers != other.vanishing_transfers {
+            let _ = writeln!(
+                out,
+                " vanishing_transfers:\n  derived:  {:?}\n  inferred: {:?}",
+                self.vanishing_transfers, other.vanishing_transfers
+            );
+        }
+        if self.bound_builtins != other.bound_builtins {
+            let _ = writeln!(
+                out,
+                " bound_builtins:\n  derived:  {:?}\n  inferred: {:?}",
+                self.bound_builtins, other.bound_builtins
+            );
+        }
+        if self.method_instantiations != other.method_instantiations {
+            let _ = writeln!(
+                out,
+                " method_instantiations:\n  derived:  {:?}\n  inferred: {:?}",
+                self.method_instantiations, other.method_instantiations
+            );
+        }
         if self.locals != other.locals {
             let _ = writeln!(
                 out,
@@ -1156,6 +1272,10 @@ impl CheckedBodyFacts {
             subscript_descriptors: at(&self.subscript_descriptors, occurrences),
             call_place_uses: flagged(&self.call_place_uses),
             transfers: flagged(&self.transfers),
+            vanishing_transfers: self.vanishing_transfers,
+            comparisons: flagged(&self.comparisons),
+            bound_builtins: at(&self.bound_builtins, occurrences),
+            method_instantiations: at(&self.method_instantiations, occurrences),
             locals: self.locals,
         }
     }
@@ -1198,6 +1318,8 @@ impl CheckedBodyFacts {
             + self.subscript_descriptors.len()
             + self.call_place_uses.len()
             + self.transfers.len()
+            + self.bound_builtins.len()
+            + self.method_instantiations.len()
     }
 }
 

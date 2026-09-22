@@ -21,7 +21,7 @@ impl Checker {
         // First-seen observation (including "none"): the two-phase pass
         // reruns the check when this callee's final effects differ from what
         // the stalest query here saw.
-        self.note_effect_query(callee, effects.as_ref().is_none_or(Vec::is_empty));
+        self.note_effect_query(callee, EffectRead::of(effects.as_ref(), true));
         self.effect_observations
             .borrow_mut()
             .entry(callee.to_string())
@@ -52,7 +52,7 @@ impl Checker {
             return ty;
         }
         let effects = self.transfer_effects.borrow().get(name).cloned();
-        self.note_effect_query(name, effects.as_ref().is_none_or(Vec::is_empty));
+        self.note_effect_query(name, EffectRead::of(effects.as_ref(), false));
         self.effect_observations
             .borrow_mut()
             .entry(name.to_string())
@@ -181,7 +181,7 @@ impl Checker {
     ) -> Result<(), TypeError> {
         use mojito_checked::checked::CallThroughCallee;
         let throughs = self.call_through_effects.borrow().get(callee).cloned();
-        self.note_effect_query(callee, throughs.as_ref().is_none_or(Vec::is_empty));
+        self.note_effect_query(callee, EffectRead::of(throughs.as_ref(), false));
         self.call_through_observations
             .borrow_mut()
             .entry(callee.to_string())
@@ -276,7 +276,7 @@ impl Checker {
             _ => name.to_string(),
         };
         let effects = self.transfer_effects.borrow().get(&key).cloned();
-        self.note_effect_query(&key, effects.as_ref().is_none_or(Vec::is_empty));
+        self.note_effect_query(&key, EffectRead::of(effects.as_ref(), false));
         self.effect_observations
             .borrow_mut()
             .entry(key)

@@ -50,6 +50,10 @@ pub const UINT_DIGITS_SYMBOL: &str = "__module$std$$intrinsics$_uint_digits";
 /// digits of `UInt.MAX` plus a sign, rounded up.
 pub const DIGITS_BUFFER_BYTES: u64 = 32;
 
+/// The receiver of a method symbol selected through a trait bound, which the
+/// concrete type replaces at run time (`__trait_dispatch.copy$ov$`).
+pub const TRAIT_DISPATCH: &str = "__trait_dispatch";
+
 /// Whether a `**` on these operand types calls [`POW_INT_SYMBOL`].
 ///
 /// Every pair the native lowering routes to its integer arms does, which is
@@ -676,7 +680,7 @@ pub fn iterator_method_symbol(
 /// runtime type is known.
 pub fn iterator_dispatch_symbol(convention: ArgConvention) -> String {
     iterator_method_symbol(
-        "__trait_dispatch",
+        TRAIT_DISPATCH,
         Some(convention),
         &SignatureKey {
             types: Vec::new(),
@@ -704,6 +708,15 @@ pub fn borrowed_iterator_dispatch_alternate(symbol: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Whether a selected method symbol dispatches through a trait bound: its
+/// receiver is the abstract `__trait_dispatch`, which a concrete type
+/// replaces ([`retarget_method_symbol`]).
+pub fn is_trait_dispatch_symbol(symbol: &str) -> bool {
+    symbol
+        .rsplit_once('.')
+        .is_some_and(|(receiver, _)| receiver == TRAIT_DISPATCH)
 }
 
 /// Retarget a checker-selected method symbol to a concrete runtime type.
@@ -1745,7 +1758,7 @@ pub fn callable_contract_target(ty: &Ty) -> Option<String> {
     let signature_types = params.iter().chain(variadic.iter().map(Box::as_ref));
     let signature =
         SignatureKey::from_tys(signature_types).with_kw_variadic(kw_variadic.as_deref());
-    Some(method_symbol("__trait_dispatch", "__call__", &signature))
+    Some(method_symbol(TRAIT_DISPATCH, "__call__", &signature))
 }
 
 /// Whether `name` is a minted `Tuple`/`TString` specialization symbol

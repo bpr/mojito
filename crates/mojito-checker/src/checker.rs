@@ -2521,8 +2521,30 @@ type CallResultOrigin = (
     Option<mojito_types::origin::Mutability>,
 );
 
-/// Each callee whose effect summary one body read, and whether it was empty.
-type EffectQueries = Vec<(String, bool)>;
+/// Each callee whose effect summary one body read, and what the read found.
+type EffectQueries = Vec<(String, EffectRead)>;
+
+/// What reading one callee's effect summary found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EffectRead {
+    Empty,
+    /// Transfer effects replayed against a call's own receiver and arguments.
+    Transfers,
+    /// Anything else: a call-through residue, a callable behind one, or the
+    /// effects baked into a function value.
+    Residue,
+}
+
+impl EffectRead {
+    /// A read of `effects` that a call replays when `replayed`.
+    pub(crate) const fn of<T>(effects: Option<&Vec<T>>, replayed: bool) -> Self {
+        match effects {
+            Some(effects) if !effects.is_empty() && replayed => Self::Transfers,
+            Some(effects) if !effects.is_empty() => Self::Residue,
+            _ => Self::Empty,
+        }
+    }
+}
 
 /// Each generic-struct application one body reached, as written.
 type StructApplications = Vec<(String, Vec<TyArg>)>;

@@ -296,92 +296,13 @@ impl Checker {
             return r;
         }
         // Operator overloading: `a OP b` on a user struct dispatches to the left
-        // operand's dunder method (`a.__add__(b)`, `a.__eq__(b)`, …). Among
-        // same-arity overloads the operand type selects (first by value
-        // coercion, then through an `@implicit` conversion of the right
-        // operand, as a call argument would convert); an overloaded dunder
-        // records the exact lowered symbol so `BinOp.resolved` names it.
-        // `a != b` on an Equatable struct declaring `__eq__` without `__ne__`
-        // is Equatable's default `__ne__` (`not (a == b)`): the operator
-        // dispatches `__eq__` and MIR negates the result. The default is the
-        // trait's, so a struct that does not conform to `Equatable` has no
-        // `__ne__` (Mojo: "does not implement the '__ne__' method").
-        // (`struct_dunder_signature_for` falls back to the first same-arity
-        // declaration for diagnostics, so acceptance is re-checked here: a
-        // `__ne__` overload set that accepts no operand of this type still
-        // defers to `__eq__`.)
-        let dunder_accepts = |dunder: &str| {
-            self.struct_dunder_signature_for(&lt, dunder, &[&rt])
-                .is_some_and(|(info, sig, targs)| {
-                    self.value_coerces(&rt, &substitute_at(&sig.params[0], info, targs))
-                })
-        };
-        let negated_equality = op == Ne
-            && !dunder_accepts("__ne__")
-            && dunder_accepts("__eq__")
-            && self.conforms_to(&lt, "Equatable");
-        let dunder = if negated_equality {
-            Some("__eq__")
-        } else {
-            op.dunder()
-        };
-        if let Some(dunder) = dunder
-            && let Some((info, sig, targs)) = self.struct_dunder_signature_for(&lt, dunder, &[&rt])
-        {
-            if negated_equality && let Some(span) = span.clone() {
-                self.operation_adjustments.borrow_mut().insert(
-                    span,
-                    mojito_checked::checked::SemanticAdjustment::NegatedEquality,
-                );
+        // operand's dunder method (`a.__add__(b)`, `a.__eq__(b)`, …); see
+        // `struct_infix_dispatch` for the selection.
+        if let Some(dispatch) = self.struct_infix_dispatch(op, &lt, &rt)? {
+            if dispatch.converted {
+                self.record_implicit_conversion(right, &rt, &dispatch.operand_ty)?;
             }
-            let Ty::Struct(sname, _) = &lt else {
-                unreachable!("dunder signatures resolve on struct receivers")
-            };
-            let overloaded = info.methods.get(dunder).is_some_and(|sigs| sigs.len() > 1);
-            let mut operand_ty = rt.clone();
-            let mut selected = sig;
-            let param = substitute_at(&sig.params[0], info, targs);
-            if !self.value_coerces(&rt, &param) {
-                let same_arity = info
-                    .methods
-                    .get(dunder)
-                    .into_iter()
-                    .flatten()
-                    .filter(|sig| sig.params.len() == 1);
-                for candidate in same_arity {
-                    let param = substitute_at(&candidate.params[0], info, targs);
-                    if self.implicit_conversion_target(&rt, &param)?.is_some() {
-                        self.record_implicit_conversion(right, &rt, &param)?;
-                        operand_ty = param;
-                        selected = candidate;
-                        break;
-                    }
-                }
-            }
-            // The dunder's availability clause (`__eq__ ... where
-            // conforms_to(Self.T, Equatable)`) is judged against the
-            // receiver's arguments, as a method call judges it; a failing
-            // clause leaves the operator undefined for these operands.
-            let environment: HashMap<String, TyArg> = info
-                .decls
-                .iter()
-                .map(|decl| decl.name().trim_start_matches('*').to_string())
-                .zip(targs.iter().cloned())
-                .chain(positional_pack_binding(&info.decls, targs))
-                .collect();
-            if self
-                .method_constraint_result(selected, &environment)
-                .is_err()
-            {
-                return Err(TypeError::BadOperator {
-                    op: infix_symbol(op).to_string(),
-                    operands: format!("{lt} and {rt}"),
-                });
-            }
-            if matches!(
-                selected.conventions.first().copied().flatten(),
-                Some(ArgConvention::Var | ArgConvention::Deinit)
-            ) {
+            if dispatch.consumes {
                 self.check_consuming_as(
                     right,
                     &rt,
@@ -389,44 +310,29 @@ impl Checker {
                     super::traits::ConsumeKind::Move,
                 )?;
             }
-            // A closed receiver instance dispatches the dunder's
-            // per-instantiation clone (`__eq__$y3:Int`), selected among the
-            // clone family by the same operand.
-            let Ty::Struct(_, targs) = &lt else {
-                unreachable!("dunder signatures resolve on struct receivers")
-            };
-            if let Some(span) = &span {
-                self.record_struct_instantiation(sname, targs, span.source.as_deref());
-            }
-            let (dispatched, selected, overloaded) = match self
-                .instance_method_clone(sname, dunder, targs)
-                .and_then(|clone| {
-                    self.struct_dunder_signature_for(&lt, &clone, &[&operand_ty])
-                        .map(|(_, sig, _)| (clone, sig))
-                }) {
-                Some((clone, sig)) => {
-                    let overloaded = info.methods.get(&clone).is_some_and(|sigs| sigs.len() > 1);
-                    (clone, sig, overloaded)
+            if let Some(span) = span {
+                if dispatch.negated_equality {
+                    self.operation_adjustments.borrow_mut().insert(
+                        span.clone(),
+                        mojito_checked::checked::SemanticAdjustment::NegatedEquality,
+                    );
                 }
-                None => (dunder.to_string(), selected, overloaded),
-            };
-            if (overloaded || dispatched != dunder)
-                && let Some(span) = span.clone()
-            {
-                let target = if overloaded {
-                    method_lowered_name(
-                        sname,
-                        &dispatched,
-                        selected,
-                        self.self_instance_ty(sname).as_ref(),
-                    )
-                } else {
-                    format!("{sname}.{dispatched}")
-                };
-                self.overload_targets.borrow_mut().insert(span, target);
+                self.record_struct_instantiation(
+                    &dispatch.struct_name,
+                    &dispatch.struct_args,
+                    span.source.as_deref(),
+                );
+                if let Some(target) = dispatch.target {
+                    self.overload_targets.borrow_mut().insert(span, target);
+                }
             }
+            let dunder = if dispatch.negated_equality {
+                "__eq__"
+            } else {
+                op.dunder().expect("a dispatched operator has a dunder")
+            };
             return self
-                .struct_dunder(&lt, dunder, &[&operand_ty])
+                .struct_dunder(&lt, dunder, &[&dispatch.operand_ty])
                 .expect("dunder signature was resolved");
         }
         // The right operand's reflected dunder (`1 + m` → `m.__radd__(1)`)
@@ -479,6 +385,138 @@ impl Checker {
             op: infix_symbol(op).to_string(),
             operands: format!("{lt} and {rt}"),
         })
+    }
+
+    /// The dunder `lt OP rt` dispatches on a struct left operand, decided
+    /// from the operand types alone: what `infer_infix` then records at the
+    /// operator, and what an instance of a checked template realizes at its
+    /// own types.
+    ///
+    /// Among same-arity overloads the operand type selects, first by value
+    /// coercion, then through an `@implicit` conversion of the right operand,
+    /// as a call argument would convert; an overloaded dunder records the
+    /// exact lowered symbol so `BinOp.resolved` names it. `a != b` on an
+    /// Equatable struct declaring `__eq__` without `__ne__` is Equatable's
+    /// default `__ne__` (`not (a == b)`): the operator dispatches `__eq__`
+    /// and MIR negates the result. The default is the trait's, so a struct
+    /// that does not conform to `Equatable` has no `__ne__` (Mojo: "does not
+    /// implement the '__ne__' method"). `struct_dunder_signature_for` falls
+    /// back to the first same-arity declaration for diagnostics, so
+    /// acceptance is re-checked here: a `__ne__` overload set that accepts
+    /// no operand of this type still defers to `__eq__`. The dunder's
+    /// availability clause (`__eq__ ... where conforms_to(Self.T,
+    /// Equatable)`) is judged against the receiver's arguments, as a method
+    /// call judges it; a failing clause leaves the operator undefined for
+    /// these operands. A closed receiver instance dispatches the dunder's
+    /// per-instantiation clone (`__eq__$y3:Int`), selected among the clone
+    /// family by the same operand.
+    ///
+    /// `None` when the left operand has no dunder for the pair.
+    pub(super) fn struct_infix_dispatch(
+        &self,
+        op: InfixOp,
+        lt: &Ty,
+        rt: &Ty,
+    ) -> Result<Option<StructInfixDispatch>, TypeError> {
+        let dunder_accepts = |dunder: &str| {
+            self.struct_dunder_signature_for(lt, dunder, &[rt])
+                .is_some_and(|(info, sig, targs)| {
+                    self.value_coerces(rt, &substitute_at(&sig.params[0], info, targs))
+                })
+        };
+        let negated_equality = op == InfixOp::Ne
+            && !dunder_accepts("__ne__")
+            && dunder_accepts("__eq__")
+            && self.conforms_to(lt, "Equatable");
+        let dunder = if negated_equality {
+            Some("__eq__")
+        } else {
+            op.dunder()
+        };
+        let Some(dunder) = dunder else {
+            return Ok(None);
+        };
+        let Some((info, sig, targs)) = self.struct_dunder_signature_for(lt, dunder, &[rt]) else {
+            return Ok(None);
+        };
+        let Ty::Struct(sname, _) = lt else {
+            unreachable!("dunder signatures resolve on struct receivers")
+        };
+        let overloaded = info.methods.get(dunder).is_some_and(|sigs| sigs.len() > 1);
+        let mut operand_ty = rt.clone();
+        let mut selected = sig;
+        let mut converted = false;
+        let param = substitute_at(&sig.params[0], info, targs);
+        if !self.value_coerces(rt, &param) {
+            let same_arity = info
+                .methods
+                .get(dunder)
+                .into_iter()
+                .flatten()
+                .filter(|sig| sig.params.len() == 1);
+            for candidate in same_arity {
+                let param = substitute_at(&candidate.params[0], info, targs);
+                if self.implicit_conversion_target(rt, &param)?.is_some() {
+                    operand_ty = param;
+                    selected = candidate;
+                    converted = true;
+                    break;
+                }
+            }
+        }
+        let environment: HashMap<String, TyArg> = info
+            .decls
+            .iter()
+            .map(|decl| decl.name().trim_start_matches('*').to_string())
+            .zip(targs.iter().cloned())
+            .chain(positional_pack_binding(&info.decls, targs))
+            .collect();
+        if self
+            .method_constraint_result(selected, &environment)
+            .is_err()
+        {
+            return Err(TypeError::BadOperator {
+                op: infix_symbol(op).to_string(),
+                operands: format!("{lt} and {rt}"),
+            });
+        }
+        let consumes = matches!(
+            selected.conventions.first().copied().flatten(),
+            Some(ArgConvention::Var | ArgConvention::Deinit)
+        );
+        let (dispatched, selected, overloaded) = match self
+            .instance_method_clone(sname, dunder, targs)
+            .and_then(|clone| {
+                self.struct_dunder_signature_for(lt, &clone, &[&operand_ty])
+                    .map(|(_, sig, _)| (clone, sig))
+            }) {
+            Some((clone, sig)) => {
+                let overloaded = info.methods.get(&clone).is_some_and(|sigs| sigs.len() > 1);
+                (clone, sig, overloaded)
+            }
+            None => (dunder.to_string(), selected, overloaded),
+        };
+        let target = (overloaded || dispatched != dunder).then(|| {
+            if overloaded {
+                method_lowered_name(
+                    sname,
+                    &dispatched,
+                    selected,
+                    self.self_instance_ty(sname).as_ref(),
+                )
+            } else {
+                format!("{sname}.{dispatched}")
+            }
+        });
+        Ok(Some(StructInfixDispatch {
+            target,
+            negated_equality,
+            operand_ty,
+            converted,
+            consumes,
+            struct_name: sname.clone(),
+            struct_args: targs.to_vec(),
+        }))
     }
 
     /// Type a membership test `x in c` / `x not in c` → `Bool`. The container is
@@ -930,6 +968,24 @@ pub(super) const fn prefix_symbol(op: PrefixOp) -> &'static str {
 }
 
 /// Whether `ty` is the nominal `Optional[Int]` (module-qualified or not).
+/// What [`Checker::struct_infix_dispatch`] decided for one operator.
+pub(super) struct StructInfixDispatch {
+    /// The lowered symbol `BinOp.resolved` names: an overloaded dunder's, or
+    /// a per-instantiation clone's. `None` for a lone declaration.
+    pub(super) target: Option<String>,
+    /// `!=` served by `__eq__` and a negation.
+    pub(super) negated_equality: bool,
+    /// The right operand's type as the selected dunder takes it.
+    pub(super) operand_ty: Ty,
+    /// Whether the right operand converts to `operand_ty` through an
+    /// `@implicit` constructor.
+    pub(super) converted: bool,
+    /// Whether the dunder consumes its operand.
+    pub(super) consumes: bool,
+    pub(super) struct_name: String,
+    pub(super) struct_args: Vec<TyArg>,
+}
+
 fn is_optional_int(ty: &Ty) -> bool {
     matches!(ty, Ty::Struct(name, args)
         if (name == "Optional" || name.ends_with("$Optional"))

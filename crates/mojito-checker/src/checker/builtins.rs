@@ -466,35 +466,38 @@ impl Checker {
             if runtime_ty != ty {
                 self.record_literal_materializations(arg, &ty, &runtime_ty)?;
             }
-            if let Ty::Struct(name, _) = &ty
-                && !self.structs.contains_key(name)
-                && (list_element(&ty).is_some_and(is_printable)
-                    || set_element(&ty).is_some_and(is_printable)
-                    || dict_elements(&ty)
-                        .is_some_and(|(key, value)| is_printable(key) && is_printable(value))
-                    || tuple_elements(&ty)
-                        .is_some_and(|elements| elements.into_iter().all(is_printable)))
-            {
-                continue;
-            }
-            if matches!(&ty, Ty::Struct(name, args)
-                if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice")
-                    && args.is_empty())
-            {
-                continue;
-            }
-            if matches!(ty, Ty::Struct(..) | Ty::Param { .. }) || self.opaque_element(&ty).is_some()
-            {
-                if self.conforms_to(&ty, "Writable") {
-                    continue;
-                }
-                return Err(not_writable(&ty));
-            }
-            if !is_printable(&ty) {
+            if !self.printable_argument(&ty) {
                 return Err(not_writable(&ty));
             }
         }
         Ok(Ty::None)
+    }
+
+    /// Whether a value of type `ty` may be handed to `print` or a `Writer`: a
+    /// printable built-in, a built-in aggregate of printable elements, a
+    /// slice, or a struct or parameter that is `Writable`.
+    pub(super) fn printable_argument(&self, ty: &Ty) -> bool {
+        if let Ty::Struct(name, _) = ty
+            && !self.structs.contains_key(name)
+            && (list_element(ty).is_some_and(is_printable)
+                || set_element(ty).is_some_and(is_printable)
+                || dict_elements(ty)
+                    .is_some_and(|(key, value)| is_printable(key) && is_printable(value))
+                || tuple_elements(ty)
+                    .is_some_and(|elements| elements.into_iter().all(is_printable)))
+        {
+            return true;
+        }
+        if matches!(ty, Ty::Struct(name, args)
+            if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice")
+                && args.is_empty())
+        {
+            return true;
+        }
+        if matches!(ty, Ty::Struct(..) | Ty::Param { .. }) || self.opaque_element(ty).is_some() {
+            return self.conforms_to(ty, "Writable");
+        }
+        is_printable(ty)
     }
 
     /// Type the built-in `input(prompt)`: the prompt is a compile-time or

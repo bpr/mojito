@@ -291,9 +291,22 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `realize_method_call` retargets a closed method call to the clone member
   `declarations.rs:method_clone_target` finds (the helper
   `constructor_clone_target` shares), `realize_builtin_len` takes the `len`
-  witness, `plain_data` is the instance-argument obligation of a
-  `MethodBody`, and `census` reports what keeps each generic body from being
-  captured, with `grammar_features` naming the constructs it holds. `struct_application_frames`, pushed in
+  witness, `realize_comparison` repeats an operator's type-driven dispatch
+  (through `operators.rs:struct_infix_dispatch`, the type-level half of
+  `infer_infix`), `plain_data` is the instance-argument obligation of a
+  `MethodBody` and `loan_free` its transfer obligation
+  (`body_transfer_effects` tells a vanishing transfer from a call-through
+  residue), and `census` reports what keeps each generic body from being
+  captured, with `grammar_features` naming the constructs it holds. The
+  submodule `template_facts/bound_dispatch.rs` re-selects a call through a
+  bound for an instance: `bound_witness` is the by-types resolver from a
+  receiver type, a method name, and the recorded argument types to the
+  requirement's witness (a place read, a hashed leaf, or a struct's own
+  method with its binders bound), `realize_bound_dispatch` rewrites the
+  abstract contract with it, `realize_inverted_writes` turns an inverted
+  `write_to` on a struct instance into that call, and
+  `realize_bound_builtin` re-proves a `hasher.update`/`writer.write`
+  argument's bound. `struct_application_frames`, pushed in
   `generics.rs:record_struct_instantiation`, is how a template keeps the
   struct applications its instances must request. `span_table` maps every
   `FactTable` onto the checker's storage, `BodyShape` is the grammar of the

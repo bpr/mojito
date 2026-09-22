@@ -35,57 +35,95 @@ parameters symbolic, or deriving an instantiation from a checked template. A
 defect found on the way is filed by its kind; a divergence from the pin goes
 to section 3, however small.
 
-- [ ] **1.1 A call that records a contract, a conversion, or an origin has no
-  derivation recipe**
+- [ ] **1.1 A body that calls its own callable parameter publishes a
+  call-through residue**
 
-  Problem: an instance inherits a template's facts only when every fact table
-  the body touched has a recipe, and most call facts do not.
-  - Tables with a recipe are listed in the design record. Every conversion
-    table, `CallTransfers`, `CallResultOrigins`, and every
-    `SemanticAdjustment` except `MaterializeLiteral` and the pointer-slot four
-    refuse the body
-    (`templates.rs:derive_adjustment`, `template_facts.rs:derivable_table`).
-  - A method call derives only under `templates.rs:closed_method_contract`:
-    on `self` or a field of it, every argument a closed scalar bound by value.
-    175 of the 314 clone bodies still inferred hold a call that passes
-    something else (`template_census.clone.grammar.expr:MethodCall+args`).
-  - A method call through a trait bound records a `CheckedCallContract` whose
-    target an instance must realize against the concrete implementation. The
-    built-in `len` is the one realized operation today
-    (`realize_builtin_len`).
-  - A callee whose transfer or call-through summary is not empty also refuses.
-    Replaying a stabilized summary on remapped places is the missing recipe.
-  - A reference-returning call on a field already derives when it passes
-    scalars (`templates.rs:closed_reference_contract`). `List.index`,
-    `List.__hash__`, `Dict.get`, and `Dict.__eq__` hold one and wait only on a
-    non-scalar argument or a call through a bound.
-  - A `ref` local and a receiver reached through a reference derive too. The
-    12 `Dict` and `Set` loops over `ref entry = self.entries[i]` and
-    `List.extend(Span)` wait on the same two things: `entry.key == key`
-    dispatches through the bound, and `other.find_index(mine.key)` passes a
-    non-scalar.
-  - Every bundled `mut` parameter (37 clone bodies) is a writer or a hasher
-    the body calls through its bound, so those bodies wait here as well.
-  - Each recipe needs its soundness argument written beside
-    `template_certificate`, and a verification-mode run over a probe.
-  - Depends on nothing.
-  - Model: Fable, plan first. One recipe per table is small. Choosing which
-    concrete-dependent decisions a clone check makes after selection is not.
-
-- [ ] **1.2 A place argument on a field's method is closed types only**
-
-  Problem: `self.inner.fill(slot)` derives when the `mut` or `ref` parameter's
-  type is closed, and keeps the clone check when it mentions a struct
-  parameter.
-  - On a call of `self`'s own method the callee's binders are the caller's, so
-    the instance substitutes the parameter type. On a field's method they are
-    the field struct's, and `CallParameters` holds the callee's own names.
-  - A `ref` local and a field reached through one are not admitted as a kept
-    place either.
+  Problem: `List.deinit_with`, `Optional.map`, `Optional.and_then`, and
+  `DictEntry.reap_with` call a `def(...) capturing[_]` parameter, which records
+  a `CallThroughEffect` on the body's own frame, and their callers
+  (`Dict.clear_with`, `Dict.deinit_with`) read it. Neither derives: 27 clone
+  bodies per pass in `benchmarks/compile/stdlib_heavy.mojo`
+  (`template_census.clone.sole_blocker.effects`).
+  - A transfer summary that vanishes for plain data already derives
+    (`vanishing_transfers`). A residue names the callable parameter by slot
+    (`CallThroughCallee::RuntimeParam`) and its arguments by signature
+    origin, so it is the same under every instance and could be kept and
+    republished; a caller's read then needs the same replay on its own actuals.
+  - Such a call also records `CallableCaptureAccesses` at the caller from the
+    concrete closure's type, which has no recipe either
+    (`templates.rs:derive_adjustment`).
   - Depends on nothing.
   - Model: Fable, plan first.
 
-- [ ] **1.3 An augmented or whole-value store to a subscripted element keeps the
+- [ ] **1.2 A converting argument and a conversion table have no recipe**
+
+  Problem: an argument that converts through an `@implicit` constructor
+  records `ImplicitConversions` and its three sibling tables, and a clone may
+  select a different constructor, or none, so the body refuses.
+  - Seven clone bodies per pass, all `write_repr_to`, which the `TypeName`
+    adjustment also blocks.
+  - The conversion is chosen from the argument's and the parameter's types
+    (`checker.rs:implicit_conversion_constructor`), a by-types decision an
+    instance could repeat, as `realize_comparison` repeats an operator's.
+  - Depends on nothing.
+  - Model: Opus, plan first.
+
+- [ ] **1.3 An arithmetic operator through a bound, and a reflected, consuming,
+  or converting comparison, keep the clone check**
+
+  Problem: `==`, `!=`, and the orderings over two parameter-typed places
+  derive (`template_facts.rs:realize_comparison`); `a + b` under `T: Addable`
+  does not, nor does a comparison whose instance converts or consumes its
+  right operand, dispatches a reflected dunder, or serves `!=` through
+  `__eq__` (`NegatedEquality`).
+  - `struct_infix_dispatch` already decides each of those from the operand
+    types; what is missing is the recipe for the facts they record at the
+    operand (`ImplicitConversions`, `CopyPlaceValueUses`, the adjustment).
+  - A comparison of a place against a literal or a call result is also out:
+    only two places are admitted, since each records nothing in either check.
+  - Depends on nothing.
+  - Model: Opus, plan first.
+
+- [ ] **1.4 A bound dispatch whose instance witness is overloaded, consumes
+  or mutates its receiver, or bakes a binder keeps the clone check**
+
+  Problem: `item.__hash__(hasher)` and `item.write_to(writer)` through a
+  bound derive when the instance's type declares one read-`self` method of
+  that name whose binders, if any, bind to the caller's own symbolic types
+  (`template_facts/bound_dispatch.rs:bound_witness`); every other witness
+  refuses.
+  - An overloaded witness (two `copy` or `__hash__` declarations) needs the
+    clone check's ranking on the recorded argument types, which
+    `select_method_overload` makes from expressions, not types.
+  - A witness with a `mut` or consuming receiver records the receiver's
+    place, its generation refresh, and an implicit copy the abstract call
+    never recorded.
+  - A binder the instance would bake (a witness `[H: Hasher]` handed a
+    concrete hasher) selects a per-call clone in the clone check, which no
+    recipe repeats; the symbolic binding a caller's own `H` gives is the only
+    one admitted.
+  - A type that meets `Hashable` without declaring `__hash__` (the
+    reflective default) selects no method at all, and a `hasher.update(x)`
+    on a concrete hasher selects one where the bounded form is a builtin.
+  - Depends on nothing.
+  - Model: Opus, plan first.
+
+- [ ] **1.5 A reference is never a call argument**
+
+  Problem: a `ref` local, a field reached through one, and a reference call's
+  result are not admitted as an argument, kept or by value, so a body that
+  hands one on keeps the clone check.
+  - `List.extend(Span)` hands `elements[i].copy()` on and derives; a body
+    handing `elements[i]` itself, or `ref entry = self.entries[i]` then
+    `f(entry)`, does not.
+  - Such an argument records a borrow of its own (`BorrowedReferenceReceivers`
+    for a receiver, a read through the handle for an argument), decided by
+    what the argument is rather than by its type, so the recipe is the one
+    `REFERENCE_RECEIVERS` has.
+  - Depends on nothing.
+  - Model: Opus, plan first.
+
+- [ ] **1.6 An augmented or whole-value store to a subscripted element keeps the
   clone check**
 
   Problem: a scalar store through a subscript derives
@@ -94,17 +132,18 @@ to section 3, however small.
   - `self.counts[i] += 1` records the `AugmentedSubscript` adjustment, which
     holds a getter contract, an optional setter, and an in-place operator and
     has no recipe.
-  - `self.index[bucket] = entries^` stores a moved value of a non-scalar type,
-    so the setter's contract is not closed. `Dict._append_new` and
+  - `self.index[bucket] = entries^` stores a moved value of a non-scalar type
+    through the setter, a whole-value argument the store's grammar does not
+    admit yet (`element_store` demands a scalar). `Dict._append_new` and
     `Dict.update` are this shape.
   - A whole element read from the same list (`self.items[i] = self.items[j]`)
     is accepted for `Int` and rejected for `String`, so it cannot derive until
     that divergence closes
     (`conformance/probes/element_store_from_same_list.mojo`).
-  - Depends on 1.1 for non-scalar arguments.
+  - Depends on nothing.
   - Model: Fable, plan first.
 
-- [ ] **1.4 A method that constructs a struct keeps the clone check**
+- [ ] **1.7 A method that constructs a struct keeps the clone check**
 
   Problem: a construction is outside the method grammar, and the one table it
   always fills has no recipe.
@@ -122,23 +161,24 @@ to section 3, however small.
     overload target naming the `__init__` clone. `constructor_clone_target`
     already finds that clone, through the helper the sibling-call recipe
     shares (`declarations.rs:method_clone_target`).
-  - A constructor argument is a call argument, so anything but a closed scalar
-    waits on 1.1.
-  - Depends on 1.1 for non-scalar arguments.
+  - A constructor argument is a call argument, and a whole value of the
+    parameter type bound by value already has its recipe
+    (`VALUE_ARGUMENTS`).
+  - Depends on nothing.
   - Model: Fable, plan first.
 
-- [ ] **1.5 A method that raises keeps the clone check**
+- [ ] **1.8 A method that raises keeps the clone check**
 
   Problem: `raises` and `raise` are outside the method grammar, so a checked
   accessor is inferred per instantiation beside its unchecked twin.
   - `Optional.__getitem__` and `Dict.__getitem__` are of this shape: 21 clone
     bodies per pass (`template_census.clone.grammar.raises`).
-  - The raised value is a construction, so this waits on 1.4.
+  - The raised value is a construction, so this waits on 1.7.
     `EffectFacts::raises` already substitutes.
-  - Depends on 1.4.
+  - Depends on 1.7.
   - Model: Opus, plan first.
 
-- [ ] **1.6 A struct with a field of a parameter type is never a plain-data
+- [ ] **1.9 A struct with a field of a parameter type is never a plain-data
   argument**
 
   Problem: a `MethodBody` derivation refuses an instance whose argument may
@@ -159,7 +199,7 @@ to section 3, however small.
   - Model: Opus, plan first. The lever is one predicate. The fallout is every
     origin test that relied on the conservative answer.
 
-- [ ] **1.7 A folded compile-time value that survives into an instance breaks its
+- [ ] **1.10 A folded compile-time value that survives into an instance breaks its
   trace**
 
   Problem: the elaborator writes a fresh literal where a value parameter or a
@@ -177,7 +217,7 @@ to section 3, however small.
   - Model: Opus, plan first. A kept identity on a folded node must be checked
     against every consumer of `SyntaxId::fresh()` in the elaborator.
 
-- [ ] **1.8 A struct with an origin or a value parameter derives no method**
+- [ ] **1.11 A struct with an origin or a value parameter derives no method**
 
   Problem: a method derives only on a struct whose parameters are all plain
   types, so `Span` and `Array` keep the clone check for every method.
@@ -188,11 +228,29 @@ to section 3, however small.
   - A receiver origin (`ref[o] self`) is refused for the same reason: the
     binder it names is not a plain type parameter.
   - An origin argument passes through unchanged. A value argument is folded
-    by the elaborator, which is 1.7.
-  - Depends on 1.7 for a value parameter.
+    by the elaborator, which is 1.10.
+  - Depends on 1.10 for a value parameter.
   - Model: Fable, plan first.
 
-- [ ] **1.9 A local declared inside an unrolled loop has no per-copy binding**
+- [ ] **1.12 A loan-carrying instance needs its transfers replayed on remapped
+  places**
+
+  Problem: a body that replays a transfer summary derives only for an instance
+  whose values are plain data; one whose argument carries a loan (`Span`, a
+  struct holding a reference) keeps the clone check.
+  - The replay records `CallTransfers` and `CallResultOrigins` whose sources
+    are `Origin::Place` values rooted at checker-run owners, merges into the
+    unkeyed `transferred_origins` store, and may derive an effect whose
+    destination is a `SigOrigin::Bound` owner of an enclosing frame. Each
+    needs the `TemplateOwner` remapping the invalidation tables already have.
+  - The escape check `replay_transfer_effects` runs is a verdict, which a
+    derivation must refuse into, never skip.
+  - A struct with an origin parameter mints no instance clones today, so the
+    shape is unreachable until 1.11 lands.
+  - Depends on 1.11.
+  - Model: Fable, plan first.
+
+- [ ] **1.13 A local declared inside an unrolled loop has no per-copy binding**
 
   Problem: an unrolled `comptime for` copies its body once per iteration, and
   a derivation mints one binding per template local, not one per copy.
@@ -203,7 +261,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, plan first.
 
-- [ ] **1.10 A surviving trait-bound template with a local of a parameter type
+- [ ] **1.14 A surviving trait-bound template with a local of a parameter type
   keeps the clone check**
 
   Problem: a `def` template may hold scalar locals and runtime `if` and
@@ -222,7 +280,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Fable, plan first.
 
-- [ ] **1.11 Every discovery round still infers every uncovered body again**
+- [ ] **1.15 Every discovery round still infers every uncovered body again**
 
   Problem: a compilation checks the whole elaborated program once per
   discovery round and once per transfer-effect round, and a checked template
@@ -242,7 +300,7 @@ to section 3, however small.
   - Depends on 1.1.
   - Model: Fable, plan first.
 
-- [ ] **1.12 Type parameters are identified by spelling**
+- [ ] **1.16 Type parameters are identified by spelling**
 
   Problem: a value parameter is now owned by its declaration
   (`ParamId { owner, slot }`), but `Ty::Param` still compares by name, so two
@@ -263,13 +321,13 @@ to section 3, however small.
   - The lever is a reference wrapper in `Ty::Param` with identity equality and
     a diagnostic name, and `IndexRef`-style slots for a signature's own
     binders, as `canonical_generic_signature` already does for values.
-  - Depends on nothing. 1.13 and 1.18 are easier
+  - Depends on nothing. 1.17 and 1.22 are easier
     after it, and do not need it.
   - Model: Fable, plan first. A comparison change under every checker
     substitution; the plan's job is to find the coincidence sites before the
     edit does.
 
-- [ ] **1.13 A body that forwards its pack gets no symbolic verdict**
+- [ ] **1.17 A body that forwards its pack gets no symbolic verdict**
 
   Problem: source validation types an element of a variadic pack that is
   still a parameter, but has no rule for a call that spreads the pack into
@@ -292,22 +350,7 @@ to section 3, however small.
   - Model: Fable, plan first. Structural call binding is owned by
     `mojito-ast`'s `call.rs`, and a spread is not a slot it knows.
 
-- [ ] **1.14 A variadic struct construction in a validated body is not matched
-  against its constructor**
-
-  Problem: inside a validated body, `Pair[Int, Bool](1, True)` types from its
-  type arguments and its arguments are checked only as expressions, so a
-  wrong argument list in an untaken arm is not reported.
-  - The instance and its constructor exist only once the elaborator mints
-    them (`infer_validated_variadic_construction`,
-    `checker/comptime_validation.rs`). The taken arm is still checked against
-    the minted constructor.
-  - A bare `Tuple(1, "one")` is exact: it types as the tuple display it is.
-  - The lever is the checker-owned instantiation 1.16 builds.
-  - Depends on 1.13.
-  - Model: Fable, plan first.
-
-- [ ] **1.15 A pack-keyed template's instances are never derived from it**
+- [ ] **1.18 A pack-keyed template's instances are never derived from it**
 
   Problem: a pack-keyed body is validated once, but its certificate is always
   incomplete, so every instance is still checked as a clone.
@@ -318,10 +361,10 @@ to section 3, however small.
     derivation needs the per-iteration substitution the elaborator's unrolling
     performs, which no fact recipe has.
   - `conformance/probes/template_fallback_pack.mojo` pins the clone check.
-  - Depends on 1.1.
+  - Depends on nothing.
   - Model: Fable, plan first.
 
-- [ ] **1.16 A variadic struct's type arguments are not inferred from its
+- [ ] **1.19 A variadic struct's type arguments are not inferred from its
   constructor**
 
   Problem: `Pair((1, True))` for `struct Pair[*Ts](...)` with
@@ -349,7 +392,22 @@ to section 3, however small.
   - Model: Fable, plan first. Moves one instantiation decision from the
     elaborator to the checker and touches the discovery loop's request kinds.
 
-- [ ] **1.17 A body reading `reflect[...]` is not validated symbolically**
+- [ ] **1.20 A variadic struct construction in a validated body is not matched
+  against its constructor**
+
+  Problem: inside a validated body, `Pair[Int, Bool](1, True)` types from its
+  type arguments and its arguments are checked only as expressions, so a
+  wrong argument list in an untaken arm is not reported.
+  - The instance and its constructor exist only once the elaborator mints
+    them (`infer_validated_variadic_construction`,
+    `checker/comptime_validation.rs`). The taken arm is still checked against
+    the minted constructor.
+  - A bare `Tuple(1, "one")` is exact: it types as the tuple display it is.
+  - The lever is the checker-owned instantiation 1.19 builds.
+  - Depends on 1.17.
+  - Model: Fable, plan first.
+
+- [ ] **1.21 A body reading `reflect[...]` is not validated symbolically**
 
   Problem: a body that reads a reflection handle checks only per
   instantiation (`reads_reflection`, `checker/comptime_validation.rs`), so an
@@ -363,7 +421,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Fable, plan first. A new symbolic form with no precedent.
 
-- [ ] **1.18 A `DType`- or vector-keyed template body is not validated symbolically**
+- [ ] **1.22 A `DType`- or vector-keyed template body is not validated symbolically**
 
   Problem: a body keyed on a `DType` parameter or a vector-typed value
   parameter checks only per instantiation, because `Ty::Simd` holds a
@@ -393,7 +451,7 @@ to section 3, however small.
     checker, the elaborator's width folding, and native lowering's vector
     types.
 
-- [ ] **1.19 A per-call method clone and a whole-struct specialization leave no
+- [ ] **1.23 A per-call method clone and a whole-struct specialization leave no
   trace**
 
   Problem: the elaborator traces a `def` clone and a per-instantiation method
@@ -402,16 +460,16 @@ to section 3, however small.
     parameters. `specialize.rs:per_call_method_clones` has four callers and
     records no `MethodInstanceTrace`.
   - A member of a struct specialized whole (`Tuple$…`, a `DType`-keyed range)
-    comes from a concrete-only template, so it also waits on 1.13 and 1.18.
+    comes from a concrete-only template, so it also waits on 1.17 and 1.22.
   - Hello World's 1320 generated body inferences are all of these two kinds.
-  - Depends on 1.13 and 1.18 for the whole-struct half; the per-call half
+  - Depends on 1.17 and 1.22 for the whole-struct half; the per-call half
     depends on nothing.
   - Model: Opus, plan first, for the per-call trace.
 
-- [ ] **1.20 An explicit `DType`-keyed application loses to a keyed overload of
+- [ ] **1.24 An explicit `DType`-keyed application loses to a keyed overload of
   the same name**
 
-  Problem: `kind[DType.float64](1.5)`, where `def kind[dt: DType](a:
+  Problem: `kind[DType.float64](1.8)`, where `def kind[dt: DType](a:
   Scalar[dt])` shares its name with a `def kind[T: Copyable](a: T)` holding a
   `comptime if`, reports "type mismatch for type parameter 'T': expected a
   type, found a value" — the wrong overload's parameter.
@@ -420,15 +478,15 @@ to section 3, however small.
   - The member is then dropped from the round-one program, leaving only the
     keyed sibling's stub for the explicit application to bind against.
   - Keeping it alive instead does not work today: its `Scalar[dt]` signature
-    cannot be checked with `dt` symbolic, which is exactly 1.18.
+    cannot be checked with `dt` symbolic, which is exactly 1.22.
   - Inferred calls to the *keyed* sibling do now work beside such a member,
     where the whole name used to be rejected.
-  - Depends on 1.18.
+  - Depends on 1.22.
   - Model: Fable, plan first. The lever is the symbolic `Ty::Simd` that entry
     introduces; the plan's job is the round-one survival rule for a member
     of no request-served class.
 
-- [ ] **1.21 The Pliron pivot has no falsifiable proof yet**
+- [ ] **1.25 The Pliron pivot has no falsifiable proof yet**
 
   Problem: [`docs/pliron-backend-pivot-plan.md`](pliron-backend-pivot-plan.md)
   stages a migration to a required Pliron IR framework, but its Stage A1 slice
@@ -507,7 +565,23 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Model: Fable, plan first. It changes the MIR call contract and the text
     schema with it.
 
-- [ ] **2.4 Native runtime ABI bump: land every change that needs a new
+- [ ] **2.4 A struct instance over a generic instance mangles its constructor
+  into an existing symbol**
+
+  Problem: `Bag[List[Int]](List[Int]())` runs on the VM and the native
+  backend refuses it: ``in `Bag.__init__`: unsupported concrete instance
+  symbol `Bag$mono$TList$u24$mono$u24$TInt$Int.__init__` collides with an
+  existing declaration``.
+  - The per-instantiation `__init__` clone and the monomorphized constructor
+    of the nested application mangle to one name.
+  - `Bag[Int]` and `Bag[String]` are fine; only an argument that is itself a
+    generic instance collides.
+  - `conformance/probes/native_nested_generic_instance_ctor.mojo` pins it;
+    the pinned Mojo runs it.
+  - Depends on nothing.
+  - Model: Opus.
+
+- [ ] **2.5 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
 
   Problem: each item below changes the native runtime ABI, so it needs an
@@ -563,7 +637,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   re-probed at every re-pin; every other Mojito-only acceptance is a
   divergence on the ledger below, waiting to be withdrawn. Both keep their
   fixtures under `assets/extensions/`.
-- The `26cfe94f40` re-pin (2026-09-21, Mojo `1.2.0.dev2026092105`) closed the
+- The `26cfe94f40` re-pin (2026-09-21, Mojo `1.6.0.dev2026092105`) closed the
   one subset change its window forced: a walrus updates and never introduces
   a binding. The window's unimplemented features are the changeset in
   [`docs/mojo-nightly.md`](mojo-nightly.md) and are filed separately; the two
