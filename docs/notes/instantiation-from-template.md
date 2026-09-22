@@ -271,6 +271,7 @@ they are a set, not a ladder.
 | `BOUND_DISPATCH` | a method call on a place of a bare parameter type, proved through a bound: `place.copy()`, `item.__hash__(hasher)`, `item.write_to(writer)`, or any requirement whose arguments are closed scalars or named places of a bare parameter type handed to a bounded `mut`/`ref` parameter | The template records the abstract dispatch (`__trait_dispatch.__hash__$ov$…`), or for `write_to` the inverted write, and nothing the receiver's type decides: a kept argument's place use and generation refresh follow from the requirement's convention, which the witness shares. `infer_method_call` decides a concrete receiver's witness from its type alone, and `bound_witness` repeats that decision from the types. Obligation 16 below. The call through the bound read the summaries of every conformer's method of that name, one key per conformer; each was empty, and the instance re-reads only its own target's. |
 | `BOUND_BUILTINS` | `hasher.update(x)`, `hasher._update_with_simd(x)`, or `writer.write(x…)` on a parameter bounded by `Hasher` or `Writer`, whose arguments are closed scalars, string literals, named whole values, `ref` locals, fields read through a reference, pointer slots, or reference calls | The builtin selects no callee and records at an argument only what its syntax decides: a borrow of a named place or a reference result, an unconsumed temporary, a closed literal's materialization. The argument's type it proved through the bound, and the instance proves it again at its own type (obligation 17), which for a hashed value is where the hash leaf is recorded. |
 | `BOUND_BINDERS` | the method's own type binders, each a plain trait-bounded type (`[H: Hasher]`) | A clone keeps such a binder, bound symbolically as the template binds it: no clone is minted per hasher, the VM reifies the binding at run time, and no retained fact substitutes it. The instance's substitution binds the struct's parameters alone (`instance_substitution`), as it does beside an origin binder. |
+| `CONSTRUCTIONS` | a construction of a declared struct whose compile-time arguments are types, as a whole value: `copy:` of a named place, or arguments that are closed scalars, whole values, or — for a fieldwise struct's reference field — a `ref` local | A construction records no contract: `infer_construction` selects an `__init__` from the argument types, retargets it to the instance's constructor clone, and reaches the struct application. Its one unconditional record, `ConstructionImmutableBinders`, is empty when no compile-time argument is an `ImmOrigin` cast, which the type-only arguments guarantee, and installation writes the empty entry again. What a constructor records at an argument is decided by the argument's syntax and the constructor's conventions (a copy owes obligation 3, a transfer obligation 10, a literal materializes to a closed type); the selected member binds each argument exactly, so no member can outrank it under any instance (obligation 18). A constructed type that names the receiver in an origin argument (`_ListIter[T, origin_of(self)]`) is kept with the slot unbound and the origin by template owner (`typed_origins`), and the `return`'s re-resolution of the annotation's `origin_of(self)` is repeated once by the instance rather than recorded. |
 
 The compiler-private trap `_mojito_abort("message")` is a statement of any
 non-keyed body: the built-in types its literal and selects nothing. A
@@ -414,6 +415,22 @@ only `Movable` records nothing there, and its `Int` clone would.
     leaf), each `_update_with_simd(x)` a vector, and each `writer.write(x…)`
     every argument's type printable (`printable_argument`, the acceptance
     `infer_print` applies). Nothing is recorded; the demand only refuses.
+18. **Constructions.** Each admitted construction is re-selected on the
+    substituted constructed type (`realize_construction`). A `copy:`
+    construction and a fieldwise one select nothing; the fieldwise one's
+    arguments must still equal their fields under the struct's own
+    substitution (a reference field's argument its referent). A hand-written
+    family keeps the template's member — the one whose lowered name the
+    template recorded, or the lone declaration — whose parameters every
+    argument still binds exactly (`match_call_slots` on the recorded
+    argument types; a literal materializes to a closed parameter; a
+    defaulted parameter has a closed type), unless every member's parameters
+    are closed, and takes the instance's clone of that member
+    (`constructor_clone_target`) as its target. A member with binders of its
+    own, a variadic binding, and a family the instance collapses refuse. A
+    bundled struct mints no constructor clone, so the template's spelling
+    stands and the instance owes the member's `where` clause
+    (`method_constraints_apply`) instead.
 
 The declaration's bounds and `where` clauses are not re-checked: the checker
 discharges them at the requesting call, and the elaborator proves a fully
@@ -531,18 +548,27 @@ tables. In short, for one debug-profile run each:
   A user struct that hashes or writes through its parameter derives for an
   `Int`, a `String`, and a user-struct instance alike
   (`template_method_bound_dispatch.mojo`).
+  Constructions took `stdlib_heavy` from 860 to 1004 and `generic.mojo` from
+  274 to 310: `List.copy`, `Optional.copy`, `Dict.copy`, `List.try_index`,
+  `Dict._reset_index`, and the four iterator makers (`List.__iter__`,
+  `List.__reversed__`, `Optional.__iter__`, `Dict.take_items`) derive. A user
+  struct's `copy:`, fieldwise, collection, and hand-written constructions
+  derive with the constructor clone retargeted
+  (`template_method_construction.mojo`), and a view constructed over
+  `ref source = self` with the receiver in its origin argument does too
+  (`assets/extensions/ok/ref_field_template_method_construction.mojo`).
 - Hello World mints no per-instantiation clones at all. Its generated bodies
   are members of structs specialized whole and per-call clones, from
   concrete-only templates.
-- The census (`template_census.*`) says which table recipes come next:
-  `ConstructionImmutableBinders` alone would make 62 more of the 296 clone
-  bodies still inferred capturable, and a call-through residue 27 more. Its
+- The census (`template_census.*`) says which table recipes come next: of
+  the 260 clone bodies still inferred, 173 are capturable already, and the
+  largest blocker left is a call-through residue (39 bodies, sole blocker of
+  27), then `ExplicitDestroyCalls` (13), the `TypeName` adjustment (11), and
+  `BorrowViewResult` (6, the `Dict.keys`/`values`/`__iter__` family). Its
   `grammar.*` counters say which constructs keep a body outside every class
-  whatever its tables: a direct call with arguments (174 bodies), a method
-  call with arguments (164, now admitted when each is a scalar or a whole
-  value of its parameter's type), a subscript that is neither a pointer slot
-  nor a reference call on a field (118), and a non-scalar closed result
-  (114).
+  whatever its tables: a method call with arguments (150 bodies), a direct
+  call with arguments (145), a subscript that is neither a pointer slot nor
+  a reference call on a field (107), and a non-scalar closed result (90).
 
 An earlier version of the `body_inference.clone` counter tested for a `$` in a
 name and so counted ordinary bundled structs' methods as clones. The figures
@@ -553,10 +579,19 @@ it produced (3828 for Hello World) were wrong and are withdrawn.
 Each of these keeps the clone check. The roadmap carries one entry per item.
 
 - A method body beyond `MethodBody`: a receiver origin, a copy or move
-  initializer, `raises`, the method's own binders, a `for` loop, a
-  construction, a string other than the `_mojito_abort` message, a call
-  passing a `ref` local or a reference call's result, an argument that
-  converts, and a local whose type is built over a parameter.
+  initializer, `raises`, the method's own binders, a `for` loop, a string
+  other than the `_mojito_abort` message, a call passing a `ref` local or a
+  reference call's result, an argument that converts, and a local whose type
+  is built over a parameter (`var result = List[Self.T]()` in
+  `List.__mul__`, `List.__getitem__(slice)`, and the owned `__iter__`s).
+- A construction with an `ImmOrigin` or a value compile-time argument, one
+  whose constructor has binders of its own or binds a variadic parameter,
+  one whose argument is a `ref` local bound to anything but a fieldwise
+  struct's reference field or is a reference call's result, and a sibling
+  call returning a view (`_DictKeyIter(self.items())` records
+  `BorrowViewResult`). A pointer's own place provenance inside a retained
+  type is still refused; only a struct's origin arguments are kept by
+  template owner.
 - A reference used as an argument, as the receiver of a method its bare
   parameter type promises through a bound, or as the base of a whole store
   (`self.entries[i].hits = 0` records a subscript descriptor), and one yielded

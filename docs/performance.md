@@ -400,6 +400,11 @@ ordinary bundled structs. The figures below replace it.
   three to `generic.mojo`, too few to show above session drift, so no
   interleaved pair was taken: three runs after read 17.60 to 17.93 s and
   11.10 to 11.54 s.
+- Constructions add 26 derived clone bodies per pass to `stdlib_heavy.mojo`
+  (144 of 2742 clone inferences: 860 to 1004 derived) and 36 to
+  `generic.mojo` (274 to 310). No interleaved pair was taken; three plain
+  runs after read 18.18 to 18.47 s and 11.83 to 12.17 s, in a session whose
+  drift is larger than the change, so no wall-time claim is made.
 
 ### Parameter-expression attributes (2026-09-20)
 
@@ -431,49 +436,53 @@ captured (`template_census.*`; `MOJITO_TIMING_NOTES=1` names each body).
 
 | | Bodies inferred | Capturable with today's recipes |
 |---|---:|---:|
-| Generic method templates | 243 | 106 |
-| Per-instantiation clones | 296 | 131 |
+| Generic method templates | 223 | 136 |
+| Per-instantiation clones | 260 | 173 |
 
 A derived body is not inferred, so it is not in the census. Of the 411
-per-instantiation clone bodies of that pass, 140 derive; the census rows are
+per-instantiation clone bodies of that pass, 176 derive; the census rows are
 the generated generic bodies that were inferred.
 
 What blocks the clone bodies, by how many bodies each reason appears in:
 
 | Reason | Bodies | Sole blocker of |
 |---|---:|---:|
-| `ConstructionImmutableBinders` | 103 | 62 |
 | a call-through residue | 39 | 27 |
-| a fact keyed outside the body's occurrences | 24 | 0 |
 | `ExplicitDestroyCalls` | 13 | 4 |
-| adjustment `TypeName` | 11 | 3 |
+| adjustment `TypeName` | 11 | 4 |
+| adjustment `EraseCompileTimeArgument` | 8 | 0 |
+| `ImplicitConversions` | 7 | 0 |
+| adjustment `PointerOriginCast` | 7 | 5 |
+| adjustment `BorrowViewResult` | 6 | 6 |
 
 The four reference facts (`ReferenceValueUses`, the `ReferenceResult`
 adjustment, `InteriorReferences`, `CopyableReferenceResultReads`),
-`SubscriptDescriptors`, `CallPlaceUses`, and a transfer summary that vanishes
-for plain data have recipes and left the table; what `effects` still counts
-is a body that calls its own callable parameter, or reads such a body's
-residue. The best recipe sets by how many more clone bodies they would make
-capturable: one, 62 (`ConstructionImmutableBinders`); two, 89 (plus the
-residue). Capturable is necessary, not sufficient: 131 bodies are capturable
-already and are inferred because no class admits their syntax.
+`SubscriptDescriptors`, `CallPlaceUses`, a transfer summary that vanishes
+for plain data, `ConstructionImmutableBinders`, and the return annotation's
+re-resolution (the facts once keyed outside the body) have recipes and left
+the table; what `effects` still counts is a body that calls its own callable
+parameter, or reads such a body's residue. The best single recipe left is
+that residue, 27 more clone bodies. Capturable is necessary, not sufficient:
+173 bodies are capturable already and are inferred because no class admits
+their syntax.
 
 What those bodies are made of is the census's second half
 (`template_census.<class>.grammar.<construct>`): every construct a method's
-declaration and body hold, whatever class admits it. Among the 296 clone
+declaration and body hold, whatever class admits it. Among the 260 clone
 bodies, the constructs no class admits in any form are the method's own
-binders (40) and `raises` with `raise` (21). The rest are admitted only in
+binders (37) and `raises` with `raise` (21). The rest are admitted only in
 part: a `mut` parameter (admitted with no origin clause, though every bundled
 one is a writer or a hasher the body calls through its bound), a `ref`
 declaration (admitted over a place of `self`, a parameter, a local, or a
-reference call), a method call with arguments (164, admitted when every
+reference call), a method call with arguments (150, admitted when every
 argument is a closed scalar, a kept place, or a whole value of exactly its
-parameter's type), a direct call with arguments (174), a subscript (118,
-admitted on a pointer slot or as a reference call on a field), a `^` transfer
-(118), a non-scalar closed result (114), a string literal (42, admitted as the
-`_mojito_abort` message), a `ref self` (admitted with no receiver origin), and
-a reference result (admitted when every `return` hands out a place of
-`self`).
+parameter's type), a direct call with arguments (145, admitted as a struct
+construction over closed scalars, whole values, or `copy:` of a named
+place), a subscript (107, admitted on a pointer slot or as a reference call
+on a field), a `^` transfer (115), a non-scalar closed result (90), a string
+literal (35, admitted as the `_mojito_abort` message), a `ref self` (admitted
+with no receiver origin), and a reference result (admitted when every
+`return` hands out a place of `self`).
 
 The remaining cost is body inference of uncovered bodies, about one second per
 transfer pass. `docs/roadmap.md` section 1 carries the entries that attack it,

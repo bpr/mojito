@@ -306,7 +306,18 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   abstract contract with it, `realize_inverted_writes` turns an inverted
   `write_to` on a struct instance into that call, and
   `realize_bound_builtin` re-proves a `hasher.update`/`writer.write`
-  argument's bound. `struct_application_frames`, pushed in
+  argument's bound. The submodule `template_facts/constructions.rs`
+  re-selects a struct construction's constructor for an instance
+  (`realize_construction`): the template's member must still bind every
+  recorded argument type exactly (`exact_binding`, over
+  `call.rs:match_call_slots`; a fieldwise struct's fields likewise), and
+  the target becomes the instance's clone of it through
+  `declarations.rs:constructor_clone_target`. A retained struct type that
+  names a binding in an origin argument is kept by template owner
+  (`unbound_struct_origins`/`bind_struct_origins` over `map_struct_origins`,
+  the bundle's `typed_origins`), and the return annotation an inference
+  re-resolves at each `return` is resolved once for a derived instance
+  (`annotation_spans`, `grew_outside_body`). `struct_application_frames`, pushed in
   `generics.rs:record_struct_instantiation`, is how a template keeps the
   struct applications its instances must request. `span_table` maps every
   `FactTable` onto the checker's storage, `BodyShape` is the grammar of the

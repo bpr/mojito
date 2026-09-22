@@ -510,6 +510,7 @@ assets/ok/template_method_borrowed_parameter.mojo	-	ineligible	no-scalar-entry-s
 assets/ok/template_method_bound_copy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_bound_dispatch.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_calls.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_getter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_moves.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_operator_dispatch.mojo	-	ineligible	no-scalar-entry-shape
@@ -622,6 +623,7 @@ assets/extensions/ok/ref_field_drain_mut_method.mojo	-	ineligible	no-scalar-entr
 assets/extensions/ok/ref_field_parametric_mut_subscript_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_parametric_mut_write_generic_wrapper.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_reborrow_read.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/ref_field_template_method_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_view_for_temporary.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_view_free_function.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_view_method_return.mojo	-	ineligible	no-scalar-entry-shape

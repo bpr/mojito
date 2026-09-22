@@ -120,6 +120,9 @@ to section 3, however small.
     for a receiver, a read through the handle for an argument), decided by
     what the argument is rather than by its type, so the recipe is the one
     `REFERENCE_RECEIVERS` has.
+  - A `ref` local handed to a fieldwise struct's reference field is admitted
+    (`CONSTRUCTIONS`); one handed to a hand-written constructor's `ref`
+    parameter, which records `BorrowRefArguments`, is not.
   - Depends on nothing.
   - Model: Opus, plan first.
 
@@ -143,42 +146,49 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Fable, plan first.
 
-- [ ] **1.7 A method that constructs a struct keeps the clone check**
+- [ ] **1.7 A method binding a local of a type built over a parameter keeps
+  the clone check**
 
-  Problem: a construction is outside the method grammar, and the one table it
-  always fills has no recipe.
-  - `List.copy`, `Optional.copy`, `Set.copy`, `Dict.keys`, and `Dict.__iter__`
-    are one construction each.
-  - `ConstructionImmutableBinders` blocks 103 clone bodies and is the sole
-    blocker of 56, the best single recipe left (`docs/performance.md`, *Census
-    of method bodies*).
-  - The 16 iterator makers (`List.__iter__`, `List.__reversed__`,
-    `Optional.__iter__`, `Dict.take_items`) are `ref source = self` and one
-    construction. The `ref` declaration already derives. Their result type
-    carries `origin_of(self)`, a binding inside a type, which a bundle does
-    not keep yet.
-  - A construction also records a `generic_instantiations` entry and an
-    overload target naming the `__init__` clone. `constructor_clone_target`
-    already finds that clone, through the helper the sibling-call recipe
-    shares (`declarations.rs:method_clone_target`).
-  - A constructor argument is a call argument, and a whole value of the
-    parameter type bound by value already has its recipe
-    (`VALUE_ARGUMENTS`).
+  Problem: a `var` whose type mentions a parameter without being one
+  (`var result = List[Self.T]()`, `var it = _ListOwnedIter[Self.T](…)`)
+  refuses at the deletability obligation, which judges a binding again only
+  when its type is a bare parameter.
+  - `List.__mul__`, both `List.__getitem__` slice overloads, and the owned
+    `List.__iter__`/`Optional.__iter__`/`Set.__iter__` are of this shape:
+    their constructions derive now, and this is what is left.
+  - The declaration decides whether such a binding is deletable from the
+    type's own conformance under the instance's arguments
+    (`is_deinitable`), which realization could ask as it does for a bare
+    parameter (`realize_instance_facts`, obligation 11).
   - Depends on nothing.
-  - Model: Fable, plan first.
+  - Model: Opus, plan first.
 
-- [ ] **1.8 A method that raises keeps the clone check**
+- [ ] **1.8 A sibling call returning a view keeps the clone check**
+
+  Problem: `_DictKeyIter(self.items())` constructs from a sibling call whose
+  result is a view over `self`, and the call records `BorrowViewResult`,
+  an adjustment with no recipe.
+  - `Dict.keys`, `Dict.values`, and `Dict.__iter__` are this shape: six clone
+    bodies per pass, the sole blocker of each.
+  - The adjustment names the receiver's place the result borrows, decided by
+    the callee's `origin_of(self)` return and the receiver, neither of which
+    an instance changes; the result's type carries the origin, which the
+    bundle keeps by template owner now (`typed_origins`).
+  - Depends on nothing.
+  - Model: Opus, plan first.
+
+- [ ] **1.9 A method that raises keeps the clone check**
 
   Problem: `raises` and `raise` are outside the method grammar, so a checked
   accessor is inferred per instantiation beside its unchecked twin.
   - `Optional.__getitem__` and `Dict.__getitem__` are of this shape: 21 clone
     bodies per pass (`template_census.clone.grammar.raises`).
-  - The raised value is a construction, so this waits on 1.7.
-    `EffectFacts::raises` already substitutes.
-  - Depends on 1.7.
+  - The raised value is a construction, which derives now
+    (`CONSTRUCTIONS`); `EffectFacts::raises` already substitutes.
+  - Depends on nothing.
   - Model: Opus, plan first.
 
-- [ ] **1.9 A struct with a field of a parameter type is never a plain-data
+- [ ] **1.10 A struct with a field of a parameter type is never a plain-data
   argument**
 
   Problem: a `MethodBody` derivation refuses an instance whose argument may
@@ -199,7 +209,7 @@ to section 3, however small.
   - Model: Opus, plan first. The lever is one predicate. The fallout is every
     origin test that relied on the conservative answer.
 
-- [ ] **1.10 A folded compile-time value that survives into an instance breaks its
+- [ ] **1.11 A folded compile-time value that survives into an instance breaks its
   trace**
 
   Problem: the elaborator writes a fresh literal where a value parameter or a
@@ -217,7 +227,7 @@ to section 3, however small.
   - Model: Opus, plan first. A kept identity on a folded node must be checked
     against every consumer of `SyntaxId::fresh()` in the elaborator.
 
-- [ ] **1.11 A struct with an origin or a value parameter derives no method**
+- [ ] **1.12 A struct with an origin or a value parameter derives no method**
 
   Problem: a method derives only on a struct whose parameters are all plain
   types, so `Span` and `Array` keep the clone check for every method.
@@ -228,11 +238,11 @@ to section 3, however small.
   - A receiver origin (`ref[o] self`) is refused for the same reason: the
     binder it names is not a plain type parameter.
   - An origin argument passes through unchanged. A value argument is folded
-    by the elaborator, which is 1.10.
-  - Depends on 1.10 for a value parameter.
+    by the elaborator, which is 1.11.
+  - Depends on 1.11 for a value parameter.
   - Model: Fable, plan first.
 
-- [ ] **1.12 A loan-carrying instance needs its transfers replayed on remapped
+- [ ] **1.13 A loan-carrying instance needs its transfers replayed on remapped
   places**
 
   Problem: a body that replays a transfer summary derives only for an instance
@@ -246,11 +256,11 @@ to section 3, however small.
   - The escape check `replay_transfer_effects` runs is a verdict, which a
     derivation must refuse into, never skip.
   - A struct with an origin parameter mints no instance clones today, so the
-    shape is unreachable until 1.11 lands.
-  - Depends on 1.11.
+    shape is unreachable until 1.12 lands.
+  - Depends on 1.12.
   - Model: Fable, plan first.
 
-- [ ] **1.13 A local declared inside an unrolled loop has no per-copy binding**
+- [ ] **1.14 A local declared inside an unrolled loop has no per-copy binding**
 
   Problem: an unrolled `comptime for` copies its body once per iteration, and
   a derivation mints one binding per template local, not one per copy.
@@ -261,7 +271,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, plan first.
 
-- [ ] **1.14 A surviving trait-bound template with a local of a parameter type
+- [ ] **1.15 A surviving trait-bound template with a local of a parameter type
   keeps the clone check**
 
   Problem: a `def` template may hold scalar locals and runtime `if` and
@@ -280,7 +290,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Fable, plan first.
 
-- [ ] **1.15 Every discovery round still infers every uncovered body again**
+- [ ] **1.16 Every discovery round still infers every uncovered body again**
 
   Problem: a compilation checks the whole elaborated program once per
   discovery round and once per transfer-effect round, and a checked template
@@ -300,7 +310,7 @@ to section 3, however small.
   - Depends on 1.1.
   - Model: Fable, plan first.
 
-- [ ] **1.16 Type parameters are identified by spelling**
+- [ ] **1.17 Type parameters are identified by spelling**
 
   Problem: a value parameter is now owned by its declaration
   (`ParamId { owner, slot }`), but `Ty::Param` still compares by name, so two
@@ -321,13 +331,13 @@ to section 3, however small.
   - The lever is a reference wrapper in `Ty::Param` with identity equality and
     a diagnostic name, and `IndexRef`-style slots for a signature's own
     binders, as `canonical_generic_signature` already does for values.
-  - Depends on nothing. 1.17 and 1.22 are easier
+  - Depends on nothing. 1.18 and 1.23 are easier
     after it, and do not need it.
   - Model: Fable, plan first. A comparison change under every checker
     substitution; the plan's job is to find the coincidence sites before the
     edit does.
 
-- [ ] **1.17 A body that forwards its pack gets no symbolic verdict**
+- [ ] **1.18 A body that forwards its pack gets no symbolic verdict**
 
   Problem: source validation types an element of a variadic pack that is
   still a parameter, but has no rule for a call that spreads the pack into
@@ -350,7 +360,7 @@ to section 3, however small.
   - Model: Fable, plan first. Structural call binding is owned by
     `mojito-ast`'s `call.rs`, and a spread is not a slot it knows.
 
-- [ ] **1.18 A pack-keyed template's instances are never derived from it**
+- [ ] **1.19 A pack-keyed template's instances are never derived from it**
 
   Problem: a pack-keyed body is validated once, but its certificate is always
   incomplete, so every instance is still checked as a clone.
@@ -364,7 +374,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Fable, plan first.
 
-- [ ] **1.19 A variadic struct's type arguments are not inferred from its
+- [ ] **1.20 A variadic struct's type arguments are not inferred from its
   constructor**
 
   Problem: `Pair((1, True))` for `struct Pair[*Ts](...)` with
@@ -392,7 +402,7 @@ to section 3, however small.
   - Model: Fable, plan first. Moves one instantiation decision from the
     elaborator to the checker and touches the discovery loop's request kinds.
 
-- [ ] **1.20 A variadic struct construction in a validated body is not matched
+- [ ] **1.21 A variadic struct construction in a validated body is not matched
   against its constructor**
 
   Problem: inside a validated body, `Pair[Int, Bool](1, True)` types from its
@@ -403,11 +413,11 @@ to section 3, however small.
     `checker/comptime_validation.rs`). The taken arm is still checked against
     the minted constructor.
   - A bare `Tuple(1, "one")` is exact: it types as the tuple display it is.
-  - The lever is the checker-owned instantiation 1.19 builds.
-  - Depends on 1.17.
+  - The lever is the checker-owned instantiation 1.20 builds.
+  - Depends on 1.18.
   - Model: Fable, plan first.
 
-- [ ] **1.21 A body reading `reflect[...]` is not validated symbolically**
+- [ ] **1.22 A body reading `reflect[...]` is not validated symbolically**
 
   Problem: a body that reads a reflection handle checks only per
   instantiation (`reads_reflection`, `checker/comptime_validation.rs`), so an
@@ -421,7 +431,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Fable, plan first. A new symbolic form with no precedent.
 
-- [ ] **1.22 A `DType`- or vector-keyed template body is not validated symbolically**
+- [ ] **1.23 A `DType`- or vector-keyed template body is not validated symbolically**
 
   Problem: a body keyed on a `DType` parameter or a vector-typed value
   parameter checks only per instantiation, because `Ty::Simd` holds a
@@ -451,7 +461,7 @@ to section 3, however small.
     checker, the elaborator's width folding, and native lowering's vector
     types.
 
-- [ ] **1.23 A per-call method clone and a whole-struct specialization leave no
+- [ ] **1.24 A per-call method clone and a whole-struct specialization leave no
   trace**
 
   Problem: the elaborator traces a `def` clone and a per-instantiation method
@@ -460,13 +470,13 @@ to section 3, however small.
     parameters. `specialize.rs:per_call_method_clones` has four callers and
     records no `MethodInstanceTrace`.
   - A member of a struct specialized whole (`Tuple$…`, a `DType`-keyed range)
-    comes from a concrete-only template, so it also waits on 1.17 and 1.22.
+    comes from a concrete-only template, so it also waits on 1.18 and 1.23.
   - Hello World's 1320 generated body inferences are all of these two kinds.
-  - Depends on 1.17 and 1.22 for the whole-struct half; the per-call half
+  - Depends on 1.18 and 1.23 for the whole-struct half; the per-call half
     depends on nothing.
   - Model: Opus, plan first, for the per-call trace.
 
-- [ ] **1.24 An explicit `DType`-keyed application loses to a keyed overload of
+- [ ] **1.25 An explicit `DType`-keyed application loses to a keyed overload of
   the same name**
 
   Problem: `kind[DType.float64](1.8)`, where `def kind[dt: DType](a:
@@ -478,15 +488,15 @@ to section 3, however small.
   - The member is then dropped from the round-one program, leaving only the
     keyed sibling's stub for the explicit application to bind against.
   - Keeping it alive instead does not work today: its `Scalar[dt]` signature
-    cannot be checked with `dt` symbolic, which is exactly 1.22.
+    cannot be checked with `dt` symbolic, which is exactly 1.23.
   - Inferred calls to the *keyed* sibling do now work beside such a member,
     where the whole name used to be rejected.
-  - Depends on 1.22.
+  - Depends on 1.23.
   - Model: Fable, plan first. The lever is the symbolic `Ty::Simd` that entry
     introduces; the plan's job is the round-one survival rule for a member
     of no request-served class.
 
-- [ ] **1.25 The Pliron pivot has no falsifiable proof yet**
+- [ ] **1.26 The Pliron pivot has no falsifiable proof yet**
 
   Problem: [`docs/pliron-backend-pivot-plan.md`](pliron-backend-pivot-plan.md)
   stages a migration to a required Pliron IR framework, but its Stage A1 slice
@@ -1320,6 +1330,12 @@ words. The representation gap and the two standing ledgers are last.
       `iterator.__next__()` through the contract had no native
       `CopyIteratorReference` adapter, which a `for` loop's own advance has
       had all along (`copyable_iterator_reference_aggregate`).
+    - Until it closes, `tests/heavy/main.rs`'s `excluded == 0` fails on every
+      run, so `check-pliron-heavy` is red in every overnight gate
+      (2026-09-21, 2026-09-22). Leave the ratchet at zero: it only ever
+      ratchets down, and it is not what guards against a *new* exclusion —
+      the `expect_file!` manifest equality runs first and any new excluded
+      row changes the TSV.
     - Model: Opus, plan first. The arity change touches the instance
       signature, the call site, and the pliron parameter-argument rule
       together.

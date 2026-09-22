@@ -1642,6 +1642,44 @@ fn template_method_reference_receivers_derive() {
 }
 
 #[test]
+fn template_method_constructions_derive() {
+    // A `copy:` construction of the struct's own type, a fieldwise
+    // construction, a bundled collection over the struct's parameter, and a
+    // hand-written constructor family retargeted to the instance's own
+    // `__init__` clone, as a result, a field store, and a local.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_construction.mojo"),
+        "1 2 x 3 0 0\n1 x 1 2 x\n1 0 x 7\n1 1 5 y\n0 0\n",
+        &[
+            ("Box.copy", 2),
+            ("Box.empty", 2),
+            ("Box.some", 2),
+            ("Box.pair", 2),
+            ("Box.tagged", 2),
+            ("Box.tagged_as", 2),
+            ("Box.reset", 2),
+            ("Box.keep", 2),
+            ("Box.__init__", 2),
+            ("Tagged.__init__", 2),
+        ],
+    );
+}
+
+#[test]
+fn template_method_origin_bearing_constructions_derive() {
+    // A view over the receiver, constructed from a `ref` local into a
+    // fieldwise struct's reference field: the constructed type names the
+    // receiver in an origin argument, kept by binding and rebound per
+    // instance, and the `return` re-resolves the annotation's
+    // `origin_of(self)`.
+    assert_methods_derive(
+        include_str!("../assets/extensions/ok/ref_field_template_method_construction.mojo"),
+        "4 q 2 2\n5 r 1 1\n",
+        &[("Store.view", 2), ("Store.rest", 2), ("Store.__init__", 2)],
+    );
+}
+
+#[test]
 fn template_def_with_a_scalar_local_keeps_the_symbolic_choice() {
     // A surviving trait-bound `def` with a scalar local derives, so its
     // instances inherit the overload the template bound rather than ranking

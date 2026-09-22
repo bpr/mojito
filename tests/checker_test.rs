@@ -6737,8 +6737,8 @@ fn method_templates_are_identified_by_their_struct_and_body() {
 #[test]
 fn method_template_classes_name_what_the_body_holds() {
     // A method beyond a scalar getter is certified `MethodBody`, and its
-    // features say which arguments its certificate rests on. A call through
-    // a bound stays outside every class.
+    // features say which arguments its certificate rests on. A store through
+    // the method's own origin binder stays outside every class.
     use mojito::templates::{MethodFeatures, TemplateClass, TemplateCoverage};
     let source = "@fieldwise_init\nstruct Slot[T: Movable & Deinitable & Equatable](Movable):\n    var item: Self.T\n    var uses: Int\n\n    def count(self) -> Int:\n        return self.uses\n\n    def bump(mut self, step: Int):\n        self.uses += step\n\n    def replace(mut self, var item: Self.T):\n        self.item = item^\n        self.bump(1)\n\n    def same(self, other: Self.T) -> Bool:\n        return self.item == other\n\n    def peek(ref self) -> ref[origin_of(self.item)] Self.T:\n        return self.item\n\n    def tally(self, mut into: Int):\n        into += self.uses\n\n    def held(self) -> Int:\n        ref me = self\n        return me.uses\n\n    def through(self) -> Int:\n        ref me = self\n        return me.count()\n\n    def filled(self) -> Int:\n        var n = 0\n        self.tally(n)\n        return n\n\n    def first[o: Origin](self, ref[o] other: Self.T) -> ref[o] Self.T:\n        return other\n\n    def write[o: MutOrigin](self, ref[o] into: Int):\n        into += self.uses\n\ndef main():\n    var s = Slot(1, 0)\n    s.replace(2)\n    print(s.count(), s.same(2), s.peek())\n";
     let linked = mojito::link_source(source, std::path::Path::new("method_classes.mojo"))
@@ -6806,11 +6806,10 @@ fn method_template_classes_name_what_the_body_holds() {
         "Slot.write stores through its origin binder: {:?}",
         coverage("write")
     );
-    assert!(
-        matches!(coverage("same"), TemplateCoverage::Incomplete(_)),
-        "Slot.same is outside every class: {:?}",
-        coverage("same")
-    );
+    let TemplateCoverage::Certified(TemplateClass::MethodBody(same)) = coverage("same") else {
+        panic!("Slot.same is certified: {:?}", coverage("same"));
+    };
+    assert!(same.contains(MethodFeatures::OPERATOR_DISPATCH));
 }
 
 /// A residual constraint is neither false nor a proof, and negating it proves

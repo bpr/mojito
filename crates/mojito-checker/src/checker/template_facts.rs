@@ -20,7 +20,7 @@ use mojito_checked::templates::{
     IncompleteReason, InstanceName, InstanceTrace, MethodFeatures, OccurrenceId,
     TemplateArgumentBoundary, TemplateCallContract, TemplateClass, TemplateCoverage, TemplateId,
     TemplateInvalidation, TemplateObligation, TemplateOrigin, TemplateOwner, TemplatePlace,
-    TemplateProducer, TemplateReference,
+    TemplateProducer, TemplateReference, TypedOrigins, TypedTable,
 };
 use mojito_common::error::TypeError;
 use mojito_common::timing;
@@ -32,6 +32,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 mod bound_dispatch;
+mod constructions;
 
 /// Which kind of declaration a body inference visit belongs to, for the
 /// `body_inference.*` timing counters.
@@ -158,6 +159,8 @@ struct Occurrence {
     callee: Option<String>,
     /// A direct or method call's positional arguments.
     arguments: Vec<SyntaxId>,
+    /// A direct or method call's keyword arguments, each with its value.
+    keywords: Vec<(String, SyntaxId)>,
     /// Whether this is a bare identifier.
     identifier: bool,
     /// A method call's receiver occurrence and method name.
@@ -174,6 +177,7 @@ struct Occurrence {
 struct GrammarNotes {
     comparisons: Vec<OccurrenceId>,
     bound_builtins: Vec<(OccurrenceId, BoundBuiltin)>,
+    constructions: Vec<OccurrenceId>,
 }
 
 impl Checker {
@@ -357,6 +361,17 @@ impl Checker {
             && !verify
         {
             self.install_body_facts(facts, spans, param_owners)?;
+            // An inference re-resolves the return annotation over the body's
+            // own places at each `return` (`reconcile_return_origin_tails`),
+            // recording the receiver's facts at an `origin_of(self)` there;
+            // the instance does so once, under its own bindings.
+            if let Some(Some((annotation, generated))) = self.return_annotations.last() {
+                let _ = if *generated {
+                    self.resolve_generated_return_annotation(annotation)
+                } else {
+                    self.resolve_return_annotation(annotation)
+                };
+            }
             let counter = if template {
                 "template_bodies.reused"
             } else {
@@ -422,7 +437,7 @@ impl Checker {
             }
             return Ok(());
         };
-        if let Some((facts, _)) = &derived {
+        if let Some((realized, _)) = &derived {
             let inferred = self
                 .capture_body_facts(body, param_owners, &baseline, &reads)
                 .map_err(|reason| {
@@ -433,13 +448,13 @@ impl Checker {
                 })?;
             // A clone check never selects a rebind's by-value overload: the
             // declaration's selection stands, so only the template states it.
-            let facts = &without_rebind_selection(facts);
-            let inferred = without_rebind_selection(&inferred);
+            let facts = &comparable(realized);
+            let inferred = comparable(&inferred);
             if inferred != *facts && overload_rebinding_only(facts, &inferred) {
                 // The one expected difference: the clone check ranked an
                 // overload set again on concrete arguments, which the
                 // template's selection forbids. The derived facts stand.
-                self.replace_body_facts(body, facts, param_owners)?;
+                self.replace_body_facts(body, realized, param_owners)?;
                 timing::count("template_derivations.overload_rebinding", 1);
             } else if inferred != *facts {
                 return Err(TypeError::InvariantViolation(format!(
@@ -1043,6 +1058,11 @@ impl Checker {
             }
             self.realize_method_call(&mut facts, index, occurrences, substitution)?;
         }
+        // A construction selected its constructor from the arguments' types
+        // and named the instance's clone of it, where one exists.
+        for construction in &template.constructions {
+            self.realize_construction(&mut facts, *construction, occurrences, substitution)?;
+        }
         for comparison in &template.comparisons {
             self.realize_comparison(&mut facts, *comparison, occurrences)?;
         }
@@ -1491,10 +1511,12 @@ impl Checker {
                     Ok(mut facts) => {
                         let (coverage, notes) = self.certificate(site, Some(&facts));
                         // The template recorded nothing at a comparison the
-                        // grammar admitted, and nothing that names a bound
-                        // builtin's call, so only the grammar names them.
+                        // grammar admitted, nothing that names a bound
+                        // builtin's call, and no contract at a construction,
+                        // so only the grammar names them.
                         facts.comparisons = notes.comparisons;
                         facts.bound_builtins = notes.bound_builtins;
+                        facts.constructions = notes.constructions;
                         (facts, coverage)
                     }
                     Err(reason) => (
@@ -1579,6 +1601,7 @@ impl Checker {
             ])
             .chain(method_body.then_some(TemplateObligation::PlainDataArguments))
             .chain(method_body.then_some(TemplateObligation::PlainDataTransfers))
+            .chain(method_body.then_some(TemplateObligation::ConstructorSelection))
             .collect(),
         });
     }
@@ -1697,6 +1720,7 @@ impl Checker {
         let shape = BodyShape {
             origins: &self.syntax_origins,
             facts,
+            structs: &self.structs,
             params: params
                 .iter()
                 .map(|parameter| parameter.name.as_str())
@@ -1717,10 +1741,12 @@ impl Checker {
             places: RefCell::new(Vec::new()),
             comparisons: RefCell::new(Vec::new()),
             bound_builtins: RefCell::new(Vec::new()),
+            constructions: RefCell::new(Vec::new()),
         };
         if !shape.block(body, false)
             || !shape.comparisons.borrow().is_empty()
             || !shape.bound_builtins.borrow().is_empty()
+            || !shape.constructions.borrow().is_empty()
         {
             return outside("the body is not scalar returns over direct calls and 'len'");
         }
@@ -2037,6 +2063,7 @@ impl Checker {
         let shape = BodyShape {
             origins: &self.syntax_origins,
             facts,
+            structs: &self.structs,
             params: method
                 .params
                 .iter()
@@ -2076,6 +2103,7 @@ impl Checker {
             places: RefCell::new(Vec::new()),
             comparisons: RefCell::new(Vec::new()),
             bound_builtins: RefCell::new(Vec::new()),
+            constructions: RefCell::new(Vec::new()),
         };
         if !shape.block(&method.body, false) {
             return outside("the body is outside the method grammar");
@@ -2092,6 +2120,7 @@ impl Checker {
                 GrammarNotes {
                     comparisons: shape.comparisons.borrow().clone(),
                     bound_builtins: shape.bound_builtins.borrow().clone(),
+                    constructions: shape.constructions.borrow().clone(),
                 },
             )
         };
@@ -2101,15 +2130,18 @@ impl Checker {
         if !shape.references_recorded(facts) {
             return outside("a reference is yielded or kept outside the method grammar");
         }
-        // The grammar admitted every method call it judged closed. Nothing
-        // else may have selected a callee or read an effect summary.
+        // The grammar admitted every method call it judged closed and every
+        // construction. Nothing else may have selected a callee or read an
+        // effect summary.
         let targets: Vec<&str> = facts
             .selected_calls
             .iter()
             .map(|(_, call)| call.contract.target.as_str())
             .collect();
-        let at_method_call =
-            |id: &OccurrenceId| facts.selected_calls.iter().any(|(call, _)| call == id);
+        let constructions = shape.constructions.borrow();
+        let admitted_call = |id: &OccurrenceId| {
+            facts.selected_calls.iter().any(|(call, _)| call == id) || constructions.contains(id)
+        };
         // A call through a bound reads the summaries of every conformer's
         // method of that name, one key per conformer (`Struct.method`, or the
         // overload symbol `Struct.method$ov$…`), none of them a target.
@@ -2136,12 +2168,12 @@ impl Checker {
         let stray_call = facts
             .call_parameters
             .iter()
-            .any(|(id, _)| !at_method_call(id))
+            .any(|(id, _)| !admitted_call(id))
             || !facts.generic_instantiations.is_empty()
             || !facts
                 .overload_targets
                 .iter()
-                .all(|(id, _)| at_method_call(id))
+                .all(|(id, _)| admitted_call(id))
             || !facts
                 .effect_free_callees
                 .iter()
@@ -2209,13 +2241,14 @@ impl Checker {
         if self.body_transfer_effects(&occurrences, baseline, reads).0 {
             reasons.push("effects".to_string());
         }
+        let annotation = self.return_annotation_spans();
         for (index, table) in FactTable::ALL.into_iter().enumerate() {
             let entries = self.span_table(table);
             let recorded = occurrences
                 .iter()
                 .filter(|occurrence| entries.has(&occurrence.span))
                 .count();
-            if entries.entries() != baseline.tables[index] + recorded {
+            if self.grew_outside_body(table, &occurrences, baseline.tables[index], &annotation) {
                 reasons.push(format!("outside:{table:?}"));
             } else if recorded > 0 && !derivable_table(table) {
                 reasons.push(format!("table:{table:?}"));
@@ -2307,6 +2340,7 @@ impl Checker {
                     span: statement.source_span(),
                     callee: None,
                     arguments: Vec::new(),
+                    keywords: Vec::new(),
                     identifier: false,
                     method_call: None,
                     comparison: None,
@@ -2328,6 +2362,20 @@ impl Checker {
                             .iter()
                             .map(|argument| self.origins.origin(argument.syntax_id))
                             .collect(),
+                        _ => Vec::new(),
+                    },
+                    keywords: match &expr.kind {
+                        ExprKind::Call { kwargs, .. } | ExprKind::MethodCall { kwargs, .. } => {
+                            kwargs
+                                .iter()
+                                .map(|keyword| {
+                                    (
+                                        keyword.name.clone(),
+                                        self.origins.origin(keyword.value.syntax_id),
+                                    )
+                                })
+                                .collect()
+                        }
                         _ => Vec::new(),
                     },
                     identifier: matches!(expr.kind, ExprKind::Identifier(_)),
@@ -2394,35 +2442,7 @@ impl Checker {
         let vanishing_transfers = self.body_transfer_effects(&occurrences, baseline, reads).1;
         let owner_end = self.next_owner.get();
         let local_owner = |owner: OwnerId| {
-            param_owners
-                .runtime
-                .iter()
-                .position(|param| *param == Some(owner))
-                .map(TemplateOwner::Param)
-                .or_else(|| {
-                    (param_owners.receiver == Some(owner)).then_some(TemplateOwner::Receiver)
-                })
-                .or_else(|| {
-                    param_owners
-                        .compile_time
-                        .iter()
-                        .find(|(_, param)| *param == owner)
-                        .map(|(name, _)| TemplateOwner::CompileTimeParam(name.clone()))
-                })
-                .or_else(|| {
-                    (baseline.owner_start..owner_end)
-                        .contains(&owner.0)
-                        .then(|| TemplateOwner::Local(owner.0 - baseline.owner_start))
-                })
-                .or_else(|| {
-                    self.owner_scopes.first().and_then(|globals| {
-                        globals
-                            .iter()
-                            .find(|(_, global)| **global == owner)
-                            .map(|(name, _)| TemplateOwner::Global(name.clone()))
-                    })
-                })
-                .ok_or(IncompleteReason::ExternalBinding)
+            self.template_owner(owner, param_owners, baseline.owner_start, owner_end)
         };
         // A reference names the receiver, a parameter, or a local, which
         // every instance has (`for_each_owner` renumbers the last).
@@ -2499,10 +2519,30 @@ impl Checker {
             apart(values(&occurrences, &self.expression_place_types.borrow()))?;
         let (binding_types, reference_binding_types) =
             apart(values(&occurrences, &self.binding_types.borrow()))?;
+        let mut typed_origins = Vec::new();
+        let expression_types = unbound_typed(
+            TypedTable::Expression,
+            values(&occurrences, &self.expression_types.borrow()),
+            &local_place,
+            &mut typed_origins,
+        )?;
+        let expression_place_types = unbound_typed(
+            TypedTable::Place,
+            expression_place_types,
+            &local_place,
+            &mut typed_origins,
+        )?;
+        let binding_types = unbound_typed(
+            TypedTable::Binding,
+            binding_types,
+            &local_place,
+            &mut typed_origins,
+        )?;
         Ok(CheckedBodyFacts {
-            expression_types: values(&occurrences, &self.expression_types.borrow()),
+            expression_types,
             expression_place_types,
             binding_types,
+            typed_origins,
             reference_binding_types,
             reference_place_types,
             expression_bindings: owned(&self.expression_bindings.borrow())?,
@@ -2670,6 +2710,7 @@ impl Checker {
             // The certificate fills these from the grammar.
             comparisons: Vec::new(),
             bound_builtins: Vec::new(),
+            constructions: Vec::new(),
             method_instantiations: values(&occurrences, &self.method_instantiations.borrow()),
             locals: owner_end - baseline.owner_start,
             occurrences: occurrences
@@ -2702,37 +2743,60 @@ impl Checker {
         if self.body_transfer_effects(occurrences, baseline, reads).0 {
             return Err(IncompleteReason::UnkeyedFact("transfer effects"));
         }
+        let annotation = self.return_annotation_spans();
         for (index, table) in FactTable::ALL.into_iter().enumerate() {
+            if self.grew_outside_body(table, occurrences, baseline.tables[index], &annotation) {
+                return Err(IncompleteReason::FactOutsideBody(table));
+            }
             let entries = self.span_table(table);
             let recorded = occurrences
                 .iter()
                 .filter(|occurrence| entries.has(&occurrence.span))
                 .count();
-            if entries.entries() != baseline.tables[index] + recorded {
-                return Err(IncompleteReason::FactOutsideBody(table));
-            }
             // A recorded transfer is kept as the bundle's `vanishing_transfers`.
             if recorded > 0 && !derivable_table(table) && table != FactTable::CallTransfers {
                 return Err(IncompleteReason::UnsupportedTable(table));
             }
         }
+        // A construction's immutable-binder record is kept only as the fact
+        // that it is empty, which installation writes again: the grammar
+        // admits no `ImmOrigin` argument, so it is never otherwise.
+        let immutable_binders = self.construction_immutable_binders.borrow();
+        if occurrences.iter().any(|occurrence| {
+            immutable_binders
+                .get(&occurrence.span)
+                .is_some_and(|binders| !binders.is_empty())
+        }) {
+            return Err(IncompleteReason::ImmutableBinder);
+        }
         // A type is retained as written, and a binding identity inside one
-        // would never be remapped for an instance. The type of a `ref`
-        // binding is the exception: a reference at the top of a place or
-        // binding type is kept by template owner (`rooted_reference`).
+        // would never be remapped for an instance. Two exceptions are kept by
+        // template owner: a reference at the top of a place or binding type
+        // (`rooted_reference`), and a struct's origin arguments
+        // (`unbound_struct_origins`); a pointer's own provenance and a
+        // reference below the top stay refused.
         let expression_types = self.expression_types.borrow();
         let kept_apart = [
             &*self.expression_place_types.borrow(),
             &*self.binding_types.borrow(),
         ];
+        let abstracted = |ty: &Ty| {
+            unbound_struct_origins(ty, &|place| {
+                Ok(TemplatePlace {
+                    root: TemplateOwner::Receiver,
+                    path: place.path.clone(),
+                })
+            })
+            .is_ok()
+        };
         if occurrences.iter().any(|occurrence| {
             expression_types
                 .get(&occurrence.span)
-                .is_some_and(names_place)
+                .is_some_and(|ty| !abstracted(ty))
                 || kept_apart
                     .iter()
                     .filter_map(|table| table.get(&occurrence.span))
-                    .any(|ty| rooted_reference(ty).is_none() && names_place(ty))
+                    .any(|ty| rooted_reference(ty).is_none() && !abstracted(ty))
         }) {
             return Err(IncompleteReason::ExternalBinding);
         }
@@ -2784,20 +2848,38 @@ impl Checker {
                 .cloned()
                 .ok_or_else(|| corrupt("a body occurrence"))
         };
+        let rooted = |place: &TemplatePlace| {
+            Ok::<_, TypeError>(mojito_types::origin::OriginPlace {
+                root: owner(&place.root)?,
+                path: place.path.clone(),
+            })
+        };
+        // A struct type kept with its origin slots unbound gets the
+        // instance's own bindings back in them.
+        let typed = |table: TypedTable, id: &OccurrenceId, ty: &Ty| {
+            facts
+                .typed_origins
+                .iter()
+                .find(|typed| typed.table == table && typed.occurrence == *id)
+                .map_or_else(
+                    || Ok(ty.clone()),
+                    |typed| bind_struct_origins(ty, &typed.origins, &rooted),
+                )
+        };
         for (id, ty) in &facts.expression_types {
             self.expression_types
                 .borrow_mut()
-                .insert(span(id)?, ty.clone());
+                .insert(span(id)?, typed(TypedTable::Expression, id, ty)?);
         }
         for (id, ty) in &facts.expression_place_types {
             self.expression_place_types
                 .borrow_mut()
-                .insert(span(id)?, ty.clone());
+                .insert(span(id)?, typed(TypedTable::Place, id, ty)?);
         }
         for (id, ty) in &facts.binding_types {
             self.binding_types
                 .borrow_mut()
-                .insert(span(id)?, ty.clone());
+                .insert(span(id)?, typed(TypedTable::Binding, id, ty)?);
         }
         for (id, binding) in &facts.expression_bindings {
             self.expression_bindings
@@ -2819,12 +2901,6 @@ impl Checker {
                 .borrow_mut()
                 .insert(span(id)?, adjustment.clone());
         }
-        let rooted = |place: &TemplatePlace| {
-            Ok::<_, TypeError>(mojito_types::origin::OriginPlace {
-                root: owner(&place.root)?,
-                path: place.path.clone(),
-            })
-        };
         let referenced = |reference: &TemplateReference| {
             Ok::<_, TypeError>(mojito_types::origin::RefTy {
                 referent: Box::new(reference.referent.clone()),
@@ -2936,6 +3012,13 @@ impl Checker {
             self.method_instantiations
                 .borrow_mut()
                 .insert(span(id)?, instantiation.clone());
+        }
+        // A construction's immutable-binder record, empty as the grammar
+        // requires: what `infer_construction` writes at every construction.
+        for id in &facts.constructions {
+            self.construction_immutable_binders
+                .borrow_mut()
+                .insert(span(id)?, Vec::new());
         }
         for id in &facts.unconsumed_temporaries {
             self.unconsumed_temporaries.borrow_mut().insert(span(id)?);
@@ -3130,6 +3213,79 @@ impl Checker {
         ]
     }
 
+    /// The template-local identity of a binding a body's fact names: one of
+    /// the declaration's parameters, its receiver, a compile-time parameter,
+    /// a local the body declared (its identity in `locals..owner_end`), or a
+    /// module-scope binding by name. Anything else is outside the body.
+    fn template_owner(
+        &self,
+        owner: OwnerId,
+        param_owners: &BodyParams,
+        locals: u32,
+        owner_end: u32,
+    ) -> Result<TemplateOwner, IncompleteReason> {
+        param_owners
+            .runtime
+            .iter()
+            .position(|param| *param == Some(owner))
+            .map(TemplateOwner::Param)
+            .or_else(|| (param_owners.receiver == Some(owner)).then_some(TemplateOwner::Receiver))
+            .or_else(|| {
+                param_owners
+                    .compile_time
+                    .iter()
+                    .find(|(_, param)| *param == owner)
+                    .map(|(name, _)| TemplateOwner::CompileTimeParam(name.clone()))
+            })
+            .or_else(|| {
+                (locals..owner_end)
+                    .contains(&owner.0)
+                    .then(|| TemplateOwner::Local(owner.0 - locals))
+            })
+            .or_else(|| {
+                self.owner_scopes.first().and_then(|globals| {
+                    globals
+                        .iter()
+                        .find(|(_, global)| **global == owner)
+                        .map(|(name, _)| TemplateOwner::Global(name.clone()))
+                })
+            })
+            .ok_or(IncompleteReason::ExternalBinding)
+    }
+
+    /// Whether a table grew outside the body's occurrences during its check,
+    /// from `before` entries. Growth at the enclosing return annotation's own
+    /// expressions is the `return`'s re-resolution of that annotation, which
+    /// an instance repeats itself (`annotation_spans`), so it is not outside.
+    fn grew_outside_body(
+        &self,
+        table: FactTable,
+        occurrences: &[Occurrence],
+        before: usize,
+        annotation: &HashSet<SourceSpan>,
+    ) -> bool {
+        let entries = self.span_table(table);
+        let recorded = occurrences
+            .iter()
+            .filter(|occurrence| entries.has(&occurrence.span))
+            .count();
+        let annotated = annotation.iter().filter(|span| entries.has(span)).count();
+        let Some(growth) = entries.entries().checked_sub(before) else {
+            return true;
+        };
+        growth < recorded || growth > recorded + annotated
+    }
+
+    /// The expression spans of the return annotation the body being checked
+    /// re-resolves at each `return`, or none.
+    fn return_annotation_spans(&self) -> HashSet<SourceSpan> {
+        self.return_annotations
+            .last()
+            .and_then(Option::as_ref)
+            .map(|(annotation, _)| annotation_spans(annotation))
+            .unwrap_or_default()
+    }
+
     /// The checker's storage for one occurrence-keyed fact table.
     fn span_table(&self, table: FactTable) -> std::cell::Ref<'_, dyn SpanKeyed> {
         fn keyed<T: SpanKeyed + 'static>(table: &RefCell<T>) -> std::cell::Ref<'_, dyn SpanKeyed> {
@@ -3270,7 +3426,8 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::DeletableBindings
         | FactTable::LinearBindings
         | FactTable::LinearTemporaries
-        | FactTable::MethodInstantiations => true,
+        | FactTable::MethodInstantiations
+        | FactTable::ConstructionImmutableBinders => true,
         FactTable::ContextualBases
         | FactTable::CallTransfers
         | FactTable::ImplicitConversions
@@ -3279,7 +3436,6 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::ConversionSourceBorrows
         | FactTable::SimdConstructions
         | FactTable::ParameterizedMethodCalls
-        | FactTable::ConstructionImmutableBinders
         | FactTable::CallResultOrigins
         | FactTable::TupleUnpackPlans
         | FactTable::ViewResultInteriors
@@ -3308,13 +3464,16 @@ fn values<V: Clone>(
         .collect()
 }
 
-/// A bundle with every rebind's by-value selection cleared, for comparing a
-/// derived bundle with a clone check's.
-fn without_rebind_selection(facts: &CheckedBodyFacts) -> CheckedBodyFacts {
+/// A bundle with every rebind's by-value selection cleared and the grammar's
+/// construction notes dropped, for comparing a derived bundle with a clone
+/// check's: a raw capture names no construction, and a realized bundle keeps
+/// them for installation.
+fn comparable(facts: &CheckedBodyFacts) -> CheckedBodyFacts {
     let mut facts = facts.clone();
     for (_, assertion) in &mut facts.rebind_assertions {
         assertion.by_value = false;
     }
+    facts.constructions.clear();
     facts
 }
 
@@ -3408,6 +3567,13 @@ fn for_each_owner(facts: &mut CheckedBodyFacts, visit: &dyn Fn(&mut TemplateOwne
         if let Some(reference) = &mut call.reference_result {
             origin_owners(&mut reference.origin, visit);
         }
+    }
+    for origin in facts
+        .typed_origins
+        .iter_mut()
+        .flat_map(|typed| &mut typed.origins)
+    {
+        origin_owners(origin, visit);
     }
     let call_invalidations = facts.selected_calls.iter_mut().flat_map(|(_, call)| {
         call.arguments
@@ -3529,8 +3695,35 @@ fn grammar_features(method: &mojito_ast::ast::Method, ret_ty: &Ty) -> Vec<String
     features
 }
 
-/// Whether a type names a checker-local place: an origin rooted at a binding
-/// identity, in a pointer, a reference, or a struct's origin argument.
+/// Whether a compile-time argument of a construction is a type: no origin
+/// (`ImmOrigin(o)` would bind a slot immutably) and no value.
+fn type_argument(argument: &mojito_ast::ast::ParamArg) -> bool {
+    use mojito_ast::ast::ParamArg;
+    match argument {
+        ParamArg::Type(_) => true,
+        ParamArg::Named { value, .. } => type_argument(value),
+        ParamArg::Value(_) => false,
+    }
+}
+
+/// The spans of the expressions a return annotation embeds (`origin_of(self)`
+/// in `Self.IteratorType[origin_of(self)]`). A body's `return` re-resolves
+/// the annotation over the body's own places
+/// (`reconcile_return_origin_tails`), so an inference records the receiver's
+/// facts there, outside the body; a derived instance resolves the annotation
+/// once itself.
+fn annotation_spans(annotation: &mojito_ast::ast::SourceType) -> HashSet<SourceSpan> {
+    struct Spans(HashSet<SourceSpan>);
+    impl mojito_ast::visit::Visitor for Spans {
+        fn visit_expr(&mut self, expr: &Expr) {
+            self.0.insert(expr.source_span());
+        }
+    }
+    let mut spans = Spans(HashSet::new());
+    mojito_ast::visit::walk_type(&mut spans, annotation);
+    spans.0
+}
+
 /// The reference at the top of a `ref` binding's type, when its origin names
 /// a binding: what a bundle keeps by template owner instead of as written.
 fn rooted_reference(ty: &Ty) -> Option<&mojito_types::origin::RefTy> {
@@ -3542,6 +3735,141 @@ fn rooted_reference(ty: &Ty) -> Option<&mojito_types::origin::RefTy> {
     }
 }
 
+/// A type with every struct origin argument mapped by `origin`, in pre-order:
+/// the one traversal behind keeping a struct's origin tail by template owner
+/// (`unbound_struct_origins`) and giving it an instance's bindings back
+/// (`bind_struct_origins`). A pointer's or a reference's own origin is not a
+/// struct argument and passes through.
+fn map_struct_origins<E>(
+    ty: &Ty,
+    origin: &mut dyn FnMut(
+        &mojito_types::origin::Origin,
+    ) -> Result<mojito_types::origin::Origin, E>,
+) -> Result<Ty, E> {
+    use mojito_types::origin::Origin;
+    use mojito_types::types::TyArg;
+    fn all<E>(
+        types: &[Ty],
+        origin: &mut dyn FnMut(&Origin) -> Result<Origin, E>,
+    ) -> Result<Vec<Ty>, E> {
+        types
+            .iter()
+            .map(|ty| map_struct_origins(ty, origin))
+            .collect()
+    }
+    Ok(match ty {
+        Ty::Struct(name, arguments) => Ty::Struct(
+            name.clone(),
+            arguments
+                .iter()
+                .map(|argument| {
+                    Ok(match argument {
+                        TyArg::Ty(ty) => TyArg::Ty(map_struct_origins(ty, origin)?),
+                        TyArg::Origin(slot) => TyArg::Origin(origin(slot)?),
+                        TyArg::Val(value) => TyArg::Val(value.clone()),
+                    })
+                })
+                .collect::<Result<Vec<_>, E>>()?,
+        ),
+        Ty::Tuple(elements) => Ty::Tuple(all(elements, origin)?),
+        Ty::RuntimePack(elements) => Ty::RuntimePack(all(elements, origin)?),
+        Ty::Variant(alternatives) => Ty::Variant(all(alternatives, origin)?),
+        Ty::VariadicPack(element) => {
+            Ty::VariadicPack(Box::new(map_struct_origins(element, origin)?))
+        }
+        Ty::ComptimeList(element) => {
+            Ty::ComptimeList(Box::new(map_struct_origins(element, origin)?))
+        }
+        Ty::Pointer {
+            element,
+            origin: provenance,
+        } => Ty::Pointer {
+            element: Box::new(map_struct_origins(element, origin)?),
+            origin: provenance.clone(),
+        },
+        Ty::Ref(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = Box::new(map_struct_origins(&reference.referent, origin)?);
+            Ty::Ref(reference)
+        }
+        _ => ty.clone(),
+    })
+}
+
+/// A struct-typed value's type with its origin tails unbound, and those
+/// origins by template owner, for a type that names a binding only there.
+/// `None` when the type names no binding at all, so it is kept as written.
+fn unbound_struct_origins(
+    ty: &Ty,
+    place: &dyn Fn(&mojito_types::origin::OriginPlace) -> Result<TemplatePlace, IncompleteReason>,
+) -> Result<Option<(Ty, Vec<TemplateOrigin>)>, IncompleteReason> {
+    if !names_place(ty) {
+        return Ok(None);
+    }
+    let mut origins = Vec::new();
+    let unbound = map_struct_origins(ty, &mut |origin| {
+        origins.push(template_origin(origin, place)?);
+        Ok(mojito_types::origin::Origin::Unbound)
+    })?;
+    if names_place(&unbound) {
+        return Err(IncompleteReason::ExternalBinding);
+    }
+    Ok(Some((unbound, origins)))
+}
+
+/// One retained type table with every struct type that names a binding in an
+/// origin argument (`_ListIter[T, origin_of(self)]`) kept with the slot
+/// unbound, its origins appended to `typed_origins` by template owner.
+fn unbound_typed(
+    table: TypedTable,
+    types: Vec<(OccurrenceId, Ty)>,
+    place: &dyn Fn(&mojito_types::origin::OriginPlace) -> Result<TemplatePlace, IncompleteReason>,
+    typed_origins: &mut Vec<TypedOrigins>,
+) -> Result<Vec<(OccurrenceId, Ty)>, IncompleteReason> {
+    types
+        .into_iter()
+        .map(|(id, ty)| match unbound_struct_origins(&ty, place)? {
+            Some((ty, origins)) => {
+                typed_origins.push(TypedOrigins {
+                    table,
+                    occurrence: id,
+                    origins,
+                });
+                Ok((id, ty))
+            }
+            None => Ok((id, ty)),
+        })
+        .collect()
+}
+
+/// A type with every struct origin argument unbound, for comparing two types
+/// but for their origin tails.
+fn without_struct_origins(ty: &Ty) -> Ty {
+    let Ok(erased) = map_struct_origins(ty, &mut |_| {
+        Ok::<_, std::convert::Infallible>(mojito_types::origin::Origin::Unbound)
+    });
+    erased
+}
+
+/// The inverse of [`unbound_struct_origins`]: the kept origins, rooted at an
+/// instance's own bindings, written back into the type's struct origin slots
+/// in the order they were taken out.
+fn bind_struct_origins(
+    ty: &Ty,
+    origins: &[TemplateOrigin],
+    rooted: &dyn Fn(&TemplatePlace) -> Result<mojito_types::origin::OriginPlace, TypeError>,
+) -> Result<Ty, TypeError> {
+    let mut slots = origins.iter();
+    map_struct_origins(ty, &mut |_| {
+        let origin = slots.next().ok_or_else(|| {
+            TypeError::InvariantViolation("template derivation lost a struct origin".to_string())
+        })?;
+        checked_origin(origin, rooted)
+    })
+}
+
+/// Whether a type names a checker-local place: an origin rooted at a binding
+/// identity, in a pointer, a reference, or a struct's origin argument.
 fn names_place(ty: &Ty) -> bool {
     use mojito_types::origin::{Origin, PointerOrigin};
     fn rooted(origin: &Origin) -> bool {
@@ -3729,6 +4057,8 @@ struct BodyShape<'a> {
     origins: &'a mojito_ast::ast::SyntaxOrigins,
     /// `None` judges the syntax alone, before anything is captured.
     facts: Option<&'a CheckedBodyFacts>,
+    /// The declared structs, which a call may construct.
+    structs: &'a HashMap<String, super::StructInfo>,
     params: Vec<&'a str>,
     /// The `mut` and `ref` parameters among them: a place the body borrows,
     /// so never the source of a `^` transfer.
@@ -3771,6 +4101,9 @@ struct BodyShape<'a> {
     /// The checker builtins called on a bounded parameter, which an instance
     /// proves again at its own type.
     bound_builtins: RefCell<Vec<(OccurrenceId, BoundBuiltin)>>,
+    /// The struct constructions admitted, whose constructor an instance
+    /// re-selects on its own arguments.
+    constructions: RefCell<Vec<OccurrenceId>>,
 }
 
 /// What a local of a certified body is.
@@ -4186,7 +4519,7 @@ impl BodyShape<'_> {
             ExprKind::Transfer(inner) => {
                 (source(inner) && !borrowed(inner)) || self.call_result(inner)
             }
-            _ if self.call_result(expr) => true,
+            _ if self.call_result(expr) || self.construction(expr) => true,
             // The pointee, taken out of its slot: a temporary.
             ExprKind::MethodCall {
                 object,
@@ -4216,6 +4549,96 @@ impl BodyShape<'_> {
         matches!(&expr.kind, ExprKind::MethodCall { method, .. }
             if !matches!(method.as_str(), "unsafe_take_pointee" | "unsafe_offset"))
             && self.expression(expr)
+    }
+
+    /// A construction of a declared struct: a temporary of the constructed
+    /// type, whose constructor an instance re-selects on its own arguments.
+    ///
+    /// Its compile-time arguments are types, so it binds no origin
+    /// immutably and folds no value. Each argument is a closed scalar, a
+    /// whole value, or the `copy:` of a named place, so what the call records
+    /// at an argument is decided by the argument's syntax and the
+    /// constructor's conventions, and the template's selection binds every
+    /// argument exactly under every instance. A `ref` local and a reference
+    /// call's result record a borrow of their own and stay out.
+    fn construction(&self, expr: &Expr) -> bool {
+        let ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } = &expr.kind
+        else {
+            return false;
+        };
+        if self.keyed || !self.structs.contains_key(name) {
+            return false;
+        }
+        // A binding of that name would shadow the struct: the recorded type
+        // says the call constructed it.
+        let id = self.occurrence(expr);
+        let constructed = self.facts.is_none_or(|facts| {
+            matches!(fact_at(&facts.expression_types, id),
+                Some(Ty::Struct(constructed, _)) if constructed == name)
+        });
+        let named_place = |place: &Expr| match &place.kind {
+            ExprKind::Identifier(name) => {
+                (self.receiver && name == "self")
+                    || self.params.contains(&name.as_str())
+                    || self.declared(name)
+            }
+            ExprKind::Member { .. } => self.receiver_field(place),
+            _ => false,
+        };
+        let copied = args.is_empty()
+            && matches!(kwargs.as_slice(), [copy] if copy.name == "copy" && named_place(&copy.value));
+        // A fieldwise struct's reference field takes a `ref` local as the
+        // handle it is: the argument records the referent's read-through
+        // facts and that it is kept as a handle, both decided by the field's
+        // declaration and the binding's kind.
+        let info = &self.structs[name];
+        let reference_field = |field: Option<&(String, Ty)>, argument: &Expr| {
+            info.fieldwise_init
+                && !info.methods.contains_key("__init__")
+                && field.is_some_and(|(_, ty)| matches!(ty, Ty::Ref(_)))
+                && matches!(&argument.kind, ExprKind::Identifier(name) if self.reference_local(name))
+        };
+        let value = |field: Option<&(String, Ty)>, argument: &Expr| {
+            (self.expression(argument) && self.scalar(argument))
+                || self.whole_value(argument)
+                || reference_field(field, argument)
+        };
+        let admitted = constructed
+            && param_args.iter().all(type_argument)
+            && (copied
+                || (args
+                    .iter()
+                    .enumerate()
+                    .all(|(position, argument)| value(info.fields.get(position), argument))
+                    && kwargs.iter().all(|keyword| {
+                        let field = info.fields.iter().find(|(name, _)| *name == keyword.name);
+                        value(field, &keyword.value)
+                    })));
+        if admitted {
+            let fields = args
+                .iter()
+                .enumerate()
+                .map(|(position, argument)| (info.fields.get(position), argument));
+            let keyed = kwargs.iter().map(|keyword| {
+                let field = info.fields.iter().find(|(name, _)| *name == keyword.name);
+                (field, &keyword.value)
+            });
+            for (field, argument) in fields.chain(keyed) {
+                if reference_field(field, argument) {
+                    self.handle(self.occurrence(argument));
+                }
+            }
+            let mut constructions = self.constructions.borrow_mut();
+            if !constructions.contains(&id) {
+                constructions.push(id);
+            }
+        }
+        admitted && self.holds(MethodFeatures::CONSTRUCTIONS)
     }
 
     /// A pointer into storage `self` owns: a field of `self` whose recorded
@@ -4289,9 +4712,17 @@ impl BodyShape<'_> {
     }
 
     /// Whether the recorded type of `expr` is exactly `ty`.
+    /// Whether the recorded type of `expr` is exactly `ty`, but for the
+    /// origin arguments of a struct: a retained type keeps those slots
+    /// unbound, and a `return` reconciles a value's origin tail with the
+    /// declared one on the places alone (`reconcile_return_origin_tails`),
+    /// which no instance changes.
     fn typed(&self, expr: &Expr, ty: &Ty) -> bool {
-        self.facts
-            .is_none_or(|facts| fact_at(&facts.expression_types, self.occurrence(expr)) == Some(ty))
+        self.facts.is_none_or(|facts| {
+            fact_at(&facts.expression_types, self.occurrence(expr)).is_some_and(|recorded| {
+                without_struct_origins(recorded) == without_struct_origins(ty)
+            })
+        })
     }
 
     /// Whether the binding `value` initializes has a type an instance can

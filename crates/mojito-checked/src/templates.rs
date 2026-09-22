@@ -472,6 +472,9 @@ pub enum IncompleteReason {
     /// The source validation run that checked this body ended without a
     /// verdict, so nothing it recorded is certified.
     ValidationAborted,
+    /// A construction bound an origin binder immutably (`ImmOrigin(o)`), a
+    /// record the bundle does not carry.
+    ImmutableBinder,
 }
 
 impl IncompleteReason {
@@ -486,6 +489,7 @@ impl IncompleteReason {
             Self::AmbiguousOccurrence => "template_capture_incomplete.ambiguous_occurrence",
             Self::SymbolicFact => "template_capture_incomplete.symbolic_fact",
             Self::ValidationAborted => "template_capture_incomplete.validation_aborted",
+            Self::ImmutableBinder => "template_capture_incomplete.immutable_binder",
         }
     }
 }
@@ -503,6 +507,7 @@ impl std::fmt::Display for IncompleteReason {
             Self::AmbiguousOccurrence => f.write_str("two occurrences share one identity"),
             Self::SymbolicFact => f.write_str("a fact's type mentions a parameter"),
             Self::ValidationAborted => f.write_str("source validation ended without a verdict"),
+            Self::ImmutableBinder => f.write_str("a construction binds an origin immutably"),
         }
     }
 }
@@ -607,6 +612,11 @@ impl MethodFeatures {
     /// The method's own trait-bounded type binders (`[H: Hasher]`), which a
     /// clone keeps and binds symbolically as the template does.
     pub const BOUND_BINDERS: Self = Self(1 << 16);
+    /// A construction of a declared struct whose compile-time arguments are
+    /// types, passing closed scalars, whole values, or `copy:` of a named
+    /// place; an instance re-selects the constructor's clone on its own
+    /// arguments.
+    pub const CONSTRUCTIONS: Self = Self(1 << 17);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
@@ -667,6 +677,29 @@ pub enum TemplateOrigin {
     Union(Vec<Self>),
     /// An origin that names no binding identity, kept as written.
     Unrooted(mojito_types::origin::Origin),
+}
+
+/// The origin arguments a retained struct type carries in its argument
+/// tails, in template-local terms, in the order a pre-order walk of the type
+/// meets them (`TypedOrigins`).
+///
+/// A constructed iterator's type (`_ListIter[T, origin_of(self)]`) names the
+/// receiver inside a type argument. The type is kept with every struct
+/// origin slot unbound, and an instance writes its own bindings back into
+/// those slots in the same order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypedOrigins {
+    pub table: TypedTable,
+    pub occurrence: OccurrenceId,
+    pub origins: Vec<TemplateOrigin>,
+}
+
+/// Which retained type table a [`TypedOrigins`] entry completes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypedTable {
+    Expression,
+    Place,
+    Binding,
 }
 
 /// One [`mojito_types::origin::RefTy`] a call yielded, in template-local
@@ -769,6 +802,12 @@ pub enum TemplateObligation {
     /// template's own body, whose parameter is still symbolic, never meets
     /// this and is inferred again.
     PlainDataTransfers,
+    /// The constructor the template selected still binds every argument
+    /// exactly at the instance, and the instance's `__init__` clone, where
+    /// one exists, is that member's. A construction records no contract, so
+    /// the instance repeats the selection from the constructed type, the
+    /// arguments' recorded types, and the constructor's declaration.
+    ConstructorSelection,
 }
 
 /// One subscript's index shape, a slice kind per sliced index, and whether
@@ -891,6 +930,15 @@ pub struct CheckedBodyFacts {
     /// with the binders bound to the caller's own symbolic types, which
     /// discovery leaves alone.
     pub method_instantiations: Vec<(OccurrenceId, MethodInstantiation)>,
+    /// Struct constructions the grammar admitted, each with an empty
+    /// immutable-binder record. A construction records no contract; an
+    /// instance re-selects each constructor's clone from the constructed type
+    /// ([`TemplateObligation::ConstructorSelection`]).
+    pub constructions: Vec<OccurrenceId>,
+    /// The origins of every retained struct type that names a binding in an
+    /// origin argument, kept by template owner while the type itself keeps
+    /// those slots unbound.
+    pub typed_origins: Vec<TypedOrigins>,
     /// How many locals the body declares.
     pub locals: u32,
 }
@@ -1185,6 +1233,20 @@ impl CheckedBodyFacts {
                 self.method_instantiations, other.method_instantiations
             );
         }
+        if self.constructions != other.constructions {
+            let _ = writeln!(
+                out,
+                " constructions:\n  derived:  {:?}\n  inferred: {:?}",
+                self.constructions, other.constructions
+            );
+        }
+        if self.typed_origins != other.typed_origins {
+            let _ = writeln!(
+                out,
+                " typed_origins:\n  derived:  {:?}\n  inferred: {:?}",
+                self.typed_origins, other.typed_origins
+            );
+        }
         if self.locals != other.locals {
             let _ = writeln!(
                 out,
@@ -1276,6 +1338,19 @@ impl CheckedBodyFacts {
             comparisons: flagged(&self.comparisons),
             bound_builtins: at(&self.bound_builtins, occurrences),
             method_instantiations: at(&self.method_instantiations, occurrences),
+            constructions: flagged(&self.constructions),
+            typed_origins: occurrences
+                .iter()
+                .flat_map(|occurrence| {
+                    self.typed_origins
+                        .iter()
+                        .filter(|typed| typed.occurrence.syntax == occurrence.syntax)
+                        .map(|typed| TypedOrigins {
+                            occurrence: *occurrence,
+                            ..typed.clone()
+                        })
+                })
+                .collect(),
             locals: self.locals,
         }
     }
@@ -1320,6 +1395,8 @@ impl CheckedBodyFacts {
             + self.transfers.len()
             + self.bound_builtins.len()
             + self.method_instantiations.len()
+            + self.constructions.len()
+            + self.typed_origins.len()
     }
 }
 
