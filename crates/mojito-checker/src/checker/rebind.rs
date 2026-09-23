@@ -221,9 +221,9 @@ impl Checker {
     /// overloaded on its operand: a `TrivialRegisterPassable` operand is
     /// rebound by value, any other through `ref[src]`, and only the reference
     /// is a place. The overload is selected once, on the declaration, so a
-    /// compiler-generated (`$`-mangled) specialization keeps the selection
-    /// source validation made with the operand's type still symbolic instead
-    /// of re-selecting on the concrete type it was cloned with.
+    /// clone of a validated template keeps the selection source validation
+    /// made with the operand's type still symbolic instead of re-selecting
+    /// on the concrete type it was cloned with.
     fn rebinds_by_value(&self, operand: &Ty) -> bool {
         self.is_trivial_register_passable(operand)
             && (self.source_validation
@@ -231,7 +231,7 @@ impl Checker {
                     .transfer_frames
                     .borrow()
                     .iter()
-                    .any(|frame| frame.callable.contains('$')))
+                    .any(|frame| frame.keeps_symbolic_selection))
     }
 
     /// `Dest` for an operand of type `ty`. Under source validation the target

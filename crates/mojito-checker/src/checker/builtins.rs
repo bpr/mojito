@@ -456,7 +456,18 @@ impl Checker {
                 });
             }
         }
-        for arg in args {
+        let forwarded_pack = self.forwarded_pack_argument("print", args, true)?;
+        for (position, arg) in args.iter().enumerate() {
+            // A forwarded pack prints element by element, so its bound must
+            // give every element `Writable`.
+            if let Some((spread, forwarded)) = &forwarded_pack
+                && *spread == position
+            {
+                if !self.conforms_to(&forwarded.pack, "Writable") {
+                    return Err(not_writable(&forwarded.pack));
+                }
+                continue;
+            }
             let ty = self.infer(arg)?;
             self.borrow_reference_result_argument(arg);
             self.borrow_nominal_place_argument(arg, &ty);

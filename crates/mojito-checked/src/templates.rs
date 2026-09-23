@@ -11,7 +11,7 @@
 //! The design record is `docs/notes/instantiation-from-template.md`.
 
 use crate::checked::{
-    CheckedCallArgumentSource, CheckedCallBoundary, CheckedCallContract,
+    CallThroughEffect, CheckedCallArgumentSource, CheckedCallBoundary, CheckedCallContract,
     CheckedCallValueAdjustment, EffectFacts, GenericInstantiation, MethodInstantiation,
     SemanticAdjustment,
 };
@@ -617,6 +617,11 @@ impl MethodFeatures {
     /// place; an instance re-selects the constructor's clone on its own
     /// arguments.
     pub const CONSTRUCTIONS: Self = Self(1 << 17);
+    /// A call through a runtime parameter declared with a `def(...)` type,
+    /// passing closed scalars or whole values, and such a parameter forwarded
+    /// to a sibling call: the residue either records on the body's frame is
+    /// republished for the instance ([`TemplateObligation::CallThroughResidue`]).
+    pub const CALLABLE_PARAMETERS: Self = Self(1 << 18);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
@@ -808,6 +813,15 @@ pub enum TemplateObligation {
     /// the instance repeats the selection from the constructed type, the
     /// arguments' recorded types, and the constructor's declaration.
     ConstructorSelection,
+    /// A call-through residue names the callable parameter by slot and each
+    /// argument by signature origin, so the instance republishes the
+    /// template's verbatim. That holds only while no argument carries an
+    /// origin (a loan-carrying binding would carry one in the template and
+    /// not in a plain-data instance), which capture refuses, and while every
+    /// retained type is loan-free, as a vanishing transfer demands. A residue
+    /// the body read from a callee is owed again: the instance's realized
+    /// callee must publish exactly the residue the template read.
+    CallThroughResidue,
 }
 
 /// One subscript's index shape, a slice kind per sliced index, and whether
@@ -844,6 +858,10 @@ pub struct CheckedBodyFacts {
     /// read, every one of them empty: a derivation holds only while they
     /// still are.
     pub effect_free_callees: Vec<String>,
+    /// Those of them read where a callable's name stands as a value (a
+    /// parameter forwarded, a declaration handed on) rather than at a call:
+    /// the instance reads them under the same name.
+    pub value_callees: Vec<String>,
     /// Calls of the built-in `len`, which an instance realizes against its
     /// concrete argument type.
     pub builtin_len_calls: Vec<OccurrenceId>,
@@ -935,6 +953,20 @@ pub struct CheckedBodyFacts {
     /// instance re-selects each constructor's clone from the constructed type
     /// ([`TemplateObligation::ConstructorSelection`]).
     pub constructions: Vec<OccurrenceId>,
+    /// Calls through a runtime parameter of `def(...)` type, which the grammar
+    /// admitted. Such a call records the parameter's own contract symbol and
+    /// parameters, in the caller's binder scope; an instance takes both from
+    /// its own parameter binding.
+    pub callable_calls: Vec<OccurrenceId>,
+    /// The call-through residue the body published on its own frame, by
+    /// calling its callable parameter or forwarding it. It names slots and
+    /// signature origins only, so an instance republishes it verbatim
+    /// ([`TemplateObligation::CallThroughResidue`]).
+    pub call_throughs: Vec<CallThroughEffect>,
+    /// Each callee whose call-through summary the body read, with what it
+    /// read. An instance rekeys each to its realized callee, which must
+    /// publish the same residue.
+    pub call_through_reads: Vec<(String, Vec<CallThroughEffect>)>,
     /// The origins of every retained struct type that names a binding in an
     /// origin argument, kept by template owner while the type itself keeps
     /// those slots unbound.
@@ -954,306 +986,294 @@ pub enum BoundBuiltin {
     Write,
 }
 
+/// One field of a derived bundle beside the inferred one, when they differ:
+/// what verification mode reports.
+fn differing<T: std::fmt::Debug + PartialEq>(
+    out: &mut String,
+    name: &str,
+    derived: &T,
+    inferred: &T,
+) {
+    use std::fmt::Write as _;
+    if derived != inferred {
+        let _ = writeln!(
+            out,
+            " {name}:\n  derived:  {derived:?}\n  inferred: {inferred:?}"
+        );
+    }
+}
+
 impl CheckedBodyFacts {
     /// The fields in which this (derived) bundle differs from an `other`
     /// (inferred) one, each with both values: what verification mode reports.
     pub fn difference(&self, other: &Self) -> String {
-        use std::fmt::Write as _;
         let mut out = String::new();
-        if self.occurrences != other.occurrences {
-            let _ = writeln!(
-                out,
-                " occurrences:\n  derived:  {:?}\n  inferred: {:?}",
-                self.occurrences, other.occurrences
-            );
-        }
-        if self.expression_types != other.expression_types {
-            let _ = writeln!(
-                out,
-                " expression_types:\n  derived:  {:?}\n  inferred: {:?}",
-                self.expression_types, other.expression_types
-            );
-        }
-        if self.expression_place_types != other.expression_place_types {
-            let _ = writeln!(
-                out,
-                " expression_place_types:\n  derived:  {:?}\n  inferred: {:?}",
-                self.expression_place_types, other.expression_place_types
-            );
-        }
-        if self.binding_types != other.binding_types {
-            let _ = writeln!(
-                out,
-                " binding_types:\n  derived:  {:?}\n  inferred: {:?}",
-                self.binding_types, other.binding_types
-            );
-        }
-        if self.expression_bindings != other.expression_bindings {
-            let _ = writeln!(
-                out,
-                " expression_bindings:\n  derived:  {:?}\n  inferred: {:?}",
-                self.expression_bindings, other.expression_bindings
-            );
-        }
-        if self.statement_bindings != other.statement_bindings {
-            let _ = writeln!(
-                out,
-                " statement_bindings:\n  derived:  {:?}\n  inferred: {:?}",
-                self.statement_bindings, other.statement_bindings
-            );
-        }
-        if self.expression_effects != other.expression_effects {
-            let _ = writeln!(
-                out,
-                " expression_effects:\n  derived:  {:?}\n  inferred: {:?}",
-                self.expression_effects, other.expression_effects
-            );
-        }
-        if self.operation_adjustments != other.operation_adjustments {
-            let _ = writeln!(
-                out,
-                " operation_adjustments:\n  derived:  {:?}\n  inferred: {:?}",
-                self.operation_adjustments, other.operation_adjustments
-            );
-        }
-        if self.generic_instantiations != other.generic_instantiations {
-            let _ = writeln!(
-                out,
-                " generic_instantiations:\n  derived:  {:?}\n  inferred: {:?}",
-                self.generic_instantiations, other.generic_instantiations
-            );
-        }
-        if self.overload_targets != other.overload_targets {
-            let _ = writeln!(
-                out,
-                " overload_targets:\n  derived:  {:?}\n  inferred: {:?}",
-                self.overload_targets, other.overload_targets
-            );
-        }
-        if self.call_parameters != other.call_parameters {
-            let _ = writeln!(
-                out,
-                " call_parameters:\n  derived:  {:?}\n  inferred: {:?}",
-                self.call_parameters, other.call_parameters
-            );
-        }
-        if self.borrowed_reference_receivers != other.borrowed_reference_receivers {
-            let _ = writeln!(
-                out,
-                " borrowed_reference_receivers:\n  derived:  {:?}\n  inferred: {:?}",
-                self.borrowed_reference_receivers, other.borrowed_reference_receivers
-            );
-        }
-        if self.borrowed_read_call_places != other.borrowed_read_call_places {
-            let _ = writeln!(
-                out,
-                " borrowed_read_call_places:\n  derived:  {:?}\n  inferred: {:?}",
-                self.borrowed_read_call_places, other.borrowed_read_call_places
-            );
-        }
-        if self.read_temporary_arguments != other.read_temporary_arguments {
-            let _ = writeln!(
-                out,
-                " read_temporary_arguments:\n  derived:  {:?}\n  inferred: {:?}",
-                self.read_temporary_arguments, other.read_temporary_arguments
-            );
-        }
-        if self.effect_free_callees != other.effect_free_callees {
-            let _ = writeln!(
-                out,
-                " effect_free_callees:\n  derived:  {:?}\n  inferred: {:?}",
-                self.effect_free_callees, other.effect_free_callees
-            );
-        }
-        if self.builtin_len_calls != other.builtin_len_calls {
-            let _ = writeln!(
-                out,
-                " builtin_len_calls:\n  derived:  {:?}\n  inferred: {:?}",
-                self.builtin_len_calls, other.builtin_len_calls
-            );
-        }
-        if self.selected_calls != other.selected_calls {
-            let _ = writeln!(
-                out,
-                " selected_calls:\n  derived:  {:?}\n  inferred: {:?}",
-                self.selected_calls, other.selected_calls
-            );
-        }
-        if self.struct_applications != other.struct_applications {
-            let _ = writeln!(
-                out,
-                " struct_applications:\n  derived:  {:?}\n  inferred: {:?}",
-                self.struct_applications, other.struct_applications
-            );
-        }
-        if self.rebind_assertions != other.rebind_assertions {
-            let _ = writeln!(
-                out,
-                " rebind_assertions:\n  derived:  {:?}\n  inferred: {:?}",
-                self.rebind_assertions, other.rebind_assertions
-            );
-        }
-        if self.copy_place_value_uses != other.copy_place_value_uses {
-            let _ = writeln!(
-                out,
-                " copy_place_value_uses:\n  derived:  {:?}\n  inferred: {:?}",
-                self.copy_place_value_uses, other.copy_place_value_uses
-            );
-        }
-        if self.interior_invalidations != other.interior_invalidations {
-            let _ = writeln!(
-                out,
-                " interior_invalidations:\n  derived:  {:?}\n  inferred: {:?}",
-                self.interior_invalidations, other.interior_invalidations
-            );
-        }
-        if self.unconsumed_temporaries != other.unconsumed_temporaries {
-            let _ = writeln!(
-                out,
-                " unconsumed_temporaries:\n  derived:  {:?}\n  inferred: {:?}",
-                self.unconsumed_temporaries, other.unconsumed_temporaries
-            );
-        }
-        if self.discarded_reference_results != other.discarded_reference_results {
-            let _ = writeln!(
-                out,
-                " discarded_reference_results:\n  derived:  {:?}\n  inferred: {:?}",
-                self.discarded_reference_results, other.discarded_reference_results
-            );
-        }
-        if self.reference_value_uses != other.reference_value_uses {
-            let _ = writeln!(
-                out,
-                " reference_value_uses:\n  derived:  {:?}\n  inferred: {:?}",
-                self.reference_value_uses, other.reference_value_uses
-            );
-        }
-        if self.deletable_bindings != other.deletable_bindings {
-            let _ = writeln!(
-                out,
-                " deletable_bindings:\n  derived:  {:?}\n  inferred: {:?}",
-                self.deletable_bindings, other.deletable_bindings
-            );
-        }
-        if self.linear_bindings != other.linear_bindings {
-            let _ = writeln!(
-                out,
-                " linear_bindings:\n  derived:  {:?}\n  inferred: {:?}",
-                self.linear_bindings, other.linear_bindings
-            );
-        }
-        if self.linear_temporaries != other.linear_temporaries {
-            let _ = writeln!(
-                out,
-                " linear_temporaries:\n  derived:  {:?}\n  inferred: {:?}",
-                self.linear_temporaries, other.linear_temporaries
-            );
-        }
-        if self.reference_results != other.reference_results {
-            let _ = writeln!(
-                out,
-                " reference_results:\n  derived:  {:?}\n  inferred: {:?}",
-                self.reference_results, other.reference_results
-            );
-        }
-        if self.interior_references != other.interior_references {
-            let _ = writeln!(
-                out,
-                " interior_references:\n  derived:  {:?}\n  inferred: {:?}",
-                self.interior_references, other.interior_references
-            );
-        }
-        if self.reference_binding_types != other.reference_binding_types {
-            let _ = writeln!(
-                out,
-                " reference_binding_types:\n  derived:  {:?}\n  inferred: {:?}",
-                self.reference_binding_types, other.reference_binding_types
-            );
-        }
-        if self.reference_place_types != other.reference_place_types {
-            let _ = writeln!(
-                out,
-                " reference_place_types:\n  derived:  {:?}\n  inferred: {:?}",
-                self.reference_place_types, other.reference_place_types
-            );
-        }
-        if self.copyable_reference_result_reads != other.copyable_reference_result_reads {
-            let _ = writeln!(
-                out,
-                " copyable_reference_result_reads:\n  derived:  {:?}\n  inferred: {:?}",
-                self.copyable_reference_result_reads, other.copyable_reference_result_reads
-            );
-        }
-        if self.subscript_descriptors != other.subscript_descriptors {
-            let _ = writeln!(
-                out,
-                " subscript_descriptors:\n  derived:  {:?}\n  inferred: {:?}",
-                self.subscript_descriptors, other.subscript_descriptors
-            );
-        }
-        if self.call_place_uses != other.call_place_uses {
-            let _ = writeln!(
-                out,
-                " call_place_uses:\n  derived:  {:?}\n  inferred: {:?}",
-                self.call_place_uses, other.call_place_uses
-            );
-        }
-        if self.transfers != other.transfers {
-            let _ = writeln!(
-                out,
-                " transfers:\n  derived:  {:?}\n  inferred: {:?}",
-                self.transfers, other.transfers
-            );
-        }
-        if self.comparisons != other.comparisons {
-            let _ = writeln!(
-                out,
-                " comparisons:\n  derived:  {:?}\n  inferred: {:?}",
-                self.comparisons, other.comparisons
-            );
-        }
-        if self.vanishing_transfers != other.vanishing_transfers {
-            let _ = writeln!(
-                out,
-                " vanishing_transfers:\n  derived:  {:?}\n  inferred: {:?}",
-                self.vanishing_transfers, other.vanishing_transfers
-            );
-        }
-        if self.bound_builtins != other.bound_builtins {
-            let _ = writeln!(
-                out,
-                " bound_builtins:\n  derived:  {:?}\n  inferred: {:?}",
-                self.bound_builtins, other.bound_builtins
-            );
-        }
-        if self.method_instantiations != other.method_instantiations {
-            let _ = writeln!(
-                out,
-                " method_instantiations:\n  derived:  {:?}\n  inferred: {:?}",
-                self.method_instantiations, other.method_instantiations
-            );
-        }
-        if self.constructions != other.constructions {
-            let _ = writeln!(
-                out,
-                " constructions:\n  derived:  {:?}\n  inferred: {:?}",
-                self.constructions, other.constructions
-            );
-        }
-        if self.typed_origins != other.typed_origins {
-            let _ = writeln!(
-                out,
-                " typed_origins:\n  derived:  {:?}\n  inferred: {:?}",
-                self.typed_origins, other.typed_origins
-            );
-        }
-        if self.locals != other.locals {
-            let _ = writeln!(
-                out,
-                " locals:\n  derived:  {:?}\n  inferred: {:?}",
-                self.locals, other.locals
-            );
-        }
+        differing(
+            &mut out,
+            "occurrences",
+            &self.occurrences,
+            &other.occurrences,
+        );
+        differing(
+            &mut out,
+            "expression_types",
+            &self.expression_types,
+            &other.expression_types,
+        );
+        differing(
+            &mut out,
+            "expression_place_types",
+            &self.expression_place_types,
+            &other.expression_place_types,
+        );
+        differing(
+            &mut out,
+            "binding_types",
+            &self.binding_types,
+            &other.binding_types,
+        );
+        differing(
+            &mut out,
+            "expression_bindings",
+            &self.expression_bindings,
+            &other.expression_bindings,
+        );
+        differing(
+            &mut out,
+            "statement_bindings",
+            &self.statement_bindings,
+            &other.statement_bindings,
+        );
+        differing(
+            &mut out,
+            "expression_effects",
+            &self.expression_effects,
+            &other.expression_effects,
+        );
+        differing(
+            &mut out,
+            "operation_adjustments",
+            &self.operation_adjustments,
+            &other.operation_adjustments,
+        );
+        differing(
+            &mut out,
+            "generic_instantiations",
+            &self.generic_instantiations,
+            &other.generic_instantiations,
+        );
+        differing(
+            &mut out,
+            "overload_targets",
+            &self.overload_targets,
+            &other.overload_targets,
+        );
+        differing(
+            &mut out,
+            "call_parameters",
+            &self.call_parameters,
+            &other.call_parameters,
+        );
+        differing(
+            &mut out,
+            "borrowed_reference_receivers",
+            &self.borrowed_reference_receivers,
+            &other.borrowed_reference_receivers,
+        );
+        differing(
+            &mut out,
+            "borrowed_read_call_places",
+            &self.borrowed_read_call_places,
+            &other.borrowed_read_call_places,
+        );
+        differing(
+            &mut out,
+            "read_temporary_arguments",
+            &self.read_temporary_arguments,
+            &other.read_temporary_arguments,
+        );
+        differing(
+            &mut out,
+            "effect_free_callees",
+            &self.effect_free_callees,
+            &other.effect_free_callees,
+        );
+        differing(
+            &mut out,
+            "builtin_len_calls",
+            &self.builtin_len_calls,
+            &other.builtin_len_calls,
+        );
+        differing(
+            &mut out,
+            "selected_calls",
+            &self.selected_calls,
+            &other.selected_calls,
+        );
+        differing(
+            &mut out,
+            "struct_applications",
+            &self.struct_applications,
+            &other.struct_applications,
+        );
+        differing(
+            &mut out,
+            "rebind_assertions",
+            &self.rebind_assertions,
+            &other.rebind_assertions,
+        );
+        differing(
+            &mut out,
+            "copy_place_value_uses",
+            &self.copy_place_value_uses,
+            &other.copy_place_value_uses,
+        );
+        differing(
+            &mut out,
+            "interior_invalidations",
+            &self.interior_invalidations,
+            &other.interior_invalidations,
+        );
+        differing(
+            &mut out,
+            "unconsumed_temporaries",
+            &self.unconsumed_temporaries,
+            &other.unconsumed_temporaries,
+        );
+        differing(
+            &mut out,
+            "discarded_reference_results",
+            &self.discarded_reference_results,
+            &other.discarded_reference_results,
+        );
+        differing(
+            &mut out,
+            "reference_value_uses",
+            &self.reference_value_uses,
+            &other.reference_value_uses,
+        );
+        differing(
+            &mut out,
+            "deletable_bindings",
+            &self.deletable_bindings,
+            &other.deletable_bindings,
+        );
+        differing(
+            &mut out,
+            "linear_bindings",
+            &self.linear_bindings,
+            &other.linear_bindings,
+        );
+        differing(
+            &mut out,
+            "linear_temporaries",
+            &self.linear_temporaries,
+            &other.linear_temporaries,
+        );
+        differing(
+            &mut out,
+            "reference_results",
+            &self.reference_results,
+            &other.reference_results,
+        );
+        differing(
+            &mut out,
+            "interior_references",
+            &self.interior_references,
+            &other.interior_references,
+        );
+        differing(
+            &mut out,
+            "reference_binding_types",
+            &self.reference_binding_types,
+            &other.reference_binding_types,
+        );
+        differing(
+            &mut out,
+            "reference_place_types",
+            &self.reference_place_types,
+            &other.reference_place_types,
+        );
+        differing(
+            &mut out,
+            "copyable_reference_result_reads",
+            &self.copyable_reference_result_reads,
+            &other.copyable_reference_result_reads,
+        );
+        differing(
+            &mut out,
+            "subscript_descriptors",
+            &self.subscript_descriptors,
+            &other.subscript_descriptors,
+        );
+        differing(
+            &mut out,
+            "call_place_uses",
+            &self.call_place_uses,
+            &other.call_place_uses,
+        );
+        differing(&mut out, "transfers", &self.transfers, &other.transfers);
+        differing(
+            &mut out,
+            "comparisons",
+            &self.comparisons,
+            &other.comparisons,
+        );
+        differing(
+            &mut out,
+            "vanishing_transfers",
+            &self.vanishing_transfers,
+            &other.vanishing_transfers,
+        );
+        differing(
+            &mut out,
+            "bound_builtins",
+            &self.bound_builtins,
+            &other.bound_builtins,
+        );
+        differing(
+            &mut out,
+            "method_instantiations",
+            &self.method_instantiations,
+            &other.method_instantiations,
+        );
+        differing(
+            &mut out,
+            "constructions",
+            &self.constructions,
+            &other.constructions,
+        );
+        differing(
+            &mut out,
+            "value_callees",
+            &self.value_callees,
+            &other.value_callees,
+        );
+        differing(
+            &mut out,
+            "callable_calls",
+            &self.callable_calls,
+            &other.callable_calls,
+        );
+        differing(
+            &mut out,
+            "call_throughs",
+            &self.call_throughs,
+            &other.call_throughs,
+        );
+        differing(
+            &mut out,
+            "call_through_reads",
+            &self.call_through_reads,
+            &other.call_through_reads,
+        );
+        differing(
+            &mut out,
+            "typed_origins",
+            &self.typed_origins,
+            &other.typed_origins,
+        );
+        differing(&mut out, "locals", &self.locals, &other.locals);
         out
     }
 
@@ -1303,8 +1323,10 @@ impl CheckedBodyFacts {
             borrowed_read_call_places: flagged(&self.borrowed_read_call_places),
             borrowed_reference_receivers: flagged(&self.borrowed_reference_receivers),
             read_temporary_arguments: flagged(&self.read_temporary_arguments),
-            // Realization recomputes these from the calls that remain.
+            // Realization recomputes these from the calls that remain and
+            // the value reads, which name no occurrence.
             effect_free_callees: Vec::new(),
+            value_callees: self.value_callees.clone(),
             builtin_len_calls: flagged(&self.builtin_len_calls),
             // A call and its arguments are copied together.
             selected_calls: at(&self.selected_calls, occurrences)
@@ -1339,6 +1361,11 @@ impl CheckedBodyFacts {
             bound_builtins: at(&self.bound_builtins, occurrences),
             method_instantiations: at(&self.method_instantiations, occurrences),
             constructions: flagged(&self.constructions),
+            callable_calls: flagged(&self.callable_calls),
+            // A residue names slots, not occurrences; realization rekeys each
+            // read to the instance's callee and refuses one no call names.
+            call_throughs: self.call_throughs.clone(),
+            call_through_reads: self.call_through_reads.clone(),
             typed_origins: occurrences
                 .iter()
                 .flat_map(|occurrence| {

@@ -20,11 +20,22 @@ pub enum ArgSlot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Structural reason an argument list cannot bind to a declaration.
 pub enum MatchError {
-    TooManyPositional { expected: usize, got: usize },
+    TooManyPositional {
+        expected: usize,
+        got: usize,
+    },
     UnknownKeyword(String),
     PositionalOnly(String),
     Duplicate(String),
     Missing(String),
+    /// More than one `*pack` among the positional arguments.
+    RepeatedSpread,
+    /// A positional argument after the `*pack`.
+    PositionalAfterSpread,
+    /// The `*pack` did not land alone in the callee's positional collector:
+    /// it filled a regular slot, or shares the collector with another
+    /// argument.
+    SpreadOutsideVariadic,
 }
 
 #[derive(Clone, Copy)]
@@ -59,6 +70,19 @@ impl MatchError {
                 func: func.to_string(),
                 reason: format!("missing required argument '{m}'"),
             },
+            Self::RepeatedSpread => TypeError::BadCall {
+                func: func.to_string(),
+                reason: "unpack markers must not appear more than once in a call".to_string(),
+            },
+            Self::PositionalAfterSpread => TypeError::BadCall {
+                func: func.to_string(),
+                reason: "positional argument must not follow an unpack".to_string(),
+            },
+            Self::SpreadOutsideVariadic => TypeError::BadCall {
+                func: func.to_string(),
+                reason: "unpack is only supported when the callee accepts a variadic pack"
+                    .to_string(),
+            },
         }
     }
 }
@@ -67,6 +91,29 @@ pub struct CallSlots {
     pub slots: Vec<ArgSlot>,
     pub positional_overflow: Vec<usize>,
     pub keyword_overflow: Vec<usize>,
+}
+
+/// The one `*pack` among `npos` positional arguments, given the positions
+/// of every spread: it must be the last positional argument and the only
+/// spread. `None` when the call spreads nothing.
+pub fn spread_position(spreads: &[usize], npos: usize) -> Result<Option<usize>, MatchError> {
+    match spreads {
+        [] => Ok(None),
+        [spread] if *spread + 1 == npos => Ok(Some(*spread)),
+        [_] => Err(MatchError::PositionalAfterSpread),
+        _ => Err(MatchError::RepeatedSpread),
+    }
+}
+
+/// Whether the `*pack` at `spread` bound to the callee's positional
+/// collector by itself: the whole forwarded pack is that collector's one
+/// argument, never a regular slot's.
+pub fn bind_spread(matched: &CallSlots, spread: usize) -> Result<(), MatchError> {
+    if matched.positional_overflow == [spread] {
+        Ok(())
+    } else {
+        Err(MatchError::SpreadOutsideVariadic)
+    }
 }
 
 /// Match positional and keyword arguments to regular parameter slots.
@@ -231,5 +278,33 @@ mod tests {
         .err()
         .expect("collector keys must remain unique");
         assert_eq!(error, MatchError::Duplicate("extra".to_string()));
+    }
+
+    #[test]
+    fn a_spread_is_the_last_and_only_positional_unpack() {
+        assert_eq!(spread_position(&[], 2), Ok(None));
+        assert_eq!(spread_position(&[2], 3), Ok(Some(2)));
+        assert_eq!(
+            spread_position(&[1], 3),
+            Err(MatchError::PositionalAfterSpread)
+        );
+        assert_eq!(spread_position(&[0, 1], 2), Err(MatchError::RepeatedSpread));
+    }
+
+    #[test]
+    fn a_spread_binds_alone_to_the_positional_collector() {
+        let variadics = CallVariadics {
+            positional: true,
+            keyword: false,
+        };
+        let matched = match_call_slots(&names()[..1], &[true], None, None, 2, &[], variadics)
+            .expect("one regular slot plus the spread");
+        assert_eq!(bind_spread(&matched, 1), Ok(()));
+        let filled = match_call_slots(&names()[..2], &[true, true], None, None, 2, &[], variadics)
+            .expect("the spread fills the second regular slot");
+        assert_eq!(
+            bind_spread(&filled, 1),
+            Err(MatchError::SpreadOutsideVariadic)
+        );
     }
 }

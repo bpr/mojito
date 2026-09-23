@@ -373,6 +373,7 @@ impl Checker {
             )?,
             variadic: variadic_idx.map(|index| Box::new(all_types[index].clone())),
             variadic_index: regular_marker_index(&method.params, variadic_idx),
+            variadic_convention: variadic_idx.and_then(|index| method.params[index].convention),
             kw_variadic: kw_variadic_idx.map(|index| Box::new(all_types[index].clone())),
             kw_variadic_index: kw_variadic_idx,
             positional_only: regular_marker_index(&method.params, method.positional_only),
@@ -1344,6 +1345,7 @@ impl Checker {
                 p.kind == mojito_ast::ast::ParamKind::KwVariadic
                     || ref_parameter_is_writable(p, &reference_type_params),
             )?;
+            self.record_owned_pack(p);
             if matches!(p.convention, Some(mojito_ast::ast::ArgConvention::Ref)) {
                 let binder = self.reference_parameter_struct_binder(p.origin.as_deref());
                 self.register_reference_parameter(
@@ -1403,6 +1405,7 @@ impl Checker {
             .push((self.scopes.len().saturating_sub(1), allowed));
         self.transfer_frames.borrow_mut().push(TransferFrame {
             callable: effect_key,
+            keeps_symbolic_selection: false,
             param_owners: owners.clone(),
             param_borrowed: m
                 .params
@@ -2669,9 +2672,13 @@ impl Checker {
                         });
                     }
                 }
+                // A pack forwarded whole binds the callee's pack to the
+                // caller's; elements bind the pack to itself and are
+                // collected below.
+                let solved = if forwards_pack(act) { act } else { pat };
                 subst
                     .entry(binder.id.clone())
-                    .or_insert_with(|| pat.clone());
+                    .or_insert_with(|| solved.clone());
             } else {
                 unify(pat, act, &mut subst)?;
             }
@@ -2681,10 +2688,14 @@ impl Checker {
             .iter()
             .zip(actuals)
             .filter_map(|(pattern, actual)| match pattern {
-                Ty::Param { binder, .. } if binder.name.starts_with('*') => Some((
-                    binder.name.trim_start_matches('*').to_string(),
-                    actual.clone(),
-                )),
+                Ty::Param { binder, .. }
+                    if binder.name.starts_with('*') && !forwards_pack(actual) =>
+                {
+                    Some((
+                        binder.name.trim_start_matches('*').to_string(),
+                        actual.clone(),
+                    ))
+                }
                 _ => None,
             })
             .fold(HashMap::new(), |mut packs, (name, ty)| {
@@ -2760,12 +2771,16 @@ impl Checker {
                     ..
                 } => {
                     if *variadic {
-                        tyargs.push(TyArg::Val(CtValue::Tuple(
-                            inferred_packs
-                                .get(pname.trim_start_matches('*'))
-                                .cloned()
-                                .unwrap_or_default(),
-                        )));
+                        let argument = match subst.get(id) {
+                            Some(pack) if forwards_pack(pack) => TyArg::Ty(pack.clone()),
+                            _ => TyArg::Val(CtValue::Tuple(
+                                inferred_packs
+                                    .get(pname.trim_start_matches('*'))
+                                    .cloned()
+                                    .unwrap_or_default(),
+                            )),
+                        };
+                        tyargs.push(argument);
                         continue;
                     }
                     let solved = subst
@@ -2993,6 +3008,12 @@ type BoundConstructorParams = Result<(Vec<Ty>, ConstructorOriginBindings), Optio
 
 /// Whether a `return` occurs anywhere below. A nested function's own
 /// `return` counts too, which only defers more to the executable check.
+/// Whether an actual is a caller's whole pack, still a parameter, forwarded
+/// into the callee's collector.
+fn forwards_pack(actual: &Ty) -> bool {
+    mojito_types::types::pack_spread(std::slice::from_ref(actual)).is_some()
+}
+
 fn block_holds_return(body: &[Stmt]) -> bool {
     struct Finder(bool);
     impl mojito_ast::visit::Visitor for Finder {

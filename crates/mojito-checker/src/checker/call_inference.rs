@@ -1196,6 +1196,7 @@ impl Checker {
                 reason: "`**kwargs^` requires a callee with a `**kwargs` collector".to_string(),
             });
         }
+        self.reject_forwarded_pack(name, args, variadic.as_deref())?;
         let matched = match_call_slots(
             &names,
             &required,
@@ -1447,6 +1448,7 @@ impl Checker {
             .filter(|argument| !argument.is_forwarded())
             .map(|argument| argument.name.as_str())
             .collect();
+        let forwarded_pack = self.forwarded_pack_argument(name, args, variadic.is_some())?;
         let matched = match_call_slots(
             names,
             required,
@@ -1460,6 +1462,10 @@ impl Checker {
             },
         )
         .map_err(|e| e.into_type_error(name))?;
+        if let Some((position, _)) = &forwarded_pack {
+            mojito_ast::call::bind_spread(&matched, *position)
+                .map_err(|error| error.into_type_error(name))?;
+        }
         let (slots, overflow, kw_overflow) = (
             matched.slots,
             matched.positional_overflow,
@@ -1481,7 +1487,17 @@ impl Checker {
         if let Some(elem) = variadic.as_deref() {
             for &p in &overflow {
                 use_params.push(elem.clone());
-                arg_tys.push(self.infer(&args[p])?);
+                let actual = match &forwarded_pack {
+                    Some((position, forwarded)) if *position == p => self.bind_forwarded_pack(
+                        name,
+                        &args[p],
+                        forwarded,
+                        elem,
+                        self.owned_collectors.get(name).copied(),
+                    )?,
+                    _ => self.infer(&args[p])?,
+                };
+                arg_tys.push(actual);
                 arg_exprs.push(&args[p]);
             }
         }
@@ -1629,7 +1645,17 @@ impl Checker {
             kwargs,
         )?;
         self.record_argument_borrows(&slots, &effective_conventions, args, kwargs, None);
-        let referent = self.canonicalize_public_tuple_types(resolve(ret)?);
+        let mut referent = self.canonicalize_public_tuple_types(resolve(ret)?);
+        if forwarded_pack.is_some() {
+            // A result naming the callee's pack elements (`Us[i]`) closes
+            // over the caller's own pack.
+            let arguments: HashMap<String, TyArg> = decls
+                .iter()
+                .zip(tyargs.iter().cloned())
+                .map(|(decl, argument)| (decl.name().trim_start_matches('*').to_string(), argument))
+                .collect();
+            referent = self.close_pack_elements(referent, &arguments);
+        }
         let result = return_ref
             .map(|mut reference| {
                 reference.referent = Box::new(referent.clone());

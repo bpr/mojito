@@ -163,5 +163,11 @@ fn runtime_match_error(error: mojito_ast::call::MatchError, function: &str) -> R
         MatchError::Missing(parameter) => RuntimeError::TypeError(format!(
             "'{function}' missing required argument '{parameter}'"
         )),
+        // The elaborator expands every spread before a call reaches the VM.
+        spread @ (MatchError::RepeatedSpread
+        | MatchError::PositionalAfterSpread
+        | MatchError::SpreadOutsideVariadic) => {
+            RuntimeError::TypeError(spread.into_type_error(function).to_string())
+        }
     }
 }

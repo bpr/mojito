@@ -476,12 +476,20 @@ so both arms of `comptime if Self.Ts.contains[T]()` check, and
 `__VariantStorage` operations type from `T` without deciding membership. A
 variadic struct applied to concrete types inside a validated body
 (`Tuple(1, "one")`, `a == b`, `t[0]`) resolves through the same signatures
-with the pack bound to the element list. Where there is no symbolic rule — a
-pack forwarded to another callee — the checker raises
-`TypeError::SymbolicPackBoundary`, and that one body gets no verdict
-(`Checker::pack_verdict`, counted as `templates.pack_no_verdict`): it keeps
-its per-instantiation check, leaves the destruction walk, and the run goes on.
-`docs/notes/param-expr-attributes.md` records the design.
+with the pack bound to the element list. A call that forwards the pack whole
+(`inner(*a)`, `collect(30, *items^, tail=10)`, `self.take(*a)`, `print(*a)`)
+binds the callee's own pack to the caller's (`forwarded_pack_argument`,
+`bind_forwarded_pack`): the spread is the last positional argument and lands
+alone in a collector that is itself a pack (`call.rs:spread_position`,
+`bind_spread`), every bound the callee's pack declares must hold of the
+caller's, the two collectors' ownership must agree (`var` needs the `^`, a
+read pack cannot be transferred), and a result naming the callee's elements
+closes over the caller's pack. Where there is still no symbolic rule — a
+method other than `__len__` on the pack, a spread outside a call argument —
+the checker raises `TypeError::SymbolicPackBoundary`, and that one body gets
+no verdict (`Checker::pack_verdict`, counted as `templates.pack_no_verdict`):
+it keeps its per-instantiation check, leaves the destruction walk, and the
+run goes on. `docs/notes/param-expr-attributes.md` records the design.
 
 **A SIMD lane is symbolic too.** A body keyed on a `DType` parameter, or on a
 vector width naming its own parameter (`def total[dt: DType, width:

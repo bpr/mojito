@@ -213,6 +213,7 @@ impl Checker {
                     required: vec![true; regular.len()],
                     variadic: None,
                     variadic_index: None,
+                    variadic_convention: None,
                     kw_variadic: kw_variadic_idx.map(|index| Box::new(all_types[index].clone())),
                     kw_variadic_index: kw_variadic_idx,
                     positional_only: m.positional_only,
@@ -1082,6 +1083,7 @@ impl Checker {
                             Box::new(self.resolve_assoc_ty(&substitute_self(ty, self_ty)))
                         }),
                         variadic_index: req_sig.variadic_index,
+                        variadic_convention: req_sig.variadic_convention,
                         kw_variadic: req_sig.kw_variadic.as_ref().map(|ty| {
                             Box::new(self.resolve_assoc_ty(&substitute_self(ty, self_ty)))
                         }),

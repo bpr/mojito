@@ -326,6 +326,13 @@ assets/type_error/pack_bound_violation.mojo	compile-reject	agree	error: 'Pair' p
 assets/type_error/pack_element_missing_bound.mojo	compile-reject	agree	error: invalid call to 'write': an element of 'args' with type 'Ts.values[SIMDLength(paramfor_next_value[_ZeroStartingRange](iter))]' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/pack_element_narrowing_without_rebind.mojo	compile-reject	agree	error: 'Ts.values[SIMDLength(paramfor_next_value[_ZeroStartingRange](iter))]' does not implement the '__eq__' method
 assets/type_error/pack_field_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
+assets/type_error/pack_forwarding_bound_widening.mojo	compile-reject	agree	error: invalid call to 'inner': cannot unpack a pack of type 'Writable' ('Ts.values') into a call that expects a pack of type 'Writable & Copyable' ('Ts.values')
+assets/type_error/pack_forwarding_fills_regular_slot.mojo	compile-reject	agree	error: invalid call to 'sink': unpack is only supported when the callee accepts a variadic; to forward a runtime pack to a fixed-arity callee, route the call through a dispatcher whose argument is itself a variadic pack (e.g. `def shim[Ts: TypeList[Trait=AnyType, ...], //, callee: def(*args: *Ts) thin](...): callee(*pack)`)
+assets/type_error/pack_forwarding_fixed_arity.mojo	compile-reject	agree	error: invalid call to 'two': unpack is only supported when the callee accepts a variadic; to forward a runtime pack to a fixed-arity callee, route the call through a dispatcher whose argument is itself a variadic pack (e.g. `def shim[Ts: TypeList[Trait=AnyType, ...], //, callee: def(*args: *Ts) thin](...): callee(*pack)`)
+assets/type_error/pack_forwarding_homogeneous_collector.mojo	compile-reject	agree	error: invalid call to 'sink': value passed to 'b' cannot be converted from 'VariadicPack[False, Ts]' to 'VariadicList[Int, False]', it depends on an unresolved parameter 'origin_of(b.origin)'
+assets/type_error/pack_forwarding_owned_without_transfer.mojo	compile-reject	agree	error: value of type 'VariadicPack[True, *Ts.values]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
+assets/type_error/pack_forwarding_ownership_mismatch.mojo	compile-reject	agree	error: invalid call to 'sink': cannot unpack a variadic pack into a call that requires a different ownership. Expected 'False', got 'True'
+assets/type_error/pack_forwarding_transfer_of_read_pack.mojo	compile-reject	agree	error: cannot transfer out of immutable reference
 assets/type_error/pack_init_spread_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
 assets/type_error/pack_method_body_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
 assets/type_error/pack_method_where_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
@@ -441,6 +448,7 @@ assets/type_error/type_receiver_instance_mismatch.mojo	compile-reject	agree	erro
 assets/type_error/uninit_storage_compiler_private.mojo	compile-reject	agree	error: use of unknown declaration '__UninitStorage'
 assets/type_error/untaken_comptime_if_generic_member.mojo	compile-reject	agree	error: 'T' value has no attribute 'nonexistent'
 assets/type_error/untaken_comptime_if_pack_def.mojo	compile-reject	agree	error: 'Ts.values[SIMDLength(paramfor_next_value[_ZeroStartingRange](iter))]' value has no attribute 'nonexistent'
+assets/type_error/untaken_comptime_if_pack_forwarding.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["bad"]' value to 'Int'
 assets/type_error/untaken_comptime_if_pack_struct.mojo	compile-reject	agree	error: 'Ts.values[SIMDLength(paramfor_next_value[_ZeroStartingRange](iter))]' value has no attribute 'nonexistent'
 assets/type_error/untaken_comptime_if_type_error.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["hello"]' value to 'Int'
 assets/type_error/untracked_pointer_field_tracked_argument.mojo	compile-reject	agree	error: no matching function in initialization

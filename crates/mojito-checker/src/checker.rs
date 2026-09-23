@@ -570,6 +570,14 @@ pub struct Checker {
     /// The pack-keyed bodies this validation run reached no verdict on
     /// (`pack_verdict`), keyed at the body's first statement.
     no_verdict_bodies: HashSet<SourceSpan>,
+    /// The positional collectors declared `var *args`: forwarding one as a
+    /// whole needs the `^`, and a read one cannot be transferred.
+    owned_packs: HashSet<mojito_types::origin::OwnerId>,
+    /// Whether each function's positional collector is `var`, by name, for
+    /// the ownership a forwarded pack must match (`Ty::GenericFunc` carries
+    /// the regular conventions only). A name whose overloads disagree is
+    /// absent.
+    owned_collectors: HashMap<String, bool>,
     /// Per-scope compile-time bindings of a validated body: `comptime for`
     /// variables and the declaration's value parameters. The elaborator
     /// substitutes each as a literal, so a nested function or lambda reading
@@ -952,6 +960,8 @@ impl Checker {
             rebind_targets: RebindTargets::default(),
             rebind_keyed_bodies: HashSet::new(),
             no_verdict_bodies: HashSet::new(),
+            owned_packs: HashSet::new(),
+            owned_collectors: HashMap::new(),
             compile_time_bindings: vec![HashSet::new()],
             enclosing_type_params: Vec::new(),
             self_ty: None,
@@ -2051,6 +2061,9 @@ struct MethodSig {
     required: Vec<bool>,
     variadic: Option<Box<Ty>>,
     variadic_index: Option<usize>,
+    /// The positional collector's convention (`var *args`), which a pack
+    /// forwarded into it must match.
+    variadic_convention: Option<ArgConvention>,
     kw_variadic: Option<Box<Ty>>,
     kw_variadic_index: Option<usize>,
     positional_only: Option<usize>,
@@ -2101,6 +2114,7 @@ impl MethodSig {
             required: vec![true; len],
             variadic: None,
             variadic_index: None,
+            variadic_convention: None,
             kw_variadic: None,
             kw_variadic_index: None,
             positional_only: None,
@@ -2454,6 +2468,12 @@ struct TraitInfo {
 /// signature-relative effects.
 struct TransferFrame {
     callable: String,
+    /// Whether this body is a clone of a template source validation
+    /// checked, so a selection made there with the operand symbolic (the
+    /// `rebind` overload) stands rather than being remade on the concrete
+    /// type the clone was made with. Set by `mark_symbolic_selection` once
+    /// the body site is known.
+    keeps_symbolic_selection: bool,
     param_owners: Vec<mojito_types::origin::OwnerId>,
     /// Whether each parameter's convention borrows caller storage
     /// (`mut`/`ref`) rather than owning a moved value.
@@ -2534,14 +2554,21 @@ type CallResultOrigin = (
 type EffectQueries = Vec<(String, EffectRead)>;
 
 /// What reading one callee's effect summary found.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum EffectRead {
     Empty,
+    /// An empty summary read where a callable's name stands as a value,
+    /// under that name rather than a call's target.
+    Value,
     /// Transfer effects replayed against a call's own receiver and arguments.
     Transfers,
-    /// Anything else: a call-through residue, a callable behind one, or the
-    /// effects baked into a function value.
+    /// Anything else with no recipe: the effects of a named callable behind
+    /// a call-through residue, or those baked into a function value.
     Residue,
+    /// A callee's call-through residue, resolved against the call's own
+    /// callable actuals and republished as a composition when one of them is
+    /// the body's own callable parameter.
+    CallThrough(Vec<mojito_checked::checked::CallThroughEffect>),
 }
 
 impl EffectRead {

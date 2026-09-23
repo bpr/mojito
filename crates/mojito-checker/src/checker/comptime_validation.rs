@@ -10,6 +10,19 @@ use super::*;
 use mojito_ast::ast::ParamArg;
 use mojito_types::types::{ConstraintOperand, GenericConstraint};
 
+/// A call argument that forwards a variadic pack whole (`*args`, `*args^`)
+/// while the pack is still a parameter.
+pub(super) struct ForwardedPack {
+    /// The collector binding the spread names.
+    pub(super) binding: String,
+    /// The pack as its bounded binder (`*Ts` with its declared bounds).
+    pub(super) pack: Ty,
+    /// Whether the spread carries the `^`.
+    pub(super) transferred: bool,
+    /// Whether the collector was declared `var`.
+    pub(super) owned: bool,
+}
+
 impl Checker {
     /// Check the method bodies of a struct that hold compile-time control
     /// flow, each with `self` bound at the struct's own parameters.
@@ -408,13 +421,197 @@ impl Checker {
     /// Whether a spread's operand (`*args`, `*args^`) is a binding of a pack
     /// that is still a parameter.
     pub(super) fn spreads_unbound_pack(&self, spread: &Expr) -> bool {
-        let source = match &spread.kind {
-            ExprKind::Transfer(inner) => inner,
-            _ => spread,
+        self.forwarded_pack_operand(spread).is_some()
+    }
+
+    /// Note a positional collector declared `var *args` once it is bound.
+    pub(super) fn record_owned_pack(&mut self, param: &FnParam) {
+        if param.kind == mojito_ast::ast::ParamKind::Variadic
+            && matches!(param.convention, Some(ArgConvention::Var))
+            && let Some(owner) = self.lookup_owner(&param.name)
+        {
+            self.owned_packs.insert(owner);
+        }
+    }
+
+    /// Note whether a function's positional collector is `var` as it is
+    /// declared (`None` when it has no collector). Overloads of one name that
+    /// disagree leave the name unrecorded.
+    pub(super) fn record_owned_collector(&mut self, name: &str, owned: Option<bool>) {
+        let Some(owned) = owned else {
+            return;
         };
-        matches!(&source.kind, ExprKind::Identifier(binding)
-            if matches!(self.lookup(binding), Some(Ty::VariadicPack(element))
-                if mojito_types::types::pack_spread(std::slice::from_ref(&**element)).is_some()))
+        match self.owned_collectors.get(name) {
+            Some(recorded) if *recorded != owned => {
+                self.owned_collectors.remove(name);
+            }
+            Some(_) => {}
+            None => {
+                self.owned_collectors.insert(name.to_string(), owned);
+            }
+        }
+    }
+
+    /// A callee with no pack collector cannot take a forwarded pack: the
+    /// binding's own diagnostics say why (no collector, or a homogeneous
+    /// one).
+    pub(super) fn reject_forwarded_pack(
+        &self,
+        callee: &str,
+        args: &[Expr],
+        collector: Option<&Ty>,
+    ) -> Result<(), TypeError> {
+        if let Some((position, forwarded)) =
+            self.forwarded_pack_argument(callee, args, collector.is_some())?
+            && let Some(collector) = collector
+        {
+            self.bind_forwarded_pack(callee, &args[position], &forwarded, collector, None)?;
+        }
+        Ok(())
+    }
+
+    /// The pack a call argument forwards whole (`*args`, `*args^`) when that
+    /// pack is still a parameter, or `None` for any other argument.
+    pub(super) fn forwarded_pack(&self, argument: &Expr) -> Option<ForwardedPack> {
+        match &argument.kind {
+            ExprKind::Spread(spread) => self.forwarded_pack_operand(spread),
+            _ => None,
+        }
+    }
+
+    /// [`Self::forwarded_pack`] for the spread's operand (`args`, `args^`).
+    fn forwarded_pack_operand(&self, spread: &Expr) -> Option<ForwardedPack> {
+        let (source, transferred) = match &spread.kind {
+            ExprKind::Transfer(inner) => (&**inner, true),
+            _ => (spread, false),
+        };
+        let ExprKind::Identifier(binding) = &source.kind else {
+            return None;
+        };
+        let Some(Ty::VariadicPack(element)) = self.lookup(binding) else {
+            return None;
+        };
+        let element = mojito_types::types::pack_spread(std::slice::from_ref(&**element))?;
+        let Ty::Param { binder, .. } = element else {
+            return None;
+        };
+        // The binder in scope carries the declared bounds; a pack reached
+        // through a capture keeps the bounds its binding type has.
+        let pack = self
+            .lookup_tparam(&binder.name)
+            .unwrap_or_else(|| element.clone());
+        Some(ForwardedPack {
+            binding: binding.clone(),
+            pack,
+            transferred,
+            owned: self
+                .lookup_owner(binding)
+                .is_some_and(|owner| self.owned_packs.contains(&owner)),
+        })
+    }
+
+    /// The pack a call forwards among its positional arguments, with its
+    /// place in the argument list checked: one spread, last, and only where
+    /// the callee has a positional collector. `None` when no argument
+    /// forwards a pack that is still a parameter.
+    pub(super) fn forwarded_pack_argument(
+        &self,
+        callee: &str,
+        args: &[Expr],
+        has_collector: bool,
+    ) -> Result<Option<(usize, ForwardedPack)>, TypeError> {
+        let spreads: Vec<usize> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, argument)| self.forwarded_pack(argument).is_some())
+            .map(|(position, _)| position)
+            .collect();
+        let Some(position) = mojito_ast::call::spread_position(&spreads, args.len())
+            .map_err(|error| error.into_type_error(callee))?
+        else {
+            return Ok(None);
+        };
+        if !has_collector {
+            return Err(mojito_ast::call::MatchError::SpreadOutsideVariadic.into_type_error(callee));
+        }
+        let forwarded = self
+            .forwarded_pack(&args[position])
+            .expect("selected among the forwarded arguments");
+        Ok(Some((position, forwarded)))
+    }
+
+    /// Bind a forwarded pack to a callee's positional collector: the
+    /// collector is itself a pack (`*args: *Us`), its ownership agrees with
+    /// the caller's (`var` needs the `^`, a read pack cannot be transferred,
+    /// and a collector known to be `var` or read — `collector_owned` — takes
+    /// the same kind of pack), and every bound it declares holds of the
+    /// caller's pack. The whole pack is the collector's one actual, and
+    /// `argument` (the spread) is typed as it so a later reading of the
+    /// call's arguments finds the binding rather than the bare spread.
+    pub(super) fn bind_forwarded_pack(
+        &self,
+        callee: &str,
+        argument: &Expr,
+        forwarded: &ForwardedPack,
+        collector: &Ty,
+        collector_owned: Option<bool>,
+    ) -> Result<Ty, TypeError> {
+        let Ty::Param {
+            bounds: expected, ..
+        } = collector
+        else {
+            return Err(TypeError::TypeMismatch {
+                expected: format!("VariadicList[{collector}]"),
+                found: format!("a variadic pack ('{}')", forwarded.binding),
+                context: format!("argument to '{callee}'"),
+            });
+        };
+        if !forwarded.owned && forwarded.transferred {
+            return Err(TypeError::BadCall {
+                func: callee.to_string(),
+                reason: format!(
+                    "cannot transfer out of the read pack '{}'",
+                    forwarded.binding
+                ),
+            });
+        }
+        if collector_owned.is_some_and(|owned| owned != forwarded.owned) {
+            return Err(TypeError::BadCall {
+                func: callee.to_string(),
+                reason: "cannot unpack a variadic pack into a call that requires a different \
+                         ownership"
+                    .to_string(),
+            });
+        }
+        if forwarded.owned && !forwarded.transferred {
+            return Err(TypeError::ImplicitCopy {
+                ty: format!("VariadicPack[{}]", forwarded.pack),
+                context: format!("argument to '{callee}'"),
+                transferable: true,
+                copyable: false,
+            });
+        }
+        if expected
+            .iter()
+            .any(|bound| !self.conforms_to(&forwarded.pack, bound))
+        {
+            let declared = match &forwarded.pack {
+                Ty::Param { bounds, .. } if !bounds.is_empty() => bounds.join(" & "),
+                _ => "AnyType".to_string(),
+            };
+            return Err(TypeError::BadCall {
+                func: callee.to_string(),
+                reason: format!(
+                    "cannot unpack a pack of type '{declared}' into a call that expects a pack of \
+                     type '{}'",
+                    expected.join(" & ")
+                ),
+            });
+        }
+        self.expression_types
+            .borrow_mut()
+            .insert(argument.source_span(), forwarded.pack.clone());
+        Ok(forwarded.pack.clone())
     }
 
     /// A construction from a whole pack that is still a parameter
@@ -460,7 +657,9 @@ impl Checker {
         let constructed = match name {
             "__RuntimeTuple" => Ty::Tuple(vec![pack]),
             mojito_types::types::TUPLE_TYPE_NAME => mojito_types::types::tuple_type(vec![pack]),
-            _ => return Some(Err(boundary())),
+            // Any other callee binds the forwarded pack to its own collector
+            // (`forwarded_pack_argument`, `bind_forwarded_pack`).
+            _ => return None,
         };
         if param_args.is_empty() {
             return Some(Ok(constructed));

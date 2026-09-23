@@ -549,20 +549,29 @@ fn nested_pack_forwarding_rejects_multiple_or_mixed_segments() {
     let top_level_multiple = "def count[*Ts: Movable & Deinitable](var *values: *Ts) -> Int:\n    return len(values)\n\ndef relay[*Ts: Movable & Deinitable](var *values: *Ts) -> Int:\n    return count(*values^, *values^)\n\ndef main():\n    print(relay(1, True))\n";
     let top_level_mixed = "def count[*Ts: Movable & Deinitable](var *values: *Ts) -> Int:\n    return len(values)\n\ndef relay[*Ts: Movable & Deinitable](var *values: *Ts) -> Int:\n    return count(*values^, 9)\n\ndef main():\n    print(relay(1, True))\n";
 
-    for source in [multiple, top_level_multiple] {
-        let error = run(source).unwrap_err();
-        assert!(
-            error.contains("at most one runtime-pack spread"),
-            "got: {error}"
-        );
-    }
-    for source in [mixed, top_level_mixed] {
-        let error = run(source).unwrap_err();
-        assert!(
-            error.contains("cannot be mixed with explicit overflow arguments"),
-            "got: {error}"
-        );
-    }
+    // A top-level pack body is validated from its template, where the
+    // spread's placement is a structural call error; a body nested in a
+    // non-generic `def` is not validated and the elaborator reports it.
+    let error = run(multiple).unwrap_err();
+    assert!(
+        error.contains("at most one runtime-pack spread"),
+        "got: {error}"
+    );
+    let error = run(top_level_multiple).unwrap_err();
+    assert!(
+        error.contains("unpack markers must not appear more than once in a call"),
+        "got: {error}"
+    );
+    let error = run(mixed).unwrap_err();
+    assert!(
+        error.contains("cannot be mixed with explicit overflow arguments"),
+        "got: {error}"
+    );
+    let error = run(top_level_mixed).unwrap_err();
+    assert!(
+        error.contains("positional argument must not follow an unpack"),
+        "got: {error}"
+    );
 }
 
 #[test]

@@ -279,6 +279,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   builds the dependent element (`ParamContext::list_get`,
   `DependentType::pack_element` in `mojito-types`), `opaque_element` is its
   bounded `Ty::Param` view and `restore_pack_elements` the way back,
+  `forwarded_pack`/`forwarded_pack_argument` recognize a spread of it as one
+  call argument (its placement through `call.rs:spread_position` and
+  `bind_spread`) and `bind_forwarded_pack` binds it whole to a callee's pack
+  collector (bounds, ownership, and the recorded `owned_packs`/
+  `owned_collectors`), at the overflow loops of
+  `call_inference.rs:infer_generic_call`, `generics.rs:instantiate_method_generics`,
+  `method_calls/selection.rs:score_method_call`, and `builtins.rs:infer_print`
+  (`rebind.rs:rebinds_by_value` keeps a validated template's selection in a
+  clone through the transfer frame `template_facts.rs:mark_symbolic_selection`
+  marks),
   `close_pack_elements` and `positional_pack_binding` bind a callee's pack at
   a use (`types::expand_pack_spread` for a spread such as `other: Self`),
   `infer_unbound_pack_construction` and
@@ -302,8 +312,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (through `operators.rs:struct_infix_dispatch`, the type-level half of
   `infer_infix`), `plain_data` is the instance-argument obligation of a
   `MethodBody` and `loan_free` its transfer obligation
-  (`body_transfer_effects` tells a vanishing transfer from a call-through
-  residue), and `census` reports what keeps each generic body from being
+  (`body_transfer_effects` tells a vanishing transfer from a residue no
+  recipe covers), `residue_plain` its call-through obligation (a callee's
+  residue is read as `EffectRead::CallThrough`, kept as
+  `call_through_reads`, and rekeyed by `note_realized_callee`;
+  `realize_callable_call` takes a call through a `def(...)` parameter from
+  the instance's own binding of it), and `census` reports what keeps each
+  generic body from being
   captured, with `grammar_features` naming the constructs it holds. The
   submodule `template_facts/bound_dispatch.rs` re-selects a call through a
   bound for an instance: `bound_witness` is the by-types resolver from a

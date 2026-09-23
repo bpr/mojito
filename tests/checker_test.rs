@@ -6708,10 +6708,11 @@ fn dtype_keyed_struct_validates_beside_an_invalid_arm() {
 
 #[test]
 fn a_pack_body_without_a_symbolic_rule_gets_no_verdict_alone() {
-    // Forwarding a pack that is still a parameter has no symbolic rule, so
-    // `outer` is left to its per-instantiation check. That is no verdict on
-    // `outer` only: the run continues and still judges `second`.
-    let source = "def inner[*Ts: Writable](*a: *Ts):\n    comptime for i in range(a.__len__()):\n        print(a[i])\n\ndef outer[*Ts: Writable](*a: *Ts):\n    inner(*a)\n\ndef second[flag: Bool]() -> Int:\n    comptime if flag:\n        return 1\n    else:\n        return \"two\"\n\ndef main():\n    outer(1, \"two\")\n";
+    // A method other than `__len__` on a pack that is still a parameter has
+    // no symbolic rule, so `outer` is left to its per-instantiation check.
+    // That is no verdict on `outer` only: the run continues and still judges
+    // `second`.
+    let source = "def outer[*Ts: Writable](*a: *Ts):\n    print(a.__getitem__[0]())\n\ndef second[flag: Bool]() -> Int:\n    comptime if flag:\n        return 1\n    else:\n        return \"two\"\n\ndef main():\n    outer(1, \"two\")\n";
     let linked = mojito::link_source(source, std::path::Path::new("pack_no_verdict.mojo"))
         .expect("link error");
     let prepared = mojito::comptime::prepare(linked).expect("prepare");
@@ -6734,6 +6735,27 @@ fn a_pack_body_without_a_symbolic_rule_gets_no_verdict_alone() {
             .collect::<Vec<_>>(),
         ["outer"]
     );
+}
+
+#[test]
+fn a_body_forwarding_its_pack_is_validated_from_its_template() {
+    // `inner(*a)` binds `inner`'s pack to `outer`'s whole pack, so `outer`
+    // gets a verdict: the untaken arm after the call is reported from the
+    // template, and no body is left to its per-instantiation check.
+    let source = "def inner[*Ts: Writable](*a: *Ts):\n    comptime for i in range(a.__len__()):\n        print(a[i])\n\ndef outer[*Ts: Writable](*a: *Ts):\n    inner(*a)\n    comptime if 1 > 2:\n        var x: Int = \"bad\"\n\ndef main():\n    outer(1, \"two\")\n";
+    let linked = mojito::link_source(source, std::path::Path::new("pack_forwarding.mojo"))
+        .expect("link error");
+    let prepared = mojito::comptime::prepare(linked).expect("prepare");
+    let mut catalog = mojito::templates::TemplateCatalog::default();
+    let error = mojito::checker::validate_comptime_templates_into(&prepared, &mut catalog)
+        .expect_err("the untaken arm of `outer` is invalid");
+    assert!(
+        error
+            .to_string()
+            .contains("expected Int, found StringLiteral"),
+        "{error}"
+    );
+    assert!(catalog.stats().no_verdict.is_empty());
 }
 
 #[test]

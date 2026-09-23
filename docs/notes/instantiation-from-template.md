@@ -78,7 +78,9 @@ them:
 - Growth in a store that is not keyed by occurrence refuses it
   (`UnkeyedFact`): hash leaf types, nested declaration types and effects,
   transferred origins, deletable declarations.
-- A callee effect summary that was read and was not empty refuses it.
+- A callee effect summary that was read and was not empty refuses it, unless
+  what was read is a call-through residue, which the bundle keeps
+  (`call_through_reads`).
 
 Two things a body reaches are not facts at an occurrence, so capture reads
 them from a per-body frame instead of from table growth. The frames exist only
@@ -226,8 +228,9 @@ copy, and the loop variable may only key a condition.
 
 The declaration may have a `mut`, `var`, `deinit`, or `ref` receiver, the
 `out` of an `__init__`, or none (`@staticmethod`), a `where` clause, `var`,
-`mut`, and bare `ref` parameters, trait-bounded type binders of its own, and
-any result, a reference included. A
+`mut`, bare `ref`, and `def(...)`-typed parameters, trait-bounded type
+binders of its own, and any result, a reference included. A `deinit`
+receiver is writable as a `mut` one is. A
 `mut` or `ref` parameter is bound from its declared convention and rooted at
 its own binding under every instance, so the body's facts name it by template
 owner; what its caller owes lives in the signature, which is checked per
@@ -272,6 +275,7 @@ they are a set, not a ladder.
 | `BOUND_BUILTINS` | `hasher.update(x)`, `hasher._update_with_simd(x)`, or `writer.write(x…)` on a parameter bounded by `Hasher` or `Writer`, whose arguments are closed scalars, string literals, named whole values, `ref` locals, fields read through a reference, pointer slots, or reference calls | The builtin selects no callee and records at an argument only what its syntax decides: a borrow of a named place or a reference result, an unconsumed temporary, a closed literal's materialization. The argument's type it proved through the bound, and the instance proves it again at its own type (obligation 17), which for a hashed value is where the hash leaf is recorded. |
 | `BOUND_BINDERS` | the method's own type binders, each a plain trait-bounded type (`[H: Hasher]`) | A clone keeps such a binder, bound symbolically as the template binds it: no clone is minted per hasher, the VM reifies the binding at run time, and no retained fact substitutes it. The instance's substitution binds the struct's parameters alone (`instance_substitution`), as it does beside an origin binder. |
 | `CONSTRUCTIONS` | a construction of a declared struct whose compile-time arguments are types, as a whole value: `copy:` of a named place, or arguments that are closed scalars, whole values, or — for a fieldwise struct's reference field — a `ref` local | A construction records no contract: `infer_construction` selects an `__init__` from the argument types, retargets it to the instance's constructor clone, and reaches the struct application. Its one unconditional record, `ConstructionImmutableBinders`, is empty when no compile-time argument is an `ImmOrigin` cast, which the type-only arguments guarantee, and installation writes the empty entry again. What a constructor records at an argument is decided by the argument's syntax and the constructor's conventions (a copy owes obligation 3, a transfer obligation 10, a literal materializes to a closed type); the selected member binds each argument exactly, so no member can outrank it under any instance (obligation 18). A constructed type that names the receiver in an origin argument (`_ListIter[T, origin_of(self)]`) is kept with the slot unbound and the origin by template owner (`typed_origins`), and the `return`'s re-resolution of the annotation's `origin_of(self)` is repeated once by the instance rather than recorded. |
+| `CALLABLE_PARAMETERS` | a call through a parameter declared with a `def(...)` type, passing closed scalars or whole values, as a statement; and such a parameter forwarded by value to a sibling call | The call records the parameter's own contract symbol and parameters, which the instance takes from its own binding of the parameter, and puts a call-through residue on the body's frame that names the parameter's slot and each argument's signature place. A forwarded parameter reads the callee's residue and composes one. Neither names a type: the instance republishes the template's residue and owes that its realized callee publishes the one the template read. Obligation 19 below. |
 
 The compiler-private trap `_mojito_abort("message")` is a statement of any
 non-keyed body: the built-in types its literal and selects nothing. A
@@ -336,8 +340,12 @@ only `Movable` records nothing there, and its `Int` clone would.
 8. **Struct applications.** Substituted, then recorded by installation under
    the body's own source.
 9. **Effect summaries.** Every callee's transfer and call-through summaries
-   must still be empty. Installation records the same empty observation a
-   clone check would, so the transfer fixpoint re-runs if one grows.
+   must still be empty, except a callee the template read a call-through
+   residue from, which obligation 19 covers. Installation records the same
+   observation a clone check would — empty, or the residue read — so the
+   transfer fixpoint re-runs if one grows. A name read where a callable
+   stands as a value (a parameter forwarded, a declaration handed on) is read
+   under the same name by the instance (`value_callees`).
 10. **`Movable`.** Each `^` transfer of a value whose type mentioned a
     parameter must be of a `Movable` type for the instance. A parameter is
     always movable while it is symbolic and the demand only ever produces an
@@ -431,6 +439,28 @@ only `Movable` records nothing there, and its `Int` clone would.
     bundled struct mints no constructor clone, so the template's spelling
     stands and the instance owes the member's `where` clause
     (`method_constraints_apply`) instead.
+19. **Call-through residues.** A body that calls its own `def(...)`
+    parameter records a `CallThroughEffect` on its frame, naming the
+    parameter's slot and each argument's signature place; a body that
+    forwards the parameter to a callee with such a residue reads it and
+    composes one of its own. Neither names a type, so the instance
+    republishes the template's residue verbatim (`call_throughs`, pushed on
+    the instance's frame at installation) and rekeys each read
+    (`call_through_reads`) to the callee obligation 7 or 5 realized
+    (`note_realized_callee`), which must publish exactly the residue the
+    template read. The ground is the same as obligation 14's: an argument
+    carries an origin only while its binding's type carries a loan, so
+    capture refuses a residue with a carried origin and realization refuses
+    when a substituted retained type carries a loan or a reference
+    (`residue_plain`; a callable's environment never substitutes, so a
+    `thin` or open `capturing` parameter type is not refused as `loan_free`
+    refuses it). The call through the parameter itself recorded the
+    parameter's contract symbol (`__trait_dispatch.__call__$ov$…`) and
+    parameters in the caller's binder scope, and the instance takes both from
+    its own binding of the parameter (`realize_callable_call`). A residue
+    naming a compile-time callable value refuses, and a read whose concrete
+    callable is a named declaration with effects of its own keeps the clone
+    check (`EffectRead::Residue`).
 
 The declaration's bounds and `where` clauses are not re-checked: the checker
 discharges them at the requesting call, and the elaborator proves a fully
@@ -557,13 +587,24 @@ tables. In short, for one debug-profile run each:
   (`template_method_construction.mojo`), and a view constructed over
   `ref source = self` with the receiver in its origin argument does too
   (`assets/extensions/ok/ref_field_template_method_construction.mojo`).
+  Call-through residues and a writable `deinit` receiver took `stdlib_heavy`
+  from 1004 to 1044 (2026-09-22): `List.deinit_with`, `Optional.deinit_with`,
+  and `DictEntry.reap_with` derive for every plain-data instance, and a user
+  struct that calls or forwards its `def(...)` parameter derives for an `Int`
+  and a `String` instance (`template_method_callable_parameter.mojo`). The two
+  `List[DictEntry[…]]` instances still refuse on the plain-data obligation,
+  `Dict.clear_with`/`deinit_with` on `ExplicitDestroyCalls` and a consumed
+  local receiver, `Optional.map`/`and_then` on `EraseCompileTimeArgument`,
+  and the `Tuple` teardown members are whole-struct specializations with a
+  compile-time callable.
 - Hello World mints no per-instantiation clones at all. Its generated bodies
   are members of structs specialized whole and per-call clones, from
   concrete-only templates.
 - The census (`template_census.*`) says which table recipes come next: of
-  the 260 clone bodies still inferred, 173 are capturable already, and the
-  largest blocker left is a call-through residue (39 bodies, sole blocker of
-  27), then `ExplicitDestroyCalls` (13), the `TypeName` adjustment (11), and
+  the 253 clone bodies still inferred, 177 are capturable already, and the
+  largest blockers left are a binding the grammar refuses (16, a local of a
+  parameter type), `ExplicitDestroyCalls` (13, sole blocker of 8), the
+  `TypeName` adjustment (11), `EraseCompileTimeArgument` (8), and
   `BorrowViewResult` (6, the `Dict.keys`/`values`/`__iter__` family). Its
   `grammar.*` counters say which constructs keep a body outside every class
   whatever its tables: a method call with arguments (150 bodies), a direct
@@ -605,12 +646,16 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
   surviving trait-bound `def` template. Scalar locals and runtime `if` and
   `while` are covered.
 - Any call that records a conversion, an adjustment, or an origin, and a
-  transfer that does not vanish: a call-through residue (a body that calls
-  its own callable parameter, `List.deinit_with`, `Optional.map`, and their
-  callers), a function value's baked effects, a destination a captured
-  binding names, and an instance whose values may carry a loan. An
-  arithmetic operator through a bound, a reflected or consuming operator,
-  and `!=` served by `__eq__` are re-selections in a clone with no recipe.
+  transfer that does not vanish: a call-through residue that names a
+  compile-time callable (`Tuple.deinit_with[elt_handler]`) or whose argument
+  carries an origin, a named callable's own effects behind a residue, a
+  function value's baked effects, a destination a captured binding names,
+  and an instance whose values may carry a loan. An arithmetic operator
+  through a bound, a reflected or consuming operator, and `!=` served by
+  `__eq__` are re-selections in a clone with no recipe. The
+  `CallableCaptureAccesses` adjustment is a concrete caller's fact: a
+  `capturing[_]` parameter's environment stays open in every clone, so no
+  template records it.
 - A bound dispatch whose instance witness is overloaded, has a `mut` or
   consuming receiver, takes a binder the instance would bake (a closed
   hasher type), or is a requirement the type meets without declaring the

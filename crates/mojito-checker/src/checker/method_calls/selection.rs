@@ -91,6 +91,11 @@ impl Checker {
                     _ => element,
                 };
                 let expression = &args[position];
+                // A forwarded pack was bound whole while scoring; it has no
+                // element conversion to record.
+                if self.forwarded_pack(expression).is_some() {
+                    continue;
+                }
                 let actual = self.infer_with_expected(expression, expected, true)?;
                 if !self.record_implicit_conversion(expression, &actual, expected)? {
                     return Err(TypeError::TypeMismatch {
@@ -351,6 +356,7 @@ impl Checker {
             .filter(|argument| !argument.is_forwarded())
             .map(|arg| arg.name.as_str())
             .collect();
+        let forwarded_pack = self.forwarded_pack_argument("method", args, variadic.is_some())?;
         let matched = match_call_slots(
             &signature.names,
             &signature.required,
@@ -364,6 +370,10 @@ impl Checker {
             },
         )
         .map_err(|error| error.into_type_error("method"))?;
+        if let Some((position, _)) = &forwarded_pack {
+            mojito_ast::call::bind_spread(&matched, *position)
+                .map_err(|error| error.into_type_error("method"))?;
+        }
         let (slots, overflow) = (matched.slots, matched.positional_overflow);
         let mut score = 0;
         for (index, slot) in slots.iter().enumerate() {
@@ -405,6 +415,23 @@ impl Checker {
                     }
                     _ => element,
                 };
+                if let Some((spread, forwarded)) = &forwarded_pack
+                    && *spread == position
+                {
+                    // The whole pack is the collector's one argument; the
+                    // conventions and bounds are its whole conversion.
+                    self.bind_forwarded_pack(
+                        "method",
+                        &args[position],
+                        forwarded,
+                        expected,
+                        Some(matches!(
+                            signature.variadic_convention,
+                            Some(ArgConvention::Var)
+                        )),
+                    )?;
+                    continue;
+                }
                 let actual = self.infer_with_expected(&args[position], expected, false)?;
                 if !coerces(&actual, expected)
                     && self

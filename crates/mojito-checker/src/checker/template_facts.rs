@@ -13,7 +13,9 @@
 //! refuses a body instead of being dropped silently. The design record is
 //! `docs/notes/instantiation-from-template.md`.
 
-use super::{Checker, EffectRead, callable_lowered_name, method_binder_owner};
+use super::{
+    Checker, EffectRead, callable_contract_target, callable_lowered_name, method_binder_owner,
+};
 use mojito_ast::ast::{Expr, ExprKind, Stmt, StmtKind};
 use mojito_checked::templates::{
     BoundBuiltin, CallParameterFact, CheckedBodyFacts, CheckedTemplate, FactTable,
@@ -178,6 +180,7 @@ struct GrammarNotes {
     comparisons: Vec<OccurrenceId>,
     bound_builtins: Vec<(OccurrenceId, BoundBuiltin)>,
     constructions: Vec<OccurrenceId>,
+    callable_calls: Vec<OccurrenceId>,
 }
 
 impl Checker {
@@ -244,6 +247,7 @@ impl Checker {
                 .collect(),
             compile_time: self.compile_time_owners(decls),
         };
+        self.mark_symbolic_selection(&site);
         self.check_body(&site, &params)
     }
 
@@ -316,6 +320,7 @@ impl Checker {
                 .collect(),
             compile_time: self.compile_time_owners(&method_decls),
         };
+        self.mark_symbolic_selection(&site);
         self.check_body(&site, &params)
     }
 
@@ -332,6 +337,25 @@ impl Checker {
                 ParamDecl::Type { .. } => None,
             })
             .collect()
+    }
+
+    /// Record on the body's transfer frame (pushed by its inner checker
+    /// before the site is entered) whether selections made under source
+    /// validation stand (`TransferFrame::keeps_symbolic_selection`): its
+    /// trace names a validated template, or, for a body no trace covers (a
+    /// per-call clone, a seam without the elaborator's traces), a clone's
+    /// name marks it.
+    fn mark_symbolic_selection(&self, site: &BodySite<'_>) {
+        let keeps = {
+            let catalog = self.template_catalog.borrow();
+            match catalog.trace(&site.instance) {
+                Some(trace) => catalog.validated(&trace.template),
+                None => site.display.contains('$'),
+            }
+        };
+        if let Some(frame) = self.transfer_frames.borrow_mut().last_mut() {
+            frame.keeps_symbolic_selection = keeps;
+        }
     }
 
     /// Infer one body, or serve it from a checked template.
@@ -501,13 +525,15 @@ impl Checker {
     /// The transfer effects one body inference replayed or published, as
     /// `(residue, transfers)`.
     ///
-    /// `residue` is an effect no derivation accounts for: a call-through
-    /// read or residue, a function value's baked effects, or a destination a
-    /// captured binding names. `transfers` is the rest: a callee's transfer
-    /// summary replayed on the call's own receiver and arguments, the origins
-    /// it merged, and the effect the body's own frame then publishes. Those
-    /// exist only while a value may carry a loan
-    /// ([`TemplateObligation::PlainDataTransfers`]).
+    /// `residue` is an effect no derivation accounts for: a named callable's
+    /// effects behind a call-through residue, a function value's baked
+    /// effects, or a destination a captured binding names. `transfers` is the
+    /// rest: a callee's transfer summary replayed on the call's own receiver
+    /// and arguments, the origins it merged, and the effect the body's own
+    /// frame then publishes. Those exist only while a value may carry a loan
+    /// ([`TemplateObligation::PlainDataTransfers`]). A call-through residue
+    /// the body reads or publishes is neither: capture keeps it
+    /// ([`TemplateObligation::CallThroughResidue`]).
     fn body_transfer_effects(
         &self,
         occurrences: &[Occurrence],
@@ -528,13 +554,12 @@ impl Checker {
         let residue = reads
             .effect_queries
             .iter()
-            .any(|(_, read)| *read == EffectRead::Residue)
+            .any(|(_, read)| matches!(read, EffectRead::Residue))
             || frame.is_some_and(|frame| {
-                !frame.call_throughs.is_empty()
-                    || frame
-                        .effects
-                        .iter()
-                        .any(|effect| bound(&effect.dest) || bound(&effect.src))
+                frame
+                    .effects
+                    .iter()
+                    .any(|effect| bound(&effect.dest) || bound(&effect.src))
             });
         let merged = self
             .unkeyed_fact_entries()
@@ -552,7 +577,7 @@ impl Checker {
             || reads
                 .effect_queries
                 .iter()
-                .any(|(_, read)| *read == EffectRead::Transfers)
+                .any(|(_, read)| matches!(read, EffectRead::Transfers))
             || frame.is_some_and(|frame| !frame.effects.is_empty());
         (residue, transfers)
     }
@@ -748,6 +773,18 @@ impl Checker {
             && !callable_field
     }
 
+    /// [`TemplateObligation::CallThroughResidue`] for one substituted type:
+    /// closed, and holding no loan and no reference in its storage, its
+    /// fields at their own arguments. A callable is not refused as
+    /// `loan_free` refuses one: what a callable's storage carries is its
+    /// environment's, which no substitution changes, so a `thin` one carries
+    /// nothing in either check and a `capturing` one the same open set.
+    fn residue_plain(&self, ty: &Ty) -> bool {
+        !mojito_types::types::is_symbolic(ty)
+            && !self.type_carries_loans(ty)
+            && !self.type_contains_reference(ty)
+    }
+
     /// The checked type each baked type parameter stands for in a clone.
     ///
     /// A `def` clone's are the source types the elaborator wrote, resolved as
@@ -914,7 +951,9 @@ impl Checker {
                 .iter()
                 .map(substituted_reference)
                 .collect(),
-            effect_free_callees: Vec::new(),
+            // A value-position read is under the same name in the instance;
+            // every call's read is under the callee realized for it.
+            effect_free_callees: template.value_callees.clone(),
             ..template.clone()
         };
         // A per-call request the template recorded names the caller's own
@@ -978,6 +1017,23 @@ impl Checker {
             return Err("a value may carry a loan where the body replays a transfer");
         }
         facts.vanishing_transfers = false;
+        // A call-through residue is republished verbatim on the same ground:
+        // an argument carries an origin only while its binding's type carries
+        // a loan. A type the substitution left alone carries in the instance
+        // what it carried in the template, so only the substituted types are
+        // judged, and a callable among them is judged by its environment
+        // alone, which never substitutes (`residue_plain`).
+        let residue = !template.call_throughs.is_empty() || !template.call_through_reads.is_empty();
+        let substituted_plain = facts
+            .expression_types
+            .iter()
+            .zip(&template.expression_types)
+            .chain(facts.binding_types.iter().zip(&template.binding_types))
+            .filter(|(_, (_, declared))| mojito_types::types::is_symbolic(declared))
+            .all(|((_, ty), _)| self.residue_plain(ty));
+        if residue && !substituted_plain {
+            return Err("a substituted value may carry a loan where the body keeps a residue");
+        }
         // `Movable`, which a symbolic parameter always is.
         let movable = template.transfers.iter().all(|transfer| {
             fact_at(&template.expression_types, *transfer)
@@ -1025,12 +1081,19 @@ impl Checker {
         }
         for (id, _) in &template.call_parameters {
             // A method call records its (empty) parameters here too. Its
-            // callee is realized from its contract below.
-            if template.selected_calls.iter().any(|(call, _)| call == id) {
+            // callee is realized from its contract below, and a call through
+            // a callable parameter from the instance's own binding of it.
+            if template.selected_calls.iter().any(|(call, _)| call == id)
+                || template.callable_calls.contains(id)
+            {
                 continue;
             }
             self.realize_direct_call(&mut facts, template, *id, occurrences)?;
         }
+        for call in &template.callable_calls {
+            self.realize_callable_call(&mut facts, *call, occurrences)?;
+        }
+        facts.callable_calls.clear();
         for call in &template.builtin_len_calls {
             self.realize_builtin_len(&mut facts, *call, occurrences)?;
         }
@@ -1095,6 +1158,28 @@ impl Checker {
         });
         if !summaries_empty {
             return Err("a callee's effect summary is no longer empty");
+        }
+        // Every residue read was rekeyed to a realized callee, which must
+        // publish the residue the template read.
+        let realized_targets: Vec<&str> = facts
+            .selected_calls
+            .iter()
+            .map(|(_, call)| call.contract.target.as_str())
+            .chain(
+                facts
+                    .overload_targets
+                    .iter()
+                    .map(|(_, target)| target.as_str()),
+            )
+            .collect();
+        for (callee, residue) in &facts.call_through_reads {
+            if !realized_targets.contains(&callee.as_str()) {
+                return Err("a call-through residue was read from a callee no admitted call names");
+            }
+            let published = self.call_through_effects.borrow();
+            if published.get(callee).map(Vec::as_slice) != Some(residue.as_slice()) {
+                return Err("a callee's call-through residue is not the template's");
+            }
         }
         let position = |id: &OccurrenceId| {
             occurrences
@@ -1171,9 +1256,7 @@ impl Checker {
             .is_some_and(|clone| names_method(selected, &owner, clone));
         if selected_clone {
             let target = selected.clone();
-            if !facts.effect_free_callees.contains(&target) {
-                facts.effect_free_callees.push(target);
-            }
+            note_realized_callee(facts, &target, &target);
             return Ok(());
         }
         let declared = match family.as_slice() {
@@ -1240,6 +1323,7 @@ impl Checker {
         // The callee has no binders of its own, so its parameter types were
         // recorded at the receiver's arguments: in the caller's binder scope,
         // whether the receiver is `self` or a field of another struct.
+        let selected = selected.clone();
         let contract = &mut facts.selected_calls[index].1.contract;
         contract.target.clone_from(&target);
         contract.result_ty = mojito_types::types::substitute(&contract.result_ty, substitution);
@@ -1266,9 +1350,36 @@ impl Checker {
         {
             entry.1.clone_from(&target);
         }
-        if !facts.effect_free_callees.contains(&target) {
-            facts.effect_free_callees.push(target);
-        }
+        note_realized_callee(facts, &selected, &target);
+        Ok(())
+    }
+
+    /// Realize one call through a callable parameter for an instance.
+    ///
+    /// The call recorded the parameter's own contract symbol and parameters,
+    /// in the caller's binder scope: the instance takes both from its own
+    /// binding of the parameter, which the elaborator already substituted.
+    fn realize_callable_call(
+        &self,
+        facts: &mut CheckedBodyFacts,
+        id: OccurrenceId,
+        occurrences: &[Occurrence],
+    ) -> Result<(), &'static str> {
+        let name = occurrences
+            .iter()
+            .find(|occurrence| occurrence.id == id)
+            .and_then(|occurrence| occurrence.callee.as_deref())
+            .ok_or("a callable call occurrence is not a direct call in the instance")?;
+        let Some(callee @ Ty::Func { .. }) = self.lookup(name) else {
+            return Err("a called parameter is not bound to a function type");
+        };
+        let target = callable_contract_target(callee)
+            .ok_or("a called parameter's type has no callable contract")?;
+        set_fact(&mut facts.overload_targets, id, target);
+        set_fact(&mut facts.call_parameters, id, call_parameter_facts(callee));
+        // The call reads the summaries keyed by the parameter's name, which
+        // no declaration publishes under.
+        note_realized_callee(facts, name, name);
         Ok(())
     }
 
@@ -1358,13 +1469,7 @@ impl Checker {
                 TemplateOwner::Global(written.to_string()),
             );
         }
-        if !facts
-            .effect_free_callees
-            .iter()
-            .any(|callee| callee == written)
-        {
-            facts.effect_free_callees.push(written.to_string());
-        }
+        note_realized_callee(facts, selected, written);
         Ok(())
     }
 
@@ -1520,11 +1625,13 @@ impl Checker {
                         let (coverage, notes) = self.certificate(site, Some(&facts));
                         // The template recorded nothing at a comparison the
                         // grammar admitted, nothing that names a bound
-                        // builtin's call, and no contract at a construction,
+                        // builtin's call, no contract at a construction, and
+                        // its own parameter's contract at a call through it,
                         // so only the grammar names them.
                         facts.comparisons = notes.comparisons;
                         facts.bound_builtins = notes.bound_builtins;
                         facts.constructions = notes.constructions;
+                        facts.callable_calls = notes.callable_calls;
                         (facts, coverage)
                     }
                     Err(reason) => (
@@ -1750,6 +1857,8 @@ impl Checker {
             comparisons: RefCell::new(Vec::new()),
             bound_builtins: RefCell::new(Vec::new()),
             constructions: RefCell::new(Vec::new()),
+            callable_params: Vec::new(),
+            callable_calls: RefCell::new(Vec::new()),
         };
         if !shape.block(body, false)
             || !shape.comparisons.borrow().is_empty()
@@ -1763,6 +1872,9 @@ impl Checker {
         };
         if !shape.references_recorded(facts) {
             return outside("an expression yields or keeps a reference");
+        }
+        if !facts.call_throughs.is_empty() || !facts.call_through_reads.is_empty() {
+            return outside("the body calls or forwards a callable parameter");
         }
         let effects_closed = facts
             .expression_effects
@@ -2077,13 +2189,25 @@ impl Checker {
                 .iter()
                 .map(|parameter| parameter.name.as_str())
                 .collect(),
+            callable_params: method
+                .params
+                .iter()
+                .filter(|parameter| matches!(parameter.ty, mojito_ast::ast::Type::Func { .. }))
+                .map(|parameter| parameter.name.as_str())
+                .collect(),
+            callable_calls: RefCell::new(Vec::new()),
             borrowed_params: params_passed(&[ArgConvention::Mut, ArgConvention::Ref]),
             mut_params: params_passed(&[ArgConvention::Mut]),
             keyed: false,
             receiver: method.has_self,
             self_writable: matches!(
                 method.self_convention,
-                Some(ArgConvention::Mut | ArgConvention::Var | ArgConvention::Out)
+                Some(
+                    ArgConvention::Mut
+                        | ArgConvention::Var
+                        | ArgConvention::Out
+                        | ArgConvention::Deinit
+                )
             ),
             moved_result: (!returns_reference).then_some(ret_ty),
             reference_result: returns_reference.then_some(ret_ty),
@@ -2129,6 +2253,7 @@ impl Checker {
                     comparisons: shape.comparisons.borrow().clone(),
                     bound_builtins: shape.bound_builtins.borrow().clone(),
                     constructions: shape.constructions.borrow().clone(),
+                    callable_calls: shape.callable_calls.borrow().clone(),
                 },
             )
         };
@@ -2147,8 +2272,11 @@ impl Checker {
             .map(|(_, call)| call.contract.target.as_str())
             .collect();
         let constructions = shape.constructions.borrow();
+        let callable_calls = shape.callable_calls.borrow();
         let admitted_call = |id: &OccurrenceId| {
-            facts.selected_calls.iter().any(|(call, _)| call == id) || constructions.contains(id)
+            facts.selected_calls.iter().any(|(call, _)| call == id)
+                || constructions.contains(id)
+                || callable_calls.contains(id)
         };
         // A call through a bound reads the summaries of every conformer's
         // method of that name, one key per conformer (`Struct.method`, or the
@@ -2182,12 +2310,20 @@ impl Checker {
                 .overload_targets
                 .iter()
                 .all(|(id, _)| admitted_call(id))
-            || !facts
-                .effect_free_callees
-                .iter()
-                .all(|callee| targets.contains(&callee.as_str()) || conformer_copy(callee));
+            || !facts.effect_free_callees.iter().all(|callee| {
+                targets.contains(&callee.as_str())
+                    || conformer_copy(callee)
+                    || shape.callable_params.contains(&callee.as_str())
+            });
         if stray_call {
             return outside("the body calls something other than a trivial method");
+        }
+        // A residue the body publishes or reads is republished for an
+        // instance, but only a body that calls or forwards its own callable
+        // parameter records one the recipe covers.
+        let residue = !facts.call_throughs.is_empty() || !facts.call_through_reads.is_empty();
+        if residue && !shape.holds(MethodFeatures::CALLABLE_PARAMETERS) {
+            return outside("a keyed body publishes or reads a call-through residue");
         }
         if facts.vanishing_transfers
             && (shape.keyed || !shape.holds(MethodFeatures::VANISHING_TRANSFERS))
@@ -2503,13 +2639,13 @@ impl Checker {
                 .map(|(id, owner)| local_owner(owner).map(|owner| (id, owner)))
                 .collect::<Result<Vec<_>, _>>()
         };
-        let mut effect_free_callees: Vec<String> = reads
-            .effect_queries
-            .iter()
-            .map(|(callee, _)| callee.clone())
-            .collect();
-        effect_free_callees.sort();
-        effect_free_callees.dedup();
+        let (effect_free_callees, value_callees, call_through_reads) = callee_reads(reads);
+        let call_throughs = self
+            .transfer_frames
+            .borrow()
+            .last()
+            .map(|frame| frame.call_throughs.clone())
+            .unwrap_or_default();
         // A `ref` binding's type is a reference whose origin names a binding,
         // so it is kept by template owner, apart from the closed types.
         let apart = |types: Vec<(OccurrenceId, Ty)>| {
@@ -2609,6 +2745,7 @@ impl Checker {
                 self.read_temporary_arguments.borrow().contains(span)
             }),
             effect_free_callees,
+            value_callees,
             selected_calls: values(&occurrences, &self.selected_calls.borrow())
                 .into_iter()
                 .map(|(id, mut contract)| {
@@ -2715,10 +2852,13 @@ impl Checker {
                 .map(|occurrence| occurrence.id)
                 .collect(),
             vanishing_transfers,
+            call_throughs,
+            call_through_reads,
             // The certificate fills these from the grammar.
             comparisons: Vec::new(),
             bound_builtins: Vec::new(),
             constructions: Vec::new(),
+            callable_calls: Vec::new(),
             method_instantiations: values(&occurrences, &self.method_instantiations.borrow()),
             locals: owner_end - baseline.owner_start,
             occurrences: occurrences
@@ -2750,6 +2890,21 @@ impl Checker {
         }
         if self.body_transfer_effects(occurrences, baseline, reads).0 {
             return Err(IncompleteReason::UnkeyedFact("transfer effects"));
+        }
+        // A residue is republished verbatim, so it may name only slots and
+        // signature places: a compile-time callable is folded per instance,
+        // and a carried origin exists only while the argument's type carries
+        // a loan (`TemplateObligation::CallThroughResidue`).
+        let republishable = self.transfer_frames.borrow().last().is_none_or(|frame| {
+            frame.call_throughs.iter().all(|residue| {
+                matches!(
+                    residue.callee,
+                    mojito_checked::checked::CallThroughCallee::RuntimeParam(_)
+                ) && residue.args.iter().all(|arg| arg.carried.is_empty())
+            })
+        });
+        if !republishable {
+            return Err(IncompleteReason::UnkeyedFact("call-through residue"));
         }
         let annotation = self.return_annotation_spans();
         for (index, table) in FactTable::ALL.into_iter().enumerate() {
@@ -3104,6 +3259,21 @@ impl Checker {
                 .borrow_mut()
                 .entry(callee.clone())
                 .or_default();
+        }
+        for (callee, residue) in &facts.call_through_reads {
+            self.call_through_observations
+                .borrow_mut()
+                .entry(callee.clone())
+                .or_insert_with(|| residue.clone());
+        }
+        // The residue goes on the body's own frame, which publishes it under
+        // the body's key when it is popped, as an inferred body's would be.
+        if let Some(frame) = self.transfer_frames.borrow_mut().last_mut() {
+            for residue in &facts.call_throughs {
+                if !frame.call_throughs.contains(residue) {
+                    frame.call_throughs.push(residue.clone());
+                }
+            }
         }
         Ok(())
     }
@@ -4015,6 +4185,63 @@ fn names_method(target: &str, owner: &str, method: &str) -> bool {
 }
 
 /// The fact a table holds at `id`.
+/// What one body's effect reads become in its bundle: the callees whose
+/// summaries were empty, those among them read where a callable's name
+/// stands as a value, and each call-through residue read, by callee. A
+/// callee read with a residue is not effect-free, whatever its transfer
+/// summary said: the residue is kept apart, and an instance owes it again.
+fn callee_reads(reads: &BodyReads) -> (Vec<String>, Vec<String>, CallThroughReads) {
+    let mut call_through_reads: CallThroughReads = Vec::new();
+    for (callee, read) in &reads.effect_queries {
+        if let EffectRead::CallThrough(residue) = read
+            && !call_through_reads.iter().any(|(read, _)| read == callee)
+        {
+            call_through_reads.push((callee.clone(), residue.clone()));
+        }
+    }
+    call_through_reads.sort_by(|(left, _), (right, _)| left.cmp(right));
+    let names = |value: bool| {
+        let mut names: Vec<String> = reads
+            .effect_queries
+            .iter()
+            .filter(|(callee, read)| {
+                (!value || matches!(read, EffectRead::Value))
+                    && !call_through_reads.iter().any(|(read, _)| read == callee)
+            })
+            .map(|(callee, _)| callee.clone())
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    };
+    (names(false), names(true), call_through_reads)
+}
+
+/// Each callee whose call-through residue one body read, with the residue.
+type CallThroughReads = Vec<(String, Vec<mojito_checked::checked::CallThroughEffect>)>;
+
+/// Record that realization resolved the template's callee `selected` to the
+/// instance's `target`: the target's summaries are read as the template read
+/// them, empty or with the residue the template kept.
+fn note_realized_callee(facts: &mut CheckedBodyFacts, selected: &str, target: &str) {
+    // A second call on the same callee finds the read already rekeyed.
+    let residue = facts
+        .call_through_reads
+        .iter_mut()
+        .find(|(callee, _)| callee == selected || callee == target);
+    match residue {
+        Some(read) => target.clone_into(&mut read.0),
+        None if !facts
+            .effect_free_callees
+            .iter()
+            .any(|callee| callee == target) =>
+        {
+            facts.effect_free_callees.push(target.to_string());
+        }
+        None => {}
+    }
+}
+
 fn fact_at<V>(table: &[(OccurrenceId, V)], id: OccurrenceId) -> Option<&V> {
     table
         .iter()
@@ -4081,8 +4308,8 @@ struct BodyShape<'a> {
     keyed: bool,
     /// Whether the body is a method's, which may read `self`'s fields.
     receiver: bool,
-    /// Whether `self` is a `mut` or `var` receiver, whose scalar fields the
-    /// body may write.
+    /// Whether `self` is a `mut`, `var`, or `deinit` receiver, whose scalar
+    /// fields the body may write.
     self_writable: bool,
     /// The declared result, when the body may move a whole value of any type
     /// into it: a method that returns no reference.
@@ -4112,6 +4339,12 @@ struct BodyShape<'a> {
     /// The struct constructions admitted, whose constructor an instance
     /// re-selects on its own arguments.
     constructions: RefCell<Vec<OccurrenceId>>,
+    /// The parameters declared with a `def(...)` type, which the body may
+    /// call or forward.
+    callable_params: Vec<&'a str>,
+    /// The calls through such a parameter admitted, whose contract an
+    /// instance takes from its own parameter binding.
+    callable_calls: RefCell<Vec<OccurrenceId>>,
 }
 
 /// What a local of a certified body is.
@@ -5018,16 +5251,19 @@ impl BodyShape<'_> {
                     || self.comparison(expr, *op, left, right)
             }
             ExprKind::Call {
+                name,
                 param_args,
                 args,
                 kwargs,
-                ..
             } => {
                 let id = self.occurrence(expr);
                 let known = self.facts.is_none_or(|facts| {
                     facts.call_parameters.iter().any(|(call, _)| *call == id)
                         || (facts.builtin_len_calls.contains(&id) && args.len() == 1)
                 });
+                if self.callable_params.contains(&name.as_str()) {
+                    return self.callable_call(id, param_args, args, kwargs, known);
+                }
                 // The built-in `len` reads its operand in place and realizes
                 // its witness per instance, so a method may hand it a field of
                 // `self` of any type, not only a scalar one.
@@ -5045,6 +5281,56 @@ impl BodyShape<'_> {
             }
             _ => false,
         }
+    }
+
+    /// A call through a parameter declared with a `def(...)` type, passing
+    /// closed scalars or whole values.
+    ///
+    /// The call records the parameter's own contract symbol and parameters,
+    /// which an instance takes from its own parameter binding
+    /// ([`Checker::realize_callable_call`]), and the residue it puts on the
+    /// body's frame names the parameter's slot and each argument's signature
+    /// place. What an argument records is decided as a sibling call's is: a
+    /// read parameter borrows a named place, and a `var` one takes a `^`
+    /// transfer or a temporary as it stands.
+    fn callable_call(
+        &self,
+        id: OccurrenceId,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+        known: bool,
+    ) -> bool {
+        let argument = |argument: &Expr| {
+            let named = match &argument.kind {
+                ExprKind::Identifier(name) => {
+                    self.declared(name) || self.params.contains(&name.as_str())
+                }
+                _ => self.receiver_field(argument),
+            };
+            if self.expression(argument) && self.scalar(argument) {
+                return true;
+            }
+            let read_in_place = named
+                && self.facts.is_none_or(|facts| {
+                    facts
+                        .borrowed_read_call_places
+                        .contains(&self.occurrence(argument))
+                });
+            !self.keyed && (read_in_place || self.whole_value(argument))
+        };
+        let admitted = known
+            && !self.keyed
+            && param_args.is_empty()
+            && kwargs.is_empty()
+            && args.iter().all(argument);
+        if admitted {
+            let mut calls = self.callable_calls.borrow_mut();
+            if !calls.contains(&id) {
+                calls.push(id);
+            }
+        }
+        admitted && self.holds(MethodFeatures::CALLABLE_PARAMETERS)
     }
 
     /// A method call on a place whose type is a bare struct parameter, which

@@ -2293,6 +2293,15 @@ impl Checker {
             self.tparams.pop();
             return Err(e);
         }
+        self.record_owned_collector(
+            name,
+            variadic_idx.map(|index| {
+                matches!(
+                    params[index].convention,
+                    Some(mojito_ast::ast::ArgConvention::Var)
+                )
+            }),
+        );
         self.record_statement_binding(stmt, name);
         let mut origin_signature =
             callable_origin_signature(type_params, &caller_regular, erased_origin_constraints);
@@ -2477,6 +2486,9 @@ impl Checker {
                         || matches!(param.convention, Some(mojito_ast::ast::ArgConvention::Out))
                         || ref_parameter_is_writable(param, type_params),
                 );
+                if result.is_ok() {
+                    self.record_owned_pack(param);
+                }
                 if result.is_ok()
                     && matches!(param.convention, Some(mojito_ast::ast::ArgConvention::Ref))
                 {
@@ -2541,6 +2553,7 @@ impl Checker {
             self.aggregate_escape_contexts.push((base, allowed));
             self.transfer_frames.borrow_mut().push(TransferFrame {
                 callable: name.clone(),
+                keeps_symbolic_selection: false,
                 param_owners: owners.clone(),
                 param_borrowed: caller_regular
                     .iter()

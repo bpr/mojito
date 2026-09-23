@@ -52,7 +52,13 @@ impl Checker {
             return ty;
         }
         let effects = self.transfer_effects.borrow().get(name).cloned();
-        self.note_effect_query(name, EffectRead::of(effects.as_ref(), false));
+        self.note_effect_query(
+            name,
+            match EffectRead::of(effects.as_ref(), false) {
+                EffectRead::Empty => EffectRead::Value,
+                read => read,
+            },
+        );
         self.effect_observations
             .borrow_mut()
             .entry(name.to_string())
@@ -181,7 +187,13 @@ impl Checker {
     ) -> Result<(), TypeError> {
         use mojito_checked::checked::CallThroughCallee;
         let throughs = self.call_through_effects.borrow().get(callee).cloned();
-        self.note_effect_query(callee, EffectRead::of(throughs.as_ref(), false));
+        self.note_effect_query(
+            callee,
+            match &throughs {
+                Some(throughs) if !throughs.is_empty() => EffectRead::CallThrough(throughs.clone()),
+                _ => EffectRead::Empty,
+            },
+        );
         self.call_through_observations
             .borrow_mut()
             .entry(callee.to_string())

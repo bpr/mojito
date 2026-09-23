@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A body that forwards its variadic pack to another callee (`inner(*a)`,
+  `collect(30, *items^, tail=10)`, a method's own pack, `print(*a)`) is now
+  validated from its template like every other pack-keyed body: the callee's
+  pack binds to the caller's whole pack, so an untaken `comptime if` arm after
+  the call is rejected as the pinned Mojo rejects it, where it used to be
+  reported by nothing. A pack forwarded into a callee whose bound the caller's
+  pack does not carry, into a homogeneous collector, into a regular parameter
+  slot, or beside a second spread is rejected at the call.
+- The ownership of a forwarded pack is now checked as the pinned Mojo checks
+  it: an owned pack (`var *a`) forwards only with the `^` and only into an
+  owned collector, and a read pack cannot be transferred. All four shapes used
+  to run.
 - A call inside a generic body is now bound once, while the body is checked
   with its parameters symbolic, as the pinned Mojo binds it. With `pick(x:
   Int)` beside `pick[T: Copyable](x: T)`, `outer[T](x)` calling `pick(x)`
@@ -232,6 +244,16 @@ to evolve under the `0.x` compatibility rules.
   clone records the generic-struct applications its body reaches, so discovery
   requests the same instances as before. `stdlib_heavy` derives about one
   instance-clone check in ten; wall time is unchanged so far.
+- A per-instantiation method clone whose body calls one of the method's own
+  `def(...)` parameters, or forwards it to a sibling call, now derives from
+  its checked template (`List.deinit_with`, `Optional.deinit_with`,
+  `DictEntry.reap_with`). The call-through residue such a body publishes
+  names the parameter's slot and each argument's signature place and nothing
+  about a type, so the instance republishes the template's; a body that
+  reads a callee's residue owes that its realized callee still publishes the
+  same one, and the transfer fixpoint re-runs if it grows. A residue naming
+  a compile-time callable, one whose argument carries an origin, and a named
+  callable's own effects behind one keep the clone check.
 - `--timings` no longer counts a module-qualified bundled struct's methods as
   clones: "generated" is what the elaborator lists (`GeneratedDeclarations`),
   not a `$` in a name. `template_census.*` reports what keeps each generic

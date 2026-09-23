@@ -952,6 +952,7 @@ impl Checker {
             .filter(|argument| !argument.is_forwarded())
             .map(|arg| arg.name.as_str())
             .collect();
+        let forwarded_pack = self.forwarded_pack_argument(name, args, variadic.is_some())?;
         let matched = match_call_slots(
             &signature.names,
             &signature.required,
@@ -965,6 +966,10 @@ impl Checker {
             },
         )
         .map_err(|error| error.into_type_error(name))?;
+        if let Some((position, _)) = &forwarded_pack {
+            mojito_ast::call::bind_spread(&matched, *position)
+                .map_err(|error| error.into_type_error(name))?;
+        }
         let mut patterns = Vec::new();
         let mut actuals = Vec::new();
         for (index, slot) in matched.slots.iter().enumerate() {
@@ -979,7 +984,20 @@ impl Checker {
         if let Some(element) = variadic {
             for position in matched.positional_overflow {
                 patterns.push(element.clone());
-                actuals.push(self.infer(&args[position])?);
+                let actual = match &forwarded_pack {
+                    Some((spread, forwarded)) if *spread == position => self.bind_forwarded_pack(
+                        name,
+                        &args[position],
+                        forwarded,
+                        element,
+                        Some(matches!(
+                            signature.variadic_convention,
+                            Some(ArgConvention::Var)
+                        )),
+                    )?,
+                    _ => self.infer(&args[position])?,
+                };
+                actuals.push(actual);
             }
         }
         if let Some(element) = kw_variadic {
