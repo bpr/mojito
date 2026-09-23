@@ -499,6 +499,7 @@ assets/ok/reflected_operators.mojo	main	exe-differential	sanitized
 assets/ok/repr_type_names.mojo	main	exe-differential	sanitized
 assets/ok/reversed_iteration.mojo	main	exe-differential	sanitized
 assets/ok/reversed_list.mojo	main	exe-differential	sanitized
+assets/ok/runtime_pack_dunder_len.mojo	main	exe-differential	sanitized
 assets/ok/same_spelled_type_params.mojo	main	exe-differential	sanitized
 assets/ok/scalar_dtype_construction.mojo	main	exe-differential	sanitized
 assets/ok/scalar_range_float_strided.mojo	main	exe-differential	sanitized

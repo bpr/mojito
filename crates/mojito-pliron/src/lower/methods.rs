@@ -171,6 +171,20 @@ impl FnLowering<'_> {
         {
             return self.lower_writer_write(ctx, dest, &writer, args, recv_place);
         }
+        // `Sized` spelled on a specialized pack's storage: the clone has no
+        // nominal Tuple to resolve the method onto, so the static element
+        // count answers it exactly as the `len` builtin does.
+        if resolved.is_none()
+            && method == "__len__"
+            && args.is_empty()
+            && kwargs.is_empty()
+            && matches!(
+                self.func.reg_types.get(&recv.0),
+                Some(Ty::Tuple(_) | Ty::RuntimePack(_))
+            )
+        {
+            return self.lower_len_builtin(ctx, dest, &[recv], &[]);
+        }
         // Unresolved scalar-receiver dunders are the VM's non-struct
         // intrinsic dispatch (`builtin_round_dir`/`builtin_ceildiv`); a
         // struct receiver with its own method arrives resolved instead.

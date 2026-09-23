@@ -526,6 +526,12 @@ impl VmBackend {
                 self.store_at_call_place(prog, frame_id, place, Value::Str(text), regs, vars)?;
                 Ok(Value::None)
             }
+            // A specialized pack's storage answers `Sized` where it stands:
+            // `b.__len__()` is the element count `len(b)` reads, and the
+            // clone has no nominal Tuple to lower the spelling onto.
+            Value::Tuple(items) if method == "__len__" && args.is_empty() => {
+                Ok(Value::Int(items.len() as i64))
+            }
             Value::Tuple(_) => Err(RuntimeError::Unsupported(format!(
                 "vm: internal tuple-pack storage has no runtime method '{method}'; public Tuple methods require nominal lowering"
             ))),

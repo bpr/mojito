@@ -544,17 +544,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus.
 
-- [ ] **1.28 `__len__` spelled as a method on a runtime pack is a VM error**
-
-  Problem: `b.__len__()` on a specialized pack (`*b: *Ts` in a clone) runs at
-  the pin and reaches Mojito's VM as `internal tuple-pack storage has no
-  runtime method '__len__'`; `len(b)` runs.
-  - The clone types the call; only the VM's pack storage lacks the method.
-  - `conformance/probes/runtime_pack_dunder_len.mojo` pins it.
-  - Depends on nothing.
-  - Model: Opus.
-
-- [ ] **1.29 The Pliron pivot has no falsifiable proof yet**
+- [ ] **1.28 The Pliron pivot has no falsifiable proof yet**
 
   Problem: [`docs/pliron-backend-pivot-plan.md`](pliron-backend-pivot-plan.md)
   stages a migration to a required Pliron IR framework, but its Stage A1 slice

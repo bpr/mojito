@@ -494,6 +494,7 @@ assets/ok/reflected_operators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/repr_type_names.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reversed_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reversed_list.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/runtime_pack_dunder_len.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/same_spelled_type_params.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_dtype_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_range_float_strided.mojo	-	ineligible	no-scalar-entry-shape
