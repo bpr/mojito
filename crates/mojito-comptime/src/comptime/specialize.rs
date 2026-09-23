@@ -2707,13 +2707,33 @@ impl Elab<'_> {
                 _ => true,
             }
         });
+        // A baked value parameter may sit in a **type** position of the
+        // method's own signature (`a: Scalar[dt]`, `-> SIMD[DType.int32, w]`),
+        // where the clone no longer declares the binder: spell its value
+        // there, as a def specialization does.
+        let binding_values: HashMap<&str, &CtValue> = bindings
+            .iter()
+            .map(|binding| (binding.name.as_str(), &binding.value))
+            .collect();
+        let value_subs: Subs = &|name| binding_values.get(name).map(|value| (*value).clone());
+        for parameter in &mut clone.type_params {
+            if let Some(value_type) = &mut parameter.value_type {
+                rewrite_type(value_type, value_subs);
+            }
+            if let Some(bound) = &mut parameter.callable_bound {
+                rewrite_type(bound, value_subs);
+            }
+        }
         for parameter in &mut clone.params {
+            rewrite_type(&mut parameter.ty, value_subs);
             substitute_type_bindings_in_type(&mut parameter.ty, &type_bindings);
         }
         if let Some(ret) = &mut clone.ret {
+            rewrite_type(ret, value_subs);
             substitute_type_bindings_in_type(ret, &type_bindings);
         }
         if let Some(error) = &mut clone.raises_type {
+            rewrite_type(error, value_subs);
             substitute_type_bindings_in_type(error, &type_bindings);
         }
         for predicate in &mut clone.where_clauses {

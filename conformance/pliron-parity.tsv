@@ -159,6 +159,7 @@ assets/ok/docstrings.mojo	main	exe-differential	sanitized
 assets/ok/dtype_compile_time_values.mojo	main	exe-differential	sanitized
 assets/ok/dtype_default_param.mojo	main	exe-differential	sanitized
 assets/ok/dtype_float_queries.mojo	main	exe-differential	sanitized
+assets/ok/dtype_keyed_method.mojo	main	exe-differential	sanitized
 assets/ok/dtype_runtime_surface.mojo	main	exe-differential	sanitized
 assets/ok/dtype_runtime_value.mojo	main	exe-differential	sanitized
 assets/ok/dtype_struct_param.mojo	main	exe-differential	sanitized

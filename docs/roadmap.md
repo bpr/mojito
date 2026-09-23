@@ -53,22 +53,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, as-is.
 
-- [ ] **1.2 A conversion whose target is built over a parameter refuses at the
-  binding**
-
-  Problem: `var label: Label[Self.T] = 4` records a conversion the instance
-  could re-select, and refuses one obligation earlier.
-  - The binding's own type mentions the parameter, which the deletability
-    obligation judges only for a bare parameter — the same refusal as the
-    entry 1.7 on locals of a built-over type.
-  - So the recipe's per-instance constructor clone
-    (`Label$y3:Int.__init__` beside `Label$y6:String.__init__`) has no
-    admitted site yet; `assets/ok/template_method_converting_argument.mojo`
-    pins the closed-target case instead.
-  - Depends on 1.7.
-  - Model: Opus, as-is.
-
-- [ ] **1.3 An arithmetic operator through a bound, and a reflected, consuming,
+- [ ] **1.2 An arithmetic operator through a bound, and a reflected, consuming,
   or converting comparison, keep the clone check**
 
   Problem: `==`, `!=`, and the orderings over two parameter-typed places
@@ -84,7 +69,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, plan first.
 
-- [ ] **1.4 A bound dispatch whose instance witness is overloaded, consumes
+- [ ] **1.3 A bound dispatch whose instance witness is overloaded, consumes
   or mutates its receiver, or bakes a binder keeps the clone check**
 
   Problem: `item.__hash__(hasher)` and `item.write_to(writer)` through a
@@ -108,7 +93,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, plan first.
 
-- [ ] **1.5 A reference is never a call argument**
+- [ ] **1.4 A reference is never a call argument**
 
   Problem: a `ref` local, a field reached through one, and a reference call's
   result are not admitted as an argument, kept or by value, so a body that
@@ -126,7 +111,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, plan first.
 
-- [ ] **1.6 An augmented or whole-value store to a subscripted element keeps the
+- [ ] **1.5 An augmented or whole-value store to a subscripted element keeps the
   clone check**
 
   Problem: a scalar store through a subscript derives
@@ -146,7 +131,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Fable, plan first.
 
-- [ ] **1.7 A method binding a local of a type built over a parameter keeps
+- [ ] **1.6 A method binding a local of a type built over a parameter keeps
   the clone check**
 
   Problem: a `var` whose type mentions a parameter without being one
@@ -162,6 +147,21 @@ to section 3, however small.
     parameter (`realize_instance_facts`, obligation 11).
   - Depends on nothing.
   - Model: Opus, plan first.
+
+- [ ] **1.7 A conversion whose target is built over a parameter refuses at the
+  binding**
+
+  Problem: `var label: Label[Self.T] = 4` records a conversion the instance
+  could re-select, and refuses one obligation earlier.
+  - The binding's own type mentions the parameter, which the deletability
+    obligation judges only for a bare parameter — the same refusal as the
+    entry 1.6 on locals of a built-over type.
+  - So the recipe's per-instance constructor clone
+    (`Label$y3:Int.__init__` beside `Label$y6:String.__init__`) has no
+    admitted site yet; `assets/ok/template_method_converting_argument.mojo`
+    pins the closed-target case instead.
+  - Depends on 1.6.
+  - Model: Opus, as-is.
 
 - [ ] **1.8 A sibling call returning a view keeps the clone check**
 
@@ -495,21 +495,41 @@ to section 3, however small.
   - Model: Fable, plan first. The plan's job is the round-one survival rule
     for a member of no request-served class.
 
-- [ ] **1.25 A `DType`-keyed method is not keyed at all**
+- [ ] **1.25 A keyed method's template body cannot construct a SIMD at its own
+  lane**
 
-  Problem: `b.only_dt[DType.int32](3)` for a method declared `def only_dt[dt:
-  DType](self, a: Scalar[dt])` reports "not a valid SIMD element type: a
-  non-DType argument"; the free-`def` form of the same signature works, both
-  applied explicitly and inferred from the argument's lane.
-  - No `.mojo` source in the repository spells such a method today, so the
-    gap has never been exercised: `a.cast[DType.int32]()` is a builtin the
-    checker answers, not a declared one.
-  - The method's own `dt` is not in the parameter scope that
-    `dtype_from_arg` consults when it resolves the `Scalar[dt]` annotation.
+  Problem: `def make[dt: DType](self, x: Int) -> Scalar[dt]` whose body
+  returns `Scalar[dt](x)` reports "invalid checked program: fn 'Lanes.make':
+  register r0 has no checked type"; the same body as a free `def` runs
+  (`assets/ok/dtype_value_param.mojo`).
+  - Every call retargets to a clone that lowers, but the method's own
+    template body still reaches MIR with its lane symbolic, and a SIMD or
+    scalar *construction* there types no register.
+  - A free `def` never shows this: its template is dropped from the round-one
+    program, or stands as a `template_stub`. A method cannot leave its
+    struct, so the body has to become an `unspecialized_method_stub` the way
+    a `SIMD[_, _]`-keyed one already does (`elab.rs`,
+    `synth::is_simd_keyed_method`).
+  - Reading the lane (`a + a`, `v.reduce_add()`) lowers fine, so
+    `assets/ok/dtype_keyed_method.mojo` covers everything but this.
   - Depends on nothing.
   - Model: Opus.
 
-- [ ] **1.26 An inferred `SIMD[dt, _]` width leaks into the binding's declared
+- [ ] **1.26 An explicitly applied static method is an undefined variable**
+
+  Problem: `Lanes.ident[Int](3)` for a `@staticmethod` on a plain struct
+  reports "Undefined variable 'Lanes'"; the inferred call `Lanes.ident(3)`
+  runs, and so does the same explicit application on an instance
+  (`lanes.double[DType.int32](3)`).
+  - The receiver is a type name, not a value, so only the parameterized
+    static path loses it — nothing about the parameter's kind matters, a
+    plain `[T: Copyable]` fails identically.
+  - Found while closing the `DType`-keyed method item; no fixture pins it
+    yet.
+  - Depends on nothing.
+  - Model: Fable.
+
+- [ ] **1.27 An inferred `SIMD[dt, _]` width leaks into the binding's declared
   type**
 
   Problem: `var v: SIMD[DType.int32, _] = SIMD[DType.int32, 4](1, 2, 3, 4)`
@@ -524,7 +544,17 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus.
 
-- [ ] **1.27 The Pliron pivot has no falsifiable proof yet**
+- [ ] **1.28 `__len__` spelled as a method on a runtime pack is a VM error**
+
+  Problem: `b.__len__()` on a specialized pack (`*b: *Ts` in a clone) runs at
+  the pin and reaches Mojito's VM as `internal tuple-pack storage has no
+  runtime method '__len__'`; `len(b)` runs.
+  - The clone types the call; only the VM's pack storage lacks the method.
+  - `conformance/probes/runtime_pack_dunder_len.mojo` pins it.
+  - Depends on nothing.
+  - Model: Opus.
+
+- [ ] **1.29 The Pliron pivot has no falsifiable proof yet**
 
   Problem: [`docs/pliron-backend-pivot-plan.md`](pliron-backend-pivot-plan.md)
   stages a migration to a required Pliron IR framework, but its Stage A1 slice
@@ -544,16 +574,6 @@ to section 3, however small.
   - Model: Astra for the plan and the measurement design (the broadest scope
     in this document: it reopens the waist and the dialect policy), Fable to
     build and measure the A1 slice once planned.
-
-- [ ] **1.28 `__len__` spelled as a method on a runtime pack is a VM error**
-
-  Problem: `b.__len__()` on a specialized pack (`*b: *Ts` in a clone) runs at
-  the pin and reaches Mojito's VM as `internal tuple-pack storage has no
-  runtime method '__len__'`; `len(b)` runs.
-  - The clone types the call; only the VM's pack storage lacks the method.
-  - `conformance/probes/runtime_pack_dunder_len.mojo` pins it.
-  - Depends on nothing.
-  - Model: Opus.
 
 ### 2. Native Backend
 

@@ -716,7 +716,11 @@ them for a named owner and `generate_instance_clones` for an instance
 *Ts` to the `$pack[...]` element list inside `specialize_method_clone`
 exactly as a def specialization does, and the template's method body
 becomes the `unspecialized_method_stub` trap when it only elaborates with
-the struct's or its own parameters bound. In the checker,
+the struct's or its own parameters bound. `specialize_method_clone` bakes
+the clone's *value* bindings into its signature types before its type
+bindings, as a def specialization does, so a value parameter standing in a
+type position (`a: Scalar[dt]`, `-> SIMD[DType.int32, w]`) spells its bound
+value on a clone that no longer declares the binder. In the checker,
 `instantiate_method_generics` resolves an inferred pack's variadic element to
 the heterogeneous `RuntimePack` so each overflow argument scores and converts
 against its own element, and the call retargets through
