@@ -337,6 +337,31 @@ to section 3, however small.
     there (`template_method_bound_dispatch.mojo`, `stdlib_heavy`): the
     derived facts are the same under the template's owner, so the check is
     the false positive, and the recipe verification behind it goes unseen.
+    This is what fails the five `compiler_test` derive tests that ask for
+    verification themselves (`with_template_verification(true)`):
+    `template_method_constructions_derive`,
+    `template_method_origin_bearing_constructions_derive`, and the
+    `reference_calls`/`reference_locals`/`reference_results` three. They
+    reach `List.__hash__$y3:Int`, so they went red when the derivation
+    grammar grew, not when the binder changed. The owner is only
+    uncanonical because `demangle_specialization` decodes no
+    length-prefixed value (`y` type, `r` reflected, `I`/`F` literal, `s`
+    string), so `binder_owner` leaves every type-keyed clone mangled;
+    teaching it those codes also changes what
+    `unqualified_instance_name` spells and what the conformance oracle in
+    `traits.rs` answers for such a name, which is why this is the keyed-map
+    task and not a one-line strip.
+  - A `ParamId`'s owner is the declaration's *name*, so two overloads of
+    one name give their own binders the same id whenever the slots agree.
+    Nothing distinguishes them, which is why a pack forwarded whole to a
+    same-named sibling (`def tally[*Ts](x: Int, *a: *Ts): return tally(*a)`)
+    cannot be told from the self-binding a collected element leaves, and
+    rejects with "no overload matches the supplied arguments". A call to
+    such a sibling has never worked — before the self-binding was read by
+    identity it trapped on the template stub instead — so this is a gap to
+    close with the rest, not a regression. The owner needs a per-declaration
+    discriminator for an overloaded name, and it is serialized in MIR text,
+    so the spelling is part of the decision.
   - Depends on nothing.
   - Model: Opus. Each corner is a keyed-map change behind an existing helper.
 

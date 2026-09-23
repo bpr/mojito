@@ -923,7 +923,7 @@ mod native_abi_cross_checks {
     use mojito::native::layout::{LayoutCx, StructFieldIndex, StructLayout};
     use mojito::native::rt_abi::{self, CAbiTy, RtFieldTy};
     use mojito::native::target::{NativeTarget, Triple};
-    use mojito::types::Ty;
+    use mojito::types::{Ty, canonical_simd_ty, simd_shape};
 
     use super::{EXE_MAIN, FIXTURE_NAME, host_target};
 

@@ -689,7 +689,15 @@ impl Checker {
         if !self.method_constraints_apply(signature, &arguments) {
             return None;
         }
-        let instantiate = |ty: &Ty| substitute(&substitute(ty, &receiver_subst), &method_subst);
+        // A receiver's value parameter is not a type substitution, so a lane
+        // it keys (`Scalar[Self.dtype]` on a range) closes only under its
+        // value environment, exactly as an ordinary call's result does.
+        let values = Self::value_argument_environment(&info.decls, receiver_arguments);
+        let instantiate = |ty: &Ty| {
+            let substituted = substitute(&substitute(ty, &receiver_subst), &method_subst);
+            self.resolve_dependent_ty(&substituted, &values)
+                .unwrap_or(substituted)
+        };
         let referent = instantiate(&signature.ret);
         let mut semantic_arguments = receiver_arguments.to_vec();
         semantic_arguments.extend(signature.decls.iter().filter_map(|declaration| {

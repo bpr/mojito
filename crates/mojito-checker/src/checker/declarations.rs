@@ -2772,7 +2772,14 @@ impl Checker {
                 } => {
                     if *variadic {
                         let argument = match subst.get(id) {
-                            Some(pack) if forwards_pack(pack) => TyArg::Ty(pack.clone()),
+                            // Only the *caller's* pack, bound here by a whole
+                            // forward, stands as the argument. The binding a
+                            // collected element leaves is this pack bound to
+                            // itself, which spreads like a forward but names
+                            // this very binder: its elements are below.
+                            Some(pack) if forwards_pack(pack) && !binds_pack_itself(pack, id) => {
+                                TyArg::Ty(pack.clone())
+                            }
                             _ => TyArg::Val(CtValue::Tuple(
                                 inferred_packs
                                     .get(pname.trim_start_matches('*'))
@@ -3012,6 +3019,12 @@ type BoundConstructorParams = Result<(Vec<Ty>, ConstructorOriginBindings), Optio
 /// into the callee's collector.
 fn forwards_pack(actual: &Ty) -> bool {
     mojito_types::types::pack_spread(std::slice::from_ref(actual)).is_some()
+}
+
+/// Whether the pack `bound` is the binder `id` itself, the self-binding a
+/// collected element leaves behind rather than a forward of another pack.
+fn binds_pack_itself(bound: &Ty, id: &mojito_types::param_expr::ParamId) -> bool {
+    matches!(bound, Ty::Param { binder, .. } if binder.id == *id)
 }
 
 fn block_holds_return(body: &[Stmt]) -> bool {

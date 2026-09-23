@@ -506,7 +506,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.1
+mojito-mir 1.2
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

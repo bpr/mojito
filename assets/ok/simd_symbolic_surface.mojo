@@ -7,6 +7,9 @@
 # a lane of its own, and a width expression (`width * 2`, `n + 1`) compares
 # in the pin's normal form. A call that spells no lane takes it from the
 # argument's own type, whether or not the body holds a `comptime if`.
+# requires: discovery
+
+
 def bit_and[dt: DType](a: Scalar[dt], b: Scalar[dt]) -> Scalar[dt]:
     comptime if dt == DType.bool:
         return a

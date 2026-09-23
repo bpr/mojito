@@ -1,9 +1,10 @@
-# expect: type parameter 'width' needs a type argument
+# expect: 'SIMDSize' was removed; use 'SIMDLength'
 # Upstream removed the transitional `SIMDSize` width spelling (2026-08 window:
-# `use of unknown declaration 'SIMDSize'`). Mojito no longer classifies it as
-# a width value parameter, so `SIMDSize` is just an unknown bound and the
-# explicit `[4]` below is a value supplied to a type parameter. (Like every
-# unknown bound, an uncalled declaration stays lazily unvalidated.)
+# `use of unknown declaration 'SIMDSize'`), and rejects the declaration that
+# names it. Mojito no longer classifies it as a width value parameter either:
+# the bound gets a targeted migration diagnostic where the declaration is
+# classified, so the rejection lands on `lane_count` itself, as at the pin,
+# rather than on the `[4]` argument its call supplies.
 def lane_count[width: SIMDSize](v: SIMD[DType.int, width]) -> Int:
     return width
 
