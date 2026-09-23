@@ -362,6 +362,7 @@ impl Checker {
                         span,
                         mojito_checked::checked::SemanticAdjustment::TypeName {
                             text: mojito_symbol::symbol::unqualified_instance_name(&ty),
+                            ty,
                         },
                     );
                     return Ok(Ty::StringLiteral);

@@ -333,14 +333,14 @@ impl Flatten<'_> {
                     }
                     return dest;
                 }
-                if let Some(mojito_checked::checked::SemanticAdjustment::TypeName { text }) =
-                    self.checked_adjustments(e).into_iter().find(|adjustment| {
-                        matches!(
-                            adjustment,
-                            mojito_checked::checked::SemanticAdjustment::TypeName { .. }
-                        )
-                    })
-                {
+                if let Some(mojito_checked::checked::SemanticAdjustment::TypeName {
+                    text, ..
+                }) = self.checked_adjustments(e).into_iter().find(|adjustment| {
+                    matches!(
+                        adjustment,
+                        mojito_checked::checked::SemanticAdjustment::TypeName { .. }
+                    )
+                }) {
                     return self.constant(e, Const::Str(text));
                 }
                 // A checked pointer construction materializes the frame/slot

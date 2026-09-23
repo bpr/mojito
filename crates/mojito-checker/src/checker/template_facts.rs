@@ -181,6 +181,7 @@ struct GrammarNotes {
     bound_builtins: Vec<(OccurrenceId, BoundBuiltin)>,
     constructions: Vec<OccurrenceId>,
     callable_calls: Vec<OccurrenceId>,
+    repr_calls: Vec<OccurrenceId>,
 }
 
 impl Checker {
@@ -1142,6 +1143,15 @@ impl Checker {
             self.realize_bound_builtin(&facts, *call, *builtin, occurrences)?;
         }
         facts.bound_builtins.clear();
+        for call in &template.repr_calls {
+            self.realize_repr_call(&facts, *call, occurrences)?;
+        }
+        facts.repr_calls.clear();
+        // A conversion is selected last: its source type is one the call and
+        // construction recipes may have realized.
+        for index in 0..facts.conversions.len() {
+            self.realize_conversion(&mut facts, index, substitution)?;
+        }
         facts.struct_applications =
             sorted_applications(std::mem::take(&mut facts.struct_applications));
         facts.effect_free_callees.sort();
@@ -1541,6 +1551,96 @@ impl Checker {
         Ok(())
     }
 
+    /// Realize one `repr(value)` call for an instance: its argument must
+    /// still be `Writable`, the demand the builtin makes of it.
+    ///
+    /// The call selects no callee. What it records is the wrap of its
+    /// compile-time string result as the nominal `String`, which
+    /// [`Self::realize_conversion`] repeats, and the argument's own place
+    /// use, which its syntax decides.
+    fn realize_repr_call(
+        &self,
+        facts: &CheckedBodyFacts,
+        id: OccurrenceId,
+        occurrences: &[Occurrence],
+    ) -> Result<(), &'static str> {
+        let syntax = occurrences
+            .iter()
+            .find(|occurrence| occurrence.id == id)
+            .and_then(|occurrence| occurrence.arguments.first().copied())
+            .ok_or("a repr call has no argument in the instance")?;
+        let argument = OccurrenceId {
+            syntax,
+            copy: id.copy,
+        };
+        let ty = fact_at(&facts.expression_types, argument)
+            .ok_or("a repr call's argument has no retained type")?;
+        if self.conforms_to(ty, "Writable") {
+            Ok(())
+        } else {
+            Err("a repr call's argument is not Writable for the instance")
+        }
+    }
+
+    /// Realize one implicit conversion for an instance, as
+    /// `record_selected_conversion` installs it on the substituted types.
+    ///
+    /// An `@implicit` constructor is chosen from the source and the target
+    /// type alone (`implicit_conversion_constructor`), so the instance
+    /// repeats the choice at its own types and records whichever constructor
+    /// it names — another member of the family, or a clone of the same one.
+    /// A type that reaches the target by no conversion refuses, and so does
+    /// one whose constructor consumes its source, which would record an
+    /// implicit copy the template did not. A conversion that kept no target
+    /// type is the nominal-string wrap, whose literal constructor is the same
+    /// under every instance.
+    ///
+    /// A conversion at a selected call's argument is also carried by the
+    /// contract's own boundary, which capture and installation copy verbatim.
+    /// `closed_method_contract` admits no boundary adjustment but a closed
+    /// scalar's literal, so no site the grammar admits has both; widening
+    /// that would owe the boundary the same rewrite.
+    fn realize_conversion(
+        &self,
+        facts: &mut CheckedBodyFacts,
+        index: usize,
+        substitution: &TySubst,
+    ) -> Result<(), &'static str> {
+        let (id, conversion) = &facts.conversions[index];
+        let Some(result) = conversion.result.clone() else {
+            if conversion.target == mojito_symbol::symbol::nominal_string_literal_ctor_symbol() {
+                return Ok(());
+            }
+            return Err("a conversion that kept no target type is not the literal wrap");
+        };
+        let from = fact_at(&facts.expression_types, *id)
+            .ok_or("a converted expression has no retained type")?
+            .clone();
+        let to = mojito_types::types::substitute(&result, substitution);
+        if self.value_coerces(&from, &to) {
+            return Err("the instance's value reaches the target without a conversion");
+        }
+        let selected = self
+            .implicit_conversion_constructor(&from, &to)
+            .map_err(|_| "the implicit conversion is ambiguous for the instance")?
+            .ok_or("the instance's type reaches the target by no implicit conversion")?;
+        // Each of these makes the recorder do more than fill the four tables:
+        // a consuming constructor copies its source, a raising one records a
+        // call effect, and a view one materializes a borrow owner and records
+        // an adjustment with no recipe.
+        if selected.consumes_source || selected.error.is_some() || selected.source_borrow.is_some()
+        {
+            return Err("an implicit conversion consumes, raises, or borrows for the instance");
+        }
+        facts.conversions[index].1 = mojito_checked::templates::TemplateConversion {
+            target: selected.target,
+            result: Some(to),
+            raises: selected.error,
+            source_borrow: selected.source_borrow,
+        };
+        Ok(())
+    }
+
     /// Realize one built-in `len(x)` for an instance, as `infer_len` decides
     /// it on a concrete argument.
     ///
@@ -1627,11 +1727,13 @@ impl Checker {
                         // grammar admitted, nothing that names a bound
                         // builtin's call, no contract at a construction, and
                         // its own parameter's contract at a call through it,
-                        // so only the grammar names them.
+                        // and nothing that names `repr`'s callee, so only the
+                        // grammar names them.
                         facts.comparisons = notes.comparisons;
                         facts.bound_builtins = notes.bound_builtins;
                         facts.constructions = notes.constructions;
                         facts.callable_calls = notes.callable_calls;
+                        facts.repr_calls = notes.repr_calls;
                         (facts, coverage)
                     }
                     Err(reason) => (
@@ -1859,11 +1961,13 @@ impl Checker {
             constructions: RefCell::new(Vec::new()),
             callable_params: Vec::new(),
             callable_calls: RefCell::new(Vec::new()),
+            repr_calls: RefCell::new(Vec::new()),
         };
         if !shape.block(body, false)
             || !shape.comparisons.borrow().is_empty()
             || !shape.bound_builtins.borrow().is_empty()
             || !shape.constructions.borrow().is_empty()
+            || !shape.repr_calls.borrow().is_empty()
         {
             return outside("the body is not scalar returns over direct calls and 'len'");
         }
@@ -1876,6 +1980,9 @@ impl Checker {
         if !facts.call_throughs.is_empty() || !facts.call_through_reads.is_empty() {
             return outside("the body calls or forwards a callable parameter");
         }
+        if !facts.conversions.is_empty() {
+            return outside("an argument of a direct call converts");
+        }
         let effects_closed = facts
             .expression_effects
             .iter()
@@ -1883,9 +1990,10 @@ impl Checker {
         if !effects_closed {
             return outside("a call has an effect");
         }
-        let adjustments_derive = facts.operation_adjustments.iter().all(|(_, adjustment)| {
-            mojito_checked::templates::derive_adjustment(adjustment, &Ty::clone).is_some()
-        });
+        let adjustments_derive = facts
+            .operation_adjustments
+            .iter()
+            .all(|(_, adjustment)| adjustment_derives(adjustment));
         if !adjustments_derive {
             return TemplateCoverage::Incomplete(IncompleteReason::UnsupportedTable(
                 FactTable::OperationAdjustments,
@@ -2236,6 +2344,7 @@ impl Checker {
             comparisons: RefCell::new(Vec::new()),
             bound_builtins: RefCell::new(Vec::new()),
             constructions: RefCell::new(Vec::new()),
+            repr_calls: RefCell::new(Vec::new()),
         };
         if !shape.block(&method.body, false) {
             return outside("the body is outside the method grammar");
@@ -2254,6 +2363,7 @@ impl Checker {
                     bound_builtins: shape.bound_builtins.borrow().clone(),
                     constructions: shape.constructions.borrow().clone(),
                     callable_calls: shape.callable_calls.borrow().clone(),
+                    repr_calls: shape.repr_calls.borrow().clone(),
                 },
             )
         };
@@ -2334,9 +2444,10 @@ impl Checker {
             .expression_effects
             .iter()
             .all(|(_, effects)| *effects == mojito_checked::checked::EffectFacts::default());
-        let adjustments_derive = facts.operation_adjustments.iter().all(|(_, adjustment)| {
-            mojito_checked::templates::derive_adjustment(adjustment, &Ty::clone).is_some()
-        });
+        let adjustments_derive = facts
+            .operation_adjustments
+            .iter()
+            .all(|(_, adjustment)| adjustment_derives(adjustment));
         if !effects_closed || !adjustments_derive {
             return outside("an expression has an effect or an adjustment with no recipe");
         }
@@ -2408,10 +2519,7 @@ impl Checker {
                     adjustment,
                     mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
                 );
-                (!kept_apart
-                    && mojito_checked::templates::derive_adjustment(adjustment, &Ty::clone)
-                        .is_none())
-                .then(|| {
+                (!kept_apart && !adjustment_derives(adjustment)).then(|| {
                     let spelled = format!("{adjustment:?}");
                     let variant = spelled
                         .split(|c: char| !c.is_alphanumeric())
@@ -2854,11 +2962,13 @@ impl Checker {
             vanishing_transfers,
             call_throughs,
             call_through_reads,
+            conversions: self.body_conversions(&occurrences),
             // The certificate fills these from the grammar.
             comparisons: Vec::new(),
             bound_builtins: Vec::new(),
             constructions: Vec::new(),
             callable_calls: Vec::new(),
+            repr_calls: Vec::new(),
             method_instantiations: values(&occurrences, &self.method_instantiations.borrow()),
             locals: owner_end - baseline.owner_start,
             occurrences: occurrences
@@ -2866,6 +2976,62 @@ impl Checker {
                 .map(|occurrence| occurrence.id)
                 .collect(),
         })
+    }
+
+    /// Write each realized conversion back into the four conversion tables,
+    /// as `record_selected_conversion` writes one: the converted-to type, the
+    /// error type, and the source borrow only where the selection has them.
+    fn install_conversions(
+        &self,
+        conversions: &[(SourceSpan, &mojito_checked::templates::TemplateConversion)],
+    ) {
+        for (site, conversion) in conversions {
+            self.implicit_conversions
+                .borrow_mut()
+                .insert(site.clone(), conversion.target.clone());
+            if let Some(result) = &conversion.result {
+                self.implicit_conversion_types
+                    .borrow_mut()
+                    .insert(site.clone(), result.clone());
+            }
+            if let Some(raises) = &conversion.raises {
+                self.implicit_conversion_raises
+                    .borrow_mut()
+                    .insert(site.clone(), raises.clone());
+            }
+            if let Some(mutable) = conversion.source_borrow {
+                self.conversion_source_borrows
+                    .borrow_mut()
+                    .insert(site.clone(), mutable);
+            }
+        }
+    }
+
+    /// The implicit conversion recorded at each of `occurrences`, in
+    /// occurrence order: what the four conversion tables hold at one span.
+    fn body_conversions(
+        &self,
+        occurrences: &[Occurrence],
+    ) -> Vec<(OccurrenceId, mojito_checked::templates::TemplateConversion)> {
+        let targets = self.implicit_conversions.borrow();
+        let types = self.implicit_conversion_types.borrow();
+        let raises = self.implicit_conversion_raises.borrow();
+        let borrows = self.conversion_source_borrows.borrow();
+        occurrences
+            .iter()
+            .filter_map(|occurrence| {
+                let target = targets.get(&occurrence.span)?;
+                Some((
+                    occurrence.id,
+                    mojito_checked::templates::TemplateConversion {
+                        target: target.clone(),
+                        result: types.get(&occurrence.span).cloned(),
+                        raises: raises.get(&occurrence.span).cloned(),
+                        source_borrow: borrows.get(&occurrence.span).copied(),
+                    },
+                ))
+            })
+            .collect()
     }
 
     /// Whether one body inference recorded only what capture can keep: no
@@ -2921,6 +3087,26 @@ impl Checker {
                 return Err(IncompleteReason::UnsupportedTable(table));
             }
         }
+        // A conversion is selected again at the instance's types, so only one
+        // the recipe repeats is kept: an `@implicit` constructor, which
+        // records the converted-to type beside its target, or the
+        // nominal-string wrap, whose constructor no instance changes. An
+        // index normalization records neither, and is refused here; the two
+        // other writers of a bare literal-constructor target (`String(x)`'s
+        // retarget, a literal `for` iterable) are refused by the grammar
+        // instead, one at its overload target and one as a statement.
+        let targets = self.implicit_conversions.borrow();
+        let types = self.implicit_conversion_types.borrow();
+        let wrap = mojito_symbol::symbol::nominal_string_literal_ctor_symbol();
+        if occurrences.iter().any(|occurrence| {
+            targets
+                .get(&occurrence.span)
+                .is_some_and(|target| !types.contains_key(&occurrence.span) && *target != wrap)
+        }) {
+            return Err(IncompleteReason::UnkeyedFact("implicit conversion"));
+        }
+        drop(targets);
+        drop(types);
         // A construction's immutable-binder record is kept only as the fact
         // that it is empty, which installation writes again: the grammar
         // admits no `ImmOrigin` argument, so it is never otherwise.
@@ -3109,6 +3295,13 @@ impl Checker {
                 .borrow_mut()
                 .insert(span(id)?, target.clone());
         }
+        self.install_conversions(
+            &facts
+                .conversions
+                .iter()
+                .map(|(id, conversion)| Ok((span(id)?, conversion)))
+                .collect::<Result<Vec<_>, TypeError>>()?,
+        );
         for (id, parameters) in &facts.call_parameters {
             self.call_parameters.borrow_mut().insert(
                 span(id)?,
@@ -3605,13 +3798,13 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::LinearBindings
         | FactTable::LinearTemporaries
         | FactTable::MethodInstantiations
-        | FactTable::ConstructionImmutableBinders => true,
-        FactTable::ContextualBases
-        | FactTable::CallTransfers
+        | FactTable::ConstructionImmutableBinders
         | FactTable::ImplicitConversions
         | FactTable::ImplicitConversionTypes
         | FactTable::ImplicitConversionRaises
-        | FactTable::ConversionSourceBorrows
+        | FactTable::ConversionSourceBorrows => true,
+        FactTable::ContextualBases
+        | FactTable::CallTransfers
         | FactTable::SimdConstructions
         | FactTable::ParameterizedMethodCalls
         | FactTable::CallResultOrigins
@@ -4242,6 +4435,21 @@ fn note_realized_callee(facts: &mut CheckedBodyFacts, selected: &str, target: &s
     }
 }
 
+/// Whether one adjustment has a derivation recipe, as a template's own
+/// symbolic facts can be judged.
+///
+/// `derive_adjustment` answers for one instance, under that instance's
+/// substitution. A template applies it under the identity, where an
+/// adjustment naming a type still names a parameter: a type name is the one
+/// recipe that re-renders such a type, so only an instance's substitution
+/// decides it, and the derivation refuses there if the type stays symbolic.
+fn adjustment_derives(adjustment: &mojito_checked::checked::SemanticAdjustment) -> bool {
+    matches!(
+        adjustment,
+        mojito_checked::checked::SemanticAdjustment::TypeName { .. }
+    ) || mojito_checked::templates::derive_adjustment(adjustment, &Ty::clone).is_some()
+}
+
 fn fact_at<V>(table: &[(OccurrenceId, V)], id: OccurrenceId) -> Option<&V> {
     table
         .iter()
@@ -4345,6 +4553,9 @@ struct BodyShape<'a> {
     /// The calls through such a parameter admitted, whose contract an
     /// instance takes from its own parameter binding.
     callable_calls: RefCell<Vec<OccurrenceId>>,
+    /// The `repr(value)` calls admitted, whose argument an instance proves
+    /// `Writable` at its own type.
+    repr_calls: RefCell<Vec<OccurrenceId>>,
 }
 
 /// What a local of a certified body is.
@@ -5264,6 +5475,9 @@ impl BodyShape<'_> {
                 if self.callable_params.contains(&name.as_str()) {
                     return self.callable_call(id, param_args, args, kwargs, known);
                 }
+                if name == "_unqualified_type_name" || name == "repr" {
+                    return self.string_builtin(id, name, param_args, args, kwargs);
+                }
                 // The built-in `len` reads its operand in place and realizes
                 // its witness per instance, so a method may hand it a field of
                 // `self` of any type, not only a scalar one.
@@ -5331,6 +5545,54 @@ impl BodyShape<'_> {
             }
         }
         admitted && self.holds(MethodFeatures::CALLABLE_PARAMETERS)
+    }
+
+    /// `repr(value)` and `_unqualified_type_name[T]()`: checker builtins that
+    /// make a string and select no callee.
+    ///
+    /// The reflection call names one type and records its spelling as an
+    /// adjustment, which an instance re-renders from the substituted type.
+    /// `repr` reads its argument where it lies, as a sink's argument is read,
+    /// and wraps its compile-time string result as the nominal `String`: a
+    /// conversion the instance selects again ([`Checker::realize_conversion`]),
+    /// owing that the argument is still `Writable`
+    /// ([`Checker::realize_repr_call`]). A declaration of either name would
+    /// record call parameters and a binding, and is not this.
+    fn string_builtin(
+        &self,
+        id: OccurrenceId,
+        name: &str,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> bool {
+        let declared = self.facts.is_some_and(|facts| {
+            fact_at(&facts.call_parameters, id).is_some()
+                || fact_at(&facts.expression_bindings, id).is_some()
+        });
+        if declared || !kwargs.is_empty() {
+            return false;
+        }
+        let repr = name == "repr";
+        let admitted = if repr {
+            param_args.is_empty() && matches!(args, [argument] if self.sink_argument(argument))
+        } else {
+            param_args.len() == 1 && args.is_empty()
+        };
+        if admitted && repr {
+            let mut calls = self.repr_calls.borrow_mut();
+            if !calls.contains(&id) {
+                calls.push(id);
+            }
+            // `repr` reads its argument where it lies, as a `ref` parameter
+            // would: the place use is the grammar's, not a stray one.
+            let argument = self.occurrence(&args[0]);
+            let mut places = self.places.borrow_mut();
+            if !places.contains(&argument) {
+                places.push(argument);
+            }
+        }
+        admitted && self.holds(MethodFeatures::STRING_BUILTINS)
     }
 
     /// A method call on a place whose type is a bare struct parameter, which
@@ -5505,11 +5767,15 @@ impl BodyShape<'_> {
 
     /// An argument a checker builtin reads where it lies: a closed scalar, a
     /// string literal, a named whole value, a `ref` local, a field read
-    /// through a reference, a pointer slot, or a reference call. Each records
-    /// by its syntax alone.
+    /// through a reference, a pointer slot, a reference call, or another
+    /// string builtin's result. Each records by its syntax alone.
     fn sink_argument(&self, argument: &Expr) -> bool {
         match &argument.kind {
             ExprKind::Str(_) => true,
+            ExprKind::Call { name, .. } => {
+                self.expression(argument)
+                    && (self.scalar(argument) || name == "repr" || name == "_unqualified_type_name")
+            }
             ExprKind::Identifier(name) => {
                 self.params.contains(&name.as_str()) || self.local_kind(name).is_some()
             }

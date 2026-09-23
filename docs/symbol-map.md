@@ -317,7 +317,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   residue is read as `EffectRead::CallThrough`, kept as
   `call_through_reads`, and rekeyed by `note_realized_callee`;
   `realize_callable_call` takes a call through a `def(...)` parameter from
-  the instance's own binding of it), and `census` reports what keeps each
+  the instance's own binding of it), `realize_conversion` re-selects an
+  implicit conversion from the substituted source and target types while
+  `install_conversions` writes the four conversion tables back and
+  `realize_repr_call` re-proves `repr`'s argument `Writable`, and `census`
+  reports what keeps each
   generic body from being
   captured, with `grammar_features` naming the constructs it holds. The
   submodule `template_facts/bound_dispatch.rs` re-selects a call through a

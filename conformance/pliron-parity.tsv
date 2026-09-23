@@ -574,6 +574,7 @@ assets/ok/template_method_bound_dispatch.mojo	main	exe-differential	sanitized
 assets/ok/template_method_callable_parameter.mojo	main	exe-differential	sanitized
 assets/ok/template_method_calls.mojo	main	exe-differential	sanitized
 assets/ok/template_method_construction.mojo	main	exe-differential	sanitized
+assets/ok/template_method_converting_argument.mojo	main	exe-differential	sanitized
 assets/ok/template_method_getter.mojo	main	exe-differential	sanitized
 assets/ok/template_method_moves.mojo	main	exe-differential	sanitized
 assets/ok/template_method_operator_dispatch.mojo	main	exe-differential	sanitized
@@ -584,6 +585,7 @@ assets/ok/template_method_reference_local.mojo	main	exe-differential	sanitized
 assets/ok/template_method_reference_receiver.mojo	main	exe-differential	sanitized
 assets/ok/template_method_reference_result.mojo	main	exe-differential	sanitized
 assets/ok/template_method_statements.mojo	main	exe-differential	sanitized
+assets/ok/template_method_string_builtins.mojo	main	exe-differential	sanitized
 assets/ok/template_method_subscript_store.mojo	main	exe-differential	sanitized
 assets/ok/template_method_value_argument.mojo	main	exe-differential	sanitized
 assets/ok/template_method_vanishing_transfer.mojo	main	exe-differential	sanitized

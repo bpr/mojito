@@ -276,6 +276,7 @@ they are a set, not a ladder.
 | `BOUND_BINDERS` | the method's own type binders, each a plain trait-bounded type (`[H: Hasher]`) | A clone keeps such a binder, bound symbolically as the template binds it: no clone is minted per hasher, the VM reifies the binding at run time, and no retained fact substitutes it. The instance's substitution binds the struct's parameters alone (`instance_substitution`), as it does beside an origin binder. |
 | `CONSTRUCTIONS` | a construction of a declared struct whose compile-time arguments are types, as a whole value: `copy:` of a named place, or arguments that are closed scalars, whole values, or — for a fieldwise struct's reference field — a `ref` local | A construction records no contract: `infer_construction` selects an `__init__` from the argument types, retargets it to the instance's constructor clone, and reaches the struct application. Its one unconditional record, `ConstructionImmutableBinders`, is empty when no compile-time argument is an `ImmOrigin` cast, which the type-only arguments guarantee, and installation writes the empty entry again. What a constructor records at an argument is decided by the argument's syntax and the constructor's conventions (a copy owes obligation 3, a transfer obligation 10, a literal materializes to a closed type); the selected member binds each argument exactly, so no member can outrank it under any instance (obligation 18). A constructed type that names the receiver in an origin argument (`_ListIter[T, origin_of(self)]`) is kept with the slot unbound and the origin by template owner (`typed_origins`), and the `return`'s re-resolution of the annotation's `origin_of(self)` is repeated once by the instance rather than recorded. |
 | `CALLABLE_PARAMETERS` | a call through a parameter declared with a `def(...)` type, passing closed scalars or whole values, as a statement; and such a parameter forwarded by value to a sibling call | The call records the parameter's own contract symbol and parameters, which the instance takes from its own binding of the parameter, and puts a call-through residue on the body's frame that names the parameter's slot and each argument's signature place. A forwarded parameter reads the callee's residue and composes one. Neither names a type: the instance republishes the template's residue and owes that its realized callee publishes the one the template read. Obligation 19 below. |
+| `STRING_BUILTINS` | `_unqualified_type_name[T]()`, and `repr(value)` over an argument a checker builtin reads where it lies | Neither selects a callee. The reflection call records one type's spelling, which `derive_adjustment` re-renders from the substituted type (`TypeName` carries the type beside the text) and refuses while that type is still symbolic. `repr` proves its argument `Writable` — which the instance proves again at its own type — reads it where it lies as a bounded sink's argument is read, and wraps its compile-time string result as the nominal `String`: one conversion, whose literal constructor is the same under every instance (obligation 20).
 
 The compiler-private trap `_mojito_abort("message")` is a statement of any
 non-keyed body: the built-in types its literal and selects nothing. A
@@ -461,6 +462,21 @@ only `Movable` records nothing there, and its `Int` clone would.
     naming a compile-time callable value refuses, and a read whose concrete
     callable is a named declaration with effects of its own keeps the clone
     check (`EffectRead::Residue`).
+20. **Implicit conversions.** An `@implicit` constructor is selected from the
+    source and the target type alone (`implicit_conversion_constructor`), so
+    the instance repeats the selection at its own types rather than
+    inheriting the constructor the template found, and records whichever
+    member — or clone of a member — it names (`realize_conversion`). A
+    substituted source that reaches the target without a conversion, that
+    reaches it by none, or whose constructor consumes, raises, or borrows its
+    source refuses: each of those makes the recorder do more than fill the
+    four conversion tables. A conversion that kept no converted-to type is a
+    nominal-string wrap, whose literal constructor no instance changes, and
+    capture refuses every other target-only record. A conversion at a
+    selected call's argument is also carried in the contract's own boundary,
+    which capture and installation copy verbatim; `closed_method_contract`
+    admits no boundary adjustment but a closed scalar's literal, so no site
+    the grammar admits has both.
 
 The declaration's bounds and `where` clauses are not re-checked: the checker
 discharges them at the requesting call, and the elaborator proves a fully
@@ -597,14 +613,24 @@ tables. In short, for one debug-profile run each:
   local receiver, `Optional.map`/`and_then` on `EraseCompileTimeArgument`,
   and the `Tuple` teardown members are whole-struct specializations with a
   compile-time callable.
+  The string builtins and the conversion recipe took `stdlib_heavy` from 1050
+  to 1102 (2026-09-22): `List`, `Dict`, `Optional`, and `Set.write_repr_to`
+  and `EmptyOptionalError.write_to`/`write_repr_to` certify and derive, and
+  with them the `write_to` family beside them. A user struct that writes its
+  own type name and a value's `repr` derives for an `Int` and a `String`
+  instance (`template_method_string_builtins.mojo`), and one that binds a
+  converting value re-selects the constructor at each instance
+  (`template_method_converting_argument.mojo`). `Array.write_repr_to` reads a
+  value parameter and `Tuple.write_repr_to` is compile-time keyed, so both
+  stay out.
 - Hello World mints no per-instantiation clones at all. Its generated bodies
   are members of structs specialized whole and per-call clones, from
   concrete-only templates.
 - The census (`template_census.*`) says which table recipes come next: of
-  the 253 clone bodies still inferred, 177 are capturable already, and the
+  the 244 clone bodies still inferred, 179 are capturable already, and the
   largest blockers left are a binding the grammar refuses (16, a local of a
-  parameter type), `ExplicitDestroyCalls` (13, sole blocker of 8), the
-  `TypeName` adjustment (11), `EraseCompileTimeArgument` (8), and
+  parameter type), `ExplicitDestroyCalls` (13, sole blocker of 8),
+  `EraseCompileTimeArgument` (8), `PointerOriginCast` (7), and
   `BorrowViewResult` (6, the `Dict.keys`/`values`/`__iter__` family). Its
   `grammar.*` counters say which constructs keep a body outside every class
   whatever its tables: a method call with arguments (150 bodies), a direct
@@ -621,9 +647,10 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
 
 - A method body beyond `MethodBody`: a receiver origin, a copy or move
   initializer, `raises`, the method's own binders, a `for` loop, a string
-  other than the `_mojito_abort` message, a call passing a `ref` local or a
-  reference call's result, an argument that converts, and a local whose type
-  is built over a parameter (`var result = List[Self.T]()` in
+  other than the `_mojito_abort` message or a sink's argument, a call passing
+  a `ref` local or a reference call's result, a converting argument at a
+  selected call's boundary, and a local whose type is built over a parameter
+  (`var result = List[Self.T]()` in
   `List.__mul__`, `List.__getitem__(slice)`, and the owned `__iter__`s).
 - A construction with an `ImmOrigin` or a value compile-time argument, one
   whose constructor has binders of its own or binds a variadic parameter,

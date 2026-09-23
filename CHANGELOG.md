@@ -254,6 +254,19 @@ to evolve under the `0.x` compatibility rules.
   same one, and the transfer fixpoint re-runs if it grows. A residue naming
   a compile-time callable, one whose argument carries an origin, and a named
   callable's own effects behind one keep the clone check.
+- A per-instantiation method clone whose body writes its own type name or a
+  value's `repr` now derives from its checked template, and so do the
+  `write_repr_to` and `write_to` families beside it (`stdlib_heavy` derives
+  1050 clone bodies before the change and 1102 after).
+  `_unqualified_type_name[T]()` keeps its type beside its spelling, so the
+  instance re-renders the spelling from its own substituted type instead of
+  inheriting the template's wording, and `repr(value)` re-proves its argument
+  `Writable`. The implicit conversion either records — the nominal-string
+  wrap at `repr`, or an `@implicit` constructor — is selected again from the
+  instance's own source and target types, so a clone may name a different
+  constructor of the family; one that reaches the target by no conversion, or
+  whose constructor consumes, raises, or borrows its source, keeps the clone
+  check.
 - `--timings` no longer counts a module-qualified bundled struct's methods as
   clones: "generated" is what the elaborator lists (`GeneratedDeclarations`),
   not a `$` in a name. `template_census.*` reports what keeps each generic

@@ -196,6 +196,16 @@ pub fn derive_adjustment(
         // where a nominal struct takes its own `write_to` instead.
         SemanticAdjustment::InvertedWrite => Some(SemanticAdjustment::InvertedWrite),
         SemanticAdjustment::InvertedReprWrite => Some(SemanticAdjustment::InvertedReprWrite),
+        // A type name is one type's spelling: the instance re-renders it from
+        // the substituted type, as the resolution rendered the template's. A
+        // type that is still symbolic has no spelling an instance could use.
+        SemanticAdjustment::TypeName { ty, .. } => {
+            let ty = substitute(ty);
+            (!mojito_types::types::is_symbolic(&ty)).then(|| SemanticAdjustment::TypeName {
+                text: mojito_symbol::symbol::unqualified_instance_name(&ty),
+                ty,
+            })
+        }
         SemanticAdjustment::ResolveCallable(..)
         | SemanticAdjustment::ConstructTypeParam { .. }
         | SemanticAdjustment::ReifyTypeArgument { .. }
@@ -234,7 +244,6 @@ pub fn derive_adjustment(
         | SemanticAdjustment::Iterate(..)
         | SemanticAdjustment::ConstructSimd { .. }
         | SemanticAdjustment::SizeOf { .. }
-        | SemanticAdjustment::TypeName { .. }
         | SemanticAdjustment::SimdCast { .. }
         | SemanticAdjustment::SimdToBits { .. }
         | SemanticAdjustment::SimdLength { .. }
@@ -622,6 +631,11 @@ impl MethodFeatures {
     /// to a sibling call: the residue either records on the body's frame is
     /// republished for the instance ([`TemplateObligation::CallThroughResidue`]).
     pub const CALLABLE_PARAMETERS: Self = Self(1 << 18);
+    /// `repr(value)` and `_unqualified_type_name[T]()`: checker builtins that
+    /// make a string from a value or from a type and select no callee. Each
+    /// records by its argument's type alone, which an instance judges again
+    /// ([`TemplateObligation::ImplicitConversions`]).
+    pub const STRING_BUILTINS: Self = Self(1 << 19);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
@@ -822,6 +836,32 @@ pub enum TemplateObligation {
     /// the body read from a callee is owed again: the instance's realized
     /// callee must publish exactly the residue the template read.
     CallThroughResidue,
+    /// Every implicit conversion the template selected is selected again from
+    /// the instance's own types, and records what the template recorded. An
+    /// `@implicit` constructor is chosen from the source and target types
+    /// alone, so the instance repeats the choice and may name a different
+    /// constructor; one that names none, or one that consumes its source,
+    /// refuses. A nominal-string wrap names the literal constructor, which no
+    /// instance changes, and `repr`'s argument must still be `Writable`.
+    ImplicitConversions,
+}
+
+/// One implicit conversion in template-local terms: what the four conversion
+/// tables recorded at one occurrence.
+///
+/// An instance re-decides the conversion from its own types rather than
+/// inheriting this, so the retained entry says which decision to repeat.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplateConversion {
+    /// The lowered constructor the template selected.
+    pub target: String,
+    /// The converted-to type. `None` for a nominal-string wrap, which records
+    /// the target alone.
+    pub result: Option<Ty>,
+    /// The error type of a raising constructor.
+    pub raises: Option<Ty>,
+    /// The loan mutability of a view constructor's `ref [origin]` parameter.
+    pub source_borrow: Option<bool>,
 }
 
 /// One subscript's index shape, a slice kind per sliced index, and whether
@@ -967,6 +1007,15 @@ pub struct CheckedBodyFacts {
     /// read. An instance rekeys each to its realized callee, which must
     /// publish the same residue.
     pub call_through_reads: Vec<(String, Vec<CallThroughEffect>)>,
+    /// Calls of the checker builtin `repr`, which the grammar admitted. The
+    /// call selects no callee and wraps its compile-time string result as the
+    /// nominal `String`; an instance owes only that its argument is still
+    /// `Writable` ([`TemplateObligation::ImplicitConversions`]).
+    pub repr_calls: Vec<OccurrenceId>,
+    /// The implicit conversion selected at each occurrence that records one.
+    /// An instance selects it again from its own types, so a clone whose
+    /// source type changed names a different constructor.
+    pub conversions: Vec<(OccurrenceId, TemplateConversion)>,
     /// The origins of every retained struct type that names a binding in an
     /// origin argument, kept by template owner while the type itself keeps
     /// those slots unbound.
@@ -1267,6 +1316,13 @@ impl CheckedBodyFacts {
             &self.call_through_reads,
             &other.call_through_reads,
         );
+        differing(&mut out, "repr_calls", &self.repr_calls, &other.repr_calls);
+        differing(
+            &mut out,
+            "conversions",
+            &self.conversions,
+            &other.conversions,
+        );
         differing(
             &mut out,
             "typed_origins",
@@ -1366,6 +1422,8 @@ impl CheckedBodyFacts {
             // read to the instance's callee and refuses one no call names.
             call_throughs: self.call_throughs.clone(),
             call_through_reads: self.call_through_reads.clone(),
+            repr_calls: flagged(&self.repr_calls),
+            conversions: at(&self.conversions, occurrences),
             typed_origins: occurrences
                 .iter()
                 .flat_map(|occurrence| {

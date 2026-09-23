@@ -569,6 +569,7 @@ assets/ok/template_method_bound_dispatch.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_callable_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_calls.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_construction.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_converting_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_getter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_moves.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_operator_dispatch.mojo	-	ineligible	no-scalar-entry-shape
@@ -579,6 +580,7 @@ assets/ok/template_method_reference_local.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/template_method_reference_receiver.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_reference_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_statements.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_string_builtins.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_subscript_store.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_value_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_vanishing_transfer.mojo	-	ineligible	no-scalar-entry-shape

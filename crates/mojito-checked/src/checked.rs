@@ -619,9 +619,12 @@ pub enum SemanticAdjustment {
     },
     /// `_unqualified_type_name[T]()` resolved to upstream's unqualified
     /// spelling of the checked type (`SIMD[DType.int, 1]`, `Optional[String]`);
-    /// MIR lowers it to a string constant.
+    /// MIR lowers `text` to a string constant. The type itself is kept beside
+    /// the spelling so an instance of a checked template re-renders it from
+    /// the substituted type rather than inheriting the template's wording.
     TypeName {
         text: String,
+        ty: Ty,
     },
     /// `v.cast[DType.target]()` — elementwise dtype conversion of a SIMD
     /// value. The target dtype and lane width are resolved at checking; MIR
