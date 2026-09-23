@@ -1034,6 +1034,21 @@ impl Elab<'_> {
                             return Ok(());
                         };
                         (values, kept, false)
+                    } else if self.dtype_generics.contains(name.as_str())
+                        && omits_dtype_param(self.specializable[name.as_str()], param_args)
+                    {
+                        // An inferred application of a `DType`-keyed template:
+                        // the lane is the argument's own, which only the checker
+                        // reads, so consult the recorded instantiation for this
+                        // occurrence, else keep the template as a stub for the
+                        // discovery check.
+                        let Some((values, kept, _)) =
+                            self.def_request_target(name, &source_span, param_args, mono)
+                        else {
+                            mono.retain_abstract(name, &source_span, false);
+                            return Ok(());
+                        };
+                        (values, kept, false)
                     } else {
                         let template = self.specializable[name.as_str()];
                         let whole_pack_abi = top_level_whole_pack_forwarding_call(template, args)?;
@@ -1783,21 +1798,44 @@ impl Elab<'_> {
 }
 
 /// Whether a call leaves a parameter of `template` that needs an argument
-/// without one: no source argument, no default, not infer-only, and not a
-/// symbolically retained binder. A source list that does not bind at all is
-/// not an omission; it keeps its binding diagnostic.
+/// without one.
 fn omits_required_param(template: &Stmt, param_args: &[ParamArg]) -> bool {
+    !omitted_required_params(template, param_args).is_empty()
+}
+
+/// Whether a call omits a required parameter and every one it omits is keyed
+/// on a `DType`. Such a lane lives in the argument's own type, which the
+/// checker reads off a `Scalar[dt]` slot and the elaborator cannot.
+fn omits_dtype_param(template: &Stmt, param_args: &[ParamArg]) -> bool {
+    let omitted = omitted_required_params(template, param_args);
+    !omitted.is_empty()
+        && omitted
+            .iter()
+            .all(|parameter| matches!(parameter.bounds.as_slice(), [only] if only == "DType"))
+}
+
+/// The parameters of `template` a call leaves without an argument: no source
+/// argument, no default, not infer-only, and not a symbolically retained
+/// binder. A source list that does not bind at all omits nothing; it keeps its
+/// binding diagnostic.
+fn omitted_required_params<'t>(template: &'t Stmt, param_args: &[ParamArg]) -> Vec<&'t TypeParam> {
     let StmtKind::Def { type_params, .. } = &template.kind else {
-        return false;
+        return Vec::new();
     };
-    bind_spec_param_args(type_params, param_args, "").is_ok_and(|bound| {
-        type_params.iter().zip(bound).any(|(parameter, arguments)| {
+    let Ok(bound) = bind_spec_param_args(type_params, param_args, "") else {
+        return Vec::new();
+    };
+    type_params
+        .iter()
+        .zip(bound)
+        .filter(|(parameter, arguments)| {
             arguments.is_empty()
                 && !parameter.infer_only
                 && parameter.default.is_none()
                 && !retained_specialization_param(parameter, type_params)
         })
-    })
+        .map(|(parameter, _)| parameter)
+        .collect()
 }
 
 fn consts_without_type_params(

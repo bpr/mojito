@@ -10,7 +10,8 @@ use std::fmt;
 
 use crate::ct::CtValue;
 use crate::param_expr::{
-    ParamBindings, ParamContext, ParamError, ParamExpr, ParamId, ParamKind, ParamRef,
+    HoleKind, MetaTy, ParamBindings, ParamContext, ParamError, ParamExpr, ParamId, ParamKind,
+    ParamRef,
 };
 use mojito_ast::ast::{ArgConvention, Dtype};
 
@@ -192,8 +193,10 @@ impl fmt::Display for SimdDtype {
 /// parameter expression while the enclosing declaration is still symbolic
 /// (`SIMD[dt, width]`, `SIMD[dt, 2 * n]`).
 ///
-/// `Known(-1)` is the `SIMD[dt, _]` inference wildcard. `Expr` is never a
-/// closed expression: [`simd_ty_from_slots`] folds one to `Known`.
+/// The `SIMD[dt, _]` inference wildcard is an unbound typed hole, so it is
+/// told apart from every lane count a program can name and from a binder the
+/// instantiation still owes a value. `Expr` is never a closed expression:
+/// [`simd_ty_from_slots`] folds one to `Known`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SimdWidth {
     Known(i64),
@@ -201,6 +204,12 @@ pub enum SimdWidth {
 }
 
 impl SimdWidth {
+    /// The `SIMD[dt, _]` inference wildcard. The construction that spells it
+    /// solves the hole from its argument count, so no later phase sees one.
+    pub fn inferred(context: &ParamContext) -> Self {
+        Self::Expr(context.hole(HoleKind::Unbound, MetaTy::int()))
+    }
+
     pub const fn known(&self) -> Option<i64> {
         match self {
             Self::Known(width) => Some(*width),
@@ -210,6 +219,11 @@ impl SimdWidth {
 
     pub const fn is_expr(&self) -> bool {
         matches!(self, Self::Expr(_))
+    }
+
+    /// Whether this slot is the [`SimdWidth::inferred`] wildcard.
+    pub fn is_inferred(&self) -> bool {
+        matches!(self, Self::Expr(expr) if expr.as_hole().is_some())
     }
 }
 
@@ -1834,9 +1848,11 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
             },
             Ty::Simd {
                 dtype: to_dtype,
-                width: SimdWidth::Known(-1),
+                width: to_width,
             },
-        ) => from_dtype == to_dtype && from_width.known().is_none_or(|width| width > 0),
+        ) if to_width.is_inferred() => {
+            from_dtype == to_dtype && from_width.known().is_none_or(|width| width > 0)
+        }
         // A tuple coerces element-wise (same arity) — so a literal element
         // materializes: `(1, 2.0)` fits `Tuple[Float64, Float64]`.
         (Ty::Tuple(a), Ty::Tuple(b)) => {
@@ -3350,7 +3366,7 @@ mod simd_slot_tests {
             &vector,
             &Ty::Simd {
                 dtype: lane,
-                width: SimdWidth::Known(-1),
+                width: SimdWidth::inferred(&context),
             }
         ));
     }

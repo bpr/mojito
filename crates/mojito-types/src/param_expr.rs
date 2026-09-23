@@ -998,6 +998,14 @@ impl ParamExpr {
         }
     }
 
+    /// The hole state this node is, when it is one.
+    pub fn as_hole(&self) -> Option<HoleKind> {
+        match self.kind() {
+            ParamKind::Hole { kind, .. } => Some(*kind),
+            _ => None,
+        }
+    }
+
     /// The concrete value of a closed expression, or the structured reason it
     /// has none: a free parameter, a hole, or a partial operator that fails.
     pub fn require_constant(&self) -> Result<CtValue, ParamError> {

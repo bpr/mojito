@@ -7,9 +7,9 @@ use crate::comptime::{
     ComptimeError, DefSpecializationRequest, Elaborated, MethodSpecializationRequest,
     NESTED_MARKER_INFIX, StructInstanceRequest, TStringSpecializationRequest,
     TupleSpecializationRequest, TupleTransformRequest, UnservedTemplateUse,
-    bound_generic_template_names, comptime_generic_template_names, elaborate_prepared,
-    pack_generic_template_names, prepare, template_display_name, tuple_materialized_callables,
-    unserved_template_parameter, variadic_struct_template_names,
+    bound_generic_template_names, comptime_generic_template_names, dtype_generic_template_names,
+    elaborate_prepared, pack_generic_template_names, prepare, template_display_name,
+    tuple_materialized_callables, unserved_template_parameter, variadic_struct_template_names,
 };
 use crate::ct::CtValue;
 use crate::error::{OwnershipError, ParseError, TypeError};
@@ -243,6 +243,7 @@ impl Compiler {
             let mut templates = bound_generic_template_names(linked);
             templates.extend(pack_generic_template_names(linked));
             templates.extend(comptime_generic_template_names(linked));
+            templates.extend(dtype_generic_template_names(linked));
             templates
         };
         let range_templates = scalar_range_template_names(linked);

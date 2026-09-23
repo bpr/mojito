@@ -364,6 +364,14 @@ impl Elab<'_> {
                     &stmt,
                     "unspecialized compile-time-keyed function",
                 ));
+            } else if retained
+                && self.dtype_generics.contains(&template_name)
+                && dtype_keyed_declaration(&stmt)
+            {
+                // A `DType`-keyed template with a deferred call stands in the
+                // same way, until the checker reads the lane off the call's
+                // argument and its request is served.
+                out.push(template_stub(&stmt, "unspecialized DType-keyed function"));
             }
             if let Some(mut specs) = generated {
                 specs.reverse();
@@ -420,6 +428,7 @@ impl Elab<'_> {
             if !self.bound_generics.contains(callee)
                 && !self.pack_generics.contains(callee)
                 && !self.comptime_generics.contains(callee)
+                && !self.dtype_generics.contains(callee)
             {
                 continue;
             }
@@ -617,8 +626,20 @@ impl Elab<'_> {
         uses: &'a [AbstractUse],
         edges: &'a [(String, String)],
     ) -> HashSet<&'a str> {
-        let mut stubbed: HashSet<&str> =
-            self.comptime_generics.iter().map(String::as_str).collect();
+        let mut stubbed: HashSet<&str> = self
+            .comptime_generics
+            .iter()
+            .map(String::as_str)
+            // A `DType`-keyed template stands as a stub only where a call
+            // actually deferred to the checker; the rest specialize outright
+            // and are nobody's stub.
+            .chain(
+                self.dtype_generics
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|name| uses.iter().any(|reference| reference.callee == **name)),
+            )
+            .collect();
         loop {
             let reached: Vec<&str> = uses
                 .iter()

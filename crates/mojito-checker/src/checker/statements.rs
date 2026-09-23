@@ -1542,10 +1542,17 @@ impl Checker {
                 // `Int`. A richer comptime value (tuple/list/string) the `Int` folder
                 // can't evaluate is still an ordinary binding — the elaborator has
                 // already consumed it for any `comptime for`/`comptime if`.
-                if let ExprKind::Member { object, field } = &value.kind
-                    && let Some(dtype) = self.dtype_constant(object, field)
-                    && let Some(dtype) = dtype?.known()
-                {
+                // A dtype binding keys later `Scalar[d]`/`SIMD[d, n]`
+                // annotations. A symbolic dtype binds as itself, so a
+                // `[dt: DType]`-keyed body may name its own lane through one.
+                let bound_dtype = match &value.kind {
+                    ExprKind::Member { object, field } => {
+                        self.dtype_constant(object, field).transpose()?
+                    }
+                    ExprKind::Identifier(source) => self.dtype_named(source),
+                    _ => None,
+                };
+                if let Some(dtype) = bound_dtype {
                     self.comptime_dtypes.insert(name.clone(), dtype);
                 }
                 if let Ok(v) = self.eval_ct(value) {

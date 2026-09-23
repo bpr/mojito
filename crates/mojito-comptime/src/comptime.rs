@@ -787,6 +787,16 @@ pub fn comptime_generic_template_names(program: &[Stmt]) -> HashSet<String> {
     collect_comptime_generic_templates(program)
 }
 
+/// The top-level `DType`-keyed template names (`def only_dt[dt: DType](a:
+/// Scalar[dt])`) of a linked program.
+///
+/// A call that omits the lane leaves it to the checker, which reads it off the
+/// argument's own SIMD slot and records the instantiation the next discovery
+/// round mints; until then the template stands in as a signature-only stub.
+pub fn dtype_generic_template_names(program: &[Stmt]) -> HashSet<String> {
+    collect_dtype_generic_templates(program)
+}
+
 /// The source name a template is reported under: a nested `def` is spelled by
 /// its qualified marker while the discovery check sees it, but a reader knows
 /// it by the name it was written with.
@@ -957,6 +967,7 @@ pub fn elaborate_prepared(
         bound_generics,
         pack_generics,
         comptime_generics: collect_comptime_generic_templates(program),
+        dtype_generics: collect_dtype_generic_templates(program),
         overload_families: collect_overload_families(program),
         method_requests: method_requests_by_owner,
         instance_requests,
@@ -1764,6 +1775,12 @@ struct Elab<'a> {
     /// instantiation for its occurrence; a deferred call keeps the template as
     /// a signature-only stub for the discovery check.
     comptime_generics: HashSet<String>,
+    /// The subset of `specializable` keyed on a `DType` parameter of its own.
+    /// The lane such a call omits is the argument's, which only the checker
+    /// reads, so the call consults the checker-recorded instantiation for its
+    /// occurrence and a deferred one keeps the template as a signature-only
+    /// stub for the discovery check.
+    dtype_generics: HashSet<String>,
     /// The declarations of every overloaded template name, in
     /// declaration order (see [`collect_overload_families`]). A call
     /// to such a name is served only from the checker's recorded
@@ -2429,6 +2446,18 @@ fn declaration_takes(
         && caller_visible.next().is_none()
 }
 
+/// Whether a top-level `def` keys a lane on a `DType` parameter of its own —
+/// the `DType`-keyed class's per-declaration predicate. Such a signature
+/// stands in as a checkable stub: a `Scalar[dt]` slot validates symbolically.
+fn dtype_keyed_declaration(statement: &Stmt) -> bool {
+    let StmtKind::Def { type_params, .. } = &statement.kind else {
+        return false;
+    };
+    type_params
+        .iter()
+        .any(|parameter| matches!(parameter.bounds.as_slice(), [only] if only == "DType"))
+}
+
 /// Whether a top-level `def` is specializable only because its body holds
 /// compile-time control flow or a `rebind` over its own parameters — the
 /// compile-time-keyed class's per-declaration predicate.
@@ -2507,6 +2536,22 @@ fn pack_keyed_declaration(statement: &Stmt) -> bool {
 /// assertion over its own parameters. Packs, `DType`
 /// parameters, and SIMD-width parameters stay on their own paths: their
 /// signatures cannot stand in as a checkable stub.
+fn collect_dtype_generic_templates(program: &[Stmt]) -> HashSet<String> {
+    let families = collect_overload_families(program);
+    let def_counts = def_name_counts(program);
+    program
+        .iter()
+        .filter_map(|statement| {
+            let StmtKind::Def { name, .. } = &statement.kind else {
+                return None;
+            };
+            let admitted = (def_counts[name.as_str()] == 1 || families.contains_key(name.as_str()))
+                && dtype_keyed_declaration(statement);
+            admitted.then(|| name.clone())
+        })
+        .collect()
+}
+
 fn collect_comptime_generic_templates(program: &[Stmt]) -> HashSet<String> {
     let families = collect_overload_families(program);
     let def_counts = def_name_counts(program);

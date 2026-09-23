@@ -2806,7 +2806,7 @@ impl Checker {
             &args[1],
             mojito_ast::ast::ParamArg::Value(Expr { kind: ExprKind::Identifier(name), .. }) if name == "_"
         ) {
-            SimdWidth::Known(-1)
+            SimdWidth::inferred(&self.param_context)
         } else {
             self.simd_width(&args[1])?
         };

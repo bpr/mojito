@@ -613,12 +613,16 @@ template is dropped unchecked). A `rebind` keys the class because it asserts
 that a parametric operand type resolves to its target, which only an
 instantiation can settle; a generic struct's method holding one is stubbed on
 the template for the same reason, and the assertion is made on every clone.
-Two comptime-class subsets take an inferred
+Three comptime-class subsets take an inferred
 call through discovery instead: a type pack whose element types are not
-statically evident, and a **compile-time-keyed** `def`
+statically evident, a **compile-time-keyed** `def`
 specialized only for its `comptime if`/`for` body or `rebind` (no pack,
 `DType`, or SIMD-width parameter; `comptime_generic_template_names`) called
-without an argument for a required parameter. An overloaded name with a
+without an argument for a required parameter, and a **`DType`-keyed** `def`
+(`dtype_generic_template_names`) whose call omits only its lane: the lane is
+the argument's own, which the checker reads off a `Scalar[dt]` slot and the
+elaborator cannot. A call that omits a SIMD width is not in that subset —
+the pin does not infer one either. An overloaded name with a
 compile-time-keyed or type-pack declaration among its overloads is a *family*
 (`collect_overload_families`): no call to it is
 ever resolved syntactically, since explicit `[...]` arguments name type

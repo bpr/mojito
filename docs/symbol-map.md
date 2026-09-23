@@ -600,9 +600,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   specialize from checker-recorded instantiations, and
   `comptime_generic_template_names` for defs keyed only by a `comptime
   if`/`for` body, whose inferred calls do the same, gated by
-  `omits_required_param` in `comptime/mono.rs` — each classification is a
-  per-declaration predicate (`comptime_keyed_declaration`,
-  `pack_keyed_declaration`) that an overloaded name admits one declaration at
+  `omits_required_param` in `comptime/mono.rs`, and
+  `dtype_generic_template_names` for defs keyed on a `DType` parameter,
+  whose calls may omit the lane alone (`omits_dtype_param`) — each
+  classification is a per-declaration predicate
+  (`comptime_keyed_declaration`, `pack_keyed_declaration`,
+  `dtype_keyed_declaration`) that an overloaded name admits one declaration at
   a time, so one family may hold two classes, or two type packs, and
   `Elab::family_declaration` picks the declaration a request selected by its
   parameter names, parameter types, and `symbol::VariadicKey`; `template_stub` in

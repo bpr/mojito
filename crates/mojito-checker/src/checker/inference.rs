@@ -428,7 +428,7 @@ impl Checker {
                 // sits in keeps its clone check.
                 let dimensions = if name == "SIMD" {
                     self.simd_dims(param_args).ok().and_then(|(dtype, width)| {
-                        let width = if width == SimdWidth::Known(-1) {
+                        let width = if width.is_inferred() {
                             i64::try_from(args.len()).unwrap_or(0)
                         } else {
                             width.known()?

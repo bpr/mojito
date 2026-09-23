@@ -3,8 +3,10 @@
 # validated once with `Scalar[dt]`/`SIMD[dt, width]` symbolic before any
 # clone is minted — a dtype gate (`&` on an integer lane, `/` on a float
 # lane) is the instantiation's to check, an integer or float literal splats
-# into the symbolic lane, and a width expression (`width * 2`, `n + 1`)
-# compares in the pin's normal form.
+# into the symbolic lane, a compile-time binding of the symbolic dtype keys
+# a lane of its own, and a width expression (`width * 2`, `n + 1`) compares
+# in the pin's normal form. A call that spells no lane takes it from the
+# argument's own type, whether or not the body holds a `comptime if`.
 def bit_and[dt: DType](a: Scalar[dt], b: Scalar[dt]) -> Scalar[dt]:
     comptime if dt == DType.bool:
         return a
@@ -24,6 +26,18 @@ def literals[dt: DType](a: Scalar[dt]) -> Scalar[dt]:
         return a + x + 1.5
     var y: Scalar[dt] = 3
     return -a * y + 1
+
+
+def rebound[dt: DType](a: Scalar[dt]) -> Scalar[dt]:
+    comptime lane = dt
+    comptime if dt == DType.bool:
+        return a
+    var doubled: Scalar[lane] = a + a
+    return Scalar[lane](doubled) + Scalar[lane](1)
+
+
+def inferred_lane[dt: DType](a: Scalar[dt], b: Scalar[dt]) -> Scalar[dt]:
+    return a * b + 1
 
 
 def conversions[dt: DType](a: Scalar[dt]) -> String:
@@ -82,9 +96,11 @@ def shown[dt: DType, width: Int](v: SIMD[dt, width]):
 
 
 def main():
-    print(bit_and[DType.int32](6, 3))
+    print(bit_and[DType.int32](6, 3), bit_and(Int32(6), Int32(3)))
+    print(inferred_lane(Int32(6), Int32(3)), inferred_lane(Float32(1.5), Float32(2.0)))
     print(guarded[DType.int32](6, 3), guarded[DType.float64](6, 3))
     print(literals[DType.float32](1.0), literals[DType.int16](2))
+    print(rebound[DType.int32](3), rebound[DType.float32](1.5))
     print(conversions[DType.float32](1.5), conversions[DType.int8](7))
     var v = SIMD[DType.int32, 4](1, 2, 3, 4)
     print(lanes[DType.int32, 4](v), lanes[DType.int32, 1](Int32(9)))

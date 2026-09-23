@@ -188,6 +188,24 @@ pub(super) fn solved_value_bindings(
 /// structural mismatch contributes nothing, exactly like `unify`.
 pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<String, CtValue>) {
     match (pattern, actual) {
+        // A symbolic lane binds to the actual's own dtype (`Scalar[dt]`
+        // against `Scalar[DType.int32]` solves `dt`). A numeric literal has
+        // no lane of its own, and the width slot never solves: upstream reads
+        // a dtype off the argument and leaves a width parameter unresolved.
+        (
+            Ty::Simd {
+                dtype: SimdDtype::Expr(lane),
+                ..
+            },
+            _,
+        ) if !matches!(actual, Ty::IntLiteral | Ty::FloatLiteral) => {
+            if let Some(reference) = lane.as_decl_ref()
+                && let Some(dtype) = simd_slots(actual).and_then(|(dtype, _)| dtype.known())
+            {
+                out.entry(reference.name.to_string())
+                    .or_insert(CtValue::Dtype(dtype));
+            }
+        }
         (Ty::Struct(pn, pargs), Ty::Struct(an, aargs))
             if pn == an && pargs.len() == aargs.len() =>
         {

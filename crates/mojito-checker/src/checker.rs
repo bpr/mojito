@@ -592,9 +592,10 @@ pub struct Checker {
     trait_self_comptime: Vec<HashMap<String, CtMemberReq>>,
     /// Exact integer constants declared by `comptime NAME = value`.
     comptimes: HashMap<String, mojito_common::literal::IntLiteral>,
-    /// Dtypes declared by `comptime NAME = DType.<name>`, for SIMD element-type
-    /// arguments.
-    comptime_dtypes: HashMap<String, Dtype>,
+    /// Dtypes declared by `comptime NAME = <dtype>`, for SIMD element-type
+    /// arguments. A binding of a `[dt: DType]` parameter keys a lane
+    /// symbolically, so a template body may name its own dtype through one.
+    comptime_dtypes: HashMap<String, SimdDtype>,
     /// Generic top-level type aliases declared by `comptime NAME[params] = Type`,
     /// expanded per application during type resolution. See [`ComptimeAlias`].
     comptime_aliases: HashMap<String, ComptimeAlias>,

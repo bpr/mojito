@@ -641,7 +641,7 @@ impl Checker {
         args: &[Expr],
     ) -> Result<Ty, TypeError> {
         let (dtype, mut width) = self.simd_dims(param_args)?;
-        if width == SimdWidth::Known(-1) {
+        if width.is_inferred() {
             let inferred = i64::try_from(args.len()).unwrap_or(0);
             if inferred < 1 || (inferred & (inferred - 1)) != 0 {
                 return Err(TypeError::BadSimdWidth(inferred.to_string()));

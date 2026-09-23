@@ -470,41 +470,36 @@ to section 3, however small.
   - Model: Fable, plan first. The plan's job is the round-one survival rule
     for a member of no request-served class.
 
-- [ ] **1.25 A `[dt: DType]` parameter is not inferred from a `Scalar[dt]`
-  argument**
+- [ ] **1.25 A `DType`-keyed method is not keyed at all**
 
-  Problem: `only_dt(Scalar[DType.int32](3))` for `def only_dt[dt:
-  DType](a: Scalar[dt])` reports "requires compile-time parameter 'dt'",
-  where the pin infers `dt` from the argument's lane.
-  - The pin does *not* infer a width the same way: `total(v)` for `def
-    total[dt: DType, width: Int](v: SIMD[dt, width])` is rejected there
-    ("depends on an unresolved parameter 'width'"), so only the dtype slot
-    is inferable.
-  - The lever is `SimdDtype::Expr` in a pattern against a known lane in the
-    actual, the way `solve_value_args` binds a direct value reference.
+  Problem: `b.only_dt[DType.int32](3)` for a method declared `def only_dt[dt:
+  DType](self, a: Scalar[dt])` reports "not a valid SIMD element type: a
+  non-DType argument"; the free-`def` form of the same signature works, both
+  applied explicitly and inferred from the argument's lane.
+  - No `.mojo` source in the repository spells such a method today, so the
+    gap has never been exercised: `a.cast[DType.int32]()` is a builtin the
+    checker answers, not a declared one.
+  - The method's own `dt` is not in the parameter scope that
+    `dtype_from_arg` consults when it resolves the `Scalar[dt]` annotation.
   - Depends on nothing.
-  - Model: Opus, as-is.
+  - Model: Opus.
 
-- [ ] **1.26 A `comptime` binding of a symbolic dtype does not key a lane**
+- [ ] **1.26 An inferred `SIMD[dt, _]` width leaks into the binding's declared
+  type**
 
-  Problem: `comptime d = dt` inside a `DType`-keyed body, then `Scalar[d]`,
-  reports "not a valid SIMD element type": the binding table
-  (`Checker::comptime_dtypes`) holds known dtypes only.
-  - `dtype_from_arg` resolves a binder in scope and a `comptime` binding of
-    a known dtype, but not a binding of a symbolic one.
+  Problem: `var v: SIMD[DType.int32, _] = SIMD[DType.int32, 4](1, 2, 3, 4)`
+  then `len(v)` reports "no matching function in call to 'len'": the
+  construction solves its own width from the argument count, but the
+  annotation's hole stays unsolved in the type the binding declares.
+  - `v[2]` and `v + v` run: only the paths that read a lane count off the
+    declared type — `len`, and anything keyed on the width — see the hole.
+  - Solve the binding's annotation from the initializer's width rather than
+    widening what the wildcard admits: `simd-inferred-width` is on the
+    divergence ledger and is to be withdrawn, not grown.
   - Depends on nothing.
-  - Model: Opus, as-is.
+  - Model: Opus.
 
-- [ ] **1.27 The `SIMD[dt, _]` width wildcard is a sentinel**
-
-  Problem: an inferred width is `SimdWidth::Known(-1)`, a value no lane
-  count can have, where the parameter-expression layer has a typed hole
-  (`ParamKind::Hole`).
-  - `coerces` and `infer_simd_construction` special-case the sentinel.
-  - Depends on nothing.
-  - Model: Opus, as-is.
-
-- [ ] **1.28 The Pliron pivot has no falsifiable proof yet**
+- [ ] **1.27 The Pliron pivot has no falsifiable proof yet**
 
   Problem: [`docs/pliron-backend-pivot-plan.md`](pliron-backend-pivot-plan.md)
   stages a migration to a required Pliron IR framework, but its Stage A1 slice
@@ -525,7 +520,7 @@ to section 3, however small.
     in this document: it reopens the waist and the dialect policy), Fable to
     build and measure the A1 slice once planned.
 
-- [ ] **1.29 `__len__` spelled as a method on a runtime pack is a VM error**
+- [ ] **1.28 `__len__` spelled as a method on a runtime pack is a VM error**
 
   Problem: `b.__len__()` on a specialized pack (`*b: *Ts` in a clone) runs at
   the pin and reaches Mojito's VM as `internal tuple-pack storage has no

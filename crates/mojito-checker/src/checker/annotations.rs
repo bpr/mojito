@@ -46,15 +46,9 @@ impl Checker {
             kind: ExprKind::Identifier(name),
             ..
         }) = arg
+            && let Some(dtype) = self.dtype_named(name)
         {
-            if let Some(dtype) = self.comptime_dtypes.get(name) {
-                return Ok(SimdDtype::Known(*dtype));
-            }
-            if let Some(expr) = self.value_parameter_in_scope(name)
-                && expr.meta().as_value() == Some(&Ty::Dtype)
-            {
-                return Ok(SimdDtype::Expr(expr));
-            }
+            return Ok(dtype);
         }
         if let mojito_ast::ast::ParamArg::Type(SourceType::SelfParam(param)) = arg {
             match self.self_param_value(param) {
@@ -74,6 +68,19 @@ impl Checker {
             }
             _ => "a non-DType argument".to_string(),
         }))
+    }
+
+    /// The dtype a bare name denotes: a `comptime` binding of one, or a `[dt:
+    /// DType]` parameter in scope — symbolic while its declaration is still a
+    /// template. The binding table and the parameter scope agree here, so a
+    /// `comptime d = dt` binding names the same lane its parameter does.
+    pub(super) fn dtype_named(&self, name: &str) -> Option<SimdDtype> {
+        if let Some(dtype) = self.comptime_dtypes.get(name) {
+            return Some(dtype.clone());
+        }
+        self.value_parameter_in_scope(name)
+            .filter(|expr| expr.meta().as_value() == Some(&Ty::Dtype))
+            .map(SimdDtype::Expr)
     }
 }
 
