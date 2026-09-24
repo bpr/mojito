@@ -1729,6 +1729,47 @@ fn template_method_constructions_derive() {
 }
 
 #[test]
+fn template_method_converting_call_arguments_derive() {
+    // A literal and a whole value of the struct's parameter type, each
+    // converted at a sibling call's argument. The conversion is recorded
+    // twice — at the argument and in the call's boundary — so the verified
+    // half of this assertion is what pins the boundary: a derived bundle
+    // that kept the template's `Wrapper` there differs from the clone's own
+    // `Wrapper.__init__$y3:Int`.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_converting_call_argument.mojo"),
+        "4 2 7\n4 2 7\n",
+        &[
+            ("Holder.numbered", 2),
+            ("Holder.flagged", 2),
+            ("Holder.boxed", 2),
+            ("Holder.keep", 2),
+        ],
+    );
+}
+
+#[test]
+fn template_method_consuming_conversion_keeps_the_clone_check() {
+    // The recipe re-selects the constructor at the instance's types, and a
+    // constructor that consumes its source records an implicit copy the
+    // template never did. The clone check takes the body back, and the
+    // program still runs.
+    let source = "struct Wrapper[T: Copyable & Deinitable](Copyable, Deinitable, Movable):\n    var value: Self.T\n\n    @implicit\n    def __init__(out self, var value: Self.T):\n        self.value = value^\n\nstruct Holder[T: Copyable & Deinitable](Deinitable, Movable):\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    def keep(self, box: Wrapper[Self.T]) -> Int:\n        return 7\n\n    def boxed(self) -> Int:\n        return self.keep(self.item)\n\ndef main():\n    var number = Holder[Int](5)\n    print(number.boxed())\n";
+    let compiler = Compiler::default();
+    let program = compile_entry(&compiler, source);
+    let stats = program.template_stats();
+    assert_eq!(compiler.execute(&program).expect("execute").output, "7\n");
+    assert!(
+        stats.refused.iter().any(|(name, reason)| {
+            name.starts_with("Holder.boxed$")
+                && reason == "an implicit conversion consumes, raises, or borrows for the instance"
+        }),
+        "the consuming conversion refuses the derivation: {:?}",
+        stats.refused
+    );
+}
+
+#[test]
 fn template_method_origin_bearing_constructions_derive() {
     // A view over the receiver, constructed from a `ref` local into a
     // fieldwise struct's reference field: the constructed type names the
@@ -1762,6 +1803,31 @@ fn template_def_with_a_scalar_local_keeps_the_symbolic_choice() {
         "both instances derive; refused: {:?}",
         stats.refused
     );
+}
+
+#[test]
+fn template_def_converting_argument_derives() {
+    // A direct call whose argument converts through an `@implicit`
+    // constructor: the template's selection of the callee stands for every
+    // instance, and only the conversion beneath it is chosen again, in the
+    // `comptime if` arm a keyed instance kept as well.
+    let (output, stats) = run_source(include_str!(
+        "../assets/ok/template_def_converting_argument.mojo"
+    ));
+    assert_eq!(output, "6 6\n4 2\n");
+    for template in ["counted$", "keyed$"] {
+        assert_eq!(
+            stats
+                .derived
+                .iter()
+                .filter(|name| name.starts_with(template))
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            2,
+            "both {template} instances derive; refused: {:?}",
+            stats.refused
+        );
+    }
 }
 
 /// The per-instantiation method clones of a compiled program, as

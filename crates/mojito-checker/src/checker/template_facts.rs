@@ -1171,6 +1171,7 @@ impl Checker {
         for index in 0..facts.conversions.len() {
             self.realize_conversion(&mut facts, index, substitution)?;
         }
+        realize_boundary_conversions(&mut facts)?;
         facts.struct_applications =
             sorted_applications(std::mem::take(&mut facts.struct_applications));
         facts.effect_free_callees.sort();
@@ -1646,9 +1647,8 @@ impl Checker {
     ///
     /// A conversion at a selected call's argument is also carried by the
     /// contract's own boundary, which capture and installation copy verbatim.
-    /// `closed_method_contract` admits no boundary adjustment but a closed
-    /// scalar's literal, so no site the grammar admits has both; widening
-    /// that would owe the boundary the same rewrite.
+    /// [`realize_boundary_conversions`] writes the target selected here back
+    /// into that second copy, once every conversion has been re-selected.
     fn realize_conversion(
         &self,
         facts: &mut CheckedBodyFacts,
@@ -1887,10 +1887,14 @@ impl Checker {
     ///   inherits that choice and never ranks the set again on its concrete
     ///   arguments: the pinned Mojo binds a call inside a generic body once, when
     ///   it checks the body (`conformance/probes/template_overload_binding.mojo`).
-    /// - Argument typing: the template recorded no conversion, copy, move, or
-    ///   adjustment at the call (any such table refuses the capture), so each
-    ///   argument matched its parameter exactly with `T` symbolic, and matches
-    ///   exactly after substitution.
+    /// - Argument typing: the template recorded no copy, move, or adjustment
+    ///   at the call (any such table refuses the capture), so each argument
+    ///   either matched its parameter exactly with `T` symbolic, and matches
+    ///   exactly after substitution, or converts through an `@implicit`
+    ///   constructor, which the instance selects again from its own source
+    ///   and target types (`realize_conversion`) and which never re-ranks the
+    ///   callee. A keyed body converts in an arm the same way: the instance
+    ///   re-selects only in the arms the elaborator kept.
     /// - Binding conventions: borrows are decided from slots, conventions, and
     ///   argument shape, none of which mention a type.
     /// - Effects: the callee does not raise, and its transfer and call-through
@@ -2078,9 +2082,6 @@ impl Checker {
         }
         if !facts.call_throughs.is_empty() || !facts.call_through_reads.is_empty() {
             return outside("the body calls or forwards a callable parameter");
-        }
-        if !facts.conversions.is_empty() {
-            return outside("an argument of a direct call converts");
         }
         let effects_closed = facts
             .expression_effects
@@ -4665,6 +4666,64 @@ fn note_realized_callee(facts: &mut CheckedBodyFacts, selected: &str, target: &s
     }
 }
 
+/// Write each realized conversion back into the call boundary that carries
+/// it a second time.
+///
+/// A converting argument records its conversion twice: in the four
+/// conversion tables, which [`Checker::realize_conversion`] has just
+/// re-selected at the instance's types, and in the selected call's own
+/// boundary, which lowering reads to build the argument's register. The
+/// boundary names the constructor the template found, so an instance takes
+/// the target back from the conversion at the same occurrence; a boundary
+/// conversion the tables no longer hold is one the recipes did not reach.
+fn realize_boundary_conversions(facts: &mut CheckedBodyFacts) -> Result<(), &'static str> {
+    let realized: Vec<(OccurrenceId, String)> = facts
+        .conversions
+        .iter()
+        .map(|(id, conversion)| (*id, conversion.target.clone()))
+        .collect();
+    for (_, call) in &mut facts.selected_calls {
+        for argument in &mut call.arguments {
+            for adjustment in &mut argument.adjustments {
+                let mojito_checked::checked::CheckedCallValueAdjustment::ImplicitConversion {
+                    target,
+                } = adjustment
+                else {
+                    continue;
+                };
+                let selected = realized
+                    .iter()
+                    .find(|(id, _)| *id == argument.value)
+                    .map(|(_, target)| target)
+                    .ok_or("a converted argument kept no conversion of its own")?;
+                selected.clone_into(target);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether the call's boundary converts the argument at `id` through an
+/// `@implicit` constructor, and the conversion is kept at that occurrence
+/// too, where [`Checker::realize_conversion`] selects it again.
+fn converted_argument(
+    facts: &CheckedBodyFacts,
+    contract: Option<&TemplateCallContract>,
+    id: OccurrenceId,
+) -> bool {
+    let converts = |adjustment: &mojito_checked::checked::CheckedCallValueAdjustment| {
+        matches!(
+            adjustment,
+            mojito_checked::checked::CheckedCallValueAdjustment::ImplicitConversion { .. }
+        )
+    };
+    contract.is_some_and(|call| {
+        call.arguments
+            .iter()
+            .any(|bound| bound.value == id && bound.adjustments.iter().any(converts))
+    }) && fact_at(&facts.conversions, id).is_some()
+}
+
 /// Whether one adjustment has a derivation recipe, as a template's own
 /// symbolic facts can be judged.
 ///
@@ -5721,11 +5780,14 @@ impl BodyShape<'_> {
     /// value of any type bound by value, or a place the call keeps for a
     /// `mut` or bare `ref` parameter.
     ///
-    /// A whole value binds a parameter of exactly its own type, so nothing
-    /// converts it under any instance. What the call records for it is
-    /// decided without its type: a read parameter borrows a named place and
-    /// reads a temporary, by the argument's syntax and the callee's
-    /// conventions, and a `var` parameter takes a `^` transfer or a
+    /// A whole value binds a parameter of exactly its own type, or one an
+    /// `@implicit` constructor converts it to, which the instance selects
+    /// again at its own source and target types
+    /// ([`Checker::realize_conversion`]) and writes back into the boundary
+    /// that names it ([`realize_boundary_conversions`]). What the call
+    /// records for it is decided without its type: a read parameter borrows
+    /// a named place and reads a temporary, by the argument's syntax and the
+    /// callee's conventions, and a `var` parameter takes a `^` transfer or a
     /// temporary as it stands. A place copied into a `var` parameter is
     /// admitted only where the template recorded the copy, which the
     /// instance owes again at its own type, as a transfer owes `Movable`. A
@@ -5772,10 +5834,15 @@ impl BodyShape<'_> {
             // template recorded the copy, or read where it lies, which the
             // call's conventions and the argument's syntax decide alone.
             let read_in_place = named && facts.borrowed_read_call_places.contains(&id);
+            // A value the boundary converts stands for its own type: the
+            // conversion is kept beside the boundary, and both are
+            // re-selected per instance.
+            let converted = converted_argument(facts, contract, id);
             return !self.keyed
                 && by_value
                 && parameter.is_some_and(|parameter| {
-                    fact_at(&facts.expression_types, id) == Some(&parameter.parameter_ty)
+                    converted
+                        || fact_at(&facts.expression_types, id) == Some(&parameter.parameter_ty)
                 })
                 && (read_in_place || self.whole_value(argument))
                 && self.holds(MethodFeatures::VALUE_ARGUMENTS);

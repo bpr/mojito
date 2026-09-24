@@ -341,12 +341,14 @@ pub fn closed_method_contract(call: &TemplateCallContract) -> bool {
 /// the types its by-value parameters have.
 ///
 /// An argument bound by value to a parameter of any type is still supplied,
-/// still bound without a place, and still unadapted: no conversion, no
-/// materialization, and no invalidation sits at its boundary. So its type
-/// equals the parameter's, which substitution preserves, and an instance
-/// changes the parameter's type alone. What the argument's own expression
-/// owes (a copy, a move, a temporary) is recorded at that expression and is
-/// for the body's grammar to admit.
+/// still bound without a place, and invalidates nothing at its boundary. Its
+/// type is either the parameter's, which substitution preserves, or one an
+/// `@implicit` constructor converts to it, which an instance selects again
+/// from its own source and target types. Either way an instance changes the
+/// parameter's type and, for a conversion, the constructor the boundary
+/// names. What the argument's own expression owes (a copy, a move, a
+/// temporary) is recorded at that expression and is for the body's grammar
+/// to admit.
 pub fn value_method_contract(call: &TemplateCallContract) -> bool {
     call.reference_result.is_none() && closed_contract(call, false, true)
 }
@@ -447,14 +449,23 @@ fn closed_contract(call: &TemplateCallContract, reference: bool, values: bool) -
             if kept {
                 return argument.adjustments.is_empty();
             }
-            if opaque && !argument.adjustments.is_empty() {
-                return false;
-            }
             argument.invalidations.is_empty()
-                && argument.adjustments.iter().all(|adjustment| {
-                    matches!(adjustment, CheckedCallValueAdjustment::MaterializeLiteral { target }
-                        if closed_scalar(target))
-                })
+                && argument
+                    .adjustments
+                    .iter()
+                    .all(|adjustment| match adjustment {
+                        // A closed type a literal materializes to is the one it
+                        // has under every instance.
+                        CheckedCallValueAdjustment::MaterializeLiteral { target } => {
+                            !opaque && closed_scalar(target)
+                        }
+                        // The constructor an `@implicit` conversion names is
+                        // re-selected per instance from the substituted source
+                        // and target types, and written back here.
+                        CheckedCallValueAdjustment::ImplicitConversion { .. } => values && opaque,
+                        CheckedCallValueAdjustment::ResolveCallable { .. }
+                        | CheckedCallValueAdjustment::IndexNormalization { .. } => false,
+                    })
         })
 }
 
