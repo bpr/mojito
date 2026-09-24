@@ -7,6 +7,13 @@ write a plan file at the repository root and then carry it out, while `Not
 Planned` takes the entry as-is. Every task is a new `claude -p` process, so no
 context carries over from one task to the next.
 
+Each task gets its own commit, made by the loop once the session ends, with the
+session's `commit_msg.txt` as the message. The commit takes every tracked change
+plus the files the session created, except new files at the repository root
+(plan files, prompts, `commit_msg.txt`), which stay untracked. The loop refuses
+to start over uncommitted tracked changes, since the first commit would sweep
+them in; `--no-commit` leaves everything uncommitted, as before.
+
 A finished task deletes its entry and renumbers the section, so entries are
 tracked by title, not by number: `--until 1.5` resolves to the title 1.5 has
 when the loop starts and stops once that entry is gone.
@@ -18,6 +25,7 @@ Usage:
   scripts/claude_loop.py --start 1.4 --until 1.7
   scripts/claude_loop.py --section 3 -n 0     # every task in section 3
   scripts/claude_loop.py --dry-run -n 2       # print prompts, run nothing
+  scripts/claude_loop.py --no-commit          # leave the work uncommitted
 """
 
 from __future__ import annotations
@@ -34,6 +42,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 ROADMAP = ROOT / "docs" / "roadmap.md"
 LOG_DIR = ROOT / "target" / "claude-loop"
+COMMIT_MSG = ROOT / "commit_msg.txt"
 
 MODELS = {
     "Opus": "claude-opus-5-5[1m]",
@@ -169,7 +178,8 @@ def build_prompt(task: Task, planned: bool) -> str:
         "leave the code honest, rewrite the entry to state what remains and "
         "why, and say so. Before finishing: cargo fmt --all, git diff --check, "
         "a clean cargo build, and a clean `cargo clippy --workspace --exclude "
-        "mojito-pliron --lib -- -D warnings`. Do not commit.\n"
+        "mojito-pliron --lib -- -D warnings`. Do not commit: the loop commits "
+        "this task's work on its own, with commit_msg.txt as the message.\n"
     )
     return header + work + closing
 
@@ -236,6 +246,54 @@ def run_claude(args, task: Task, model: str, prompt: str) -> bool:
     return code == 0 and not (result or {}).get("is_error", False)
 
 
+def git(*argv: str, stdin: str | None = None) -> str:
+    return subprocess.run(
+        ["git", *argv], cwd=ROOT, input=stdin, text=True, capture_output=True, check=True
+    ).stdout
+
+
+def untracked_files() -> set[str]:
+    return set(git("ls-files", "--others", "--exclude-standard", "-z").split("\0")) - {""}
+
+
+def tracked_changes() -> str:
+    return git("status", "--porcelain", "--untracked-files=no")
+
+
+def read_commit_msg() -> str:
+    try:
+        return COMMIT_MSG.read_text().strip()
+    except OSError:
+        return ""
+
+
+def commit_task(task: Task, untracked_before: set[str], msg_before: str, finished: bool) -> None:
+    """Commit the session's work for `task` as one commit.
+
+    Stages every tracked change and each file the session created below the
+    repository root; new root-level files are scratch and stay untracked.
+    """
+    created = sorted(untracked_files() - untracked_before)
+    kept = [f for f in created if "/" not in f]
+    staged = [f for f in created if "/" in f]
+    git("add", "--update")
+    if staged:
+        git("add", "--", *staged)
+    if not git("diff", "--cached", "--name-only"):
+        print(f"claude_loop: {task.id} left nothing to commit", flush=True)
+        return
+    msg = read_commit_msg()
+    if not msg or msg == msg_before:
+        msg = f"Roadmap {task.id}: {task.title}"
+        if not finished:
+            msg += "\n\nThe session ended without removing the roadmap entry."
+    git("commit", "--quiet", "--file", "-", stdin=msg + "\n")
+    rev = git("rev-parse", "--short", "HEAD").strip()
+    print(f"== {task.id} committed as {rev}", flush=True)
+    if kept:
+        print(f"== left untracked: {', '.join(kept)}", flush=True)
+
+
 def model_for(args, task: Task) -> str:
     if args.model:
         return args.model
@@ -273,7 +331,10 @@ def main() -> int:
     p.add_argument("--claude-arg", action="append", default=[],
                    help="extra argument passed to claude (repeatable)")
     p.add_argument("--keep-going", action="store_true",
-                   help="continue past a failed session or an entry left in place")
+                   help="continue past a failed session or an entry left in place "
+                        "(committing whatever it left, so the next task's commit stays its own)")
+    p.add_argument("--no-commit", action="store_true",
+                   help="do not commit each finished task")
     args = p.parse_args()
     if args.count is None:
         args.count = 0 if args.until else 1
@@ -286,6 +347,11 @@ def main() -> int:
     if not tasks:
         print("claude_loop: no unchecked tasks")
         return 0
+
+    commit = not (args.no_commit or args.dry_run)
+    if commit and (dirty := tracked_changes()):
+        sys.exit("claude_loop: uncommitted tracked changes would be swept into the first "
+                 f"task's commit; commit or stash them, or pass --no-commit:\n{dirty}")
 
     current = find_by_id(tasks, args.start) if args.start else tasks[0]
     until_title = find_by_id(tasks, args.until).title if args.until else None
@@ -303,8 +369,12 @@ def main() -> int:
             print(f"== {current.describe()}\n== model {model}\n{prompt}")
             ok, gone = True, True
         else:
+            untracked_before = untracked_files() if commit else set()
+            msg_before = read_commit_msg()
             ok = run_claude(args, current, model, prompt)
             gone = find_by_title(open_tasks(args.section), current.title) is None
+            if commit and ((ok and gone) or args.keep_going):
+                commit_task(current, untracked_before, msg_before, ok and gone)
             if not ok:
                 print(f"claude_loop: session for {current.id} failed", file=sys.stderr)
             elif not gone:

@@ -9,6 +9,19 @@ to evolve under the `0.x` compatibility rules.
 ### Fixed
 
 - A per-instantiation method clone now inherits its checked template's facts
+  when the body puts any operator a trait names over two places of one
+  parameter-typed type, not only a comparison: `a + b` under an arithmetic
+  bound, and the bitwise and shift operators, derive, and so does an operator
+  whose result is the operand's own type rather than a `Bool`. An instance
+  whose dispatch adapts the operand derives as well — the implicit copy a
+  by-value dunder parameter takes, the `@implicit` conversion an operand
+  reaches its declared type through, and the `!=` an `Equatable` type serves
+  with `__eq__` and a negation are each recorded at the instance's own types.
+  Such a body used to keep the clone check. An operand that is not a place — a
+  literal, a call's result, a nested operator — still does
+  (`docs/roadmap.md` §1).
+
+- A per-instantiation method clone now inherits its checked template's facts
   when the body stores a whole value through a field's `__setitem__`
   (`self.items[i] = value^`, a construction, a moved closed value) or stores a
   scalar element, whole or augmented, through the mutable reference a field's
@@ -17,7 +30,7 @@ to evolve under the `0.x` compatibility rules.
   grammar demanded a scalar, and the augmented store's record embedded the
   getter's contract, which no recipe could substitute. An augmented store
   through a value getter and a setter, and a struct element's `+=` through
-  `__iadd__`, still do (`docs/roadmap.md` 1.5).
+  `__iadd__`, still do (`docs/roadmap.md` §1).
 
 - A body reading `reflect[T]` over a symbolic type is now validated from its
   template like every other compile-time-keyed body: a query over a struct is

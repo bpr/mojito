@@ -167,8 +167,8 @@ struct Occurrence {
     identifier: bool,
     /// A method call's receiver occurrence and method name.
     method_call: Option<(SyntaxId, String)>,
-    /// A comparison's operator and operand occurrences.
-    comparison: Option<(mojito_ast::ast::InfixOp, SyntaxId, SyntaxId)>,
+    /// An admitted operator's kind and operand occurrences.
+    operator: Option<(mojito_ast::ast::InfixOp, SyntaxId, SyntaxId)>,
     /// Whether this is a `^` transfer.
     transfer: bool,
     /// Whether this is an integer literal.
@@ -196,7 +196,7 @@ type ElementIndices =
 /// an instance must dispatch or prove itself.
 #[derive(Debug, Default)]
 struct GrammarNotes {
-    comparisons: Vec<OccurrenceId>,
+    operators: Vec<OccurrenceId>,
     bound_builtins: Vec<(OccurrenceId, BoundBuiltin)>,
     constructions: Vec<OccurrenceId>,
     callable_calls: Vec<OccurrenceId>,
@@ -1150,10 +1150,10 @@ impl Checker {
         for construction in &template.constructions {
             self.realize_construction(&mut facts, *construction, occurrences, substitution)?;
         }
-        for comparison in &template.comparisons {
-            self.realize_comparison(&mut facts, *comparison, occurrences)?;
+        for operator in &template.operators {
+            self.realize_operator(&mut facts, *operator, occurrences)?;
         }
-        facts.comparisons.clear();
+        facts.operators.clear();
         for (call, builtin) in &template.bound_builtins {
             self.realize_bound_builtin(&facts, *call, *builtin, occurrences)?;
         }
@@ -1217,6 +1217,13 @@ impl Checker {
                 .position(|occurrence| occurrence.id == *id)
         };
         facts.overload_targets.sort_by_key(|(id, _)| position(id));
+        // An operator's copy, conversion, and adjustment are appended where
+        // its recipe ran; the inferred bundle holds each in occurrence order.
+        facts.copy_place_value_uses.sort_by_key(position);
+        facts.conversions.sort_by_key(|(id, _)| position(id));
+        facts
+            .operation_adjustments
+            .sort_by_key(|(id, _)| position(id));
         Ok(facts)
     }
 
@@ -1503,18 +1510,27 @@ impl Checker {
         Ok(())
     }
 
-    /// Realize one comparison of two places of one type for an instance, as
+    /// Realize one operator over two places of one type for an instance, as
     /// `infer_infix` decides it on the substituted operand type.
     ///
-    /// A closed scalar compares natively and records nothing, as the
-    /// template did. A nominal struct dispatches the operator's dunder, whose
-    /// selection `struct_infix_dispatch` makes from the types alone: the
-    /// instance records the target it names and reaches the struct's
-    /// application. A dunder that converts or consumes its operand, or
-    /// `!=` served by `__eq__`, records at the operands what the template
-    /// could not, so each refuses. Anything else (a tuple, a vector, a
-    /// pointer) is the clone check's to judge.
-    fn realize_comparison(
+    /// A closed scalar operates natively and records nothing, as the template
+    /// did; it owes only that the primitive path has the operator and gives
+    /// the type the template kept (`scalar_operator_result`), which a bound
+    /// alone does not promise. A nominal struct dispatches the operator's
+    /// dunder, whose selection `struct_infix_dispatch` makes from the types
+    /// alone: the instance records the target it names, reaches the struct's
+    /// application, and writes the three facts that dispatch carries and the
+    /// symbolic template could not — the implicit copy of a consumed operand,
+    /// the conversion of an adapted one, and the `NegatedEquality` adjustment
+    /// of a `!=` served by `__eq__`. The dunder's result must still be the
+    /// type the template kept, which is what an arithmetic operator's bound
+    /// promised. Anything else (a tuple, a vector, a pointer) is the clone
+    /// check's to judge.
+    ///
+    /// The reflected dunder has no arm because no admitted operator reaches
+    /// it: a comparison has no reflected form, and the left operand of an
+    /// arithmetic one has the forward dunder its bound required.
+    fn realize_operator(
         &self,
         facts: &mut CheckedBodyFacts,
         id: OccurrenceId,
@@ -1523,34 +1539,75 @@ impl Checker {
         let (op, left, right) = occurrences
             .iter()
             .find(|occurrence| occurrence.id == id)
-            .and_then(|occurrence| occurrence.comparison)
-            .ok_or("a comparison is not one in the instance")?;
+            .and_then(|occurrence| occurrence.operator)
+            .ok_or("an operator is not one in the instance")?;
         let operand = |syntax| OccurrenceId {
             syntax,
             copy: id.copy,
         };
-        let left = fact_at(&facts.expression_types, operand(left))
-            .ok_or("a comparison's operand has no retained type")?;
-        let right = fact_at(&facts.expression_types, operand(right))
-            .ok_or("a comparison's operand has no retained type")?;
-        if left != right {
-            return Err("a comparison's operands differ for the instance");
+        let (left, right) = (operand(left), operand(right));
+        let operand_ty = fact_at(&facts.expression_types, left)
+            .ok_or("an operand has no retained type")?
+            .clone();
+        if fact_at(&facts.expression_types, right) != Some(&operand_ty) {
+            return Err("an operator's operands differ for the instance");
         }
-        if closed_scalar(left) {
-            return Ok(());
+        let result = fact_at(&facts.expression_types, id)
+            .ok_or("an operator has no retained result type")?
+            .clone();
+        if closed_scalar(&operand_ty) {
+            return if super::operators::scalar_operator_result(op, &operand_ty) == Some(result) {
+                Ok(())
+            } else {
+                Err("the operator is not the instance's scalar operation")
+            };
         }
-        let Ty::Struct(name, arguments) = left else {
-            return Err("a comparison's operand is neither a scalar nor a struct");
+        let Ty::Struct(name, arguments) = &operand_ty else {
+            return Err("an operand is neither a scalar nor a struct");
         };
         if !self.structs.contains_key(name) {
-            return Err("a comparison's operand is a built-in aggregate");
+            return Err("an operand is a built-in aggregate");
         }
         let dispatch = self
-            .struct_infix_dispatch(op, left, right)
+            .struct_infix_dispatch(op, &operand_ty, &operand_ty)
             .map_err(|_| "the operator is undefined for the instance's type")?
             .ok_or("the instance's type has no dunder for the operator")?;
-        if dispatch.negated_equality || dispatch.converted || dispatch.consumes {
-            return Err("a comparison adapts or consumes its operand for the instance");
+        let dunder = if dispatch.negated_equality {
+            "__eq__"
+        } else {
+            op.dunder().ok_or("the operator dispatches no dunder")?
+        };
+        if self.struct_dunder(&operand_ty, dunder, &[&dispatch.operand_ty]) != Some(Ok(result)) {
+            return Err("the dunder's result is not the type the template kept");
+        }
+        // `check_consuming_as` on a place operand: the copy, at the operand's
+        // own type rather than the converted one, and the demand the
+        // bundle-wide check makes of every copy the template kept.
+        if dispatch.consumes {
+            if !(self.is_copyable(&operand_ty) && self.is_implicitly_copyable(&operand_ty)) {
+                return Err("a consumed operand is not implicitly copyable for the instance");
+            }
+            facts.copy_place_value_uses.push(right);
+        }
+        // The conversion `record_implicit_conversion` installs. Its
+        // constructor is selected by [`Self::realize_conversion`], which runs
+        // after every operator and inherits its refusals.
+        if dispatch.converted {
+            facts.conversions.push((
+                right,
+                mojito_checked::templates::TemplateConversion {
+                    target: String::new(),
+                    result: Some(dispatch.operand_ty.clone()),
+                    raises: None,
+                    source_borrow: None,
+                },
+            ));
+        }
+        if dispatch.negated_equality {
+            facts.operation_adjustments.push((
+                id,
+                mojito_checked::checked::SemanticAdjustment::NegatedEquality,
+            ));
         }
         // The operand's application is recorded as a receiver's would be:
         // only from a source that records applications at all.
@@ -1772,13 +1829,13 @@ impl Checker {
                 match captured {
                     Ok(mut facts) => {
                         let (coverage, notes) = self.certificate(site, Some(&facts));
-                        // The template recorded nothing at a comparison the
+                        // The template recorded nothing at an operator the
                         // grammar admitted, nothing that names a bound
                         // builtin's call, no contract at a construction, and
                         // its own parameter's contract at a call through it,
                         // and nothing that names `repr`'s callee, so only the
                         // grammar names them.
-                        facts.comparisons = notes.comparisons;
+                        facts.operators = notes.operators;
                         facts.bound_builtins = notes.bound_builtins;
                         facts.constructions = notes.constructions;
                         facts.callable_calls = notes.callable_calls;
@@ -1796,7 +1853,7 @@ impl Checker {
         self.retain_template(site, facts, coverage);
     }
 
-    /// The certificate of a body's class, with the comparisons the grammar
+    /// The certificate of a body's class, with the operators the grammar
     /// admitted over parameter-typed operands. With no facts it judges the
     /// declaration's syntax alone: `Certified` then means only that the body
     /// is worth capturing.
@@ -2050,7 +2107,7 @@ impl Checker {
             receivers: RefCell::new(Vec::new()),
             subscripts: RefCell::new(Vec::new()),
             places: RefCell::new(Vec::new()),
-            comparisons: RefCell::new(Vec::new()),
+            operators: RefCell::new(Vec::new()),
             bound_builtins: RefCell::new(Vec::new()),
             constructions: RefCell::new(Vec::new()),
             callable_params: Vec::new(),
@@ -2058,7 +2115,7 @@ impl Checker {
             repr_calls: RefCell::new(Vec::new()),
         };
         if !shape.block(body, false)
-            || !shape.comparisons.borrow().is_empty()
+            || !shape.operators.borrow().is_empty()
             || !shape.bound_builtins.borrow().is_empty()
             || !shape.constructions.borrow().is_empty()
             || !shape.repr_calls.borrow().is_empty()
@@ -2225,11 +2282,15 @@ impl Checker {
     ///   value carries none, so an instance whose every retained type is
     ///   loan-free records no transfer, merges no origin, and publishes no
     ///   effect ([`TemplateObligation::PlainDataTransfers`]).
-    /// - `OPERATOR_DISPATCH`: see [`BodyShape::comparison`] and
-    ///   [`Self::realize_comparison`]. The template records nothing at a
-    ///   comparison its bound proves, and both operands are places read
-    ///   where they lie; the instance repeats `infer_infix`'s type-driven
-    ///   selection and records the target it names.
+    /// - `OPERATOR_DISPATCH`: see [`BodyShape::operator`] and
+    ///   [`Self::realize_operator`]. The template records nothing at an
+    ///   operator its bound proves, and both operands are places read where
+    ///   they lie; the instance repeats `infer_infix`'s type-driven selection
+    ///   and records the target it names, together with the copy, conversion,
+    ///   and negated-equality adjustment that selection carries. An
+    ///   arithmetic operator's result is the operand's type, so it is a
+    ///   temporary of that type wherever the body puts it
+    ///   ([`BodyShape::operator_value`]).
     /// - `BOUND_DISPATCH`: see [`BodyShape::bound_dispatch`] and
     ///   [`Self::realize_bound_dispatch`]. A method call through a bound
     ///   records the abstract contract, or the inverted write, and nothing
@@ -2449,7 +2510,7 @@ impl Checker {
             receivers: RefCell::new(Vec::new()),
             subscripts: RefCell::new(Vec::new()),
             places: RefCell::new(Vec::new()),
-            comparisons: RefCell::new(Vec::new()),
+            operators: RefCell::new(Vec::new()),
             bound_builtins: RefCell::new(Vec::new()),
             constructions: RefCell::new(Vec::new()),
             repr_calls: RefCell::new(Vec::new()),
@@ -2467,7 +2528,7 @@ impl Checker {
             (
                 coverage,
                 GrammarNotes {
-                    comparisons: shape.comparisons.borrow().clone(),
+                    operators: shape.operators.borrow().clone(),
                     bound_builtins: shape.bound_builtins.borrow().clone(),
                     constructions: shape.constructions.borrow().clone(),
                     callable_calls: shape.callable_calls.borrow().clone(),
@@ -2789,7 +2850,7 @@ impl Checker {
                     keywords: Vec::new(),
                     identifier: false,
                     method_call: None,
-                    comparison: None,
+                    operator: None,
                     transfer: false,
                     literal: false,
                     folded_index: None,
@@ -2837,8 +2898,8 @@ impl Checker {
                         )),
                         _ => None,
                     },
-                    comparison: match &expr.kind {
-                        ExprKind::Infix(op, left, right) if comparison(*op) => Some((
+                    operator: match &expr.kind {
+                        ExprKind::Infix(op, left, right) if operator_dispatch(*op) => Some((
                             *op,
                             self.origins.origin(left.syntax_id),
                             self.origins.origin(right.syntax_id),
@@ -3155,7 +3216,7 @@ impl Checker {
             call_through_reads,
             conversions: self.body_conversions(&occurrences),
             // The certificate fills these from the grammar.
-            comparisons: Vec::new(),
+            operators: Vec::new(),
             bound_builtins: Vec::new(),
             constructions: Vec::new(),
             callable_calls: Vec::new(),
@@ -4971,8 +5032,8 @@ struct BodyShape<'a> {
     subscripts: RefCell<Vec<OccurrenceId>>,
     /// The arguments admitted as a place a call keeps.
     places: RefCell<Vec<OccurrenceId>>,
-    /// The comparisons admitted over operands of one parameter-typed type.
-    comparisons: RefCell<Vec<OccurrenceId>>,
+    /// The operators admitted over operands of one parameter-typed type.
+    operators: RefCell<Vec<OccurrenceId>>,
     /// The checker builtins called on a bounded parameter, which an instance
     /// proves again at its own type.
     bound_builtins: RefCell<Vec<(OccurrenceId, BoundBuiltin)>>,
@@ -5420,7 +5481,9 @@ impl BodyShape<'_> {
             ExprKind::Transfer(inner) => {
                 (source(inner) && !borrowed(inner)) || self.call_result(inner)
             }
-            _ if self.call_result(expr) || self.construction(expr) => true,
+            _ if self.call_result(expr) || self.construction(expr) || self.operator_value(expr) => {
+                true
+            }
             // The pointee, taken out of its slot: a temporary.
             ExprKind::MethodCall {
                 object,
@@ -5442,6 +5505,14 @@ impl BodyShape<'_> {
             }
         };
         admitted && self.holds(MethodFeatures::OPAQUE_MOVES)
+    }
+
+    /// The result of an admitted operator ([`Self::operator`]) whose operands
+    /// are not closed scalars: a temporary of the operand's own type, which an
+    /// instance's dunder yields exactly as a sibling call's result does.
+    fn operator_value(&self, expr: &Expr) -> bool {
+        matches!(&expr.kind, ExprKind::Infix(op, left, right)
+            if self.operator(expr, *op, left, right))
     }
 
     /// The result of a sibling call, of any type: a temporary, whose type is
@@ -5948,7 +6019,7 @@ impl BodyShape<'_> {
                     && self.expression(right)
                     && self.scalar(left)
                     && self.scalar(right))
-                    || self.comparison(expr, *op, left, right)
+                    || self.operator(expr, *op, left, right)
             }
             ExprKind::Call {
                 name,
@@ -6357,15 +6428,19 @@ impl BodyShape<'_> {
         }
     }
 
-    /// A comparison of two places of one type that mentions a struct
-    /// parameter, which the operator dispatches on the type alone.
+    /// An operator over two places of one type that mentions a struct
+    /// parameter, which dispatches on the type alone.
     ///
     /// The template, whose type is symbolic, recorded nothing at it: a bound
     /// (or a `where` assumption) proves the operator and the operands are
     /// read where they lie. An instance decides the same operator on its
-    /// substituted type ([`Checker::realize_comparison`]), and each operand
+    /// substituted type ([`Checker::realize_operator`]), and each operand
     /// is a place, so the instance's check reads it where it lies too.
-    fn comparison(
+    ///
+    /// The result is the operand's own type for an arithmetic, bitwise, or
+    /// shift operator, so it is not a scalar under every instance;
+    /// [`Self::operator_value`] is what admits it where a temporary may go.
+    fn operator(
         &self,
         expr: &Expr,
         op: mojito_ast::ast::InfixOp,
@@ -6384,7 +6459,7 @@ impl BodyShape<'_> {
         };
         let id = self.occurrence(expr);
         let admitted = !self.keyed
-            && comparison(op)
+            && operator_dispatch(op)
             && place(left)
             && place(right)
             && self.facts.is_none_or(|facts| {
@@ -6403,9 +6478,9 @@ impl BodyShape<'_> {
                         .contains(&self.occurrence(right))
             });
         if admitted {
-            let mut comparisons = self.comparisons.borrow_mut();
-            if !comparisons.contains(&id) {
-                comparisons.push(id);
+            let mut operators = self.operators.borrow_mut();
+            if !operators.contains(&id) {
+                operators.push(id);
             }
         }
         admitted && self.holds(MethodFeatures::OPERATOR_DISPATCH)
@@ -6461,14 +6536,12 @@ fn sorted_applications(
     applications
 }
 
-/// The operators [`BodyShape::comparison`] admits: equality and ordering,
-/// which yield `Bool` on every type that has them.
-const fn comparison(op: mojito_ast::ast::InfixOp) -> bool {
-    use mojito_ast::ast::InfixOp;
-    matches!(
-        op,
-        InfixOp::Eq | InfixOp::Ne | InfixOp::Lt | InfixOp::Le | InfixOp::Gt | InfixOp::Ge
-    )
+/// The operators [`BodyShape::operator`] admits: every one a trait names, so
+/// that a bound on the operand's parameter proves it — equality and ordering,
+/// which yield `Bool`, and the arithmetic, bitwise, and shift operators, whose
+/// result is the operand's own type (`Float64` for `/`).
+const fn operator_dispatch(op: mojito_ast::ast::InfixOp) -> bool {
+    super::builtins::infix_operation_trait(op).is_some()
 }
 
 const fn closed_scalar(ty: &Ty) -> bool {

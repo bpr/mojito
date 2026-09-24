@@ -328,9 +328,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `realize_method_call` retargets a closed method call to the clone member
   `declarations.rs:method_clone_target` finds (the helper
   `constructor_clone_target` shares), `realize_builtin_len` takes the `len`
-  witness, `realize_comparison` repeats an operator's type-driven dispatch
+  witness, `realize_operator` repeats an operator's type-driven dispatch
   (through `operators.rs:struct_infix_dispatch`, the type-level half of
-  `infer_infix`), `plain_data` is the instance-argument obligation of a
+  `infer_infix`, and `operators.rs:scalar_operator_result`, its primitive
+  half), `plain_data` is the instance-argument obligation of a
   `MethodBody` and `loan_free` its transfer obligation
   (`body_transfer_effects` tells a vanishing transfer from a residue no
   recipe covers), `residue_plain` its call-through obligation (a callee's

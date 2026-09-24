@@ -970,6 +970,32 @@ pub(super) const fn prefix_symbol(op: PrefixOp) -> &'static str {
     }
 }
 
+/// The result [`Checker::infer_infix`] gives `a OP b` over two closed scalars
+/// of one type, or `None` where the primitive path has no such operator.
+///
+/// A body whose operands are one bounded parameter records nothing at the
+/// operator, and neither does an instance whose parameter substitutes to a
+/// scalar. What the instance still owes is that the operator exists on that
+/// scalar and yields the type the template kept, which the bound alone does
+/// not say: `Andable` admits `Bool` (`is_integer_like`) where `&` has no
+/// primitive form, and `/` yields `Float64` whatever its operands are.
+pub(super) fn scalar_operator_result(op: InfixOp, ty: &Ty) -> Option<Ty> {
+    use InfixOp::{
+        Add, BitAnd, BitOr, BitXor, Div, Eq, FloorDiv, Ge, Gt, Le, Lt, Mod, Mul, Ne, Pow, Shl, Shr,
+        Sub,
+    };
+    let numeric = matches!(ty, Ty::Int | Ty::UInt | Ty::Float64);
+    let integer = matches!(ty, Ty::Int | Ty::UInt);
+    match op {
+        Eq | Ne => (numeric || *ty == Ty::Bool).then_some(Ty::Bool),
+        Lt | Le | Gt | Ge => numeric.then_some(Ty::Bool),
+        Add | Sub | Mul | FloorDiv | Mod | Pow => numeric.then(|| ty.clone()),
+        Div => numeric.then_some(Ty::Float64),
+        Shl | Shr | BitAnd | BitOr | BitXor => integer.then(|| ty.clone()),
+        _ => None,
+    }
+}
+
 /// Whether `ty` is the nominal `Optional[Int]` (module-qualified or not).
 /// What [`Checker::struct_infix_dispatch`] decided for one operator.
 pub(super) struct StructInfixDispatch {

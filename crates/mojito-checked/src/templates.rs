@@ -631,8 +631,9 @@ impl MethodFeatures {
     /// whose parameter may stand for a loan-carrying type, replays a transfer
     /// summary there.
     pub const VANISHING_TRANSFERS: Self = Self(1 << 12);
-    /// A comparison of two places of one type that mentions a struct
-    /// parameter, which an instance dispatches on its own type.
+    /// An operator over two places of one type that mentions a struct
+    /// parameter — a comparison, or an arithmetic, bitwise, or shift operator
+    /// the bound proves — which an instance dispatches on its own type.
     pub const OPERATOR_DISPATCH: Self = Self(1 << 13);
     /// A method call on a place of a bare parameter type, which the template
     /// proves through the bound and an instance re-selects on its own type:
@@ -1024,10 +1025,12 @@ pub struct CheckedBodyFacts {
     /// its own frame. None of that is retained, because none of it exists for
     /// an instance ([`TemplateObligation::PlainDataTransfers`]).
     pub vanishing_transfers: bool,
-    /// Comparisons over two places of one parameter-typed type, at which the
-    /// template recorded nothing. An instance dispatches each on its own
-    /// type and records the dunder it selects.
-    pub comparisons: Vec<OccurrenceId>,
+    /// Operators over two places of one parameter-typed type, at which the
+    /// template recorded nothing: a comparison, or an arithmetic, bitwise, or
+    /// shift operator its bound proves. An instance dispatches each on its own
+    /// type and records the dunder it selects, with the copy, conversion, and
+    /// adjustment that dispatch carries.
+    pub operators: Vec<OccurrenceId>,
     /// Calls of a checker builtin on a bounded parameter (`hasher.update(x)`,
     /// `writer.write(x)`), which select no callee. The template proved each
     /// argument through the bound; an instance owes the same proof at its own
@@ -1323,12 +1326,7 @@ impl CheckedBodyFacts {
             &other.call_place_uses,
         );
         differing(&mut out, "transfers", &self.transfers, &other.transfers);
-        differing(
-            &mut out,
-            "comparisons",
-            &self.comparisons,
-            &other.comparisons,
-        );
+        differing(&mut out, "operators", &self.operators, &other.operators);
         differing(
             &mut out,
             "vanishing_transfers",
@@ -1500,7 +1498,7 @@ impl CheckedBodyFacts {
             call_place_uses: flagged(&self.call_place_uses),
             transfers: flagged(&self.transfers),
             vanishing_transfers: self.vanishing_transfers,
-            comparisons: flagged(&self.comparisons),
+            operators: flagged(&self.operators),
             bound_builtins: at(&self.bound_builtins, occurrences, folded),
             method_instantiations: at(&self.method_instantiations, occurrences, folded),
             constructions: flagged(&self.constructions),

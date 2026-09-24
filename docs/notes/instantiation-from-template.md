@@ -126,9 +126,9 @@ Three things are recorded and kept as a fact about the body rather than as
 entries. A call transfer (`CallTransfers`), the origins it merged, and the
 effect the body's own frame then publishes exist only while a value may carry
 a loan, so the bundle keeps one flag (`vanishing_transfers`) and an instance
-owes that none of its values can. A comparison of two parameter-typed places
-records nothing in the template, so the grammar names it (`comparisons`) and
-an instance dispatches it itself. A checker builtin on a bounded parameter
+owes that none of its values can. An operator over two parameter-typed
+places records nothing in the template, so the grammar names it (`operators`)
+and an instance dispatches it itself. A checker builtin on a bounded parameter
 (`hasher.update(x)`, `writer.write(x)`) selects no callee and records nothing
 that names the call, so the grammar names it too (`bound_builtins`) and an
 instance proves the argument's bound again.
@@ -278,7 +278,7 @@ they are a set, not a ladder.
 | `ORIGIN_PARAMETERS` | a `ref` parameter with an origin clause, the method's origin binders, and the parameter forwarded as the method's own reference result | The clause lives in the signature, which is checked per clone. The body's facts for such a parameter are a bare `ref` one's: its binding, its type, and a copy where it is read by value. |
 | `VALUE_ARGUMENTS` | a whole value of any type handed to a by-value parameter of a method call: a `^` transfer, a sibling call's result, a place the template copied, or a named place a read parameter takes where it lies | The argument's recorded type equals the parameter's, before and after substitution, or an `@implicit` constructor converts it to the parameter's, and the instance selects that constructor again (obligation 20). What the call records for it is decided without its type: a read parameter borrows a named place and reads a temporary by the argument's syntax and the callee's conventions, and a `var` parameter takes a transfer or a temporary as it stands. A copied place owes obligation 3 and a transfer obligation 10, as elsewhere. A `ref` local and a reference call's result stay out, since each records a borrow of its own. A callee with a parameter of a struct parameter's type may belong to a field of another struct: it has no binders of its own, so its parameter types were recorded at the receiver's arguments, in the caller's binder scope, and the instance substitutes them in the contract and in `CallParameters` alike. An overloaded family whose members declare parameters of parameter types is admitted when every argument's type is exactly its parameter's: no member outranks an exact match, and a family an instance collapses finds no single clone (`method_clone_target`). |
 | `VANISHING_TRANSFERS` | a call whose callee stores an argument outward (`self.items.append(value^)`), so the template replays a transfer summary at it | A transfer moves the loans its source carries. The template's parameter may carry one (`type_may_carry_loans` is true for a symbolic parameter), so its check records a call transfer, merges the origin, and publishes an effect of its own; every value of a plain-data instance carries none, so `replay_transfer_effects` records nothing and the instance's frame publishes nothing, which is what the clone check records. Obligation 14 below. A call-through residue, a function value's baked effects, and a destination a captured binding names are not transfers and still refuse. |
-| `OPERATOR_DISPATCH` | `==`, `!=`, `<`, `<=`, `>`, `>=` over two places of one type that mentions a struct parameter | The template proves the operator through the bound and records nothing at it; `infer_infix` decides a struct operand's dunder from the operand types alone (`struct_infix_dispatch`). Obligation 15 below. Each operand is a place, so both checks read it where it lies and no borrow or copy is recorded. |
+| `OPERATOR_DISPATCH` | Every operator a trait names — `==`, `!=`, `<`, `<=`, `>`, `>=`, and the arithmetic, bitwise, and shift ones — over two places of one type that mentions a struct parameter | The template proves the operator through the bound and records nothing at it; `infer_infix` decides a struct operand's dunder from the operand types alone (`struct_infix_dispatch`). Obligation 15 below. Each operand is a place, so both checks read it where it lies; what the instance's dispatch adds beneath the operand is the copy of a consumed one, the conversion of an adapted one, and `NegatedEquality`. An arithmetic operator's result is the operand's own type rather than `Bool`, so it is a temporary of that type wherever the body puts it (`BodyShape::operator_value`, beside a call result and a construction). |
 | `BOUND_DISPATCH` | a method call on a place of a bare parameter type, proved through a bound: `place.copy()`, `item.__hash__(hasher)`, `item.write_to(writer)`, or any requirement whose arguments are closed scalars or named places of a bare parameter type handed to a bounded `mut`/`ref` parameter | The template records the abstract dispatch (`__trait_dispatch.__hash__$ov$…`), or for `write_to` the inverted write, and nothing the receiver's type decides: a kept argument's place use and generation refresh follow from the requirement's convention, which the witness shares. `infer_method_call` decides a concrete receiver's witness from its type alone, and `bound_witness` repeats that decision from the types. Obligation 16 below. The call through the bound read the summaries of every conformer's method of that name, one key per conformer; each was empty, and the instance re-reads only its own target's. |
 | `BOUND_BUILTINS` | `hasher.update(x)`, `hasher._update_with_simd(x)`, or `writer.write(x…)` on a parameter bounded by `Hasher` or `Writer`, whose arguments are closed scalars, string literals, named whole values, `ref` locals, fields read through a reference, pointer slots, or reference calls | The builtin selects no callee and records at an argument only what its syntax decides: a borrow of a named place or a reference result, an unconsumed temporary, a closed literal's materialization. The argument's type it proved through the bound, and the instance proves it again at its own type (obligation 17), which for a hashed value is where the hash leaf is recorded. |
 | `BOUND_BINDERS` | the method's own type binders, each a plain trait-bounded type (`[H: Hasher]`) | A clone keeps such a binder, bound symbolically as the template binds it: no clone is minted per hasher, the VM reifies the binding at run time, and no retained fact substitutes it. The instance's substitution binds the struct's parameters alone (`instance_substitution`), as it does beside an origin binder. |
@@ -396,13 +396,21 @@ only `Movable` records nothing there, and its `Int` clone would.
     field of a parameter type). The template's own body, whose parameter is
     symbolic, never meets this and is inferred again. Obligation 9 then holds
     as before: the realized callee's summary must be empty.
-15. **Comparisons.** Each admitted comparison is dispatched on the
-    substituted operand type (`realize_comparison`): a closed scalar records
-    nothing; a nominal struct records the dunder target
-    `struct_infix_dispatch` selects, when the dunder is overloaded or a
-    per-instantiation clone, and the operand's application as a receiver
-    would. A dunder that converts or consumes its operand, `!=` served by
-    `__eq__`, a built-in aggregate, and any other type refuse.
+15. **Operators.** Each admitted operator is dispatched on the substituted
+    operand type (`realize_operator`): a closed scalar records nothing, owing
+    only that the primitive path has the operation and gives the type the
+    template kept (`scalar_operator_result`); a nominal struct records the
+    dunder target `struct_infix_dispatch` selects, when the dunder is
+    overloaded or a per-instantiation clone, and the operand's application as
+    a receiver would, and its result must still be the type the template
+    kept. A dunder that consumes its operand records the implicit copy of the
+    place, and owes that the instance's type is implicitly copyable; one that
+    converts it records the conversion, whose constructor obligation 20
+    selects; `!=` served by `__eq__` records the `NegatedEquality`
+    adjustment. A built-in aggregate and any other type refuse. The reflected
+    dunder needs no arm: a comparison has no reflected form, and an
+    arithmetic operator's left operand has the forward dunder its bound
+    required.
 16. **Bound dispatches.** Each call the template dispatched through a bound
     is re-selected on the substituted receiver type (`realize_bound_dispatch`,
     through `bound_witness`): a built-in value's `copy`
@@ -653,6 +661,24 @@ tables. In short, for one debug-profile run each:
   `String` instance (`template_method_converting_call_argument.mojo`), and
   so does a module-level `def` template that converts a literal at a direct
   call (`template_def_converting_argument.mojo`).
+  Widening `OPERATOR_DISPATCH` to every operator a trait names, and to the
+  three things a struct instance's dispatch adds beneath the operand
+  (2026-09-24), moves neither count (1096 and 340 before and after): no
+  bundled body puts an arithmetic operator over two places of one
+  parameter-typed type, and none of the bundled `__eq__` declarations
+  consumes, converts, or leaves `!=` to `__eq__`. A user struct whose method
+  adds two places of a type built over its parameter, one whose instance
+  serves `!=` through `__eq__`, one whose dunder takes its operand by value,
+  and one whose operand converts into the declared parameter type all derive
+  for two instances (`template_method_operator_dispatch.mojo` and the inline
+  sources beside it in `tests/compiler_test.rs`), and so does a method
+  returning `a + b` under arithmetic bounds.
+  An operation trait other than `Comparable`/`Equatable` admits only a
+  numeric scalar (`conforms_to` answers `is_numeric_like`/`is_integer_like`
+  for `Addable` and its family, never a struct's declared conformance), so a
+  bare parameter bounded by one substitutes to a scalar in every instance;
+  the struct arm of the recipe is reached through an operand whose type is
+  *built over* the parameter instead (`Bag[T] + Bag[T]`).
 - Hello World mints no per-instantiation clones at all. Its generated bodies
   are members of structs specialized whole and per-call clones, from
   concrete-only templates.
@@ -715,12 +741,14 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
   compile-time callable (`Tuple.deinit_with[elt_handler]`) or whose argument
   carries an origin, a named callable's own effects behind a residue, a
   function value's baked effects, a destination a captured binding names,
-  and an instance whose values may carry a loan. An arithmetic operator
-  through a bound, a reflected or consuming operator, and `!=` served by
-  `__eq__` are re-selections in a clone with no recipe. The
+  and an instance whose values may carry a loan. The
   `CallableCaptureAccesses` adjustment is a concrete caller's fact: a
   `capturing[_]` parameter's environment stays open in every clone, so no
   template records it.
+- An operator with an operand that is not a place: a literal, a call's
+  result, or a nested operator. A place records nothing in either check,
+  while a literal records a materialization or a conversion and a temporary
+  records the facts the operator path does not register at all.
 - A bound dispatch whose instance witness is overloaded, has a `mut` or
   consuming receiver, takes a binder the instance would bake (a closed
   hasher type), or is a requirement the type meets without declaring the

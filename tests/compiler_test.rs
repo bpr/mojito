@@ -1749,6 +1749,204 @@ fn template_method_converting_call_arguments_derive() {
 }
 
 #[test]
+fn template_method_operator_dispatch_derives() {
+    // Equality, `!=`, and an ordering over two places of the struct's
+    // parameter type; `!=` served by the instance's `__eq__` and a negation
+    // (`Tag` declares no `__ne__`); and `+` over two places whose type is
+    // built over the parameter, whose result is a temporary of that type
+    // rather than a `Bool`.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_operator_dispatch.mojo"),
+        "False True False True\n1 2\nTrue True True False\nFalse False 1\n3 7\n",
+        &[
+            ("Pair.same", 3),
+            ("Pair.differs", 3),
+            ("Pair.matches", 3),
+            ("Sorted.ordered", 2),
+            ("Sorted.bounds", 2),
+            ("Totals.merged", 2),
+        ],
+    );
+}
+
+#[test]
+fn template_method_bounded_arithmetic_derives() {
+    // `a + b` and `a / b` under arithmetic bounds: the template's result is
+    // the operand's own type (`Float64` for `/`), so the operator is a
+    // temporary where the body puts it, and each instance owes that its
+    // scalar has the operation and gives the type the bound promised.
+    let source = r"struct Acc[T: Addable & Copyable & Deinitable & Divisible & Movable](Movable):
+    var first: Self.T
+    var second: Self.T
+
+    def __init__(out self, var first: Self.T, var second: Self.T):
+        self.first = first^
+        self.second = second^
+
+    def total(self) -> Self.T:
+        return self.first + self.second
+
+    def bound(self) -> Self.T:
+        var sum = self.first + self.second
+        return sum^
+
+    def ratio(self) -> Float64:
+        return self.first / self.second
+
+def main():
+    var a = Acc[Int](1, 2)
+    var b = Acc[Float64](1.5, 0.5)
+    print(a.total(), b.total())
+    print(a.bound(), b.bound())
+    print(a.ratio(), b.ratio())
+";
+    assert_methods_derive(
+        source,
+        "3 2.0\n3 2.0\n0.5 3.0\n",
+        &[("Acc.total", 2), ("Acc.bound", 2), ("Acc.ratio", 2)],
+    );
+}
+
+#[test]
+fn template_method_consuming_operand_derives() {
+    // A dunder that takes its operand by value copies the place the operator
+    // reads, which the symbolic template never recorded. The instance owes
+    // the copy and that its own type is implicitly copyable.
+    let source = r"@fieldwise_init
+struct Coin(Copyable, Deinitable, Equatable, ImplicitlyCopyable, Movable):
+    var value: Int
+
+    def __eq__(self, var other: Coin) -> Bool:
+        return self.value == other.value
+
+    def __ne__(self, var other: Coin) -> Bool:
+        return self.value != other.value
+
+struct Pair[T: Copyable & Equatable & Deinitable](Movable):
+    var first: Self.T
+    var second: Self.T
+
+    def __init__(out self, var first: Self.T, var second: Self.T):
+        self.first = first^
+        self.second = second^
+
+    def same(self) -> Bool:
+        return self.first == self.second
+
+def main():
+    var a = Pair[Int](1, 2)
+    var b = Pair[Coin](Coin(3), Coin(3))
+    print(a.same(), b.same())
+";
+    assert_methods_derive(source, "False True\n", &[("Pair.same", 2)]);
+}
+
+#[test]
+fn template_method_converting_operand_derives() {
+    // No overload of the instance's `__eq__` takes its own type, so the
+    // operand reaches the declared one through an `@implicit` constructor.
+    // The conversion is selected at the instance's types by the same recipe a
+    // converted call argument uses, and `Bill` pins the two adaptations
+    // composed: the copy is owed at the operand's own type, the conversion at
+    // the declared one.
+    let source = r"@fieldwise_init
+struct Money(Copyable, Deinitable, Equatable, ImplicitlyCopyable, Movable):
+    var cents: Int
+
+    def __eq__(self, other: Cents) -> Bool:
+        return self.cents == other.amount
+
+@fieldwise_init
+struct Bill(Copyable, Deinitable, Equatable, ImplicitlyCopyable, Movable):
+    var notes: Int
+
+    def __eq__(self, var other: Cents) -> Bool:
+        return self.notes == other.amount
+
+struct Cents(Copyable, Deinitable, ImplicitlyCopyable, Movable):
+    var amount: Int
+
+    def __init__(out self, amount: Int):
+        self.amount = amount
+
+    @implicit
+    def __init__(out self, m: Money):
+        self.amount = m.cents
+
+    @implicit
+    def __init__(out self, b: Bill):
+        self.amount = b.notes
+
+struct Pair[T: Copyable & Equatable & Deinitable](Movable):
+    var first: Self.T
+    var second: Self.T
+
+    def __init__(out self, var first: Self.T, var second: Self.T):
+        self.first = first^
+        self.second = second^
+
+    def same(self) -> Bool:
+        return self.first == self.second
+
+def main():
+    var a = Pair[Int](1, 2)
+    var b = Pair[Money](Money(4), Money(4))
+    var c = Pair[Bill](Bill(1), Bill(2))
+    print(a.same(), b.same(), c.same())
+";
+    assert_methods_derive(source, "False True False\n", &[("Pair.same", 3)]);
+}
+
+#[test]
+fn template_operator_on_a_call_result_keeps_the_clone_check() {
+    // Only two places are admitted. An operand that is a sibling call's
+    // result records a temporary of its own, which the operator recipe has no
+    // occurrence to key, so the whole body stays outside the class and every
+    // clone is checked. The program still runs.
+    let source = r#"struct Pair[T: Copyable & Equatable & Deinitable](Movable):
+    var first: Self.T
+    var second: Self.T
+
+    def __init__(out self, var first: Self.T, var second: Self.T):
+        self.first = first^
+        self.second = second^
+
+    def head(self) -> Self.T:
+        return self.first.copy()
+
+    def same(self) -> Bool:
+        return self.head() == self.second
+
+def main():
+    var a = Pair[Int](1, 2)
+    var b = Pair[String](String("x"), String("x"))
+    print(a.same(), b.same())
+"#;
+    let compiler = Compiler::default();
+    let program = compile_entry(&compiler, source);
+    let stats = program.template_stats();
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "False True\n"
+    );
+    assert!(
+        stats
+            .derived
+            .iter()
+            .all(|name| !name.starts_with("Pair.same$")),
+        "no clone of Pair.same derives: {:?}",
+        stats.derived
+    );
+    assert!(
+        stats.refused.iter().any(|(name, reason)| {
+            name.starts_with("Pair.same$") && reason == "its template is not certified"
+        }),
+        "the call-result operand leaves the body outside the class: {:?}",
+        stats.refused
+    );
+}
+
+#[test]
 fn template_method_consuming_conversion_keeps_the_clone_check() {
     // The recipe re-selects the constructor at the instance's types, and a
     // constructor that consumes its source records an implicit copy the
