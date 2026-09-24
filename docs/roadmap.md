@@ -553,24 +553,27 @@ to section 3, however small.
   - The rewrite exists; the method and builtin callee shapes need routing to it.
   - Model: Opus, Not Planned.
 
-- [ ] **1.32 A variadic struct construction in a validated body is not matched
-  against its constructor**
+- [ ] **1.32 A nested variadic construction is refused on the template
+  constructor path**
 
-  Problem: inside a validated body, `Pair[Int, Bool](1, True)` types from its
-  type arguments and its arguments are checked only as expressions, so a
-  wrong argument list in an untaken arm is not reported.
-  - The instance and its constructor exist only once the elaborator mints
-    them (`infer_validated_variadic_construction`,
-    `checker/comptime_validation.rs`). The taken arm is still checked against
-    the minted constructor.
-  - A bare `Tuple(1, "one")` is exact: it types as the tuple display it is.
-  - The lever exists now: a *bare* construction is matched against the
-    template's constructor with the pack solved from the arguments
-    (`infer_construction` on a variadic shell, `docs/architecture.md`
-    §Comptime elaboration). The explicit form can bind the pack from its
-    `[...]` arguments and take the same path instead of the shortcut.
+  Problem: `Outer[T, Int](Variant[T, Int](x^))` inside a generic body reports
+  "type mismatch for argument 1 to 'Outer.__init__': expected
+  Variant[T, Int], found Variant[(T, Int)]", and the same line inside a
+  validated body is refused the same way. The pin runs it.
+  - A closed user pack has two spellings. The constructor parameter
+    `Variant[*Self.Ts]` is expanded element by element
+    (`expand_pack_spread`, `crates/mojito-types/src/types.rs`), while the
+    inner construction and every annotation bind the pack as one list
+    (`TyArg::Val(CtValue::Tuple)`).
+  - `coerces` compares the two by argument count and refuses.
+  - The lever is a checker-level canonicalization of a closed user pack to
+    the bound-list spelling where `expand_bound_pack` is consumed
+    (`checker/generics.rs`). The public `Tuple` is the exception: its
+    identity is the element-by-element spelling.
+  - A concrete `Outer[Int, Bool](Variant[Int, Bool](True))` in `main` is
+    unaffected: the elaborator rewrites both applications before the check.
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **1.33 A per-call method clone and a whole-struct specialization leave no
   trace**

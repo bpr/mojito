@@ -2463,7 +2463,12 @@ impl Checker {
             } else {
                 self.infer(argument)?
             };
-            if !Self::storage_value_coerces(&actual, expected) {
+            // A literal element converts to the nominal element it spells
+            // (`"two"` where a `String` is declared), as a stored display
+            // element does.
+            if !Self::storage_value_coerces(&actual, expected)
+                && !self.record_constructor_conversion(argument, &actual, expected)?
+            {
                 return Err(TypeError::TypeMismatch {
                     expected: expected.to_string(),
                     found: actual.to_string(),

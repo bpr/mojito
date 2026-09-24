@@ -143,6 +143,26 @@ fn comptime_if_arms_use_tuple_members_and_value_parameters() {
 }
 
 #[test]
+fn variadic_construction_in_untaken_arm_is_matched_against_its_constructor() {
+    // An explicit construction of a variadic struct inside an untaken arm is
+    // matched against the template's constructor rather than typed from its
+    // arguments alone: a collector takes exactly the bound elements, a
+    // fieldwise constructor its one tuple, and a `Tuple` its element list.
+    let bag = "struct Bag[*Ts: Copyable & Movable & Deinitable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\ndef f[n: Int]() -> Int:\n    comptime if n == 0:\n        return 1\n    else:\n        var b = Bag[Int, String](1)\n        return 2\n\ndef main():\n    print(f[0]())\n";
+    let err = run(bag).unwrap_err();
+    assert!(err.contains("no constructor overload matches"), "{err}");
+    let pair = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable & Deinitable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef f[n: Int]() -> Int:\n    comptime if n == 0:\n        return 1\n    else:\n        var p = Pair[Int, Bool](1, True)\n        return 2\n\ndef main():\n    print(f[0]())\n";
+    let err = run(pair).unwrap_err();
+    assert!(err.contains("'Pair' expects 1 argument(s), got 2"), "{err}");
+    let tuple = "def f[n: Int]() -> Int:\n    comptime if n == 0:\n        return 1\n    else:\n        var t = Tuple[Int, Bool](1, \"x\", 3.5)\n        return 2\n\ndef main():\n    print(f[0]())\n";
+    let err = run(tuple).unwrap_err();
+    assert!(
+        err.contains("'Tuple' expects 2 argument(s), got 3"),
+        "{err}"
+    );
+}
+
+#[test]
 fn pack_keyed_bodies_are_validated_with_the_element_opaque() {
     // An untaken arm of a pack-keyed body is judged from the template: the
     // element under a `comptime for` index has only the pack's bound.

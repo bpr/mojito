@@ -737,14 +737,15 @@ impl Checker {
         )
     }
 
-    /// A construction of a variadic struct over concrete types inside a
-    /// validated body (`Tuple(1, "one")`, `Pair[Int, Bool](1, True)`). The
-    /// instance and its constructor exist only once the elaborator mints
-    /// them, so validation types the construction from its type arguments —
-    /// a bare `Tuple(...)` as the tuple display it is — and checks the
-    /// arguments as expressions; matching them against the instance's
-    /// constructor is the executable check's. `None` outside validation and
-    /// for every other callee.
+    /// A public `Tuple` constructed inside a validated body types as the
+    /// tuple it spells — a bare `Tuple(1, "one")` as the display it is, an
+    /// explicit `Tuple[Int, String](1, "one")` against its element list —
+    /// because its checked identity is the element-by-element nominal
+    /// spelling, not the template's bound pack. Every other variadic struct
+    /// (`Pair[Int, Bool](1, True)`) is matched against its template's
+    /// constructor with the pack bound from the `[...]` arguments, the path
+    /// a bare construction takes once its pack is solved. `None` outside
+    /// validation and for every callee this does not type.
     pub(super) fn infer_validated_variadic_construction(
         &self,
         call: &Expr,
@@ -753,33 +754,21 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Option<Result<Ty, TypeError>> {
-        if !self.source_validation || self.lookup(name).is_some() {
+        if !self.source_validation
+            || self.lookup(name).is_some()
+            || !kwargs.is_empty()
+            || !self.structs.contains_key(name)
+            || (name != mojito_types::types::TUPLE_TYPE_NAME
+                && name != mojito_types::types::TSTRING_TYPE_NAME)
+        {
             return None;
         }
-        let variadic = self.structs.get(name).is_some_and(|info| {
-            info.decls
-                .iter()
-                .any(|decl| matches!(decl, ParamDecl::Type { variadic: true, .. }))
-        });
-        if !variadic {
-            return None;
+        if !param_args.is_empty() {
+            return Some(self.infer_tuple_construction(param_args, args));
         }
-        if param_args.is_empty() {
-            if name != mojito_types::types::TUPLE_TYPE_NAME || !kwargs.is_empty() {
-                return None;
-            }
-            let mut display = Expr::new(ExprKind::TupleLit(args.to_vec()), call.span);
-            display.source.clone_from(&call.source);
-            return Some(self.infer(&display));
-        }
-        Some(
-            args.iter()
-                .chain(kwargs.iter().map(|kwarg| &kwarg.value))
-                .try_for_each(|argument| self.infer(argument).map(|_| ()))
-                .and_then(|()| {
-                    self.ty_from_anno(&SourceType::Named(name.to_string(), param_args.to_vec()))
-                }),
-        )
+        let mut display = Expr::new(ExprKind::TupleLit(args.to_vec()), call.span);
+        display.source.clone_from(&call.source);
+        Some(self.infer(&display))
     }
 
     /// Close the pack elements a callee's type names (`Self.Ts[index]`)

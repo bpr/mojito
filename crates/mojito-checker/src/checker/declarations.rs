@@ -2026,11 +2026,7 @@ impl Checker {
                     else {
                         continue;
                     };
-                    let kind = if *convention == ArgConvention::Deinit {
-                        super::traits::ConsumeKind::Deinit
-                    } else {
-                        super::traits::ConsumeKind::Move
-                    };
+                    let kind = consume_kind(*convention);
                     let argument = match slot {
                         ArgSlot::Positional(position) => &args[*position],
                         ArgSlot::Keyword(position) => &kwargs[*position].value,
@@ -2059,7 +2055,14 @@ impl Checker {
                 }
                 return Ok(selected.return_type);
             }
-            if sigs.len() == 1 && kwargs.is_empty() && sigs[0].variadic.is_none() {
+            // A surplus positional argument falls through to the slot
+            // matcher below, which refuses it; this path zips arguments with
+            // parameters and would drop it.
+            if sigs.len() == 1
+                && kwargs.is_empty()
+                && sigs[0].variadic.is_none()
+                && args.len() <= sigs[0].params.len()
+            {
                 let sig = &sigs[0];
                 let params = sig.params.clone();
                 let decls = info.decls.clone();
@@ -2121,11 +2124,7 @@ impl Checker {
                     if let Some(Some(convention @ (ArgConvention::Var | ArgConvention::Deinit))) =
                         sig.conventions.get(i)
                     {
-                        let kind = if *convention == ArgConvention::Deinit {
-                            super::traits::ConsumeKind::Deinit
-                        } else {
-                            super::traits::ConsumeKind::Move
-                        };
+                        let kind = consume_kind(*convention);
                         self.check_consuming_as(
                             &args[i],
                             aty,
@@ -2259,8 +2258,16 @@ impl Checker {
                     // The k-th argument a `*args: *Self.Ts` collector took
                     // is expected at the k-th element of the pack it solved;
                     // a regular slot's pattern expands its spreads of the
-                    // solved pack.
+                    // solved pack. A collector over an explicitly bound pack
+                    // (`Bag[Int, String](1)`) must take exactly its elements.
                     let pack_elements = bound_pack_elements(&decls, &tyargs);
+                    if !collector_takes_bound_pack(
+                        sig,
+                        pack_elements.as_ref(),
+                        matched.positional_overflow.len(),
+                    ) {
+                        continue;
+                    }
                     for (index, (aty, pty)) in arg_tys.iter().zip(&patterns).enumerate() {
                         let expected = index
                             .checked_sub(bound_slots.len())
@@ -2403,11 +2410,7 @@ impl Checker {
                     if let Some(convention @ (ArgConvention::Var | ArgConvention::Deinit)) =
                         convention
                     {
-                        let kind = if *convention == ArgConvention::Deinit {
-                            super::traits::ConsumeKind::Deinit
-                        } else {
-                            super::traits::ConsumeKind::Move
-                        };
+                        let kind = consume_kind(*convention);
                         let aty = self.infer(expression)?;
                         self.check_consuming_as(
                             expression,
@@ -2674,8 +2677,14 @@ impl Checker {
             }
             // Infer parameters hidden before `//` even when later parameters
             // were supplied explicitly (`hash[Fnv1a](value)` infers `T` from
-            // `value` while binding the explicit hasher argument).
+            // `value` while binding the explicit hasher argument). A pack
+            // pattern (`*args: *Self.Ts`) is bound from the arguments above,
+            // each element checked against its bound there; unifying it
+            // would tie the pack to the first collected argument.
             for (pattern, actual) in patterns.iter().zip(actuals) {
+                if matches!(pattern, Ty::Param { binder, .. } if binder.name.starts_with('*')) {
+                    continue;
+                }
                 unify(pattern, actual, &mut subst)?;
             }
             unify_through_callable_bounds(decls, &mut subst)?;
@@ -3178,6 +3187,33 @@ impl Checker {
 /// bound from the arguments, or the origin-binding failure that rejected the
 /// candidate (`None` when the arguments simply did not match its slots).
 type BoundConstructorParams = Result<(Vec<Ty>, ConstructorOriginBindings), Option<TypeError>>;
+
+/// The consumption a `var` or `deinit` argument convention performs.
+fn consume_kind(convention: ArgConvention) -> super::traits::ConsumeKind {
+    if convention == ArgConvention::Deinit {
+        super::traits::ConsumeKind::Deinit
+    } else {
+        super::traits::ConsumeKind::Move
+    }
+}
+
+/// Whether a `*args: *Self.Ts` collector took exactly the elements of the
+/// pack an application bound (`Bag[Int, String](1)` is short one). A
+/// collector over an open pack, or a constructor without one, takes what it
+/// is given.
+fn collector_takes_bound_pack(
+    sig: &MethodSig,
+    pack_elements: Option<&(String, Vec<Ty>)>,
+    overflow: usize,
+) -> bool {
+    let spreads_pack = sig.variadic.as_deref().is_some_and(|element| {
+        mojito_types::types::pack_spread(std::slice::from_ref(element)).is_some()
+    });
+    match pack_elements {
+        Some((_, elements)) if spreads_pack => overflow == elements.len(),
+        _ => true,
+    }
+}
 
 /// Whether a `return` occurs anywhere below. A nested function's own
 /// `return` counts too, which only defers more to the executable check.

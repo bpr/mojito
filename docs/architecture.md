@@ -476,7 +476,16 @@ so both arms of `comptime if Self.Ts.contains[T]()` check, and
 `__VariantStorage` operations type from `T` without deciding membership. A
 variadic struct applied to concrete types inside a validated body
 (`Tuple(1, "one")`, `a == b`, `t[0]`) resolves through the same signatures
-with the pack bound to the element list. A call that forwards the pack whole
+with the pack bound to the element list. An explicit construction of a user
+variadic struct there (`Pair[Int, Bool](1, True)`, `Bag[T, String](x^, "tail")`)
+is matched against the template's constructor with the pack bound from its
+`[...]` arguments (`infer_construction`), the path a bare construction takes
+once its pack is solved: a `*args: *Self.Ts` collector must take exactly the
+bound elements, and the fieldwise constructor its one tuple. The public
+`Tuple` alone types as the tuple it spells — bare as its display, explicit
+against its element list (`infer_validated_variadic_construction`) — because
+its identity is the element-by-element nominal spelling, not the template's
+bound pack. A call that forwards the pack whole
 (`inner(*a)`, `collect(30, *items^, tail=10)`, `self.take(*a)`, `print(*a)`)
 binds the callee's own pack to the caller's (`forwarded_pack_argument`,
 `bind_forwarded_pack`): the spread is the last positional argument and lands

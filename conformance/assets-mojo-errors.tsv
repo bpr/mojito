@@ -449,7 +449,9 @@ assets/type_error/typelist_size_removed_alias.mojo	compile-reject	agree	error: '
 assets/type_error/type_receiver_instance_mismatch.mojo	compile-reject	agree	error: invalid call to '__len__': value passed to 'self' cannot be converted from 'List[Int]' to 'List[String]'
 assets/type_error/uninit_storage_compiler_private.mojo	compile-reject	agree	error: use of unknown declaration '__UninitStorage'
 assets/type_error/untaken_comptime_for_reflection_body.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["oops"]' value to 'Int'
+assets/type_error/untaken_comptime_if_fieldwise_pack_construction.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/untaken_comptime_if_generic_member.mojo	compile-reject	agree	error: 'T' value has no attribute 'nonexistent'
+assets/type_error/untaken_comptime_if_pack_construction.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/untaken_comptime_if_pack_def.mojo	compile-reject	agree	error: 'Ts.values[SIMDLength(paramfor_next_value[_ZeroStartingRange](iter))]' value has no attribute 'nonexistent'
 assets/type_error/untaken_comptime_if_pack_forwarding.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["bad"]' value to 'Int'
 assets/type_error/untaken_comptime_if_pack_struct.mojo	compile-reject	agree	error: 'Ts.values[SIMDLength(paramfor_next_value[_ZeroStartingRange](iter))]' value has no attribute 'nonexistent'

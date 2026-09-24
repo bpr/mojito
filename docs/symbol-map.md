@@ -293,8 +293,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   marks),
   `close_pack_elements` and `positional_pack_binding` bind a callee's pack at
   a use (`types::expand_pack_spread` for a spread such as `other: Self`),
-  `infer_unbound_pack_construction` and
-  `infer_validated_variadic_construction` type constructions,
+  `infer_unbound_pack_construction` types a spread of an unbound pack and
+  `infer_validated_variadic_construction` a public `Tuple` (every other
+  variadic struct is matched against its template's constructor by
+  `declarations.rs:infer_construction`),
   `reject_mixed_spread` refuses `Tuple[Int, *Self.Ts]`, and `symbolic_verdict`
   turns a `TypeError::SymbolicBoundary` into that one body's no-verdict.
   `types::pack_spread` owns the spread convention.

@@ -340,6 +340,7 @@ assets/ok/pack_overload_keyword_only.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_overload_leading_type.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_overload_method_arity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_overload_variadic_position.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pack_struct_explicit_in_generic_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_getitem.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_inferred_args.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_pair.mojo	-	ineligible	no-scalar-entry-shape
