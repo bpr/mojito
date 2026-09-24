@@ -2347,6 +2347,25 @@ pub fn struct_argument_substitution(decls: &[ParamDecl], arguments: &[TyArg]) ->
         .collect()
 }
 
+/// [`substitute`] under the solutions of type packs and of compile-time
+/// values as well.
+///
+/// A pack binder stands for its element list: bare, it is the runtime pack
+/// of the elements; a variadic collector over it is the tuple of the
+/// elements, as a specialized collector binds; a spread of it flattens into
+/// the argument list it spreads. A dependent type is replaced under every
+/// binding — a pack's elements, a value binder such as an unrolled `comptime
+/// for`'s index — and folds to the type it then denotes, so `Ts[i]` at
+/// `Ts = [Int, Bool]`, `i = 1` is `Bool`.
+pub fn substitute_packs<S: std::hash::BuildHasher>(
+    ty: &Ty,
+    subst: &TySubst,
+    packs: &HashMap<ParamId, Vec<Ty>, S>,
+    values: &[(ParamId, CtValue)],
+) -> Ty {
+    substitute(&expand_packs(ty, subst, packs, values), subst)
+}
+
 /// Replace every `Ty::Param` in `ty` with its solution from `subst` (leaving an
 /// unsolved parameter untouched). Recurses into struct type arguments.
 pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
@@ -3297,6 +3316,84 @@ fn rewrite_callable_default(
             else_value: Box::new(rewrite_callable_default(else_value, rewrite)?),
         },
     })
+}
+
+/// [`substitute_packs`] before the type binders are substituted: the pack
+/// spellings expanded, and every dependent type replaced under the packs,
+/// the values, and the types alike.
+fn expand_packs<S: std::hash::BuildHasher>(
+    ty: &Ty,
+    subst: &TySubst,
+    packs: &HashMap<ParamId, Vec<Ty>, S>,
+    values: &[(ParamId, CtValue)],
+) -> Ty {
+    let recurse = |ty: &Ty| expand_packs(ty, subst, packs, values);
+    let elements_of = |ty: &Ty| match ty {
+        Ty::Param { binder, .. } => packs.get(&binder.id),
+        _ => None,
+    };
+    let expand = |list: &[Ty]| -> Vec<Ty> {
+        list.iter()
+            .flat_map(|element| match elements_of(element) {
+                Some(elements) if pack_spread(std::slice::from_ref(element)).is_some() => {
+                    elements.clone()
+                }
+                _ => vec![recurse(element)],
+            })
+            .collect()
+    };
+    match ty {
+        Ty::Param { .. } => {
+            elements_of(ty).map_or_else(|| ty.clone(), |elements| Ty::RuntimePack(elements.clone()))
+        }
+        Ty::VariadicPack(element) => elements_of(element).map_or_else(
+            || Ty::VariadicPack(Box::new(recurse(element))),
+            |elements| Ty::Tuple(elements.clone()),
+        ),
+        Ty::Struct(name, arguments) => {
+            let arguments = match pack_spread_argument(arguments).and_then(elements_of) {
+                Some(elements) => elements.iter().cloned().map(TyArg::Ty).collect(),
+                None => map_tyargs(arguments, recurse),
+            };
+            Ty::Struct(name.clone(), arguments)
+        }
+        Ty::Tuple(list) => Ty::Tuple(expand(list)),
+        Ty::RuntimePack(list) => Ty::RuntimePack(expand(list)),
+        Ty::Variant(list) => Ty::Variant(expand(list)),
+        Ty::Pointer { element, origin } => Ty::Pointer {
+            element: Box::new(recurse(element)),
+            origin: origin.clone(),
+        },
+        Ty::Ref(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = Box::new(recurse(&reference.referent));
+            Ty::Ref(reference)
+        }
+        Ty::Dependent(dependent) => {
+            let context = ParamContext::detached();
+            let mut bindings = ParamBindings::new();
+            for (id, ty) in subst {
+                bindings.bind_type(id.clone(), ty.clone());
+            }
+            let lists = packs.iter().map(|(id, elements)| {
+                let list = elements
+                    .iter()
+                    .map(|element| CtValue::Type(Box::new(element.clone())))
+                    .collect();
+                (id, CtValue::Tuple(list))
+            });
+            let values = values.iter().map(|(id, value)| (id, value.clone()));
+            for (id, value) in lists.chain(values) {
+                if let Ok(constant) = context.constant(value) {
+                    bindings.bind(id.clone(), constant);
+                }
+            }
+            context
+                .replace(dependent.expr(), &bindings)
+                .map_or_else(|_| ty.clone(), DependentType::resolve)
+        }
+        _ => ty.clone(),
+    }
 }
 
 /// Bind a generic signature's own value binders to their slots. A type the

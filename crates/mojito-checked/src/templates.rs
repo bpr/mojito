@@ -548,6 +548,14 @@ pub enum TemplateClass {
     /// checked once; an instance inherits the facts of the arms the
     /// elaborator selected and owes the `rebind` equalities they hold.
     ScalarBranches,
+    /// A module-level function source validation checks and the elaborator
+    /// then stubs, keyed on a type pack: its body is `comptime for` over the
+    /// pack's indices, reading each element as `pack[i]` into `print`,
+    /// beside the statements [`Self::ScalarBranches`] admits. The template
+    /// checked the element once at the dependent type `Ts[i]`; an instance
+    /// takes each unrolled copy at the element the fold fixed, and owes that
+    /// element `Writable`.
+    PackElements,
     /// A method of a generic struct with a plain read `self` and no binders
     /// of its own, returning a scalar over closed scalars, runtime
     /// parameters, and reads of `self`'s scalar fields.
@@ -861,6 +869,11 @@ pub enum TemplateObligation {
     /// refuses. A nominal-string wrap names the literal constructor, which no
     /// instance changes, and `repr`'s argument must still be `Writable`.
     ImplicitConversions,
+    /// Every argument of a `print` the grammar admitted is `Writable` at the
+    /// instance's type. The builtin selects no callee and proved a pack
+    /// element through the pack's bound; the element the unrolling fixed is
+    /// proved again at its own type.
+    PrintableArguments,
 }
 
 /// One implicit conversion in template-local terms: what the four conversion
@@ -1039,6 +1052,10 @@ pub struct CheckedBodyFacts {
     /// nominal `String`; an instance owes only that its argument is still
     /// `Writable` ([`TemplateObligation::ImplicitConversions`]).
     pub repr_calls: Vec<OccurrenceId>,
+    /// Calls of the built-in `print`, which the grammar admitted. The call
+    /// selects no callee; an instance owes that each argument is still
+    /// `Writable` ([`TemplateObligation::PrintableArguments`]).
+    pub print_calls: Vec<OccurrenceId>,
     /// The implicit conversion selected at each occurrence that records one.
     /// An instance selects it again from its own types, so a clone whose
     /// source type changed names a different constructor.
@@ -1352,6 +1369,12 @@ impl CheckedBodyFacts {
         differing(&mut out, "repr_calls", &self.repr_calls, &other.repr_calls);
         differing(
             &mut out,
+            "print_calls",
+            &self.print_calls,
+            &other.print_calls,
+        );
+        differing(
+            &mut out,
             "conversions",
             &self.conversions,
             &other.conversions,
@@ -1373,15 +1396,20 @@ impl CheckedBodyFacts {
     /// whose identity it kept. An occurrence the elaborator dropped — an
     /// untaken arm, a loop that ran zero times — takes its facts, requests,
     /// and effect reads with it; one it copied per loop iteration carries
-    /// them once per copy.
+    /// them once per copy. A `folded` occurrence — a loop variable the
+    /// elaborator wrote as the iteration's integer literal — keeps its
+    /// identity and none of the variable's facts: a literal records its own
+    /// type and nothing else.
     #[must_use]
-    pub fn selected(&self, occurrences: &[OccurrenceId]) -> Self {
+    pub fn selected(&self, occurrences: &[OccurrenceId], folded: &[OccurrenceId]) -> Self {
         fn at<V: Clone>(
             table: &[(OccurrenceId, V)],
             occurrences: &[OccurrenceId],
+            folded: &[OccurrenceId],
         ) -> Vec<(OccurrenceId, V)> {
             occurrences
                 .iter()
+                .filter(|occurrence| !folded.contains(occurrence))
                 .filter_map(|occurrence| {
                     table
                         .iter()
@@ -1394,21 +1422,35 @@ impl CheckedBodyFacts {
             occurrences
                 .iter()
                 .copied()
-                .filter(|occurrence| table.iter().any(|id| id.syntax == occurrence.syntax))
+                .filter(|occurrence| {
+                    !folded.contains(occurrence)
+                        && table.iter().any(|id| id.syntax == occurrence.syntax)
+                })
                 .collect()
         };
         Self {
             occurrences: occurrences.to_vec(),
-            expression_types: at(&self.expression_types, occurrences),
-            expression_place_types: at(&self.expression_place_types, occurrences),
-            binding_types: at(&self.binding_types, occurrences),
-            expression_bindings: at(&self.expression_bindings, occurrences),
-            statement_bindings: at(&self.statement_bindings, occurrences),
-            expression_effects: at(&self.expression_effects, occurrences),
-            operation_adjustments: at(&self.operation_adjustments, occurrences),
-            generic_instantiations: at(&self.generic_instantiations, occurrences),
-            overload_targets: at(&self.overload_targets, occurrences),
-            call_parameters: at(&self.call_parameters, occurrences),
+            expression_types: occurrences
+                .iter()
+                .filter_map(|occurrence| {
+                    if folded.contains(occurrence) {
+                        return Some((*occurrence, Ty::IntLiteral));
+                    }
+                    self.expression_types
+                        .iter()
+                        .find(|(id, _)| id.syntax == occurrence.syntax)
+                        .map(|(_, ty)| (*occurrence, ty.clone()))
+                })
+                .collect(),
+            expression_place_types: at(&self.expression_place_types, occurrences, folded),
+            binding_types: at(&self.binding_types, occurrences, folded),
+            expression_bindings: at(&self.expression_bindings, occurrences, folded),
+            statement_bindings: at(&self.statement_bindings, occurrences, folded),
+            expression_effects: at(&self.expression_effects, occurrences, folded),
+            operation_adjustments: at(&self.operation_adjustments, occurrences, folded),
+            generic_instantiations: at(&self.generic_instantiations, occurrences, folded),
+            overload_targets: at(&self.overload_targets, occurrences, folded),
+            call_parameters: at(&self.call_parameters, occurrences, folded),
             borrowed_read_call_places: flagged(&self.borrowed_read_call_places),
             borrowed_reference_receivers: flagged(&self.borrowed_reference_receivers),
             read_temporary_arguments: flagged(&self.read_temporary_arguments),
@@ -1418,7 +1460,7 @@ impl CheckedBodyFacts {
             value_callees: self.value_callees.clone(),
             builtin_len_calls: flagged(&self.builtin_len_calls),
             // A call and its arguments are copied together.
-            selected_calls: at(&self.selected_calls, occurrences)
+            selected_calls: at(&self.selected_calls, occurrences, folded)
                 .into_iter()
                 .map(|(id, mut call)| {
                     for argument in &mut call.arguments {
@@ -1428,28 +1470,28 @@ impl CheckedBodyFacts {
                 })
                 .collect(),
             struct_applications: self.struct_applications.clone(),
-            rebind_assertions: at(&self.rebind_assertions, occurrences),
+            rebind_assertions: at(&self.rebind_assertions, occurrences, folded),
             copy_place_value_uses: flagged(&self.copy_place_value_uses),
-            interior_invalidations: at(&self.interior_invalidations, occurrences),
+            interior_invalidations: at(&self.interior_invalidations, occurrences, folded),
             unconsumed_temporaries: flagged(&self.unconsumed_temporaries),
             discarded_reference_results: flagged(&self.discarded_reference_results),
-            reference_value_uses: at(&self.reference_value_uses, occurrences),
+            reference_value_uses: at(&self.reference_value_uses, occurrences, folded),
             deletable_bindings: flagged(&self.deletable_bindings),
             linear_bindings: flagged(&self.linear_bindings),
             linear_temporaries: flagged(&self.linear_temporaries),
-            reference_results: at(&self.reference_results, occurrences),
-            augmented_subscripts: at(&self.augmented_subscripts, occurrences),
-            interior_references: at(&self.interior_references, occurrences),
-            reference_binding_types: at(&self.reference_binding_types, occurrences),
-            reference_place_types: at(&self.reference_place_types, occurrences),
+            reference_results: at(&self.reference_results, occurrences, folded),
+            augmented_subscripts: at(&self.augmented_subscripts, occurrences, folded),
+            interior_references: at(&self.interior_references, occurrences, folded),
+            reference_binding_types: at(&self.reference_binding_types, occurrences, folded),
+            reference_place_types: at(&self.reference_place_types, occurrences, folded),
             copyable_reference_result_reads: flagged(&self.copyable_reference_result_reads),
-            subscript_descriptors: at(&self.subscript_descriptors, occurrences),
+            subscript_descriptors: at(&self.subscript_descriptors, occurrences, folded),
             call_place_uses: flagged(&self.call_place_uses),
             transfers: flagged(&self.transfers),
             vanishing_transfers: self.vanishing_transfers,
             comparisons: flagged(&self.comparisons),
-            bound_builtins: at(&self.bound_builtins, occurrences),
-            method_instantiations: at(&self.method_instantiations, occurrences),
+            bound_builtins: at(&self.bound_builtins, occurrences, folded),
+            method_instantiations: at(&self.method_instantiations, occurrences, folded),
             constructions: flagged(&self.constructions),
             callable_calls: flagged(&self.callable_calls),
             // A residue names slots, not occurrences; realization rekeys each
@@ -1457,7 +1499,8 @@ impl CheckedBodyFacts {
             call_throughs: self.call_throughs.clone(),
             call_through_reads: self.call_through_reads.clone(),
             repr_calls: flagged(&self.repr_calls),
-            conversions: at(&self.conversions, occurrences),
+            print_calls: flagged(&self.print_calls),
+            conversions: at(&self.conversions, occurrences, folded),
             typed_origins: occurrences
                 .iter()
                 .flat_map(|occurrence| {
@@ -1556,6 +1599,9 @@ pub struct InstanceTrace {
     pub type_bindings: Vec<(String, mojito_ast::ast::Type)>,
     /// The value parameters the clone no longer declares.
     pub value_bindings: Vec<(String, mojito_types::ct::CtValue)>,
+    /// The type packs the clone no longer declares, each with the element
+    /// types the elaborator wrote in its signature.
+    pub pack_bindings: Vec<(String, Vec<mojito_ast::ast::Type>)>,
     /// The parameters the clone still declares.
     pub residual: Vec<String>,
 }

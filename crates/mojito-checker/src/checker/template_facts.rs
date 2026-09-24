@@ -171,7 +171,26 @@ struct Occurrence {
     comparison: Option<(mojito_ast::ast::InfixOp, SyntaxId, SyntaxId)>,
     /// Whether this is a `^` transfer.
     transfer: bool,
+    /// Whether this is an integer literal.
+    literal: bool,
+    /// A subscript's index, when the elaborator folded it to an integer
+    /// literal: the iteration a pack element was copied for.
+    folded_index: Option<i64>,
 }
+
+/// What an instance's arguments stand for in its template's facts.
+struct InstanceSubstitution {
+    /// Each baked type binder's checked type.
+    types: TySubst,
+    /// Each baked type pack's element types.
+    packs: HashMap<mojito_types::param_expr::ParamId, Vec<Ty>>,
+}
+
+/// The loop index each pack-element occurrence of an instance was copied
+/// for: the loop's own binder, bound to the literal the elaborator folded
+/// there.
+type ElementIndices =
+    HashMap<OccurrenceId, (mojito_types::param_expr::ParamId, mojito_types::ct::CtValue)>;
 
 /// What the grammar names that the template's facts do not: the occurrences
 /// an instance must dispatch or prove itself.
@@ -182,6 +201,7 @@ struct GrammarNotes {
     constructions: Vec<OccurrenceId>,
     callable_calls: Vec<OccurrenceId>,
     repr_calls: Vec<OccurrenceId>,
+    print_calls: Vec<OccurrenceId>,
 }
 
 impl Checker {
@@ -617,6 +637,7 @@ impl Checker {
                 template: site.template_id.clone(),
                 type_bindings: Vec::new(),
                 value_bindings: Vec::new(),
+                pack_bindings: Vec::new(),
                 residual: Vec::new(),
             }
         } else {
@@ -688,8 +709,9 @@ impl Checker {
                 | TemplateClass::MethodScalarBody
                 | TemplateClass::MethodBody(_) => trace.value_bindings.is_empty(),
                 // The folded values selected the arms; no retained
-                // occurrence names one.
-                TemplateClass::ScalarBranches => true,
+                // occurrence names one. A folded loop index is read back
+                // from the copy it fixed.
+                TemplateClass::ScalarBranches | TemplateClass::PackElements => true,
             };
         if !template && !baked {
             return refuse("the clone keeps or folds a compile-time parameter");
@@ -701,7 +723,7 @@ impl Checker {
             return refuse("an instance argument does not resolve");
         };
         if matches!(class, TemplateClass::MethodBody(_))
-            && !substitution.values().all(|ty| self.plain_data(ty))
+            && !substitution.types.values().all(|ty| self.plain_data(ty))
         {
             return refuse("an instance argument carries a loan, a reference, or a callable");
         }
@@ -710,7 +732,10 @@ impl Checker {
         // without compile-time control flow keeps them all, once each; a
         // keyed one keeps the arms the elaborator selected, once per loop
         // iteration it unrolled, and drops the rest, facts and all.
-        let keyed = *class == TemplateClass::ScalarBranches;
+        let keyed = matches!(
+            class,
+            TemplateClass::ScalarBranches | TemplateClass::PackElements
+        );
         let traced = occurrences.iter().all(|occurrence| {
             (keyed || occurrence.id.copy == 0)
                 && checked
@@ -737,8 +762,47 @@ impl Checker {
             return refuse("the clone's occurrences are not the template's");
         }
         let ids: Vec<OccurrenceId> = occurrences.iter().map(|occurrence| occurrence.id).collect();
-        let selected = checked.facts.selected(&ids);
-        match self.realize_instance_facts(&selected, &substitution, &occurrences) {
+        // A loop variable the elaborator folded: the identifier's facts are
+        // not the literal's. The literal at a pack element's index says
+        // which element the copy is.
+        let folded: Vec<OccurrenceId> = occurrences
+            .iter()
+            .filter(|occurrence| {
+                occurrence.literal
+                    && checked
+                        .facts
+                        .expression_bindings
+                        .iter()
+                        .any(|(id, _)| id.syntax == occurrence.id.syntax)
+            })
+            .map(|occurrence| occurrence.id)
+            .collect();
+        let indices = occurrences
+            .iter()
+            .filter_map(|occurrence| {
+                let index = occurrence.folded_index?;
+                let (_, binder) =
+                    checked
+                        .facts
+                        .expression_types
+                        .iter()
+                        .find_map(|(id, ty)| match ty {
+                            Ty::Dependent(dependent) if id.syntax == occurrence.id.syntax => {
+                                dependent.pack_element()
+                            }
+                            _ => None,
+                        })?;
+                match binder.kind() {
+                    mojito_types::param_expr::ParamKind::DeclRef(reference) => Some((
+                        occurrence.id,
+                        (reference.id.clone(), mojito_types::ct::CtValue::Int(index)),
+                    )),
+                    _ => None,
+                }
+            })
+            .collect();
+        let selected = checked.facts.selected(&ids, &folded);
+        match self.realize_instance_facts(&selected, &substitution, &indices, &occurrences) {
             Ok(facts) => Some((
                 facts,
                 occurrences
@@ -799,24 +863,51 @@ impl Checker {
         site: &BodySite<'_>,
         template: &CheckedTemplate,
         trace: &InstanceTrace,
-    ) -> Result<TySubst, TypeError> {
+    ) -> Result<InstanceSubstitution, TypeError> {
         let Some(arguments) = &site.receiver_arguments else {
             // A binding names the template's own binder; the declaration
-            // carries its identity.
-            return trace
+            // carries its identity. The source type is resolved as the
+            // clone's own signature resolved it: a generated declaration's
+            // spelling of an already-checked type (`StringLiteral`) is
+            // admitted where a user-spelled one is not.
+            let decl_named = |name: &str| {
+                template
+                    .param_decls
+                    .iter()
+                    .find(|decl| decl.name().trim_start_matches('*') == name)
+            };
+            let resolve = |source: &mojito_ast::ast::Type| {
+                let generated = self.generated_declaration.replace(true);
+                self.bare_string_literal_parameter
+                    .set(super::declarations::is_string_literal_annotation(source));
+                let ty = self.ty_from_anno(source);
+                self.bare_string_literal_parameter.set(false);
+                self.generated_declaration.set(generated);
+                ty
+            };
+            let types = trace
                 .type_bindings
                 .iter()
                 .filter_map(|(name, source)| {
-                    template
-                        .param_decls
-                        .iter()
-                        .find(|decl| decl.name().trim_start_matches('*') == name)
-                        .map(|decl| Ok((decl.id().clone(), self.ty_from_anno(source)?)))
+                    decl_named(name).map(|decl| Ok((decl.id().clone(), resolve(source)?)))
                 })
-                .collect();
+                .collect::<Result<_, _>>()?;
+            let packs = trace
+                .pack_bindings
+                .iter()
+                .filter_map(|(name, sources)| {
+                    let elements = sources.iter().map(resolve);
+                    decl_named(name)
+                        .map(|decl| Ok((decl.id().clone(), elements.collect::<Result<_, _>>()?)))
+                })
+                .collect::<Result<_, _>>()?;
+            return Ok(InstanceSubstitution { types, packs });
         };
         if site.role == BodyRole::Template {
-            return Ok(HashMap::new());
+            return Ok(InstanceSubstitution {
+                types: HashMap::new(),
+                packs: HashMap::new(),
+            });
         }
         let unresolved = || {
             TypeError::InvariantViolation(
@@ -845,7 +936,11 @@ impl Checker {
                 }
                 _ => Err(unresolved()),
             })
-            .collect()
+            .collect::<Result<_, _>>()
+            .map(|types| InstanceSubstitution {
+                types,
+                packs: HashMap::new(),
+            })
     }
 
     /// A template's facts for one instance: every retained type substituted,
@@ -859,108 +954,24 @@ impl Checker {
     /// the call to that clone — the clone's own declared parameters. The
     /// callee's effect summaries must still be empty, as the template saw
     /// them. An `Err` is a refusal, never a verdict on the program.
+    ///
+    /// `indices` fixes, per occurrence, the loop index a pack element was
+    /// copied for: a type keyed by that occurrence substitutes under it, so
+    /// the dependent `Ts[i]` folds to the copy's own element.
     fn realize_instance_facts(
         &self,
         template: &CheckedBodyFacts,
-        substitution: &TySubst,
+        instance: &InstanceSubstitution,
+        indices: &ElementIndices,
         occurrences: &[Occurrence],
     ) -> Result<CheckedBodyFacts, &'static str> {
-        let substitute = |ty: &Ty| mojito_types::types::substitute(ty, substitution);
-        let typed = |entries: &[(OccurrenceId, Ty)]| -> Vec<(OccurrenceId, Ty)> {
-            entries
-                .iter()
-                .map(|(id, ty)| (*id, substitute(ty)))
-                .collect()
-        };
-        let substituted_reference = |(id, reference): &(OccurrenceId, TemplateReference)| {
-            (
-                *id,
-                TemplateReference {
-                    referent: substitute(&reference.referent),
-                    ..reference.clone()
-                },
-            )
-        };
-        let mut facts = CheckedBodyFacts {
-            operation_adjustments: template
-                .operation_adjustments
-                .iter()
-                .map(|(id, adjustment)| {
-                    mojito_checked::templates::derive_adjustment(adjustment, &substitute)
-                        .map(|derived| (*id, derived))
-                })
-                .collect::<Option<_>>()
-                .ok_or("an operation adjustment has no derivation recipe")?,
-            expression_types: typed(&template.expression_types),
-            expression_place_types: typed(&template.expression_place_types),
-            binding_types: typed(&template.binding_types),
-            expression_effects: template
-                .expression_effects
-                .iter()
-                .map(|(id, effects)| {
-                    (
-                        *id,
-                        mojito_checked::checked::EffectFacts {
-                            raises: effects.raises.as_ref().map(&substitute),
-                            ..effects.clone()
-                        },
-                    )
-                })
-                .collect(),
-            generic_instantiations: template
-                .generic_instantiations
-                .iter()
-                .map(|(id, instantiation)| {
-                    (
-                        *id,
-                        mojito_checked::checked::GenericInstantiation {
-                            arguments: mojito_types::types::map_tyargs(
-                                &instantiation.arguments,
-                                &substitute,
-                            ),
-                            ..instantiation.clone()
-                        },
-                    )
-                })
-                .collect(),
-            rebind_assertions: template
-                .rebind_assertions
-                .iter()
-                .map(|(id, assertion)| {
-                    (
-                        *id,
-                        mojito_checked::templates::RebindAssertion {
-                            operand: substitute(&assertion.operand),
-                            dest: substitute(&assertion.dest),
-                            by_value: assertion.by_value,
-                        },
-                    )
-                })
-                .collect(),
-            reference_results: template
-                .reference_results
-                .iter()
-                .map(substituted_reference)
-                .collect(),
-            augmented_subscripts: substituted_element_stores(
-                &template.augmented_subscripts,
-                &substitute,
-            ),
-            reference_binding_types: template
-                .reference_binding_types
-                .iter()
-                .map(substituted_reference)
-                .collect(),
-            reference_place_types: template
-                .reference_place_types
-                .iter()
-                .map(substituted_reference)
-                .collect(),
-            // A value-position read is under the same name in the instance;
-            // every call's read is under the callee realized for it.
-            effect_free_callees: template.value_callees.clone(),
-            ..template.clone()
-        };
+        let InstanceSubstitution {
+            types: substitution,
+            packs,
+        } = instance;
+        let substitute =
+            |ty: &Ty| mojito_types::types::substitute_packs(ty, substitution, packs, &[]);
+        let mut facts = substituted_facts(template, instance, indices)?;
         // A per-call request the template recorded names the caller's own
         // binders; an instance that closed it would retarget the call in the
         // clone check, which no recipe repeats.
@@ -1151,6 +1162,10 @@ impl Checker {
             self.realize_repr_call(&facts, *call, occurrences)?;
         }
         facts.repr_calls.clear();
+        for call in &template.print_calls {
+            self.realize_print_call(&facts, *call, occurrences)?;
+        }
+        facts.print_calls.clear();
         // A conversion is selected last: its source type is one the call and
         // construction recipes may have realized.
         for index in 0..facts.conversions.len() {
@@ -1586,6 +1601,36 @@ impl Checker {
         }
     }
 
+    /// [`TemplateObligation::PrintableArguments`] for one `print` call: each
+    /// argument must still be printable at the instance's type, the demand
+    /// the builtin makes of it. The call selects no callee and records at an
+    /// argument only what its syntax decides.
+    fn realize_print_call(
+        &self,
+        facts: &CheckedBodyFacts,
+        id: OccurrenceId,
+        occurrences: &[Occurrence],
+    ) -> Result<(), &'static str> {
+        let arguments = occurrences
+            .iter()
+            .find(|occurrence| occurrence.id == id)
+            .map(|occurrence| occurrence.arguments.as_slice())
+            .ok_or("a print call has no occurrence in the instance")?;
+        arguments.iter().try_for_each(|syntax| {
+            let argument = OccurrenceId {
+                syntax: *syntax,
+                copy: id.copy,
+            };
+            let ty = fact_at(&facts.expression_types, argument)
+                .ok_or("a print call's argument has no retained type")?;
+            if self.printable_argument(ty) {
+                Ok(())
+            } else {
+                Err("a print call's argument is not Writable for the instance")
+            }
+        })
+    }
+
     /// Realize one implicit conversion for an instance, as
     /// `record_selected_conversion` installs it on the substituted types.
     ///
@@ -1738,6 +1783,7 @@ impl Checker {
                         facts.constructions = notes.constructions;
                         facts.callable_calls = notes.callable_calls;
                         facts.repr_calls = notes.repr_calls;
+                        facts.print_calls = notes.print_calls;
                         (facts, coverage)
                     }
                     Err(reason) => (
@@ -1761,10 +1807,7 @@ impl Checker {
     ) -> (TemplateCoverage, GrammarNotes) {
         let (decls, ret_ty) = (site.decls, site.ret_ty);
         match site.declaration {
-            BodyDeclaration::Def(stmt) => (
-                self.template_certificate(stmt, decls, ret_ty, facts),
-                GrammarNotes::default(),
-            ),
+            BodyDeclaration::Def(stmt) => self.template_certificate(stmt, decls, ret_ty, facts),
             BodyDeclaration::Method(method) => {
                 self.method_certificate(method, decls, ret_ty, facts)
             }
@@ -1871,9 +1914,13 @@ impl Checker {
         decls: &[ParamDecl],
         ret_ty: &Ty,
         facts: Option<&CheckedBodyFacts>,
-    ) -> TemplateCoverage {
-        let outside =
-            |what| TemplateCoverage::Incomplete(IncompleteReason::OutsideEnabledClass(what));
+    ) -> (TemplateCoverage, GrammarNotes) {
+        let outside = |what| {
+            (
+                TemplateCoverage::Incomplete(IncompleteReason::OutsideEnabledClass(what)),
+                GrammarNotes::default(),
+            )
+        };
         let StmtKind::Def {
             type_params,
             params,
@@ -1887,17 +1934,30 @@ impl Checker {
         else {
             return outside("not a function");
         };
+        // A type pack is fixed per instance as a type binder is: the
+        // elaborator writes its elements into the clone's signature, and an
+        // element the body reads by loop index is fixed by the unrolling
+        // (`TemplateClass::PackElements`).
+        let pack_binders: Vec<&str> = decls
+            .iter()
+            .filter_map(|decl| match decl {
+                ParamDecl::Type {
+                    name,
+                    variadic: true,
+                    ..
+                } => Some(name.trim_start_matches('*')),
+                ParamDecl::Type { .. } | ParamDecl::Value { .. } => None,
+            })
+            .collect();
         let plain_binders = type_params.iter().all(|parameter| {
             parameter.callable_bound.is_none()
                 && parameter.default.is_none()
                 && parameter.origin_mutability.is_none()
-                && !parameter.name.starts_with('*')
         }) && decls.iter().all(|decl| match decl {
             // A binder's constraints are the declaration's `where` clauses:
             // the requesting call and the elaborator discharge them before an
             // instance exists (`TemplateObligation::DeclarationConstraints`).
             ParamDecl::Type {
-                variadic: false,
                 callable_bound: None,
                 ..
             } => true,
@@ -1922,15 +1982,25 @@ impl Checker {
         // executable check the surviving ones.
         let keyed = self.source_validation;
         if !keyed
-            && (decls
-                .iter()
-                .any(|decl| matches!(decl, ParamDecl::Value { .. }))
+            && (!pack_binders.is_empty()
+                || decls
+                    .iter()
+                    .any(|decl| matches!(decl, ParamDecl::Value { .. }))
                 || body.iter().any(holds_comptime_if))
         {
             return outside("a compile-time-keyed body is source validation's to certify");
         }
+        // A variadic parameter is admitted only as the collector of one of
+        // the declaration's own packs, which an instance binds as the tuple
+        // of the elements written in its signature.
+        let pack_collector = |parameter: &mojito_ast::ast::FnParam| {
+            parameter.kind == mojito_ast::ast::ParamKind::Variadic
+                && matches!(&parameter.ty, mojito_ast::ast::Type::Named(name, arguments)
+                    if arguments.is_empty()
+                        && pack_binders.contains(&name.trim_start_matches('*')))
+        };
         let plain_params = params.iter().all(|parameter| {
-            parameter.kind == mojito_ast::ast::ParamKind::Regular
+            (parameter.kind == mojito_ast::ast::ParamKind::Regular || pack_collector(parameter))
                 && parameter.convention.is_none()
                 && parameter.default.is_none()
                 && parameter.origin.is_none()
@@ -1941,9 +2011,16 @@ impl Checker {
         if *raises || raises_type.is_some() || captures.is_some() || !decorators.is_empty() {
             return outside("the declaration raises, captures, or is decorated");
         }
-        if !closed_scalar(ret_ty) {
+        // A body returning nothing falls off its end: the grammar admits no
+        // value `return` for it, and a bare `return` only in a runtime body.
+        if !closed_scalar(ret_ty) && *ret_ty != Ty::None {
             return outside("the return type is not a concrete scalar");
         }
+        let packs: Vec<&str> = params
+            .iter()
+            .filter(|parameter| pack_collector(parameter))
+            .map(|parameter| parameter.name.as_str())
+            .collect();
         let shape = BodyShape {
             origins: &self.syntax_origins,
             facts,
@@ -1952,6 +2029,9 @@ impl Checker {
                 .iter()
                 .map(|parameter| parameter.name.as_str())
                 .collect(),
+            packs,
+            loop_vars: RefCell::new(Vec::new()),
+            print_calls: RefCell::new(Vec::new()),
             borrowed_params: Vec::new(),
             mut_params: Vec::new(),
             keyed,
@@ -1981,8 +2061,17 @@ impl Checker {
         {
             return outside("the body is not scalar returns over direct calls and 'len'");
         }
+        let class = |class| {
+            (
+                TemplateCoverage::Certified(class),
+                GrammarNotes {
+                    print_calls: shape.print_calls.borrow().clone(),
+                    ..GrammarNotes::default()
+                },
+            )
+        };
         let Some(facts) = facts else {
-            return TemplateCoverage::Certified(TemplateClass::ClosedScalarBody);
+            return class(TemplateClass::ClosedScalarBody);
         };
         if !shape.references_recorded(facts) {
             return outside("an expression yields or keeps a reference");
@@ -2005,9 +2094,12 @@ impl Checker {
             .iter()
             .all(|(_, adjustment)| adjustment_derives(adjustment));
         if !adjustments_derive {
-            return TemplateCoverage::Incomplete(IncompleteReason::UnsupportedTable(
-                FactTable::OperationAdjustments,
-            ));
+            return (
+                TemplateCoverage::Incomplete(IncompleteReason::UnsupportedTable(
+                    FactTable::OperationAdjustments,
+                )),
+                GrammarNotes::default(),
+            );
         }
         // Every call selected a module-scope declaration, every effect
         // summary read belongs to one of those calls, and no application
@@ -2045,7 +2137,9 @@ impl Checker {
             .chain(&facts.expression_place_types)
             .chain(&facts.binding_types)
             .all(|(_, ty)| !mojito_types::types::is_symbolic(ty));
-        TemplateCoverage::Certified(if keyed {
+        class(if !shape.packs.is_empty() {
+            TemplateClass::PackElements
+        } else if keyed {
             TemplateClass::ScalarBranches
         } else if !facts.builtin_len_calls.is_empty() {
             TemplateClass::BoundedOperations
@@ -2314,6 +2408,9 @@ impl Checker {
                 .map(|parameter| parameter.name.as_str())
                 .collect(),
             callable_calls: RefCell::new(Vec::new()),
+            packs: Vec::new(),
+            loop_vars: RefCell::new(Vec::new()),
+            print_calls: RefCell::new(Vec::new()),
             borrowed_params: params_passed(&[ArgConvention::Mut, ArgConvention::Ref]),
             mut_params: params_passed(&[ArgConvention::Mut]),
             keyed: false,
@@ -2374,6 +2471,7 @@ impl Checker {
                     constructions: shape.constructions.borrow().clone(),
                     callable_calls: shape.callable_calls.borrow().clone(),
                     repr_calls: shape.repr_calls.borrow().clone(),
+                    print_calls: Vec::new(),
                 },
             )
         };
@@ -2692,6 +2790,8 @@ impl Checker {
                     method_call: None,
                     comparison: None,
                     transfer: false,
+                    literal: false,
+                    folded_index: None,
                 });
             }
 
@@ -2745,6 +2845,14 @@ impl Checker {
                         _ => None,
                     },
                     transfer: matches!(expr.kind, ExprKind::Transfer(_)),
+                    literal: matches!(expr.kind, ExprKind::Int(_)),
+                    folded_index: match &expr.kind {
+                        ExprKind::Index { index, .. } => match &index.kind {
+                            ExprKind::Int(value) => value.to_i64(),
+                            _ => None,
+                        },
+                        _ => None,
+                    },
                 });
             }
         }
@@ -3061,6 +3169,7 @@ impl Checker {
             constructions: Vec::new(),
             callable_calls: Vec::new(),
             repr_calls: Vec::new(),
+            print_calls: Vec::new(),
             method_instantiations: values(&occurrences, &self.method_instantiations.borrow()),
             locals: owner_end - baseline.owner_start,
             occurrences: occurrences
@@ -4588,6 +4697,122 @@ struct ReferenceStores {
     stores: Vec<(OccurrenceId, TemplateAugmentedSubscript)>,
 }
 
+/// The template's facts with every retained type substituted for an
+/// instance, before any call is realized: an adjustment through its recipe,
+/// a type keyed by a pack-element occurrence under that copy's loop index,
+/// every other type under the instance's arguments alone.
+fn substituted_facts(
+    template: &CheckedBodyFacts,
+    InstanceSubstitution {
+        types: substitution,
+        packs,
+    }: &InstanceSubstitution,
+    indices: &ElementIndices,
+) -> Result<CheckedBodyFacts, &'static str> {
+    let substitute = |ty: &Ty| mojito_types::types::substitute_packs(ty, substitution, packs, &[]);
+    let typed = |entries: &[(OccurrenceId, Ty)]| -> Vec<(OccurrenceId, Ty)> {
+        entries
+            .iter()
+            .map(|(id, ty)| {
+                let values: Vec<_> = indices.get(id).cloned().into_iter().collect();
+                (
+                    *id,
+                    mojito_types::types::substitute_packs(ty, substitution, packs, &values),
+                )
+            })
+            .collect()
+    };
+    let substituted_reference = |(id, reference): &(OccurrenceId, TemplateReference)| {
+        (
+            *id,
+            TemplateReference {
+                referent: substitute(&reference.referent),
+                ..reference.clone()
+            },
+        )
+    };
+    Ok(CheckedBodyFacts {
+        operation_adjustments: template
+            .operation_adjustments
+            .iter()
+            .map(|(id, adjustment)| {
+                mojito_checked::templates::derive_adjustment(adjustment, &substitute)
+                    .map(|derived| (*id, derived))
+            })
+            .collect::<Option<_>>()
+            .ok_or("an operation adjustment has no derivation recipe")?,
+        expression_types: typed(&template.expression_types),
+        expression_place_types: typed(&template.expression_place_types),
+        binding_types: typed(&template.binding_types),
+        expression_effects: template
+            .expression_effects
+            .iter()
+            .map(|(id, effects)| {
+                (
+                    *id,
+                    mojito_checked::checked::EffectFacts {
+                        raises: effects.raises.as_ref().map(&substitute),
+                        ..effects.clone()
+                    },
+                )
+            })
+            .collect(),
+        generic_instantiations: template
+            .generic_instantiations
+            .iter()
+            .map(|(id, instantiation)| {
+                (
+                    *id,
+                    mojito_checked::checked::GenericInstantiation {
+                        arguments: mojito_types::types::map_tyargs(
+                            &instantiation.arguments,
+                            &substitute,
+                        ),
+                        ..instantiation.clone()
+                    },
+                )
+            })
+            .collect(),
+        rebind_assertions: template
+            .rebind_assertions
+            .iter()
+            .map(|(id, assertion)| {
+                (
+                    *id,
+                    mojito_checked::templates::RebindAssertion {
+                        operand: substitute(&assertion.operand),
+                        dest: substitute(&assertion.dest),
+                        by_value: assertion.by_value,
+                    },
+                )
+            })
+            .collect(),
+        reference_results: template
+            .reference_results
+            .iter()
+            .map(substituted_reference)
+            .collect(),
+        augmented_subscripts: substituted_element_stores(
+            &template.augmented_subscripts,
+            &substitute,
+        ),
+        reference_binding_types: template
+            .reference_binding_types
+            .iter()
+            .map(substituted_reference)
+            .collect(),
+        reference_place_types: template
+            .reference_place_types
+            .iter()
+            .map(substituted_reference)
+            .collect(),
+        // A value-position read is under the same name in the instance;
+        // every call's read is under the callee realized for it.
+        effect_free_callees: template.value_callees.clone(),
+        ..template.clone()
+    })
+}
+
 /// The element stores of an instance: the template's, their types
 /// substituted.
 fn substituted_element_stores(
@@ -4714,6 +4939,14 @@ struct BodyShape<'a> {
     /// The `repr(value)` calls admitted, whose argument an instance proves
     /// `Writable` at its own type.
     repr_calls: RefCell<Vec<OccurrenceId>>,
+    /// The variadic parameters collecting a type pack of the declaration's
+    /// own, whose elements the body may read by loop index.
+    packs: Vec<&'a str>,
+    /// The `comptime for` variables in scope, innermost last.
+    loop_vars: RefCell<Vec<String>>,
+    /// The `print(...)` calls admitted, whose arguments an instance proves
+    /// `Writable` at its own types.
+    print_calls: RefCell<Vec<OccurrenceId>>,
 }
 
 /// What a local of a certified body is.
@@ -4753,7 +4986,12 @@ impl BodyShape<'_> {
             // would need one binding per copy, which no recipe mints yet, and
             // the loop variable folds to a literal wherever it survives, so
             // neither is admitted: the variable may only key a condition.
-            StmtKind::ComptimeFor { body, .. } if self.keyed => self.block(body, true),
+            StmtKind::ComptimeFor { var, body, .. } if self.keyed => {
+                self.loop_vars.borrow_mut().push(var.clone());
+                let admitted = self.block(body, true);
+                self.loop_vars.borrow_mut().pop();
+                admitted
+            }
             StmtKind::VarDecl { name, value, .. } if self.keyed && !in_loop => {
                 let scalar = self.expression(value) && self.scalar(value);
                 self.locals
@@ -4824,6 +5062,7 @@ impl BodyShape<'_> {
                     && self.closed(value);
                 call || (self.moved_result.is_some() && self.pointer_statement(value))
                     || (!self.keyed && self.abort(value))
+                    || (self.keyed && self.print_call(value))
             }
             StmtKind::Assign { name, value } if name == "_" => {
                 self.expression(value) && self.scalar(value)
@@ -5786,6 +6025,83 @@ impl BodyShape<'_> {
             }
         }
         admitted && self.holds(MethodFeatures::STRING_BUILTINS)
+    }
+
+    /// `print(...)` as a statement of a keyed body: a checker builtin that
+    /// selects no callee, over closed scalars and pack elements.
+    ///
+    /// What the builtin records at an argument its syntax decides (an
+    /// unconsumed temporary, a literal's materialization); what it proves,
+    /// that the argument is `Writable`, the instance proves again at its own
+    /// type ([`Checker::realize_print_call`]). A declaration of that name
+    /// would record call parameters and a binding, and is not this.
+    fn print_call(&self, expr: &Expr) -> bool {
+        let ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } = &expr.kind
+        else {
+            return false;
+        };
+        let id = self.occurrence(expr);
+        let declared = self.facts.is_some_and(|facts| {
+            fact_at(&facts.call_parameters, id).is_some()
+                || fact_at(&facts.expression_bindings, id).is_some()
+        });
+        let admitted = name == "print"
+            && !declared
+            && param_args.is_empty()
+            && kwargs.is_empty()
+            && args.iter().all(|argument| {
+                (self.expression(argument) && self.scalar(argument)) || self.pack_element(argument)
+            });
+        if admitted {
+            let mut calls = self.print_calls.borrow_mut();
+            if !calls.contains(&id) {
+                calls.push(id);
+            }
+        }
+        admitted
+    }
+
+    /// `pack[i]`: an element of a pack-typed parameter at the innermost
+    /// `comptime for` variable.
+    ///
+    /// The template typed the element once, as the dependent `Ts[i]` over
+    /// the loop's own binder, and recorded nothing else there: no place, no
+    /// adjustment, no borrow. The elaborator folds `i` to the iteration's
+    /// literal in each unrolled copy, which the instance reads back to fix
+    /// the element ([`Checker::realize_instance_facts`]).
+    fn pack_element(&self, expr: &Expr) -> bool {
+        let ExprKind::Index { object, index } = &expr.kind else {
+            return false;
+        };
+        let named = matches!(&object.kind, ExprKind::Identifier(name)
+                if self.packs.contains(&name.as_str()))
+            && matches!(&index.kind, ExprKind::Identifier(name)
+                if self.loop_vars.borrow().last() == Some(name));
+        named
+            && self.facts.is_none_or(|facts| {
+                let id = self.occurrence(expr);
+                let ty = fact_at(&facts.expression_types, id);
+                let element = matches!(
+                    ty,
+                    Some(Ty::Dependent(dependent))
+                        if dependent.pack_element().is_some_and(|(_, index)| {
+                            matches!(index.kind(), mojito_types::param_expr::ParamKind::DeclRef(_))
+                        })
+                );
+                // The element is a place of the collector, read where it
+                // lies.
+                element
+                    && fact_at(&facts.expression_place_types, id)
+                        .is_none_or(|place| Some(place) == ty)
+                    && fact_at(&facts.operation_adjustments, id).is_none()
+                    && !facts.call_place_uses.contains(&id)
+                    && !facts.borrowed_read_call_places.contains(&id)
+            })
     }
 
     /// A method call on a place whose type is a bare struct parameter, which

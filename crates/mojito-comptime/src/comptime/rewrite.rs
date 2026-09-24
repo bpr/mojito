@@ -130,7 +130,12 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
                     && let Some(ty) = source_type_from_ty(ty)
                 {
                     e.kind = ExprKind::TypeValue(ty);
-                } else if let Some(materialized) = value.materialize(e.span) {
+                } else if let Some(mut materialized) = value.materialize(e.span) {
+                    // A folded loop variable keeps the identifier's identity:
+                    // that is the occurrence-level trace a checked template's
+                    // instances are matched by, as `rebuilt` keeps a
+                    // statement's.
+                    materialized.syntax_id = e.syntax_id;
                     *e = materialized;
                 }
             }

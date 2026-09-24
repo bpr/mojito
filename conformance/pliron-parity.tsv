@@ -595,6 +595,7 @@ assets/ok/template_method_value_argument.mojo	main	exe-differential	sanitized
 assets/ok/template_method_vanishing_transfer.mojo	main	exe-differential	sanitized
 assets/ok/template_overload_binding.mojo	main	exe-differential	sanitized
 assets/ok/template_overload_binding_local.mojo	main	exe-differential	sanitized
+assets/ok/template_pack_elements.mojo	main	exe-differential	sanitized
 assets/ok/template_scalar_loop.mojo	main	exe-differential	sanitized
 assets/ok/template_two_arms.mojo	main	exe-differential	sanitized
 assets/ok/template_two_types.mojo	main	exe-differential	sanitized

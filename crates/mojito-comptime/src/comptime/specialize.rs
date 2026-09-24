@@ -1195,6 +1195,8 @@ impl Elab<'_> {
         mojito_ast::ast::stamp_source(std::slice::from_mut(&mut specialization), &tag);
         let mut type_bindings: Vec<_> = type_substitutions.into_iter().collect();
         type_bindings.sort_by(|left, right| left.0.cmp(&right.0));
+        let mut pack_bindings: Vec<_> = type_pack_expansions.into_iter().collect();
+        pack_bindings.sort_by(|left, right| left.0.cmp(&right.0));
         self.generated.borrow_mut().defs.push(output_name.clone());
         self.def_traces.borrow_mut().push(super::DefInstanceTrace {
             clone_module: tag,
@@ -1214,7 +1216,7 @@ impl Elab<'_> {
                         .map(|value| (name.to_string(), value.clone()))
                 })
                 .collect(),
-            pack_bindings: type_pack_expansions.into_keys().collect(),
+            pack_bindings,
             residual: residual_names,
         });
         Ok(specialization)

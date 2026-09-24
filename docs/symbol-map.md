@@ -370,13 +370,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `OccurrenceId`, `TemplateObligation`, `MethodFeatures`, the template-local
   `TemplateCallContract` with `closed_method_contract`, and the exhaustive
   `derive_adjustment`) is `crates/mojito-checked/src/templates.rs`. The
-  declaration-level trace is `comptime.rs`'s `DefInstanceTrace`, recorded by
-  `specialize.rs:generate_def_spec`, and `MethodInstanceTrace`, recorded by
-  `generate_instance_clones`; `GeneratedDeclarations` lists what an
-  elaboration generated; the occurrence-level trace is
-  `ast.rs:rekey_syntax`'s `SyntaxOrigins` plus `comptime.rs:rebuilt`.
-  `compiler.rs:instance_traces` carries one to the other. The design record
-  is `docs/notes/instantiation-from-template.md`.
+  declaration-level trace is `comptime.rs`'s `DefInstanceTrace` (type,
+  value, and pack bindings), recorded by `specialize.rs:generate_def_spec`,
+  and `MethodInstanceTrace`, recorded by `generate_instance_clones`;
+  `GeneratedDeclarations` lists what an elaboration generated; the
+  occurrence-level trace is `ast.rs:rekey_syntax`'s `SyntaxOrigins` plus
+  `comptime.rs:rebuilt` and the identity a folded `comptime for` variable
+  keeps (`rewrite.rs:rewrite_expr`). `compiler.rs:instance_traces` carries
+  one to the other. A pack-keyed instance (`TemplateClass::PackElements`)
+  substitutes per copy through `mojito-types`' `types.rs:substitute_packs`.
+  The design record is `docs/notes/instantiation-from-template.md`.
 - `checked.rs`'s `DiscoveryResult` is what a discovery round's check returns
   (`checker.rs:check_program_for_discovery`): `CheckedProgram::new`'s inputs,
   owned, with `scan_expressions` for the request collectors and `finalize`

@@ -700,8 +700,9 @@ pub struct DefInstanceTrace {
     pub type_bindings: Vec<(String, Type)>,
     /// Value parameters folded into the clone as literals.
     pub value_bindings: Vec<(String, CtValue)>,
-    /// Type packs expanded into the clone's signature.
-    pub pack_bindings: Vec<String>,
+    /// Type packs expanded into the clone's signature, each with the source
+    /// element types written there, in name order.
+    pub pack_bindings: Vec<(String, Vec<Type>)>,
     /// Parameters the clone still declares.
     pub residual: Vec<String>,
 }

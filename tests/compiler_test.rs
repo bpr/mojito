@@ -1350,6 +1350,46 @@ fn template_loop_instances_remap_owners() {
 }
 
 #[test]
+fn template_pack_instances_derive() {
+    // A pack-keyed template is checked once at the dependent element `Ts[i]`;
+    // each instance takes every unrolled copy at the element the folded index
+    // fixed, and the derived facts agree with the clone's own check.
+    let source = "def show[*Ts: Writable](*values: *Ts):\n    comptime for i in range(values.__len__()):\n        print(values[i])\n\ndef main():\n    show(1, \"two\", 3.5)\n    show(True)\n    show()\n";
+    let expected = "1\ntwo\n3.5\nTrue\n";
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compiler.compile_unlinked(source).expect("compile");
+        let stats = program.template_stats();
+        assert_eq!(certified_count(stats, "show"), 1, "one template inference");
+        // A verifying run infers each derived body as well and files it
+        // under `verified` once the two bundles agree.
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        let derived: std::collections::HashSet<&str> = served
+            .iter()
+            .map(String::as_str)
+            .filter(|name| name.starts_with("show$"))
+            .collect();
+        assert_eq!(derived.len(), 3, "every instance derives: {stats:?}");
+        assert!(
+            verify
+                || stats
+                    .inferred_clones
+                    .iter()
+                    .all(|name| !name.starts_with("show$")),
+            "no clone of the certified template is inferred: {stats:?}"
+        );
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            expected
+        );
+    }
+}
+
+#[test]
 fn discovery_scan_matches_the_checked_arena() {
     // Request discovery reads a `DiscoveryResult` instead of the assembled
     // arena. Every request kind is a function of the expressions visited,

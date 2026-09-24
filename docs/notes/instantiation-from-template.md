@@ -162,9 +162,10 @@ symbol.
 
 - **Declaration level.** `generate_def_spec` records a `DefInstanceTrace` per
   clone: the prepared declaration it instantiates, the source type written for
-  each baked type parameter, each folded value parameter, and the parameters
-  the clone still declares. The driver converts these to `InstanceTrace` and
-  hands them to the catalog before each check.
+  each baked type parameter, each folded value parameter, the source element
+  types written for each baked type pack, and the parameters the clone still
+  declares. The driver converts these to `InstanceTrace` and hands them to
+  the catalog before each check.
 - **Declaration level, methods.** A per-instantiation clone is appended to its
   template struct's own method list (`get$y3:Int` on `Box`, with
   `Method::self_ty = Some(Box[Int])`). `generate_instance_clones` records a
@@ -194,7 +195,13 @@ per copy.
 
 An instance occurrence with no template occurrence behind it refuses the
 derivation. A folded value parameter is such a case today: the elaborator
-writes a fresh literal where the identifier stood.
+writes a fresh literal where the identifier stood. A folded `comptime for`
+variable is not: the literal keeps the identifier's identity, takes a
+literal's facts (its own type, nothing else) rather than the variable's, and
+where it indexes a pack it says which element the copy is — the template's
+`Ts[i]` at that occurrence is replaced under `i` bound to the literal and the
+pack bound to its element list (`substitute_packs`), and folds to the
+element.
 
 ## Certificate classes
 
@@ -212,6 +219,7 @@ bound. `BodyShape` is the grammar; `template_certificate` is the argument.
 | `BoundedOperations` | plus the built-in `len` over a parameter whose bound promises a length | The bound proved the call. The instance owes the witness, which `len_result_for_type` finds, and takes the read-in-place fact `infer_len` adds for a nominal struct. |
 | `MethodScalarBody` | a method with a plain read `self` and no binders of its own, on a struct of plain type parameters: `return`s over closed scalars, parameters, reads of `self`'s scalar fields, the built-in `len` over a field, and argument-free method calls on `self` or a field with a trivial contract | A field read has the field's declared type under the struct's arguments in a template and a clone alike. The generated-declaration leniency a clone's name switches on bears on origin-bearing return annotations only, and the result is a scalar. A trivial call can change per instance only in its target. |
 | `ScalarBranches` | source-validated bodies: `comptime if` arms, scalar `comptime for` loops, scalar locals and assignments, erased `rebind`s | Every arm was checked once. The instance keeps the occurrences the elaborator selected. |
+| `PackElements` | a source-validated body keyed on a type pack (`*Ts`), collected by one variadic parameter: `comptime for` over the pack's indices, each element read as `pack[i]` into a `print` statement, beside what `ScalarBranches` admits; the result may be `None` | The element was checked once at the dependent `Ts[i]` through the pack's bound, and recorded as a place read where it lies. Each unrolled copy carries the folded index, so the instance fixes the element per copy; `print` selects no callee and records at an argument only what its syntax decides, and the instance proves the fixed element `Writable` again (obligation 21). A pack forwarded whole, a loop variable used anywhere but as the index, and a local inside the loop stay out. |
 | `MethodBody(features)` | a method beyond `MethodScalarBody`; see below | One argument per feature. |
 
 A body source validation did not produce (every class but `ScalarBranches`)
@@ -708,10 +716,13 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
   callee. `Dict.__hash__` constructs its `H2()` (`ConstructTypeParam`) and
   `Optional.__hash__` a `UInt8` tag (`SimdConstructions`), so both keep the
   clone check for those reasons.
-- A folded value parameter or loop variable that survives into an instance.
+- A folded value parameter, or a loop variable surviving into an instance
+  anywhere but as a pack element's index.
 - A local declared inside a `comptime for`.
-- Packs, `DType` and vector parameters, reflection, struct-valued parameters,
-  and anything a validation run that ended without a verdict reached.
+- A pack forwarded whole (`print(*a)`), a pack-keyed struct's methods (a
+  validated method has no class, and a whole-struct clone leaves no trace),
+  `DType` and vector parameters, reflection, struct-valued parameters, and
+  anything a validation run that ended without a verdict reached.
 
 The persistent elaboration session and the expansion worklist (plan slices 8a
 and 8b) did not land. Measurement says why: the elaborator's per-round

@@ -836,7 +836,9 @@ fixpoint. Each round's check stops at a `DiscoveryResult` (Stage 3): the
 requests below are read from it, every round but the converged one is
 discarded without its checked arena being built, and a clone the round's
 `DefInstanceTrace`s tie to a certified template takes its facts from the
-compilation's `TemplateCatalog` rather than being inferred.
+compilation's `TemplateCatalog` rather than being inferred; a pack-keyed
+clone's trace carries the pack's element types, and each unrolled copy of
+its body fixes its element from the loop index the elaborator folded there.
 `Compiler::compile_linked` iterates elaborate→check, deriving
 `DefSpecializationRequest`s from the checker's recorded generic
 instantiations (a bound, pack, compile-time, or `DType`-keyed `def`; a scalar

@@ -627,30 +627,28 @@ fn instance_traces(
     crate::templates::InstanceTrace,
 )> {
     use crate::templates::{InstanceName, InstanceTrace, TemplateId};
-    let defs = defs
-        .into_iter()
-        .filter(|trace| trace.pack_bindings.is_empty())
-        .map(|trace| {
-            (
-                InstanceName {
-                    module: Some(trace.clone_module),
+    let defs = defs.into_iter().map(|trace| {
+        (
+            InstanceName {
+                module: Some(trace.clone_module),
+                owner: None,
+                name: trace.clone_name,
+                body: None,
+            },
+            InstanceTrace {
+                template: TemplateId {
+                    module: trace.template_module,
                     owner: None,
-                    name: trace.clone_name,
-                    body: None,
+                    name: trace.template_name,
+                    declaration: trace.template_span,
                 },
-                InstanceTrace {
-                    template: TemplateId {
-                        module: trace.template_module,
-                        owner: None,
-                        name: trace.template_name,
-                        declaration: trace.template_span,
-                    },
-                    type_bindings: trace.type_bindings,
-                    value_bindings: trace.value_bindings,
-                    residual: trace.residual,
-                },
-            )
-        });
+                type_bindings: trace.type_bindings,
+                value_bindings: trace.value_bindings,
+                pack_bindings: trace.pack_bindings,
+                residual: trace.residual,
+            },
+        )
+    });
     let methods = methods.into_iter().map(|trace| {
         (
             InstanceName {
@@ -668,6 +666,7 @@ fn instance_traces(
                 },
                 type_bindings: trace.type_bindings,
                 value_bindings: Vec::new(),
+                pack_bindings: Vec::new(),
                 residual: Vec::new(),
             },
         )
