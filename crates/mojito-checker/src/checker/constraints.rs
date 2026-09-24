@@ -414,9 +414,9 @@ impl Checker {
                 .map(|e| self.eval_associated_ct(e, associated))
                 .collect::<Result<Vec<_>, _>>()
                 .map(CtValue::List),
-            _ => Err(TypeError::NotComptime(
-                "not an associated comptime expression".to_string(),
-            )),
+            _ => self.eval_reflection_expr(expr)?.ok_or_else(|| {
+                TypeError::NotComptime("not an associated comptime expression".to_string())
+            }),
         }
     }
 
@@ -671,9 +671,15 @@ impl Checker {
                     &self.compile_dependent_ct_expr(right)?,
                 )
                 .map_err(param_error),
-            _ => Err(TypeError::Unsupported(
-                "unsupported dependent parameter expression".to_string(),
-            )),
+            // `reflect[T].field_count()`: a constant for a struct subject, a
+            // query node for a symbolic one.
+            _ => match self.eval_reflection_expr(expr)? {
+                Some(CtValue::Expr(query)) => Ok(context.intern(&query)),
+                Some(value) => constant(value),
+                None => Err(TypeError::Unsupported(
+                    "unsupported dependent parameter expression".to_string(),
+                )),
+            },
         }
     }
 

@@ -405,6 +405,13 @@ ordinary bundled structs. The figures below replace it.
   `generic.mojo` (274 to 310). No interleaved pair was taken; three plain
   runs after read 18.18 to 18.47 s and 11.83 to 12.17 s, in a session whose
   drift is larger than the change, so no wall-time claim is made.
+- Whole-value element stores and stores through a mutable-reference getter
+  (2026-09-23) move neither count: `stdlib_heavy.mojo` reads 1096 derived
+  before and after, `generic.mojo` 340. No bundled body holds `x[i] += …`,
+  `Dict._append_new` is kept out by three other constructs, and `Set.insert`,
+  the one bundled body the store alone kept out, is not instantiated by
+  either benchmark. The shapes derive in user structs
+  (`template_method_subscript_store.mojo`).
 
 ### Parameter-expression attributes (2026-09-20)
 

@@ -206,6 +206,10 @@ pub fn derive_adjustment(
                 ty,
             })
         }
+        // An augmented subscript embeds its getter's contract, whose boundary
+        // names one run's spans and bindings; the store through a mutable
+        // reference getter is kept apart (`augmented_subscripts`) and rebuilt
+        // from the realized call, and a store through a setter stays here.
         SemanticAdjustment::ResolveCallable(..)
         | SemanticAdjustment::ConstructTypeParam { .. }
         | SemanticAdjustment::ReifyTypeArgument { .. }
@@ -589,8 +593,10 @@ impl MethodFeatures {
     /// call's result or a `ref` local whose referent is a struct.
     pub const REFERENCE_RECEIVERS: Self = Self(1 << 7);
     /// A store through a subscript of a field of `self`: a scalar field of
-    /// the element a reference getter yields, or a scalar element a closed
-    /// setter takes.
+    /// the element a reference getter yields, an element a declared setter
+    /// takes (a scalar, or a whole value of the setter's own parameter type),
+    /// or a scalar element stored whole or augmented through the mutable
+    /// reference its getter yields.
     pub const SUBSCRIPT_STORES: Self = Self(1 << 8);
     /// A place handed to a `mut` or bare `ref` parameter of a method call: a
     /// local, a parameter, or a field of `self`.
@@ -731,6 +737,17 @@ pub struct TemplateReference {
     pub referent: Ty,
     pub origin: TemplateOrigin,
     pub mutability: mojito_types::origin::Mutability,
+}
+
+/// An element store through a subscript getter's reference, in
+/// template-local terms.
+///
+/// The getter is the selected call at the site, so only the element's
+/// operand and result types are kept.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplateAugmentedSubscript {
+    pub operand_ty: Ty,
+    pub result_ty: Ty,
 }
 
 /// A binding a retained fact names, in template-local terms: checker owner
@@ -943,6 +960,16 @@ pub struct CheckedBodyFacts {
     /// [`SemanticAdjustment::ReferenceResult`] entries of the adjustment
     /// table, kept apart because their origins name bindings.
     pub reference_results: Vec<(OccurrenceId, TemplateReference)>,
+    /// The element stores made through the mutable reference a subscript's
+    /// getter yields.
+    ///
+    /// `self.counts[i] += 1`, or `self.grid[i] = v` on a struct with no
+    /// setter: the [`SemanticAdjustment::AugmentedSubscript`] entries of the
+    /// adjustment table whose getter is the call recorded at the same site,
+    /// kept apart because the embedded contract's boundary names spans and
+    /// bindings of one run. An instance takes the getter it realized for the
+    /// site and substitutes the two types.
+    pub augmented_subscripts: Vec<(OccurrenceId, TemplateAugmentedSubscript)>,
     /// The interior generation a subscript's reference belongs to.
     pub interior_references: Vec<(OccurrenceId, TemplatePlace)>,
     /// The type of each `ref` binding, keyed by its declaration: a reference
@@ -1227,6 +1254,12 @@ impl CheckedBodyFacts {
         );
         differing(
             &mut out,
+            "augmented_subscripts",
+            &self.augmented_subscripts,
+            &other.augmented_subscripts,
+        );
+        differing(
+            &mut out,
             "interior_references",
             &self.interior_references,
             &other.interior_references,
@@ -1405,6 +1438,7 @@ impl CheckedBodyFacts {
             linear_bindings: flagged(&self.linear_bindings),
             linear_temporaries: flagged(&self.linear_temporaries),
             reference_results: at(&self.reference_results, occurrences),
+            augmented_subscripts: at(&self.augmented_subscripts, occurrences),
             interior_references: at(&self.interior_references, occurrences),
             reference_binding_types: at(&self.reference_binding_types, occurrences),
             reference_place_types: at(&self.reference_place_types, occurrences),
@@ -1471,6 +1505,7 @@ impl CheckedBodyFacts {
             + self.linear_bindings.len()
             + self.linear_temporaries.len()
             + self.reference_results.len()
+            + self.augmented_subscripts.len()
             + self.interior_references.len()
             + self.reference_binding_types.len()
             + self.reference_place_types.len()

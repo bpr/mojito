@@ -1664,6 +1664,107 @@ impl Checker {
     /// Record a generic constructor's resolved compile-time arguments for
     /// per-call specialization and, once its clone exists on the struct,
     /// retarget the construction to it (`Variant$…​.__init__$y3:Int`).
+    /// The pack a bare construction of a variadic struct (`Pair((1, True))`,
+    /// no `[...]` arguments on a struct keyed by exactly one type pack) must
+    /// infer from the constructor it selects; `None` for every other call.
+    /// The public `Tuple` is its own request kind and is left out.
+    fn inferred_construction_pack<'d>(
+        name: &str,
+        decls: &'d [ParamDecl],
+        param_args: &[mojito_ast::ast::ParamArg],
+    ) -> Option<&'d str> {
+        if !param_args.is_empty()
+            || name == mojito_types::types::TUPLE_TYPE_NAME
+            || name == mojito_types::types::TSTRING_TYPE_NAME
+        {
+            return None;
+        }
+        match decls {
+            [
+                ParamDecl::Type {
+                    name,
+                    variadic: true,
+                    ..
+                },
+            ] => Some(name.trim_start_matches('*')),
+            _ => None,
+        }
+    }
+
+    /// A bare construction of a variadic struct infers the pack only from a
+    /// constructor parameter that spells it — a spread (`Tuple[*Self.Ts]`) or
+    /// the `*args: *Self.Ts` collector. A constructor naming the pack nowhere
+    /// (`Variant.__init__[T](out self, var value: T)`) leaves it unknown; it
+    /// is not silently the empty pack.
+    fn reject_unconstrained_pack(
+        name: &str,
+        decls: &[ParamDecl],
+        param_args: &[mojito_ast::ast::ParamArg],
+        patterns: &[Ty],
+    ) -> Result<(), TypeError> {
+        let Some(pack) = Self::inferred_construction_pack(name, decls, param_args) else {
+            return Ok(());
+        };
+        let names_pack = |ty: &Ty| {
+            matches!(ty, Ty::Param { binder, .. }
+                if binder.name.starts_with('*') && binder.name.trim_start_matches('*') == pack)
+        };
+        if patterns
+            .iter()
+            .any(|pattern| mojito_types::types::mentions(pattern, &names_pack))
+        {
+            return Ok(());
+        }
+        Err(TypeError::CannotInferTypeParam {
+            name: name.to_string(),
+            param: pack.to_string(),
+        })
+    }
+
+    /// What a bare variadic-struct construction does once its pack is
+    /// solved. The pack is recorded keyed by the call occurrence: the
+    /// compiler's discovery loop replays a closed recording as the struct
+    /// specialization the elaborator then rewrites the call to (the
+    /// scalar-range constructor rewrite's shape). When that specialization
+    /// is already declared (an earlier round minted it for another
+    /// occurrence, or the same round's clone annotations spell it), the call
+    /// types as the concrete struct's construction: it is checked against
+    /// the constructor it will be rewritten to, and its type agrees with
+    /// every annotation already spelling the specialization. `None` leaves
+    /// the call to the template's own constructor path — for every other
+    /// call, and while the specialization is not declared yet.
+    fn finish_variadic_construction(
+        &self,
+        span: &SourceSpan,
+        name: &str,
+        param_args: &[mojito_ast::ast::ParamArg],
+        tyargs: &[TyArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Option<Result<Ty, TypeError>> {
+        let decls = &self.structs.get(name)?.decls;
+        Self::inferred_construction_pack(name, decls, param_args)?;
+        self.generic_instantiations.borrow_mut().insert(
+            span.clone(),
+            mojito_checked::checked::GenericInstantiation {
+                callee: name.to_string(),
+                parameter_names: Vec::new(),
+                parameter_types: Vec::new(),
+                variadic: None,
+                arguments: tyargs.to_vec(),
+            },
+        );
+        let [TyArg::Val(pack @ CtValue::Tuple(_))] = tyargs else {
+            return None;
+        };
+        let specialization =
+            mojito_symbol::symbol::mangle(name, std::slice::from_ref(pack)).ok()?;
+        if !self.structs.contains_key(&specialization) {
+            return None;
+        }
+        Some(self.infer_construction(span, &specialization, &[], args, kwargs))
+    }
+
     fn record_constructor_instantiation(
         &self,
         span: &SourceSpan,
@@ -1966,8 +2067,14 @@ impl Checker {
                     .iter()
                     .map(|a| self.infer(a))
                     .collect::<Result<Vec<_>, _>>()?;
+                Self::reject_unconstrained_pack(name, &decls, param_args, &params)?;
                 let (mut subst, tyargs) =
                     self.resolve_use_params(name, &decls, param_args, &params, &arg_tys)?;
+                if let Some(specialized) =
+                    self.finish_variadic_construction(span, name, param_args, &tyargs, args, kwargs)
+                {
+                    return specialized;
+                }
                 unify_through_callable_bounds(&sig.decls, &mut subst)?;
                 let bound_slots: Vec<(usize, &Expr, &Ty)> = args
                     .iter()
@@ -1993,8 +2100,11 @@ impl Checker {
                 self.record_struct_instantiation(name, &tyargs, span.source.as_deref());
                 let values = solved_value_bindings(&decls, &tyargs);
                 for (i, (aty, pty)) in arg_tys.iter().zip(&params).enumerate() {
-                    let expected = pointer_origins
-                        .substitute(&self.constructor_parameter_ty(pty, &subst, &values)?);
+                    let expected = pointer_origins.substitute(&self.constructor_parameter_ty(
+                        &expand_bound_pack(pty, &decls, &tyargs),
+                        &subst,
+                        &values,
+                    )?);
                     if coerces(aty, &expected) {
                         // A literal argument materializes to the solved
                         // parameter type exactly as it does for a non-generic
@@ -2110,8 +2220,13 @@ impl Checker {
                     .map(|(_, pattern, _)| pattern.clone())
                     .collect();
                 let resolved_use =
-                    self.resolve_use_params(name, &decls, param_args, &patterns, &arg_tys);
-                if let Err(error @ TypeError::TraitNotSatisfied { .. }) = &resolved_use
+                    Self::reject_unconstrained_pack(name, &decls, param_args, &patterns).and_then(
+                        |()| self.resolve_use_params(name, &decls, param_args, &patterns, &arg_tys),
+                    );
+                if let Err(
+                    error @ (TypeError::TraitNotSatisfied { .. }
+                    | TypeError::CannotInferTypeParam { .. }),
+                ) = &resolved_use
                     && bound_failure.is_none()
                 {
                     bound_failure = Some(error.clone());
@@ -2141,9 +2256,30 @@ impl Checker {
                     let mut ok = true;
                     let mut conversions = Vec::new();
                     let mut materializations = Vec::new();
+                    // The k-th argument a `*args: *Self.Ts` collector took
+                    // is expected at the k-th element of the pack it solved;
+                    // a regular slot's pattern expands its spreads of the
+                    // solved pack.
+                    let pack_elements = bound_pack_elements(&decls, &tyargs);
                     for (index, (aty, pty)) in arg_tys.iter().zip(&patterns).enumerate() {
-                        let expected =
-                            pointer_origins.substitute(&substitute_assoc(pty, &bindings));
+                        let expected = index
+                            .checked_sub(bound_slots.len())
+                            .filter(|_| {
+                                mojito_types::types::pack_spread(std::slice::from_ref(pty))
+                                    .is_some()
+                            })
+                            .and_then(|position| {
+                                pack_elements
+                                    .as_ref()
+                                    .and_then(|(_, elements)| elements.get(position))
+                            })
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                pointer_origins.substitute(&substitute_assoc(
+                                    &expand_bound_pack(pty, &decls, &tyargs),
+                                    &bindings,
+                                ))
+                            });
                         if coerces(aty, &expected) {
                             if *aty != expected {
                                 score += 1;
@@ -2228,6 +2364,11 @@ impl Checker {
                     pointer_origins,
                 ) = best_matches.remove(0);
                 unify_through_callable_bounds(&sig.decls, &mut subst)?;
+                if let Some(specialized) =
+                    self.finish_variadic_construction(span, name, param_args, &tyargs, args, kwargs)
+                {
+                    return specialized;
+                }
                 self.record_struct_instantiation(name, &tyargs, span.source.as_deref());
                 // Rebuild the packed bound used during scoring: regular slots in
                 // slot order (skipping defaults), then variadic overflow. The
@@ -2368,8 +2509,14 @@ impl Checker {
             .collect::<Result<Vec<_>, _>>()?;
         // The origin slots were partitioned out of `param_args` above; the
         // field types bind the struct's origin binders from the arguments.
+        Self::reject_unconstrained_pack(name, &decls, param_args, &field_tys)?;
         let (subst, tyargs) =
             self.resolve_use_params(name, &decls, param_args, &field_tys, &arg_tys)?;
+        if let Some(specialized) =
+            self.finish_variadic_construction(span, name, param_args, &tyargs, args, kwargs)
+        {
+            return specialized;
+        }
         let origin_bindings = self.bind_fieldwise_origins(
             name,
             &info.source_params,
@@ -2386,7 +2533,10 @@ impl Checker {
             origins: HashMap::new(),
         };
         for (i, (aty, fty)) in arg_tys.iter().zip(&field_tys).enumerate() {
-            let expected = origin_bindings.substitute(&substitute_assoc(fty, &bindings));
+            let expected = origin_bindings.substitute(&substitute_assoc(
+                &expand_bound_pack(fty, &decls, &tyargs),
+                &bindings,
+            ));
             if Self::storage_value_coerces(aty, &expected) {
                 self.record_literal_materializations(&args[i], aty, &expected)?;
             } else if !self.record_constructor_conversion(&args[i], aty, &expected)? {
@@ -2684,6 +2834,24 @@ impl Checker {
             }
         }
         unify_through_callable_bounds(decls, &mut subst)?;
+        // A pack element materializes like any other inferred instantiation
+        // argument (a literal binds `Int`/`String`). A seam without the
+        // linked String struct keeps the literal: materializing to an absent
+        // struct would fail every conformance the literal itself satisfies.
+        let materialize_pack_element = |ty: Ty| {
+            if ty == Ty::StringLiteral
+                && !self
+                    .structs
+                    .contains_key(mojito_symbol::symbol::STDLIB_STRING_STRUCT)
+            {
+                ty
+            } else {
+                match materialized_instantiation_argument(&TyArg::Ty(ty)) {
+                    TyArg::Ty(ty) => ty,
+                    _ => unreachable!("a type argument materializes to a type"),
+                }
+            }
+        };
         let inferred_packs: HashMap<String, Vec<CtValue>> = patterns
             .iter()
             .zip(actuals)
@@ -2699,27 +2867,10 @@ impl Checker {
                 _ => None,
             })
             .fold(HashMap::new(), |mut packs, (name, ty)| {
-                // A pack element materializes like any other inferred
-                // instantiation argument (a literal binds `Int`/`String`). A
-                // seam without the linked String struct keeps the literal:
-                // materializing to an absent struct would fail every
-                // conformance the literal itself satisfies.
-                let element = if ty == Ty::StringLiteral
-                    && !self
-                        .structs
-                        .contains_key(mojito_symbol::symbol::STDLIB_STRING_STRUCT)
-                {
-                    ty
-                } else {
-                    match materialized_instantiation_argument(&TyArg::Ty(ty)) {
-                        TyArg::Ty(ty) => ty,
-                        _ => unreachable!("a type argument materializes to a type"),
-                    }
-                };
                 packs
                     .entry(name)
                     .or_insert_with(Vec::new)
-                    .push(CtValue::Type(Box::new(element)));
+                    .push(CtValue::Type(Box::new(materialize_pack_element(ty))));
                 packs
             });
         let mut tyargs = Vec::with_capacity(decls.len());
@@ -2771,6 +2922,7 @@ impl Checker {
                     ..
                 } => {
                     if *variadic {
+                        let pack_name = pname.trim_start_matches('*');
                         let argument = match subst.get(id) {
                             // Only the *caller's* pack, bound here by a whole
                             // forward, stands as the argument. The binding a
@@ -2780,12 +2932,26 @@ impl Checker {
                             Some(pack) if forwards_pack(pack) && !binds_pack_itself(pack, id) => {
                                 TyArg::Ty(pack.clone())
                             }
-                            _ => TyArg::Val(CtValue::Tuple(
-                                inferred_packs
-                                    .get(pname.trim_start_matches('*'))
-                                    .cloned()
-                                    .unwrap_or_default(),
-                            )),
+                            // A spread of the pack in a parameter type
+                            // (`storage: Tuple[*Self.Ts]`) solved it whole
+                            // against the argument's element list; its
+                            // elements materialize like collected ones.
+                            _ => match value_solutions.get(pack_name) {
+                                Some(CtValue::Tuple(elements)) => TyArg::Val(CtValue::Tuple(
+                                    elements
+                                        .iter()
+                                        .map(|element| match element {
+                                            CtValue::Type(ty) => CtValue::Type(Box::new(
+                                                materialize_pack_element((**ty).clone()),
+                                            )),
+                                            other => other.clone(),
+                                        })
+                                        .collect(),
+                                )),
+                                _ => TyArg::Val(CtValue::Tuple(
+                                    inferred_packs.get(pack_name).cloned().unwrap_or_default(),
+                                )),
+                            },
                         };
                         tyargs.push(argument);
                         continue;

@@ -393,9 +393,12 @@ list, the conformance clauses, and the trailing `where`, where `Self` is not
 available — and a member naming it bare is rejected with current Mojo's
 `unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead`.
 A variadic struct currently supports exactly one type-parameter pack and no
-other compile-time parameters, and must be instantiated with explicit bracket
-arguments (`Pair[Int, Bool](...)`; the elaborator does not infer struct
-packs). A variadic struct may also be applied over an enclosing generic
+other compile-time parameters. It is instantiated with explicit bracket
+arguments (`Pair[Int, Bool](...)`) or by a bare construction whose pack the
+checker infers from the constructor it selects (`Pair((1, True))` through a
+`Tuple[*Self.Ts]` field, `Bag(7, "x")` through a `var *args: *Self.Ts`
+collector); a constructor naming the pack nowhere leaves it uninferable. A
+variadic struct may also be applied over an enclosing generic
 declaration's own parameters (`Variant[*Ts]` in `def f[*Ts]`, `Variant[T,
 String]` in `def g[T]`): the application stays symbolic in the retained
 template and each specialization spells the concrete struct.

@@ -56,7 +56,7 @@ impl Checker {
                 method_index,
                 overload_index,
             );
-            self.pack_verdict(
+            self.symbolic_verdict(
                 &format!("{}.{method_name}", declaration.name),
                 &m.body,
                 scopes,
@@ -66,11 +66,12 @@ impl Checker {
         Ok(())
     }
 
-    /// Keep a pack-keyed body's validation result, unless it ended at a use
-    /// of the unbound pack with no symbolic rule: that is no verdict, so the
-    /// body is recorded and left to its per-instantiation check. `scopes` is
-    /// the scope depth before the body, restored past the abandoned check.
-    pub(super) fn pack_verdict(
+    /// Keep a body's validation result, unless it ended at a use of an
+    /// unbound pack or a reflected symbolic type with no symbolic rule: that
+    /// is no verdict, so the body is recorded and left to its
+    /// per-instantiation check. `scopes` is the scope depth before the body,
+    /// restored past the abandoned check.
+    pub(super) fn symbolic_verdict(
         &mut self,
         name: &str,
         body: &[Stmt],
@@ -78,11 +79,11 @@ impl Checker {
         checked: Result<(), TypeError>,
     ) -> Result<(), TypeError> {
         match checked {
-            Err(TypeError::SymbolicPackBoundary(what)) if self.source_validation => {
+            Err(TypeError::SymbolicBoundary(what)) if self.source_validation => {
                 while self.scopes.len() > scopes {
                     self.pop_scope();
                 }
-                timing::count("templates.pack_no_verdict", 1);
+                timing::count("templates.no_verdict", 1);
                 self.no_verdict_bodies
                     .extend(body.first().map(Stmt::source_span));
                 self.template_catalog
@@ -128,12 +129,16 @@ impl Checker {
                     && args.len() == 2
                     && self.comptime_type_operand(&args[0])?.is_some() =>
             {
-                let ExprKind::Identifier(trait_name) = &args[1].kind else {
+                let Some(trait_names) = mojito_ast::ast::trait_conjunction_names(&args[1]) else {
                     return Err(TypeError::Unsupported(
-                        "conforms_to takes a trait name as its second argument".to_string(),
+                        "conforms_to takes a trait name, or a '&' conjunction of trait names, \
+                         as its second argument"
+                            .to_string(),
                     ));
                 };
-                return self.check_trait_name(trait_name);
+                return trait_names
+                    .into_iter()
+                    .try_for_each(|trait_name| self.check_trait_name(trait_name));
             }
             // An application of an undeclared name (`TriviallyCopyable[Int]`)
             // is neither a predicate nor a type.
@@ -161,6 +166,55 @@ impl Checker {
                 Err(_) if self.condition_is_compile_time_shaped(cond) => Err(constraint_error),
                 Err(error) => Err(error),
             },
+        }
+    }
+
+    /// The conformances a `comptime if` condition proves of its operands for
+    /// the arm it guards, as the pinned Mojo licenses them: every
+    /// `conforms_to(X, A & B)` atom under `and`, keyed by `X`'s spelling — a
+    /// parameter's binder name, a dependent element's expression — so the
+    /// proof reaches exactly that element, and only below the condition.
+    /// `or`, `not`, and any other leaf prove nothing.
+    pub(super) fn conformance_arm_assumptions(
+        &self,
+        cond: &Expr,
+    ) -> Result<HashSet<(String, String)>, TypeError> {
+        let cond = self.inline_local_comptime_values(cond);
+        let mut proved = HashSet::new();
+        self.collect_arm_assumptions(&cond, &mut proved)?;
+        Ok(proved)
+    }
+
+    fn collect_arm_assumptions(
+        &self,
+        cond: &Expr,
+        proved: &mut HashSet<(String, String)>,
+    ) -> Result<(), TypeError> {
+        match &cond.kind {
+            ExprKind::Infix(InfixOp::And, left, right) => {
+                self.collect_arm_assumptions(left, proved)?;
+                self.collect_arm_assumptions(right, proved)
+            }
+            ExprKind::Call { name, args, .. } if name == "conforms_to" && args.len() == 2 => {
+                let Some(trait_names) = mojito_ast::ast::trait_conjunction_names(&args[1]) else {
+                    return Ok(());
+                };
+                let key = match self.comptime_type_operand(&args[0])? {
+                    Some(Ty::Param { binder, .. }) => {
+                        binder.name.trim_start_matches('*').to_string()
+                    }
+                    Some(Ty::Dependent(dependent)) => dependent.expr().to_string(),
+                    _ => return Ok(()),
+                };
+                proved.extend(trait_names.into_iter().map(|trait_name| {
+                    (
+                        key.clone(),
+                        mojito_ast::ast::canonical_trait_name(trait_name).to_string(),
+                    )
+                }));
+                Ok(())
+            }
+            _ => Ok(()),
         }
     }
 
@@ -296,6 +350,8 @@ impl Checker {
                 }
             }
             ExprKind::TypeValue(ty) => Some(self.ty_from_anno(ty)?),
+            // A reflection handle is a compile-time value, not a type.
+            ExprKind::TypeApply { name, .. } if name == "reflect" => None,
             ExprKind::TypeApply { name, args }
                 if !self.comptime_aliases.contains_key(name)
                     && mojito_types::types::trivial_predicate_name(name).is_none() =>
@@ -330,7 +386,8 @@ impl Checker {
                     index: index.clone(),
                 })?)
             }
-            _ => None,
+            // `types[i]`, `r.field_at[i].T`: a reflected field type.
+            _ => self.reflected_type_operand(expr)?,
         })
     }
 
@@ -402,9 +459,9 @@ impl Checker {
             )));
         };
         let name = &binder.name;
-        let list = self.pack_reference(name).ok_or_else(|| {
-            TypeError::SymbolicPackBoundary(format!("pack '{name}' is not in scope"))
-        })?;
+        let list = self
+            .pack_reference(name)
+            .ok_or_else(|| TypeError::SymbolicBoundary(format!("pack '{name}' is not in scope")))?;
         let index = self
             .compile_dependent_ct_expr(index)
             .map_err(|_| TypeError::TypeMismatch {
@@ -647,7 +704,7 @@ impl Checker {
         };
         let pack = mojito_types::types::pack_spread(std::slice::from_ref(&**element))?.clone();
         let boundary = || {
-            TypeError::SymbolicPackBoundary(format!(
+            TypeError::SymbolicBoundary(format!(
                 "'{name}' called with a spread of the unbound pack '{binding}'"
             ))
         };
@@ -748,42 +805,59 @@ impl Checker {
         self.resolve_dependent_ty(&ty, &values).unwrap_or(ty)
     }
 
-    /// The bounded type parameter an element of an unbound variadic pack
-    /// behaves as: the pack's declared bounds, plus every trait the enclosing
-    /// declarations' `where` clauses guarantee of its elements. The dependent
-    /// type stays the element's identity; this is what its capabilities are
-    /// read from.
+    /// The bounded type parameter an element of an unbound variadic pack, or
+    /// a reflected field type of a symbolic subject, behaves as: the pack's
+    /// declared bounds (a field type has none), plus every trait a `where`
+    /// clause guarantees of the pack's elements or a `comptime if
+    /// conforms_to` arm proves of this element. The dependent type stays the
+    /// element's identity; this is what its capabilities are read from.
     pub(super) fn opaque_element(&self, ty: &Ty) -> Option<Ty> {
         let Ty::Dependent(dependent) = ty else {
             return None;
         };
-        let (list, _) = dependent.pack_element()?;
-        let pack = list.as_decl_ref()?.name.to_string();
-        let declared = self.lookup_tparam(&format!("*{pack}")).or_else(|| {
-            self.self_decls
-                .iter()
-                .filter(|decl| {
-                    matches!(decl, ParamDecl::Type { variadic: true, .. })
-                        && decl.name().trim_start_matches('*') == pack
-                })
-                .find_map(type_parameter)
+        let reflected = |node: &ParamExpr| {
+            matches!(
+                node.kind(),
+                mojito_types::param_expr::ParamKind::Reflect { .. }
+            )
+        };
+        let list = dependent.pack_element().map(|(list, _)| list);
+        let pack = list.and_then(ParamExpr::as_decl_ref);
+        if pack.is_none() && !reflected(dependent.expr()) && !list.is_some_and(reflected) {
+            return None;
+        }
+        let pack_name = pack.map(|reference| reference.name.to_string());
+        let declared = pack_name.as_deref().and_then(|pack| {
+            self.lookup_tparam(&format!("*{pack}")).or_else(|| {
+                self.self_decls
+                    .iter()
+                    .filter(|decl| {
+                        matches!(decl, ParamDecl::Type { variadic: true, .. })
+                            && decl.name().trim_start_matches('*') == pack
+                    })
+                    .find_map(type_parameter)
+            })
         });
         let mut bounds = match declared {
             Some(Ty::Param { bounds, .. }) => bounds,
             _ => Vec::new(),
         };
+        let spelled = dependent.expr().to_string();
         for (parameter, guaranteed) in self.assumed_conformances.iter().flatten() {
-            if parameter.trim_start_matches('*') == pack && !bounds.contains(guaranteed) {
+            let names_element = parameter == &spelled
+                || pack_name
+                    .as_deref()
+                    .is_some_and(|pack| parameter.trim_start_matches('*') == pack);
+            if names_element && !bounds.contains(guaranteed) {
                 bounds.push(guaranteed.clone());
             }
         }
         // Two packs may share a spelling (`Tuple.Ts`, `Bag.Ts`); a view's name
         // is its element's alone, so the owner qualifies the later one.
-        let spelled = dependent.expr().to_string();
         let mut views = self.pack_element_views.borrow_mut();
-        let name = match views.get(&spelled) {
-            Some(viewed) if viewed != ty => {
-                format!("{}.{spelled}", list.as_decl_ref()?.id.owner)
+        let name = match (views.get(&spelled), pack) {
+            (Some(viewed), Some(reference)) if viewed != ty => {
+                format!("{}.{spelled}", reference.id.owner)
             }
             _ => spelled,
         };
@@ -1165,20 +1239,17 @@ pub(super) fn struct_valued_template(
 /// parameters (`keys_rebind`, from `rebind::rebind_keyed_bodies`), or keyed
 /// on a variadic pack — the declaration's own, or that of the struct
 /// `enclosing` it — each leaves the template stubbed, so validation is the
-/// only check it gets. Either way a body that checks
-/// only per instantiation is left out: one reading a reflection handle
-/// (`reflect[T]`), whose field facts only the elaborator evaluates.
+/// only check it gets.
 pub(super) fn validates_body(
     enclosing: &[mojito_ast::ast::TypeParam],
     type_params: &[mojito_ast::ast::TypeParam],
     body: &[Stmt],
     keys_rebind: bool,
 ) -> bool {
-    (block_has_comptime(body)
+    block_has_comptime(body)
         || keys_rebind
         || is_variadic_template(type_params)
-        || is_variadic_template(enclosing))
-        && !reads_reflection(body)
+        || is_variadic_template(enclosing)
 }
 
 /// Whether a block holds a `comptime if`/`comptime for` anywhere below it,
@@ -1187,8 +1258,11 @@ pub(super) fn block_has_comptime(stmts: &[Stmt]) -> bool {
     stmts.iter().any(stmt_has_comptime)
 }
 
-/// Whether a block names `reflect[...]` anywhere below it.
-fn reads_reflection(stmts: &[Stmt]) -> bool {
+/// Whether a block names `reflect[...]` anywhere below it. Such a body is
+/// validated symbolically like any other, but its instances keep the clone
+/// check: the field facts the elaborator evaluates are its own
+/// (`template_facts.rs:template_certificate`).
+pub(super) fn reads_reflection(stmts: &[Stmt]) -> bool {
     let mut finder = ReflectionFinder { found: false };
     mojito_ast::visit::walk_block(&mut finder, stmts);
     finder.found

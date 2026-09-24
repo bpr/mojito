@@ -865,12 +865,17 @@ impl Elab<'_> {
                         self.request_instance(name, param_args, consts, mono);
                     }
                 }
-                // A checker-selected scalar-range occurrence: rewrite the
-                // `range(...)` call into the concrete generated range-family
-                // struct's constructor and queue its specialization.
-                if name == "range"
+                // A checker-selected constructor occurrence — a scalar
+                // `range(...)` or a bare variadic-struct construction whose
+                // pack the checker inferred (`Pair((1, True))`): rewrite the
+                // call into the concrete specialization's constructor and
+                // queue that specialization.
+                let bare_pack_construction = param_args.is_empty()
+                    && mono.resolves_top_template(name)
+                    && self.single_pack_template(name);
+                if (name == "range" || bare_pack_construction)
                     && let Some((template, vals)) = mono
-                        .range_call_targets
+                        .struct_call_targets
                         .get(&source_span.clone().without_syntax())
                         .cloned()
                 {
@@ -892,8 +897,7 @@ impl Elab<'_> {
                 // which pre-check elaboration could soundly choose `*Ts`.  Only
                 // rewrite an occurrence the checker explicitly identified; an
                 // unhinted occurrence deliberately survives for the discovery
-                // check. Other variadic struct templates retain their existing
-                // explicit-argument requirement.
+                // check.
                 if name == "Tuple"
                     && param_args.is_empty()
                     && mono.resolves_top_template(name)
@@ -903,6 +907,15 @@ impl Elab<'_> {
                     {
                         *name = target.clone();
                     }
+                    return Ok(());
+                }
+                // A bare construction of any other single-pack template
+                // (`Pair((1, True))`) likewise survives for the discovery
+                // check, which infers the pack from the constructor it
+                // selects; the template is retained as a shell so the checker
+                // can type that constructor.
+                if bare_pack_construction {
+                    mono.retained.insert(name.clone());
                     return Ok(());
                 }
                 if mono.resolves_top_template(name) && self.specializable.contains_key(name) {
@@ -1257,6 +1270,19 @@ impl Elab<'_> {
         self.specializable
             .get(name)
             .is_some_and(|template| matches!(template.kind, StmtKind::Struct { .. }))
+    }
+
+    /// Whether `name` is a struct template keyed by exactly one type pack and
+    /// nothing else (`struct Pair[*Ts: Bound]`): the shape whose bare
+    /// construction the checker infers the pack for.
+    pub(super) fn single_pack_template(&self, name: &str) -> bool {
+        self.specializable.get(name).is_some_and(|template| {
+            matches!(&template.kind, StmtKind::Struct { type_params, .. }
+            if matches!(
+                classify_ct_params(type_params).as_slice(),
+                [ParamDecl::Type { variadic: true, .. }]
+            ))
+        })
     }
 
     /// Resolve a variadic-struct instantiation's `[...]` arguments into the

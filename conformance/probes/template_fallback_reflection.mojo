@@ -1,14 +1,17 @@
-# PROBE (re-probe): a template reading a reflection handle keeps the clone check.
+# PROBE (re-probe): a template reading a reflection handle is validated from
+# its template and still keeps the clone check.
 #
-# Both compilers print 2, 0. Only the elaborator evaluates `reflect[T]`, so
-# source validation skips the body and it must never earn a template
-# certificate. Re-run whenever discovery scheduling or fallback changes.
+# Both compilers print 2, 0. Source validation checks the body once with `T`
+# symbolic (`reflect[T].field_count()` is a compile-time `Int` there), and
+# its certificate is incomplete by rule, so every instance is checked as a
+# clone with the field facts the elaborator evaluates. Re-run whenever
+# discovery scheduling or the certificate rules change.
 #
 # A narrower question stays open: the pin answers `reflect[Int].field_count()`
 # with 0, while Mojito rejects a non-struct operand ("requires a struct type").
 # Roadmap section 3 carries it.
 #
-# Observed 2026-09-20 against `Mojo 1.1.0.dev2026082605 (dd957314)`.
+# Observed 2026-09-23 against `Mojo 1.2.0.dev2026092105 (e9569894)`.
 #
 # Run:    mojo run template_fallback_reflection.mojo
 #         cargo run -- run conformance/probes/template_fallback_reflection.mojo

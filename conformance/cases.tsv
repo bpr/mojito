@@ -473,6 +473,7 @@ mut-owned-params	run	assets/ok/mut_owned_params.mojo
 pack-element-temporaries	run	assets/ok/pack_element_temporaries.mojo
 pack-struct-pair	run	assets/ok/pack_struct_pair.mojo
 pack-struct-variadic-init	run	assets/ok/pack_struct_variadic_init.mojo
+pack-struct-inferred-args	run	assets/ok/pack_struct_inferred_args.mojo
 pack-struct-writable	run	assets/ok/pack_struct_writable.mojo
 pack-bare-in-struct-header	run	assets/ok/pack_bare_in_struct_header.mojo
 bare-pack-parameter-in-method	reject	assets/type_error/pack_method_body_unqualified.mojo

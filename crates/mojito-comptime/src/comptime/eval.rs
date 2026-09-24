@@ -386,12 +386,15 @@ impl Elab<'_> {
             ExprKind::Call {
                 name, args, kwargs, ..
             } if name == "conforms_to" && kwargs.is_empty() && args.len() == 2 => {
-                let ExprKind::Identifier(trait_name) = &args[1].kind else {
+                let Some(trait_names) = mojito_ast::ast::trait_conjunction_names(&args[1]) else {
                     return Err(ComptimeError::NotComptime(
                         "conforms_to requires a trait name".to_string(),
                     ));
                 };
-                let trait_name = mojito_ast::ast::canonical_trait_name(trait_name);
+                let trait_names: Vec<&str> = trait_names
+                    .into_iter()
+                    .map(mojito_ast::ast::canonical_trait_name)
+                    .collect();
                 let values = match pack_values_projection(&args[0]) {
                     Some(pack) => scope.get(pack).cloned().ok_or_else(|| {
                         ComptimeError::NotComptime(format!(
@@ -418,7 +421,9 @@ impl Elab<'_> {
                     }
                 };
                 Ok(CtValue::Bool(types.iter().all(|ty| {
-                    self.conformance.require(ty, trait_name).is_ok()
+                    trait_names
+                        .iter()
+                        .all(|trait_name| self.conformance.require(ty, trait_name).is_ok())
                 })))
             }
             ExprKind::Call {

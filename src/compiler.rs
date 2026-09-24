@@ -340,6 +340,7 @@ impl Compiler {
             for request in def_specialization_requests(&checked, &templates)
                 .into_iter()
                 .chain(scalar_range_requests(&checked, &range_templates))
+                .chain(variadic_struct_requests(&checked, &variadic_templates))
             {
                 if conflicted.contains(request.occurrence()) {
                     continue;
@@ -982,6 +983,49 @@ fn scalar_range_requests(
     requests
 }
 
+/// The checker-recorded bare constructions of variadic struct templates
+/// (`Pair((1, True))`, the pack inferred from the constructor) whose pack is
+/// closed, as constructor-rewrite requests on the template, sorted like
+/// [`def_specialization_requests`]. The public `Tuple` and `TString` have
+/// their own request kinds. Occurrence conflicts share the caller's
+/// def-request conflict handling.
+fn variadic_struct_requests(
+    checked: &DiscoveryResult,
+    templates: &std::collections::HashSet<String>,
+) -> Vec<DefSpecializationRequest> {
+    let mut requests: Vec<DefSpecializationRequest> = checked
+        .generic_instantiations()
+        .iter()
+        .filter(|(_, instantiation)| {
+            templates.contains(&instantiation.callee)
+                && instantiation.callee != crate::types::TUPLE_TYPE_NAME
+                && instantiation.callee != crate::types::TSTRING_TYPE_NAME
+                && instantiation.arguments.iter().all(closed_generic_argument)
+        })
+        .map(|(span, instantiation)| {
+            DefSpecializationRequest::new(
+                span.clone(),
+                instantiation.callee.clone(),
+                Vec::new(),
+                Vec::new(),
+                instantiation.arguments.clone(),
+            )
+        })
+        .collect();
+    requests.sort_by(|a, b| {
+        let key = |request: &DefSpecializationRequest| {
+            (
+                request.occurrence().source.clone(),
+                request.occurrence().span.0,
+                request.occurrence().span.1,
+                request.callee().to_string(),
+            )
+        };
+        key(a).cmp(&key(b))
+    });
+    requests
+}
+
 /// Whether a recorded instantiation argument is concrete enough to replay.
 /// The checker-recorded generic-struct applications that are closed and
 /// therefore replayable as per-instantiation method clones. A symbolic value
@@ -1322,8 +1366,9 @@ fn tuple_specialization_ct_expr_is_closed(
             ParamKind::PackQuery { pack, .. } => {
                 type_binders.contains(pack.trim_start_matches('*'))
             }
-            // An element of a pack that is still a parameter names no instance.
-            ParamKind::Hole { .. } | ParamKind::ListGet { .. } => false,
+            // An element of a pack that is still a parameter, or a reflection
+            // of a symbolic type, names no instance.
+            ParamKind::Hole { .. } | ParamKind::ListGet { .. } | ParamKind::Reflect { .. } => false,
             // A signature slot is bound by the contract that holds it.
             ParamKind::IndexRef { .. }
             | ParamKind::Op { .. }

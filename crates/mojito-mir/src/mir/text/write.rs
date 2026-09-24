@@ -1901,6 +1901,15 @@ fn param_expr(value: &ParamExpr) -> String {
             "param_list_get",
             &[("list", param_expr(list)), ("index", param_expr(index))],
         ),
+        // A reflection query over a symbolic subject is a source-validation
+        // form and never crosses into MIR; the parser rejects it.
+        ParamKind::Reflect { subject, query } => record(
+            "param_reflect",
+            &[
+                ("subject", param_expr(subject)),
+                ("query", symbol(&query.to_string())),
+            ],
+        ),
         ParamKind::PackQuery { pack, query } => record(
             "param_pack_query",
             &[("pack", symbol(pack)), ("query", pack_query(query))],

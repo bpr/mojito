@@ -340,7 +340,6 @@ assets/type_error/pack_overload_ambiguous_bounds.mojo	compile-reject	agree	error
 assets/type_error/pack_overload_homogeneous_string_ambiguity.mojo	compile-reject	agree	error: ambiguous call to 'g'
 assets/type_error/pack_overload_string_regular_ambiguity.mojo	compile-reject	agree	error: ambiguous call to 'g'
 assets/type_error/pack_struct_init_arity.mojo	compile-reject	agree	error: no matching function in initialization
-assets/type_error/pack_struct_needs_explicit_args.mojo	runs	divergence	the pin runs it; Mojito rejects: variadic struct 'Pair' requires explicit compile-time type arguments
 assets/type_error/pack_struct_runtime_getitem_index.mojo	compile-reject	agree	error: invalid call to '__getitem__': cannot use a dynamic value in a parameter list
 assets/type_error/pack_struct_runtime_index.mojo	compile-reject	agree	error: invalid call to '__getitem_param__': cannot use a dynamic value in a parameter list
 assets/type_error/parameter_closure_immutable_capture_write.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
@@ -390,6 +389,8 @@ assets/type_error/rebound_view_origin_identity.mojo	compile-reject	agree	error: 
 assets/type_error/receiver_carried_origin_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed mutably to 'sink' argument in 'stash' call
 assets/type_error/reference_element_append_rejected.mojo	compile-reject	agree	error: expected ']' in call argument list
 assets/type_error/reference_element_handle_replacement_rejected.mojo	compile-reject	agree	error: expected ']' in call argument list
+assets/type_error/reflected_field_proof_is_positional.mojo	compile-reject	agree	error: invalid call to '__init__': no candidates found
+assets/type_error/reflected_field_type_needs_proof.mojo	compile-reject	agree	error: invalid call to '__init__': no candidates found
 assets/type_error/reserved_word_function_name.mojo	compile-reject	agree	error: 'del' cannot be used as a function name in this context
 assets/type_error/return_origin_widening_field_view.mojo	compile-reject	agree	error: cannot implicitly convert 'View[origin_of(self.items)]' value to 'View[origin_of(self)]'
 assets/type_error/return_origin_widening_parameter_field.mojo	compile-reject	agree	error: cannot implicitly convert 'View[origin_of(b.items)]' value to 'View[origin_of(b)]'
@@ -446,10 +447,13 @@ assets/type_error/typelist_index_out_of_range.mojo	runs	subset	the pin runs it;M
 assets/type_error/typelist_size_removed_alias.mojo	compile-reject	agree	error: 'TypeList[Int, Bool]' value has no attribute 'size'
 assets/type_error/type_receiver_instance_mismatch.mojo	compile-reject	agree	error: invalid call to '__len__': value passed to 'self' cannot be converted from 'List[Int]' to 'List[String]'
 assets/type_error/uninit_storage_compiler_private.mojo	compile-reject	agree	error: use of unknown declaration '__UninitStorage'
+assets/type_error/untaken_comptime_for_reflection_body.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["oops"]' value to 'Int'
 assets/type_error/untaken_comptime_if_generic_member.mojo	compile-reject	agree	error: 'T' value has no attribute 'nonexistent'
 assets/type_error/untaken_comptime_if_pack_def.mojo	compile-reject	agree	error: 'Ts.values[SIMDLength(paramfor_next_value[_ZeroStartingRange](iter))]' value has no attribute 'nonexistent'
 assets/type_error/untaken_comptime_if_pack_forwarding.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["bad"]' value to 'Int'
 assets/type_error/untaken_comptime_if_pack_struct.mojo	compile-reject	agree	error: 'Ts.values[SIMDLength(paramfor_next_value[_ZeroStartingRange](iter))]' value has no attribute 'nonexistent'
+assets/type_error/untaken_comptime_if_reflection_def.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["oops"]' value to 'Int'
+assets/type_error/untaken_comptime_if_reflection_method.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["oops"]' value to 'Int'
 assets/type_error/untaken_comptime_if_type_error.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["hello"]' value to 'Int'
 assets/type_error/untracked_pointer_field_tracked_argument.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/variadic_constructor_element_mismatch.mojo	compile-reject	agree	error: no matching function in initialization

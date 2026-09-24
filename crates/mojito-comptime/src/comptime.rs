@@ -2030,11 +2030,12 @@ struct Mono {
     /// Checker-discovered inferred bound-generic applications: call occurrence
     /// (without its syntax id) → the concrete clone that call selects.
     def_call_targets: HashMap<SourceSpan, DefCallTarget>,
-    /// Checker-discovered scalar `range(...)` occurrences: call occurrence →
-    /// the linked range-family struct template plus the dtype value its
-    /// generated specialization bakes. `mono_expr` rewrites the call into
-    /// that concrete constructor.
-    range_call_targets: HashMap<SourceSpan, (String, Vec<CtValue>)>,
+    /// Checker-selected constructor rewrites: call occurrence → the struct
+    /// template plus the values its specialization bakes — a scalar
+    /// `range(...)` with the linked range-family template and its dtype, or a
+    /// bare variadic-struct construction with the pack the checker inferred.
+    /// `mono_expr` rewrites the call into that concrete constructor.
+    struct_call_targets: HashMap<SourceSpan, (String, Vec<CtValue>)>,
     /// Closed applications of ordinary generic structs found while walking
     /// (annotations, constructor calls, and generated clones themselves):
     /// template → baked type values, minted as per-instantiation method

@@ -6707,6 +6707,66 @@ fn dtype_keyed_struct_validates_beside_an_invalid_arm() {
 }
 
 #[test]
+fn a_reflection_body_is_validated_without_instantiation() {
+    // `reflect[T].field_count()` is a compile-time `Int` while `T` is
+    // symbolic, so the untaken arm is judged from the template.
+    let source = "def field_count[T: AnyType]() -> Int:\n    comptime if reflect[T].field_count() == 2:\n        return 2\n    else:\n        var x: Int = \"oops\"\n        return 0\n\ndef main():\n    print(1)\n";
+    let error = validate_prepared(source, "reflection_untaken.mojo")
+        .expect_err("the untaken arm is invalid");
+    assert!(
+        error
+            .to_string()
+            .contains("expected Int, found StringLiteral"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_conforms_to_arm_licenses_its_trait_for_the_arm_alone() {
+    // The pin licenses a `conforms_to` proof inside the arm it guards, for a
+    // plain parameter, a pack element, and a reflected field type alike.
+    let plain = "def show[T: AnyType](x: T):\n    comptime if conforms_to(T, Writable):\n        print(x)\n    else:\n        print(\"?\")\n\ndef main():\n    print(1)\n";
+    validate_prepared(plain, "arm_plain.mojo").expect("a plain parameter is licensed");
+    let pack = "def show[*Ts: AnyType](*args: *Ts):\n    comptime for i in range(args.__len__()):\n        comptime if conforms_to(Ts[i], Writable):\n            print(args[i])\n\ndef main():\n    print(1)\n";
+    validate_prepared(pack, "arm_pack.mojo").expect("a pack element is licensed");
+    let field = "def show[T: AnyType]():\n    comptime r = reflect[T]\n    comptime for i in range(r.field_count()):\n        comptime FT = r.field_at[i].T\n        comptime if conforms_to(FT, Defaultable & Writable):\n            print(FT())\n\ndef main():\n    print(1)\n";
+    validate_prepared(field, "arm_field.mojo").expect("a field type is licensed");
+    // The proof ends with the arm.
+    let after = "def show[T: AnyType](x: T):\n    comptime if conforms_to(T, Writable):\n        pass\n    print(x)\n\ndef main():\n    print(1)\n";
+    let error = validate_prepared(after, "arm_after.mojo").expect_err("the arm's proof ended");
+    assert!(
+        error
+            .to_string()
+            .contains("does not conform to trait 'Writable'"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_reflected_field_proof_is_keyed_by_its_element() {
+    // Proving the first field's type licenses nothing of the field at the
+    // loop index, which is the one the arm constructs.
+    let source = "def defaults[T: AnyType]():\n    comptime r = reflect[T]\n    comptime types = r.field_types()\n    comptime for i in range(r.field_count()):\n        comptime if conforms_to(types[0], Defaultable & Writable):\n            comptime FT = types[i]\n            print(FT())\n\ndef main():\n    print(1)\n";
+    let error = validate_prepared(source, "proof_positional.mojo")
+        .expect_err("the proof names another element");
+    assert!(
+        error
+            .to_string()
+            .contains("does not conform to trait 'Defaultable'"),
+        "{error}"
+    );
+}
+
+/// Source validation of `source` alone, as `Compiler::compile_linked` runs it
+/// before any elaboration.
+fn validate_prepared(source: &str, file: &str) -> Result<(), mojito::error::TypeError> {
+    let linked = mojito::link_source(source, std::path::Path::new(file)).expect("link error");
+    let prepared = mojito::comptime::prepare(linked).expect("prepare");
+    let mut catalog = mojito::templates::TemplateCatalog::default();
+    mojito::checker::validate_comptime_templates_into(&prepared, &mut catalog)
+}
+
+#[test]
 fn a_pack_body_without_a_symbolic_rule_gets_no_verdict_alone() {
     // A method other than `__len__` on a pack that is still a parameter has
     // no symbolic rule, so `outer` is left to its per-instantiation check.

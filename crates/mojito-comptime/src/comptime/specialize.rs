@@ -412,16 +412,34 @@ impl Elab<'_> {
     fn seed_def_call_targets(&self, def_requests: &[DefSpecializationRequest], mono: &mut Mono) {
         for request in def_requests {
             let callee = request.callee();
-            // A scalar-range request targets a DType-value-param struct
-            // template rather than a bound-generic def: record the
-            // constructor-rewrite target consumed by `mono_expr`'s
-            // `range(...)` occurrence. The Job queues lazily at the rewrite,
-            // like the def targets below.
+            // A request on a struct template is a constructor rewrite rather
+            // than a def clone: a scalar-range request names the DType-keyed
+            // range-family template and its dtype, and a bare variadic-struct
+            // construction names the template and the pack the checker
+            // inferred, spelled element by element. The Job queues lazily at
+            // the rewrite, like the def targets below.
             if self.struct_template(callee) {
-                if let [TyArg::Val(value @ CtValue::Dtype(_))] = request.arguments() {
-                    mono.range_call_targets
+                let vals = match request.arguments() {
+                    [TyArg::Val(value @ CtValue::Dtype(_))] => Some(vec![value.clone()]),
+                    [TyArg::Val(value @ CtValue::Tuple(_))]
+                        if self.single_pack_template(callee) =>
+                    {
+                        Some(vec![value.clone()])
+                    }
+                    arguments if self.single_pack_template(callee) => arguments
+                        .iter()
+                        .map(|argument| match argument {
+                            TyArg::Ty(ty) => Some(ty.clone()),
+                            TyArg::Val(_) | TyArg::Origin(_) => None,
+                        })
+                        .collect::<Option<Vec<Ty>>>()
+                        .map(|types| tuple_specialization_values(&types)),
+                    _ => None,
+                };
+                if let Some(vals) = vals {
+                    mono.struct_call_targets
                         .entry(request.occurrence().clone().without_syntax())
-                        .or_insert_with(|| (callee.to_string(), vec![value.clone()]));
+                        .or_insert_with(|| (callee.to_string(), vals));
                 }
                 continue;
             }
@@ -2835,14 +2853,17 @@ impl Elab<'_> {
                 if !pack_matches {
                     return Ok(expression.clone());
                 }
-                let ExprKind::Identifier(trait_name) = &args[1].kind else {
+                let Some(trait_names) = mojito_ast::ast::trait_conjunction_names(&args[1]) else {
                     return Err(ComptimeError::NotComptime(
                         "conforms_to on a type pack requires a trait name".to_string(),
                     ));
                 };
-                let trait_name = mojito_ast::ast::canonical_trait_name(trait_name);
                 let satisfied = elements.iter().all(|element| match element {
-                    CtValue::Type(ty) => self.conformance.require(ty, trait_name).is_ok(),
+                    CtValue::Type(ty) => trait_names.iter().all(|trait_name| {
+                        self.conformance
+                            .require(ty, mojito_ast::ast::canonical_trait_name(trait_name))
+                            .is_ok()
+                    }),
                     _ => false,
                 });
                 Ok(with_kind(ExprKind::Bool(satisfied)))
@@ -3144,6 +3165,7 @@ pub(super) fn unspecialized_method_stub(owner: &str, method: &Method) -> Stmt {
 pub(super) fn template_shell(template: &Stmt) -> Stmt {
     let mut shell = template.clone();
     if let StmtKind::Struct {
+        type_params,
         conformance_conditions,
         where_clauses,
         fields,
@@ -3155,8 +3177,18 @@ pub(super) fn template_shell(template: &Stmt) -> Stmt {
     {
         conformance_conditions.clear();
         where_clauses.clear();
-        fields.clear();
-        associated.clear();
+        // A variadic template's members resolve symbolically over its pack,
+        // so its shell keeps them: the discovery check types a construction
+        // of the shell — inferring the pack from the constructor it selects —
+        // and the members of the instance that construction produces. A
+        // struct-valued-parameter template has no symbolic member form.
+        if !type_params
+            .iter()
+            .any(|parameter| parameter.name.starts_with('*'))
+        {
+            fields.clear();
+            associated.clear();
+        }
         for method in methods.iter_mut() {
             method.body.clear();
         }

@@ -233,11 +233,17 @@ impl Checker {
             (*self.uninitialized.borrow_mut()).clone_from(&before);
             if comptime {
                 self.check_comptime_condition(cond)?;
+                // A `conforms_to` the condition proves holds in this arm alone.
+                let proved = self.conformance_arm_assumptions(cond)?;
+                self.assumed_conformances.push(proved);
+                let checked = self.check_scoped_block(body, ret, in_loop);
+                self.assumed_conformances.pop();
+                checked?;
             } else {
                 self.register_named_bindings(cond)?;
                 self.expect_bool(cond, "if condition")?;
+                self.check_scoped_block(body, ret, in_loop)?;
             }
-            self.check_scoped_block(body, ret, in_loop)?;
             let condition = match &cond.kind {
                 ExprKind::Bool(value) => Some(*value),
                 _ => None,
@@ -2603,7 +2609,7 @@ impl Checker {
                     self.pack_element_views.borrow_mut().clear();
                 }
                 let checked = self.check_def_body(stmt, &decls, &ret_ty, module_level);
-                result = self.pack_verdict(name, body, scopes, checked);
+                result = self.symbolic_verdict(name, body, scopes, checked);
             }
             self.named_result_context.pop();
             self.return_annotations.pop();

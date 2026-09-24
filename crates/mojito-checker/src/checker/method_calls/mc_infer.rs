@@ -980,7 +980,7 @@ impl Checker {
             return if method == "__len__" && args.is_empty() && param_args.is_empty() {
                 Ok(Ty::Int)
             } else {
-                Err(TypeError::SymbolicPackBoundary(format!(
+                Err(TypeError::SymbolicBoundary(format!(
                     "method '{method}' of an unbound pack"
                 )))
             };

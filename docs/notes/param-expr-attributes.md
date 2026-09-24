@@ -390,7 +390,7 @@ Three decisions shaped the checker side.
   have touched every type visitor in six crates. The pin rejects a spread
   beside other arguments, so the one-element rule loses nothing.
 - **No verdict is per body and typed.** Where the symbolic path has no rule,
-  the checker raises `TypeError::SymbolicPackBoundary` and that body alone is
+  the checker raises `TypeError::SymbolicBoundary` and that body alone is
   left to the executable check. Matching error text against shell names, and
   abandoning the whole run, is kept only for `DType`- and vector-keyed shells.
 
@@ -443,6 +443,54 @@ the whole SIMD surface on an unconstrained `Scalar[dt]`; `Scalar[dt]` is
 `SIMD[dt, 1]` and is neither `Float64` nor narrowed inside a `dt ==
 DType.float64` arm; the pin does not infer `width` from a `SIMD[dt, width]`
 argument in a `def`.
+
+## Reflection queries
+
+A query on the reflection of a type that is still a parameter is
+`ParamKind::Reflect { subject, query }`: the subject a `TypeShape` (or the
+`DeclRef` a bare parameter is), the query one of `ReflectQuery::{IsStruct,
+FieldCount, FieldNames, FieldTypes, FieldIndex(name), FieldNamed(name)}`,
+each carrying the meta-type of its answer (`Bool`, `Int`, a list of string
+literals, a type list, a type). A field type under an index is
+`ListGet { list: Reflect { FieldTypes }, index }` — the pack element's own
+node over a different list — and resolves through `DependentType::resolve`
+like `Ts[i]`. The checker never builds a node over a registered struct: at
+concrete or symbolic arguments it answers from the struct table, so
+`reflect[Self]` in a generic struct's method folds to the struct's own
+fields and `reflect[Pair]` under a symbolic loop index selects (`Select`)
+as a bound pack does. The node never crosses the MIR waist: the text writer
+prints `param_reflect` and the parser rejects it.
+
+Three decisions shaped this, against the pack precedent.
+
+- **A node, not a second evaluator.** The elaborator's `comptime/eval.rs`
+  keeps answering every query per instance; the checker's
+  `eval_reflection` answers the same questions once, from the same struct
+  table, and defers to a node only where no answer exists yet. Instances
+  are re-elaborated from source, so nothing derives from the node: a
+  reflection body's certificate is incomplete by rule.
+- **The view is keyed by spelling.** `opaque_element` served a pack element
+  by its pack's name; it now serves any `ListGet` or `Reflect` element by
+  the element's own spelled expression, with a pack's declared bounds when
+  it has a pack and none otherwise. One view mechanism, one restore.
+- **A proof is positional and exact.** The pin licenses
+  `comptime if conforms_to(X, A & B):` for its arm and its operand alone,
+  for a plain parameter, a pack element, and a field type alike; a proof
+  on `types[0]` says nothing of `types[i]`, a proof after the use or in
+  another loop nothing at all. `conformance_arm_assumptions` pushes the
+  atoms on `assumed_conformances` around the arm, keyed by the binder's
+  name or the element's spelling, so the plain-parameter path
+  (`has_assumed_conformance`) and the view path read the same table.
+
+What the pin licenses, probed 2026-09-23 (Mojo 1.2.0.dev2026092105) and
+pinned by `assets/ok/reflection_symbolic_fields.mojo`, the five
+`assets/type_error/{untaken_comptime_if_reflection_def,untaken_comptime_for_reflection_body,untaken_comptime_if_reflection_method,reflected_field_type_needs_proof,reflected_field_proof_is_positional}.mojo`,
+and `conformance/probes/reflection_*.mojo`: a body reading `reflect[T]` is
+checked before instantiation; a field type is opaque and inherits nothing
+from `T`'s bound; a `conforms_to` arm proves exactly its traits; `types[i]
+== Int` narrows nothing; a `var` of an opaque type needs `Deinitable`
+proved (which Mojito's destruction walk does not yet require of any opaque
+parameter, `docs/roadmap.md` §3).
 
 ## Measurements
 

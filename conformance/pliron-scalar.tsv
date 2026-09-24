@@ -341,6 +341,7 @@ assets/ok/pack_overload_leading_type.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_overload_method_arity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_overload_variadic_position.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_getitem.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pack_struct_inferred_args.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_pair.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_variadic_init.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_writable.mojo	-	ineligible	no-scalar-entry-shape
@@ -491,6 +492,7 @@ assets/ok/reference_carrier_collection.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_element_chained_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_iteration_temporary_list.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflected_operators.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/reflection_symbolic_fields.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/repr_type_names.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reversed_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reversed_list.mojo	-	ineligible	no-scalar-entry-shape

@@ -43,6 +43,21 @@ pub fn canonical_trait_name(name: &str) -> &str {
     }
 }
 
+/// The trait names of a trait-position expression: one identifier, or a `&`
+/// conjunction of them (`Copyable & Writable`, as `conforms_to` accepts).
+/// `None` for any other shape.
+pub fn trait_conjunction_names(expr: &Expr) -> Option<Vec<&str>> {
+    match &expr.kind {
+        ExprKind::Identifier(name) => Some(vec![name.as_str()]),
+        ExprKind::Infix(InfixOp::BitAnd, left, right) => {
+            let mut names = trait_conjunction_names(left)?;
+            names.extend(trait_conjunction_names(right)?);
+            Some(names)
+        }
+        _ => None,
+    }
+}
+
 /// Canonicalize the whole-value destructor method name: upstream deprecated
 /// `__del__` in favor of `__deinit__`.
 ///

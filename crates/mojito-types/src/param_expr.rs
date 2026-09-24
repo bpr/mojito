@@ -384,6 +384,14 @@ impl ParamContext {
         )
     }
 
+    /// A reflection query on a subject type. The subject is any type
+    /// expression; the checker never builds a node over a closed struct,
+    /// which it reflects from its own table.
+    pub fn reflect_query(&self, subject: &ParamExpr, query: ReflectQuery) -> ParamExpr {
+        let subject = self.intern(subject);
+        self.make(query.meta(), ParamKind::Reflect { subject, query })
+    }
+
     /// A typed hole. Reserved: no source construct produces one, a known
     /// parameter without a binding is its reference, and a hole is a boundary
     /// error at executable facts, MIR, mangling, and the VM.
@@ -450,6 +458,9 @@ impl ParamContext {
             }
             ParamKind::ListGet { list, index } => {
                 self.list_get(&self.fold(list)?, &self.fold(index)?)?
+            }
+            ParamKind::Reflect { subject, query } => {
+                self.reflect_query(&self.fold(subject)?, query.clone())
             }
             _ => expr.clone(),
         })
@@ -885,6 +896,10 @@ impl ParamContext {
                 &self.replace_at(list, bindings, depth, memo)?,
                 &self.replace_at(index, bindings, depth, memo)?,
             )?,
+            ParamKind::Reflect { subject, query } => self.reflect_query(
+                &self.replace_at(subject, bindings, depth, memo)?,
+                query.clone(),
+            ),
             ParamKind::PackQuery { pack, query } => {
                 let query = match query {
                     PackQuery::Contains(element) => {
@@ -952,6 +967,9 @@ impl ParamContext {
                 &self.shift(list, cutoff, by)?,
                 &self.shift(index, cutoff, by)?,
             )?,
+            ParamKind::Reflect { subject, query } => {
+                self.reflect_query(&self.shift(subject, cutoff, by)?, query.clone())
+            }
             _ => expr.clone(),
         })
     }
@@ -1112,7 +1130,9 @@ impl ParamExpr {
                 left.visit(visitor);
                 right.visit(visitor);
             }
-            ParamKind::Conforms { subject, .. } | ParamKind::Trivial { subject, .. } => {
+            ParamKind::Conforms { subject, .. }
+            | ParamKind::Trivial { subject, .. }
+            | ParamKind::Reflect { subject, .. } => {
                 subject.visit(visitor);
             }
             ParamKind::Select { index, .. } => index.visit(visitor),
@@ -1161,8 +1181,9 @@ impl ParamExpr {
             ParamKind::TypeShape(_) => 7,
             ParamKind::Select { .. } => 8,
             ParamKind::ListGet { .. } => 9,
-            ParamKind::PackQuery { .. } => 10,
-            ParamKind::Hole { .. } => 11,
+            ParamKind::Reflect { .. } => 10,
+            ParamKind::PackQuery { .. } => 11,
+            ParamKind::Hole { .. } => 12,
         }
     }
 }
@@ -1280,6 +1301,14 @@ pub enum ParamKind {
     /// `param_list.get`: one element of a parameter list that is still a
     /// parameter. A constant list is a [`Self::Select`] instead.
     ListGet { list: ParamExpr, index: ParamExpr },
+    /// A query on the reflection of a type that is still a parameter
+    /// (`reflect[T].field_count()`). The checker answers a closed subject
+    /// from its struct table before building a node; a node whose subject
+    /// closes under replacement stays residual for the checker to fold.
+    Reflect {
+        subject: ParamExpr,
+        query: ReflectQuery,
+    },
     /// A bound-pack query the checker's concrete pack logic resolves.
     PackQuery { pack: String, query: PackQuery },
     /// Reserved typed unknown/unbound state; see [`ParamContext::hole`].
@@ -1660,6 +1689,48 @@ pub enum PackQuery {
     },
     /// `TypeList[Ts.values]().contains[T]()` over a Type-meta-type element.
     Contains(ParamExpr),
+}
+
+/// The reflection queries of a symbolic subject.
+///
+/// Each carries the meta-type of its answer: `is_struct()` a `Bool`;
+/// `field_count()` and `field_index[name]()` an `Int`; `field_types()` a type
+/// list, whose element under an index is a dependent type; `field_names()` a
+/// list of string literals; `field[name].T` a type.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ReflectQuery {
+    IsStruct,
+    FieldCount,
+    FieldNames,
+    FieldTypes,
+    FieldIndex(String),
+    FieldNamed(String),
+}
+
+impl ReflectQuery {
+    /// The meta-type of the query's answer.
+    pub fn meta(&self) -> MetaTy {
+        match self {
+            Self::IsStruct => MetaTy::bool(),
+            Self::FieldCount | Self::FieldIndex(_) => MetaTy::int(),
+            Self::FieldTypes => MetaTy::type_list(),
+            Self::FieldNames => MetaTy::ParamList(Box::new(MetaTy::value(Ty::StringLiteral))),
+            Self::FieldNamed(_) => MetaTy::Type,
+        }
+    }
+}
+
+impl fmt::Display for ReflectQuery {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::IsStruct => write!(f, "is_struct()"),
+            Self::FieldCount => write!(f, "field_count()"),
+            Self::FieldNames => write!(f, "field_names()"),
+            Self::FieldTypes => write!(f, "field_types()"),
+            Self::FieldIndex(name) => write!(f, "field_index[{name:?}]()"),
+            Self::FieldNamed(name) => write!(f, "field[{name:?}].T"),
+        }
+    }
 }
 
 /// The two reserved hole states: an explicitly unknown contextual value, and
@@ -2371,6 +2442,7 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
             write!(f, "][{index}]")
         }
         ParamKind::ListGet { list, index } => write!(f, "{list}[{index}]"),
+        ParamKind::Reflect { subject, query } => write!(f, "reflect[{subject}].{query}"),
         ParamKind::PackQuery { pack, query } => match query {
             PackQuery::Length => write!(f, "TypeList[{pack}.values]().length"),
             PackQuery::Conforms(trait_name) => {

@@ -132,21 +132,7 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<()
 /// `TyArg::Val` bindings — `other: Self` on an `Array[Int, 3]` receiver
 /// becomes `Array[Int, 3]`, not `Array[Int, length]`.
 pub(super) fn substitute_at(ty: &Ty, info: &StructInfo, targs: &[TyArg]) -> Ty {
-    // A pack applied element by element (`Tuple[Int, Bool]`) binds every
-    // spread of it (`other: Self`) to those elements, not to the first.
-    let expanded = match positional_pack_binding(&info.decls, targs) {
-        Some((pack, TyArg::Val(CtValue::Tuple(types)))) => {
-            let elements: Vec<Ty> = types
-                .iter()
-                .filter_map(|value| match value {
-                    CtValue::Type(ty) => Some((**ty).clone()),
-                    _ => None,
-                })
-                .collect();
-            mojito_types::types::expand_pack_spread(ty, &pack, &elements)
-        }
-        _ => ty.clone(),
-    };
+    let expanded = expand_bound_pack(ty, &info.decls, targs);
     let ty = &expanded;
     let substituted = substitute_assoc(
         ty,
@@ -161,6 +147,55 @@ pub(super) fn substitute_at(ty: &Ty, info: &StructInfo, targs: &[TyArg]) -> Ty {
     // parameter), so a member instantiated on `P[origin_of(xs)]` names that
     // origin where its declaration names `Self.o`.
     substitute_struct_origin_tails(&substituted, &info.tail_origin_bindings(targs))
+}
+
+/// Expand every spread of a variadic struct's pack in a member template type
+/// (`Tuple[*Self.Ts]`, `other: Self`) to the elements a closed application
+/// binds it to, whether the application spells the pack element by element
+/// (`Tuple[Int, Bool]`) or as one bound list (a resolved `Pair[Int, Bool]`).
+/// A type over a pack still open, or of a struct with no pack, is returned as
+/// it is.
+pub(super) fn expand_bound_pack(ty: &Ty, decls: &[ParamDecl], targs: &[TyArg]) -> Ty {
+    match bound_pack_elements(decls, targs) {
+        Some((pack, elements)) => mojito_types::types::expand_pack_spread(ty, &pack, &elements),
+        None => ty.clone(),
+    }
+}
+
+/// The pack a closed application of a variadic struct binds, with its
+/// element types, in either spelling; `None` while the pack is open (a
+/// forwarded spread) or the struct has no pack.
+pub(super) fn bound_pack_elements(
+    decls: &[ParamDecl],
+    targs: &[TyArg],
+) -> Option<(String, Vec<Ty>)> {
+    let (pack, binding) = match (decls, targs) {
+        (
+            [
+                ParamDecl::Type {
+                    name,
+                    variadic: true,
+                    ..
+                },
+            ],
+            [TyArg::Val(binding @ CtValue::Tuple(_))],
+        ) => (name.trim_start_matches('*').to_string(), binding.clone()),
+        _ => positional_pack_binding(decls, targs).and_then(|(pack, binding)| match binding {
+            TyArg::Val(value) => Some((pack, value)),
+            _ => None,
+        })?,
+    };
+    let CtValue::Tuple(types) = binding else {
+        return None;
+    };
+    types
+        .iter()
+        .map(|value| match value {
+            CtValue::Type(ty) => Some((**ty).clone()),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()
+        .map(|elements| (pack, elements))
 }
 
 /// The value-parameter bindings a resolved application implies: each
@@ -204,6 +239,45 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
             {
                 out.entry(reference.name.to_string())
                     .or_insert(CtValue::Dtype(dtype));
+            }
+        }
+        // A spread of a pack that is still a parameter (`Tuple[*Self.Ts]`
+        // against `Tuple[Int, Bool]`, the fieldwise constructor of a variadic
+        // struct) binds the pack to the actual's whole element list, whether
+        // the actual spells it element by element or as one bound pack. A
+        // pack forwarded from another still-open pack solves nothing here.
+        (Ty::Struct(pn, pargs), Ty::Struct(an, aargs))
+            if let Some(Ty::Param { binder, .. }) =
+                mojito_types::types::pack_spread_argument(pargs)
+                && mojito_types::types::pack_spread_argument(aargs).is_none()
+                && (pn == an
+                    || (pn == mojito_types::types::TUPLE_TYPE_NAME
+                        && mojito_types::types::tuple_elements(actual).is_some())) =>
+        {
+            let element_types = |types: Vec<Ty>| {
+                CtValue::Tuple(types.into_iter().map(Box::new).map(CtValue::Type).collect())
+            };
+            // A public Tuple actual may already be spelled by its concrete
+            // specialization symbol (a later discovery round); its retained
+            // element types are the list either way.
+            let elements = match aargs.as_slice() {
+                [TyArg::Val(value @ CtValue::Tuple(_))] => Some(value.clone()),
+                _ if pn == mojito_types::types::TUPLE_TYPE_NAME => {
+                    mojito_types::types::tuple_elements(actual)
+                        .map(|types| element_types(types.into_iter().cloned().collect()))
+                }
+                _ => aargs
+                    .iter()
+                    .map(|argument| match argument {
+                        TyArg::Ty(ty) => Some(ty.clone()),
+                        TyArg::Val(_) | TyArg::Origin(_) => None,
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .map(element_types),
+            };
+            if let Some(elements) = elements {
+                out.entry(binder.name.trim_start_matches('*').to_string())
+                    .or_insert(elements);
             }
         }
         (Ty::Struct(pn, pargs), Ty::Struct(an, aargs))

@@ -815,6 +815,14 @@ fn reflection_field_handles_substitute_generic_struct_arguments() {
 }
 
 #[test]
+fn conforms_to_conjunction_selects_an_arm_at_an_instance() {
+    // The elaborator evaluates a `&` conjunction of traits as the checker
+    // validates it, so the proved arm constructs the field type.
+    let src = "struct Zero(Copyable, Defaultable, Writable):\n    var v: Int\n    def __init__(out self):\n        self.v = 0\n    def write_to(self, mut writer: Some[Writer]):\n        writer.write(\"Zero\")\n\nstruct Unit(Copyable, Writable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def write_to(self, mut writer: Some[Writer]):\n        writer.write(\"Unit\")\n\n@fieldwise_init\nstruct Holder(Copyable):\n    var first: Zero\n    var second: Unit\n\ndef show[T: AnyType]():\n    comptime types = reflect[T].field_types()\n    comptime for i in range(reflect[T].field_count()):\n        comptime FT = types[i]\n        comptime if conforms_to(FT, Defaultable & Deinitable & Writable):\n            print(FT())\n        else:\n            print(\"other\")\n\ndef main():\n    show[Holder]()\n";
+    assert_eq!(run(src).unwrap(), "Zero\nother\n");
+}
+
+#[test]
 fn reflection_rejects_removed_field_type_spelling() {
     let error = run("struct Point:\n    var x: Int\n\ndef main():\n    comptime reflected = reflect[Point].field_type[\"x\"]()\n")
         .unwrap_err();
@@ -1092,13 +1100,11 @@ fn variadic_struct_annotations_and_methods_use_the_specialization() {
 }
 
 #[test]
-fn variadic_struct_requires_explicit_type_arguments() {
-    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    var p = Pair((1, True))\n    print(p.storage[0])\n";
-    let err = run(src).unwrap_err();
-    assert!(
-        err.contains("variadic struct 'Pair' requires explicit compile-time type arguments"),
-        "got: {err}"
-    );
+fn variadic_struct_infers_type_arguments_from_constructor() {
+    // A bare construction solves `*Ts` from the fieldwise `Tuple[*Self.Ts]`
+    // field against the display it stores, through the discovery loop.
+    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    var p = Pair((1, True))\n    print(p.storage[0])\n    print(p.storage[1])\n";
+    assert_eq!(run(src).unwrap(), "1\nTrue\n");
 }
 
 #[test]

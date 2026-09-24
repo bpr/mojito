@@ -1585,6 +1585,29 @@ fn template_method_reference_calls_derive() {
 }
 
 #[test]
+fn template_method_subscript_stores_derive() {
+    // A store through a subscript of a field of `self`: a scalar field of a
+    // reference getter's element, a scalar or a whole value through a
+    // declared setter, and a scalar element stored whole or augmented through
+    // the mutable reference its getter yields.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_subscript_store.mojo"),
+        "8 0 31\n6 3 7 11\n0 51\ny 1 z 5\n",
+        &[
+            ("Shelf.reset", 2),
+            ("Shelf.bump", 2),
+            ("Shelf.count", 2),
+            ("Shelf.bump_count", 2),
+            ("Shelf.put_item", 2),
+            ("Shelf.put_bucket", 2),
+            ("Shelf.put_entry", 2),
+            ("Shelf.set_cell", 2),
+            ("Shelf.bump_cell", 2),
+        ],
+    );
+}
+
+#[test]
 fn template_method_borrowed_parameters_derive() {
     // A `mut` or bare `ref` parameter is bound from its convention alone: a
     // `mut` one may be stored to, scalar or whole, and a `ref` one is read.

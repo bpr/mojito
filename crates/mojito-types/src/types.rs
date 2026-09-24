@@ -96,8 +96,10 @@ impl PartialEq for TransferSet {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DependentType {
     /// A type-valued parameter expression: a finite type selection
-    /// (`ParamKind::Select`), or one element of a variadic pack that is still
-    /// a parameter (`ParamKind::ListGet`).
+    /// (`ParamKind::Select`), one element of a parameter list that is still
+    /// a parameter (`ParamKind::ListGet` — a variadic pack, or the field
+    /// types of a reflected symbolic type), or a reflected field type
+    /// (`ParamKind::Reflect`).
     Parameter(ParamExpr),
 }
 
@@ -839,6 +841,11 @@ pub fn mentions(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool) -> bool {
     let argument_mentions = |argument: &TyArg| match argument {
         TyArg::Ty(ty) => mentions(ty, predicate),
         TyArg::Val(CtValue::Expr(expr)) => expr_mentions(expr, predicate),
+        // A pack bound whole holds type positions (see `map_tyargs`).
+        TyArg::Val(CtValue::Tuple(values)) => values.iter().any(|value| match value {
+            CtValue::Type(ty) => mentions(ty, predicate),
+            _ => false,
+        }),
         TyArg::Val(_) | TyArg::Origin(_) => false,
     };
     match ty {
@@ -2913,6 +2920,17 @@ pub fn map_tyargs(args: &[TyArg], mut f: impl FnMut(&Ty) -> Ty) -> Vec<TyArg> {
     args.iter()
         .map(|a| match a {
             TyArg::Ty(t) => TyArg::Ty(f(t)),
+            // A pack bound whole (`Pair[T, Int]` as one list) holds type
+            // positions too: its element types map like `TyArg::Ty`.
+            TyArg::Val(CtValue::Tuple(values)) => TyArg::Val(CtValue::Tuple(
+                values
+                    .iter()
+                    .map(|value| match value {
+                        CtValue::Type(ty) => CtValue::Type(Box::new(f(ty))),
+                        other => other.clone(),
+                    })
+                    .collect(),
+            )),
             TyArg::Val(v) => TyArg::Val(v.clone()),
             // Origin substitution is threaded separately; pass origins through.
             TyArg::Origin(o) => TyArg::Origin(o.clone()),

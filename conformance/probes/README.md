@@ -80,6 +80,22 @@ element at a symbolic index opaque. Observed 2026-09-20 against
 | `pack_forwarding_untaken_arm.mojo` | Is a body that forwards its pack (`inner(*a)`) checked from the template? | **differs**: the pin rejects the untaken arm, Mojito reaches no verdict on that body and prints `1` `two` — `docs/roadmap.md` §1 |
 | `abort_ends_a_returning_body.mojo` | Does a trailing `abort(...)` end a value-returning body? | **differs**: the pin prints `1`, Mojito rejects ("does not return a value on every path") — `docs/roadmap.md` §3 |
 
+## Reflection-reading template bodies (re-run at every re-pin)
+
+A body reading `reflect[T]` over a symbolic `T` is validated from its
+template; a field type under a symbolic index is opaque until a
+`conforms_to` arm proves a trait of it. Observed 2026-09-23 against
+`Mojo 1.2.0.dev2026092105 (e9569894)`.
+
+| Probe | Question | Expected on both |
+|---|---|---|
+| `reflection_body_untaken_arm.mojo` | Is an untaken arm of a never-instantiated body reading `reflect[T]` checked? | reject (the arm's type error) |
+| `reflection_field_type_proof.mojo` | What does `comptime if conforms_to(types[i], Defaultable & Writable):` license on the field type? | reject (`Sized` was not proved); accepted once the `len` line goes |
+| `reflection_proof_is_positional.mojo` | Does a proof on another index, after the use, or in another loop license a use? | reject, three times |
+| `template_fallback_reflection.mojo` | Does a validated reflection body still check per instance? | runs, prints `2` `0` |
+| `element_store_from_same_list.mojo` | Is an element stored from another element of the same `List` field accepted whatever the element type? | **differs**: the pin prints `5` `y`, Mojito rejects the `String` instance ("'self' is borrowed mutably and also used at the same call") — `docs/roadmap.md` 3.5 |
+| `comptime_for_body_scope.mojo` | Is each unrolled iteration of a `comptime for` body its own scope? | **differs**: the pin prints `0` `1`, Mojito rejects ("'v' is already declared in this scope") — `docs/roadmap.md` §3 |
+
 ## Re-probes of enforced claims
 
 These rejections were enforced by the slice-A alignment sweep and confirmed

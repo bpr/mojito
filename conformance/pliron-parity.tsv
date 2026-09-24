@@ -346,6 +346,7 @@ assets/ok/pack_overload_leading_type.mojo	main	exe-differential	sanitized
 assets/ok/pack_overload_method_arity.mojo	main	exe-differential	sanitized
 assets/ok/pack_overload_variadic_position.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_getitem.mojo	main	exe-differential	sanitized
+assets/ok/pack_struct_inferred_args.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_pair.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_variadic_init.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_writable.mojo	main	exe-differential	sanitized
@@ -496,6 +497,7 @@ assets/ok/reference_carrier_collection.mojo	main	exe-differential	sanitized
 assets/ok/reference_element_chained_read.mojo	main	exe-differential	sanitized
 assets/ok/reference_iteration_temporary_list.mojo	main	exe-differential	sanitized
 assets/ok/reflected_operators.mojo	main	exe-differential	sanitized
+assets/ok/reflection_symbolic_fields.mojo	main	exe-differential	sanitized
 assets/ok/repr_type_names.mojo	main	exe-differential	sanitized
 assets/ok/reversed_iteration.mojo	main	exe-differential	sanitized
 assets/ok/reversed_list.mojo	main	exe-differential	sanitized

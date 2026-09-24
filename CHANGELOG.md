@@ -8,6 +8,25 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A per-instantiation method clone now inherits its checked template's facts
+  when the body stores a whole value through a field's `__setitem__`
+  (`self.items[i] = value^`, a construction, a moved closed value) or stores a
+  scalar element, whole or augmented, through the mutable reference a field's
+  `__getitem__` yields (`self.counts[i] += 1`, `self.grid[i] = n` on a struct
+  with no setter). Such a body used to keep the clone check: the setter's
+  grammar demanded a scalar, and the augmented store's record embedded the
+  getter's contract, which no recipe could substitute. An augmented store
+  through a value getter and a setter, and a struct element's `+=` through
+  `__iadd__`, still do (`docs/roadmap.md` 1.5).
+
+- A body reading `reflect[T]` over a symbolic type is now validated from its
+  template like every other compile-time-keyed body: a query over a struct is
+  answered from the struct table, a query over a parameter is a dependent node,
+  and a field type under the loop index is opaque until a `comptime if
+  conforms_to(FT, ...)` arm proves a trait of it — which now licenses a plain
+  parameter and a pack element in the same way, as the pinned Mojo does. An
+  untaken arm in such a body used to go unreported until an instance selected
+  it.
 - A body that forwards its variadic pack to another callee (`inner(*a)`,
   `collect(30, *items^, tail=10)`, a method's own pack, `print(*a)`) is now
   validated from its template like every other pack-keyed body: the callee's

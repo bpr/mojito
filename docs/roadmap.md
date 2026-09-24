@@ -111,25 +111,31 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, plan first.
 
-- [ ] **1.5 An augmented or whole-value store to a subscripted element keeps the
-  clone check**
+- [ ] **1.5 An augmented store through a value getter and a setter, and a
+  store on `self` itself, keep the clone check**
 
-  Problem: a scalar store through a subscript derives
-  (`self.entries[i].hits = 0`, `self.counts[i] = n`), and two neighbouring
-  stores still refuse it.
-  - `self.counts[i] += 1` records the `AugmentedSubscript` adjustment, which
-    holds a getter contract, an optional setter, and an in-place operator and
-    has no recipe.
-  - `self.index[bucket] = entries^` stores a moved value of a non-scalar type
-    through the setter, a whole-value argument the store's grammar does not
-    admit yet (`element_store` demands a scalar). `Dict._append_new` and
-    `Dict.update` are this shape.
+  Problem: an element store through a declared setter or a mutable-reference
+  getter derives, whole or augmented (`self.items[i] = value^`,
+  `self.counts[i] += 1`), and three neighbouring stores still refuse it.
+  - `self.table[i] += 1` where `__getitem__` returns a value binds the
+    computed result to the setter at a synthesized source span
+    (`statements.rs`, `(source, DUMMY_SPAN)`, one per module), which is no
+    occurrence of the body, and records `ReadTemporaryArguments` and
+    `UnconsumedTemporaries` there. A recipe needs a synthetic occurrence, or
+    the checker keying those facts at the site.
+  - A struct element's `+=` selects its `__iadd__` (`inplace`), a third
+    embedded contract with no recipe.
+  - `Dict.update` stores on `self` itself (`self[k.copy()] = v.copy()`), with
+    a bound-dispatched index and value; `element_store` admits a field of
+    `self` only.
   - A whole element read from the same list (`self.items[i] = self.items[j]`)
     is accepted for `Int` and rejected for `String`, so it cannot derive until
-    that divergence closes
-    (`conformance/probes/element_store_from_same_list.mojo`).
+    3.5 closes (`conformance/probes/element_store_from_same_list.mojo`).
+  - No bundled body holds `x[i] += …`, and `Dict._append_new` is kept out by
+    a field read through a `var` parameter, an `Int(…)` conversion, and a
+    method call on a local, so none of these moves `stdlib_heavy`.
   - Depends on nothing.
-  - Model: Fable, plan first.
+  - Model: Opus, plan first.
 
 - [ ] **1.6 A method binding a local of a type built over a parameter keeps
   the clone check**
@@ -271,7 +277,166 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, plan first.
 
-- [ ] **1.15 A surviving trait-bound template with a local of a parameter type
+- [ ] **1.15 A call to an explicit destructor keeps the clone check**
+
+  Problem: `ExplicitDestroyCalls` has no derivation recipe, so a body that
+  calls a `deinit self` method other than `__deinit__` is inferred per
+  instance.
+  - It blocks 11 templates and 8 clones per pass in
+    `benchmarks/compile/stdlib_heavy.mojo`, 9 and 4 of them alone. Among
+    them are `Dict.pop`, `Dict.clear_with`, `Set.difference_update`,
+    `dealloc`'s `allocation^.unsafe_leak()`, and the slice overloads of
+    `List.__getitem__` through `slice.start.or_else(0)`.
+  - The fact is a bare mark on the call. It holds when the receiver's struct
+    declares the method as an explicit destructor, which an instance's
+    substitution cannot change for a nominal receiver.
+  - A receiver of a parameter type selects the method only after
+    substitution, so that case must re-ask the instance's struct.
+  - Depends on nothing.
+  - Model: Opus, as-is.
+
+- [ ] **1.16 A consuming method call on a copied place receiver keeps the clone
+  check**
+
+  Problem: `ImplicitlyCopiedConsumingReceivers` has no derivation recipe, so a
+  body that calls a consuming method on a place it does not own is inferred
+  per instance.
+  - It blocks 2 templates and 4 clones per pass in `stdlib_heavy`, always
+    beside 1.15: the slice overloads of `List.__getitem__` and
+    `Span.__getitem__` call `or_else` on `slice.start`.
+  - The mark records that the receiver is copied before the call consumes it,
+    which depends on the receiver's type being `ImplicitlyCopyable`. An
+    instance must judge that again when the receiver's type names a
+    parameter.
+  - Depends on nothing.
+  - Model: Opus, as-is.
+
+- [ ] **1.17 A runtime `for` keeps the clone check**
+
+  Problem: `IterationProtocols` has no derivation recipe, so every body with
+  a runtime `for` loop is inferred per instance.
+  - It is the sole blocker of 5 templates and 1 clone per pass in
+    `stdlib_heavy`: `List.__init__`, `Set.__init__`, `Set.__hash__`,
+    `Array.__init__`, and `Dict._find_index`.
+  - The protocol is the `__iter__`/`__next__` contract selected from the
+    iterable's type. An instance must select it again from the substituted
+    type, as bound dispatch re-selects a witness.
+  - The loop variable's binding is a template local, which a derivation
+    already mints.
+  - Depends on nothing.
+  - Model: Opus, plan first.
+
+- [ ] **1.18 A SIMD construction keeps the clone check**
+
+  Problem: `SimdConstructions` has no derivation recipe, so a body that
+  builds a `SIMD` or `Scalar` value is inferred per instance.
+  - It blocks 3 templates and 3 clones per pass in `stdlib_heavy`, 1 and 2 of
+    them alone: `Optional.__hash__`, `Dict.__hash__`, and `path.expandvars`.
+  - The fact is the construction's concrete dtype and width. A closed
+    construction copies as it stands; one whose dtype or width names a
+    parameter has no entry in the template at all, and must be computed from
+    the instance's arguments.
+  - `Dict.__hash__` also records `ConstructTypeParam`, which has no recipe
+    either.
+  - Depends on nothing.
+  - Model: Opus, plan first.
+
+- [ ] **1.19 A condition on a `Boolable` struct keeps the clone check**
+
+  Problem: `TruthinessConditions` has no derivation recipe, so a body whose
+  `if` or `while` tests a struct through `__bool__` is inferred per instance.
+  - It blocks 4 templates per pass in `stdlib_heavy`: `OptionalReg.or_else`
+    alone, and `os.mkdir`, `os.remove`, and `os.rmdir` beside 1.8 and 1.13.
+  - The mark says the condition is not already a `Bool`. A condition of a
+    parameter type can become `Bool` itself under substitution, so an
+    instance must judge it again.
+  - Depends on nothing.
+  - Model: Opus, as-is.
+
+- [ ] **1.20 A tuple unpacking keeps the clone check**
+
+  Problem: `TupleUnpackPlans` has no derivation recipe, so a body that
+  unpacks a tuple into several bindings is inferred per instance.
+  - It blocks 2 templates per pass in `stdlib_heavy`: `os.removedirs` alone,
+    and `path.expandvars` beside several others.
+  - The plan holds each synthetic element read's checked type and generated
+    accessor. An instance substitutes the types and re-derives the accessors
+    from them.
+  - Depends on nothing.
+  - Model: Opus, as-is.
+
+- [ ] **1.21 A parameterized method call keeps the clone check**
+
+  Problem: `ParameterizedMethodCalls` has no derivation recipe, so a body
+  calling `v.m[T](…)` is inferred per instance.
+  - It is the sole blocker of 1 template in compile-time validation in
+    `stdlib_heavy`: `TString.write_to`.
+  - The fact is the selected method's declared compile-time parameters. They
+    are the callee's declaration, so only a receiver of a parameter type,
+    whose method is selected after substitution, needs re-selection.
+  - Depends on nothing.
+  - Model: Opus, as-is.
+
+- [ ] **1.22 A view-returning method call's interior tags keep the clone
+  check**
+
+  Problem: `ViewResultInteriors` has no derivation recipe, so a body calling
+  a method whose return origin projects an owned interior of its receiver is
+  inferred per instance.
+  - It blocks 5 templates per pass in `stdlib_heavy`, none of them alone:
+    `path.basename`, `path.dirname`, `path.split`, `path.splitroot`, and
+    `path.expandvars`.
+  - Each of those also waits on 1.8 (`BorrowViewResult`) and 1.13
+    (`CallResultOrigins`), so this recipe frees no body by itself.
+  - The tags come from the callee's declared return origin, which an
+    instance does not change for a nominal receiver.
+  - Depends on nothing.
+  - Model: Opus, as-is.
+
+- [ ] **1.23 A comprehension keeps the clone check**
+
+  Problem: `ComprehensionBindings` has no derivation recipe, so a body
+  holding a list, set, or dict comprehension is inferred per instance.
+  - It blocks no body in `stdlib_heavy` today.
+  - The fact holds each comprehension binder's identity and type. A
+    derivation mints a fresh identity per binder and substitutes its type, as
+    it does for a template local.
+  - Depends on nothing.
+  - Model: Opus, as-is.
+
+- [ ] **1.24 A `with` statement keeps the clone check**
+
+  Problem: `WithDesugars` has no derivation recipe, so a body holding a
+  `with` statement is inferred per instance.
+  - It blocks no body in `stdlib_heavy` today.
+  - The fact is a desugared statement list spliced into the tree after the
+    last transfer round. It carries its own syntax, whose occurrences a
+    derivation would have to remap like the body's.
+  - Depends on nothing.
+  - Model: Opus, plan first.
+
+- [ ] **1.25 A nested `def` with explicit captures keeps the clone check**
+
+  Problem: `DeclarationCaptures` has no derivation recipe, so a body
+  declaring a nested `def` with a capture list is inferred per instance.
+  - It blocks no body in `stdlib_heavy` today.
+  - Each capture names an outer binding, so a derivation must remap it to
+    the instance's binding identity, and substitute its type.
+  - Depends on nothing.
+  - Model: Opus, plan first.
+
+- [ ] **1.26 A leading-dot contextual member keeps the clone check**
+
+  Problem: `ContextualBases` has no derivation recipe, so a body spelling
+  `.Member` against a contextual type is inferred per instance.
+  - It blocks no body in `stdlib_heavy` today.
+  - The fact is the resolved base type's name, which HIR substitutes. A
+    contextual type naming a parameter resolves to a different base per
+    instance, so the name must be re-rendered from the substituted type.
+  - Depends on nothing.
+  - Model: Opus, as-is.
+
+- [ ] **1.27 A surviving trait-bound template with a local of a parameter type
   keeps the clone check**
 
   Problem: a `def` template may hold scalar locals and runtime `if` and
@@ -286,11 +451,11 @@ to section 3, however small.
     of a bare parameter type (`template_facts.rs:whole_value`).
   - A `def` has no plain-data obligation yet, and its parameter may be
     instantiated with a type that carries a loan or is a callable.
-  - A runtime `for` needs the iteration-protocol recipe.
-  - Depends on nothing.
+  - A runtime `for` needs the iteration-protocol recipe, which is 1.17.
+  - Depends on 1.17 for a runtime `for`.
   - Model: Fable, plan first.
 
-- [ ] **1.16 Every discovery round still infers every uncovered body again**
+- [ ] **1.28 Every discovery round still infers every uncovered body again**
 
   Problem: a compilation checks the whole elaborated program once per
   discovery round and once per transfer-effect round, and a checked template
@@ -307,10 +472,10 @@ to section 3, however small.
     every fact table, under the identity substitution.
   - The arena is already built once per compilation rather than once per
     round (`DiscoveryResult`).
-  - Depends on the recipe entries above, one per table.
+  - Depends on 1.2, 1.4, 1.5, 1.8, 1.13, and 1.15 through 1.26.
   - Model: Fable, plan first.
 
-- [ ] **1.17 Binder identity is still by spelling below the checker**
+- [ ] **1.29 Binder identity is still by spelling below the checker**
 
   Problem: a type binder is now its declaration's (`Ty::Param { binder }`,
   `ParamDecl::{Type, Value}.id`), but three readers still bind a type by
@@ -340,8 +505,9 @@ to section 3, however small.
     This is what fails the five `compiler_test` derive tests that ask for
     verification themselves (`with_template_verification(true)`):
     `template_method_constructions_derive`,
-    `template_method_origin_bearing_constructions_derive`, and the
-    `reference_calls`/`reference_locals`/`reference_results` three. They
+    `template_method_origin_bearing_constructions_derive`, the
+    `reference_calls`/`reference_locals`/`reference_results` three, and
+    `template_method_subscript_stores_derive` (a sixth, 2026-09-23). They
     reach `List.__hash__$y3:Int`, so they went red when the derivation
     grammar grew, not when the binder changed. The owner is only
     uncanonical because `demangle_specialization` decodes no
@@ -363,9 +529,10 @@ to section 3, however small.
     discriminator for an overloaded name, and it is serialized in MIR text,
     so the spelling is part of the decision.
   - Depends on nothing.
-  - Model: Opus. Each corner is a keyed-map change behind an existing helper.
+  - Model: Opus, as-is. Each corner is a keyed-map change behind an existing
+    helper.
 
-- [ ] **1.18 A pack-keyed template's instances are never derived from it**
+- [ ] **1.30 A pack-keyed template's instances are never derived from it**
 
   Problem: a pack-keyed body is validated once, but its certificate is always
   incomplete, so every instance is still checked as a clone.
@@ -379,7 +546,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Fable, plan first.
 
-- [ ] **1.19 A pack forwarded into a method or into `print` fails at the
+- [ ] **1.31 A pack forwarded into a method or into `print` fails at the
   clone**
 
   Problem: the pin runs `self.take(*a)` and `print(*a)` inside a pack-keyed
@@ -395,38 +562,10 @@ to section 3, however small.
     `pack_forwarding_print_untaken_arm.mojo` pin both; the pin prints
     `1` `two`.
   - Depends on nothing.
-  - Model: Opus. The rewrite exists; the method and builtin callee shapes
+  - Model: Opus, as-is. The rewrite exists; the method and builtin callee shapes
     need routing to it.
 
-- [ ] **1.20 A variadic struct's type arguments are not inferred from its
-  constructor**
-
-  Problem: `Pair((1, True))` for `struct Pair[*Ts](...)` with
-  `var storage: Tuple[*Self.Ts]` runs at the pin, while Mojito requires
-  `Pair[Int, Bool](...)`
-  (`assets/type_error/pack_struct_needs_explicit_args.mojo`, a `divergence`
-  row of `conformance/assets-mojo-errors.tsv`).
-  - Monomorphization (`crates/mojito-comptime/src/comptime/mono.rs`) runs
-    before type checking, so argument types are only syntactically known
-    there.
-  - Inference needs a checker-owned instantiation: the checker must type the
-    template's constructor symbolically and unify `*Ts` against the
-    argument types, then request the instance the way it already requests
-    inferred bound-generic clones.
-  - Value inference already binds a direct reference and leaves any other
-    residual as an equation (`solve_value_args`, `unify_arg` in native mono);
-    pack inference is added to that, not beside it. The pin does not invert
-    `Buf[n + 1]` against `Buf[4]` either
-    (`assets/type_error/param_expr_inverse_inference.mojo`).
-  - The template now types symbolically under source validation: a variadic
-    struct registers with its fields, signatures, and bodies over the unbound
-    pack (`docs/architecture.md` §Source validation). Unification against its
-    constructor is what is missing.
-  - Depends on nothing.
-  - Model: Fable, plan first. Moves one instantiation decision from the
-    elaborator to the checker and touches the discovery loop's request kinds.
-
-- [ ] **1.21 A variadic struct construction in a validated body is not matched
+- [ ] **1.32 A variadic struct construction in a validated body is not matched
   against its constructor**
 
   Problem: inside a validated body, `Pair[Int, Bool](1, True)` types from its
@@ -437,25 +576,15 @@ to section 3, however small.
     `checker/comptime_validation.rs`). The taken arm is still checked against
     the minted constructor.
   - A bare `Tuple(1, "one")` is exact: it types as the tuple display it is.
-  - The lever is the checker-owned instantiation 1.20 builds.
-  - Depends on 1.20.
+  - The lever exists now: a *bare* construction is matched against the
+    template's constructor with the pack solved from the arguments
+    (`infer_construction` on a variadic shell, `docs/architecture.md`
+    §Comptime elaboration). The explicit form can bind the pack from its
+    `[...]` arguments and take the same path instead of the shortcut.
+  - Depends on nothing.
   - Model: Fable, plan first.
 
-- [ ] **1.22 A body reading `reflect[...]` is not validated symbolically**
-
-  Problem: a body that reads a reflection handle checks only per
-  instantiation (`reads_reflection`, `checker/comptime_validation.rs`), so an
-  untaken arm there is never reported.
-  - Its `comptime for` iterates a struct's field list, which only the
-    elaborator evaluates. A symbolic `T` has no field list.
-  - The bundled hashing and writing defaults over `reflect[Self]` are the
-    acceptance list.
-  - The lever is an opaque field handle, as a pack element is an opaque
-    `param_list.get`.
-  - Depends on nothing.
-  - Model: Fable, plan first. A new symbolic form with no precedent.
-
-- [ ] **1.23 A per-call method clone and a whole-struct specialization leave no
+- [ ] **1.33 A per-call method clone and a whole-struct specialization leave no
   trace**
 
   Problem: the elaborator traces a `def` clone and a per-instantiation method
@@ -467,16 +596,16 @@ to section 3, however small.
     comes from a template whose validated body is never certified: a `DType`
     binder fails `template_certificate`'s plain-binder rule
     (`checker/template_facts.rs`), and a validated method has no class. It
-    waits on 1.18, the pack-keyed certificate.
+    waits on 1.30, the pack-keyed certificate.
   - Hello World's 1320 generated body inferences are all of these two kinds.
   - An untraced body keeps the `$`-name test for its `rebind` selection
     (`template_facts.rs:keeps_symbolic_selection`); a traced one keeps the
     selection only when its template was validated.
-  - Depends on 1.18 for the whole-struct half; the per-call half depends on
+  - Depends on 1.30 for the whole-struct half; the per-call half depends on
     nothing.
   - Model: Opus, plan first, for the per-call trace.
 
-- [ ] **1.24 An explicit `DType`-keyed application loses to a keyed overload of
+- [ ] **1.34 An explicit `DType`-keyed application loses to a keyed overload of
   the same name**
 
   Problem: `kind[DType.float64](1.8)`, where `def kind[dt: DType](a:
@@ -495,7 +624,7 @@ to section 3, however small.
   - Model: Fable, plan first. The plan's job is the round-one survival rule
     for a member of no request-served class.
 
-- [ ] **1.25 A keyed method's template body cannot construct a SIMD at its own
+- [ ] **1.35 A keyed method's template body cannot construct a SIMD at its own
   lane**
 
   Problem: `def make[dt: DType](self, x: Int) -> Scalar[dt]` whose body
@@ -513,9 +642,9 @@ to section 3, however small.
   - Reading the lane (`a + a`, `v.reduce_add()`) lowers fine, so
     `assets/ok/dtype_keyed_method.mojo` covers everything but this.
   - Depends on nothing.
-  - Model: Opus.
+  - Model: Opus, as-is.
 
-- [ ] **1.26 An explicitly applied static method is an undefined variable**
+- [ ] **1.36 An explicitly applied static method is an undefined variable**
 
   Problem: `Lanes.ident[Int](3)` for a `@staticmethod` on a plain struct
   reports "Undefined variable 'Lanes'"; the inferred call `Lanes.ident(3)`
@@ -527,9 +656,9 @@ to section 3, however small.
   - Found while closing the `DType`-keyed method item; no fixture pins it
     yet.
   - Depends on nothing.
-  - Model: Fable.
+  - Model: Fable, plan first.
 
-- [ ] **1.27 An inferred `SIMD[dt, _]` width leaks into the binding's declared
+- [ ] **1.37 An inferred `SIMD[dt, _]` width leaks into the binding's declared
   type**
 
   Problem: `var v: SIMD[DType.int32, _] = SIMD[DType.int32, 4](1, 2, 3, 4)`
@@ -542,9 +671,22 @@ to section 3, however small.
     widening what the wildcard admits: `simd-inferred-width` is on the
     divergence ledger and is to be withdrawn, not grown.
   - Depends on nothing.
-  - Model: Opus.
+  - Model: Opus, as-is.
 
-- [ ] **1.28 The Pliron pivot has no falsifiable proof yet**
+- [ ] **1.38 A keyword fieldwise construction of a variadic struct is
+  rejected**
+
+  Problem: `Pair[Int, Bool](storage=(1, True))` on an `@fieldwise_init`
+  variadic struct reports "'Pair$…' expects 1 argument(s), got 0", and so
+  does the bare `Pair(storage=(1, True))`; the pin runs both.
+  - The specialization's fieldwise path (`infer_construction`, the
+    `fieldwise_init` tail) binds positional arguments only; a plain
+    fieldwise struct takes keywords through the synthesized `__init__`.
+  - Found while probing the pack inference; independent of it.
+  - Depends on nothing.
+  - Model: Opus, as-is. One constructor path, with the pin's verdict in hand.
+
+- [ ] **1.39 The Pliron pivot has no falsifiable proof yet**
 
   Problem: [`docs/pliron-backend-pivot-plan.md`](pliron-backend-pivot-plan.md)
   stages a migration to a required Pliron IR framework, but its Stage A1 slice
@@ -637,7 +779,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - `conformance/probes/native_nested_generic_instance_ctor.mojo` pins it;
     the pinned Mojo runs it.
   - Depends on nothing.
-  - Model: Opus.
+  - Model: Opus, plan first.
 
 - [ ] **2.5 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
@@ -679,8 +821,8 @@ change that needs a new `MJRT_ABI_VERSION`.
     same on both backends in the meantime.
   - A later task that needs an ABI bump joins this entry rather than
     getting its own.
-  - Model: Fable. The signature classification changes the native calling
-    convention itself, and the ABI version, `docs/native-abi.md`, the
+  - Model: Fable, plan first. The signature classification changes the native
+    calling convention itself, and the ABI version, `docs/native-abi.md`, the
     runtime, and the parity harness all move together.
 
 ### 3. Catch Up To Current Mojo *(recurring — reopens at every nightly re-pin)*
@@ -904,7 +1046,8 @@ words. The representation gap and the two standing ledgers are last.
     with a local of a parameter type, and a struct method that calls a
     module-scope overload set. Section 1 carries those entries, and each one
     that lands narrows this.
-  - **Model:** Fable. It closes only as section 1's coverage entries land.
+  - **Model:** Fable, as-is. It closes only as section 1's coverage entries
+    land.
 
 - [ ] **3.14 A module-level `def` converts to a `def(...) capturing[_]` runtime
   parameter**
@@ -925,7 +1068,7 @@ words. The representation gap and the two standing ledgers are last.
     `Dict.clear_with`, and `DictEntry.reap_with` declare such parameters and
     are callable only through this conversion.
   - Depends on nothing.
-  - Model: Opus.
+  - Model: Opus, plan first.
 
 - [ ] **3.15 A user `Hasher` cannot spell `update` the way the pin requires**
 
@@ -951,8 +1094,8 @@ words. The representation gap and the two standing ledgers are last.
     shape message), `checker/method_calls/mc_infer.rs` (the intrinsic arms),
     and `stdlib/std/hashlib/` (`hasher.mojo`, `_ahash.mojo`, `_fnv1a.mojo`
     plus every `hasher.update(...)` call site).
-  - Model: Fable. It changes a compiler-known trait's contract and needs a
-    scalar `__hash__` before the rename can land.
+  - Model: Fable, plan first. It changes a compiler-known trait's contract and
+    needs a scalar `__hash__` before the rename can land.
 
 - [ ] **3.16 `Layout` carries its alignment as a runtime field**
 
@@ -1299,7 +1442,118 @@ words. The representation gap and the two standing ledgers are last.
   - Depends on nothing.
   - Model: Opus, as-is, one site each.
 
-- [ ] **3.39 Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
+- [ ] **3.39 Each unrolled `comptime for` iteration shares the enclosing scope**
+
+  Problem: `comptime for i in range(2):` with `var v: Int = i` in its body
+  prints `0` then `1` at the pin, while Mojito reports "'v' is already
+  declared in this scope".
+  - The elaborator splices every unrolled copy of the body into the enclosing
+    block (`comptime/elab.rs`, the `ComptimeFor` arm), so the second copy
+    redeclares the first's locals; the validator checks the body once in its
+    own scope and accepts it.
+  - A `comptime n = names[i]` binding in the body fails the same way.
+  - Pinned by `conformance/probes/comptime_for_body_scope.mojo`.
+  - Depends on nothing.
+  - Model: Opus, plan first. Each iteration needs its own scope, or its locals
+    renamed.
+
+- [ ] **3.40 A trait default body holding a `comptime if` never elaborates**
+
+  Problem: a trait whose default method holds `comptime if True:` reports
+  "unsupported feature: comptime if" for every conformer, where the pin
+  checks the default symbolically and runs it.
+  - The elaborator specializes struct methods and `def`s; a default body a
+    conformer inherits is never stubbed or selected, so the construct reaches
+    the executable check.
+  - The upstream reflective defaults (`Hashable.__hash__`, `Equatable.__eq__`)
+    are written as such bodies over `reflect[Self]`.
+  - Depends on nothing.
+  - Model: Opus, plan first. The plan says where an inherited default is
+    copied into a conformer today and where its selection would run.
+
+- [ ] **3.41 A field name under a symbolic index prints without `materialize`**
+
+  Problem: `print(names[i])` inside `comptime for i in range(len(names))`
+  over `comptime names = reflect[T].field_names()` prints at Mojito, while
+  the pin rejects it with "cannot materialize comptime value of type
+  'Array[StringSpan[...]]'" and needs `materialize[names[i]]()`.
+  - Mojito accepts a program the pin rejects, so this is a divergence.
+  - `materialize[names[i]]()` fails at the instance in turn ("Undefined
+    variable 'materialize'"): the elaborator's crossing takes a bare binding
+    only.
+  - Depends on 3.39 for the `comptime n = names[i]` workaround.
+  - Model: Opus, plan first.
+
+- [ ] **3.42 `comptime assert` is not parsed**
+
+  Problem: upstream's `comptime assert conforms_to(FT, Hashable)` is a parse
+  error at Mojito.
+  - The pin treats the assertion as a proof: a preceding, same-block
+    `comptime assert conforms_to(X, T)` licenses `T` on `X` exactly as a
+    `comptime if conforms_to(X, T):` arm does (`docs/notes/param-expr-attributes.md`
+    §Reflection queries), and a failing one reports "constraint failed" at
+    the instance.
+  - The checker's arm licensing (`conformance_arm_assumptions`) is the lever;
+    the statement form would push the same atoms for the rest of its block.
+  - Depends on nothing.
+  - Model: Opus, plan first.
+
+- [ ] **3.43 A field's value cannot be read by reflection**
+
+  Problem: `reflect[T].field_ref[i](x)` — the value of field `i` of `x` — is
+  unsupported; the upstream hashing, equality, and writing defaults are
+  written with it.
+  - Mojito's defaults are Rust AST synthesis (`comptime/synth.rs`) and a
+    lowering (`mojito-pliron/src/lower/print.rs`), so no bundled body needs
+    it yet.
+  - Under validation the result's type is the opaque field type
+    (`types[i]`), which the arm-licensing rule already covers.
+  - Depends on 3.42 for the upstream spelling of the defaults.
+  - Model: Fable, plan first.
+
+- [ ] **3.44 `Int()` has no zero-argument constructor**
+
+  Problem: `print(Int())` prints `0` at the pin, while Mojito reports "'Int'
+  expects 1 argument(s), got 0"; `Float64()` likewise.
+  - `Int` conforms to `Defaultable` at the pin, so a `conforms_to(FT,
+    Defaultable)` arm over an `Int` field selects `FT()` and then fails.
+  - Depends on nothing.
+  - Model: Opus, as-is.
+
+- [ ] **3.45 A `var` of an opaque type is not required to be `Deinitable`**
+
+  Problem: `var v: FT = FT()` under `comptime if conforms_to(FT, Defaultable
+  & Writable):` validates at Mojito, while the pin reports "'v' abandoned
+  without being explicitly destroyed ... consider adding trait conformance
+  to Deinitable" until `Deinitable` is proved too.
+  - Mojito accepts a program the pin rejects, so this is a divergence; it
+    holds for every opaque parameter, not only a reflected field type.
+  - The abstract destruction walk (`explicit_destroy.rs`) does not ask the
+    view's bounds for `Deinitable`.
+  - Depends on nothing.
+  - Model: Opus, as-is.
+
+- [ ] **3.46 A local compile-time type list is unknown in an instance's annotation**
+
+  Problem: `var v: types[i] = ...` over `comptime types =
+  reflect[T].field_types()` validates, but the instance reports "unknown
+  type 'types'".
+  - The elaborator resolves `f.T` over a bound handle (`resolve_reflected_type`,
+    `comptime/eval.rs`) and nothing else in an annotation; `comptime FT =
+    types[i]` then `var v: FT` is the working spelling.
+  - Depends on 3.39 when the annotation sits in a `comptime for` body.
+  - Model: Opus, as-is.
+
+- [ ] **3.47 A handle chain in a call's type argument is read as a value**
+
+  Problem: `_unqualified_type_name[reflect[T].field_at[i].T]()` reports
+  "expected a type, found a value" at the instance.
+  - The elaborator's `resolve_reflected_param_arg` rewrites a `ParamArg::Type`
+    only; the chain arrives as a value argument.
+  - Depends on nothing.
+  - Model: Opus, as-is.
+
+- [ ] **3.48 Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
   any order)*
 
   Problem: parts of Mojito's stdlib lean on the Rust runtime where upstream
@@ -1329,7 +1583,7 @@ words. The representation gap and the two standing ledgers are last.
   Four runtime services are deliberately not on that list; they are in
   [`docs/non-goals.md`](non-goals.md).
 
-- [ ] **3.40 Behavioral divergences from the pinned Mojo — burn to zero**
+- [ ] **3.49 Behavioral divergences from the pinned Mojo — burn to zero**
   *(standing)*
 
   Every new divergence lands here with a probe or a `cases.tsv`
@@ -1559,7 +1813,8 @@ words. The representation gap and the two standing ledgers are last.
     - Pinned by `assets/extensions/ok/ref_field_view_for_temporary.mojo`,
       `ref_field_view_ref_yield.mojo`, `ref_field_view_method_return.mojo`,
       `ref_field_drain_mut_method.mojo`, and `ref_field_chained_view_call.mojo`.
-    - Model: Opus. The rule already exists; the gap is one constructor path.
+    - Model: Opus, plan first. The rule already exists; the gap is one
+      constructor path.
   - `string-subscript-element`: `s[0]` on a `String` yields a character
     upstream and an `Int` in Mojito
     (`assets/ok/nominal_string_indexing.mojo`, `h` against `104`). Two
@@ -1568,49 +1823,50 @@ words. The representation gap and the two standing ledgers are last.
     (`assets/ok/self_hosted_dict.mojo`), and reflection prints
     `<unprintable>` upstream where Mojito prints the element types
     (`assets/ok/type_names_applied_elements.mojo`).
-    - Model: Fable. The subscript's element type is a declaration change in
-      the stdlib's `String`, and the other two are texts to match.
+    - Model: Fable, plan first. The subscript's element type is a declaration
+      change in the stdlib's `String`, and the other two are texts to match.
   - `int-true-division`: `Int / Int` is true division into `Float64` in
     Mojito; the pin truncates back to `Int` and divides only an `IntLiteral`
     pair into a float. An `output-diff` row, not a rejection, so it is not on
     the burn-down.
-    - Model: Fable. The result type of one operator changes, and every
-      fixture and stdlib body that divides integers moves with it.
+    - Model: Fable, plan first. The result type of one operator changes, and
+      every fixture and stdlib body that divides integers moves with it.
   - `simd-infix-comparison`: Mojito's `<`/`<=`/`>`/`>=` are elementwise at
     every width and its `==`/`!=` compare lane by lane. The pin constrains
     the strict inequalities to `Scalar` and gives `==`/`!=` whole-vector
     meaning, pointing at `SIMD.lt(...)`, which Mojito now has (2026-09-13)
     along with `le`/`gt`/`ge`/`eq`/`ne`. Six corpus fixtures were respelled
     onto the methods.
-    - Model: Fable. Withdrawing the infix spelling is a leniency to remove,
-      with fallout across the stdlib's SIMD bodies.
+    - Model: Fable, plan first. Withdrawing the infix spelling is a leniency to
+      remove, with fallout across the stdlib's SIMD bodies.
   - `simd-element-narrowing` / `simd-inferred-width` / `float-literal-to-int`:
     three small constructor leniencies. Mojito narrows a SIMD element
     argument to the lane type (wrapping an out-of-range literal and a wider
     runtime value), infers an unbound SIMD width from the argument count, and
     truncates a `FloatLiteral` straight to `Int`; the pin wants the lane's
     own scalar, a written-out width, and the `Float64` it truncates from.
-    - Model: Fable. Three leniencies to withdraw in one pass.
+    - Model: Fable, as-is. Three leniencies to withdraw in one pass.
   - `float32-reduce-ordering`: `reduce_mul` over `Float32` lanes folds left
     at lane precision in Mojito and pairwise in the pin
     (`319256416.0` against `319256448.0` on sixteen lanes;
     `assets/ok/simd_wide_widths.mojo` now reduces an exactly representable
     vector to avoid it). The float-format entry above hides the same rows.
-    - Model: Fable. The reduction shape changes in the VM and in the
+    - Model: Fable, plan first. The reduction shape changes in the VM and in the
       `llvm.vector.reduce.fmul` lowering together.
   - `string-span-byte-index` / `string-codepoint-index`: `sp[byte=i]` reads
     the byte value in Mojito and returns the one-byte view upstream, and
     `s[codepoint=i]` is a `Codepoint` in Mojito and a one-codepoint
     `StringSpan` upstream. The same shape as `string-subscript-element`
     above, on the keyword subscripts.
-    - Model: Fable. Declaration changes in the stdlib's `String`/`StringSpan`.
+    - Model: Fable, plan first. Declaration changes in the stdlib's
+      `String`/`StringSpan`.
   - `split-returns-owned-strings`: `String.split`/`splitlines` return
     `List[String]` in Mojito and owned-interior `StringSlice` views upstream,
     so `var parts = s.split(" ")` then `s = String(parts[0])` runs in Mojito
     and hits upstream's call-result aliasing rejection.
     - Pinned by `conformance/probes/split_returns_owned_strings.mojo`.
-    - Model: Fable. An API shape change with display and iteration fallout
-      across every `split` caller.
+    - Model: Fable, plan first. An API shape change with display and iteration
+      fallout across every `split` caller.
   - `contiguous-slice-result`: a contiguous `List` slice is an owned `List`
     in Mojito and a borrowing `Span` upstream, so only Mojito returns one
     from a `-> List[Int]` function.
@@ -1618,15 +1874,16 @@ words. The representation gap and the two standing ledgers are last.
       `xs = rebuild(xs[0:1])` because the slice views `xs`'s owned elements,
       while Mojito's copy borrows nothing and runs. Pinned by
       `conformance/probes/list_slice_copies.mojo`.
-    - Model: Fable. The return type of `List.__getitem__(ContiguousSlice)`
-      changes, and every caller that owns the result moves with it.
+    - Model: Fable, plan first. The return type of
+      `List.__getitem__(ContiguousSlice)` changes, and every caller that owns
+      the result moves with it.
   - `int-is-floatable`: Mojito conforms `Int` and an integer literal to
     `Floatable`; upstream conforms neither, so a `Floatable`-bounded helper
     takes only a float there. Mojito also resolves `len(x)` from a bare
     `__len__` where the pin wants a declared `Sized` conformance —
     `assets/ok/dunder_index.mojo` and `assets/ok/self_hosted_vec.mojo` now
     declare it.
-    - Model: Fable. Two conformance leniencies to withdraw.
+    - Model: Fable, as-is. Two conformance leniencies to withdraw.
   - `slice-descriptor-kinds` / `unmodeled-struct-decorator` /
     `implicitly-deletable-alias`: three spellings the pin has dropped or
     never had. Mojito splits upstream's single `Slice` into
@@ -1634,8 +1891,8 @@ words. The representation gap and the two standing ledgers are last.
     ignores an unmodeled struct decorator where the pin rejects an unknown
     one (`@value` is now unknown there), and it still normalizes
     `ImplicitlyDeletable` to `Deinitable`, which the pin has removed.
-    - Model: Fable. Each is a name or a type to withdraw, with stdlib and
-      fixture fallout.
+    - Model: Fable, plan first. Each is a name or a type to withdraw, with
+      stdlib and fixture fallout.
 
   Five divergences are retained on purpose and re-probed rather than fixed;
   they are listed in [`docs/non-goals.md`](non-goals.md).

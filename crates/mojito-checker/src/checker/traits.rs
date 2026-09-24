@@ -461,11 +461,42 @@ impl Checker {
         declaration: &StructDeclaration<'_>,
     ) -> Result<(), TypeError> {
         let name = declaration.name;
-        // A template shell has no members to resolve: its fields depend on the
-        // pack, and it exists only to type symbolic applications. (Under
-        // source validation the shell still carries its source where
-        // clauses, which check only per specialization too.)
+        // A template shell exists to type symbolic applications. A variadic
+        // template's members resolve over its pack, so its shell installs
+        // them when they all resolve — the discovery check then types a
+        // construction of the shell and the members of the instance it
+        // produces — and stays member-less otherwise. Any other shell has no
+        // symbolic member form. (Under source validation the shell still
+        // carries its source where clauses, which check only per
+        // specialization too.)
         if declaration.template_shell {
+            let variadic = self.structs.get(name).is_some_and(|info| {
+                info.decls
+                    .iter()
+                    .any(|decl| matches!(decl, ParamDecl::Type { variadic: true, .. }))
+            });
+            if !variadic {
+                return Ok(());
+            }
+            let (_, saved) = self.enter_struct_scope(declaration)?;
+            let resolved = self.resolve_struct_member_types(declaration);
+            self.exit_struct_scope(saved);
+            if let Ok((
+                fields,
+                field_origin_arguments,
+                associated,
+                associated_constraints,
+                parameterized_associated,
+                _,
+            )) = resolved
+                && let Some(info) = self.structs.get_mut(name)
+            {
+                info.fields = fields;
+                info.field_origin_arguments = field_origin_arguments;
+                info.associated = associated;
+                info.associated_constraints = associated_constraints;
+                info.parameterized_associated = parameterized_associated;
+            }
             return Ok(());
         }
         if !declaration.where_clauses.is_empty() {

@@ -89,6 +89,9 @@ impl Checker {
 
     #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     fn resolve_ty_from_anno_at_depth(&self, ty: &SourceType) -> Result<Ty, TypeError> {
+        if let Some(reflected) = self.reflected_type_annotation(ty)? {
+            return Ok(reflected);
+        }
         Ok(match ty {
             SourceType::Int => Ty::Int,
             SourceType::UInt => Ty::UInt,

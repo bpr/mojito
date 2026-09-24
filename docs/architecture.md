@@ -486,8 +486,8 @@ caller's, the two collectors' ownership must agree (`var` needs the `^`, a
 read pack cannot be transferred), and a result naming the callee's elements
 closes over the caller's pack. Where there is still no symbolic rule — a
 method other than `__len__` on the pack, a spread outside a call argument —
-the checker raises `TypeError::SymbolicPackBoundary`, and that one body gets
-no verdict (`Checker::pack_verdict`, counted as `templates.pack_no_verdict`):
+the checker raises `TypeError::SymbolicBoundary`, and that one body gets
+no verdict (`Checker::symbolic_verdict`, counted as `templates.no_verdict`):
 it keeps its per-instantiation check, leaves the destruction walk, and the
 run goes on. `docs/notes/param-expr-attributes.md` records the design.
 
@@ -515,6 +515,28 @@ crosses the MIR waist: `validate_dependent_bindings` refuses it, the
 elaborator still clones every such body per call or per application, and
 lowering reads only known slots.
 
+**A reflected field is symbolic too.** A body reading `reflect[T]` over a
+parameter — a `def`'s type parameter, or `Self` in a generic struct's method —
+is validated like any other (`checker/reflection.rs`). A query over a
+registered struct, at concrete or symbolic arguments, is answered from the
+struct table as the elaborator answers it; a query over a subject that is
+still a parameter is a `ParamKind::Reflect` node: `field_count()`,
+`field_index[name]()`, and `len(field_names())` are compile-time `Int`s,
+`is_struct()` a `Bool`, `field_names()[i]` a string literal, and a field
+type — `types[i]`, `r.field_at[i].T`, `r.field["x"].T` — the dependent
+element `ListGet` of a `field_types()` list, viewed through the same bounded
+`Ty::Param` a pack element is (`opaque_element`, now keyed by the element's
+spelling). A field type has no declared bound: `T`'s own bound says nothing
+about a field, so a trait use of it is rejected until proved, and a
+`comptime if conforms_to(X, A & B)` condition proves exactly those traits of
+exactly that operand for the arm it guards (`conformance_arm_assumptions`,
+pushed on `assumed_conformances` around the arm), which is what the pin
+licenses for a plain parameter, a pack element, and a field type alike; a
+proof on another index, after the use, in another loop, or in an `or` proves
+nothing. A reflection body's certificate is incomplete by rule
+(`template_certificate`), so its instances keep the clone check and the
+elaborator's own field facts. A `Reflect` node never crosses the MIR waist.
+
 **Validation is a template producer.** `Compiler::compile_linked` runs
 validation once, on the prepared program that every discovery round then
 re-elaborates, and lends it the compilation's `TemplateCatalog`
@@ -526,7 +548,8 @@ the facts of the arms the elaborator selects instead of being inferred
 (Stage 3, *Checked Templates*). A run that ends without a verdict — it
 reached a member of a struct-value-keyed template shell — withdraws every
 certificate it produced. A pack-, `DType`-, or vector-keyed body's
-certificate is always incomplete, so its instances keep the clone check. The verdict-only
+certificate is always incomplete, and so is a reflection-reading body's, so
+their instances keep the clone check. The verdict-only
 `validate_comptime_templates` remains for clients without a catalog, and
 `comptime::elaborate`, the composed-stage seam, runs the same three steps
 through it.
@@ -780,14 +803,33 @@ walked; `resolve_struct_spec_args_if_ready` leaves such an application
 symbolic (as the public `Tuple` always was) and retains the template. The
 program rebuild then emits the template as a **shell**
 (`StmtKind::Struct::template_shell`): its parameters, declared conformances
-(taken unconditionally — the concrete specialization re-verifies them), and
-the method signatures that resolve symbolically register in the checker
-(`check_struct_shell` skips the variadic-template rejection,
-`register_struct_method_signatures` skips a signature that fails, and the
-member-type and completion phases are skipped), so the retained abstract
-body checks against it; `explicit_destroy` and MIR skip a shell entirely. A
-concrete application that fails to resolve keeps its eager diagnostic, and the
-raw seam still rejects an unmarked variadic template.
+(taken unconditionally — the concrete specialization re-verifies them), the
+method signatures that resolve symbolically, and — for a variadic template,
+whose members resolve over its pack — its fields and associated members
+when they all resolve, register in the checker (`check_struct_shell` skips
+the variadic-template rejection, `register_struct_method_signatures` skips a
+signature that fails, `check_struct_types` installs a variadic shell's
+members all-or-nothing, and the completion phase is skipped), so the
+retained abstract body checks against it, its constructions included;
+`explicit_destroy` and MIR skip a shell entirely. A concrete application that
+fails to resolve keeps its eager diagnostic, and the raw seam still rejects
+an unmarked variadic template.
+
+A bare construction of a single-pack template (`Pair((1, True))`,
+`Bag(7, "x")`) also survives elaboration with the template retained as a
+shell (`mono_expr`, `Elab::single_pack_template`). The discovery check types
+it against the shell's constructor and solves the pack there
+(`solve_value_args` binds a spread `Tuple[*Self.Ts]` to the display's
+element list; the `*args: *Self.Ts` collector's elements collect as a
+method-level pack does), rejects a constructor naming the pack nowhere
+(`Checker::reject_unconstrained_pack`), records the pack as a
+`GenericInstantiation` on the struct's own name at the call occurrence and
+— once the specialization is declared — types the call as that concrete
+struct's construction (`finish_variadic_construction`). `Compiler::compile_linked` turns the
+recording into a constructor-rewrite request (`variadic_struct_requests`,
+the scalar-range shape), which `seed_def_call_targets` files under
+`Mono::struct_call_targets` and `mono_expr` serves by rewriting the call to
+`mangle(template, [pack])` — the same symbol an explicit application mints.
 
 Inferred applications reach the same clones through the compiler's discovery
 fixpoint. Each round's check stops at a `DiscoveryResult` (Stage 3): the
@@ -797,7 +839,9 @@ discarded without its checked arena being built, and a clone the round's
 compilation's `TemplateCatalog` rather than being inferred.
 `Compiler::compile_linked` iterates elaborate→check, deriving
 `DefSpecializationRequest`s from the checker's recorded generic
-instantiations and `MethodSpecializationRequest`s from its recorded generic
+instantiations (a bound, pack, compile-time, or `DType`-keyed `def`; a scalar
+`range` family; a bare variadic-struct construction — the last two are
+constructor rewrites on a struct template) and `MethodSpecializationRequest`s from its recorded generic
 *method* instantiations — on a specialized variadic struct, on a closed
 instance of an ordinary generic struct (the request owner is the instance
 key `mangle(template, arguments)` and the instance's arguments bake before

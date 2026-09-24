@@ -20,9 +20,9 @@ use mojito_ast::ast::{Expr, ExprKind, Stmt, StmtKind};
 use mojito_checked::templates::{
     BoundBuiltin, CallParameterFact, CheckedBodyFacts, CheckedTemplate, FactTable,
     IncompleteReason, InstanceName, InstanceTrace, MethodFeatures, OccurrenceId,
-    TemplateArgumentBoundary, TemplateCallContract, TemplateClass, TemplateCoverage, TemplateId,
-    TemplateInvalidation, TemplateObligation, TemplateOrigin, TemplateOwner, TemplatePlace,
-    TemplateProducer, TemplateReference, TypedOrigins, TypedTable,
+    TemplateArgumentBoundary, TemplateAugmentedSubscript, TemplateCallContract, TemplateClass,
+    TemplateCoverage, TemplateId, TemplateInvalidation, TemplateObligation, TemplateOrigin,
+    TemplateOwner, TemplatePlace, TemplateProducer, TemplateReference, TypedOrigins, TypedTable,
 };
 use mojito_common::error::TypeError;
 use mojito_common::timing;
@@ -942,6 +942,10 @@ impl Checker {
                 .iter()
                 .map(substituted_reference)
                 .collect(),
+            augmented_subscripts: substituted_element_stores(
+                &template.augmented_subscripts,
+                &substitute,
+            ),
             reference_binding_types: template
                 .reference_binding_types
                 .iter()
@@ -1907,6 +1911,12 @@ impl Checker {
         if !plain_binders || decls.len() != type_params.len() {
             return outside("a compile-time parameter is not a plain type or scalar value");
         }
+        // A reflection query over a parameter is validated as a node; the
+        // instance's field facts are the elaborator's, so no fact of this
+        // body derives.
+        if super::comptime_validation::reads_reflection(body) {
+            return outside("a body reading a reflection handle keeps its clone check");
+        }
         // One producer per body: source validation owns every body it
         // checks (keyed by compile-time control flow or a `rebind`), the
         // executable check the surviving ones.
@@ -2462,6 +2472,91 @@ impl Checker {
         class()
     }
 
+    /// The reference each reference call at the body's occurrences yields,
+    /// and each element store made through one.
+    ///
+    /// A store through a mutable reference getter overwrote the getter's
+    /// reference at the site; the contract the store embeds still holds it.
+    fn captured_reference_stores(
+        &self,
+        occurrences: &[Occurrence],
+        local_reference: &dyn Fn(
+            &mojito_types::origin::RefTy,
+        ) -> Result<TemplateReference, IncompleteReason>,
+    ) -> Result<ReferenceStores, IncompleteReason> {
+        let adjustments = values(occurrences, &self.operation_adjustments.borrow());
+        let references = adjustments
+            .iter()
+            .filter_map(|(id, adjustment)| {
+                let reference = match adjustment {
+                    mojito_checked::checked::SemanticAdjustment::ReferenceResult { reference } => {
+                        reference
+                    }
+                    mojito_checked::checked::SemanticAdjustment::AugmentedSubscript(plan)
+                        if self.stores_through_reference(occurrences, *id, adjustment) =>
+                    {
+                        plan.getter.reference_result.as_ref()?
+                    }
+                    _ => return None,
+                };
+                Some(local_reference(reference).map(|reference| (*id, reference)))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let stores = adjustments
+            .iter()
+            .filter_map(|(id, adjustment)| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::AugmentedSubscript(plan)
+                    if self.stores_through_reference(occurrences, *id, adjustment) =>
+                {
+                    Some((
+                        *id,
+                        TemplateAugmentedSubscript {
+                            operand_ty: plan.operand_ty.clone(),
+                            result_ty: plan.result_ty.clone(),
+                        },
+                    ))
+                }
+                _ => None,
+            })
+            .collect();
+        Ok(ReferenceStores { references, stores })
+    }
+
+    /// [`Self::reference_element_store`] at the occurrence `id`.
+    fn stores_through_reference(
+        &self,
+        occurrences: &[Occurrence],
+        id: OccurrenceId,
+        adjustment: &mojito_checked::checked::SemanticAdjustment,
+    ) -> bool {
+        occurrences
+            .iter()
+            .find(|occurrence| occurrence.id == id)
+            .is_some_and(|occurrence| self.reference_element_store(&occurrence.span, adjustment))
+    }
+
+    /// Whether the adjustment at `site` is an element store through the
+    /// mutable reference the subscript's getter yields: no setter, no
+    /// in-place operator, no synthesized value, and the getter the call
+    /// selected at the site. Such a store is kept apart from the adjustment
+    /// table (`augmented_subscripts`) and rebuilt from the realized call; a
+    /// store through a setter embeds a second contract and a synthesized
+    /// value source, neither an occurrence of the body, and stays in it.
+    fn reference_element_store(
+        &self,
+        site: &SourceSpan,
+        adjustment: &mojito_checked::checked::SemanticAdjustment,
+    ) -> bool {
+        let mojito_checked::checked::SemanticAdjustment::AugmentedSubscript(plan) = adjustment
+        else {
+            return false;
+        };
+        plan.setter.is_none()
+            && plan.inplace.is_none()
+            && plan.value_source.is_none()
+            && self.selected_calls.borrow().get(site) == Some(&plan.getter)
+    }
+
     /// Report, for one generic body, everything that keeps it from being
     /// captured: the census that orders which recipes to write next.
     ///
@@ -2518,7 +2613,7 @@ impl Checker {
                 let kept_apart = matches!(
                     adjustment,
                     mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
-                );
+                ) || self.reference_element_store(&occurrence.span, adjustment);
                 (!kept_apart && !adjustment_derives(adjustment)).then(|| {
                     let spelled = format!("{adjustment:?}");
                     let variant = spelled
@@ -2720,6 +2815,10 @@ impl Checker {
                 mutability: reference.mutability,
             })
         };
+        let ReferenceStores {
+            references: reference_results,
+            stores: augmented_subscripts,
+        } = self.captured_reference_stores(&occurrences, &local_reference)?;
         let local_invalidations =
             |invalidations: Vec<mojito_checked::checked::InteriorInvalidation>| {
                 invalidations
@@ -2802,22 +2901,15 @@ impl Checker {
             expression_effects: values(&occurrences, &self.expression_effects.borrow()),
             operation_adjustments: values(&occurrences, &self.operation_adjustments.borrow())
                 .into_iter()
-                .filter(|(_, adjustment)| {
+                .filter(|(id, adjustment)| {
                     !matches!(
                         adjustment,
                         mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
-                    )
+                    ) && !self.stores_through_reference(&occurrences, *id, adjustment)
                 })
                 .collect(),
-            reference_results: values(&occurrences, &self.operation_adjustments.borrow())
-                .into_iter()
-                .filter_map(|(id, adjustment)| match adjustment {
-                    mojito_checked::checked::SemanticAdjustment::ReferenceResult { reference } => {
-                        Some(local_reference(&reference).map(|reference| (id, reference)))
-                    }
-                    _ => None,
-                })
-                .collect::<Result<Vec<_>, _>>()?,
+            reference_results,
+            augmented_subscripts,
             interior_references: values(&occurrences, &self.interior_references.borrow())
                 .into_iter()
                 .map(|(id, place)| local_place(&place).map(|place| (id, place)))
@@ -3437,6 +3529,7 @@ impl Checker {
                 },
             );
         }
+        self.install_element_stores(facts, &span)?;
         // The body's own source decides, exactly as it does for an inferred
         // body, whether an application it reaches is user-reachable.
         let source = spans.values().next().and_then(|span| span.source.clone());
@@ -3501,6 +3594,44 @@ impl Checker {
                 .collect(),
             param_owners,
         )
+    }
+
+    /// Install each element store made through a mutable reference getter:
+    /// its getter is the call installed at its site, and the adjustment
+    /// overwrites the getter's reference there as the checker's own insert
+    /// does.
+    fn install_element_stores(
+        &self,
+        facts: &CheckedBodyFacts,
+        span: &dyn Fn(&OccurrenceId) -> Result<SourceSpan, TypeError>,
+    ) -> Result<(), TypeError> {
+        for (id, store) in &facts.augmented_subscripts {
+            let site = span(id)?;
+            let getter = self
+                .selected_calls
+                .borrow()
+                .get(&site)
+                .cloned()
+                .ok_or_else(|| {
+                    TypeError::InvariantViolation(
+                        "a derived element store has no getter at its site".to_string(),
+                    )
+                })?;
+            self.operation_adjustments.borrow_mut().insert(
+                site,
+                mojito_checked::checked::SemanticAdjustment::AugmentedSubscript(Box::new(
+                    mojito_checked::checked::CheckedAugmentedSubscript {
+                        getter,
+                        setter: None,
+                        inplace: None,
+                        operand_ty: store.operand_ty.clone(),
+                        result_ty: store.result_ty.clone(),
+                        value_source: None,
+                    },
+                )),
+            );
+        }
+        Ok(())
     }
 
     /// Remove one occurrence's entry from every occurrence-keyed fact table.
@@ -4450,6 +4581,33 @@ fn adjustment_derives(adjustment: &mojito_checked::checked::SemanticAdjustment) 
     ) || mojito_checked::templates::derive_adjustment(adjustment, &Ty::clone).is_some()
 }
 
+/// What `captured_reference_stores` reads off the adjustment table: the
+/// reference each reference call yields, and each element store through one.
+struct ReferenceStores {
+    references: Vec<(OccurrenceId, TemplateReference)>,
+    stores: Vec<(OccurrenceId, TemplateAugmentedSubscript)>,
+}
+
+/// The element stores of an instance: the template's, their types
+/// substituted.
+fn substituted_element_stores(
+    stores: &[(OccurrenceId, TemplateAugmentedSubscript)],
+    substitute: &dyn Fn(&Ty) -> Ty,
+) -> Vec<(OccurrenceId, TemplateAugmentedSubscript)> {
+    stores
+        .iter()
+        .map(|(id, store)| {
+            (
+                *id,
+                TemplateAugmentedSubscript {
+                    operand_ty: substitute(&store.operand_ty),
+                    result_ty: substitute(&store.result_ty),
+                },
+            )
+        })
+        .collect()
+}
+
 fn fact_at<V>(table: &[(OccurrenceId, V)], id: OccurrenceId) -> Option<&V> {
     table
         .iter()
@@ -4650,8 +4808,9 @@ impl BodyShape<'_> {
             // A scalar field of a writable `self`: the store is a plain
             // scalar write, never an in-place operator of the field's type.
             StmtKind::SetPlace { place, value } if !self.keyed => {
-                let scalar =
-                    self.scalar_field_place(place) && self.expression(value) && self.scalar(value);
+                let scalar = (self.scalar_field_place(place) || self.reference_element(place))
+                    && self.expression(value)
+                    && self.scalar(value);
                 (scalar || self.whole_store(place, value) || self.element_store(place, value))
                     && self.holds(MethodFeatures::STATEMENTS)
             }
@@ -4683,7 +4842,9 @@ impl BodyShape<'_> {
             StmtKind::AugAssign { place, value, .. } => {
                 let local = matches!(&place.kind, ExprKind::Identifier(name)
                     if self.local(name) || self.mut_params.contains(&name.as_str()));
-                (local || (!self.keyed && self.scalar_field_place(place)))
+                (local
+                    || (!self.keyed
+                        && (self.scalar_field_place(place) || self.reference_element(place))))
                     && self.scalar(place)
                     && self.expression(value)
                     && self.scalar(value)
@@ -5212,26 +5373,26 @@ impl BodyShape<'_> {
         admitted && (through.is_none() || self.holds(MethodFeatures::SUBSCRIPT_STORES))
     }
 
-    /// A closed scalar stored to an element of a field of a writable `self`,
-    /// where the field's struct declares a setter (`self.counts[i] = n`).
+    /// A value stored to an element of a field of a writable `self`, where
+    /// the field's struct declares a setter (`self.counts[i] = n`,
+    /// `self.index[b] = entries^`).
     ///
     /// The store is a call of `__setitem__` recorded at the subscript, under
-    /// the closed contract a sibling call has: the index and the value bind
-    /// closed scalar parameters by value, so an instance changes its target
-    /// alone.
+    /// the contract a sibling call has: the index and the value are its
+    /// arguments ([`Self::argument`]), a closed scalar or a whole value bound
+    /// by value to a parameter of exactly its own type, so an instance changes
+    /// the target and, by substitution, the parameter types alone.
     fn element_store(&self, place: &Expr, value: &Expr) -> bool {
         let ExprKind::Index { object, index } = &place.kind else {
             return false;
         };
         let admitted = self.self_writable
             && self.receiver_field(object)
-            && [&**index, value]
-                .into_iter()
-                .all(|operand| self.expression(operand) && self.scalar(operand))
-            && self.scalar(place)
+            && self.argument(place, index)
+            && self.argument(place, value)
             && self.facts.is_none_or(|facts| {
                 self.named_contract(facts, place, object, "__setitem__")
-                    .is_some_and(mojito_checked::templates::closed_method_contract)
+                    .is_some_and(mojito_checked::templates::value_method_contract)
             });
         if admitted {
             self.subscript(self.occurrence(place));
@@ -5239,6 +5400,38 @@ impl BodyShape<'_> {
         admitted
             && self.holds(MethodFeatures::SIBLING_CALLS)
             && self.holds(MethodFeatures::SUBSCRIPT_STORES)
+    }
+
+    /// A closed scalar element of a field of a writable `self`, stored
+    /// through the mutable reference its getter yields (`self.counts[i] +=
+    /// 1`, or `self.cells[i] = n` on a struct that declares no setter).
+    ///
+    /// The getter is a reference call, and the store records no second
+    /// contract: the checker writes the computed value back through the
+    /// reference. Its record is the getter's contract beside the element's
+    /// type, kept apart as `augmented_subscripts`, and the reference's
+    /// mutability is the receiver binding's, which no instance changes.
+    fn reference_element(&self, place: &Expr) -> bool {
+        let ExprKind::Index { object, .. } = &place.kind else {
+            return false;
+        };
+        let id = self.occurrence(place);
+        let admitted = self.self_writable
+            && self.receiver_field(object)
+            && self.reference_call(place)
+            && self.scalar(place)
+            && self.facts.is_none_or(|facts| {
+                fact_at(&facts.augmented_subscripts, id).is_some()
+                    && fact_at(&facts.selected_calls, id)
+                        .and_then(|call| call.reference_result.as_ref())
+                        .is_some_and(|reference| {
+                            reference.mutability == mojito_types::origin::Mutability::Mutable
+                        })
+            });
+        if admitted {
+            self.subscript(id);
+        }
+        admitted && self.holds(MethodFeatures::SUBSCRIPT_STORES)
     }
 
     /// Note that the subscript `id` is the base of a store.

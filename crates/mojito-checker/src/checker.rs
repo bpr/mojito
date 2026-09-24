@@ -106,10 +106,11 @@ pub fn check_program(stmts: &[Stmt]) -> Result<mojito_checked::checked::CheckedP
 /// has no symbolic signature here, so reaching one ends validation without a
 /// verdict and leaves the program to the executable check.
 ///
-/// A body keyed on a variadic pack is validated with the element at a
-/// symbolic index opaque (`Checker::opaque_element`). Where that has no rule
-/// — a pack forwarded to another callee — the one body gets no verdict
-/// (`Checker::pack_verdict`) and the run goes on.
+/// A body keyed on a variadic pack, or reading `reflect[T]` over a
+/// parameter, is validated with the element at a symbolic index opaque
+/// (`Checker::opaque_element`). Where that has no rule — a pack forwarded to
+/// another callee — the one body gets no verdict
+/// (`Checker::symbolic_verdict`) and the run goes on.
 pub fn validate_comptime_templates(stmts: &[Stmt]) -> Result<(), TypeError> {
     validate_comptime_templates_into(
         stmts,
@@ -567,8 +568,8 @@ pub struct Checker {
     /// compile-time-keyed ones; empty in the executable check, which sees
     /// only clones.
     rebind_keyed_bodies: HashSet<SourceSpan>,
-    /// The pack-keyed bodies this validation run reached no verdict on
-    /// (`pack_verdict`), keyed at the body's first statement.
+    /// The bodies this validation run reached no verdict on
+    /// (`symbolic_verdict`), keyed at the body's first statement.
     no_verdict_bodies: HashSet<SourceSpan>,
     /// The positional collectors declared `var *args`: forwarding one as a
     /// whole needs the `^`, and a read one cannot be transferred.
@@ -2804,6 +2805,8 @@ type SplitCallableSpecialization = (
 mod places;
 
 mod comptime_validation;
+
+mod reflection;
 
 mod rebind;
 

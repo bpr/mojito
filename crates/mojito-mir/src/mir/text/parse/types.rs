@@ -689,6 +689,13 @@ impl Decoder {
                     );
                     None
                 }
+                "param_reflect" => {
+                    self.error(
+                        value.span,
+                        "a reflection query over a symbolic type cannot cross MIR",
+                    );
+                    None
+                }
                 // A hole is a boundary error at MIR, never a parsed form.
                 "param_hole" => {
                     self.error(

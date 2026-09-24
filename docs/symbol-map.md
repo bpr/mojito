@@ -261,8 +261,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `check_comptime_for` checks a loop body under its element type,
   `bind_local_comptime` binds function-local `comptime` aliases and
   compile-time-only values, `struct_valued_template` and `validates_body`
-  draw the per-instantiation boundary (struct-value template shells,
-  reflection readers), and `is_template_shell_member_error` names the errors
+  draw the per-instantiation boundary (struct-value template shells),
+  `conformance_arm_assumptions` collects what a `comptime if`'s
+  `conforms_to` atoms prove for the arm `statements.rs:check_conditional`
+  guards with them, and `is_template_shell_member_error` names the errors
   that end validation without a verdict. A `DType`- or width-keyed body is
   validated with its lane symbolic: `annotations::dtype_from_arg` and
   `type_resolution::simd_width` resolve a binder in scope (bare, or `Self.x`
@@ -293,9 +295,23 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   a use (`types::expand_pack_spread` for a spread such as `other: Self`),
   `infer_unbound_pack_construction` and
   `infer_validated_variadic_construction` type constructions,
-  `reject_mixed_spread` refuses `Tuple[Int, *Self.Ts]`, and `pack_verdict`
-  turns a `TypeError::SymbolicPackBoundary` into that one body's no-verdict.
+  `reject_mixed_spread` refuses `Tuple[Int, *Self.Ts]`, and `symbolic_verdict`
+  turns a `TypeError::SymbolicBoundary` into that one body's no-verdict.
   `types::pack_spread` owns the spread convention.
+- `checker/reflection.rs` owns `reflect[T]` under the checker.
+  `eval_reflection` answers a query from the struct table for a registered
+  struct and as a `ParamKind::Reflect` node (`ParamContext::reflect_query`,
+  `ReflectQuery` in `mojito-types`) for a subject still a parameter;
+  `infer_reflection` types a query read as a value (hooked at the top of
+  `inference.rs:infer_impl`), `eval_reflection_expr` serves
+  `constraints.rs:eval_associated_ct` and `compile_dependent_ct_expr`, and
+  `reflected_type_operand` / `reflected_type_annotation` resolve `types[i]`,
+  `r.field_at[i].T`, and `r.field["x"].T` in `comptime_type_operand` and
+  `type_resolution.rs:ty_from_anno` to the dependent element (a `ListGet`
+  over the `field_types()` node, viewed through `opaque_element`). The
+  elaborator's `comptime/eval.rs` answers the same queries per instance;
+  `template_facts.rs:template_certificate` keeps every reflection-reading
+  body's instances on the clone check (`reads_reflection`).
 - `checker/template_facts.rs` owns checked templates on the checker side.
   `Checker::check_def_body` is every `def` body's entry and
   `check_method_body` every struct method's (from

@@ -803,6 +803,9 @@ impl Checker {
 
     #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn infer_impl(&self, expr: &Expr) -> Result<Ty, TypeError> {
+        if let Some(ty) = self.infer_reflection(expr)? {
+            return Ok(ty);
+        }
         match &expr.kind {
             ExprKind::Int(_) => Ok(Ty::IntLiteral),
             ExprKind::Float(_) => Ok(Ty::FloatLiteral),
@@ -837,7 +840,7 @@ impl Checker {
             // of a pack that is still a parameter, among other arguments or
             // into a callee with no symbolic rule, is no verdict on the body.
             ExprKind::Spread(spread) if self.spreads_unbound_pack(spread) => {
-                Err(TypeError::SymbolicPackBoundary(
+                Err(TypeError::SymbolicBoundary(
                     "a call spreading the unbound pack among its arguments".to_string(),
                 ))
             }
@@ -2037,9 +2040,15 @@ impl Checker {
 
         // A tuple display against a tuple-typed context checks each element
         // contextually, so an element may convert implicitly (a string
-        // literal where the nominal String element is expected).
+        // literal where the nominal String element is expected). A context
+        // spreading a pack that is still a parameter (`Tuple[*Self.Ts]`, the
+        // field of a variadic struct whose pack the display is about to
+        // solve) has no element list yet, so the display infers plainly.
         if let (ExprKind::TupleLit(values), Some(expected_elements)) =
             (&expression.kind, tuple_elements(expected))
+            && !expected_elements.iter().any(|element| {
+                mojito_types::types::pack_spread(std::slice::from_ref(*element)).is_some()
+            })
         {
             if values.len() != expected_elements.len() {
                 return Err(TypeError::ArityMismatch {
