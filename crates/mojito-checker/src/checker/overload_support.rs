@@ -86,6 +86,9 @@ pub(super) struct CallableOverloadMatch {
     pub(super) owned: Vec<bool>,
     /// [`owned_arguments`] of the call against the candidate.
     pub(super) owned_arguments: Vec<bool>,
+    /// How many arguments with a lane (`simd_shape`) the candidate binds to a
+    /// bare type parameter rather than through a `SIMD` pattern.
+    pub(super) simd_erasures: usize,
 }
 
 pub(super) fn ct_integer(value: &CtValue) -> Option<mojito_common::literal::IntLiteral> {
@@ -760,6 +763,22 @@ pub(super) fn select_callable_overload(
         .into_iter()
         .filter(|candidate| candidate.score == best)
         .collect::<Vec<_>>();
+    if best_matches.len() != 1 {
+        // Among candidates tied on every rank term, one binding an argument
+        // with a lane through a `SIMD` pattern (`Scalar[dt]`, `SIMD[dt, 4]`)
+        // beats one binding it to a bare type parameter: `kind(x)` over a
+        // `Float64`, `Int32` or `Int` selects `kind[dt: DType](a: Scalar[dt])`
+        // beside `kind[T: Copyable](a: T)`, as the pinned Mojo does. The rule
+        // reaches no other pattern — `Optional[T]` and `List[Scalar[dt]]`
+        // stay ambiguous beside `T` — and no argument without a lane: a `Bool`
+        // converts into `Scalar[DType.bool]`, so the conversion count decides.
+        let fewest_erasures = best_matches
+            .iter()
+            .map(|candidate| candidate.simd_erasures)
+            .min()
+            .unwrap_or(0);
+        best_matches.retain(|candidate| candidate.simd_erasures == fewest_erasures);
+    }
     if best_matches.len() != 1 {
         // A read and an owned overload of one parameter type tie on argument
         // scoring whenever the argument is owned: `ArgumentBinding` prices the

@@ -2351,8 +2351,8 @@ fn collect_specializable<'a>(
 }
 
 /// The declarations of every overloaded template name, in declaration order:
-/// a name declared more than once with a compile-time-keyed or type-pack
-/// declaration among them.
+/// a name declared more than once with a compile-time-keyed, type-pack, or
+/// `DType`-keyed declaration among them.
 ///
 /// Overload selection is the checker's, so the elaborator cannot pick among
 /// these itself: a call reaches one of them only through the checker's
@@ -2371,9 +2371,11 @@ fn collect_overload_families(program: &[Stmt]) -> HashMap<String, Vec<&Stmt>> {
     }
     families.retain(|_, declarations| {
         declarations.len() > 1
-            && declarations
-                .iter()
-                .any(|s| comptime_keyed_declaration(s) || pack_keyed_declaration(s))
+            && declarations.iter().any(|s| {
+                comptime_keyed_declaration(s)
+                    || pack_keyed_declaration(s)
+                    || dtype_keyed_declaration(s)
+            })
     });
     families
 }

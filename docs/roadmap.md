@@ -588,27 +588,33 @@ to section 3, however small.
   - The plan is for the per-call trace.
   - Model: Opus, Planned.
 
-- [ ] **1.34 An explicit `DType`-keyed application loses to a keyed overload of
-  the same name**
+- [ ] **1.34 A `Bool` argument does not infer a `Scalar[dt]` lane**
 
-  Problem: `kind[DType.float64](1.8)`, where `def kind[dt: DType](a:
-  Scalar[dt])` shares its name with a `def kind[T: Copyable](a: T)` holding a
-  `comptime if`, reports "type mismatch for type parameter 'T': expected a
-  type, found a value" — the wrong overload's parameter.
-  - The family's branch is request-only, and the `DType` member is served by
-    neither request-served class, so its call is deferred to discovery.
-  - The member is then dropped from the round-one program, leaving only the
-    keyed sibling's stub for the explicit application to bind against.
-  - Keeping it alive is possible now that its `Scalar[dt]` signature checks
-    with `dt` symbolic.
-  - Inferred calls to the *keyed* sibling do now work beside such a member,
-    where the whole name used to be rejected.
+  Problem: `kind(True)` against a lone `def kind[dt: DType](a: Scalar[dt])`
+  reports "cannot infer type parameter 'dt'"; the pin binds `DType.bool`.
+  - `solve_value_args` (`checker/generics.rs`) reads the lane off
+    `simd_shape`, which has no `Bool` arm: a `Bool` is not a SIMD in Mojito.
+  - The pin converts the `Bool` into `Scalar[DType.bool]`, at the cost of one
+    implicit conversion, so beside a `def kind[T: Copyable](a: T)` the bare
+    parameter still wins (`assets/ok/dtype_keyed_overload_family.mojo`).
   - Depends on nothing.
-  - The plan's job is the round-one survival rule for a member of no request-
-    served class.
-  - Model: Fable, Planned.
+  - Model: Opus, Not Planned.
 
-- [ ] **1.35 A keyed method's template body cannot construct a SIMD at its own
+- [ ] **1.35 A method overload binding a lane through `Scalar[dt]` ties with
+  a bare parameter**
+
+  Problem: `s.kind(x)` over a `Float64`, where `def kind[dt: DType](self, a:
+  Scalar[dt])` shares its name with `def kind[T: Copyable](self, a: T)`, is
+  ambiguous; the pin selects the `Scalar[dt]` pattern.
+  - Free calls select it: `select_callable_overload`
+    (`checker/overload_support.rs`) breaks a full tie by the fewest arguments
+    with a lane bound to a bare type parameter (`simd_erasures`).
+  - Method selection (`method_calls/selection.rs:score_method_call`) has no
+    such term.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.36 A keyed method's template body cannot construct a SIMD at its own
   lane**
 
   Problem: `def make[dt: DType](self, x: Int) -> Scalar[dt]` whose body
@@ -628,7 +634,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.36 An inferred `SIMD[dt, _]` width leaks into the binding's declared
+- [ ] **1.37 An inferred `SIMD[dt, _]` width leaks into the binding's declared
   type**
 
   Problem: `var v: SIMD[DType.int32, _] = SIMD[DType.int32, 4](1, 2, 3, 4)`
@@ -643,7 +649,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.37 A keyword fieldwise construction of a variadic struct is
+- [ ] **1.38 A keyword fieldwise construction of a variadic struct is
   rejected**
 
   Problem: `Pair[Int, Bool](storage=(1, True))` on an `@fieldwise_init`
@@ -657,7 +663,7 @@ to section 3, however small.
   - One constructor path, with the pin's verdict in hand.
   - Model: Opus, Not Planned.
 
-- [ ] **1.38 The Pliron pivot has no falsifiable proof yet**
+- [ ] **1.39 The Pliron pivot has no falsifiable proof yet**
 
   Problem: [`docs/pliron-backend-pivot-plan.md`](pliron-backend-pivot-plan.md)
   stages a migration to a required Pliron IR framework, but its Stage A1 slice

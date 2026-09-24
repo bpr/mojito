@@ -5,7 +5,10 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-type InferredCall = (Ty, usize, Option<Ty>, HashMap<usize, bool>);
+/// A call typed against one callable: its result, rank, error type, the
+/// erased-origin bindings, and how many arguments with a lane it binds to a
+/// bare type parameter (`CallableOverloadMatch::simd_erasures`).
+type InferredCall = (Ty, usize, Option<Ty>, HashMap<usize, bool>, usize);
 
 impl Checker {
     fn erased_origin_constraint_environment(
@@ -545,7 +548,7 @@ impl Checker {
                         args,
                         kwargs,
                     ) {
-                        Ok((ret, score, error, bool_bindings)) => {
+                        Ok((ret, score, error, bool_bindings, simd_erasures)) => {
                             if let Some(target) = callable_lowered_name(name, candidate) {
                                 match origin_signatures.get(index) {
                                     Some(signature)
@@ -569,6 +572,7 @@ impl Checker {
                                         error,
                                         owned: owned_parameters(candidate),
                                         owned_arguments: owned_arguments(candidate, args, kwargs),
+                                        simd_erasures,
                                     }),
                                 }
                             }
@@ -800,7 +804,7 @@ impl Checker {
                 },
             );
         }
-        let (ret, _, error, bool_bindings) =
+        let (ret, _, error, bool_bindings, _) =
             self.infer_callable_ty(&span, name, ty.clone(), &ordinary_param_args, args, kwargs)?;
         if let Some(signature) = origin_signatures.first() {
             self.validate_erased_origin_constraint(name, signature, &bool_bindings)?;
@@ -1038,7 +1042,7 @@ impl Checker {
                 self.overload_targets.borrow_mut().remove(&span);
             }
         }
-        let (ret, _, error, _) =
+        let (ret, _, error, _, _) =
             self.infer_callable_ty(&span, "<element>", callable.clone(), &[], args, kwargs)?;
         let carried = contract_transfer_effects(&callable);
         if !carried.is_empty() {
@@ -1400,6 +1404,7 @@ impl Checker {
                     .rank(),
             error.map(|error| *error),
             bool_bindings,
+            0,
         ))
     }
 
@@ -1523,6 +1528,7 @@ impl Checker {
             self.resolve_dependent_ty(&substituted, &values)
         };
         let mut conversions = 0;
+        let mut simd_erasures = 0;
         for ((aty, pty), expression) in arg_tys.iter().zip(&use_params).zip(arg_exprs) {
             if matches!(pty, Ty::Param { binder, .. } if binder.name.starts_with('*')) {
                 // Each pack element was checked independently against the pack's
@@ -1531,6 +1537,9 @@ impl Checker {
                 conversions += pack_element_conversion_count(aty);
                 continue;
             }
+            simd_erasures += usize::from(
+                matches!(pty, Ty::Param { .. }) && mojito_types::types::simd_shape(aty).is_some(),
+            );
             let expected = resolve(pty)?;
             // A dependent generic parameter can resolve to a reference-valued
             // type only after explicit value arguments have been substituted
@@ -1715,6 +1724,7 @@ impl Checker {
                 .rank(),
             error,
             bool_bindings,
+            simd_erasures,
         ))
     }
 
