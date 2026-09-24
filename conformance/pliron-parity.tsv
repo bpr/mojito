@@ -494,6 +494,7 @@ assets/ok/span_temp_method_argument.mojo	main	exe-differential	sanitized
 assets/ok/span_temp_static_argument.mojo	main	exe-differential	sanitized
 assets/ok/span_view_basics.mojo	main	exe-differential	sanitized
 assets/ok/static_call_origin_application.mojo	main	exe-differential	sanitized
+assets/ok/static_method_explicit_application.mojo	main	exe-differential	sanitized
 assets/ok/static_methods.mojo	main	exe-differential	sanitized
 assets/ok/std_traits_origin_imports.mojo	main	exe-differential	sanitized
 assets/ok/stored_array_span_iterators.mojo	main	exe-differential	sanitized

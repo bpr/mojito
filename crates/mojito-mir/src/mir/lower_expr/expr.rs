@@ -953,12 +953,12 @@ impl Flatten<'_> {
                     let ExprKind::Member { object, field } = &callee.kind else {
                         unreachable!("checked parameterized method call has a member callee")
                     };
-                    // A parameterized **static** call (`Bag[Int, String].has[Bool]()`):
-                    // the receiver is a type, so this is a call on the
-                    // checker-selected symbol with the method's own
-                    // compile-time arguments, exactly like the unparameterized
-                    // static spelling.
-                    if let ExprKind::TypeApply { name, .. } = &object.kind {
+                    // A parameterized **static** call (`Bag[Int, String].has[Bool]()`,
+                    // `Lanes.ident[Int](3)`): the receiver is a type, so this
+                    // is a call on the checker-selected symbol with the
+                    // method's own compile-time arguments, exactly like the
+                    // unparameterized static spelling.
+                    if let Some(name) = self.type_receiver_name(object) {
                         // A per-call clone declares no compile-time
                         // parameters: the source type arguments are baked
                         // into its symbol and occupy no slots.
@@ -1586,77 +1586,16 @@ impl Flatten<'_> {
                     )
                 });
                 let implicitly_copied_receiver = self.implicitly_copies_consuming_receiver(e);
-                if let ExprKind::Identifier(type_name) = &object.kind
-                    && !self.vars.iter().any(|name| name == type_name)
-                {
-                    let saved_anchor_permission = self.allow_argument_anchors;
-                    self.allow_argument_anchors = self.call_anchors_arguments(e);
-                    let (regs, arg_places) = self.lower_call_arguments(args, false);
-                    self.allow_argument_anchors = saved_anchor_permission;
-                    let (kw, kwarg_places) = self.lower_call_keywords(kwargs, false);
-                    let d = self.fresh(span(e), None);
-                    let target = self
-                        .resolved_callable(e)
-                        .unwrap_or_else(|| format!("{type_name}.{method}"));
-                    self.emit_call_invalidations(e, args, kwargs);
-                    let capture_accesses = self.checked_call_capture_accesses(e);
-                    self.emit(MirInstr::Call {
-                        dest: d,
-                        func: FuncRef::named(&target),
-                        raises: self.checked_raises(e),
-                        args: regs,
-                        kwargs: kw,
-                        arg_places,
-                        kwarg_places,
-                        capture_accesses,
-                        param_arg_regs: Vec::new(),
-                    });
-                    self.emit_nested_closure_argument_keepalives(args, kwargs);
-                    return d;
-                }
-                // A **static** method on a parameterized type — the receiver is a
-                // type, not a value (`Dict[Int, Int].fromkeys(...)` or the pointer
-                // family's `UnsafePointer[T].alloc(n)`). Lower to a call on the
-                // checker-selected symbol (overloaded statics carry their exact
-                // spelling). The receiver's compile-time arguments are already
-                // resolved into that selection by the checker and erase here —
-                // a static's frame declares only the method's own parameters,
-                // so struct arguments must not occupy its `param_arg_regs`
-                // slots.
-                if let ExprKind::TypeApply { name, .. } = &object.kind {
-                    let saved_anchor_permission = self.allow_argument_anchors;
-                    self.allow_argument_anchors = self.call_anchors_arguments(e);
-                    let (regs, arg_places) = self.lower_call_arguments(args, false);
-                    self.allow_argument_anchors = saved_anchor_permission;
-                    let (kw, kwarg_places) = self.lower_call_keywords(kwargs, false);
-                    let d = self.fresh(span(e), None);
-                    let target = self
-                        .resolved_callable(e)
-                        .unwrap_or_else(|| format!("{name}.{method}"));
-                    self.emit_call_invalidations(e, args, kwargs);
-                    self.emit(MirInstr::Call {
-                        dest: d,
-                        func: FuncRef::named(&target),
-                        raises: self.checked_raises(e),
-                        args: regs,
-                        kwargs: kw,
-                        arg_places,
-                        kwarg_places,
-                        capture_accesses: self.checked_call_capture_accesses(e),
-                        param_arg_regs: Vec::new(),
-                    });
-                    self.emit_nested_closure_argument_keepalives(args, kwargs);
-                    return d;
-                }
-                // The single-argument spelling of the same static receiver
-                // (`Box[String].filled(...)`) parses as a value subscript; the
-                // checker routed it as a static call, and a subscript base
-                // naming no local is likewise a type, never a place. The
-                // bracket content is a compile-time argument — do not lower it.
-                if let ExprKind::Index { object: base, .. } = &object.kind
-                    && let ExprKind::Identifier(type_name) = &base.kind
-                    && !self.vars.iter().any(|name| name == type_name)
-                {
+                // A **static** method — the receiver is a type, not a value
+                // (`Point.origin()`, `Dict[Int, Int].fromkeys(...)`, the
+                // pointer family's `UnsafePointer[T].alloc(n)`). Lower to a
+                // call on the checker-selected symbol (overloaded statics
+                // carry their exact spelling). The receiver's compile-time
+                // arguments are already resolved into that selection by the
+                // checker and erase here — a static's frame declares only the
+                // method's own parameters, so struct arguments must not
+                // occupy its `param_arg_regs` slots.
+                if let Some(type_name) = self.type_receiver_name(object) {
                     let saved_anchor_permission = self.allow_argument_anchors;
                     self.allow_argument_anchors = self.call_anchors_arguments(e);
                     let (regs, arg_places) = self.lower_call_arguments(args, false);
@@ -2637,6 +2576,27 @@ impl Flatten<'_> {
                 });
                 dest
             }
+        }
+    }
+
+    /// The struct a static call's receiver names, when the receiver is a
+    /// type rather than a value: a type application (`Dict[Int, Int]`), a
+    /// bare name that is no local (`Point`), or the single-argument
+    /// application that parses as a value subscript over such a name
+    /// (`Box[String]`). The bracket content is a compile-time argument the
+    /// checker already resolved into its symbol selection — never lowered.
+    fn type_receiver_name<'e>(&self, object: &'e Expr) -> Option<&'e str> {
+        let not_a_local = |name: &'e String| {
+            (!self.vars.iter().any(|local| local == name)).then_some(name.as_str())
+        };
+        match &object.kind {
+            ExprKind::TypeApply { name, .. } => Some(name.as_str()),
+            ExprKind::Identifier(name) => not_a_local(name),
+            ExprKind::Index { object: base, .. } => match &base.kind {
+                ExprKind::Identifier(name) => not_a_local(name),
+                _ => None,
+            },
+            _ => None,
         }
     }
 }

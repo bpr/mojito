@@ -494,6 +494,7 @@ assets/ok/span_temp_method_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_temp_static_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_view_basics.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/static_call_origin_application.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/static_method_explicit_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/static_methods.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/std_traits_origin_imports.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/stored_array_span_iterators.mojo	-	ineligible	no-scalar-entry-shape

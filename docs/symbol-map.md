@@ -107,9 +107,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   is the `__VariantStorage` primitive's operation dispatch (`isa`/`set` — both
   value and `init_with=` placement forms — `unwrap`/`unsafe_unwrap`,
   `replace`/`unsafe_replace`, and the consuming `deinit_with`), reachable only
-  on a `Ty::Variant` receiver (the bundled `Variant`'s `_storage` field) from
-  the parameterized `Invoke(Member)` spelling via `infer_variant_storage_invoke`
-  and from ordinary method calls via `infer_method_call`; the public API is
+  on a `Ty::Variant` receiver (the bundled `Variant`'s `_storage` field)
+  through `infer_method_call`, which the parameterized `Invoke(Member)`
+  spelling and the ordinary method call both dispatch to after the static
+  receiver arms (a type-name receiver is never inferred as a value); the
+  public API is
   `stdlib/std/utils/variant.mojo`, whose type-keyed methods specialize per
   call, and `type_keyed_projection` routes a `v[T]` subscript to the struct's
   `__getitem_param__[T]` clone in value and place positions (the

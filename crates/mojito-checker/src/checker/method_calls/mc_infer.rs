@@ -250,6 +250,11 @@ impl Checker {
                         .to_string(),
                     }
                 })?;
+                if parameterized_syntax {
+                    self.parameterized_method_calls
+                        .borrow_mut()
+                        .insert(span.clone(), selected.param_decls.clone());
+                }
                 // A generic static records its instantiation and retargets
                 // to the per-call clone once minted, as an instance call
                 // does: a compile-time-keyed body only folds bound.

@@ -628,21 +628,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.36 An explicitly applied static method is an undefined variable**
-
-  Problem: `Lanes.ident[Int](3)` for a `@staticmethod` on a plain struct
-  reports "Undefined variable 'Lanes'"; the inferred call `Lanes.ident(3)`
-  runs, and so does the same explicit application on an instance
-  (`lanes.double[DType.int32](3)`).
-  - The receiver is a type name, not a value, so only the parameterized
-    static path loses it — nothing about the parameter's kind matters, a
-    plain `[T: Copyable]` fails identically.
-  - Found while closing the `DType`-keyed method item; no fixture pins it
-    yet.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
-- [ ] **1.37 An inferred `SIMD[dt, _]` width leaks into the binding's declared
+- [ ] **1.36 An inferred `SIMD[dt, _]` width leaks into the binding's declared
   type**
 
   Problem: `var v: SIMD[DType.int32, _] = SIMD[DType.int32, 4](1, 2, 3, 4)`
@@ -657,7 +643,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.38 A keyword fieldwise construction of a variadic struct is
+- [ ] **1.37 A keyword fieldwise construction of a variadic struct is
   rejected**
 
   Problem: `Pair[Int, Bool](storage=(1, True))` on an `@fieldwise_init`
@@ -671,7 +657,7 @@ to section 3, however small.
   - One constructor path, with the pin's verdict in hand.
   - Model: Opus, Not Planned.
 
-- [ ] **1.39 The Pliron pivot has no falsifiable proof yet**
+- [ ] **1.38 The Pliron pivot has no falsifiable proof yet**
 
   Problem: [`docs/pliron-backend-pivot-plan.md`](pliron-backend-pivot-plan.md)
   stages a migration to a required Pliron IR framework, but its Stage A1 slice

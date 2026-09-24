@@ -871,20 +871,13 @@ impl Checker {
                     }
                     return Ok(Ty::Int);
                 }
-                if let Some(result) = self.infer_variant_storage_invoke(
-                    expr.source_span(),
-                    callee,
-                    param_args,
-                    args,
-                    kwargs,
-                ) {
-                    return result;
-                }
                 // Parameterized method syntax is parsed as `Invoke(Member)` so
                 // that ordinary indexing remains unambiguous. Keep it a direct
                 // method call semantically: bound methods do not become
                 // first-class/escaping values merely because their compile-time
-                // arguments are explicit.
+                // arguments are explicit. The method dispatch owns the receiver
+                // reading: a type-name receiver (`Lanes.ident[Int](3)`) is a
+                // static call there and is never inferred as a value.
                 if let ExprKind::Member { object, field } = &callee.kind {
                     // `p.__getitem__[k]()` on a specialized variadic struct
                     // names the accessor the subscript sugar unrolled per
@@ -1442,26 +1435,13 @@ impl Checker {
     /// `__VariantStorage` primitive. The parser preserves their type
     /// arguments on the invoke; checked metadata records every selected tag
     /// and whether the runtime operation is checked or unsafe.
-    pub(super) fn infer_variant_storage_invoke(
-        &self,
-        span: SourceSpan,
-        callee: &Expr,
-        param_args: &[mojito_ast::ast::ParamArg],
-        args: &[Expr],
-        kwargs: &[mojito_ast::ast::KwArg],
-    ) -> Option<Result<Ty, TypeError>> {
-        let ExprKind::Member { object, field } = &callee.kind else {
-            return None;
-        };
-        self.infer_variant_storage_method(span, object, field, param_args, args, kwargs)
-    }
-
-    /// The `__VariantStorage` primitive's operation dispatch, reachable both
-    /// from the parameterized `Invoke(Member)` spelling
-    /// (`self._storage.unwrap[T]()`) and the ordinary method-call spelling
-    /// for parameterless operations (`self._storage.deinit_with(handler)`).
-    /// Only a `Ty::Variant`-typed receiver — the storage field of the
-    /// bundled `Variant` struct — reaches it; every other receiver is `None`.
+    /// The `__VariantStorage` primitive's operation dispatch, reached through
+    /// `infer_method_call` from both the parameterized `Invoke(Member)`
+    /// spelling (`self._storage.unwrap[T]()`) and the ordinary method-call
+    /// spelling for parameterless operations
+    /// (`self._storage.deinit_with(handler)`). Only a `Ty::Variant`-typed
+    /// receiver — the storage field of the bundled `Variant` struct — reaches
+    /// it; every other receiver is `None`.
     pub(super) fn infer_variant_storage_method(
         &self,
         span: SourceSpan,
