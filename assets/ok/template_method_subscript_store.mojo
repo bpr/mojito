@@ -19,15 +19,20 @@ struct Entry[T: ImplicitlyCopyable & Deinitable](ImplicitlyCopyable):
 
 
 # A mutable-reference getter and no setter: a store writes through the
-# reference.
+# reference. The getter names the fields it may return, because returning an
+# element's own sub-origin as the container's is a shape upstream refuses.
 struct Grid:
-    var cells: List[Int]
+    var first: Int
+    var second: Int
 
     def __init__(out self):
-        self.cells = List[Int]()
+        self.first = 0
+        self.second = 0
 
-    def __getitem__(ref self, i: Int) -> ref[origin_of(self.cells)] Int:
-        return self.cells[i]
+    def __getitem__(ref self, i: Int) -> ref[origin_of(self.first, self.second)] Int:
+        if i == 0:
+            return self.first
+        return self.second
 
 
 struct Shelf[T: ImplicitlyCopyable & Deinitable]:
@@ -49,7 +54,6 @@ struct Shelf[T: ImplicitlyCopyable & Deinitable]:
         self.items.append(value^)
         self.counts.append(0)
         self.buckets.append(List[Int]())
-        self.grid.cells.append(0)
 
     def reset(mut self, i: Int):
         self.entries[i].hits = 7
@@ -99,7 +103,7 @@ struct Shelf[T: ImplicitlyCopyable & Deinitable]:
         return self.entries[i].value
 
     def cell_at(self, i: Int) -> Int:
-        return self.grid.cells[i]
+        return self.grid[i]
 
 
 def main():

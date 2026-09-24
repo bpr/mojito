@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	433
+# swept-count	440
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -431,7 +431,7 @@ assets/type_error/symbolic_origin_pointer_write.mojo	compile-reject	agree	error:
 assets/type_error/template_method_place_argument_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed mutably to 'n' argument in 'grow' call
 assets/type_error/template_method_reference_read_requires_copy.mojo	compile-reject	agree	error: value of type 'T' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/template_method_transfer_requires_movable.mojo	compile-reject	agree	error: cannot transfer value into destination, because 'T' doesn't conform to 'Movable'
-assets/type_error/template_pack_element_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'Ts.values[SIMDLength(paramfor_next_value[_ZeroStartingRange](iter))]' does not conform to trait 'Writable'
+assets/type_error/template_pack_element_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'Ts.values[SIMDLength(paramfor_next_value[_ZeroStartingRange](iter))]' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/template_where_instance_violated.mojo	compile-reject	agree	error: invalid call to 'small': violated constraint
 assets/type_error/trait_comptime_member.mojo	compile-reject	agree	error: 'Box[T]' does not implement all requirements for 'HasElement'
 assets/type_error/transfer_into_mut_parameter.mojo	compile-reject	agree	error: invalid call to 'poke': value passed to mutable argument 't' must be mutable

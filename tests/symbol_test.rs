@@ -571,3 +571,41 @@ fn param_expr_closed_specialization_keys() {
         Some(vec![CtValue::Int(1)])
     );
 }
+
+#[test]
+fn a_template_name_is_recovered_from_a_key_whose_values_are_text_only() {
+    use mojito::ct::CtValue;
+    use mojito::symbol::{demangle_specialization, mangle, specialization_template};
+
+    // A value key is rebuilt, so both answers agree.
+    let value_keyed = mangle("Holder.take", &[CtValue::Int(3)]).expect("a constant key");
+    assert_eq!(
+        demangle_specialization(&value_keyed).map(|(template, _)| template),
+        Some("Holder.take")
+    );
+    assert_eq!(specialization_template(&value_keyed), Some("Holder.take"));
+
+    // A type key renders a `Ty` no parser here reads back, so only the
+    // template name is recoverable — and a binder belongs to the template.
+    let type_keyed = mangle("List.__hash__", &[CtValue::Type(Box::new(mojito::Ty::Int))])
+        .expect("a constant key");
+    assert_eq!(type_keyed, "List.__hash__$y3:Int");
+    assert_eq!(demangle_specialization(&type_keyed), None);
+    assert_eq!(specialization_template(&type_keyed), Some("List.__hash__"));
+
+    // A container holding one is text-only too, and still delimits.
+    let nested = mangle(
+        "f",
+        &[CtValue::Tuple(vec![
+            CtValue::Int(1),
+            CtValue::Type(Box::new(mojito::Ty::Bool)),
+        ])],
+    )
+    .expect("a constant key");
+    assert_eq!(demangle_specialization(&nested), None);
+    assert_eq!(specialization_template(&nested), Some("f"));
+
+    // An unspecialized name carries no suffix either way.
+    assert_eq!(specialization_template("List.__hash__"), None);
+    assert_eq!(demangle_specialization("List.__hash__"), None);
+}

@@ -3104,17 +3104,7 @@ impl Checker {
                     ))
                 })
                 .collect::<Result<Vec<_>, IncompleteReason>>()?,
-            // Recording is idempotent, and a clone check reaches a retargeted
-            // receiver's application twice, so only the set matters.
-            struct_applications: sorted_applications(reads.struct_applications.iter().fold(
-                Vec::new(),
-                |mut distinct, application| {
-                    if !distinct.contains(application) {
-                        distinct.push(application.clone());
-                    }
-                    distinct
-                },
-            )),
+            struct_applications: sorted_applications(reads.struct_applications.clone()),
             builtin_len_calls: occurrences
                 .iter()
                 .filter(|occurrence| {
@@ -6386,8 +6376,13 @@ impl BodyShape<'_> {
     }
 }
 
-/// A body's struct applications in one canonical order, since only the set
-/// matters and a derived bundle is compared with an inferred one.
+/// A body's struct applications as one canonical ordered set, since a derived
+/// bundle is compared with an inferred one.
+///
+/// Recording is idempotent, and a clone check reaches a retargeted receiver's
+/// application twice. Substitution collapses applications too: `Bag[T]` and
+/// `Bag[Int]` are two of a template's and one of the instance's, so a derived
+/// bundle must reduce exactly as its own check would.
 fn sorted_applications(
     mut applications: Vec<(String, Vec<mojito_types::types::TyArg>)>,
 ) -> Vec<(String, Vec<mojito_types::types::TyArg>)> {
@@ -6395,6 +6390,7 @@ fn sorted_applications(
         let arguments: Vec<String> = arguments.iter().map(ToString::to_string).collect();
         (name.clone(), arguments)
     });
+    applications.dedup();
     applications
 }
 

@@ -3,6 +3,7 @@
 # each call mints a clone whose signature spells the bound value, whether the
 # lane is applied explicitly or read off the argument, and whether the method
 # is an instance method, a static one, or a method of a generic struct.
+# requires: discovery
 struct Lanes:
     var tag: Int
 

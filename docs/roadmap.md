@@ -497,28 +497,17 @@ to section 3, however small.
     binder bounded by another contract collides one level down.
   - The elaborator's declaration metadata (`$elaborated`) and a 1.0/1.1 MIR
     artifact (`$mir-1.1:<name>`) still have no owner to give.
-  - A clone that keeps a binder (`BOUND_BINDERS`, `List.__hash__[H]`) gives
-    it `ParamId { owner: "List.__hash__$y3:Int" }` where the template's facts
-    carry `owner: "List.__hash__"`, so `MOJITO_VERIFY_TEMPLATE_FACTS=1`
-    reports every such clone as a mismatch in `expression_types` and stops
-    there (`template_method_bound_dispatch.mojo`, `stdlib_heavy`): the
-    derived facts are the same under the template's owner, so the check is
-    the false positive, and the recipe verification behind it goes unseen.
-    This is what fails the five `compiler_test` derive tests that ask for
-    verification themselves (`with_template_verification(true)`):
-    `template_method_constructions_derive`,
-    `template_method_origin_bearing_constructions_derive`, the
-    `reference_calls`/`reference_locals`/`reference_results` three, and
-    `template_method_subscript_stores_derive` (a sixth, 2026-09-23). They
-    reach `List.__hash__$y3:Int`, so they went red when the derivation
-    grammar grew, not when the binder changed. The owner is only
-    uncanonical because `demangle_specialization` decodes no
-    length-prefixed value (`y` type, `r` reflected, `I`/`F` literal, `s`
-    string), so `binder_owner` leaves every type-keyed clone mangled;
-    teaching it those codes also changes what
-    `unqualified_instance_name` spells and what the conformance oracle in
-    `traits.rs` answers for such a name, which is why this is the keyed-map
-    task and not a one-line strip.
+  - `demangle_specialization` still rebuilds no length-prefixed value, so a
+    specialization keyed by a string or a numeric literal (`s`, `I`, `F`) is
+    invisible to it. `unqualified_instance_name` spells such a name
+    unexpanded, and the conformance oracle in `traits.rs` answers `false`
+    for it rather than consulting the template.
+    - Binder identity no longer waits on this. `specialization_template`
+      delimits a suffix without rebuilding its values, so `binder_owner`
+      canonicalizes a type-keyed clone too (2026-09-24), and
+      `demangle_specialization`'s own answers are unchanged.
+    - A type or reflected key (`y`, `r`) renders a `Ty` that only a later
+      phase parses, so those two stay text-only whatever is decided here.
   - A `ParamId`'s owner is the declaration's *name*, so two overloads of
     one name give their own binders the same id whenever the slots agree.
     Nothing distinguishes them, which is why a pack forwarded whole to a
@@ -1718,7 +1707,7 @@ words. The representation gap and the two standing ledgers are last.
       had all along (`copyable_iterator_reference_aggregate`).
     - Until it closes, `tests/heavy/main.rs`'s `excluded == 0` fails on every
       run, so `check-pliron-heavy` is red in every overnight gate
-      (2026-09-21, 2026-09-22). Leave the ratchet at zero: it only ever
+      (2026-09-21, 2026-09-22, 2026-09-24). Leave the ratchet at zero: it only ever
       ratchets down, and it is not what guards against a *new* exclusion —
       the `expect_file!` manifest equality runs first and any new excluded
       row changes the TSV.

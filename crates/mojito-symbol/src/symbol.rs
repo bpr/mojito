@@ -1918,11 +1918,32 @@ pub fn unqualified_instance_name(ty: &Ty) -> String {
 ///
 /// The template name and the baked values, or `None` when the symbol carries
 /// no specialization suffix or one of the text-only codes (a type spelling
-/// cannot be rebuilt into a `Ty`).
+/// cannot be rebuilt into a `Ty`). [`specialization_template`] answers for
+/// those too, when the name alone is what is wanted.
 ///
 /// A module-qualified template (`__module$$ahash$AHasher$v…`) keeps its
 /// qualification.
 pub fn demangle_specialization(symbol: &str) -> Option<(&str, Vec<CtValue>)> {
+    let (template, values) = split_specialization(symbol)?;
+    values
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .map(|values| (template, values))
+}
+
+/// The template `symbol` specializes, whatever its key bakes.
+///
+/// [`demangle_specialization`] answers only when it can rebuild every baked
+/// value, so a type-keyed clone (`List.__hash__$y3:Int`) is invisible to it.
+/// A binder belongs to the template rather than to one of its clones, and
+/// that identity needs the name alone.
+pub fn specialization_template(symbol: &str) -> Option<&str> {
+    split_specialization(symbol).map(|(template, _)| template)
+}
+
+/// The template name and one entry per baked value, `None` where a value is
+/// well formed but not rebuildable here.
+fn split_specialization(symbol: &str) -> Option<(&str, Vec<Option<CtValue>>)> {
     let mut cursor = 0;
     while let Some(offset) = symbol[cursor..].find('$') {
         let split = cursor + offset;
@@ -1938,7 +1959,7 @@ pub fn demangle_specialization(symbol: &str) -> Option<(&str, Vec<CtValue>)> {
     None
 }
 
-fn decode_specialization_suffix(suffix: &str) -> Option<Vec<CtValue>> {
+fn decode_specialization_suffix(suffix: &str) -> Option<Vec<Option<CtValue>>> {
     let bytes = suffix.as_bytes();
     let mut position = 0;
     let mut values = Vec::new();
@@ -1956,7 +1977,13 @@ fn decode_specialization_suffix(suffix: &str) -> Option<Vec<CtValue>> {
 
 /// Decode one encoded value at `position`, returning it and the position past
 /// its terminator.
-fn decode_specialization_value(text: &str, position: usize) -> Option<(CtValue, usize)> {
+///
+/// The value is `None` where the encoding is well formed but names something
+/// this crate cannot rebuild: a text-only code renders a `Ty` or a literal
+/// spelling, and no parser here reads one back. A container holding such a
+/// value is `None` too, and still reports where it ends — which is all
+/// [`specialization_template`] needs.
+fn decode_specialization_value(text: &str, position: usize) -> Option<(Option<CtValue>, usize)> {
     let bytes = text.as_bytes();
     let code = *bytes.get(position)?;
     let body = position + 1;
@@ -1967,26 +1994,39 @@ fn decode_specialization_value(text: &str, position: usize) -> Option<(CtValue, 
     Some(match code {
         b'i' => {
             let (digits, next) = until(b';')?;
-            (CtValue::Int(digits.parse().ok()?), next)
+            (Some(CtValue::Int(digits.parse().ok()?)), next)
         }
         b'u' => {
             let (digits, next) = until(b';')?;
-            (CtValue::UInt(digits.parse().ok()?), next)
+            (Some(CtValue::UInt(digits.parse().ok()?)), next)
         }
         b'b' => {
             let (digit, next) = until(b';')?;
-            (CtValue::Bool(digit == "1"), next)
+            (Some(CtValue::Bool(digit == "1")), next)
         }
         b'f' => {
             let (hex, next) = until(b';')?;
-            (CtValue::Float(u64::from_str_radix(hex, 16).ok()?), next)
+            (
+                Some(CtValue::Float(u64::from_str_radix(hex, 16).ok()?)),
+                next,
+            )
         }
         b'd' => {
             let (name, next) = until(b';')?;
             (
-                CtValue::Dtype(mojito_ast::ast::Dtype::from_name(name)?),
+                Some(CtValue::Dtype(mojito_ast::ast::Dtype::from_name(name)?)),
                 next,
             )
+        }
+        // The text-only codes, all `{code}{length}:{spelling}`: `mangle`
+        // renders a `Ty` or a literal here, so the walk reports where the
+        // value ends and leaves rebuilding to a phase that can parse one.
+        b'y' | b'r' | b'I' | b'F' | b's' => {
+            let (digits, after) = until(b':')?;
+            let length: usize = digits.parse().ok()?;
+            let end = after.checked_add(length)?;
+            text.get(after..end)?;
+            (None, end)
         }
         b'v' => {
             let (dtype, after_dtype) = until(b':')?;
@@ -2002,9 +2042,9 @@ fn decode_specialization_value(text: &str, position: usize) -> Option<(CtValue, 
             for _ in 0..width {
                 let (lane, next) = decode_specialization_value(text, cursor)?;
                 lanes.push(match lane {
-                    CtValue::Int(value) => CtLane::Int(i128::from(value)),
-                    CtValue::Float(bits) => CtLane::Float(bits),
-                    CtValue::Bool(value) => CtLane::Bool(value),
+                    Some(CtValue::Int(value)) => CtLane::Int(i128::from(value)),
+                    Some(CtValue::Float(bits)) => CtLane::Float(bits),
+                    Some(CtValue::Bool(value)) => CtLane::Bool(value),
                     _ => return None,
                 });
                 cursor = next;
@@ -2012,7 +2052,7 @@ fn decode_specialization_value(text: &str, position: usize) -> Option<(CtValue, 
             if bytes.get(cursor) != Some(&b']') {
                 return None;
             }
-            (CtValue::Simd { dtype, lanes }, cursor + 1)
+            (Some(CtValue::Simd { dtype, lanes }), cursor + 1)
         }
         b'S' => {
             let (length, after_length) = until(b':')?;
@@ -2026,14 +2066,17 @@ fn decode_specialization_value(text: &str, position: usize) -> Option<(CtValue, 
             let mut fields = Vec::new();
             while bytes.get(cursor) != Some(&b'}') {
                 let (value, next) = decode_specialization_value(text, cursor)?;
-                fields.push((String::new(), value));
+                fields.push(value.map(|value| (String::new(), value)));
                 cursor = next;
             }
             (
-                CtValue::Struct {
-                    name: name.to_string(),
-                    fields,
-                },
+                fields
+                    .into_iter()
+                    .collect::<Option<Vec<_>>>()
+                    .map(|fields| CtValue::Struct {
+                        name: name.to_string(),
+                        fields,
+                    }),
                 cursor + 1,
             )
         }
@@ -2050,11 +2093,13 @@ fn decode_specialization_value(text: &str, position: usize) -> Option<(CtValue, 
             if bytes.get(cursor) != Some(&b']') {
                 return None;
             }
-            let value = if code == b't' {
-                CtValue::Tuple(items)
-            } else {
-                CtValue::List(items)
-            };
+            let value = items.into_iter().collect::<Option<Vec<_>>>().map(|items| {
+                if code == b't' {
+                    CtValue::Tuple(items)
+                } else {
+                    CtValue::List(items)
+                }
+            });
             (value, cursor + 1)
         }
         b'm' | b'h' => {
@@ -2066,13 +2111,16 @@ fn decode_specialization_value(text: &str, position: usize) -> Option<(CtValue, 
                 for _ in 0..count {
                     let (key, next) = decode_specialization_value(text, cursor)?;
                     let (value, next) = decode_specialization_value(text, next)?;
-                    entries.push((key, value));
+                    entries.push(key.zip(value));
                     cursor = next;
                 }
-                CtValue::Dict {
-                    spelling: None,
-                    entries,
-                }
+                entries
+                    .into_iter()
+                    .collect::<Option<Vec<_>>>()
+                    .map(|entries| CtValue::Dict {
+                        spelling: None,
+                        entries,
+                    })
             } else {
                 let mut elements = Vec::with_capacity(count);
                 for _ in 0..count {
@@ -2080,10 +2128,13 @@ fn decode_specialization_value(text: &str, position: usize) -> Option<(CtValue, 
                     elements.push(value);
                     cursor = next;
                 }
-                CtValue::Set {
-                    spelling: None,
-                    elements,
-                }
+                elements
+                    .into_iter()
+                    .collect::<Option<Vec<_>>>()
+                    .map(|elements| CtValue::Set {
+                        spelling: None,
+                        elements,
+                    })
             };
             if bytes.get(cursor) != Some(&b']') {
                 return None;

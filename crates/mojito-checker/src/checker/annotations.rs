@@ -274,8 +274,8 @@ pub(super) fn value_binder_expr(id: ParamId, name: &str, ty: &Ty) -> ParamExpr {
 /// The declaration that owns a name's parameter binders: the template, so a
 /// `$` clone shares its template's parameters rather than minting fresh ones.
 pub(super) fn binder_owner(name: &str) -> String {
-    mojito_symbol::symbol::demangle_specialization(name)
-        .map_or(name, |(template, _)| template)
+    mojito_symbol::symbol::specialization_template(name)
+        .unwrap_or(name)
         .to_string()
 }
 

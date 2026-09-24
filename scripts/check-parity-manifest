@@ -262,7 +262,35 @@ LC_ALL=C awk -F '\t' '
 ' <(pliron_rows "$root/conformance/pliron-parity.tsv") \
   <(pliron_rows "$root/conformance/pliron-scalar.tsv") || exit 1
 
-# 2. Each manifest names every fixture of the folders its sweep walks, once.
+# 2. Each sweep concatenates its directories in a fixed order and never sorts
+#    the whole list, so every directory owns one contiguous block and the
+#    blocks follow that order. Check 1 compares only rows of the same
+#    directory, so re-sorting a whole manifest passes it and fails nothing
+#    until the sweep runs: 337a7ab lifted the assets/extensions blocks of both
+#    manifests to the top and stayed invisible until the 2026-09-24 gate.
+check_blocks() {
+    local manifest="$1"
+    shift
+    LC_ALL=C awk -F '\t' -v expected="$*" -v name="${manifest#"$root/"}" '
+        BEGIN { count = split(expected, order, " ") }
+        { dir = $1; sub(/\/[^\/]*$/, "/", dir)
+          if (dir == current) next
+          for (i = placed + 1; i <= count; i++) {
+              if (order[i] == dir) { placed = i; current = dir; next }
+          }
+          current = dir
+          print name ": " dir " rows do not follow the sweep order at " $1 \
+              " (expected " expected ")" > "/dev/stderr"; bad = 1 }
+        END { exit(bad ? 1 : 0) }
+    ' <(pliron_rows "$manifest") || exit 1
+}
+check_blocks "$root/conformance/pliron-parity.tsv" \
+    assets/ok/ assets/ownership_ok/ assets/extensions/ok/ \
+    assets/extensions/ownership_ok/ assets/runtime_error/
+check_blocks "$root/conformance/pliron-scalar.tsv" \
+    assets/ok/ assets/extensions/ok/ assets/runtime_error/
+
+# 3. Each manifest names every fixture of the folders its sweep walks, once.
 check_inventory() {
     local manifest="$1"
     shift
@@ -283,7 +311,7 @@ check_inventory "$root/conformance/pliron-parity.tsv" \
 check_inventory "$root/conformance/pliron-scalar.tsv" \
     "$root/assets/ok" "$root/assets/extensions/ok" "$root/assets/runtime_error"
 
-# 3. The parity sweep's coverage ratchets are equalities against the same rows,
+# 4. The parity sweep's coverage ratchets are equalities against the same rows,
 #    so they are arithmetic on the checked-in manifest. Bumping one without the
 #    other is the drift that hid here for four days.
 for pair in "exe-differential:differential" "error-differential:errors"; do
