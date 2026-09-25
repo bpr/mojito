@@ -165,9 +165,17 @@ keeps those slots unbound, their origins kept beside it by template owner
 (`TemplateCallContract::result_origins`), as a retained type's are
 (`typed_origins`); the slots the call's contract resolved
 (`CallResultOrigins`) are kept the same way (`call_result_origins`); and the
-call's `BorrowViewResult` loan names nothing an instance changes. A struct
-application's origin arguments are kept unbound too, since recording one
-erases them.
+call's `BorrowViewResult` loan names nothing an instance changes. A callee
+whose declared return origin projects an owned interior of its receiver
+(`String.strip` over `origin_of(self)._get_owned_interior["bytes"]`) records
+the projection's tags at the call (`ViewResultInteriors`), and each result
+slot it fixes as immutable as an immutable binder
+(`ConstructionImmutableBinders`). Both are the callee's declaration, which a
+nominal receiver selects alike under every instance: the tags are installed
+as they stand, and the binders are derived again from the kept
+`call_result_origins`, so capture refuses only a call whose binders differ
+from those. A struct application's origin arguments are kept unbound too,
+since recording one erases them.
 
 ## The expansion trace
 

@@ -3634,6 +3634,7 @@ impl Checker {
                 &occurrences,
                 &self.parameterized_method_calls.borrow(),
             ),
+            view_result_interiors: values(&occurrences, &self.view_result_interiors.borrow()),
             iterations: self.captured_iterations(&occurrences, &local_place)?,
             tuple_unpacks: self.captured_tuple_unpacks(&occurrences, &local_reference)?,
             call_place_uses: keyed(&|span| self.call_place_uses.borrow().contains(span)),
@@ -3795,15 +3796,24 @@ impl Checker {
         drop(types);
         // A construction's immutable-binder record is kept only as the fact
         // that it is empty, which installation writes again: the grammar
-        // admits no `ImmOrigin` argument, so it is never otherwise.
+        // admits no `ImmOrigin` argument, so it is never otherwise. A
+        // view-returning call's record is the immutable slots of its result
+        // origins, which installation derives again from those.
         let immutable_binders = self.construction_immutable_binders.borrow();
+        let result_origins = self.call_result_origins.borrow();
         if occurrences.iter().any(|occurrence| {
             immutable_binders
                 .get(&occurrence.span)
-                .is_some_and(|binders| !binders.is_empty())
+                .is_some_and(|binders| {
+                    !binders.is_empty()
+                        && result_origins
+                            .get(&occurrence.span)
+                            .is_none_or(|slots| *binders != call_result_immutable_binders(slots))
+                })
         }) {
             return Err(IncompleteReason::ImmutableBinder);
         }
+        drop(result_origins);
         // A type is retained as written, and a binding identity inside one
         // would never be remapped for an instance. Two exceptions are kept by
         // template owner: a reference at the top of a place or binding type
@@ -3956,21 +3966,7 @@ impl Checker {
                 .borrow_mut()
                 .insert(span(id)?, rooted(place)?);
         }
-        for (id, slots) in &facts.call_result_origins {
-            let resolved = slots
-                .iter()
-                .map(|resolved| {
-                    Ok((
-                        resolved.slot,
-                        checked_origin(&resolved.origin, &rooted)?,
-                        resolved.mutability,
-                    ))
-                })
-                .collect::<Result<Vec<_>, TypeError>>()?;
-            self.call_result_origins
-                .borrow_mut()
-                .insert(span(id)?, resolved);
-        }
+        self.install_call_results(facts, &span, &rooted)?;
         self.install_transfers(facts, &span, &rooted, &owner)?;
         for (id, reference) in &facts.reference_binding_types {
             self.binding_types
@@ -4145,6 +4141,44 @@ impl Checker {
                     frame.call_throughs.push(residue.clone());
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// Install what a view-returning call records about its result: the
+    /// origins its contract binds, the immutable binders those imply, and
+    /// the owned-interior tags its callee's return origin projects.
+    fn install_call_results(
+        &self,
+        facts: &CheckedBodyFacts,
+        span: &dyn Fn(&OccurrenceId) -> Result<SourceSpan, TypeError>,
+        rooted: &dyn Fn(&TemplatePlace) -> Result<mojito_types::origin::OriginPlace, TypeError>,
+    ) -> Result<(), TypeError> {
+        for (id, slots) in &facts.call_result_origins {
+            let resolved = slots
+                .iter()
+                .map(|resolved| {
+                    Ok((
+                        resolved.slot,
+                        checked_origin(&resolved.origin, rooted)?,
+                        resolved.mutability,
+                    ))
+                })
+                .collect::<Result<Vec<_>, TypeError>>()?;
+            let binders = call_result_immutable_binders(&resolved);
+            if !binders.is_empty() {
+                self.construction_immutable_binders
+                    .borrow_mut()
+                    .insert(span(id)?, binders);
+            }
+            self.call_result_origins
+                .borrow_mut()
+                .insert(span(id)?, resolved);
+        }
+        for (id, tags) in &facts.view_result_interiors {
+            self.view_result_interiors
+                .borrow_mut()
+                .insert(span(id)?, tags.clone());
         }
         Ok(())
     }
@@ -4579,13 +4613,28 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::TruthinessConditions
         | FactTable::TupleUnpackPlans
         | FactTable::ParameterizedMethodCalls
+        | FactTable::ViewResultInteriors
         | FactTable::CallTransfers => true,
         FactTable::ContextualBases
-        | FactTable::ViewResultInteriors
         | FactTable::WithDesugars
         | FactTable::DeclarationCaptures
         | FactTable::ComprehensionBindings => false,
     }
+}
+
+/// The immutable binders a view-returning call records beside its result
+/// origins (`record_call_result_origins`): each slot the callee fixes as
+/// immutable, bound at the result itself.
+fn call_result_immutable_binders(
+    slots: &[super::CallResultOrigin],
+) -> Vec<super::ImmutableOriginBinder> {
+    slots
+        .iter()
+        .filter(|(_, _, mutability)| {
+            *mutability == Some(mojito_types::origin::Mutability::Immutable)
+        })
+        .map(|(slot, _, _)| (Vec::new(), *slot))
+        .collect()
 }
 
 /// The parameters each call at a body's occurrences binds, in pre-order.

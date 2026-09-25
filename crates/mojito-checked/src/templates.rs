@@ -1291,6 +1291,12 @@ pub struct CheckedBodyFacts {
     /// declaration, and a nominal receiver's method is selected alike under
     /// every instance, so an instance inherits the entry.
     pub parameterized_method_calls: Vec<(OccurrenceId, Vec<mojito_types::types::ParamDecl>)>,
+    /// The owned-interior tags a view-returning method call's result is
+    /// projected through (`s.strip()` carries `s.<bytes>`). They are the
+    /// selected callee's declared return origin, and a nominal receiver's
+    /// method is selected alike under every instance, so an instance
+    /// inherits the entry.
+    pub view_result_interiors: Vec<(OccurrenceId, Vec<String>)>,
     /// The iterator protocol of each runtime `for`, keyed by its iterable,
     /// which an instance selects again from the substituted iterable type.
     pub iterations: Vec<(OccurrenceId, TemplateIteration)>,
@@ -1476,6 +1482,7 @@ impl CheckedBodyFacts {
             subscript_descriptors,
             simd_constructions,
             parameterized_method_calls,
+            view_result_interiors,
             iterations,
             tuple_unpacks,
             call_place_uses,
@@ -1652,6 +1659,7 @@ impl CheckedBodyFacts {
             subscript_descriptors: at(&self.subscript_descriptors, occurrences, folded),
             simd_constructions: at(&self.simd_constructions, occurrences, folded),
             parameterized_method_calls: at(&self.parameterized_method_calls, occurrences, folded),
+            view_result_interiors: at(&self.view_result_interiors, occurrences, folded),
             iterations: at(&self.iterations, occurrences, folded),
             tuple_unpacks: at(&self.tuple_unpacks, occurrences, folded),
             call_place_uses: flagged(&self.call_place_uses),
@@ -1745,6 +1753,7 @@ impl CheckedBodyFacts {
             + self.subscript_descriptors.len()
             + self.simd_constructions.len()
             + self.parameterized_method_calls.len()
+            + self.view_result_interiors.len()
             + self.iterations.len()
             + self.tuple_unpacks.len()
             + self.call_place_uses.len()

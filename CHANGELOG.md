@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method that binds a view over an owned interior of a field or local
+  (`var view = self.name.strip()`) now derives its instances from the
+  checked template, keeping the interior projection and the immutable origin
+  binder the callee's declared return origin records at the call. Such
+  bodies used to keep the clone check because view-result interiors had no
+  derivation recipe.
 - A method that calls another struct's method with explicit compile-time
   arguments (`self.scaler.scaled[3](x)`) now derives its instances from the
   checked template, keeping the per-call clone the call requests as its
