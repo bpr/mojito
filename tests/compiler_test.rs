@@ -1751,6 +1751,40 @@ fn template_method_sibling_views_derive() {
 }
 
 #[test]
+fn template_method_raises_derive() {
+    // A method that raises: `Error("…")` under a bare `raises`, and a
+    // construction of the declared error type, built over the struct's
+    // parameter or closed, under a typed one, one of them from a method
+    // returning a reference.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_raises.mojo"),
+        "7\nseven\n7 seven\nerror: empty slot\nerror: SlotError\n1 2 1\nerror: Exhausted\n",
+        &[("Slot.take", 2), ("Slot.peek", 2), ("Slot.use", 2)],
+    );
+}
+
+#[test]
+fn template_method_raised_string_keeps_the_clone_check() {
+    // A raised string literal is converted to `Error` by its type, which no
+    // recipe keeps yet, so the body stays outside the class and still runs.
+    let source = "struct Slot[T: Copyable & Deinitable](Movable):\n    var item: Self.T\n    var full: Bool\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n        self.full = False\n\n    def take(self) raises -> Self.T:\n        if not self.full:\n            raise \"empty\"\n        return self.item.copy()\n\n\ndef main():\n    try:\n        print(Slot[Int](1).take())\n    except e:\n        print(e)\n";
+    let compiler = Compiler::default();
+    let program = compile_entry(&compiler, source);
+    let stats = program.template_stats();
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "empty\n"
+    );
+    assert!(
+        stats.refused.iter().any(|(name, reason)| {
+            name.starts_with("Slot.take$") && reason == "its template is not certified"
+        }),
+        "the raised string leaves the body outside the class: {:?}",
+        stats.refused
+    );
+}
+
+#[test]
 fn template_method_built_over_locals_derive() {
     // A local whose type is built over the struct's parameter: a bundled
     // collection moved out, handed on, or left unused, a hand-written struct

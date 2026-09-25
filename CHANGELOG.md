@@ -9,6 +9,12 @@ to evolve under the `0.x` compatibility rules.
 ### Fixed
 
 - A per-instantiation method clone now inherits its checked template's facts
+  when the method raises: a bare or typed `raises` declaration whose `raise`
+  names `Error("…")` or a construction of the declared error type
+  (`Optional.__getitem__`, `Dict.popitem`). Such a body used to keep the
+  clone check.
+
+- A per-instantiation method clone now inherits its checked template's facts
   when the body calls a sibling method whose result is a view over `self`
   (`_DictKeyIter(self.items())` in `Dict.keys`, `Dict.values`, and
   `Dict.__iter__`): the call's loan and the origins its result binds are kept

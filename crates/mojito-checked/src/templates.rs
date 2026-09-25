@@ -713,6 +713,10 @@ impl MethodFeatures {
     /// it lies by a read parameter, copied into a `var` one, or kept by a
     /// `mut` or `ref` one.
     pub const REFERENCE_ARGUMENTS: Self = Self(1 << 20);
+    /// A `raises` declaration, and a `raise` of a construction or of
+    /// `Error("…")`: whether the operand matches the declared error type,
+    /// and whether it is a string, hold alike under every instance.
+    pub const RAISES: Self = Self(1 << 21);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {

@@ -534,6 +534,7 @@ assets/ok/template_method_moves.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_operator_dispatch.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_origin_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_place_argument.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_raises.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_reference_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_reference_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_reference_local.mojo	-	ineligible	no-scalar-entry-shape

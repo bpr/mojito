@@ -265,7 +265,7 @@ no clone is minted per origin, and a clone keeps the binder and binds it
 symbolically as the template does. A body that writes through a `MutOrigin`
 is judged per instantiation and stays a clone check. A receiver origin, a
 struct's own origin parameter (no clone is minted for such a struct), the
-copy and move initializers, any other binder, and `raises` stay outside. A `where`
+copy and move initializers, and any other binder stay outside. A `where`
 clause is the declaration's constraint: `generate_instance_clones` mints a
 clone only where it evaluates true, a trace exists only for a minted clone, and
 a clone's signature no longer states it.
@@ -296,6 +296,7 @@ they are a set, not a ladder.
 | `CALLABLE_PARAMETERS` | a call through a parameter declared with a `def(...)` type, passing closed scalars or whole values, as a statement; and such a parameter forwarded by value to a sibling call | The call records the parameter's own contract symbol and parameters, which the instance takes from its own binding of the parameter, and puts a call-through residue on the body's frame that names the parameter's slot and each argument's signature place. A forwarded parameter reads the callee's residue and composes one. Neither names a type: the instance republishes the template's residue and owes that its realized callee publishes the one the template read. Obligation 19 below. |
 | `STRING_BUILTINS` | `_unqualified_type_name[T]()`, and `repr(value)` over an argument a checker builtin reads where it lies | Neither selects a callee. The reflection call records one type's spelling, which `derive_adjustment` re-renders from the substituted type (`TypeName` carries the type beside the text) and refuses while that type is still symbolic. `repr` proves its argument `Writable` — which the instance proves again at its own type — reads it where it lies as a bounded sink's argument is read, and wraps its compile-time string result as the nominal `String`: one conversion, whose literal constructor is the same under every instance (obligation 20).
 | `REFERENCE_ARGUMENTS` | a `ref` local, a field reached through a reference, or a reference call's result handed to a method call's read, `var`, or `mut` parameter, or lent to a hand-written constructor's `ref` parameter | What the call records there is decided by what the argument is, as for a receiver reached through a reference: a read parameter borrows the place the argument names (`BorrowedReadCallPlaces`, by syntax), a `mut` parameter keeps it (`CallPlaceUses`), a `var` parameter copies it where the template recorded the copy (obligation 3), and a field read keeps its base as a handle. A reference call records its own result and interior, and its copyable-read mark is taken again at the instance's referent (obligation 13). A constructor's `BorrowRefArguments` names the lending positions, which are the selected constructor's declaration, and each loan's mutability, which is the place's; `derive_adjustment` carries it verbatim. One whose loan materializes a temporary names a binding of one run and refuses. |
+| `RAISES` | a `raises` declaration, bare or typed, and a `raise` whose operand is a `CONSTRUCTIONS` construction or `Error("…")` of a string literal | A `raise` records nothing of its own. `require_error` asks two things of the operand's type: whether it is a string, which a constructed struct's name and the builtin `Error` settle whatever the instance, and whether it equals the declared error type, which it does under every substitution if it does symbolically, both types being written over the same parameters. The declared error type lives in the signature, checked per clone. A raised string literal, a raising call in the body (`effects_closed`), and a module-level `def` that raises stay outside. |
 
 The compiler-private trap `_mojito_abort("message")` is a statement of any
 non-keyed body: the built-in types its literal and selects nothing. A
@@ -712,6 +713,16 @@ tables. In short, for one debug-profile run each:
   constructor, spell it through a `comptime` alias, or bind it to a local
   derives for an `Int` and a `String` instance
   (`template_method_sibling_view.mojo`).
+  A method that raises (2026-09-24) took `stdlib_heavy` from 1172 to 1224
+  (200 to 209 distinct derived clones): `Optional.__getitem__` derives for
+  the `Int` and `String` instances and `Dict.popitem` for both `Dict`
+  instances. `Optional.__getitem__` over a `DictEntry` still refuses on the
+  plain-data obligation, `Dict.pop` on `ExplicitDestroyCalls`,
+  `Dict.__getitem__` on a reference result reached through an element's
+  field, `List.index` on `Bool(result)`, and the iterators' `__next__` on
+  their struct's origin parameter. A user struct whose accessors raise
+  `Error("…")` or a construction of the declared error type derives for an
+  `Int` and a `String` instance (`template_method_raises.mojo`).
   Widening `OPERATOR_DISPATCH` to every operator a trait names, and to the
   three things a struct instance's dispatch adds beneath the operand
   (2026-09-24), moves neither count (1096 and 340 before and after): no
@@ -754,7 +765,7 @@ it produced (3828 for Hello World) were wrong and are withdrawn.
 Each of these keeps the clone check. The roadmap carries one entry per item.
 
 - A method body beyond `MethodBody`: a receiver origin, a copy or move
-  initializer, `raises`, the method's own binders, a `for` loop, a string
+  initializer, a raised string or a raising call, the method's own binders, a `for` loop, a string
   other than the `_mojito_abort` message or a sink's argument, a call passing
   a `ref` local or a reference call's result, and a local whose type is built
   over a parameter

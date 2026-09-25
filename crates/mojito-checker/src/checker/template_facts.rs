@@ -2312,8 +2312,8 @@ impl Checker {
     /// caller owes lives in the signature, which is checked per clone. A `mut`
     /// parameter may be stored to; a bare `ref` one has parametric
     /// mutability, and a write through it is refused below. The copy and move
-    /// initializers, a receiver or parameter origin, binders, and `raises`
-    /// stay outside.
+    /// initializers, a receiver or parameter origin, and binders stay
+    /// outside.
     ///
     /// - `STATEMENTS`: a runtime statement is checked once whatever runs it,
     ///   so `if`, `while`, `break`, `continue`, and a bare `return` neither
@@ -2397,6 +2397,9 @@ impl Checker {
     ///   constructor's `BorrowRefArguments` names the lending positions and
     ///   each loan's mutability, neither of which an instance changes
     ///   (`derive_adjustment`).
+    /// - `RAISES`: see [`BodyShape::raised`]. A `raise` records nothing of
+    ///   its own, and the judgment an instance repeats there holds under
+    ///   every substitution the template's holds under.
     ///
     /// Any other handle, borrowed receiver, reference result, interior
     /// reference, or copyable read in the body refuses it
@@ -2463,13 +2466,12 @@ impl Checker {
             .iter()
             .all(|binder| origin_binder(binder) || bound_binder(binder))
             || !(method.decorators.is_empty() || is_static)
-            || method.raises
-            || method.raises_type.is_some()
         {
             return outside(
-                "the method has binders other than origins and bounded types, decorators, or raises",
+                "the method has binders other than origins and bounded types, or decorators",
             );
         }
+        let raises = method.raises || method.raises_type.is_some();
         let plain_struct = decls.iter().all(|decl| {
             matches!(
                 decl,
@@ -2578,6 +2580,11 @@ impl Checker {
                     features = features
                         .union(MethodFeatures::STATEMENTS)
                         .union(MethodFeatures::BOUND_BINDERS);
+                }
+                if raises {
+                    features = features
+                        .union(MethodFeatures::STATEMENTS)
+                        .union(MethodFeatures::RAISES);
                 }
                 features
             }),
@@ -5315,6 +5322,9 @@ impl BodyShape<'_> {
                     .push((name.clone(), LocalKind::Reference));
                 bound && self.holds(MethodFeatures::REFERENCE_LOCALS)
             }
+            StmtKind::Raise(value) if !self.keyed => {
+                self.raised(value) && self.holds(MethodFeatures::RAISES)
+            }
             StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue if !self.keyed => {
                 self.holds(MethodFeatures::STATEMENTS)
             }
@@ -5616,6 +5626,29 @@ impl BodyShape<'_> {
                     && fact_at(&facts.expression_bindings, id).is_none()
             });
         admitted && self.holds(MethodFeatures::STATEMENTS)
+    }
+
+    /// The operand of a `raise`: a construction, or `Error` made from a
+    /// string literal.
+    ///
+    /// `require_error` asks whether the operand is a string, which a
+    /// constructed struct's name and the builtin `Error` settle, and whether
+    /// its type is the declared error type. Both types are functions of the
+    /// same parameters, so the instance's answer is the template's.
+    fn raised(&self, value: &Expr) -> bool {
+        let id = self.occurrence(value);
+        let error = matches!(&value.kind, ExprKind::Call { name, param_args, args, kwargs }
+            if name == "Error"
+                && !self.structs.contains_key(name)
+                && param_args.is_empty()
+                && kwargs.is_empty()
+                && matches!(args.as_slice(), [message] if matches!(message.kind, ExprKind::Str(_))))
+            && self.facts.is_none_or(|facts| {
+                fact_at(&facts.expression_types, id) == Some(&Ty::Error)
+                    && fact_at(&facts.call_parameters, id).is_none()
+                    && fact_at(&facts.expression_bindings, id).is_none()
+            });
+        error || self.construction(value)
     }
 
     /// Note that the body holds `feature`.
