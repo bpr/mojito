@@ -521,6 +521,7 @@ assets/ok/template_inner_request.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_borrowed_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_bound_copy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_bound_dispatch.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_bound_witness_shapes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_callable_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_calls.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_construction.mojo	-	ineligible	no-scalar-entry-shape

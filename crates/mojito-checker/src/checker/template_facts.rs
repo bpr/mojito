@@ -6252,13 +6252,18 @@ impl BodyShape<'_> {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> bool {
+        // A receiver a `var self` requirement consumes is a named place's
+        // `^` transfer, which records the move at itself.
+        let consumed = matches!(&object.kind, ExprKind::Transfer(inner)
+            if matches!(inner.kind, ExprKind::Identifier(_)))
+            && self.whole_value(object);
         let place = match &object.kind {
             ExprKind::Identifier(name) => {
                 self.params.contains(&name.as_str()) || self.local_kind(name).is_some()
             }
             ExprKind::Member { .. } => self.receiver_field(object) || self.reference_member(object),
             ExprKind::Index { .. } => self.slot(object),
-            _ => false,
+            _ => consumed,
         };
         let named = |argument: &Expr| {
             matches!(&argument.kind, ExprKind::Identifier(name)
@@ -6279,24 +6284,30 @@ impl BodyShape<'_> {
                     return false;
                 };
                 // A named place handed to a bounded parameter of the
-                // requirement: its own bounds prove the parameter's.
+                // requirement: its own bounds prove the parameter's, or its
+                // type is closed, the same in every instance, and the
+                // template's check proved it against the bound.
                 let bounded = |argument: &Expr, parameter: &Ty| {
                     let ty = fact_at(&facts.expression_types, self.occurrence(argument));
-                    matches!((ty, parameter), (Some(Ty::Param { bounds: given, .. }), Ty::Param { bounds, .. })
-                        if bounds.iter().all(|bound| given.contains(bound)))
+                    match (ty, parameter) {
+                        (Some(Ty::Param { bounds: given, .. }), Ty::Param { bounds, .. }) => {
+                            bounds.iter().all(|bound| given.contains(bound))
+                        }
+                        (Some(ty), Ty::Param { .. }) => !mojito_types::types::is_symbolic(ty),
+                        _ => false,
+                    }
                 };
                 let Some(call) = fact_at(&facts.selected_calls, id) else {
                     // The inverted write: one writer, a bounded place the
                     // call only names.
-                    let inverted = fact_at(&facts.operation_adjustments, id).is_some_and(
-                        |adjustment| {
+                    let inverted =
+                        fact_at(&facts.operation_adjustments, id).is_some_and(|adjustment| {
                             matches!(
                                 adjustment,
                                 mojito_checked::checked::SemanticAdjustment::InvertedWrite
                                     | mojito_checked::checked::SemanticAdjustment::InvertedReprWrite
                             )
-                        },
-                    );
+                        });
                     let writer = Ty::Param {
                         binder: crate::checker::annotations::synthetic_binder("$writer_probe"),
                         bounds: vec!["Writer".to_string()],
@@ -6338,11 +6349,28 @@ impl BodyShape<'_> {
                     }
                     kept
                 };
+                let contract = if consumed {
+                    mojito_checked::templates::consuming_method_contract(call)
+                } else {
+                    mojito_checked::templates::closed_method_contract(call)
+                };
                 mojito_symbol::symbol::is_trait_dispatch_symbol(&call.contract.target)
-                    && mojito_checked::templates::closed_method_contract(call)
-                    && !call.contract.receiver_requires_place
-                    && call.contract.receiver_convention.is_none()
-                    && call.invalidations.is_empty()
+                    && contract
+                    && match call.contract.receiver_convention {
+                        None => {
+                            !call.contract.receiver_requires_place && call.invalidations.is_empty()
+                        }
+                        // A `mut self` requirement keeps the receiver's place
+                        // and refreshes its generation, below the receiver's
+                        // own binding, whatever the witness.
+                        Some(mojito_ast::ast::ArgConvention::Mut) => {
+                            call.contract.receiver_requires_place
+                        }
+                        Some(mojito_ast::ast::ArgConvention::Var) => {
+                            consumed && call.invalidations.is_empty()
+                        }
+                        Some(_) => false,
+                    }
                     && (call.contract.result_ty == *receiver
                         || !mojito_types::types::is_symbolic(&call.contract.result_ty))
                     && call.contract.arguments.len() == args.len()

@@ -9,6 +9,16 @@ to evolve under the `0.x` compatibility rules.
 ### Fixed
 
 - A per-instantiation method clone now inherits its checked template's facts
+  for a call through the struct parameter's bound whatever shape the
+  instance's witness takes: a member of an overload set its arity selects, a
+  `[H: Hasher]` witness handed a concrete hasher (which names the per-call
+  clone once it is minted), a `mut self` requirement, and a `var self` one
+  consumed through a `^` transfer. A named place of a closed type handed to
+  such a call no longer leaves the template uncertified either. Each used to
+  keep the clone check. An overload set whose members share an arity still
+  does (`docs/roadmap.md` §1).
+
+- A per-instantiation method clone now inherits its checked template's facts
   when the body puts any operator a trait names over two places of one
   parameter-typed type, not only a comparison: `a + b` under an arithmetic
   bound, and the bitwise and shift operators, derive, and so does an operator

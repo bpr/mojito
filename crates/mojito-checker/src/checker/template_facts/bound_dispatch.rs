@@ -42,6 +42,9 @@ enum BoundWitness<'a> {
         /// The witness's own binders, each bound to the caller's argument
         /// type at the parameter that names it.
         binders: TySubst,
+        /// The per-call request a witness with binders records, whether its
+        /// clone is selected or not yet minted.
+        request: Option<Box<MethodInstantiation>>,
         /// The struct's own substitution under the receiver's arguments.
         substitution: TySubst,
     },
@@ -53,6 +56,8 @@ enum BoundWitness<'a> {
 struct DispatchedArgument {
     value: OccurrenceId,
     ty: Ty,
+    /// The parameter type the abstract call bound it to.
+    parameter_ty: Ty,
     convention: Option<ArgConvention>,
     requires_place: bool,
 }
@@ -89,6 +94,7 @@ impl Checker {
             .ok_or("a dispatched receiver has no retained type")?;
         let call =
             fact_at(&facts.selected_calls, id).ok_or("a bound dispatch lost its contract")?;
+        let receiver_convention = call.contract.receiver_convention;
         let arguments = call
             .contract
             .arguments
@@ -106,12 +112,13 @@ impl Checker {
                 Ok(DispatchedArgument {
                     value,
                     ty,
+                    parameter_ty: parameter.parameter_ty.clone(),
                     convention: parameter.convention,
                     requires_place: parameter.requires_place,
                 })
             })
             .collect::<Result<Vec<_>, &'static str>>()?;
-        match self.bound_witness(&ty, &method, &arguments)? {
+        match self.bound_witness(&ty, receiver_convention, &method, &arguments)? {
             BoundWitness::CopyRead => {
                 if !self.is_copyable(&ty) {
                     return Err("the instance's type is not copyable");
@@ -190,11 +197,12 @@ impl Checker {
                 .ok_or("an inverted write's writer has no retained type")?;
             let arguments = [DispatchedArgument {
                 value: writer,
+                parameter_ty: writer_ty.clone(),
                 ty: writer_ty,
                 convention: Some(ArgConvention::Mut),
                 requires_place: true,
             }];
-            let witness = self.bound_witness(&ty, method, &arguments)?;
+            let witness = self.bound_witness(&ty, None, method, &arguments)?;
             let BoundWitness::Method { .. } = &witness else {
                 return Err("an inverted write's receiver selects no method");
             };
@@ -293,18 +301,14 @@ impl Checker {
     /// The witness the instance's type selects for `method`, from the types
     /// alone.
     ///
-    /// A nominal struct's witness is the lone declaration of that name whose
-    /// shape is the requirement's: a read `self`, one parameter per
-    /// argument bound with the recorded convention, and no variadic, default,
-    /// `raises`, or reference result. Each parameter's type, under `Self`,
-    /// the struct's arguments, and the witness's own binders, is the
-    /// argument's recorded type or a bounded parameter the argument's type
-    /// satisfies. A binder of the witness is admitted where exactly one
-    /// parameter is that binder and the argument there is itself a bare
-    /// parameter, so the binding stays symbolic as the clone check leaves it.
+    /// A nominal struct's witness is the declaration of that name that binds
+    /// the recorded arguments ([`Self::witness_binders`]); of an overload
+    /// set, the one member that does where no other could take as many
+    /// arguments, named by its overload symbol.
     fn bound_witness<'a>(
         &'a self,
         receiver: &'a Ty,
+        receiver_convention: Option<ArgConvention>,
         method: &str,
         arguments: &[DispatchedArgument],
     ) -> Result<BoundWitness<'a>, &'static str> {
@@ -327,79 +331,119 @@ impl Checker {
             .structs
             .get(owner)
             .ok_or("a dispatched receiver's struct is not declared")?;
-        let [declared] = info
+        let candidates = info
             .methods
             .get(method)
             .map(Vec::as_slice)
-            .ok_or("the instance's type declares no witness for the requirement")?
-        else {
-            return Err("the instance's type overloads the requirement");
-        };
-        let plain = declared.has_self
-            && declared.self_convention.is_none()
-            && declared.params.len() == arguments.len()
-            && declared.required.iter().all(|required| *required)
-            && declared.variadic.is_none()
-            && declared.kw_variadic.is_none()
-            && !declared.raises
-            && declared.ref_return.is_none()
-            && declared.view_return.is_empty()
-            && declared.parametric_origin_writes.is_empty();
-        if !plain {
-            return Err("the instance's witness is not a plain method of the requirement's shape");
-        }
+            .ok_or("the instance's type declares no witness for the requirement")?;
         let substitution = crate::checker::annotations::struct_subst(&info.decls, struct_arguments);
-        let mut binders = HashMap::new();
-        for decl in &declared.decls {
-            let ParamDecl::Type {
-                bounds,
-                callable_bound: None,
-                default: None,
-                variadic: false,
-                ..
-            } = decl
-            else {
-                return Err("the instance's witness declares a binder that is not a plain type");
+        let (mut declared, mut binders) = if let [declared] = candidates {
+            (
+                declared,
+                self.witness_binders(
+                    declared,
+                    receiver,
+                    receiver_convention,
+                    &substitution,
+                    arguments,
+                )?,
+            )
+        } else {
+            // An overload set is ranked on the recorded argument types
+            // only where the arity alone decides it: one member fits,
+            // and no other member could take as many arguments.
+            let mut fitting = candidates.iter().filter_map(|declared| {
+                self.witness_binders(
+                    declared,
+                    receiver,
+                    receiver_convention,
+                    &substitution,
+                    arguments,
+                )
+                .ok()
+                .map(|binders| (declared, binders))
+            });
+            let (Some(selected), None) = (fitting.next(), fitting.next()) else {
+                return Err("no lone member of the instance's overloaded witness fits");
             };
-            let mut named = declared.params.iter().enumerate().filter(
-                |(_, ty)| matches!(ty, Ty::Param { binder, .. } if binder.id == *decl.id()),
-            );
-            let (Some((index, _)), None) = (named.next(), named.next()) else {
-                return Err("the instance's witness binder is not named by exactly one parameter");
-            };
-            let argument = &arguments[index].ty;
-            let Ty::Param { bounds: given, .. } = argument else {
-                return Err("the instance would bake a witness binder");
-            };
-            if !bounds.iter().all(|bound| {
-                given
+            let rivals = candidates
+                .iter()
+                .filter(|declared| takes_arity(declared, arguments.len()))
+                .count();
+            if rivals > 1 {
+                return Err("the instance's overloaded witness needs ranking by type");
+            }
+            selected
+        };
+        let overloaded = candidates.len() > 1;
+        let request = (!declared.decls.is_empty()).then(|| {
+            Box::new(MethodInstantiation {
+                owner: owner.clone(),
+                owner_arguments: self
+                    .instance_arguments(owner, struct_arguments)
+                    .unwrap_or_default(),
+                method: method.to_string(),
+                parameter_names: declared.names.clone(),
+                arguments: declared
+                    .decls
                     .iter()
-                    .any(|carried| carried == bound || self.trait_refines(carried, bound))
-            }) {
-                return Err("an argument does not carry the witness binder's bounds");
+                    .filter_map(|decl| binders.get(decl.id()).cloned())
+                    .map(TyArg::Ty)
+                    .collect(),
+            })
+        });
+        // A binder the instance bakes selects the per-call clone once the
+        // elaborator has minted it, as the clone check retargets to it; until
+        // then the call names the method itself.
+        let baked = request.as_ref().filter(|_| {
+            binders
+                .values()
+                .all(|ty| !mojito_types::types::is_symbolic(ty))
+        });
+        if let Some(request) = baked {
+            if overloaded {
+                return Err("the instance bakes a binder of an overloaded witness");
             }
-            binders.insert(decl.id().clone(), argument.clone());
-        }
-        for (index, argument) in arguments.iter().enumerate() {
-            let convention = declared.conventions[index];
-            if convention != argument.convention
-                || argument.requires_place
-                    != matches!(convention, Some(ArgConvention::Mut | ArgConvention::Ref))
+            // A generic owner keys its per-call clone by the instance too,
+            // and no instance argument reaches one (`plain_data`).
+            if !struct_arguments.is_empty() {
+                return Err("the instance bakes a binder of a generic struct's witness");
+            }
+            if let Some(clone) =
+                self.specialized_method_clone(owner, method, &declared.decls, &request.arguments)
             {
-                return Err("the instance's witness binds an argument by another convention");
+                let [minted] = info
+                    .methods
+                    .get(&clone)
+                    .map(Vec::as_slice)
+                    .ok_or("the instance's per-call witness clone is not declared")?
+                else {
+                    return Err("the instance's per-call witness clone is overloaded");
+                };
+                declared = minted;
+                binders = self.witness_binders(
+                    declared,
+                    receiver,
+                    receiver_convention,
+                    &substitution,
+                    arguments,
+                )?;
+                return Ok(BoundWitness::Method {
+                    owner,
+                    arguments: struct_arguments,
+                    declared,
+                    target: format!("{owner}.{clone}"),
+                    binders,
+                    request: Some(request.clone()),
+                    substitution,
+                });
             }
-            let parameter = self.witness_parameter_ty(
-                &declared.params[index],
-                receiver,
-                &substitution,
-                &binders,
-            );
-            let accepted = parameter == argument.ty
-                || matches!(&parameter, Ty::Param { bounds, .. }
-                    if bounds.iter().all(|bound| self.conforms_to(&argument.ty, bound)));
-            if !accepted {
-                return Err("an argument does not fit the instance's witness parameter");
-            }
+        } else if request.is_some()
+            && binders
+                .values()
+                .any(|ty| !mojito_types::types::is_symbolic(ty))
+        {
+            return Err("the instance would bake some witness binders and not others");
         }
         let target = if self
             .instance_method_clone(owner, method, struct_arguments)
@@ -408,6 +452,8 @@ impl Checker {
             if declared.decls.is_empty() {
                 self.method_clone_target(owner, method, struct_arguments, declared, &substitution)
                     .ok_or("the instance's witness clone family has no member for it")?
+            } else if overloaded {
+                return Err("the instance's overloaded witness has binders and a clone family");
             } else {
                 // A witness with binders of its own keeps them in its clone,
                 // and a lone declaration's clone is a lone clone.
@@ -431,7 +477,16 @@ impl Checker {
             if !declared.availability.is_empty() && !struct_arguments.is_empty() {
                 return Err("the instance's witness has an availability condition and no clone");
             }
-            format!("{owner}.{method}")
+            if overloaded {
+                crate::checker::overload_support::method_lowered_name(
+                    owner,
+                    method,
+                    declared,
+                    self.self_instance_ty(owner).as_ref(),
+                )
+            } else {
+                format!("{owner}.{method}")
+            }
         };
         Ok(BoundWitness::Method {
             owner,
@@ -439,8 +494,103 @@ impl Checker {
             declared,
             target,
             binders,
+            request,
             substitution,
         })
+    }
+
+    /// How one declaration of the requirement's name binds the recorded
+    /// arguments, if it is a witness of the requirement's shape: a read
+    /// `self`, one parameter per argument bound with the recorded
+    /// convention, and no variadic, default, `raises`, or reference result.
+    /// Each parameter's type, under `Self`, the struct's arguments, and the
+    /// witness's own binders, is the argument's recorded type or a bounded
+    /// parameter the argument's type satisfies. A binder of the witness is
+    /// admitted where exactly one parameter is that binder and the argument
+    /// there is itself a bare parameter, so the binding stays symbolic as
+    /// the clone check leaves it.
+    fn witness_binders(
+        &self,
+        declared: &MethodSig,
+        receiver: &Ty,
+        receiver_convention: Option<ArgConvention>,
+        substitution: &TySubst,
+        arguments: &[DispatchedArgument],
+    ) -> Result<TySubst, &'static str> {
+        let plain = declared.has_self
+            && declared.self_convention == receiver_convention
+            && declared.params.len() == arguments.len()
+            && declared.required.iter().all(|required| *required)
+            && declared.variadic.is_none()
+            && declared.kw_variadic.is_none()
+            && !declared.raises
+            && declared.ref_return.is_none()
+            && declared.view_return.is_empty()
+            && declared.parametric_origin_writes.is_empty();
+        if !plain {
+            return Err("the instance's witness is not a plain method of the requirement's shape");
+        }
+        let mut binders = HashMap::new();
+        for decl in &declared.decls {
+            let ParamDecl::Type {
+                bounds,
+                callable_bound: None,
+                default: None,
+                variadic: false,
+                ..
+            } = decl
+            else {
+                return Err("the instance's witness declares a binder that is not a plain type");
+            };
+            let mut named = declared.params.iter().enumerate().filter(
+                |(_, ty)| matches!(ty, Ty::Param { binder, .. } if binder.id == *decl.id()),
+            );
+            let (Some((index, _)), None) = (named.next(), named.next()) else {
+                return Err("the instance's witness binder is not named by exactly one parameter");
+            };
+            let argument = &arguments[index].ty;
+            let carried = match argument {
+                Ty::Param { bounds: given, .. } => bounds.iter().all(|bound| {
+                    given
+                        .iter()
+                        .any(|carried| carried == bound || self.trait_refines(carried, bound))
+                }),
+                closed if !mojito_types::types::is_symbolic(closed) => {
+                    bounds.iter().all(|bound| self.conforms_to(closed, bound))
+                }
+                _ => false,
+            };
+            if !carried {
+                return Err("an argument does not carry the witness binder's bounds");
+            }
+            binders.insert(decl.id().clone(), argument.clone());
+        }
+        for (index, argument) in arguments.iter().enumerate() {
+            let convention = declared.conventions[index];
+            if convention != argument.convention
+                || argument.requires_place
+                    != matches!(convention, Some(ArgConvention::Mut | ArgConvention::Ref))
+            {
+                return Err("the instance's witness binds an argument by another convention");
+            }
+            let parameter = self.witness_parameter_ty(
+                &declared.params[index],
+                receiver,
+                substitution,
+                &binders,
+            );
+            // A literal binds the closed type the requirement declares,
+            // which a witness declares too.
+            let accepted = parameter == argument.ty
+                || (parameter == argument.parameter_ty
+                    && !mojito_types::types::is_symbolic(&parameter))
+                || matches!(&parameter, Ty::Param { bounds, .. }
+                    if bounds.iter().all(|bound| self.conforms_to(&argument.ty, bound)));
+            if !accepted {
+                return Err("an argument does not fit the instance's witness parameter");
+            }
+        }
+        Ok(binders)
     }
 
     /// Write a struct witness into the instance's facts at `id`: the
@@ -462,6 +612,7 @@ impl Checker {
             declared,
             target,
             binders,
+            request,
             substitution,
         } = witness
         else {
@@ -508,25 +659,34 @@ impl Checker {
                 }])
             })
             .collect::<Result<Vec<_>, &'static str>>()?;
-        let boundaries = arguments
-            .iter()
-            .zip(&invalidations)
-            .enumerate()
-            .map(
-                |(index, (argument, invalidations))| TemplateArgumentBoundary {
-                    source: CheckedCallArgumentSource::Positional(index),
-                    value: argument.value,
-                    adjustments: Vec::new(),
-                    invalidations: invalidations.clone(),
-                },
-            )
-            .collect();
         let call = &mut facts
             .selected_calls
             .iter_mut()
             .find(|(site, _)| *site == id)
             .ok_or("a bound dispatch lost its contract")?
             .1;
+        // A literal the requirement's closed parameter materialized is
+        // materialized to the witness's, the same type.
+        let boundaries = arguments
+            .iter()
+            .zip(&invalidations)
+            .enumerate()
+            .map(|(index, (argument, invalidations))| {
+                let source = CheckedCallArgumentSource::Positional(index);
+                let adjustments = call
+                    .arguments
+                    .iter()
+                    .find(|bound| bound.source == source)
+                    .map(|bound| bound.adjustments.clone())
+                    .unwrap_or_default();
+                TemplateArgumentBoundary {
+                    source,
+                    value: argument.value,
+                    adjustments,
+                    invalidations: invalidations.clone(),
+                }
+            })
+            .collect();
         call.contract.target.clone_from(target);
         call.contract.result_ty = result_ty;
         call.contract.param_decls.clone_from(&declared.decls);
@@ -582,28 +742,14 @@ impl Checker {
                     .push((argument.value, invalidations)),
             }
         }
-        if !declared.decls.is_empty() {
-            let request = MethodInstantiation {
-                owner: (*owner).to_string(),
-                owner_arguments: self
-                    .instance_arguments(owner, struct_arguments)
-                    .unwrap_or_default(),
-                method: method_source_name(target, owner).to_string(),
-                parameter_names: declared.names.clone(),
-                arguments: declared
-                    .decls
-                    .iter()
-                    .filter_map(|decl| binders.get(decl.id()).cloned())
-                    .map(TyArg::Ty)
-                    .collect(),
-            };
+        if let Some(request) = request {
             match facts
                 .method_instantiations
                 .iter_mut()
                 .find(|(site, _)| *site == id)
             {
-                Some(entry) => entry.1 = request,
-                None => facts.method_instantiations.push((id, request)),
+                Some(entry) => entry.1 = (**request).clone(),
+                None => facts.method_instantiations.push((id, (**request).clone())),
             }
         }
         if !facts.effect_free_callees.contains(target) {
@@ -641,14 +787,19 @@ fn nominal_writer_receiver(ty: &Ty) -> bool {
     }
 }
 
-/// The source method name a lowered target names: the clone tag and the
-/// overload suffix stripped.
-fn method_source_name<'a>(target: &'a str, owner: &str) -> &'a str {
-    let method = target
-        .strip_prefix(owner)
-        .and_then(|rest| rest.strip_prefix('.'))
-        .unwrap_or(target);
-    method.split('$').next().unwrap_or(method)
+/// Whether a declaration could take `count` positional arguments: its
+/// required positional parameters are no more, and its positional
+/// parameters (or a variadic) no fewer, with no keyword-only parameter
+/// required.
+fn takes_arity(declared: &MethodSig, count: usize) -> bool {
+    let positional = declared
+        .keyword_only
+        .unwrap_or(declared.params.len())
+        .min(declared.required.len());
+    let required = |range: &[bool]| range.iter().filter(|required| **required).count();
+    required(&declared.required[..positional]) <= count
+        && required(&declared.required[positional..]) == 0
+        && (count <= positional || declared.variadic.is_some())
 }
 
 /// Forget a dispatched call that selects no callee for the instance: its

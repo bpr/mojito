@@ -334,7 +334,7 @@ pub fn trivial_method_contract(call: &TemplateCallContract) -> bool {
 /// callee's declaration, which an instance's clone keeps. Every field is
 /// named, so a new one must be given a rule here before this crate builds.
 pub fn closed_method_contract(call: &TemplateCallContract) -> bool {
-    call.reference_result.is_none() && closed_contract(call, false, false)
+    call.reference_result.is_none() && closed_contract(call, None, false)
 }
 
 /// Whether a method call's contract is a [`closed_method_contract`] but for
@@ -350,7 +350,7 @@ pub fn closed_method_contract(call: &TemplateCallContract) -> bool {
 /// temporary) is recorded at that expression and is for the body's grammar
 /// to admit.
 pub fn value_method_contract(call: &TemplateCallContract) -> bool {
-    call.reference_result.is_none() && closed_contract(call, false, true)
+    call.reference_result.is_none() && closed_contract(call, None, true)
 }
 
 /// Whether a method call's contract is a [`closed_method_contract`] but for
@@ -366,7 +366,20 @@ pub fn value_method_contract(call: &TemplateCallContract) -> bool {
 pub fn closed_reference_contract(call: &TemplateCallContract) -> bool {
     call.reference_result.is_some()
         && call.contract.receiver_requires_place
-        && closed_contract(call, true, false)
+        && closed_contract(call, Some(mojito_ast::ast::ArgConvention::Ref), false)
+}
+
+/// Whether a method call's contract is a [`closed_method_contract`] but for
+/// a receiver it consumes.
+///
+/// The receiver is the `^` transfer the call spells, which records the move
+/// at the receiver's own expression, not in the contract, so an instance's
+/// consuming witness changes only the target, as a read one does.
+pub fn consuming_method_contract(call: &TemplateCallContract) -> bool {
+    call.reference_result.is_none()
+        && call.contract.receiver_convention == Some(mojito_ast::ast::ArgConvention::Var)
+        && !call.contract.receiver_requires_place
+        && closed_contract(call, Some(mojito_ast::ast::ArgConvention::Var), false)
 }
 
 /// Whether a call keeps the caller's place for this argument: what a `mut`
@@ -385,10 +398,16 @@ pub const fn kept_place_argument(argument: &crate::checked::CheckedCallArgument)
         )
 }
 
-/// What [`closed_method_contract`], [`value_method_contract`], and
-/// [`closed_reference_contract`] share. `values` admits a by-value parameter
-/// of any type, which then takes no adjustment at all.
-fn closed_contract(call: &TemplateCallContract, reference: bool, values: bool) -> bool {
+/// What [`closed_method_contract`], [`value_method_contract`],
+/// [`closed_reference_contract`], and [`consuming_method_contract`] share.
+/// `receiver` is the one convention beyond a read or `mut` receiver the call
+/// may take, and `values` admits a by-value parameter of any type, which then
+/// takes no adjustment at all.
+fn closed_contract(
+    call: &TemplateCallContract,
+    receiver: Option<mojito_ast::ast::ArgConvention>,
+    values: bool,
+) -> bool {
     use mojito_ast::ast::ArgConvention;
     let TemplateCallContract {
         contract:
@@ -424,7 +443,7 @@ fn closed_contract(call: &TemplateCallContract, reference: bool, values: bool) -
         && (matches!(
             receiver_convention,
             None | Some(ArgConvention::Imm | ArgConvention::Mut)
-        ) || (reference && *receiver_convention == Some(ArgConvention::Ref)))
+        ) || (receiver.is_some() && *receiver_convention == receiver))
         && arguments.iter().all(|argument| {
             let by_value = (values || closed_scalar(&argument.parameter_ty))
                 && !argument.requires_place

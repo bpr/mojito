@@ -279,7 +279,7 @@ they are a set, not a ladder.
 | `VALUE_ARGUMENTS` | a whole value of any type handed to a by-value parameter of a method call: a `^` transfer, a sibling call's result, a place the template copied, or a named place a read parameter takes where it lies | The argument's recorded type equals the parameter's, before and after substitution, or an `@implicit` constructor converts it to the parameter's, and the instance selects that constructor again (obligation 20). What the call records for it is decided without its type: a read parameter borrows a named place and reads a temporary by the argument's syntax and the callee's conventions, and a `var` parameter takes a transfer or a temporary as it stands. A copied place owes obligation 3 and a transfer obligation 10, as elsewhere. A `ref` local and a reference call's result stay out, since each records a borrow of its own. A callee with a parameter of a struct parameter's type may belong to a field of another struct: it has no binders of its own, so its parameter types were recorded at the receiver's arguments, in the caller's binder scope, and the instance substitutes them in the contract and in `CallParameters` alike. An overloaded family whose members declare parameters of parameter types is admitted when every argument's type is exactly its parameter's: no member outranks an exact match, and a family an instance collapses finds no single clone (`method_clone_target`). |
 | `VANISHING_TRANSFERS` | a call whose callee stores an argument outward (`self.items.append(value^)`), so the template replays a transfer summary at it | A transfer moves the loans its source carries. The template's parameter may carry one (`type_may_carry_loans` is true for a symbolic parameter), so its check records a call transfer, merges the origin, and publishes an effect of its own; every value of a plain-data instance carries none, so `replay_transfer_effects` records nothing and the instance's frame publishes nothing, which is what the clone check records. Obligation 14 below. A call-through residue, a function value's baked effects, and a destination a captured binding names are not transfers and still refuse. |
 | `OPERATOR_DISPATCH` | Every operator a trait names — `==`, `!=`, `<`, `<=`, `>`, `>=`, and the arithmetic, bitwise, and shift ones — over two places of one type that mentions a struct parameter | The template proves the operator through the bound and records nothing at it; `infer_infix` decides a struct operand's dunder from the operand types alone (`struct_infix_dispatch`). Obligation 15 below. Each operand is a place, so both checks read it where it lies; what the instance's dispatch adds beneath the operand is the copy of a consumed one, the conversion of an adapted one, and `NegatedEquality`. An arithmetic operator's result is the operand's own type rather than `Bool`, so it is a temporary of that type wherever the body puts it (`BodyShape::operator_value`, beside a call result and a construction). |
-| `BOUND_DISPATCH` | a method call on a place of a bare parameter type, proved through a bound: `place.copy()`, `item.__hash__(hasher)`, `item.write_to(writer)`, or any requirement whose arguments are closed scalars or named places of a bare parameter type handed to a bounded `mut`/`ref` parameter | The template records the abstract dispatch (`__trait_dispatch.__hash__$ov$…`), or for `write_to` the inverted write, and nothing the receiver's type decides: a kept argument's place use and generation refresh follow from the requirement's convention, which the witness shares. `infer_method_call` decides a concrete receiver's witness from its type alone, and `bound_witness` repeats that decision from the types. Obligation 16 below. The call through the bound read the summaries of every conformer's method of that name, one key per conformer; each was empty, and the instance re-reads only its own target's. |
+| `BOUND_DISPATCH` | a method call on a place of a bare parameter type, or on a named place's `^` transfer for a `var self` requirement, proved through a bound: `place.copy()`, `item.__hash__(hasher)`, `item.write_to(writer)`, `item.bump(2)` on a `mut self` requirement, or any requirement whose arguments are closed scalars or named places handed to a bounded `mut`/`ref` parameter, each of a bare parameter type or of a closed type the template proved against the bound | The template records the abstract dispatch (`__trait_dispatch.__hash__$ov$…`), or for `write_to` the inverted write, and nothing the receiver's type decides: a kept argument's place use and generation refresh follow from the requirement's convention, which the witness shares. `infer_method_call` decides a concrete receiver's witness from its type alone, and `bound_witness` repeats that decision from the types. Obligation 16 below. The call through the bound read the summaries of every conformer's method of that name, one key per conformer; each was empty, and the instance re-reads only its own target's. |
 | `BOUND_BUILTINS` | `hasher.update(x)`, `hasher._update_with_simd(x)`, or `writer.write(x…)` on a parameter bounded by `Hasher` or `Writer`, whose arguments are closed scalars, string literals, named whole values, `ref` locals, fields read through a reference, pointer slots, or reference calls | The builtin selects no callee and records at an argument only what its syntax decides: a borrow of a named place or a reference result, an unconsumed temporary, a closed literal's materialization. The argument's type it proved through the bound, and the instance proves it again at its own type (obligation 17), which for a hashed value is where the hash leaf is recorded. |
 | `BOUND_BINDERS` | the method's own type binders, each a plain trait-bounded type (`[H: Hasher]`) | A clone keeps such a binder, bound symbolically as the template binds it: no clone is minted per hasher, the VM reifies the binding at run time, and no retained fact substitutes it. The instance's substitution binds the struct's parameters alone (`instance_substitution`), as it does beside an origin binder. |
 | `CONSTRUCTIONS` | a construction of a declared struct whose compile-time arguments are types, as a whole value: `copy:` of a named place, or arguments that are closed scalars, whole values, or — for a fieldwise struct's reference field — a `ref` local | A construction records no contract: `infer_construction` selects an `__init__` from the argument types, retargets it to the instance's constructor clone, and reaches the struct application. Its one unconditional record, `ConstructionImmutableBinders`, is empty when no compile-time argument is an `ImmOrigin` cast, which the type-only arguments guarantee, and installation writes the empty entry again. What a constructor records at an argument is decided by the argument's syntax and the constructor's conventions (a copy owes obligation 3, a transfer obligation 10, a literal materializes to a closed type); the selected member binds each argument exactly, so no member can outrank it under any instance (obligation 18). A constructed type that names the receiver in an origin argument (`_ListIter[T, origin_of(self)]`) is kept with the slot unbound and the origin by template owner (`typed_origins`), and the `return`'s re-resolution of the annotation's `origin_of(self)` is repeated once by the instance rather than recorded. |
@@ -417,23 +417,35 @@ only `Movable` records nothing there, and its `Int` clone would.
     (`builtin_copy_is_value_read`) loses its contract, target, and parameters
     and marks the receiver a copied place; a built-in leaf's `__hash__`
     (`builtin_hashable_ty`) loses the same three and records the leaf; a
-    nominal struct's witness is the lone declaration of the requirement's
-    name whose shape is the requirement's — a read `self`, one parameter per
-    argument with the recorded convention, no variadic, default, `raises`, or
-    reference result — and the contract takes its target (the instance clone
-    where one exists), its result and parameter types under `Self`, the
-    struct's arguments, and the witness's own binders, and the call
-    parameters the abstract call recorded empty. A binder of the witness
+    nominal struct's witness is the declaration of the requirement's name
+    whose shape is the requirement's (`witness_binders`) — the receiver
+    convention the abstract call recorded (read, `mut`, or `var`), one
+    parameter per argument with the recorded convention, no variadic,
+    default, `raises`, or reference result — and the contract takes its
+    target (the instance clone where one exists), its result and parameter
+    types under `Self`, the struct's arguments, and the witness's own
+    binders, and the call parameters the abstract call recorded empty. A
+    literal the requirement's closed parameter materialized keeps its
+    materialization. Of an overload set, the one member that fits is taken,
+    under its overload symbol (`method_lowered_name`), when no other member
+    could take as many arguments (`takes_arity`); two members of one arity
+    need a ranking on types and refuse. A binder of the witness
     (`String.__hash__[H]`) is admitted where exactly one parameter is that
-    binder and the argument there is itself a bare parameter, so the binding
-    stays symbolic and the per-call request it records (`MethodInstantiations`)
-    is one discovery leaves alone. An inverted write whose receiver the
+    binder: a bare parameter argument keeps it symbolic, and the per-call
+    request it records (`MethodInstantiations`) is one discovery leaves
+    alone; a closed argument (a concrete hasher) bakes it, the request is one
+    discovery serves, and once the elaborator has minted the per-call clone
+    (`specialized_method_clone`) the call names that clone, as the clone
+    check retargets to it. A `mut self` requirement keeps the receiver's
+    place and generation refresh as the template recorded them, and a
+    `var self` one is admitted only on a named place's `^` transfer, which
+    records the move at the receiver itself. An inverted write whose receiver the
     instance makes a struct other than `String` becomes the struct's own
     `write_to` call the same way (`realize_inverted_writes`): the adjustment
     and the receiver's borrow go, and the writer becomes a kept place with
-    its generation refresh. An overloaded requirement, a witness of another
-    shape, a binder an instance would bake, and a type that is neither a
-    built-in nor a declared struct refuse. Bound dispatches are realized
+    its generation refresh. A witness of another shape, a binder baked into
+    a generic struct's witness, and a type that is neither a built-in nor a
+    declared struct refuse. Bound dispatches are realized
     before the closed calls, which then leave a nominal target as it stands.
 17. **Bound builtins.** Each `hasher.update(x)` must find its argument's
     substituted type `Hashable` (`is_hashable`, which records a wide SIMD
@@ -615,7 +627,11 @@ tables. In short, for one debug-profile run each:
   instance, and `Set.write_to` is certified (no instance reaches it there).
   A user struct that hashes or writes through its parameter derives for an
   `Int`, a `String`, and a user-struct instance alike
-  (`template_method_bound_dispatch.mojo`).
+  (`template_method_bound_dispatch.mojo`), and so does one whose witness is
+  a member of an overload set, takes a concrete hasher into a `[H: Hasher]`
+  binder, or satisfies a `mut self` or `var self` requirement
+  (`template_method_bound_witness_shapes.mojo`; `stdlib_heavy` is unmoved,
+  since no bundled body has those shapes).
   Constructions took `stdlib_heavy` from 860 to 1004 and `generic.mojo` from
   274 to 310: `List.copy`, `Optional.copy`, `Dict.copy`, `List.try_index`,
   `Dict._reset_index`, and the four iterator makers (`List.__iter__`,
@@ -749,12 +765,13 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
   result, or a nested operator. A place records nothing in either check,
   while a literal records a materialization or a conversion and a temporary
   records the facts the operator path does not register at all.
-- A bound dispatch whose instance witness is overloaded, has a `mut` or
-  consuming receiver, takes a binder the instance would bake (a closed
-  hasher type), or is a requirement the type meets without declaring the
-  method (a struct's reflective `__hash__` default); and a
-  `hasher.update(x)` whose receiver is a concrete hasher, which selects a
-  callee. `Dict.__hash__` constructs its `H2()` (`ConstructTypeParam`) and
+- A bound dispatch whose instance witness overloads the requirement with
+  two members of one arity, or bakes a binder of a generic struct's witness,
+  and a `var self` requirement called on a place rather than a `^` transfer
+  (an implicit copy). A struct's reflective `__hash__` default derives: the
+  trait-default expansion declares it before any body is checked. A
+  `hasher.update(x)` on a concrete hasher is a Mojito-only spelling (the
+  pin's `update` takes bytes), so no fixture exercises it. `Dict.__hash__` constructs its `H2()` (`ConstructTypeParam`) and
   `Optional.__hash__` a `UInt8` tag (`SimdConstructions`), so both keep the
   clone check for those reasons.
 - A folded value parameter, or a loop variable surviving into an instance

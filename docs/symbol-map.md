@@ -347,9 +347,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   captured, with `grammar_features` naming the constructs it holds. The
   submodule `template_facts/bound_dispatch.rs` re-selects a call through a
   bound for an instance: `bound_witness` is the by-types resolver from a
-  receiver type, a method name, and the recorded argument types to the
-  requirement's witness (a place read, a hashed leaf, or a struct's own
-  method with its binders bound), `realize_bound_dispatch` rewrites the
+  receiver type, its convention, a method name, and the recorded argument
+  types to the requirement's witness (a place read, a hashed leaf, or a
+  struct's own method with its binders bound, chosen from an overload set
+  by arity, and retargeted to a baked binder's per-call clone), with
+  `witness_binders` judging one declaration, `realize_bound_dispatch` rewrites the
   abstract contract with it, `realize_inverted_writes` turns an inverted
   `write_to` on a struct instance into that call, and
   `realize_bound_builtin` re-proves a `hasher.update`/`writer.write`
@@ -373,7 +375,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   summaries a body read, which are its dependencies. The vocabulary
   (`CheckedTemplate`, `CheckedBodyFacts`, `TemplateCatalog`, `InstanceTrace`,
   `OccurrenceId`, `TemplateObligation`, `MethodFeatures`, the template-local
-  `TemplateCallContract` with `closed_method_contract`, and the exhaustive
+  `TemplateCallContract` with `closed_method_contract` and its consuming
+  sibling `consuming_method_contract`, and the exhaustive
   `derive_adjustment`) is `crates/mojito-checked/src/templates.rs`. The
   declaration-level trace is `comptime.rs`'s `DefInstanceTrace` (type,
   value, and pack bindings), recorded by `specialize.rs:generate_def_spec`,

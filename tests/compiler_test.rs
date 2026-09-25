@@ -1968,6 +1968,45 @@ fn template_method_consuming_conversion_keeps_the_clone_check() {
 }
 
 #[test]
+fn template_method_bound_witness_shapes_derive() {
+    // Each instance re-selects the witness a call through the bound names:
+    // an overload member the arity picks, a `[H: Hasher]` binder a concrete
+    // hasher bakes into the per-call clone, a `mut self` requirement, and a
+    // `var self` one the receiver's `^` transfer consumes.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_bound_witness_shapes.mojo"),
+        "T3 B3 3 s\nT3 B3 3 s\nTrue True\nTrue True\nFalse\n15\n",
+        &[
+            ("Holder.__hash__", 4),
+            ("Holder.write_to", 4),
+            ("Holder.feed", 4),
+            ("Holder.show", 4),
+            ("Ledger.step", 1),
+            ("Ledger.settle", 1),
+        ],
+    );
+}
+
+#[test]
+fn template_method_same_arity_witness_overloads_keep_the_clone_check() {
+    // Two `total` members take one argument each: only a ranking on the
+    // argument's type would choose, so the instance is checked as a clone.
+    let source = "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total(self, by: String) -> Int:\n        return self.count\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n\n    def sum(self) -> Int:\n        return self.entry.total(1)\n\n\ndef main():\n    print(Ledger[Counter](Counter(2)).sum())\n";
+    let compiler = Compiler::default();
+    let program = compile_entry(&compiler, source);
+    let stats = program.template_stats();
+    assert_eq!(compiler.execute(&program).expect("execute").output, "3\n");
+    assert!(
+        stats.refused.iter().any(|(name, reason)| {
+            name.starts_with("Ledger.sum$")
+                && reason == "the instance's overloaded witness needs ranking by type"
+        }),
+        "the same-arity overload set refuses the derivation: {:?}",
+        stats.refused
+    );
+}
+
+#[test]
 fn template_method_origin_bearing_constructions_derive() {
     // A view over the receiver, constructed from a `ref` local into a
     // fieldwise struct's reference field: the constructed type names the
