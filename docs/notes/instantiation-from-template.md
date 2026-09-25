@@ -316,6 +316,8 @@ they are a set, not a ladder.
 | `REFERENCE_ARGUMENTS` | a `ref` local, a field reached through a reference, or a reference call's result handed to a method call's read, `var`, or `mut` parameter, or lent to a hand-written constructor's `ref` parameter | What the call records there is decided by what the argument is, as for a receiver reached through a reference: a read parameter borrows the place the argument names (`BorrowedReadCallPlaces`, by syntax), a `mut` parameter keeps it (`CallPlaceUses`), a `var` parameter copies it where the template recorded the copy (obligation 3), and a field read keeps its base as a handle. A reference call records its own result and interior, and its copyable-read mark is taken again at the instance's referent (obligation 13). A constructor's `BorrowRefArguments` names the lending positions, which are the selected constructor's declaration, and each loan's mutability, which is the place's; `derive_adjustment` carries it verbatim. One whose loan materializes a temporary names a binding of one run and refuses. |
 | `RAISES` | a `raises` declaration, bare or typed, and a `raise` whose operand is a `CONSTRUCTIONS` construction or `Error("…")` of a string literal | A `raise` records nothing of its own. `require_error` asks two things of the operand's type: whether it is a string, which a constructed struct's name and the builtin `Error` settle whatever the instance, and whether it equals the declared error type, which it does under every substitution if it does symbolically, both types being written over the same parameters. The declared error type lives in the signature, checked per clone. A raised string literal, a raising call in the body (`effects_closed`), and a module-level `def` that raises stay outside. |
 | `CONSUMING_CALLS` | a method call on the `^` transfer of a named place the body owns — a `var` local, a `var` parameter, or a field of a consumed `self` — whose callee on the receiver's nominal struct takes it as `var self` or as a named `deinit self` destructor (`entry^.reap_value()`, `self._alloc^.unsafe_leak()`, `result^._take_items()`), passing arguments `VALUE_ARGUMENTS` admits | The move is recorded at the transfer, which owes obligation 10, and not in the contract, so the instance changes the contract only in its target and its substituted types (`consuming_nominal_contract`). The call's one other record, the explicit-destroy mark (`ExplicitDestroyCalls`), says the receiver's struct declares the method with `deinit self`: a struct's destructors are keyed by name on its declaration (`explicit_destructors`), which its arguments do not change, so an instance inherits the mark. Through a bound, a `deinit self` requirement on a `^` receiver is a `BOUND_DISPATCH` call, and its instance's witness is asked again: a struct that implements the requirement with a named destructor takes the mark the template's parameter-typed receiver could not have (`realize_bound_dispatch`). A defaulted argument, evaluated in the callee's scope, stays outside. |
+| `COPIED_RECEIVERS` | a method call whose callee consumes its receiver, on a named place the call copies first rather than on a `^` transfer: a parameter, a `var` local, or a field of `self`, of a parameter, or of a local (`slice.start.or_else(0)`, `self.limit.or_else(n)`), on a nominal struct as `CONSUMING_CALLS` admits it or through a bound to a `var self` requirement (`coin.spend()`) | `infer_method_call` copies such a place whatever its type, where the type is implicitly copyable, and rejects the program otherwise; the mark it records at the call (`ImplicitlyCopiedConsumingReceivers`) is decided by the receiver's syntax and the callee's convention, so an instance inherits it and owes the copy at its own type (obligation 3). The contract is a consuming call's, and nothing moves out of the place. Through a bound, the instance's witness must itself take `var self` or `deinit self`, or the derivation refuses (`realize_bound_dispatch`). |
+| `DIRECT_CALLS` | a direct call of a module-scope function that is not generic, not overloaded, and takes only closed scalars by value (`check_slice_bounds(start, end, self.size)`) | The call selects the same declaration under every instance and binds its arguments at types no substitution changes; the instance realizes it as a `FixedCalls` body's direct call (obligation 5), re-reading the callee's empty effect summaries. |
 
 The compiler-private trap `_mojito_abort("message")` is a statement of any
 non-keyed body: the built-in types its literal and selects nothing. A
@@ -342,7 +344,9 @@ only `Movable` records nothing there, and its `Int` clone would.
    template keeps the operand's own type, the target, and the by-value
    selection (`RebindAssertion`), and the instance owes their equality.
 3. **Implicit copies.** A place copied at a consuming position must be
-   implicitly copyable at the instance's type, as `check_consuming` demands.
+   implicitly copyable at the instance's type, as `check_consuming` demands,
+   and so must a receiver a consuming call copies, as `infer_method_call`
+   demands.
 4. **Locals.** The survivors are renumbered as the instance's own check would
    mint them.
 5. **Direct calls.** The template's selection stands. The instance repeats the
@@ -763,12 +767,21 @@ tables. In short, for one debug-profile run each:
   `Set.clear_with` are not reused as their own templates, since the
   call-through residue obligation judges the identity substitution's
   parameters as loan carriers; `dealloc` is a module-level `def` with a `var`
-  parameter, outside its class; and the slice overloads of
-  `List.__getitem__` and `Span.__getitem__` keep
-  `ImplicitlyCopiedConsumingReceivers`. A user struct whose methods consume
+  parameter, outside its class. A user struct whose methods consume
   a local, a field of `self`, or a bounded parameter through a named
   destructor or a `var self` method derives for two instances
   (`template_method_explicit_destroy_call.mojo`).
+  A consuming call on a copied receiver (2026-09-25), with a direct call of a
+  scalar module function beside it, moves `stdlib_heavy` from 1664 to 1720
+  installed derivations and from 1938 to 1882 inferred clone bodies: the
+  `ContiguousSlice` overload of `List.__getitem__` derives for every
+  instance. That overload of `Span.__getitem__` still copies its receiver
+  into a local (`var result = self`), and the `StridedSlice` overload of
+  `List.__getitem__` reads a tuple element of a local, both outside the
+  method grammar. A user struct whose methods call `or_else` on a field of a
+  parameter, of `self`, on a local, and on a parameter built over its
+  parameter, and a `var self` requirement through a bound, derives for two
+  instances (`template_method_copied_consuming_receiver.mojo`).
   A folded value surviving into an instance (2026-09-25) moves no bundled
   count (`stdlib_heavy` installs 1624 derivations before and after): no
   bundled `def` reads a loop variable or value parameter as a runtime value.
@@ -821,7 +834,8 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
   one of the method's own origin binders, a copy or move
   initializer, a raised string or a raising call, the method's own binders,
   a `var self` method returning `self^`, a consuming call with a defaulted
-  argument, a `for` loop, a string
+  argument, a receiver copied into a local (`var result = self`), a tuple
+  element read of a local, a `for` loop, a string
   other than the `_mojito_abort` message or a sink's argument, a call passing
   a `ref` local or a reference call's result, and a local whose type is built
   over a parameter

@@ -1901,6 +1901,24 @@ fn template_method_explicit_destroy_call_derives() {
 }
 
 #[test]
+fn template_method_copied_consuming_receiver_derives() {
+    // A consuming call on a named place the call copies first: `or_else` on
+    // a field of a read parameter, of `self`, on a local, and on a parameter
+    // built over the struct's parameter, and a `var self` requirement through
+    // a bound. A direct call of a scalar module function derives beside them.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_copied_consuming_receiver.mojo"),
+        "3 2\n3 6\n7 9\nx z\n4 60\n",
+        &[
+            ("Shelf.count", 2),
+            ("Shelf.capped", 2),
+            ("Shelf.pick", 2),
+            ("Purse.total", 2),
+        ],
+    );
+}
+
+#[test]
 fn template_method_defaulted_destructor_keeps_the_clone_check() {
     // A destructor's defaulted argument is evaluated in the callee's scope,
     // which no recipe keeps yet, so the body stays outside the class.

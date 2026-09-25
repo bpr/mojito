@@ -1318,6 +1318,28 @@ impl Checker {
         if !copies {
             return Err("a copied place is not implicitly copyable for the instance");
         }
+        // `infer_method_call`'s demand on a place a consuming call copies,
+        // at the instance's type.
+        let copied_receivers = facts
+            .implicitly_copied_consuming_receivers
+            .iter()
+            .all(|call| {
+                occurrences
+                    .iter()
+                    .find(|occurrence| occurrence.id == *call)
+                    .and_then(|occurrence| occurrence.method_call.as_ref())
+                    .and_then(|(receiver, _)| {
+                        let receiver = OccurrenceId {
+                            syntax: *receiver,
+                            copy: call.copy,
+                        };
+                        fact_at(&facts.expression_types, receiver)
+                    })
+                    .is_some_and(|ty| self.is_implicitly_copyable(ty))
+            });
+        if !copied_receivers {
+            return Err("a copied consuming receiver is not implicitly copyable for the instance");
+        }
         // A call-through residue is republished verbatim on the same ground:
         // an argument carries an origin only while its binding's type carries
         // a loan. A type the substitution left alone carries in the instance
@@ -2638,6 +2660,12 @@ impl Checker {
     ///   `^` transfer, and a named `deinit self` destructor's mark is the
     ///   struct's declaration, so an instance changes only the target, as a
     ///   sibling call's.
+    /// - `COPIED_RECEIVERS`: see [`BodyShape::copied_consuming_call`]. The
+    ///   call's copy of its receiver is decided by the receiver's syntax and
+    ///   the callee's convention, and the instance owes it at its own type.
+    /// - `DIRECT_CALLS`: see `method_direct_calls`. A non-generic scalar
+    ///   callee is selected alike under every instance, which realizes it as
+    ///   a function template's direct call.
     ///
     /// Any other handle, borrowed receiver, reference result, interior
     /// reference, or copyable read in the body refuses it
@@ -2889,66 +2917,7 @@ impl Checker {
         if !shape.references_recorded(facts) {
             return outside("a reference is yielded or kept outside the method grammar");
         }
-        // The grammar admitted every method call it judged closed, every
-        // call an element store embeds, and every construction. Nothing
-        // else may have selected a callee or read an effect summary.
-        let targets: Vec<&str> = facts
-            .selected_calls
-            .iter()
-            .map(|(_, call)| call.contract.target.as_str())
-            .chain(facts.augmented_subscripts.iter().flat_map(|(_, store)| {
-                store
-                    .getter
-                    .iter()
-                    .chain(&store.inplace)
-                    .map(|call| call.contract.target.as_str())
-            }))
-            .collect();
-        let constructions = shape.constructions.borrow();
-        let callable_calls = shape.callable_calls.borrow();
-        let admitted_call = |id: &OccurrenceId| {
-            facts.selected_calls.iter().any(|(call, _)| call == id)
-                || constructions.contains(id)
-                || callable_calls.contains(id)
-        };
-        // A call through a bound reads the summaries of every conformer's
-        // method of that name, one key per conformer (`Struct.method`, or the
-        // overload symbol `Struct.method$ov$…`), none of them a target.
-        let dispatched: Vec<&str> = facts
-            .selected_calls
-            .iter()
-            .filter(|(_, call)| {
-                mojito_symbol::symbol::is_trait_dispatch_symbol(&call.contract.target)
-            })
-            .filter_map(|(_, call)| {
-                let target = &call.contract.target;
-                let member = target
-                    .rsplit_once('.')
-                    .map_or(target.as_str(), |(_, member)| member);
-                member.split('$').next()
-            })
-            .collect();
-        let conformer_copy = |callee: &str| {
-            callee.rsplit_once('.').is_some_and(|(_, member)| {
-                let member = member.split('$').next().unwrap_or(member);
-                dispatched.contains(&member)
-            })
-        };
-        let stray_call = facts
-            .call_parameters
-            .iter()
-            .any(|(id, _)| !admitted_call(id))
-            || !facts.generic_instantiations.is_empty()
-            || !facts
-                .overload_targets
-                .iter()
-                .all(|(id, _)| admitted_call(id))
-            || !summary_callees(facts).all(|callee| {
-                targets.contains(&callee.as_str())
-                    || conformer_copy(callee)
-                    || shape.callable_params.contains(&callee.as_str())
-            });
-        if stray_call {
+        if stray_method_call(facts, &shape) {
             return outside("the body calls something other than a trivial method");
         }
         // A residue the body publishes or reads is republished for an
@@ -3572,6 +3541,11 @@ impl Checker {
             explicit_destroy_calls: keyed(&|span| {
                 self.explicit_destroy_calls.borrow().contains(span)
             }),
+            implicitly_copied_consuming_receivers: keyed(&|span| {
+                self.implicitly_copied_consuming_receivers
+                    .borrow()
+                    .contains(span)
+            }),
             reference_value_uses: values(&occurrences, &self.reference_value_uses.borrow()),
             deletable_bindings: keyed(&|span| {
                 self.explicit_destroy_deletability
@@ -4180,8 +4154,8 @@ impl Checker {
     }
 
     /// Install the bare per-occurrence marks: temporaries no one consumes,
-    /// discarded results, explicit-destroy calls, and each binding's
-    /// deletability.
+    /// discarded results, explicit-destroy calls, consuming calls on a copied
+    /// receiver, and each binding's deletability.
     fn install_occurrence_marks(
         &self,
         facts: &CheckedBodyFacts,
@@ -4197,6 +4171,11 @@ impl Checker {
         }
         for id in &facts.explicit_destroy_calls {
             self.explicit_destroy_calls.borrow_mut().insert(span(id)?);
+        }
+        for id in &facts.implicitly_copied_consuming_receivers {
+            self.implicitly_copied_consuming_receivers
+                .borrow_mut()
+                .insert(span(id)?);
         }
         for id in &facts.linear_temporaries {
             self.linear_temporaries.borrow_mut().insert(span(id)?);
@@ -4488,6 +4467,7 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::InteriorInvalidations
         | FactTable::DiscardedReferenceResults
         | FactTable::ExplicitDestroyCalls
+        | FactTable::ImplicitlyCopiedConsumingReceivers
         | FactTable::ReferenceValueUses
         | FactTable::InteriorReferences
         | FactTable::CopyableReferenceResultReads
@@ -4514,7 +4494,6 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::DeclarationCaptures
         | FactTable::ComprehensionBindings
         | FactTable::IterationProtocols
-        | FactTable::ImplicitlyCopiedConsumingReceivers
         | FactTable::TruthinessConditions => false,
     }
 }
@@ -5091,6 +5070,101 @@ fn mentions_callable(ty: &Ty) -> bool {
 
 /// The module-scope declaration a template's direct call selected: the
 /// binding its call occurrence resolved to.
+/// Whether a method body selected a callee, or read an effect summary, that
+/// its grammar did not admit.
+///
+/// The grammar admitted every method call it judged closed, every call an
+/// element store embeds, every construction, every call through a callable
+/// parameter, and every direct call `method_direct_calls` names.
+fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
+    let targets: Vec<&str> = facts
+        .selected_calls
+        .iter()
+        .map(|(_, call)| call.contract.target.as_str())
+        .chain(facts.augmented_subscripts.iter().flat_map(|(_, store)| {
+            store
+                .getter
+                .iter()
+                .chain(&store.inplace)
+                .map(|call| call.contract.target.as_str())
+        }))
+        .collect();
+    let constructions = shape.constructions.borrow();
+    let callable_calls = shape.callable_calls.borrow();
+    let direct_calls = method_direct_calls(facts);
+    if !direct_calls.is_empty() {
+        shape.holds(MethodFeatures::DIRECT_CALLS);
+    }
+    let admitted_call = |id: &OccurrenceId| {
+        facts.selected_calls.iter().any(|(call, _)| call == id)
+            || constructions.contains(id)
+            || callable_calls.contains(id)
+            || direct_calls.iter().any(|(call, _)| call == id)
+    };
+    // A call through a bound reads the summaries of every conformer's
+    // method of that name, one key per conformer (`Struct.method`, or the
+    // overload symbol `Struct.method$ov$…`), none of them a target.
+    let dispatched: Vec<&str> = facts
+        .selected_calls
+        .iter()
+        .filter(|(_, call)| mojito_symbol::symbol::is_trait_dispatch_symbol(&call.contract.target))
+        .filter_map(|(_, call)| {
+            let target = &call.contract.target;
+            let member = target
+                .rsplit_once('.')
+                .map_or(target.as_str(), |(_, member)| member);
+            member.split('$').next()
+        })
+        .collect();
+    let conformer_copy = |callee: &str| {
+        callee.rsplit_once('.').is_some_and(|(_, member)| {
+            let member = member.split('$').next().unwrap_or(member);
+            dispatched.contains(&member)
+        })
+    };
+    facts
+        .call_parameters
+        .iter()
+        .any(|(id, _)| !admitted_call(id))
+        || !facts.generic_instantiations.is_empty()
+        || !facts
+            .overload_targets
+            .iter()
+            .all(|(id, _)| admitted_call(id))
+        || !summary_callees(facts).all(|callee| {
+            targets.contains(&callee.as_str())
+                || direct_calls.iter().any(|(_, direct)| direct == callee)
+                || conformer_copy(callee)
+                || shape.callable_params.contains(&callee.as_str())
+        })
+}
+
+/// The direct calls a method body makes of a module-scope function that is
+/// not generic and takes only closed scalars, each with its callee.
+///
+/// The call selects the same declaration under every instance and binds its
+/// arguments by value at types no substitution changes, so an instance
+/// realizes it as a function template's direct call
+/// ([`Checker::realize_direct_call`]).
+fn method_direct_calls(facts: &CheckedBodyFacts) -> Vec<(OccurrenceId, &str)> {
+    facts
+        .call_parameters
+        .iter()
+        .filter(|(id, parameters)| {
+            !facts.selected_calls.iter().any(|(call, _)| call == id)
+                && !facts
+                    .generic_instantiations
+                    .iter()
+                    .any(|(call, _)| call == id)
+                && !facts.overload_targets.iter().any(|(call, _)| call == id)
+                && parameters
+                    .iter()
+                    .all(|parameter| parameter.convention.is_none() && closed_scalar(&parameter.ty))
+        })
+        .filter_map(|(id, _)| template_callee(facts, *id).map(|callee| (*id, callee)))
+        .collect()
+}
+
 fn template_callee(facts: &CheckedBodyFacts, call: OccurrenceId) -> Option<&str> {
     facts
         .expression_bindings
@@ -6639,7 +6713,7 @@ impl BodyShape<'_> {
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> bool {
         let ExprKind::Transfer(inner) = &object.kind else {
-            return false;
+            return self.copied_consuming_call(expr, object, method, args, kwargs);
         };
         !self.keyed
             && matches!(
@@ -6656,6 +6730,49 @@ impl BodyShape<'_> {
                     .is_some_and(mojito_checked::templates::consuming_nominal_contract)
             })
             && self.holds(MethodFeatures::CONSUMING_CALLS)
+    }
+
+    /// A method call on a named place the call copies before its callee
+    /// consumes the copy (`slice.start.or_else(0)`): a parameter, a `var`
+    /// local, or a field of `self`, of a parameter, or of a local.
+    ///
+    /// `infer_method_call` copies such a place whatever its type, where the
+    /// type is implicitly copyable, and refuses the program otherwise; the
+    /// mark it records at the call is owed again at the instance's type
+    /// (`realize_instance_facts`). The contract is a consuming call's, as on
+    /// a `^` transfer, and nothing moves out of the place.
+    fn copied_consuming_call(
+        &self,
+        expr: &Expr,
+        object: &Expr,
+        method: &str,
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> bool {
+        let named = |name: &str| self.params.contains(&name) || self.declared(name);
+        let place = match &object.kind {
+            ExprKind::Identifier(name) => named(name),
+            ExprKind::Member { object: base, .. } => {
+                self.receiver_field(object)
+                    || matches!(&base.kind, ExprKind::Identifier(name) if named(name))
+            }
+            _ => false,
+        };
+        !self.keyed
+            && place
+            && args
+                .iter()
+                .chain(kwargs.iter().map(|keyword| &keyword.value))
+                .all(|argument| self.argument(expr, argument))
+            && self.facts.is_none_or(|facts| {
+                facts
+                    .implicitly_copied_consuming_receivers
+                    .contains(&self.occurrence(expr))
+                    && self
+                        .named_contract(facts, expr, object, method)
+                        .is_some_and(mojito_checked::templates::consuming_nominal_contract)
+            })
+            && self.holds(MethodFeatures::COPIED_RECEIVERS)
     }
 
     /// The contract the call at `expr` recorded, when it names `method` on
@@ -7181,17 +7298,25 @@ impl BodyShape<'_> {
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> bool {
         // A receiver a `var self` requirement consumes is a named place's
-        // `^` transfer, which records the move at itself.
-        let consumed = matches!(&object.kind, ExprKind::Transfer(inner)
+        // `^` transfer, which records the move at itself, or a named place
+        // the call copies first, which the call marks.
+        let transferred = matches!(&object.kind, ExprKind::Transfer(inner)
             if matches!(inner.kind, ExprKind::Identifier(_)))
             && self.whole_value(object);
+        let copied = !transferred
+            && self.facts.is_some_and(|facts| {
+                facts
+                    .implicitly_copied_consuming_receivers
+                    .contains(&self.occurrence(expr))
+            });
+        let consumed = transferred || copied;
         let place = match &object.kind {
             ExprKind::Identifier(name) => {
                 self.params.contains(&name.as_str()) || self.local_kind(name).is_some()
             }
             ExprKind::Member { .. } => self.receiver_field(object) || self.reference_member(object),
             ExprKind::Index { .. } => self.slot(object),
-            _ => consumed,
+            _ => transferred,
         };
         let named = |argument: &Expr| {
             matches!(&argument.kind, ExprKind::Identifier(name)
@@ -7305,7 +7430,9 @@ impl BodyShape<'_> {
                     && call.contract.arguments.len() == args.len()
                     && call.contract.arguments.iter().all(kept_argument)
             });
-        admitted && self.holds(MethodFeatures::BOUND_DISPATCH)
+        admitted
+            && self.holds(MethodFeatures::BOUND_DISPATCH)
+            && (!copied || self.holds(MethodFeatures::COPIED_RECEIVERS))
     }
 
     /// `hasher.update(value)`, `hasher._update_with_simd(value)`, or

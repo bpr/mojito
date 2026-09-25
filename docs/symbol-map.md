@@ -356,7 +356,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   by arity, and retargeted to a baked binder's per-call clone), with
   `witness_binders` judging one declaration, `realize_bound_dispatch` rewrites the
   abstract contract with it (and marks a witness that is a named `deinit self`
-  destructor as an explicit-destroy call), `realize_inverted_writes` turns an inverted
+  destructor as an explicit-destroy call, refusing a copied receiver whose
+  witness does not consume it), `realize_inverted_writes` turns an inverted
   `write_to` on a struct instance into that call, and
   `realize_bound_builtin` re-proves a `hasher.update`/`writer.write`
   argument's bound. The submodule `template_facts/constructions.rs`
@@ -374,14 +375,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `generics.rs:record_struct_instantiation`, is how a template keeps the
   struct applications its instances must request. `span_table` maps every
   `FactTable` onto the checker's storage, `BodyShape` is the grammar of the
-  derivation classes, and `overload_rebinding_only` is the one difference
+  derivation classes (`method_direct_calls` the direct calls a method body
+  may make), and `overload_rebinding_only` is the one difference
   verification mode accepts. `note_effect_query` records the callee effect
   summaries a body read, which are its dependencies. The vocabulary
   (`CheckedTemplate`, `CheckedBodyFacts`, `TemplateCatalog`, `InstanceTrace`,
   `OccurrenceId`, `TemplateObligation`, `MethodFeatures`, the template-local
   `TemplateCallContract` with `closed_method_contract` and its consuming
   siblings `consuming_method_contract` (through a bound) and
-  `consuming_nominal_contract` (a nominal receiver's `^` transfer), and the
+  `consuming_nominal_contract` (a nominal receiver's `^` transfer, or a
+  place the call copies, `BodyShape::copied_consuming_call`), and the
   exhaustive
   `derive_adjustment`) is `crates/mojito-checked/src/templates.rs`. The
   declaration-level trace is `comptime.rs`'s `DefInstanceTrace` (type,

@@ -743,6 +743,16 @@ impl MethodFeatures {
     /// transfer, and which methods a struct declares as destructors does not
     /// change with its arguments.
     pub const CONSUMING_CALLS: Self = Self(1 << 22);
+    /// A method call whose callee consumes its receiver, on a named place
+    /// the call copies first rather than on a `^` transfer
+    /// (`slice.start.or_else(0)`): the copy is decided by the receiver's
+    /// syntax and the callee's convention, and an instance owes it at its
+    /// own type.
+    pub const COPIED_RECEIVERS: Self = Self(1 << 23);
+    /// A direct call of a module-scope function that is not generic and
+    /// takes only closed scalars by value: it selects the same declaration
+    /// under every instance.
+    pub const DIRECT_CALLS: Self = Self(1 << 24);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
@@ -1142,6 +1152,11 @@ pub struct CheckedBodyFacts {
     /// inherits the set; a call through a bound asks the instance's struct
     /// again once it is realized.
     pub explicit_destroy_calls: Vec<OccurrenceId>,
+    /// Calls whose callee consumes a place receiver the call copies first.
+    /// Whether a call copies its receiver is decided by the receiver's
+    /// syntax and the callee's convention, so an instance inherits the set
+    /// and owes the copy: the receiver's type must be implicitly copyable.
+    pub implicitly_copied_consuming_receivers: Vec<OccurrenceId>,
     /// Expressions kept as a reference handle rather than read through, and
     /// whether the handle is writable. Only the value of a `return` in a
     /// method that returns a reference derives: the declaration and the
@@ -1463,6 +1478,12 @@ impl CheckedBodyFacts {
         );
         differing(
             &mut out,
+            "implicitly_copied_consuming_receivers",
+            &self.implicitly_copied_consuming_receivers,
+            &other.implicitly_copied_consuming_receivers,
+        );
+        differing(
+            &mut out,
             "reference_value_uses",
             &self.reference_value_uses,
             &other.reference_value_uses,
@@ -1730,6 +1751,9 @@ impl CheckedBodyFacts {
             }),
             discarded_reference_results: flagged(&self.discarded_reference_results),
             explicit_destroy_calls: flagged(&self.explicit_destroy_calls),
+            implicitly_copied_consuming_receivers: flagged(
+                &self.implicitly_copied_consuming_receivers,
+            ),
             reference_value_uses: at(&self.reference_value_uses, occurrences, folded),
             deletable_bindings: flagged_except(&self.deletable_bindings, &[]),
             linear_bindings: flagged_except(&self.linear_bindings, &[]),
@@ -1827,6 +1851,7 @@ impl CheckedBodyFacts {
             + self.unconsumed_temporaries.len()
             + self.discarded_reference_results.len()
             + self.explicit_destroy_calls.len()
+            + self.implicitly_copied_consuming_receivers.len()
             + self.reference_value_uses.len()
             + self.deletable_bindings.len()
             + self.linear_bindings.len()

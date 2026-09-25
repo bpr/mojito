@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method whose body calls a consuming method on a named place it does not
+  own, which the call copies first (`slice.start.or_else(0)`, or a `var self`
+  requirement through a bound on a parameter), now derives its
+  per-instantiation clones from the checked template instead of keeping the
+  clone check; the instance owes the copy at its own type. A direct call of a
+  non-generic module function taking scalars derives beside it, so the
+  `ContiguousSlice` overload of `List.__getitem__` is covered.
+
 - A method whose body consumes a value through a method that takes its
   receiver — a named `deinit self` destructor on a local or on a field of a
   consumed `self` (`entry^.reap_value()`, `self._alloc^.unsafe_leak()`), a

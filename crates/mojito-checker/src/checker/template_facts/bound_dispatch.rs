@@ -135,7 +135,17 @@ impl Checker {
                 self.record_hash_leaf(&ty);
                 drop_call(facts, id);
             }
-            witness @ BoundWitness::Method { .. } => {
+            witness @ BoundWitness::Method { declared, .. } => {
+                // A receiver the call copies is copied only for a witness
+                // that consumes it, as the requirement does.
+                if facts.implicitly_copied_consuming_receivers.contains(&id)
+                    && !matches!(
+                        declared.self_convention,
+                        Some(ArgConvention::Var | ArgConvention::Deinit)
+                    )
+                {
+                    return Err("a copied receiver's witness does not consume it");
+                }
                 self.install_witness(facts, id, &witness, &arguments, occurrences)?;
                 // The struct's own method may be a named `deinit self`
                 // destructor, which the template's receiver could not name.
