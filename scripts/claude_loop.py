@@ -245,7 +245,7 @@ def run_claude(args, task: Task, model: str, label: str, prompt: str) -> bool:
 
 
 def show_progress(task: Task, label: str, seconds: float, suffix: str = "") -> None:
-    line = f"[{seconds:6.0f}s] {label}  {task.id} {task.title}"
+    line = f"[{seconds:6.0f}s] {label}  {task.title}"
     width = shutil.get_terminal_size().columns - 1 - len(suffix)
     if len(line) > width:
         line = line[: max(width - 3, 0)] + "..."
@@ -288,7 +288,7 @@ def commit_task(task: Task, untracked_before: set[str], msg_before: str, finishe
         return
     msg = read_commit_msg()
     if not msg or msg == msg_before:
-        msg = f"Roadmap {task.id}: {task.title}"
+        msg = f"Roadmap: {task.title}"
         if not finished:
             msg += "\n\nThe session ended without removing the roadmap entry."
     git("commit", "--quiet", "--file", "-", stdin=msg + "\n")
@@ -379,7 +379,7 @@ def main() -> int:
             if commit and ((ok and gone) or args.keep_going):
                 commit_task(current, untracked_before, msg_before, ok and gone)
             if not ok:
-                print(f"claude_loop: session for {current.id} failed", file=sys.stderr)
+                print(f"claude_loop: session for \"{current.title}\" failed", file=sys.stderr)
             elif not gone:
                 print(f"claude_loop: entry \"{current.title}\" is still on the roadmap",
                       file=sys.stderr)
