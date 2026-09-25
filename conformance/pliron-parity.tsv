@@ -548,6 +548,7 @@ assets/ok/template_method_origin_parameter.mojo	main	exe-differential	sanitized
 assets/ok/template_method_parameterized_call.mojo	main	exe-differential	sanitized
 assets/ok/template_method_place_argument.mojo	main	exe-differential	sanitized
 assets/ok/template_method_raises.mojo	main	exe-differential	sanitized
+assets/ok/template_method_range_loop.mojo	main	exe-differential	sanitized
 assets/ok/template_method_reference_argument.mojo	main	exe-differential	sanitized
 assets/ok/template_method_reference_call.mojo	main	exe-differential	sanitized
 assets/ok/template_method_reference_local.mojo	main	exe-differential	sanitized

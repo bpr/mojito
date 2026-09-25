@@ -2756,8 +2756,9 @@ impl Checker {
     ///   call's copy of its receiver is decided by the receiver's syntax and
     ///   the callee's convention, and the instance owes it at its own type.
     /// - `DIRECT_CALLS`: see `method_direct_calls`. A non-generic scalar
-    ///   callee is selected alike under every instance, which realizes it as
-    ///   a function template's direct call.
+    ///   callee, or the member of an overload set taking closed scalars
+    ///   (`range(n)`), is selected alike under every instance, which
+    ///   realizes it as a function template's direct call.
     /// - `ITERATION`: see [`BodyShape::iterable`] and `realize_iterations`.
     ///   The protocol a loop records is selected from the iterable's type
     ///   and resolved against the place it borrows, so an instance keeps the
@@ -5588,9 +5589,10 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
 /// The direct calls a method body makes of a module-scope function that is
 /// not generic and takes only closed scalars, each with its callee.
 ///
-/// The call selects the same declaration under every instance and binds its
-/// arguments by value at types no substitution changes, so an instance
-/// realizes it as a function template's direct call
+/// The call selects the same declaration under every instance, or the same
+/// member of an overload set, which ranks only the closed argument types,
+/// and binds its arguments by value at types no substitution changes, so an
+/// instance realizes it as a function template's direct call
 /// ([`Checker::realize_direct_call`]).
 fn method_direct_calls(facts: &CheckedBodyFacts) -> Vec<(OccurrenceId, &str)> {
     facts
@@ -5602,7 +5604,6 @@ fn method_direct_calls(facts: &CheckedBodyFacts) -> Vec<(OccurrenceId, &str)> {
                     .generic_instantiations
                     .iter()
                     .any(|(call, _)| call == id)
-                && !facts.overload_targets.iter().any(|(call, _)| call == id)
                 && parameters
                     .iter()
                     .all(|parameter| parameter.convention.is_none() && closed_scalar(&parameter.ty))
@@ -6942,7 +6943,7 @@ impl BodyShape<'_> {
 
     /// The iterable of a runtime `for`: a place the loop borrows (`self`, a
     /// field of it, a parameter, a local), the `^` transfer of a place the
-    /// body owns, or a sibling call's result. The loop records its protocol
+    /// body owns, a sibling call's result, or a direct call's (`range(n)`). The loop records its protocol
     /// at the iterable, which a recipe must then hold
     /// ([`Checker::realize_iterations`]).
     fn iterable(&self, iter: &Expr) -> bool {
@@ -6954,6 +6955,7 @@ impl BodyShape<'_> {
                     || self.local_kind(name).is_some()
             }
             ExprKind::Member { .. } => self.receiver_field(iter) || self.reference_member(iter),
+            ExprKind::Call { .. } => self.expression(iter),
             _ => self.call_result(iter),
         };
         admitted

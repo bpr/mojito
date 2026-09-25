@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method that loops, or builds a comprehension, over `range(...)` in a
+  generic struct now derives its instances from the checked template: the
+  call selects a member of `range`'s overload set from closed scalar
+  arguments, which no instance changes, and the loop's protocol is selected
+  again from the range's type. Such bodies used to keep the clone check
+  because the method grammar admitted no direct call as an iterable and no
+  overloaded direct call at all.
 - A compile-time-keyed method of an ordinary generic struct — `comptime if
   Self.T == Int` arms, a `comptime for` over a literal range with its
   variable read as a runtime value and a local declared inside — now derives
