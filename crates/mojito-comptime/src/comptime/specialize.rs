@@ -2473,7 +2473,8 @@ impl Elab<'_> {
             };
             clone.where_clauses.clear();
             clone.self_ty = Some(receiver.clone());
-            if let Some(first) = method.body.first() {
+            let clone_body = clone.body.first().map(|first| first.span);
+            if let (Some(first), Some(clone_body)) = (method.body.first(), clone_body) {
                 self.method_traces
                     .borrow_mut()
                     .push(super::MethodInstanceTrace {
@@ -2487,6 +2488,7 @@ impl Elab<'_> {
                         clone_name: clone.name.clone(),
                         template_name: method.name.clone(),
                         body: first.span,
+                        clone_body,
                         type_bindings: bindings
                             .iter()
                             .filter_map(|binding| {

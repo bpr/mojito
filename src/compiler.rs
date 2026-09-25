@@ -659,7 +659,7 @@ fn instance_traces(
                 module: Some(trace.clone_module),
                 owner: Some(trace.owner.clone()),
                 name: trace.clone_name,
-                body: Some(trace.body),
+                body: Some(trace.clone_body),
             },
             InstanceTrace {
                 template: TemplateId {

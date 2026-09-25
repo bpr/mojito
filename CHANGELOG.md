@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A compile-time-keyed method of an ordinary generic struct — `comptime if
+  Self.T == Int` arms, a `comptime for` over a literal range with its
+  variable read as a runtime value and a local declared inside — now derives
+  its instances from the template source validation checked: each instance
+  keeps the arms the elaborator selected, once per unrolled copy, and its
+  trace names its own first statement. Such bodies used to keep the clone
+  check because a validated method had no derivation class, and a body
+  opening with a `comptime if` left a trace no instance matched.
 - A method that hands a hasher a multi-lane vector
   (`hasher._update_with_simd(SIMD[DType.uint8, 4](1, 2, 3, 4))`) now derives
   its instances from the checked template: the template keeps each closed

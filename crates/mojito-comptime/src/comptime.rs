@@ -659,11 +659,11 @@ pub struct GeneratedDeclarations {
 ///
 /// The clone is appended to its template struct's own method list
 /// (`get$y3:Int` on `Box`), so it is identified by that struct, its name, the
-/// source tag stamped on its body, and the byte range of its body's first
-/// statement — same-name overloads clone under one name and one tag, and a
-/// `Method` has no range of its own. Only whole-instance clones are traced: a
-/// per-call clone also bakes the method's own parameters and leaves no trace
-/// yet.
+/// source tag stamped on its body, and the byte range of its own body's
+/// first statement — same-name overloads clone under one name and one tag,
+/// and a `Method` has no range of its own. Only whole-instance clones are
+/// traced: a per-call clone also bakes the method's own parameters and
+/// leaves no trace yet.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MethodInstanceTrace {
     pub owner: String,
@@ -672,9 +672,12 @@ pub struct MethodInstanceTrace {
     /// The source tag stamped on every node of the clone's body.
     pub clone_module: String,
     pub template_name: String,
-    /// The first statement of the template method's body, which the clone's
-    /// first statement shares.
+    /// The first statement of the template method's body.
     pub body: mojito_common::token::Span,
+    /// The first statement of the clone's own body: the template's where the
+    /// body is copied whole, or the first statement the elaborator kept of a
+    /// body that opens with compile-time control flow.
+    pub clone_body: mojito_common::token::Span,
     /// The struct's type parameters, with the source type written for each.
     pub type_bindings: Vec<(String, Type)>,
 }

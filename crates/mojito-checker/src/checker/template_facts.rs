@@ -1073,10 +1073,7 @@ impl Checker {
         // without compile-time control flow keeps them all, once each; a
         // keyed one keeps the arms the elaborator selected, once per loop
         // iteration it unrolled, and drops the rest, facts and all.
-        let keyed = matches!(
-            class,
-            TemplateClass::ScalarBranches | TemplateClass::PackElements
-        );
+        let keyed = class.keyed();
         let traced = occurrences.iter().all(|occurrence| {
             (keyed || occurrence.id.copy == 0)
                 && checked
@@ -2784,6 +2781,15 @@ impl Checker {
     ///   protocol is an `ITERATION` loop's, and each binder is declared from
     ///   that protocol's binding plan, which an instance selects again
     ///   (`install_comprehension_bindings`).
+    /// - `COMPTIME_CONTROL`: a `comptime if` or `comptime for` in a body
+    ///   source validation checked. Every arm was checked once with the
+    ///   struct's parameters symbolic; an instance keeps the occurrences of
+    ///   the arms the elaborator selected, once per unrolled copy, and drops
+    ///   the rest with their facts (`CheckedBodyFacts::selected`). A loop
+    ///   variable read as a runtime value is the copy's literal, which takes
+    ///   a literal's facts (`folded_literals`), and a local declared inside
+    ///   the loop is one binding per copy (`renumber_locals`), as in a keyed
+    ///   `def`. A `rebind`-keyed body stays outside.
     ///
     /// Any other handle, borrowed receiver, reference result, interior
     /// reference, or copyable read in the body refuses it
@@ -2802,8 +2808,13 @@ impl Checker {
                 GrammarNotes::default(),
             )
         };
-        if self.source_validation {
-            return outside("a compile-time-keyed method has no class yet");
+        // Source validation checks a body keyed by compile-time control flow
+        // (`COMPTIME_CONTROL`) or by a `rebind`. A `rebind` asserts an
+        // equality only an instance can discharge, and no recipe repeats it.
+        if self.source_validation
+            && super::rebind::body_keys_rebind(&method.body, &self.rebind_keyed_bodies)
+        {
+            return outside("a rebind-keyed method has no class yet");
         }
         // `__init__(out self, …)` is an ordinary owned receiver here: which
         // fields a body initializes is its syntax, and definite initialization
@@ -6293,6 +6304,27 @@ impl BodyShape<'_> {
                     .push((name.clone(), LocalKind::Scalar));
                 scalar
             }
+            // A validated method keeps its compile-time control flow: every
+            // arm is checked once, and an instance keeps the arms the
+            // elaborator selected, once per unrolled copy, and drops the
+            // rest with their facts (`COMPTIME_CONTROL`).
+            StmtKind::ComptimeIf { branches, orelse } => {
+                branches
+                    .iter()
+                    .map(|(_, arm)| arm)
+                    .chain(orelse)
+                    .all(|arm| self.block(arm))
+                    && self.holds(MethodFeatures::STATEMENTS)
+                    && self.holds(MethodFeatures::COMPTIME_CONTROL)
+            }
+            StmtKind::ComptimeFor { var, body, .. } => {
+                self.loop_vars.borrow_mut().push(var.clone());
+                let admitted = self.block(body);
+                self.loop_vars.borrow_mut().pop();
+                admitted
+                    && self.holds(MethodFeatures::STATEMENTS)
+                    && self.holds(MethodFeatures::COMPTIME_CONTROL)
+            }
             // A runtime statement is checked once, whatever runs it, so it
             // neither drops nor copies an occurrence. A scalar local is one
             // binding wherever it is declared. An annotated local holds its
@@ -8244,14 +8276,13 @@ impl BodyShape<'_> {
     }
 
     /// Whether `expr` names a compile-time value the elaborator folds to a
-    /// literal in every instance: a `comptime for` variable or a value
-    /// parameter no local shadows.
+    /// literal in every instance: a `comptime for` variable, or a keyed
+    /// body's value parameter, that no local shadows.
     fn folds(&self, expr: &Expr) -> bool {
         matches!(&expr.kind, ExprKind::Identifier(name)
-            if self.keyed
-                && self.local_kind(name).is_none()
+            if self.local_kind(name).is_none()
                 && !self.params.contains(&name.as_str())
-                && (self.values.contains(&name.as_str())
+                && ((self.keyed && self.values.contains(&name.as_str()))
                     || self.loop_vars.borrow().iter().any(|var| var == name)))
     }
 

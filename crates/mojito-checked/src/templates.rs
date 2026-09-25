@@ -675,12 +675,29 @@ pub enum TemplateClass {
     MethodBody(MethodFeatures),
 }
 
+impl TemplateClass {
+    /// Whether the class's bodies hold compile-time control flow: source
+    /// validation checked every arm once, and an instance keeps the
+    /// occurrences the elaborator selected, once per unrolled copy.
+    #[must_use]
+    pub const fn keyed(self) -> bool {
+        match self {
+            Self::ScalarBranches | Self::PackElements => true,
+            Self::MethodBody(features) => features.contains(MethodFeatures::COMPTIME_CONTROL),
+            Self::ClosedScalarBody
+            | Self::FixedCalls
+            | Self::BoundedOperations
+            | Self::MethodScalarBody => false,
+        }
+    }
+}
+
 /// The constructs a [`TemplateClass::MethodBody`] holds beyond scalar `return`s.
 ///
 /// They are independent of one another: a body may call a sibling without
 /// moving a value of a parameter type, and the reverse.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct MethodFeatures(u32);
+pub struct MethodFeatures(u64);
 
 impl MethodFeatures {
     /// A receiver other than a plain read `self`, or statements beyond a
@@ -822,6 +839,12 @@ impl MethodFeatures {
     /// ([`WithForm`]), and an instance builds the same desugar again from
     /// its own syntax and that form.
     pub const WITH_STATEMENTS: Self = Self(1 << 31);
+    /// A `comptime if` or `comptime for` in a body source validation
+    /// checked: every arm is checked once with the struct's parameters
+    /// symbolic, an instance keeps the arms the elaborator selected, once
+    /// per unrolled copy, and a `comptime for` variable read as a runtime
+    /// value folds to the copy's literal.
+    pub const COMPTIME_CONTROL: Self = Self(1 << 32);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
