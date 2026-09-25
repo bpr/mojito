@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method that calls another struct's method with explicit compile-time
+  arguments (`self.scaler.scaled[3](x)`) now derives its instances from the
+  checked template, keeping the per-call clone the call requests as its
+  target. Such bodies used to keep the clone check because parameterized
+  method calls had no derivation recipe.
 - A method that unpacks a tuple into `var` locals — from a parameter, a
   local, a field of `self`, or a sibling call's result — now derives its
   instances from the checked template: the instance builds the element reads

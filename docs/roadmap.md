@@ -87,17 +87,21 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.4 A parameterized method call keeps the clone check**
+- [ ] **1.4 A compile-time-keyed method has no derivation class**
 
-  Problem: `ParameterizedMethodCalls` has no derivation recipe, so a body
-  calling `v.m[T](…)` is inferred per instance.
-  - It is the sole blocker of 1 template in compile-time validation in
-    `stdlib_heavy`: `TString.write_to`.
-  - The fact is the selected method's declared compile-time parameters. They
-    are the callee's declaration, so only a receiver of a parameter type,
-    whose method is selected after substitution, needs re-selection.
+  Problem: source validation refuses every compile-time-keyed method before
+  reading its facts (`method_certificate`: "a compile-time-keyed method has
+  no class yet"), so each is inferred per instance.
+  - It covers all 19 keyed templates source validation checks in
+    `stdlib_heavy`, among them `TString.write_to` and `Tuple.write_to`.
+  - The census names `ParameterizedMethodCalls` the sole table blocker of
+    `TString.write_to`; that table derives now, but the class gate comes
+    first, and the body also unrolls a `comptime for` over a pack struct's
+    `Tuple[*Self.Ts]` storage through `__getitem_param__[i]()`.
+  - A keyed body's per-iteration copies read a folded index, so a class
+    must key each copy's facts by its fold, as keyed `def`s already do.
   - Depends on nothing.
-  - Model: Opus, Not Planned.
+  - Model: Fable, Not Planned.
 
 - [ ] **1.5 A view-returning method call's interior tags keep the clone
   check**
@@ -544,8 +548,9 @@ to section 3, however small.
   - `Set.__iter__` also hands its construction a field of a field
     (`self.items.data`), which `BodyShape::argument` does not admit.
   - The call records the callee's generic instantiation at the substituted
-    arguments, which a recipe would re-key per instance, as 1.4 would for a
-    method.
+    arguments, which a recipe would re-key per instance; a method's per-call
+    clone derives only on a non-generic receiver, whose request no instance
+    changes.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -733,7 +738,23 @@ to section 3, however small.
   - Depends on 1.19.
   - Model: Opus, Not Planned.
 
-- [ ] **1.43 The Pliron pivot has no falsifiable proof yet**
+- [ ] **1.43 A field read of a field or of a `var` local keeps the clone
+  check**
+
+  Problem: the method grammar reads a field only of `self` or through a
+  reference (`BodyShape::receiver_field`, `reference_member`), so
+  `return self.scaler.base` or `var local = Scaler(1); return local.base`
+  keeps the body's clone check.
+  - Found beside the parameterized method call recipe: a body calling
+    `self.scaler.scaled[3](x)` derives, and the same body reading
+    `self.scaler.base` does not.
+  - `Set.__iter__`'s `self.items.data` argument is the same gap (1.29).
+  - A field of a closed nominal place has the same type and path under every
+    instance, so only the place's binding changes.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.44 The Pliron pivot has no falsifiable proof yet**
 
   Problem: [`docs/pliron-backend-pivot-plan.md`](pliron-backend-pivot-plan.md)
   stages a migration to a required Pliron IR framework, but its Stage A1 slice

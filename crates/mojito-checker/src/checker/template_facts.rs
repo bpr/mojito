@@ -1632,6 +1632,18 @@ impl Checker {
             .get(&owner)
             .ok_or("a method call's receiver struct is not declared")?;
         let selected = &facts.selected_calls[index].1.contract.target;
+        // A per-call clone (`Scaler.scaled$i3`) bakes the callee's binders
+        // into its target. On a non-generic receiver the request names no
+        // instance, and substitution left its arguments as they were, so the
+        // clone check selects the same clone.
+        if let Some(request) = fact_at(&facts.method_instantiations, id) {
+            if !arguments.is_empty() || !request.owner_arguments.is_empty() {
+                return Err("a per-call clone request is keyed by a generic receiver");
+            }
+            let target = selected.clone();
+            note_realized_callee(facts, &target, &target);
+            return Ok(());
+        }
         // A subscript that is the target of a store selected the setter.
         let method = if method == "__getitem__" && names_method(selected, &owner, "__setitem__") {
             "__setitem__".to_string()
@@ -2720,6 +2732,10 @@ impl Checker {
     /// - `TUPLE_UNPACKS`: see [`BodyShape::tuple_unpack`]. The element reads
     ///   are a function of the value's type and place, from which an
     ///   instance builds them again.
+    /// - `PARAMETERIZED_CALLS`: see [`BodyShape::parameterized_call`]. The
+    ///   declared compile-time parameters are the callee's, and on a
+    ///   non-generic receiver the per-call clone the call targets is the same
+    ///   under every instance (`realize_method_call`).
     ///
     /// Any other handle, borrowed receiver, reference result, interior
     /// reference, or copyable read in the body refuses it
@@ -3259,24 +3275,26 @@ impl Checker {
                         _ => None,
                     },
                     arguments: match &expr.kind {
-                        ExprKind::Call { args, .. } | ExprKind::MethodCall { args, .. } => args
+                        ExprKind::Call { args, .. }
+                        | ExprKind::MethodCall { args, .. }
+                        | ExprKind::Invoke { args, .. } => args
                             .iter()
                             .map(|argument| self.origins.origin(argument.syntax_id))
                             .collect(),
                         _ => Vec::new(),
                     },
                     keywords: match &expr.kind {
-                        ExprKind::Call { kwargs, .. } | ExprKind::MethodCall { kwargs, .. } => {
-                            kwargs
-                                .iter()
-                                .map(|keyword| {
-                                    (
-                                        keyword.name.clone(),
-                                        self.origins.origin(keyword.value.syntax_id),
-                                    )
-                                })
-                                .collect()
-                        }
+                        ExprKind::Call { kwargs, .. }
+                        | ExprKind::MethodCall { kwargs, .. }
+                        | ExprKind::Invoke { kwargs, .. } => kwargs
+                            .iter()
+                            .map(|keyword| {
+                                (
+                                    keyword.name.clone(),
+                                    self.origins.origin(keyword.value.syntax_id),
+                                )
+                            })
+                            .collect(),
                         _ => Vec::new(),
                     },
                     identifier: matches!(expr.kind, ExprKind::Identifier(_)),
@@ -3284,6 +3302,14 @@ impl Checker {
                         ExprKind::MethodCall { object, method, .. } => {
                             Some((self.origins.origin(object.syntax_id), method.clone()))
                         }
+                        // `receiver.method[…](…)`, a method call with
+                        // explicit compile-time arguments.
+                        ExprKind::Invoke { callee, .. } => match &callee.kind {
+                            ExprKind::Member { object, field } => {
+                                Some((self.origins.origin(object.syntax_id), field.clone()))
+                            }
+                            _ => None,
+                        },
                         ExprKind::Index { object, .. } => Some((
                             self.origins.origin(object.syntax_id),
                             "__getitem__".to_string(),
@@ -3523,22 +3549,7 @@ impl Checker {
             }),
             generic_instantiations: values(&occurrences, &self.generic_instantiations.borrow()),
             overload_targets: values(&occurrences, &self.overload_targets.borrow()),
-            call_parameters: values(&occurrences, &self.call_parameters.borrow())
-                .into_iter()
-                .map(|(id, parameters)| {
-                    (
-                        id,
-                        parameters
-                            .into_iter()
-                            .map(|parameter| CallParameterFact {
-                                name: parameter.name,
-                                convention: parameter.convention,
-                                ty: parameter.ty,
-                            })
-                            .collect(),
-                    )
-                })
-                .collect(),
+            call_parameters: captured_call_parameters(&occurrences, &self.call_parameters.borrow()),
             borrowed_read_call_places: keyed(&|span| {
                 self.borrowed_read_call_places.borrow().contains(span)
             }),
@@ -3619,6 +3630,10 @@ impl Checker {
             linear_temporaries: keyed(&|span| self.linear_temporaries.borrow().contains(span)),
             subscript_descriptors: values(&occurrences, &self.subscript_descriptors.borrow()),
             simd_constructions: values(&occurrences, &self.simd_constructions.borrow()),
+            parameterized_method_calls: values(
+                &occurrences,
+                &self.parameterized_method_calls.borrow(),
+            ),
             iterations: self.captured_iterations(&occurrences, &local_place)?,
             tuple_unpacks: self.captured_tuple_unpacks(&occurrences, &local_reference)?,
             call_place_uses: keyed(&|span| self.call_place_uses.borrow().contains(span)),
@@ -4021,6 +4036,11 @@ impl Checker {
             self.simd_constructions
                 .borrow_mut()
                 .insert(span(id)?, *dimensions);
+        }
+        for (id, decls) in &facts.parameterized_method_calls {
+            self.parameterized_method_calls
+                .borrow_mut()
+                .insert(span(id)?, decls.clone());
         }
         self.install_iterations(facts, &span, &rooted)?;
         self.install_tuple_unpacks(facts, &span, &referenced)?;
@@ -4558,14 +4578,35 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::SimdConstructions
         | FactTable::TruthinessConditions
         | FactTable::TupleUnpackPlans
+        | FactTable::ParameterizedMethodCalls
         | FactTable::CallTransfers => true,
         FactTable::ContextualBases
-        | FactTable::ParameterizedMethodCalls
         | FactTable::ViewResultInteriors
         | FactTable::WithDesugars
         | FactTable::DeclarationCaptures
         | FactTable::ComprehensionBindings => false,
     }
+}
+
+/// The parameters each call at a body's occurrences binds, in pre-order.
+fn captured_call_parameters(
+    occurrences: &[Occurrence],
+    table: &HashMap<SourceSpan, Vec<super::CallParameter>>,
+) -> Vec<(OccurrenceId, Vec<CallParameterFact>)> {
+    values(occurrences, table)
+        .into_iter()
+        .map(|(id, parameters)| {
+            let facts = parameters
+                .into_iter()
+                .map(|parameter| CallParameterFact {
+                    name: parameter.name,
+                    convention: parameter.convention,
+                    ty: parameter.ty,
+                })
+                .collect();
+            (id, facts)
+        })
+        .collect()
 }
 
 /// The entries of one fact table at a body's occurrences, in pre-order.
@@ -6003,7 +6044,7 @@ impl BodyShape<'_> {
             StmtKind::Expr(value) => {
                 let call = matches!(
                     value.kind,
-                    ExprKind::Call { .. } | ExprKind::MethodCall { .. }
+                    ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
                 ) && self.expression(value)
                     && self.closed(value);
                 call || (self.moved_result.is_some() && self.pointer_statement(value))
@@ -6531,9 +6572,14 @@ impl BodyShape<'_> {
     /// The result of a sibling call, of any type: a temporary, whose type is
     /// the contract's substituted result.
     fn call_result(&self, expr: &Expr) -> bool {
-        matches!(&expr.kind, ExprKind::MethodCall { method, .. }
-            if !matches!(method.as_str(), "unsafe_take_pointee" | "unsafe_offset"))
-            && self.expression(expr)
+        let call = match &expr.kind {
+            ExprKind::MethodCall { method, .. } => {
+                !matches!(method.as_str(), "unsafe_take_pointee" | "unsafe_offset")
+            }
+            ExprKind::Invoke { callee, .. } => matches!(callee.kind, ExprKind::Member { .. }),
+            _ => false,
+        };
+        call && self.expression(expr)
     }
 
     /// A construction of a declared struct: a temporary of the constructed
@@ -6942,6 +6988,76 @@ impl BodyShape<'_> {
         admitted
     }
 
+    /// A call of a method on `self`, on one of its fields, on a `var` local,
+    /// or through a reference, passing admitted arguments, whose recorded
+    /// contract changes per instance only in its target and its substituted
+    /// result ([`Self::sibling_call`]).
+    fn method_call(
+        &self,
+        expr: &Expr,
+        object: &Expr,
+        method: &str,
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> bool {
+        let on_self = matches!(&object.kind, ExprKind::Identifier(name) if name == "self");
+        ((self.receiver && (on_self || self.receiver_field(object)))
+            || (!self.keyed && (self.reference_receiver(object) || self.value_local(object))))
+            && (!self.keyed || (args.is_empty() && kwargs.is_empty()))
+            && args
+                .iter()
+                .chain(kwargs.iter().map(|keyword| &keyword.value))
+                .all(|argument| self.argument(expr, argument))
+            && self
+                .facts
+                .is_none_or(|facts| self.sibling_call(facts, expr, object, method))
+    }
+
+    /// A method call spelled with explicit compile-time arguments,
+    /// `receiver.method[3](x)`, on a receiver [`Self::method_call`] admits.
+    ///
+    /// The receiver's recorded type is a struct, so the method and the
+    /// compile-time parameters it declares (`ParameterizedMethodCalls`) are
+    /// selected from the struct's own declaration, alike under every
+    /// instance. The arguments are literals or types, and the call retargets
+    /// to the per-call clone its `MethodInstantiation` requests; an instance
+    /// whose substitution would change that request refuses
+    /// (`realize_instance_facts`), so a type argument naming a struct
+    /// parameter keeps the clone check. Before the per-call clone exists the
+    /// contract still carries the declared parameters, which
+    /// [`Self::sibling_call`] refuses.
+    fn parameterized_call(
+        &self,
+        expr: &Expr,
+        callee: &Expr,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> bool {
+        use mojito_ast::ast::ParamArg;
+        let ExprKind::Member { object, field } = &callee.kind else {
+            return false;
+        };
+        let literal = |argument: &ParamArg| match argument {
+            ParamArg::Type(_) => true,
+            ParamArg::Value(value) => matches!(
+                value.kind,
+                ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Float(_)
+            ),
+            ParamArg::Named { .. } => false,
+        };
+        let id = self.occurrence(expr);
+        let admitted = !self.keyed
+            && !param_args.is_empty()
+            && param_args.iter().all(literal)
+            && self.facts.is_none_or(|facts| {
+                fact_at(&facts.parameterized_method_calls, id).is_some()
+                    && fact_at(&facts.method_instantiations, id).is_some()
+            })
+            && self.method_call(expr, object, field, args, kwargs);
+        admitted && self.holds(MethodFeatures::PARAMETERIZED_CALLS)
+    }
+
     /// Whether the call at `expr` recorded a closed contract naming `method`
     /// on the receiver's own struct, and nothing a derivation lacks. A call
     /// that is not trivial is a sibling call, which only a method body holds.
@@ -7262,23 +7378,17 @@ impl BodyShape<'_> {
                 args,
                 kwargs,
             } => {
-                let on_self = matches!(&object.kind, ExprKind::Identifier(name) if name == "self");
-                let sibling = ((self.receiver && (on_self || self.receiver_field(object)))
-                    || (!self.keyed
-                        && (self.reference_receiver(object) || self.value_local(object))))
-                    && (!self.keyed || (args.is_empty() && kwargs.is_empty()))
-                    && args
-                        .iter()
-                        .chain(kwargs.iter().map(|keyword| &keyword.value))
-                        .all(|argument| self.argument(expr, argument))
-                    && self
-                        .facts
-                        .is_none_or(|facts| self.sibling_call(facts, expr, object, method));
-                sibling
+                self.method_call(expr, object, method, args, kwargs)
                     || self.consuming_call(expr, object, method, args, kwargs)
                     || self.bound_dispatch(expr, object, args, kwargs)
                     || self.bound_builtin(expr, object, method, args, kwargs)
             }
+            ExprKind::Invoke {
+                callee,
+                param_args,
+                args,
+                kwargs,
+            } => self.parameterized_call(expr, callee, param_args, args, kwargs),
             ExprKind::Prefix(_, value) => {
                 !self.folds(value) && self.expression(value) && self.scalar(value)
             }

@@ -787,6 +787,12 @@ impl MethodFeatures {
     /// tuple's type, which an instance substitutes and derives them from
     /// again.
     pub const TUPLE_UNPACKS: Self = Self(1 << 28);
+    /// A method called with explicit compile-time arguments
+    /// (`self.field.method[3](x)`) on a nominal receiver: the callee and the
+    /// parameters it declares are selected from the receiver's own type,
+    /// which no instance changes, and a per-call clone request it records
+    /// must name no struct parameter.
+    pub const PARAMETERIZED_CALLS: Self = Self(1 << 29);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
@@ -1280,6 +1286,11 @@ pub struct CheckedBodyFacts {
     /// construction. Only a closed construction records one, and its
     /// dimensions are the same in every instance.
     pub simd_constructions: Vec<(OccurrenceId, (mojito_ast::ast::Dtype, i64))>,
+    /// The compile-time parameters the selected method declares, at each
+    /// call spelled `receiver.method[…](…)`. They are the callee's
+    /// declaration, and a nominal receiver's method is selected alike under
+    /// every instance, so an instance inherits the entry.
+    pub parameterized_method_calls: Vec<(OccurrenceId, Vec<mojito_types::types::ParamDecl>)>,
     /// The iterator protocol of each runtime `for`, keyed by its iterable,
     /// which an instance selects again from the substituted iterable type.
     pub iterations: Vec<(OccurrenceId, TemplateIteration)>,
@@ -1464,6 +1475,7 @@ impl CheckedBodyFacts {
             copyable_reference_result_reads,
             subscript_descriptors,
             simd_constructions,
+            parameterized_method_calls,
             iterations,
             tuple_unpacks,
             call_place_uses,
@@ -1639,6 +1651,7 @@ impl CheckedBodyFacts {
             copyable_reference_result_reads: flagged(&self.copyable_reference_result_reads),
             subscript_descriptors: at(&self.subscript_descriptors, occurrences, folded),
             simd_constructions: at(&self.simd_constructions, occurrences, folded),
+            parameterized_method_calls: at(&self.parameterized_method_calls, occurrences, folded),
             iterations: at(&self.iterations, occurrences, folded),
             tuple_unpacks: at(&self.tuple_unpacks, occurrences, folded),
             call_place_uses: flagged(&self.call_place_uses),
@@ -1731,6 +1744,7 @@ impl CheckedBodyFacts {
             + self.copyable_reference_result_reads.len()
             + self.subscript_descriptors.len()
             + self.simd_constructions.len()
+            + self.parameterized_method_calls.len()
             + self.iterations.len()
             + self.tuple_unpacks.len()
             + self.call_place_uses.len()
