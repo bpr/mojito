@@ -20,9 +20,10 @@ use mojito_ast::ast::{Expr, ExprKind, Stmt, StmtKind};
 use mojito_checked::templates::{
     BoundBuiltin, CallParameterFact, CheckedBodyFacts, CheckedTemplate, FactTable,
     IncompleteReason, InstanceName, InstanceTrace, MethodFeatures, OccurrenceId,
-    TemplateArgumentBoundary, TemplateAugmentedSubscript, TemplateCallContract, TemplateClass,
-    TemplateCoverage, TemplateId, TemplateInvalidation, TemplateObligation, TemplateOrigin,
-    TemplateOwner, TemplatePlace, TemplateProducer, TemplateReference, TypedOrigins, TypedTable,
+    TemplateArgumentBoundary, TemplateAugmentedSubscript, TemplateCallContract,
+    TemplateCallResultOrigin, TemplateClass, TemplateCoverage, TemplateId, TemplateInvalidation,
+    TemplateObligation, TemplateOrigin, TemplateOwner, TemplatePlace, TemplateProducer,
+    TemplateReference, TypedOrigins, TypedTable,
 };
 use mojito_common::error::TypeError;
 use mojito_common::timing;
@@ -3102,6 +3103,7 @@ impl Checker {
             local_contract(
                 contract,
                 &occurrences,
+                &local_place,
                 &local_reference,
                 &local_invalidations,
             )
@@ -3166,11 +3168,28 @@ impl Checker {
             &local_place,
             &mut typed_origins,
         )?;
+        let call_result_origins = values(&occurrences, &self.call_result_origins.borrow())
+            .into_iter()
+            .map(|(id, slots)| {
+                slots
+                    .iter()
+                    .map(|(slot, origin, mutability)| {
+                        Ok(TemplateCallResultOrigin {
+                            slot: *slot,
+                            origin: template_origin(origin, &local_place)?,
+                            mutability: *mutability,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, IncompleteReason>>()
+                    .map(|slots| (id, slots))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(CheckedBodyFacts {
             expression_types,
             expression_place_types,
             binding_types,
             typed_origins,
+            call_result_origins,
             reference_binding_types,
             reference_place_types,
             expression_bindings: owned(&self.expression_bindings.borrow())?,
@@ -3227,7 +3246,21 @@ impl Checker {
                 .into_iter()
                 .map(|(id, call)| Ok((id, template_contract(call)?)))
                 .collect::<Result<Vec<_>, IncompleteReason>>()?,
-            struct_applications: sorted_applications(reads.struct_applications.clone()),
+            // An application's origin arguments are erased where it is
+            // recorded (`materialized_instantiation_argument`), so one is kept
+            // with its struct origin slots unbound, like a retained type.
+            struct_applications: sorted_applications(
+                reads
+                    .struct_applications
+                    .iter()
+                    .map(|(name, arguments)| {
+                        match without_struct_origins(&Ty::Struct(name.clone(), arguments.clone())) {
+                            Ty::Struct(name, arguments) => (name, arguments),
+                            _ => (name.clone(), arguments.clone()),
+                        }
+                    })
+                    .collect(),
+            ),
             builtin_len_calls: occurrences
                 .iter()
                 .filter(|occurrence| {
@@ -3584,6 +3617,21 @@ impl Checker {
                 .borrow_mut()
                 .insert(span(id)?, rooted(place)?);
         }
+        for (id, slots) in &facts.call_result_origins {
+            let resolved = slots
+                .iter()
+                .map(|resolved| {
+                    Ok((
+                        resolved.slot,
+                        checked_origin(&resolved.origin, &rooted)?,
+                        resolved.mutability,
+                    ))
+                })
+                .collect::<Result<Vec<_>, TypeError>>()?;
+            self.call_result_origins
+                .borrow_mut()
+                .insert(span(id)?, resolved);
+        }
         for (id, reference) in &facts.reference_binding_types {
             self.binding_types
                 .borrow_mut()
@@ -3718,8 +3766,9 @@ impl Checker {
         for id in &facts.linear_temporaries {
             self.linear_temporaries.borrow_mut().insert(span(id)?);
         }
-        let checked_contract =
-            |call: &TemplateCallContract| checked_contract(call, &span, &placed, &referenced);
+        let checked_contract = |call: &TemplateCallContract| {
+            checked_contract(call, &span, &placed, &rooted, &referenced)
+        };
         for (id, call) in &facts.selected_calls {
             self.selected_calls
                 .borrow_mut()
@@ -4082,12 +4131,12 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::ImplicitConversions
         | FactTable::ImplicitConversionTypes
         | FactTable::ImplicitConversionRaises
-        | FactTable::ConversionSourceBorrows => true,
+        | FactTable::ConversionSourceBorrows
+        | FactTable::CallResultOrigins => true,
         FactTable::ContextualBases
         | FactTable::CallTransfers
         | FactTable::SimdConstructions
         | FactTable::ParameterizedMethodCalls
-        | FactTable::CallResultOrigins
         | FactTable::TupleUnpackPlans
         | FactTable::ViewResultInteriors
         | FactTable::WithDesugars
@@ -4230,6 +4279,9 @@ fn for_each_owner(facts: &mut CheckedBodyFacts, visit: &dyn Fn(&mut TemplateOwne
         if let Some(reference) = &mut call.reference_result {
             origin_owners(&mut reference.origin, visit);
         }
+        for origin in &mut call.result_origins {
+            origin_owners(origin, visit);
+        }
     }
     for origin in facts
         .typed_origins
@@ -4237,6 +4289,13 @@ fn for_each_owner(facts: &mut CheckedBodyFacts, visit: &dyn Fn(&mut TemplateOwne
         .flat_map(|typed| &mut typed.origins)
     {
         origin_owners(origin, visit);
+    }
+    for resolved in facts
+        .call_result_origins
+        .iter_mut()
+        .flat_map(|(_, slots)| slots)
+    {
+        origin_owners(&mut resolved.origin, visit);
     }
     let call_invalidations = calls(&mut facts.selected_calls, &mut facts.augmented_subscripts)
         .flat_map(|call| {
@@ -4807,6 +4866,7 @@ fn checked_contract(
     call: &TemplateCallContract,
     span: &dyn Fn(&OccurrenceId) -> Result<SourceSpan, TypeError>,
     placed: &PlacedInvalidations<'_>,
+    rooted: &dyn Fn(&TemplatePlace) -> Result<mojito_types::origin::OriginPlace, TypeError>,
     referenced: &dyn Fn(&TemplateReference) -> Result<mojito_types::origin::RefTy, TypeError>,
 ) -> Result<mojito_checked::checked::CheckedCallContract, TypeError> {
     let arguments = call
@@ -4823,9 +4883,11 @@ fn checked_contract(
         .collect::<Result<Vec<_>, TypeError>>()?;
     let reference_result = call.reference_result.as_ref().map(referenced).transpose()?;
     Ok(mojito_checked::checked::CheckedCallContract {
-        result_ty: reference_result
-            .clone()
-            .map_or_else(|| call.contract.result_ty.clone(), Ty::Ref),
+        result_ty: match reference_result.clone() {
+            Some(reference) => Ty::Ref(reference),
+            None if call.result_origins.is_empty() => call.contract.result_ty.clone(),
+            None => bind_struct_origins(&call.contract.result_ty, &call.result_origins, rooted)?,
+        },
         reference_result,
         boundary: mojito_checked::checked::CheckedCallBoundary {
             arguments,
@@ -4847,6 +4909,9 @@ type PlacedInvalidations<'a> = dyn Fn(
 fn local_contract(
     mut contract: mojito_checked::checked::CheckedCallContract,
     occurrences: &[Occurrence],
+    local_place: &dyn Fn(
+        &mojito_types::origin::OriginPlace,
+    ) -> Result<TemplatePlace, IncompleteReason>,
     local_reference: &dyn Fn(
         &mojito_types::origin::RefTy,
     ) -> Result<TemplateReference, IncompleteReason>,
@@ -4869,6 +4934,13 @@ fn local_contract(
             local_reference(&reference)
         })
         .transpose()?;
+    let result_origins = match unbound_struct_origins(&contract.result_ty, local_place)? {
+        Some((unbound, origins)) => {
+            contract.result_ty = unbound;
+            origins
+        }
+        None => Vec::new(),
+    };
     let arguments = boundary
         .arguments
         .into_iter()
@@ -4890,6 +4962,7 @@ fn local_contract(
     Ok(TemplateCallContract {
         contract,
         reference_result,
+        result_origins,
         arguments,
         invalidations: local_invalidations(boundary.invalidations)?,
     })

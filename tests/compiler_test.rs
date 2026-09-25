@@ -1732,6 +1732,25 @@ fn template_method_reference_arguments_derive() {
 }
 
 #[test]
+fn template_method_sibling_views_derive() {
+    // A sibling call whose result is a view over `self`: returned as is,
+    // wrapped by a fieldwise or a hand-written constructor, spelled through a
+    // `comptime` alias as `Dict.keys` is, and bound to a local. The call's
+    // loan and the origin its result binds name the receiver.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_sibling_view.mojo"),
+        "2 1 2 1\n2 1 12 11\n2 1\n",
+        &[
+            ("Shelf.view", 2),
+            ("Shelf.keys", 2),
+            ("Shelf.aliased", 2),
+            ("Shelf.counted", 2),
+            ("Shelf.bound", 2),
+        ],
+    );
+}
+
+#[test]
 fn template_method_built_over_locals_derive() {
     // A local whose type is built over the struct's parameter: a bundled
     // collection moved out, handed on, or left unused, a hand-written struct

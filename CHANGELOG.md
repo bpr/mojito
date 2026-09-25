@@ -9,6 +9,13 @@ to evolve under the `0.x` compatibility rules.
 ### Fixed
 
 - A per-instantiation method clone now inherits its checked template's facts
+  when the body calls a sibling method whose result is a view over `self`
+  (`_DictKeyIter(self.items())` in `Dict.keys`, `Dict.values`, and
+  `Dict.__iter__`): the call's loan and the origins its result binds are kept
+  by template owner and rebuilt on the instance's receiver. Such a body used
+  to keep the clone check.
+
+- A per-instantiation method clone now inherits its checked template's facts
   when the body binds an annotated `var` whose value converts to a type built
   over the struct's parameter (`var label: Label[Self.T] = 4`,
   `var box: Wrapper[Self.T] = self.item`), or whose annotation is the value's

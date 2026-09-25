@@ -231,6 +231,7 @@ impl Checker {
                         boundary: CheckedCallBoundary::default(),
                     },
                     reference_result: None,
+                    result_origins: Vec::new(),
                     arguments: Vec::new(),
                     invalidations: Vec::new(),
                 },

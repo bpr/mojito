@@ -155,6 +155,16 @@ one. The recorded expression types of such a body are the referents, because
 ordinary inference reads through a reference, so the guard on the three type
 tables stands unchanged.
 
+A view a call returns (`self.items()` over `-> View[origin_of(self)]`) names
+the receiver in a struct origin argument instead. The contract's result type
+keeps those slots unbound, their origins kept beside it by template owner
+(`TemplateCallContract::result_origins`), as a retained type's are
+(`typed_origins`); the slots the call's contract resolved
+(`CallResultOrigins`) are kept the same way (`call_result_origins`); and the
+call's `BorrowViewResult` loan names nothing an instance changes. A struct
+application's origin arguments are kept unbound too, since recording one
+erases them.
+
 ## The expansion trace
 
 Two halves identify what a clone's occurrence came from. Neither demangles a
@@ -268,7 +278,7 @@ they are a set, not a ladder.
 | `STATEMENTS` | a receiver other than a plain read `self`, or the runtime statements above, plus a store to a closed scalar field of a `mut`/`var` `self` | A stored field is a closed scalar, so the store is a plain scalar write and never an in-place operator of the field's type. Invalidations name `self` and locals by template owner. |
 | `OPAQUE_MOVES` | a whole value of any type moved (`^`) or copied between a parameter, a local, a field of `self`, and the result | The value is never an operand, a receiver, a condition, or an argument, so nothing dispatches on its type. A store or a result has the value's own recorded type, which stays equal under substitution, so neither check converts. What a clone check still decides from the type is owed per instance (obligations 3 and 10 to 12 below). |
 | `POINTER_SLOTS` | over a pointer field of `self` with no tracked provenance: `unsafe_offset(scalar)`, `unsafe_take_pointee()`, `unsafe_deinit_pointee()`, `free`, and the slot `pointer[scalar]` as a store target or a copied place | Such a pointer holds no loan, names no place, and is a pointer under every instance, so its methods are the built-in ones (`infer_pointer_method`), which select no callee and record an adjustment naming at most the pointee. Every other judgment there only produces an error, and the template's is at least as strict. |
-| `SIBLING_CALLS` | a method call on `self`, a field of it, or a `var` local, passing closed scalars, whose contract is a `closed_method_contract` | Obligation 7 below. Arguments are closed scalars in both checks, so nothing about them depends on the instance. |
+| `SIBLING_CALLS` | a method call on `self`, a field of it, or a `var` local, passing closed scalars, whose contract is a `closed_method_contract`; its result may be a view over the receiver (`_DictKeyIter(self.items())`) | Obligation 7 below. Arguments are closed scalars in both checks, so nothing about them depends on the instance. A view result's `BorrowViewResult` loan and the origins its contract resolves are the callee's declared `origin_of(self)` return over the call's own receiver, which no instance changes; a constructor the view is handed to matches its field or parameter but for those origin arguments. |
 | `REFERENCE_RESULT` | a method that returns a reference: every `return` hands out a field of `self`, a pointer slot, or a reference call's result, of exactly the declared referent type | The `return` keeps its value as a handle because the declaration returns a reference (`ReferenceValueUses`, written from the declaration and the statement's syntax alone) and demands neither a copy nor a move. Whether the place lies within the declared origin is judged on its path, the signature, and the receiver's constructor, none of which an instance changes; the loan-escape check reads what obligation 12 already rules out. The signature is checked per clone before the body, derived or not. Any other handle in the body refuses it. |
 | `REFERENCE_CALLS` | a subscript or a named accessor on a field of `self`, passing closed scalars, whose contract is a `closed_reference_contract`, either returned as above or read by value into the result or a `var` | Obligation 13 below. The call is never a receiver, an operand, a condition, or an argument, each of which records a borrow of its own. A by-value read is admitted only where the template marked the read copyable. An iterator's `__next__` marks its read by another rule and stays out. |
 | `REFERENCE_LOCALS` | `ref name = place`, where the place is `self`, a field of it, a parameter, a `var` local, or a reference call; then a field read through the binding, the binding copied out whole, a scalar operand, `len` over it, a scalar store through it, or the binding forwarded as the method's own reference result | The declaration decides mutability from the value's reference and the binding it names, re-stamps an origin computed upstream, and runs no check of its own. Its type is a reference whose origin names a binding, so a bundle keeps it by template owner, as it keeps a call's, and an instance substitutes the referent. Every use records the referent. A copy out owes obligation 3, and a copyable read obligation 13. |
@@ -695,6 +705,13 @@ tables. In short, for one debug-profile run each:
   converts a literal or a field of `self` into a local of a type built over
   its parameter derives for an `Int` and a `String` instance
   (`template_method_converting_binding.mojo`).
+  A sibling call returning a view (2026-09-24) took `stdlib_heavy` from 1142
+  to 1172 (`generic.mojo` stays at 352): `Dict.keys`, `Dict.values`, and
+  `Dict.__iter__` derive for both `Dict` instances. A user struct whose
+  methods return such a view, wrap it by a fieldwise or a hand-written
+  constructor, spell it through a `comptime` alias, or bind it to a local
+  derives for an `Int` and a `String` instance
+  (`template_method_sibling_view.mojo`).
   Widening `OPERATOR_DISPATCH` to every operator a trait names, and to the
   three things a struct instance's dispatch adds beneath the operand
   (2026-09-24), moves neither count (1096 and 340 before and after): no
@@ -720,8 +737,9 @@ tables. In short, for one debug-profile run each:
   the 244 clone bodies still inferred, 179 are capturable already, and the
   largest blockers left are a binding the grammar refuses (16, a local of a
   parameter type), `ExplicitDestroyCalls` (13, sole blocker of 8),
-  `EraseCompileTimeArgument` (8), `PointerOriginCast` (7), and
-  `BorrowViewResult` (6, the `Dict.keys`/`values`/`__iter__` family). Its
+  `EraseCompileTimeArgument` (8), and `PointerOriginCast` (7);
+  `BorrowViewResult` (6, the `Dict.keys`/`values`/`__iter__` family) has a
+  recipe since. Its
   `grammar.*` counters say which constructs keep a body outside every class
   whatever its tables: a method call with arguments (150 bodies), a direct
   call with arguments (145), a subscript that is neither a pointer slot nor
@@ -748,11 +766,11 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
 - A construction with an `ImmOrigin` or a value compile-time argument, one
   whose constructor has binders of its own or binds a variadic parameter,
   one whose argument is a `ref` local bound to anything but a fieldwise
-  struct's reference field or is a reference call's result, and a sibling
-  call returning a view (`_DictKeyIter(self.items())` records
-  `BorrowViewResult`). A pointer's own place provenance inside a retained
-  type is still refused; only a struct's origin arguments are kept by
-  template owner.
+  struct's reference field or is a reference call's result, and one that
+  wraps a sibling's immutable view (`ImmOrigin(origin_of(self))`). A method
+  called on a sibling's view result itself (`self.entries().size()`). A
+  pointer's own place provenance inside a retained type is still refused;
+  only a struct's origin arguments are kept by template owner.
 - A reference used as an argument, as the receiver of a method its bare
   parameter type promises through a bound, or as the value of a store
   (`self.items[i] = self.items[j]`, which the checker also judges by the

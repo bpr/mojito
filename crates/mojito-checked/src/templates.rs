@@ -205,6 +205,12 @@ pub fn derive_adjustment(
             arguments: arguments.clone(),
             materialized: None,
         }),
+        // A view result's loans are the selected callee's result contract
+        // over the call's own receiver and arguments, which no instance
+        // changes. A materialized temporary names a binding of one run.
+        SemanticAdjustment::BorrowViewResult { materialized: None } => {
+            Some(SemanticAdjustment::BorrowViewResult { materialized: None })
+        }
         SemanticAdjustment::InvertedReprWrite => Some(SemanticAdjustment::InvertedReprWrite),
         // A type name is one type's spelling: the instance re-renders it from
         // the substituted type, as the resolution rendered the template's. A
@@ -242,7 +248,9 @@ pub fn derive_adjustment(
         }
         | SemanticAdjustment::MaterializeBorrowSource { .. }
         | SemanticAdjustment::BorrowConversionSource { .. }
-        | SemanticAdjustment::BorrowViewResult { .. }
+        | SemanticAdjustment::BorrowViewResult {
+            materialized: Some(_),
+        }
         | SemanticAdjustment::CopyPlaceValue
         | SemanticAdjustment::ReferenceResult { .. }
         | SemanticAdjustment::TupleUnpack { .. }
@@ -303,6 +311,11 @@ pub struct TemplateCallContract {
     /// The contract's reference result, which names the receiver's binding.
     /// The contract's own is left empty, and its result type is the referent.
     pub reference_result: Option<TemplateReference>,
+    /// The origin arguments of a view result's struct type, which name the
+    /// receiver's or an argument's binding, in the order a pre-order walk of
+    /// the type meets them. The contract's result type keeps those slots
+    /// unbound (`TypedOrigins` keeps a retained type's the same way).
+    pub result_origins: Vec<TemplateOrigin>,
     pub arguments: Vec<TemplateArgumentBoundary>,
     /// Receiver and call-site generation changes.
     pub invalidations: Vec<TemplateInvalidation>,
@@ -446,6 +459,7 @@ fn closed_contract(
                     },
             },
         reference_result: _,
+        result_origins: _,
         arguments: boundary_arguments,
         invalidations: _,
     } = call;
@@ -774,6 +788,16 @@ pub struct TypedOrigins {
     pub table: TypedTable,
     pub occurrence: OccurrenceId,
     pub origins: Vec<TemplateOrigin>,
+}
+
+/// One origin slot a view-returning call's result binds at the call, in
+/// template-local terms ([`CheckedBodyFacts::call_result_origins`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplateCallResultOrigin {
+    pub slot: mojito_types::origin::OriginParamId,
+    pub origin: TemplateOrigin,
+    /// The callee's capability over the place, when its contract fixes one.
+    pub mutability: Option<mojito_types::origin::Mutability>,
 }
 
 /// Which retained type table a [`TypedOrigins`] entry completes.
@@ -1131,6 +1155,12 @@ pub struct CheckedBodyFacts {
     /// origin argument, kept by template owner while the type itself keeps
     /// those slots unbound.
     pub typed_origins: Vec<TypedOrigins>,
+    /// The origin slots each view-returning call's contract resolved at the
+    /// call (`self.items()` over `-> View[origin_of(self)]` binds the view's
+    /// slot to the receiver), kept by template owner. The contract and the
+    /// places it names are the callee's declaration and the call's own
+    /// receiver and arguments, which no instance changes.
+    pub call_result_origins: Vec<(OccurrenceId, Vec<TemplateCallResultOrigin>)>,
     /// How many locals the body declares.
     pub locals: u32,
 }
@@ -1447,6 +1477,12 @@ impl CheckedBodyFacts {
             &self.typed_origins,
             &other.typed_origins,
         );
+        differing(
+            &mut out,
+            "call_result_origins",
+            &self.call_result_origins,
+            &other.call_result_origins,
+        );
         differing(&mut out, "locals", &self.locals, &other.locals);
         out
     }
@@ -1573,18 +1609,28 @@ impl CheckedBodyFacts {
             repr_calls: flagged(&self.repr_calls),
             print_calls: flagged(&self.print_calls),
             conversions: at(&self.conversions, occurrences, folded),
-            typed_origins: occurrences
-                .iter()
-                .flat_map(|occurrence| {
+            // Table by table, as the capture keeps them.
+            typed_origins: [
+                TypedTable::Expression,
+                TypedTable::Place,
+                TypedTable::Binding,
+            ]
+            .into_iter()
+            .flat_map(|table| {
+                occurrences.iter().flat_map(move |occurrence| {
                     self.typed_origins
                         .iter()
-                        .filter(|typed| typed.occurrence.syntax == occurrence.syntax)
+                        .filter(move |typed| {
+                            typed.table == table && typed.occurrence.syntax == occurrence.syntax
+                        })
                         .map(|typed| TypedOrigins {
                             occurrence: *occurrence,
                             ..typed.clone()
                         })
                 })
-                .collect(),
+            })
+            .collect(),
+            call_result_origins: at(&self.call_result_origins, occurrences, folded),
             locals: self.locals,
         }
     }
@@ -1632,6 +1678,7 @@ impl CheckedBodyFacts {
             + self.method_instantiations.len()
             + self.constructions.len()
             + self.typed_origins.len()
+            + self.call_result_origins.len()
     }
 }
 

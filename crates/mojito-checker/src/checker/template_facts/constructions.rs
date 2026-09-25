@@ -245,11 +245,13 @@ fn exact_binding(
 }
 
 /// Whether an argument of the recorded type binds a parameter of `parameter`'s
-/// type exactly: the same type, or a literal materializing to a closed one,
-/// which the template recorded and an instance derives
-/// (`SemanticAdjustment::MaterializeLiteral`).
+/// type exactly: the same type but for its struct origin arguments, or a
+/// literal materializing to a closed one, which the template recorded and an
+/// instance derives (`SemanticAdjustment::MaterializeLiteral`). A retained
+/// type keeps its origin slots unbound, and the template's check already
+/// matched them against the parameter's on places no instance changes.
 fn binds(argument: &Ty, parameter: &Ty) -> bool {
-    argument == parameter
+    super::without_struct_origins(argument) == super::without_struct_origins(parameter)
         || (matches!(argument, Ty::IntLiteral | Ty::FloatLiteral)
             && !mojito_types::types::is_symbolic(parameter)
             && mojito_types::types::coerces(argument, parameter))
