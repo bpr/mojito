@@ -311,6 +311,7 @@ impl Checker {
                     vector
                 }
                 BoundBuiltin::Write => self.printable_argument(ty),
+                BoundBuiltin::Finish => false,
             };
             if !accepted {
                 return Err(

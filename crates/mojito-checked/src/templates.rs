@@ -743,7 +743,8 @@ impl MethodFeatures {
     /// about an argument that its syntax does not decide.
     pub const BOUND_BUILTINS: Self = Self(1 << 15);
     /// The method's own trait-bounded type binders (`[H: Hasher]`), which a
-    /// clone keeps and binds symbolically as the template does.
+    /// clone keeps and binds symbolically as the template does, so a
+    /// construction of one (`H()`) is the same in every clone.
     pub const BOUND_BINDERS: Self = Self(1 << 16);
     /// A construction of a declared struct whose compile-time arguments are
     /// types, passing closed scalars, whole values, `copy:` of a named place,
@@ -1473,6 +1474,10 @@ pub enum BoundBuiltin {
     UpdateSimd,
     /// `writer.write(values…)`: every value must be writable.
     Write,
+    /// `hasher^.finish()` on a `^` transfer of a place of the method's own
+    /// `Hasher` binder: it takes no argument and yields a `UInt64` under
+    /// every instance.
+    Finish,
 }
 
 /// One field of a derived bundle beside the inferred one, when they differ:

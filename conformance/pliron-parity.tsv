@@ -523,6 +523,7 @@ assets/ok/template_def_converting_argument.mojo	main	exe-differential	sanitized
 assets/ok/template_folded_value.mojo	main	exe-differential	sanitized
 assets/ok/template_inner_request.mojo	main	exe-differential	sanitized
 assets/ok/template_loop_local.mojo	main	exe-differential	sanitized
+assets/ok/template_method_binder_construction.mojo	main	exe-differential	sanitized
 assets/ok/template_method_borrowed_parameter.mojo	main	exe-differential	sanitized
 assets/ok/template_method_bound_copy.mojo	main	exe-differential	sanitized
 assets/ok/template_method_bound_dispatch.mojo	main	exe-differential	sanitized

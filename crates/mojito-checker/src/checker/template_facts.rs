@@ -2515,6 +2515,9 @@ impl Checker {
             operators: RefCell::new(Vec::new()),
             bound_builtins: RefCell::new(Vec::new()),
             constructions: RefCell::new(Vec::new()),
+            binders: Vec::new(),
+            struct_binders: Vec::new(),
+            binder_constructions: RefCell::new(Vec::new()),
             callable_params: Vec::new(),
             callable_calls: RefCell::new(Vec::new()),
             repr_calls: RefCell::new(Vec::new()),
@@ -2711,7 +2714,9 @@ impl Checker {
     ///   again at its own type.
     /// - `BOUND_BINDERS`: a trait-bounded binder of the method's own
     ///   (`[H: Hasher]`) is kept by every clone, bound symbolically as the
-    ///   template binds it, and substituted by nothing.
+    ///   template binds it, and substituted by nothing, so a construction
+    ///   of one records the same adjustment in every clone (see
+    ///   [`BodyShape::binder_construction`]).
     /// - `REFERENCE_RESULT`: see [`BodyShape::returned_place`]. The handle a
     ///   `return` keeps is decided by the declaration and the statement's
     ///   syntax, and the declared origin is checked on the place's path and
@@ -2995,6 +3000,14 @@ impl Checker {
             operators: RefCell::new(Vec::new()),
             bound_builtins: RefCell::new(Vec::new()),
             constructions: RefCell::new(Vec::new()),
+            binders: method
+                .type_params
+                .iter()
+                .filter(|binder| bound_binder(binder))
+                .map(|binder| binder.name.as_str())
+                .collect(),
+            struct_binders: self.self_decls.iter().map(ParamDecl::id).collect(),
+            binder_constructions: RefCell::new(Vec::new()),
             repr_calls: RefCell::new(Vec::new()),
         };
         if !shape.block(&method.body) {
@@ -3044,10 +3057,10 @@ impl Checker {
             .expression_effects
             .iter()
             .all(|(_, effects)| *effects == mojito_checked::checked::EffectFacts::default());
-        let adjustments_derive = facts
-            .operation_adjustments
-            .iter()
-            .all(|(_, adjustment)| adjustment_derives(adjustment));
+        let binder_constructions = shape.binder_constructions.borrow();
+        let adjustments_derive = facts.operation_adjustments.iter().all(|(id, adjustment)| {
+            binder_constructions.contains(id) || adjustment_derives(adjustment)
+        });
         if !effects_closed || !adjustments_derive {
             return outside("an expression has an effect or an adjustment with no recipe");
         }
@@ -3138,6 +3151,22 @@ impl Checker {
             .is_some_and(|occurrence| self.kept_element_store(&occurrence.span, adjustment))
     }
 
+    /// Whether the adjustment at `site` constructs a binder that is not the
+    /// enclosing struct's, which every clone keeps symbolic
+    /// ([`BodyShape::binder_construction`]).
+    fn own_binder_construction(
+        &self,
+        site: &SourceSpan,
+        adjustment: &mojito_checked::checked::SemanticAdjustment,
+    ) -> bool {
+        matches!(
+            adjustment,
+            mojito_checked::checked::SemanticAdjustment::ConstructTypeParam { .. }
+        ) && matches!(self.expression_types.borrow().get(site),
+            Some(Ty::Param { binder, .. })
+                if self.self_decls.iter().all(|decl| *decl.id() != binder.id))
+    }
+
     /// Whether the adjustment at `site` is an element store the call
     /// selected at the site stands for: one through the mutable reference
     /// its getter yields, with no synthesized value, or one read through a
@@ -3219,7 +3248,8 @@ impl Checker {
                 let kept_apart = matches!(
                     adjustment,
                     mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
-                ) || self.kept_element_store(&occurrence.span, adjustment);
+                ) || self.kept_element_store(&occurrence.span, adjustment)
+                    || self.own_binder_construction(&occurrence.span, adjustment);
                 (!kept_apart && !adjustment_derives(adjustment)).then(|| {
                     let spelled = format!("{adjustment:?}");
                     let variant = spelled
@@ -5735,6 +5765,28 @@ fn adjustment_derives(adjustment: &mojito_checked::checked::SemanticAdjustment) 
     ) || mojito_checked::templates::derive_adjustment(adjustment, &Ty::clone).is_some()
 }
 
+/// A construction of a binder the instance keeps symbolic (`H()` in a
+/// method's `[H: Hasher]`), which the instance records as the template did.
+///
+/// The adjustment names the binder only by spelling; the recorded type names
+/// its declaration, which the substitution leaves alone exactly when the
+/// binder is the method's own rather than the struct's.
+fn kept_binder_construction(
+    template: &CheckedBodyFacts,
+    id: OccurrenceId,
+    adjustment: &mojito_checked::checked::SemanticAdjustment,
+    substitute: &dyn Fn(&Ty) -> Ty,
+) -> Option<mojito_checked::checked::SemanticAdjustment> {
+    let mojito_checked::checked::SemanticAdjustment::ConstructTypeParam { param } = adjustment
+    else {
+        return None;
+    };
+    fact_at(&template.expression_types, id)
+        .filter(|ty| matches!(ty, Ty::Param { binder, .. } if *binder.name == **param))
+        .filter(|ty| substitute(ty) == **ty)
+        .map(|_| adjustment.clone())
+}
+
 /// One kept call's contract under an instance's own spans and bindings: the
 /// inverse of [`local_contract`].
 fn checked_contract(
@@ -5902,7 +5954,10 @@ fn substituted_facts(
             .operation_adjustments
             .iter()
             .map(|(id, adjustment)| {
-                mojito_checked::templates::derive_adjustment(adjustment, &substitute)
+                kept_binder_construction(template, *id, adjustment, &substitute)
+                    .or_else(|| {
+                        mojito_checked::templates::derive_adjustment(adjustment, &substitute)
+                    })
                     .map(|derived| (*id, derived))
             })
             .collect::<Option<_>>()
@@ -6114,6 +6169,15 @@ struct BodyShape<'a> {
     /// The struct constructions admitted, whose constructor an instance
     /// re-selects on its own arguments.
     constructions: RefCell<Vec<OccurrenceId>>,
+    /// The method's own trait-bounded type binders, which the body may
+    /// construct (`H()`).
+    binders: Vec<&'a str>,
+    /// The enclosing struct's binders: a construction naming one of them
+    /// would construct another type per instance.
+    struct_binders: Vec<&'a mojito_types::param_expr::ParamId>,
+    /// The constructions of a method's own binder admitted, whose
+    /// adjustment every clone records again as the template does.
+    binder_constructions: RefCell<Vec<OccurrenceId>>,
     /// The parameters declared with a `def(...)` type, which the body may
     /// call or forward.
     callable_params: Vec<&'a str>,
@@ -6759,6 +6823,7 @@ impl BodyShape<'_> {
             }
             _ if self.call_result(expr)
                 || self.construction(expr)
+                || self.binder_construction(expr)
                 || self.operator_value(expr)
                 || self.comprehension(expr) =>
             {
@@ -6988,6 +7053,43 @@ impl BodyShape<'_> {
             && element(value);
         self.locals.borrow_mut().truncate(scope);
         admitted && self.holds(MethodFeatures::COMPREHENSIONS)
+    }
+
+    /// A construction of one of the method's own trait-bounded binders
+    /// (`H()`): a temporary of the binder's type, which every clone keeps
+    /// symbolic, so each records the same `ConstructTypeParam`.
+    ///
+    /// The adjustment names the binder by spelling, so the recorded type
+    /// decides which declaration it constructs: a binder of the enclosing
+    /// struct is another type under each instance, and stays outside.
+    fn binder_construction(&self, expr: &Expr) -> bool {
+        let ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } = &expr.kind
+        else {
+            return false;
+        };
+        let id = self.occurrence(expr);
+        let admitted = !self.keyed
+            && param_args.is_empty()
+            && args.is_empty()
+            && kwargs.is_empty()
+            && self.binders.contains(&name.as_str())
+            && self.facts.is_none_or(|facts| {
+                matches!(fact_at(&facts.operation_adjustments, id),
+                    Some(mojito_checked::checked::SemanticAdjustment::ConstructTypeParam { param })
+                        if param == name)
+                    && matches!(fact_at(&facts.expression_types, id),
+                        Some(Ty::Param { binder, .. })
+                            if *binder.name == **name && !self.struct_binders.contains(&&binder.id))
+            });
+        if admitted {
+            self.binder_constructions.borrow_mut().push(id);
+        }
+        admitted && self.holds(MethodFeatures::BOUND_BINDERS)
     }
 
     /// A construction of a declared struct: a temporary of the constructed
@@ -8326,13 +8428,24 @@ impl BodyShape<'_> {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> bool {
-        let receiver = matches!(&object.kind, ExprKind::Identifier(name)
-            if self.params.contains(&name.as_str()) || self.local_kind(name).is_some());
         let (builtin, bound) = match (method, args.len()) {
             ("update", 1) => (BoundBuiltin::Update, "Hasher"),
             ("_update_with_simd", 1) => (BoundBuiltin::UpdateSimd, "Hasher"),
             ("write", 1..) => (BoundBuiltin::Write, "Writer"),
+            ("finish", 0) => (BoundBuiltin::Finish, "Hasher"),
             _ => return false,
+        };
+        // `finish` consumes its hasher, which the `^` transfer records at
+        // itself. Only the method's own binder stays a builtin receiver in
+        // every instance: a struct binder's hasher selects its own method.
+        let consumed = builtin == BoundBuiltin::Finish;
+        let receiver = if consumed {
+            matches!(&object.kind, ExprKind::Transfer(inner)
+                if matches!(inner.kind, ExprKind::Identifier(_)))
+                && self.whole_value(object)
+        } else {
+            matches!(&object.kind, ExprKind::Identifier(name)
+                if self.params.contains(&name.as_str()) || self.local_kind(name).is_some())
         };
         let id = self.occurrence(expr);
         let admitted = !self.keyed
@@ -8341,7 +8454,9 @@ impl BodyShape<'_> {
             && args.iter().all(|argument| self.sink_argument(argument))
             && self.facts.is_none_or(|facts| {
                 matches!(fact_at(&facts.expression_types, self.occurrence(object)),
-                    Some(Ty::Param { bounds, .. }) if bounds.iter().any(|carried| carried == bound))
+                    Some(Ty::Param { binder, bounds, .. })
+                        if bounds.iter().any(|carried| carried == bound)
+                            && !(consumed && self.struct_binders.contains(&&binder.id)))
                     && !facts.selected_calls.iter().any(|(site, _)| *site == id)
                     && !facts.overload_targets.iter().any(|(site, _)| *site == id)
                     && !facts.call_parameters.iter().any(|(site, _)| *site == id)

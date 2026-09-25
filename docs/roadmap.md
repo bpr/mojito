@@ -35,21 +35,22 @@ parameters symbolic, or deriving an instantiation from a checked template. A
 defect found on the way is filed by its kind; a divergence from the pin goes
 to section 3, however small.
 
-- [ ] **1.1 A construction of a method's own hasher binder keeps the clone
-  check**
+- [ ] **1.1 A bundled `Set` or `Dict` hash method is cloned per hasher**
 
-  Problem: `SemanticAdjustment::ConstructTypeParam` has no derivation recipe,
-  so a body that constructs a value of one of its binders (`H2()`) is
-  inferred per instance.
+  Problem: `Set.__hash__` and `Dict.__hash__` are cloned per hasher
+  (`Dict.__hash__$y3:Int$y6:String$y48:…AHasher…`), so their hasher binder
+  is substituted, and the template's `H2()` has no recipe for the concrete
+  hasher it becomes.
   - It blocks `Dict.__hash__` in `stdlib_heavy`, for both `Dict` instances,
     beside 1.2.
-  - The binder is the method's own trait-bounded one (`[H2: Hasher]`), which
-    a clone keeps symbolic, so the clone records the same adjustment.
-  - The adjustment names the binder only by spelling (`param: "H2"`), and a
-    struct binder's construction would change per instance; the recipe must
-    tell the two apart from the declaration, not from the name.
-  - Probe: `var inner = H(); self.value.__hash__(inner)` in a
-    `def m[H: Hasher](self, mut hasher: H)` of a generic struct.
+  - A construction of a binder every clone keeps symbolic derives
+    (`kept_binder_construction`); one the substitution rewrites refuses.
+  - `List.__hash__`, `Optional.__hash__`, and a user struct's `__hash__`
+    reached through `hash(x)` are cloned per struct instance only; why the
+    two bundled collections are keyed by the hasher too is not yet known.
+  - Either drop the hasher from their clone key, or derive the rewritten
+    `H2()` as a `CONSTRUCTIONS` construction of the concrete hasher.
+  - Probe: `hash(d)` on a `Dict[Int, String]`, under `MOJITO_TIMING_NOTES=1`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

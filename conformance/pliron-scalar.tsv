@@ -523,6 +523,7 @@ assets/ok/template_def_converting_argument.mojo	-	ineligible	no-scalar-entry-sha
 assets/ok/template_folded_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_inner_request.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_loop_local.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_binder_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_borrowed_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_bound_copy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_bound_dispatch.mojo	-	ineligible	no-scalar-entry-shape

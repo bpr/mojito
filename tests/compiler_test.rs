@@ -1807,6 +1807,38 @@ fn template_method_raises_derive() {
 }
 
 #[test]
+fn template_method_binder_construction_derives() {
+    // A construction of the method's own `[H: Hasher]` binder, kept symbolic
+    // by every clone, and the fresh hasher consumed through `finish`.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_binder_construction.mojo"),
+        "True False\nTrue False\nTrue False\n",
+        &[("Sealed.__hash__", 3)],
+    );
+}
+
+#[test]
+fn template_method_struct_binder_construction_keeps_the_clone_check() {
+    // A struct binder's construction (`Self.H()`) builds another type under
+    // each instance, so the body stays outside the class.
+    let source = "from std.hashlib import Hasher\nfrom std.hashlib.hasher import default_hasher\n\n\nstruct Mixer[H: Hasher](Movable):\n    var seed: Int\n\n    def __init__(out self, seed: Int):\n        self.seed = seed\n\n    def mix(self) -> UInt64:\n        var inner = Self.H()\n        inner.update(self.seed)\n        return inner^.finish()\n\n\ndef main():\n    var a = Mixer[default_hasher](3)\n    var b = Mixer[default_hasher](3)\n    print(a.mix() == b.mix())\n";
+    let compiler = Compiler::default();
+    let program = compile_entry(&compiler, source);
+    let stats = program.template_stats();
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "True\n"
+    );
+    assert!(
+        stats.refused.iter().any(|(name, reason)| {
+            name.starts_with("Mixer.mix$") && reason == "its template is not certified"
+        }),
+        "the struct binder's construction leaves the body outside the class: {:?}",
+        stats.refused
+    );
+}
+
+#[test]
 fn template_method_value_parameter_templates_reuse() {
     // A struct with a scalar value parameter (`Grid[T, rows: Int]`, as
     // `Array`) or an origin parameter (`Span`) is never cloned whole, so its

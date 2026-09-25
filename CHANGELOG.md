@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method that constructs a value of its own trait-bounded binder
+  (`var inner = H()` in `def __hash__[H: Hasher](self, mut hasher: H)`) and
+  consumes it with `inner^.finish()` now derives its instances from the
+  checked template: every clone keeps that binder symbolic, so it records the
+  same construction. Such bodies used to keep the clone check because a
+  binder's construction had no derivation recipe.
 - A method holding a `with` statement now derives its instances from the
   checked template: the template keeps the form its manager's declarations
   select, and each instance builds its own desugar from its syntax, whose
