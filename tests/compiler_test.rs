@@ -1807,6 +1807,61 @@ fn template_method_raises_derive() {
 }
 
 #[test]
+fn template_method_value_parameter_templates_reuse() {
+    // A struct with a scalar value parameter (`Grid[T, rows: Int]`, as
+    // `Array`) or an origin parameter (`Span`) is never cloned whole, so its
+    // methods are certified as templates and their own facts reused in every
+    // later pass instead of being inferred again. A receiver origin naming
+    // the method's own binder (`ref [o] self`) derives per instance.
+    let source = include_str!("../assets/ok/template_method_value_parameter.mojo");
+    let expected = "2 3\na 2\n5 5 3\nz 2\n4 8 False 2 6 True\n2 2\n";
+    let compiler = Compiler::default();
+    let program = compile_entry(&compiler.clone().with_template_verification(false), source);
+    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        expected
+    );
+    assert_eq!(
+        compiler.execute(&verified).expect("execute").output,
+        expected
+    );
+    let stats = program.template_stats();
+    for name in [
+        "Grid.count",
+        "Grid.total",
+        "Grid.full",
+        "Array.__len__",
+        "Array.__getitem__",
+        "Array.unsafe_get",
+        "Span.__len__",
+        "Span.__getitem__",
+        "Cell.hits_of",
+    ] {
+        assert_eq!(
+            certified_count(stats, name),
+            1,
+            "{name}: one template inference"
+        );
+        assert!(
+            stats.reused.iter().any(|reused| reused == name),
+            "{name}: later passes reuse the template's own facts: {stats:?}"
+        );
+    }
+    let derived: std::collections::HashSet<&str> = stats
+        .derived
+        .iter()
+        .map(String::as_str)
+        .filter(|name| name.starts_with("Cell.hits_of$"))
+        .collect();
+    assert_eq!(
+        derived.len(),
+        2,
+        "both receiver-origin clones derive: {stats:?}"
+    );
+}
+
+#[test]
 fn template_method_raised_string_keeps_the_clone_check() {
     // A raised string literal is converted to `Error` by its type, which no
     // recipe keeps yet, so the body stays outside the class and still runs.

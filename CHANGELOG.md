@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method of a struct with a scalar value parameter or an origin parameter
+  (`Array`, `Span`, a user `Grid[T, rows: Int]`) is now certified as a
+  checked template, so its facts are reused in every later pass instead of
+  the body being inferred again: a `Self.rows` read is a runtime read of the
+  reified value on the erased path such a struct keeps, and a pointer field
+  whose provenance is the struct's own origin names no checker-local place.
+  A receiver origin naming one of the method's own origin binders
+  (`ref [o] self`) is admitted as a signature fact, so each per-instantiation
+  clone of such a method derives too.
+
 - A compile-time-keyed `def` clone now inherits its checked template's facts
   when the body reads a `comptime for` variable or a scalar value parameter
   as a runtime value (`sum += i`, `acc = acc * 2 + i`, `bump(i)`,

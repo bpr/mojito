@@ -2444,11 +2444,24 @@ impl Checker {
                         | ArgConvention::Ref
                 )
             );
+        // A receiver origin naming one of the method's own origin binders
+        // (`ref [o] self`) is a signature fact like a `ref` parameter's
+        // clause: the binder is kept by every clone (`ORIGIN_PARAMETERS`).
+        let receiver_origin_kept = method.self_origin.as_ref().is_none_or(|origins| {
+            matches!(origins.as_slice(), [origin]
+            if matches!(&origin.kind, ExprKind::Identifier(name)
+                if method.type_params.iter().any(|binder| {
+                    binder.name == *name && origin_binder(binder)
+                })))
+        });
         if !(plain_read || owned_receiver || is_static || constructs)
-            || method.self_origin.is_some()
+            || !receiver_origin_kept
             || initializer
         {
-            return outside("the receiver carries an origin, or is a copy or move initializer's");
+            return outside(
+                "the receiver carries an origin that is not the method's own binder, or is a copy \
+                 or move initializer's",
+            );
         }
         // A `where` clause is the declaration's constraint: the elaborator
         // mints a clone only where it evaluates true, and a trace exists only
@@ -2467,6 +2480,10 @@ impl Checker {
             );
         }
         let raises = method.raises || method.raises_type.is_some();
+        // A struct's origin binder is erased from its declarations, and a
+        // scalar value binder (`Array[T, length: Int]`) is read in the body
+        // as `Self.length`, a runtime read of the reified parameter on the
+        // erased path every such struct keeps: neither is substituted.
         let plain_struct = decls.iter().all(|decl| {
             matches!(
                 decl,
@@ -2475,10 +2492,10 @@ impl Checker {
                     callable_bound: None,
                     ..
                 }
-            )
+            ) || matches!(decl, ParamDecl::Value { ty, variadic: false, .. } if closed_scalar(ty))
         });
         if !plain_struct {
-            return outside("a struct parameter is not a plain type parameter");
+            return outside("a struct parameter is not a plain type or scalar value parameter");
         }
         // A `mut` or `ref` parameter is bound from its declared convention
         // alone, and is rooted at its own binding under every instance. What
@@ -2546,7 +2563,13 @@ impl Checker {
             callable_calls: RefCell::new(Vec::new()),
             packs: Vec::new(),
             loop_vars: RefCell::new(Vec::new()),
-            values: Vec::new(),
+            values: decls
+                .iter()
+                .filter_map(|decl| match decl {
+                    ParamDecl::Value { name, .. } => Some(name.as_str()),
+                    ParamDecl::Type { .. } => None,
+                })
+                .collect(),
             print_calls: RefCell::new(Vec::new()),
             borrowed_params: params_passed(&[ArgConvention::Mut, ArgConvention::Ref]),
             mut_params: params_passed(&[ArgConvention::Mut]),
@@ -5890,11 +5913,19 @@ impl BodyShape<'_> {
     /// pointer under every instance, so its methods are the built-in ones.
     fn pointer(&self, expr: &Expr) -> bool {
         let admitted = match &expr.kind {
+            // An untracked pointer field, or one whose provenance is the
+            // struct's own origin parameter (`Span._data`): neither names a
+            // checker-local place, so the retained type is the template's
+            // under every instance.
             ExprKind::Member { .. } => {
                 self.receiver_field(expr)
                     && self.facts.is_none_or(|facts| {
                         fact_at(&facts.expression_types, self.occurrence(expr)).is_some_and(|ty| {
-                            matches!(ty, Ty::Pointer { origin, .. } if origin.as_origin().is_none())
+                            matches!(ty, Ty::Pointer { origin, .. }
+                            if matches!(
+                                origin.as_origin(),
+                                None | Some(mojito_types::origin::Origin::Param(_))
+                            ))
                         })
                     })
             }
@@ -6333,6 +6364,16 @@ impl BodyShape<'_> {
                 if matches!(&object.kind, ExprKind::Identifier(name) if name == "self"))
     }
 
+    /// Whether `expr` is `Self.<value>` in a method body, reading the
+    /// struct's own scalar value binder: a runtime read of the reified
+    /// parameter, with no binding of its own.
+    fn struct_value(&self, expr: &Expr) -> bool {
+        self.receiver
+            && matches!(&expr.kind, ExprKind::Member { object, field }
+                if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
+                    && self.values.contains(&field.as_str()))
+    }
+
     /// Whether `expr` is `self` itself in a method body.
     fn receiver_itself(&self, expr: &Expr) -> bool {
         self.receiver && matches!(&expr.kind, ExprKind::Identifier(name) if name == "self")
@@ -6385,7 +6426,10 @@ impl BodyShape<'_> {
             // A field of `self`, admitted where its recorded type is a closed
             // scalar: every use site of `expression` also demands `scalar`.
             ExprKind::Member { .. } => {
-                (self.receiver_field(expr) || self.reference_member(expr)) && self.scalar(expr)
+                (self.receiver_field(expr)
+                    || self.reference_member(expr)
+                    || self.struct_value(expr))
+                    && self.scalar(expr)
             }
             // A call of a method on `self`, on one of its fields, or on a
             // `var` local, passing scalars, whose recorded contract changes
