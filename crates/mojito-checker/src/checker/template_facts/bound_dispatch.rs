@@ -137,6 +137,18 @@ impl Checker {
             }
             witness @ BoundWitness::Method { .. } => {
                 self.install_witness(facts, id, &witness, &arguments, occurrences)?;
+                // The struct's own method may be a named `deinit self`
+                // destructor, which the template's receiver could not name.
+                let destroys = matches!(&ty, Ty::Struct(name, _) if self
+                    .structs
+                    .get(name)
+                    .is_some_and(|info| info.explicit_destructors.contains_key(&method)));
+                if destroys && !facts.explicit_destroy_calls.contains(&id) {
+                    facts.explicit_destroy_calls.push(id);
+                    let order =
+                        |id: &OccurrenceId| occurrences.iter().position(|found| found.id == *id);
+                    facts.explicit_destroy_calls.sort_by_key(order);
+                }
             }
         }
         Ok(())

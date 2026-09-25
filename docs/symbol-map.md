@@ -355,7 +355,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   struct's own method with its binders bound, chosen from an overload set
   by arity, and retargeted to a baked binder's per-call clone), with
   `witness_binders` judging one declaration, `realize_bound_dispatch` rewrites the
-  abstract contract with it, `realize_inverted_writes` turns an inverted
+  abstract contract with it (and marks a witness that is a named `deinit self`
+  destructor as an explicit-destroy call), `realize_inverted_writes` turns an inverted
   `write_to` on a struct instance into that call, and
   `realize_bound_builtin` re-proves a `hasher.update`/`writer.write`
   argument's bound. The submodule `template_facts/constructions.rs`
@@ -379,7 +380,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`CheckedTemplate`, `CheckedBodyFacts`, `TemplateCatalog`, `InstanceTrace`,
   `OccurrenceId`, `TemplateObligation`, `MethodFeatures`, the template-local
   `TemplateCallContract` with `closed_method_contract` and its consuming
-  sibling `consuming_method_contract`, and the exhaustive
+  siblings `consuming_method_contract` (through a bound) and
+  `consuming_nominal_contract` (a nominal receiver's `^` transfer), and the
+  exhaustive
   `derive_adjustment`) is `crates/mojito-checked/src/templates.rs`. The
   declaration-level trace is `comptime.rs`'s `DefInstanceTrace` (type,
   value, and pack bindings), recorded by `specialize.rs:generate_def_spec`,

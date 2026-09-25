@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method whose body consumes a value through a method that takes its
+  receiver — a named `deinit self` destructor on a local or on a field of a
+  consumed `self` (`entry^.reap_value()`, `self._alloc^.unsafe_leak()`), a
+  `var self` method, or a `deinit self` requirement through a bound — now
+  derives its per-instantiation clones from the checked template instead of
+  keeping the clone check. Which methods a struct declares as destructors
+  does not change with its arguments; through a bound, the instance's own
+  struct is asked. `Dict.pop`, `Dict.clear_with`, `Dict.deinit_with`, and
+  `Set.difference_update` are among the bundled bodies this covers.
+
 - A `var` declared inside a `comptime for` body that unrolls more than once
   is now one binding per iteration, as upstream: each unrolled copy that
   declares a binding is its own scope, so the body may also shadow an outer

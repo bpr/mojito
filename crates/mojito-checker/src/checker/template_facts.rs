@@ -2633,6 +2633,11 @@ impl Checker {
     /// - `RAISES`: see [`BodyShape::raised`]. A `raise` records nothing of
     ///   its own, and the judgment an instance repeats there holds under
     ///   every substitution the template's holds under.
+    /// - `CONSUMING_CALLS`: see [`BodyShape::consuming_call`] and
+    ///   `consuming_nominal_contract`. The receiver's move is recorded at its
+    ///   `^` transfer, and a named `deinit self` destructor's mark is the
+    ///   struct's declaration, so an instance changes only the target, as a
+    ///   sibling call's.
     ///
     /// Any other handle, borrowed receiver, reference result, interior
     /// reference, or copyable read in the body refuses it
@@ -3564,6 +3569,9 @@ impl Checker {
             discarded_reference_results: keyed(&|span| {
                 self.discarded_reference_results.borrow().contains(span)
             }),
+            explicit_destroy_calls: keyed(&|span| {
+                self.explicit_destroy_calls.borrow().contains(span)
+            }),
             reference_value_uses: values(&occurrences, &self.reference_value_uses.borrow()),
             deletable_bindings: keyed(&|span| {
                 self.explicit_destroy_deletability
@@ -4021,34 +4029,12 @@ impl Checker {
                 .borrow_mut()
                 .insert(span(id)?, Vec::new());
         }
-        for id in &facts.unconsumed_temporaries {
-            self.unconsumed_temporaries.borrow_mut().insert(span(id)?);
-        }
-        for id in &facts.discarded_reference_results {
-            self.discarded_reference_results
-                .borrow_mut()
-                .insert(span(id)?);
-        }
         for (id, writable) in &facts.reference_value_uses {
             self.reference_value_uses
                 .borrow_mut()
                 .insert(span(id)?, *writable);
         }
-        for id in &facts.deletable_bindings {
-            self.explicit_destroy_deletability
-                .borrow_mut()
-                .bindings
-                .insert(span(id)?);
-        }
-        for id in &facts.linear_bindings {
-            self.explicit_destroy_deletability
-                .borrow_mut()
-                .linear_bindings
-                .insert(span(id)?);
-        }
-        for id in &facts.linear_temporaries {
-            self.linear_temporaries.borrow_mut().insert(span(id)?);
-        }
+        self.install_occurrence_marks(facts, &span)?;
         let checked_contract = |call: &TemplateCallContract| {
             checked_contract(call, &span, &placed, &rooted, &referenced)
         };
@@ -4191,6 +4177,38 @@ impl Checker {
                 .collect(),
             param_owners,
         )
+    }
+
+    /// Install the bare per-occurrence marks: temporaries no one consumes,
+    /// discarded results, explicit-destroy calls, and each binding's
+    /// deletability.
+    fn install_occurrence_marks(
+        &self,
+        facts: &CheckedBodyFacts,
+        span: &dyn Fn(&OccurrenceId) -> Result<SourceSpan, TypeError>,
+    ) -> Result<(), TypeError> {
+        for id in &facts.unconsumed_temporaries {
+            self.unconsumed_temporaries.borrow_mut().insert(span(id)?);
+        }
+        for id in &facts.discarded_reference_results {
+            self.discarded_reference_results
+                .borrow_mut()
+                .insert(span(id)?);
+        }
+        for id in &facts.explicit_destroy_calls {
+            self.explicit_destroy_calls.borrow_mut().insert(span(id)?);
+        }
+        for id in &facts.linear_temporaries {
+            self.linear_temporaries.borrow_mut().insert(span(id)?);
+        }
+        let mut deletability = self.explicit_destroy_deletability.borrow_mut();
+        for id in &facts.deletable_bindings {
+            deletability.bindings.insert(span(id)?);
+        }
+        for id in &facts.linear_bindings {
+            deletability.linear_bindings.insert(span(id)?);
+        }
+        Ok(())
     }
 
     /// Install each element store: the call installed at its site is its
@@ -4469,6 +4487,7 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::SelectedCalls
         | FactTable::InteriorInvalidations
         | FactTable::DiscardedReferenceResults
+        | FactTable::ExplicitDestroyCalls
         | FactTable::ReferenceValueUses
         | FactTable::InteriorReferences
         | FactTable::CopyableReferenceResultReads
@@ -4495,7 +4514,6 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::DeclarationCaptures
         | FactTable::ComprehensionBindings
         | FactTable::IterationProtocols
-        | FactTable::ExplicitDestroyCalls
         | FactTable::ImplicitlyCopiedConsumingReceivers
         | FactTable::TruthinessConditions => false,
     }
@@ -6602,6 +6620,44 @@ impl BodyShape<'_> {
             })
     }
 
+    /// A method call on the `^` transfer of a named place the body owns, on
+    /// a nominal struct, whose callee consumes the receiver: `var self`, or
+    /// a named `deinit self` destructor (`entry^.reap_value()`).
+    ///
+    /// The transfer records the move at the receiver and owes `Movable` per
+    /// instance, as every transfer does; the contract changes per instance
+    /// only in its target and its substituted types
+    /// (`consuming_nominal_contract`). The explicit-destroy mark the call
+    /// records depends on which methods the receiver's struct declares with
+    /// `deinit self`, which its arguments do not change.
+    fn consuming_call(
+        &self,
+        expr: &Expr,
+        object: &Expr,
+        method: &str,
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> bool {
+        let ExprKind::Transfer(inner) = &object.kind else {
+            return false;
+        };
+        !self.keyed
+            && matches!(
+                inner.kind,
+                ExprKind::Identifier(_) | ExprKind::Member { .. }
+            )
+            && self.whole_value(object)
+            && args
+                .iter()
+                .chain(kwargs.iter().map(|keyword| &keyword.value))
+                .all(|argument| self.argument(expr, argument))
+            && self.facts.is_none_or(|facts| {
+                self.named_contract(facts, expr, inner, method)
+                    .is_some_and(mojito_checked::templates::consuming_nominal_contract)
+            })
+            && self.holds(MethodFeatures::CONSUMING_CALLS)
+    }
+
     /// The contract the call at `expr` recorded, when it names `method` on
     /// the struct `object` has.
     fn named_contract<'f>(
@@ -6835,6 +6891,7 @@ impl BodyShape<'_> {
                         .facts
                         .is_none_or(|facts| self.sibling_call(facts, expr, object, method));
                 sibling
+                    || self.consuming_call(expr, object, method, args, kwargs)
                     || self.bound_dispatch(expr, object, args, kwargs)
                     || self.bound_builtin(expr, object, method, args, kwargs)
             }
@@ -7237,9 +7294,10 @@ impl BodyShape<'_> {
                         Some(mojito_ast::ast::ArgConvention::Mut) => {
                             call.contract.receiver_requires_place
                         }
-                        Some(mojito_ast::ast::ArgConvention::Var) => {
-                            consumed && call.invalidations.is_empty()
-                        }
+                        Some(
+                            mojito_ast::ast::ArgConvention::Var
+                            | mojito_ast::ast::ArgConvention::Deinit,
+                        ) => consumed && call.invalidations.is_empty(),
                         Some(_) => false,
                     }
                     && (call.contract.result_ty == *receiver

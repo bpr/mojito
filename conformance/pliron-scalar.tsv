@@ -533,6 +533,7 @@ assets/ok/template_method_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_converting_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_converting_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_converting_call_argument.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_explicit_destroy_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_getter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_moves.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_operator_dispatch.mojo	-	ineligible	no-scalar-entry-shape

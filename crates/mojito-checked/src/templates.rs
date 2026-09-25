@@ -400,12 +400,32 @@ pub fn closed_reference_contract(call: &TemplateCallContract) -> bool {
 ///
 /// The receiver is the `^` transfer the call spells, which records the move
 /// at the receiver's own expression, not in the contract, so an instance's
-/// consuming witness changes only the target, as a read one does.
+/// consuming witness changes only the target, as a read one does. The
+/// callee takes it as `var self` or `deinit self`.
 pub fn consuming_method_contract(call: &TemplateCallContract) -> bool {
+    use mojito_ast::ast::ArgConvention;
+    let convention = call.contract.receiver_convention;
     call.reference_result.is_none()
-        && call.contract.receiver_convention == Some(mojito_ast::ast::ArgConvention::Var)
+        && matches!(convention, Some(ArgConvention::Var | ArgConvention::Deinit))
         && !call.contract.receiver_requires_place
-        && closed_contract(call, Some(mojito_ast::ast::ArgConvention::Var), false)
+        && closed_contract(call, convention, false)
+}
+
+/// Whether a method call's contract is a [`value_method_contract`] but for
+/// a nominal receiver it consumes.
+///
+/// The receiver is the `^` transfer the call spells, as for
+/// [`consuming_method_contract`]; the callee takes it as `var self` or as a
+/// named `deinit self` destructor, a convention of the struct's own
+/// declaration, which substitution does not change.
+pub fn consuming_nominal_contract(call: &TemplateCallContract) -> bool {
+    use mojito_ast::ast::ArgConvention;
+    let convention = call.contract.receiver_convention;
+    call.reference_result.is_none()
+        && matches!(convention, Some(ArgConvention::Var | ArgConvention::Deinit))
+        && !call.contract.receiver_requires_place
+        && call.invalidations.is_empty()
+        && closed_contract(call, convention, true)
 }
 
 /// Whether a call keeps the caller's place for this argument: what a `mut`
@@ -717,6 +737,12 @@ impl MethodFeatures {
     /// `Error("…")`: whether the operand matches the declared error type,
     /// and whether it is a string, hold alike under every instance.
     pub const RAISES: Self = Self(1 << 21);
+    /// A method call on the `^` transfer of a named place whose callee
+    /// consumes its receiver (`var self`, or a named `deinit self`
+    /// destructor), on a nominal struct: the move is recorded at the
+    /// transfer, and which methods a struct declares as destructors does not
+    /// change with its arguments.
+    pub const CONSUMING_CALLS: Self = Self(1 << 22);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
@@ -1111,6 +1137,11 @@ pub struct CheckedBodyFacts {
     /// Values an expression statement or a `_ =` assignment discards. The
     /// statement's syntax alone decides it, so an instance inherits the set.
     pub discarded_reference_results: Vec<OccurrenceId>,
+    /// Calls of a struct's named `deinit self` method. A nominal receiver's
+    /// struct declares the method whatever its arguments, so an instance
+    /// inherits the set; a call through a bound asks the instance's struct
+    /// again once it is realized.
+    pub explicit_destroy_calls: Vec<OccurrenceId>,
     /// Expressions kept as a reference handle rather than read through, and
     /// whether the handle is writable. Only the value of a `return` in a
     /// method that returns a reference derives: the declaration and the
@@ -1426,6 +1457,12 @@ impl CheckedBodyFacts {
         );
         differing(
             &mut out,
+            "explicit_destroy_calls",
+            &self.explicit_destroy_calls,
+            &other.explicit_destroy_calls,
+        );
+        differing(
+            &mut out,
             "reference_value_uses",
             &self.reference_value_uses,
             &other.reference_value_uses,
@@ -1692,6 +1729,7 @@ impl CheckedBodyFacts {
                 literal.unconsumed_temporary
             }),
             discarded_reference_results: flagged(&self.discarded_reference_results),
+            explicit_destroy_calls: flagged(&self.explicit_destroy_calls),
             reference_value_uses: at(&self.reference_value_uses, occurrences, folded),
             deletable_bindings: flagged_except(&self.deletable_bindings, &[]),
             linear_bindings: flagged_except(&self.linear_bindings, &[]),
@@ -1788,6 +1826,7 @@ impl CheckedBodyFacts {
             + self.interior_invalidations.len()
             + self.unconsumed_temporaries.len()
             + self.discarded_reference_results.len()
+            + self.explicit_destroy_calls.len()
             + self.reference_value_uses.len()
             + self.deletable_bindings.len()
             + self.linear_bindings.len()

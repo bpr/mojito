@@ -1883,6 +1883,42 @@ fn template_method_raised_string_keeps_the_clone_check() {
 }
 
 #[test]
+fn template_method_explicit_destroy_call_derives() {
+    // A consuming call on a `^` transfer: a named `deinit self` destructor on
+    // a local or on a field of a consumed `self`, a `var self` method, and a
+    // `deinit self` requirement through a bound, whose instance's struct is
+    // asked again whether it names a destructor.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_explicit_destroy_call.mojo"),
+        "2 3 5\n6 7\n8 9\n10 22 1\n",
+        &[
+            ("Desk.spend", 2),
+            ("Desk.lease", 2),
+            ("Ledger.close", 2),
+            ("Clerk.handle", 2),
+        ],
+    );
+}
+
+#[test]
+fn template_method_defaulted_destructor_keeps_the_clone_check() {
+    // A destructor's defaulted argument is evaluated in the callee's scope,
+    // which no recipe keeps yet, so the body stays outside the class.
+    let source = "@explicit_destroy(\"finish the ticket\")\nstruct Ticket(Movable, Deinitable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def finish(deinit self, bonus: Int = 1) -> Int:\n        return self.id + bonus\n\n\nstruct Desk[T: Copyable & Deinitable](Movable):\n    var count: Int\n\n    def __init__(out self):\n        self.count = 0\n\n    def spend(self, n: Int) -> Int:\n        var ticket = Ticket(n)\n        return ticket^.finish()\n\n\ndef main():\n    print(Desk[Int]().spend(1))\n";
+    let compiler = Compiler::default();
+    let program = compile_entry(&compiler, source);
+    let stats = program.template_stats();
+    assert_eq!(compiler.execute(&program).expect("execute").output, "2\n");
+    assert!(
+        stats.refused.iter().any(|(name, reason)| {
+            name.starts_with("Desk.spend$") && reason == "its template is not certified"
+        }),
+        "the defaulted argument leaves the body outside the class: {:?}",
+        stats.refused
+    );
+}
+
+#[test]
 fn template_method_struct_argument_derives() {
     // An instance argument that is a struct declaring fields of its own
     // parameter types is judged with those fields at its own arguments, so
