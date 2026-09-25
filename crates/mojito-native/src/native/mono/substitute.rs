@@ -190,8 +190,13 @@ pub(super) fn substitute_value_parameter_reads(
 ) -> Result<(), MonoError> {
     for block in blocks {
         for instruction in &mut block.instrs {
+            // A promoted callable parameter is a runtime parameter of this
+            // instance: its reads stay reads of the closure the caller
+            // passed, since folding the name in would discard the
+            // environment the body calls through.
             if let MirInstr::UseVar { dest, var, .. } = instruction
                 && let Some(name) = var_names.get(*var as usize)
+                && !bindings.runtime_callables.contains(name)
                 && let Some(value) = bindings.values.get(name)
             {
                 let constant = if let Some(callable) = bindings.callables.get(name) {

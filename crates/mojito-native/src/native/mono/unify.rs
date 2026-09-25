@@ -62,6 +62,52 @@ pub(super) fn ordered_arguments(
         .collect()
 }
 
+/// Each supplied compile-time argument paired with the declaration it fills.
+/// Positional arguments skip the inferred-only declarations
+/// (`hash[T: Hashable, //, HasherType]` binds `HasherType` first), as the
+/// checker's binder does; an argument matching no declaration is dropped.
+pub(super) fn matched_parameter_arguments<'a>(
+    decls: &'a [ParamDecl],
+    arguments: &[mojito_mir::mir::MirParamArg],
+) -> Vec<(&'a ParamDecl, Reg)> {
+    let explicit: Vec<&ParamDecl> = decls
+        .iter()
+        .filter(|declaration| {
+            !matches!(
+                declaration,
+                ParamDecl::Type {
+                    infer_only: true,
+                    ..
+                } | ParamDecl::Value {
+                    infer_only: true,
+                    ..
+                }
+            )
+        })
+        .collect();
+    let mut positional = 0;
+    let mut matched = Vec::new();
+    for argument in arguments {
+        let Some(value_reg) = argument.value else {
+            if argument.name.is_none() {
+                positional += 1;
+            }
+            continue;
+        };
+        let declaration = if let Some(name) = &argument.name {
+            decls.iter().find(|declaration| declaration.name() == name)
+        } else {
+            let declaration = explicit.get(positional).copied();
+            positional += 1;
+            declaration
+        };
+        if let Some(declaration) = declaration {
+            matched.push((declaration, value_reg));
+        }
+    }
+    matched
+}
+
 pub(super) fn bind_explicit_value_arguments(
     decls: &[ParamDecl],
     arguments: &[mojito_mir::mir::MirParamArg],
@@ -71,41 +117,9 @@ pub(super) fn bind_explicit_value_arguments(
     is_struct: &dyn Fn(&str) -> bool,
     enclosing_types: &HashMap<String, Ty>,
 ) -> Result<(), MonoError> {
-    let mut positional = 0;
-    for argument in arguments {
-        let Some(value_reg) = argument.value else {
-            if argument.name.is_none() {
-                positional += 1;
-            }
-            continue;
-        };
-        // Positional compile-time arguments skip the inferred-only
-        // declarations (`hash[T: Hashable, //, HasherType]` binds
-        // `HasherType` first), as the checker's binder does.
-        let explicit: Vec<&ParamDecl> = decls
-            .iter()
-            .filter(|declaration| {
-                !matches!(
-                    declaration,
-                    ParamDecl::Type {
-                        infer_only: true,
-                        ..
-                    } | ParamDecl::Value {
-                        infer_only: true,
-                        ..
-                    }
-                )
-            })
-            .collect();
-        let declaration = if let Some(name) = &argument.name {
-            decls.iter().find(|declaration| declaration.name() == name)
-        } else {
-            let declaration = explicit.get(positional).copied();
-            positional += 1;
-            declaration
-        };
+    for (declaration, value_reg) in matched_parameter_arguments(decls, arguments) {
         match declaration {
-            Some(ParamDecl::Value { name, .. }) => {
+            ParamDecl::Value { name, .. } => {
                 let value =
                     constant_values
                         .get(&value_reg.0)
@@ -124,7 +138,7 @@ pub(super) fn bind_explicit_value_arguments(
             // spells that binder, which the enclosing instance's bindings
             // resolve. An unresolvable spelling leaves the slot to its
             // default.
-            Some(ParamDecl::Type { name, .. }) => {
+            ParamDecl::Type { name, .. } => {
                 let Some(CtValue::Str(spelling)) = constant_values.get(&value_reg.0) else {
                     continue;
                 };
@@ -137,7 +151,6 @@ pub(super) fn bind_explicit_value_arguments(
                     bindings.types.insert(name.clone(), bound);
                 }
             }
-            _ => {}
         }
     }
     Ok(())

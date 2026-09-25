@@ -489,6 +489,7 @@ copyinit-moveinit	run	assets/ok/copyinit_moveinit.mojo
 generic-copyable-iterator-refinement	run	assets/ok/generic_copyable_iterator_refinement.mojo
 input-prompt	run	assets/ok/input.mojo
 lambda-higher-order	run	assets/ok/lambda_hof.mojo
+capturing-callable-parameter-with-locals	run	assets/ok/capturing_callable_parameter_with_locals.mojo
 loop-binding-consuming-copy	run	assets/ok/loop_binding_consuming_copy.mojo
 nominal-string-codepoint-from-u32	run	assets/ok/nominal_string_codepoint_from_u32.mojo
 nominal-string-codepoint-type	run	assets/ok/nominal_string_codepoint_type.mojo

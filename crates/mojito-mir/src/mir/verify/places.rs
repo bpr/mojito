@@ -155,6 +155,91 @@ pub fn instruction_places(instruction: &MirInstr) -> Vec<&MirPlace> {
     }
 }
 
+/// The same places as [`instruction_places`], for a pass that rewrites the
+/// slots they address.
+pub fn instruction_places_mut(instruction: &mut MirInstr) -> Vec<&mut MirPlace> {
+    match instruction {
+        MirInstr::EstablishLoans { loans, .. } => {
+            loans.iter_mut().map(|loan| &mut loan.place).collect()
+        }
+        MirInstr::MakeRef { place, .. }
+        | MirInstr::MovePlace { place, .. }
+        | MirInstr::Store { place, .. }
+        | MirInstr::StoreRef { place, .. }
+        | MirInstr::LoadPlace { place, .. }
+        | MirInstr::VariantSet { place, .. }
+        | MirInstr::VariantSetInitWith { place, .. }
+        | MirInstr::VariantReplace { place, .. }
+        | MirInstr::ConsumePlace { place, .. }
+        | MirInstr::DropPlace { place } => vec![place],
+        MirInstr::MakeClosure { captures, .. } => captures
+            .iter_mut()
+            .map(|capture| &mut capture.place)
+            .collect(),
+        MirInstr::Call {
+            arg_places,
+            kwarg_places,
+            ..
+        } => arg_places
+            .iter_mut()
+            .flatten()
+            .chain(kwarg_places.iter_mut().flatten())
+            .collect(),
+        MirInstr::CallIndirect {
+            callee_place,
+            arg_places,
+            kwarg_places,
+            ..
+        } => callee_place
+            .iter_mut()
+            .chain(arg_places.iter_mut().flatten())
+            .chain(kwarg_places.iter_mut().flatten())
+            .collect(),
+        MirInstr::MethodCall {
+            recv_place,
+            arg_places,
+            kwarg_places,
+            ..
+        } => recv_place
+            .iter_mut()
+            .chain(arg_places.iter_mut().flatten())
+            .chain(kwarg_places.iter_mut().flatten())
+            .collect(),
+        MirInstr::Index {
+            base_place,
+            index_place,
+            ..
+        } => base_place
+            .iter_mut()
+            .chain(index_place.iter_mut())
+            .collect(),
+        MirInstr::Slice {
+            object_place,
+            arg_places,
+            ..
+        }
+        | MirInstr::MultiIndex {
+            object_place,
+            arg_places,
+            ..
+        } => object_place
+            .iter_mut()
+            .chain(arg_places.iter_mut().flatten())
+            .collect(),
+        MirInstr::MultiSet {
+            receiver_place,
+            arg_places,
+            value_place,
+            ..
+        } => receiver_place
+            .iter_mut()
+            .chain(arg_places.iter_mut().flatten())
+            .chain(value_place.iter_mut())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 pub(super) fn verify_place(
     function_name: &str,
     block: usize,

@@ -5,6 +5,8 @@
 
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use equiv::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use promote::*;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
@@ -77,6 +79,11 @@ struct Bindings {
     /// The call-site arity of an unspecialized variadic callee: substitution
     /// rewrites `VariadicPack(T)` into the concrete `RuntimePack([T'; n])`.
     variadic_arity: Option<usize>,
+    /// Callable parameters whose bound argument is a closure with captures.
+    /// The environment survives no name, so the instance takes the closure as
+    /// a runtime parameter and its body keeps the indirect call, instead of
+    /// folding the callable's name into a direct one.
+    runtime_callables: Vec<String>,
 }
 
 struct Specializer<'a> {
@@ -108,6 +115,7 @@ struct Specializer<'a> {
 mod equiv;
 mod infer;
 mod instances;
+mod promote;
 mod specializer;
 mod substitute;
 mod symbolic;

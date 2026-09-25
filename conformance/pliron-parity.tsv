@@ -40,6 +40,7 @@ assets/ok/call_temporary_ref_receiver.mojo	main	exe-differential	sanitized
 assets/ok/callable_element_call_dispatch.mojo	main	exe-differential	sanitized
 assets/ok/callable_struct_element_invocation.mojo	main	exe-differential	sanitized
 assets/ok/callable_struct_transfer_after_last_use.mojo	main	exe-differential	sanitized
+assets/ok/capturing_callable_parameter_with_locals.mojo	main	exe-differential	sanitized
 assets/ok/capturing_lambda_array_display.mojo	main	exe-differential	sanitized
 assets/ok/chained_comparison.mojo	main	exe-differential	sanitized
 assets/ok/closures.mojo	main	exe-differential	sanitized
@@ -175,7 +176,7 @@ assets/ok/keyword_subscript_user_struct.mojo	main	exe-differential	sanitized
 assets/ok/kwargs.mojo	main	exe-differential	sanitized
 assets/ok/lambda_basic.mojo	main	exe-differential	sanitized
 assets/ok/lambda_generic_comptime.mojo	main	exe-differential	sanitized
-assets/ok/lambda_hof.mojo	main	excluded	pliron backend: in `observe`: unsupported binding call to `main$scale` during monomorphization: Missing("x")
+assets/ok/lambda_hof.mojo	main	exe-differential	sanitized
 assets/ok/lambda_in_control_flow.mojo	main	exe-differential	sanitized
 assets/ok/layout_allocation.mojo	main	exe-differential	sanitized
 assets/ok/lifecycle_deprecated_spellings.mojo	main	exe-differential	sanitized

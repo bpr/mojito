@@ -57,9 +57,9 @@ use calls::*;
 use instr::*;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use intrinsics::*;
-pub use places::instruction_places;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use places::*;
+pub use places::{instruction_places, instruction_places_mut};
 pub use regs::*;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use subscripts::*;

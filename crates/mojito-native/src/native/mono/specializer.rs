@@ -255,6 +255,30 @@ impl<'a> Specializer<'a> {
             .as_str()
     }
 
+    /// The callable parameters this call binds to a closure that captures.
+    /// Their environments survive no name, so each becomes a runtime
+    /// parameter of the instance and an argument here.
+    pub(super) fn capturing_callable_arguments(
+        &self,
+        target: &str,
+        param_args: &[mojito_mir::mir::MirParamArg],
+    ) -> Vec<(String, Reg)> {
+        let Some(declaration) = self.declarations.get(target) else {
+            return Vec::new();
+        };
+        matched_parameter_arguments(&declaration.param_decls, param_args)
+            .into_iter()
+            .filter(|(decl, _)| {
+                matches!(decl, ParamDecl::Value { ty, .. }
+                    if matches!(peel_refs(ty), Ty::Func { .. } | Ty::GenericFunc { .. }))
+            })
+            .filter_map(|(decl, reg)| {
+                let (_, captures_are_empty) = self.callable_targets.get(&reg.0)?;
+                (!captures_are_empty).then(|| (decl.name().to_string(), reg))
+            })
+            .collect()
+    }
+
     pub(super) fn materialize(
         &mut self,
         key: &InstanceKey,
@@ -276,6 +300,17 @@ impl<'a> Specializer<'a> {
             e.function.get_or_insert_with(|| key.template.clone());
             e
         })?;
+        // A callable parameter the call site could not fold into this body
+        // becomes its last runtime parameter, carrying the closure — and its
+        // environment — that the body then calls indirectly.
+        let promoted: Vec<(String, Ty)> = bindings
+            .runtime_callables
+            .iter()
+            .filter_map(|parameter| {
+                promote_to_runtime_parameter(&mut function, parameter)
+                    .map(|ty| (parameter.clone(), ty))
+            })
+            .collect();
         self.constant_values = function_constant_values(&function);
         self.callable_targets = function_callable_targets(&function);
         self.enclosing_types.clone_from(&bindings.types);
@@ -303,6 +338,9 @@ impl<'a> Specializer<'a> {
             substitute_declaration(&mut declaration, bindings)?;
             declaration.lowered_name.clone_from(&name);
             declaration.param_decls.clear();
+            for (parameter, ty) in promoted {
+                declare_runtime_parameter(&mut declaration, &parameter, ty);
+            }
             self.instantiate_constructed_defaults(&key.template, &mut declaration)?;
             self.output_function_decls.push(declaration);
         }
@@ -548,6 +586,7 @@ impl<'a> Specializer<'a> {
                         func,
                         args,
                         kwargs,
+                        arg_places,
                         param_arg_regs,
                         ..
                     } => {
@@ -656,7 +695,7 @@ impl<'a> Specializer<'a> {
                         let receiver = (func.0.contains(".__init__")
                             && function.reg_types.contains_key(&dest.0))
                         .then_some(*dest);
-                        let (target, bindings, arguments) = self.infer_call(
+                        let (target, mut bindings, arguments) = self.infer_call(
                             owner,
                             function,
                             &func.0,
@@ -666,9 +705,20 @@ impl<'a> Specializer<'a> {
                             kwargs,
                             param_arg_regs,
                         )?;
+                        // A callable parameter bound to a closure with
+                        // captures keeps its environment: the instance takes
+                        // it as a trailing runtime parameter, so pass the
+                        // closure here as an ordinary argument.
+                        let capturing = self.capturing_callable_arguments(&target, param_arg_regs);
+                        bindings.runtime_callables =
+                            capturing.iter().map(|(name, _)| name.clone()).collect();
                         func.0 = self.enqueue(&target, bindings, arguments)?;
                         for param_arg in param_arg_regs.iter_mut() {
                             param_arg.value = None;
+                        }
+                        for (_, closure) in capturing {
+                            args.push(closure);
+                            arg_places.push(None);
                         }
                     }
                     MirInstr::MakeSimd { elems, .. } => {

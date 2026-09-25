@@ -1794,39 +1794,18 @@ words. The representation gap and the two standing ledgers are last.
       overflow), so the plan decides which are bugs and which are recorded
       choices.
     - Model: Opus, Planned.
-  - `native-exclusions-returned`: `assets/ok/lambda_hof.mojo` is the one
-    fixture the native backend still rejects — "unsupported binding call to
-    `main$scale` during monomorphization: Missing("x")".
-    - `observe[f: def(x: Int) capturing[origins] -> Int]` takes its callable
-      as a compile-time parameter and the argument captures `factor`.
-      Monomorphization binds the callable by name and rewrites the body's
-      read of it to `Const::Function("main$scale")`
-      (`mono/substitute.rs`), which erases the environment; a capturing
-      lambda's lowered body takes its captures as leading parameters, so the
-      direct call is one argument short.
-    - The VM keeps the closure and calls it indirectly. Passing the
-      environment natively means the instance takes the closure as a runtime
-      argument, which changes the instance's arity — something
-      monomorphization never does today. Both existing guards (the
-      `CallIndirect` rewrite's "generic retained callable … has captures",
-      and `infer_call`'s captures-empty condition) are simply not reached,
-      because the constant-folding happens first.
-    - The other three exclusions of the 2026-09-18 regeneration closed on
-      2026-09-19: an instance key that kept its arguments' origins minted a
-      second instance under the same origin-free symbol
-      (`interior_dest_rebind_releases_loans`,
-      `nominal_string_bytes_capacity`), and a direct
-      `iterator.__next__()` through the contract had no native
-      `CopyIteratorReference` adapter, which a `for` loop's own advance has
-      had all along (`copyable_iterator_reference_aggregate`).
-    - Until it closes, `tests/heavy/main.rs`'s `excluded == 0` fails on every
-      run, so `check-pliron-heavy` is red in every overnight gate
-      (2026-09-21, 2026-09-22, 2026-09-24). Leave the ratchet at zero: it only ever
-      ratchets down, and it is not what guards against a *new* exclusion —
-      the `expect_file!` manifest equality runs first and any new excluded
-      row changes the TSV.
-    - The arity change touches the instance signature, the call site, and the
-      pliron parameter-argument rule together.
+  - `method-capturing-callable-parameter`: a method whose compile-time
+    callable parameter binds a capturing closure is rejected — "operator Mul
+    is not defined for Int and None" — while the pin runs it and the same
+    closure through a free function is `assets/ok/lambda_hof.mojo`.
+    - The method call is what breaks it: the program runs once the
+      `runner.apply[scale](5)` line goes, so binding the closure to a
+      *method's* parameter is what retypes the captured `factor` as `None`.
+    - Pinned by `conformance/probes/method_capturing_callable_parameter.mojo`.
+    - The native side of this shape is unbuilt behind the checker: only the
+      direct-call arm promotes a capturing callable argument to a runtime
+      parameter (`mono/promote.rs`), so a `MethodCall` carrying one would
+      still reject contextually at monomorphization.
     - Model: Opus, Planned.
   - `destructor-timing-against-the-pin`: two corpus fixtures run the same
     destructors later than the pin does
