@@ -765,6 +765,11 @@ impl MethodFeatures {
     /// iterable's type, which an instance substitutes and selects from again,
     /// and the loop variable is a local of the body.
     pub const ITERATION: Self = Self(1 << 25);
+    /// A construction of a closed `SIMD`, `Scalar`, or scalar-alias value
+    /// from closed scalars (`UInt8(1)`), handed to a checker builtin or to a
+    /// by-value parameter: its dtype and width are the same under every
+    /// instance, and it selects no callee.
+    pub const SIMD_CONSTRUCTIONS: Self = Self(1 << 26);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
@@ -1232,6 +1237,10 @@ pub struct CheckedBodyFacts {
     /// its setter takes the value by keyword. The subscript's syntax and the
     /// setter's declaration decide both, so an instance inherits the entry.
     pub subscript_descriptors: Vec<(OccurrenceId, SubscriptDescriptors)>,
+    /// The dtype and width of each `SIMD`, `Scalar`, or scalar-alias
+    /// construction. Only a closed construction records one, and its
+    /// dimensions are the same in every instance.
+    pub simd_constructions: Vec<(OccurrenceId, (mojito_ast::ast::Dtype, i64))>,
     /// The iterator protocol of each runtime `for`, keyed by its iterable,
     /// which an instance selects again from the substituted iterable type.
     pub iterations: Vec<(OccurrenceId, TemplateIteration)>,
@@ -1334,6 +1343,14 @@ pub enum BoundBuiltin {
 
 /// One field of a derived bundle beside the inferred one, when they differ:
 /// what verification mode reports.
+/// Compare each named field of a derived and an inferred bundle with
+/// [`differing`], under the field's own name.
+macro_rules! differing_fields {
+    ($out:expr, $derived:expr, $inferred:expr; $($field:ident),+ $(,)?) => {
+        $(differing($out, stringify!($field), &$derived.$field, &$inferred.$field);)+
+    };
+}
+
 fn differing<T: std::fmt::Debug + PartialEq>(
     out: &mut String,
     name: &str,
@@ -1364,300 +1381,67 @@ impl CheckedBodyFacts {
     /// (inferred) one, each with both values: what verification mode reports.
     pub fn difference(&self, other: &Self) -> String {
         let mut out = String::new();
-        differing(
-            &mut out,
-            "occurrences",
-            &self.occurrences,
-            &other.occurrences,
+        differing_fields!(
+            &mut out, self, other;
+            occurrences,
+            expression_types,
+            expression_place_types,
+            binding_types,
+            expression_bindings,
+            statement_bindings,
+            expression_effects,
+            operation_adjustments,
+            generic_instantiations,
+            overload_targets,
+            call_parameters,
+            borrowed_reference_receivers,
+            borrowed_read_call_places,
+            read_temporary_arguments,
+            effect_free_callees,
+            builtin_len_calls,
+            selected_calls,
+            struct_applications,
+            rebind_assertions,
+            copy_place_value_uses,
+            interior_invalidations,
+            unconsumed_temporaries,
+            discarded_reference_results,
+            explicit_destroy_calls,
+            implicitly_copied_consuming_receivers,
+            reference_value_uses,
+            deletable_bindings,
+            linear_bindings,
+            linear_temporaries,
+            reference_results,
+            augmented_subscripts,
+            interior_references,
+            reference_binding_types,
+            reference_place_types,
+            copyable_reference_result_reads,
+            subscript_descriptors,
+            simd_constructions,
+            iterations,
+            call_place_uses,
+            transfers,
+            operators,
         );
-        differing(
-            &mut out,
-            "expression_types",
-            &self.expression_types,
-            &other.expression_types,
-        );
-        differing(
-            &mut out,
-            "expression_place_types",
-            &self.expression_place_types,
-            &other.expression_place_types,
-        );
-        differing(
-            &mut out,
-            "binding_types",
-            &self.binding_types,
-            &other.binding_types,
-        );
-        differing(
-            &mut out,
-            "expression_bindings",
-            &self.expression_bindings,
-            &other.expression_bindings,
-        );
-        differing(
-            &mut out,
-            "statement_bindings",
-            &self.statement_bindings,
-            &other.statement_bindings,
-        );
-        differing(
-            &mut out,
-            "expression_effects",
-            &self.expression_effects,
-            &other.expression_effects,
-        );
-        differing(
-            &mut out,
-            "operation_adjustments",
-            &self.operation_adjustments,
-            &other.operation_adjustments,
-        );
-        differing(
-            &mut out,
-            "generic_instantiations",
-            &self.generic_instantiations,
-            &other.generic_instantiations,
-        );
-        differing(
-            &mut out,
-            "overload_targets",
-            &self.overload_targets,
-            &other.overload_targets,
-        );
-        differing(
-            &mut out,
-            "call_parameters",
-            &self.call_parameters,
-            &other.call_parameters,
-        );
-        differing(
-            &mut out,
-            "borrowed_reference_receivers",
-            &self.borrowed_reference_receivers,
-            &other.borrowed_reference_receivers,
-        );
-        differing(
-            &mut out,
-            "borrowed_read_call_places",
-            &self.borrowed_read_call_places,
-            &other.borrowed_read_call_places,
-        );
-        differing(
-            &mut out,
-            "read_temporary_arguments",
-            &self.read_temporary_arguments,
-            &other.read_temporary_arguments,
-        );
-        differing(
-            &mut out,
-            "effect_free_callees",
-            &self.effect_free_callees,
-            &other.effect_free_callees,
-        );
-        differing(
-            &mut out,
-            "builtin_len_calls",
-            &self.builtin_len_calls,
-            &other.builtin_len_calls,
-        );
-        differing(
-            &mut out,
-            "selected_calls",
-            &self.selected_calls,
-            &other.selected_calls,
-        );
-        differing(
-            &mut out,
-            "struct_applications",
-            &self.struct_applications,
-            &other.struct_applications,
-        );
-        differing(
-            &mut out,
-            "rebind_assertions",
-            &self.rebind_assertions,
-            &other.rebind_assertions,
-        );
-        differing(
-            &mut out,
-            "copy_place_value_uses",
-            &self.copy_place_value_uses,
-            &other.copy_place_value_uses,
-        );
-        differing(
-            &mut out,
-            "interior_invalidations",
-            &self.interior_invalidations,
-            &other.interior_invalidations,
-        );
-        differing(
-            &mut out,
-            "unconsumed_temporaries",
-            &self.unconsumed_temporaries,
-            &other.unconsumed_temporaries,
-        );
-        differing(
-            &mut out,
-            "discarded_reference_results",
-            &self.discarded_reference_results,
-            &other.discarded_reference_results,
-        );
-        differing(
-            &mut out,
-            "explicit_destroy_calls",
-            &self.explicit_destroy_calls,
-            &other.explicit_destroy_calls,
-        );
-        differing(
-            &mut out,
-            "implicitly_copied_consuming_receivers",
-            &self.implicitly_copied_consuming_receivers,
-            &other.implicitly_copied_consuming_receivers,
-        );
-        differing(
-            &mut out,
-            "reference_value_uses",
-            &self.reference_value_uses,
-            &other.reference_value_uses,
-        );
-        differing(
-            &mut out,
-            "deletable_bindings",
-            &self.deletable_bindings,
-            &other.deletable_bindings,
-        );
-        differing(
-            &mut out,
-            "linear_bindings",
-            &self.linear_bindings,
-            &other.linear_bindings,
-        );
-        differing(
-            &mut out,
-            "linear_temporaries",
-            &self.linear_temporaries,
-            &other.linear_temporaries,
-        );
-        differing(
-            &mut out,
-            "reference_results",
-            &self.reference_results,
-            &other.reference_results,
-        );
-        differing(
-            &mut out,
-            "augmented_subscripts",
-            &self.augmented_subscripts,
-            &other.augmented_subscripts,
-        );
-        differing(
-            &mut out,
-            "interior_references",
-            &self.interior_references,
-            &other.interior_references,
-        );
-        differing(
-            &mut out,
-            "reference_binding_types",
-            &self.reference_binding_types,
-            &other.reference_binding_types,
-        );
-        differing(
-            &mut out,
-            "reference_place_types",
-            &self.reference_place_types,
-            &other.reference_place_types,
-        );
-        differing(
-            &mut out,
-            "copyable_reference_result_reads",
-            &self.copyable_reference_result_reads,
-            &other.copyable_reference_result_reads,
-        );
-        differing(
-            &mut out,
-            "subscript_descriptors",
-            &self.subscript_descriptors,
-            &other.subscript_descriptors,
-        );
-        differing(&mut out, "iterations", &self.iterations, &other.iterations);
-        differing(
-            &mut out,
-            "call_place_uses",
-            &self.call_place_uses,
-            &other.call_place_uses,
-        );
-        differing(&mut out, "transfers", &self.transfers, &other.transfers);
-        differing(&mut out, "operators", &self.operators, &other.operators);
         self.transfer_differences(other, &mut out);
-        differing(
-            &mut out,
-            "bound_builtins",
-            &self.bound_builtins,
-            &other.bound_builtins,
+        differing_fields!(
+            &mut out, self, other;
+            bound_builtins,
+            method_instantiations,
+            constructions,
+            value_callees,
+            callable_calls,
+            call_throughs,
+            call_through_reads,
+            repr_calls,
+            print_calls,
+            conversions,
+            typed_origins,
+            call_result_origins,
+            locals,
         );
-        differing(
-            &mut out,
-            "method_instantiations",
-            &self.method_instantiations,
-            &other.method_instantiations,
-        );
-        differing(
-            &mut out,
-            "constructions",
-            &self.constructions,
-            &other.constructions,
-        );
-        differing(
-            &mut out,
-            "value_callees",
-            &self.value_callees,
-            &other.value_callees,
-        );
-        differing(
-            &mut out,
-            "callable_calls",
-            &self.callable_calls,
-            &other.callable_calls,
-        );
-        differing(
-            &mut out,
-            "call_throughs",
-            &self.call_throughs,
-            &other.call_throughs,
-        );
-        differing(
-            &mut out,
-            "call_through_reads",
-            &self.call_through_reads,
-            &other.call_through_reads,
-        );
-        differing(&mut out, "repr_calls", &self.repr_calls, &other.repr_calls);
-        differing(
-            &mut out,
-            "print_calls",
-            &self.print_calls,
-            &other.print_calls,
-        );
-        differing(
-            &mut out,
-            "conversions",
-            &self.conversions,
-            &other.conversions,
-        );
-        differing(
-            &mut out,
-            "typed_origins",
-            &self.typed_origins,
-            &other.typed_origins,
-        );
-        differing(
-            &mut out,
-            "call_result_origins",
-            &self.call_result_origins,
-            &other.call_result_origins,
-        );
-        differing(&mut out, "locals", &self.locals, &other.locals);
         out
     }
 
@@ -1808,6 +1592,7 @@ impl CheckedBodyFacts {
             reference_place_types: at(&self.reference_place_types, occurrences, folded),
             copyable_reference_result_reads: flagged(&self.copyable_reference_result_reads),
             subscript_descriptors: at(&self.subscript_descriptors, occurrences, folded),
+            simd_constructions: at(&self.simd_constructions, occurrences, folded),
             iterations: at(&self.iterations, occurrences, folded),
             call_place_uses: flagged(&self.call_place_uses),
             transfers: flagged(&self.transfers),
@@ -1897,6 +1682,7 @@ impl CheckedBodyFacts {
             + self.reference_place_types.len()
             + self.copyable_reference_result_reads.len()
             + self.subscript_descriptors.len()
+            + self.simd_constructions.len()
             + self.iterations.len()
             + self.call_place_uses.len()
             + self.transfers.len()

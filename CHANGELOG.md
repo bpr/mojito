@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method whose body constructs a closed `SIMD` or scalar-alias value
+  (`UInt8(1)`) and hands it to a hasher, to a by-value parameter, or to a
+  `var` local now derives its instances from the checked template: the
+  construction's dtype and width are closed, so the instance installs the
+  template's record as it stands. Such bodies, like `Optional.__hash__`, used
+  to keep the clone check because SIMD constructions had no derivation
+  recipe.
 - A method whose body holds a runtime `for` — over a field of `self`, over
   `self` through its own iterator, over a sibling call's temporary, or owned
   over a local — now derives its instances from the checked template: the

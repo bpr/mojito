@@ -2673,6 +2673,10 @@ impl Checker {
     ///   and resolved against the place it borrows, so an instance keeps the
     ///   place and selects again from its own substituted type; the loop
     ///   variable's binding is a local like any other.
+    /// - `SIMD_CONSTRUCTIONS`: see [`BodyShape::simd_construction`]. Only a
+    ///   closed construction records its dtype and width, which the instance
+    ///   installs as they stand; its value goes to a checker builtin, a
+    ///   by-value parameter, or a `var` local.
     ///
     /// Any other handle, borrowed receiver, reference result, interior
     /// reference, or copyable read in the body refuses it
@@ -3568,6 +3572,7 @@ impl Checker {
             }),
             linear_temporaries: keyed(&|span| self.linear_temporaries.borrow().contains(span)),
             subscript_descriptors: values(&occurrences, &self.subscript_descriptors.borrow()),
+            simd_constructions: values(&occurrences, &self.simd_constructions.borrow()),
             iterations: self.captured_iterations(&occurrences, &local_place)?,
             call_place_uses: keyed(&|span| self.call_place_uses.borrow().contains(span)),
             transfers: occurrences
@@ -3964,6 +3969,11 @@ impl Checker {
             self.subscript_descriptors
                 .borrow_mut()
                 .insert(span(id)?, descriptors.clone());
+        }
+        for (id, dimensions) in &facts.simd_constructions {
+            self.simd_constructions
+                .borrow_mut()
+                .insert(span(id)?, *dimensions);
         }
         self.install_iterations(facts, &span, &rooted)?;
         for id in &facts.call_place_uses {
@@ -4494,9 +4504,9 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::ConversionSourceBorrows
         | FactTable::CallResultOrigins
         | FactTable::IterationProtocols
+        | FactTable::SimdConstructions
         | FactTable::CallTransfers => true,
         FactTable::ContextualBases
-        | FactTable::SimdConstructions
         | FactTable::ParameterizedMethodCalls
         | FactTable::TupleUnpackPlans
         | FactTable::ViewResultInteriors
@@ -5827,6 +5837,7 @@ impl BodyShape<'_> {
                     && self.moved_result.is_some()
                     && (closed
                         || self.whole_value(value)
+                        || self.simd_value(value)
                         || self.reference_read(value)
                         || (ty.is_some() && self.converted_place(value)))
                     && (ty.is_none() || self.annotated_binding(value));
@@ -6924,7 +6935,7 @@ impl BodyShape<'_> {
         });
         if !facts.call_place_uses.contains(&id) {
             let by_value = parameter.is_none_or(|parameter| !parameter.requires_place);
-            if self.expression(argument) && self.scalar(argument) {
+            if (self.expression(argument) && self.scalar(argument)) || self.simd_value(argument) {
                 return by_value;
             }
             // A whole value of any type, bound by value to a parameter of
@@ -7134,7 +7145,9 @@ impl BodyShape<'_> {
                 if name == "_unqualified_type_name" || name == "repr" {
                     return self.string_builtin(id, name, param_args, args, kwargs);
                 }
-                if self.scalar_conversion(id, name, param_args, args, kwargs) {
+                if self.scalar_conversion(id, name, param_args, args, kwargs)
+                    || self.simd_construction(id, name, args, kwargs)
+                {
                     return true;
                 }
                 // The built-in `len` reads its operand in place and realizes
@@ -7188,6 +7201,48 @@ impl BodyShape<'_> {
                     && fact_at(&facts.selected_calls, id).is_none()
                     && fact_at(&facts.conversions, id).is_none()
             })
+    }
+
+    /// A construction of a closed `SIMD`, `Scalar`, or scalar-alias value
+    /// from closed scalars (`UInt8(1)`, `SIMD[DType.uint8, 2](1, 2)`).
+    ///
+    /// Inference records a construction's dtype and width only when both
+    /// are closed, so a recorded one is the same under every instance. It
+    /// selects no callee and converts nothing, and its value is admitted
+    /// only where a closed value may go ([`Self::simd_value`]).
+    fn simd_construction(
+        &self,
+        id: OccurrenceId,
+        name: &str,
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> bool {
+        let admitted = (name == "SIMD"
+            || name == "Scalar"
+            || mojito_ast::ast::Dtype::from_scalar_alias(name).is_some())
+            && kwargs.is_empty()
+            && args
+                .iter()
+                .all(|argument| self.expression(argument) && self.scalar(argument))
+            && self.facts.is_none_or(|facts| {
+                fact_at(&facts.simd_constructions, id).is_some()
+                    && fact_at(&facts.expression_types, id)
+                        .is_some_and(|ty| !mojito_types::types::is_symbolic(ty))
+                    && fact_at(&facts.call_parameters, id).is_none()
+                    && fact_at(&facts.overload_targets, id).is_none()
+                    && fact_at(&facts.generic_instantiations, id).is_none()
+                    && fact_at(&facts.selected_calls, id).is_none()
+                    && fact_at(&facts.conversions, id).is_none()
+                    && fact_at(&facts.operation_adjustments, id).is_none()
+            });
+        admitted && self.holds(MethodFeatures::SIMD_CONSTRUCTIONS)
+    }
+
+    /// Whether `expr` is an admitted closed `SIMD` construction, a value of
+    /// a closed type that is not one of the grammar's scalars.
+    fn simd_value(&self, expr: &Expr) -> bool {
+        matches!(&expr.kind, ExprKind::Call { name, args, kwargs, .. }
+            if self.simd_construction(self.occurrence(expr), name, args, kwargs))
     }
 
     /// A call through a parameter declared with a `def(...)` type, passing
@@ -7609,8 +7664,11 @@ impl BodyShape<'_> {
         match &argument.kind {
             ExprKind::Str(_) => true,
             ExprKind::Call { name, .. } => {
-                self.expression(argument)
-                    && (self.scalar(argument) || name == "repr" || name == "_unqualified_type_name")
+                self.simd_value(argument)
+                    || (self.expression(argument)
+                        && (self.scalar(argument)
+                            || name == "repr"
+                            || name == "_unqualified_type_name"))
             }
             ExprKind::Identifier(name) => {
                 self.params.contains(&name.as_str()) || self.local_kind(name).is_some()

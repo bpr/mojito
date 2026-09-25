@@ -548,6 +548,7 @@ assets/ok/template_method_reference_local.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/template_method_reference_receiver.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_reference_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_sibling_view.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_simd_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_statements.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_string_builtins.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_subscript_store.mojo	-	ineligible	no-scalar-entry-shape

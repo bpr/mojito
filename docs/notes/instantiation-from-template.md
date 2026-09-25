@@ -320,6 +320,7 @@ they are a set, not a ladder.
 | `COPIED_RECEIVERS` | a method call whose callee consumes its receiver, on a named place the call copies first rather than on a `^` transfer: a parameter, a `var` local, or a field of `self`, of a parameter, or of a local (`slice.start.or_else(0)`, `self.limit.or_else(n)`), on a nominal struct as `CONSUMING_CALLS` admits it or through a bound to a `var self` requirement (`coin.spend()`) | `infer_method_call` copies such a place whatever its type, where the type is implicitly copyable, and rejects the program otherwise; the mark it records at the call (`ImplicitlyCopiedConsumingReceivers`) is decided by the receiver's syntax and the callee's convention, so an instance inherits it and owes the copy at its own type (obligation 3). The contract is a consuming call's, and nothing moves out of the place. Through a bound, the instance's witness must itself take `var self` or `deinit self`, or the derivation refuses (`realize_bound_dispatch`). |
 | `DIRECT_CALLS` | a direct call of a module-scope function that is not generic, not overloaded, and takes only closed scalars by value (`check_slice_bounds(start, end, self.size)`) | The call selects the same declaration under every instance and binds its arguments at types no substitution changes; the instance realizes it as a `FixedCalls` body's direct call (obligation 5), re-reading the callee's empty effect summaries. |
 | `ITERATION` | a runtime `for` with no `else`, over `self`, a field of it, a parameter, a local, the `^` transfer of a place the body owns, or a sibling call's result; the loop variable is a local whose kind — a handle, a scalar, or a whole value — follows its recorded binding type | The protocol is selected from the iterable's type and resolved against the place the loop borrows and that binding's mutability, which are the loop's syntax and the declaration's. The template keeps those inputs (`TemplateIteration`), and the instance selects again from its substituted type (obligation 21). |
+| `SIMD_CONSTRUCTIONS` | a `SIMD`, `Scalar`, or scalar-alias construction from closed scalars (`UInt8(1)`, `SIMD[DType.uint8, 4](1, 2, 3, 4)`) whose dimensions the template recorded, handed to a checker builtin (`hasher._update_with_simd(UInt8(1))`), to a by-value parameter, or bound to a `var` local | Inference records a construction's dtype and width (`SimdConstructions`) only when both are closed, so a recorded entry is the same under every instance and is installed as it stands. The call selects no callee and converts nothing. A construction whose dtype or width names a parameter records nothing in the template; no enabled class reaches one today, since a `DType` or `Int` value binder is outside every class. |
 
 The compiler-private trap `_mojito_abort("message")` is a statement of any
 non-keyed body: the built-in types its literal and selects nothing. A
@@ -815,6 +816,17 @@ tables. In short, for one debug-profile run each:
   A keyed `def` that accumulates, assigns, prints, or passes its loop
   variable and reads its value parameter derives for every trip count
   (`template_folded_value.mojo`).
+  Closed `SIMD` constructions (2026-09-25) move `stdlib_heavy` from 1730 to
+  1742 installed derivations, from 1872 to 1860 inferred clone bodies, and
+  from 695 to 700 reused templates, and `generic.mojo` from 382 to 388
+  installed derivations: `Optional.__hash__` derives for every instance.
+  `Dict.__hash__` still constructs its `H2()` (`ConstructTypeParam`) and
+  computes on `UInt64` locals, which are not grammar scalars, and
+  `path.expandvars` returns a `String` and unpacks a tuple. A user struct
+  whose methods hand a `UInt8` tag and a `UInt64` local to
+  `_update_with_simd` and pass a `UInt8` construction to a sibling derives
+  for an `Int`, a `String`, and a user-struct instance
+  (`template_method_simd_construction.mojo`).
   Widening `OPERATOR_DISPATCH` to every operator a trait names, and to the
   three things a struct instance's dispatch adds beneath the operand
   (2026-09-24), moves neither count (1096 and 340 before and after): no
@@ -919,9 +931,15 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
   (an implicit copy). A struct's reflective `__hash__` default derives: the
   trait-default expansion declares it before any body is checked. A
   `hasher.update(x)` on a concrete hasher is a Mojito-only spelling (the
-  pin's `update` takes bytes), so no fixture exercises it. `Dict.__hash__` constructs its `H2()` (`ConstructTypeParam`) and
-  `Optional.__hash__` a `UInt8` tag (`SimdConstructions`), so both keep the
-  clone check for those reasons.
+  pin's `update` takes bytes), so no fixture exercises it. `Dict.__hash__`
+  constructs its `H2()` (`ConstructTypeParam`) and keeps the clone check for
+  that reason and for its `UInt64` arithmetic.
+- A closed `SIMD` value anywhere but a checker builtin's argument, a
+  by-value argument, or a `var` local's initializer: a width-one `SIMD` type
+  is not one of the grammar's scalars (`Int`, `UInt`, `Bool`, `Float64`),
+  so an operator or augmented assignment over it, or a store of it, is
+  outside. A closed vector handed to a hasher also grows the unkeyed hash
+  leaf store the first time its type is seen, which refuses the body.
 - A folded name beside a literal (`i * 10`) or under a prefix (`-i`), which
   the instance's check folds to one literal; a value parameter of a body
   with no compile-time control flow, which source validation never checks;
