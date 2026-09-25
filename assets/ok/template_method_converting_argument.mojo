@@ -5,9 +5,8 @@
 # target type alone, so the template retains which selection to repeat rather
 # than which constructor it found, and the instance runs the selection again
 # at its own types: one source picks `Label.__init__$ov$Int` and the other
-# `Label.__init__$ov$Bool` out of the same family. A conversion whose target
-# is built over the struct's parameter is still refused, at the binding
-# obligation rather than here.
+# `Label.__init__$ov$Bool` out of the same family. A target built over the
+# struct's parameter is `template_method_converting_binding.mojo`'s.
 struct Label(Copyable, Deinitable, Movable, Writable):
     var text: String
 

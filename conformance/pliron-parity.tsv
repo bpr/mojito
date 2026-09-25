@@ -527,6 +527,7 @@ assets/ok/template_method_callable_parameter.mojo	main	exe-differential	sanitize
 assets/ok/template_method_calls.mojo	main	exe-differential	sanitized
 assets/ok/template_method_construction.mojo	main	exe-differential	sanitized
 assets/ok/template_method_converting_argument.mojo	main	exe-differential	sanitized
+assets/ok/template_method_converting_binding.mojo	main	exe-differential	sanitized
 assets/ok/template_method_converting_call_argument.mojo	main	exe-differential	sanitized
 assets/ok/template_method_getter.mojo	main	exe-differential	sanitized
 assets/ok/template_method_moves.mojo	main	exe-differential	sanitized

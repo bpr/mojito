@@ -1800,6 +1800,38 @@ fn template_method_converting_call_arguments_derive() {
 }
 
 #[test]
+fn template_method_converting_closed_bindings_derive() {
+    // A literal converted into a closed struct at an annotated binding: the
+    // local holds the struct, not the scalar it was converted from.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_converting_argument.mojo"),
+        "count 4 flag True 5\ncount 4 flag True hi\n",
+        &[("Holder.write_to", 2)],
+    );
+}
+
+#[test]
+fn template_method_converting_bindings_derive() {
+    // An annotated `var` whose value converts to a declared type built over
+    // the struct's parameter: a literal and a whole value of the parameter
+    // type, each reaching the instance's own constructor clone; an
+    // annotation equal to the value's type, which converts nothing; and a
+    // scalar annotation, whose local stays a scalar.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_converting_binding.mojo"),
+        "4 6 5 0\n4 6 hi 0\n3 m 4.0 4.0\n",
+        &[
+            ("Holder.labeled", 2),
+            ("Holder.counted", 2),
+            ("Holder.boxed", 2),
+            ("Holder.listed", 2),
+            ("Holder.moved", 2),
+            ("Holder.floated", 2),
+        ],
+    );
+}
+
+#[test]
 fn template_method_operator_dispatch_derives() {
     // Equality, `!=`, and an ordering over two places of the struct's
     // parameter type; `!=` served by the instance's `__eq__` and a negation
@@ -2014,6 +2046,25 @@ fn template_method_consuming_conversion_keeps_the_clone_check() {
                 && reason == "an implicit conversion consumes, raises, or borrows for the instance"
         }),
         "the consuming conversion refuses the derivation: {:?}",
+        stats.refused
+    );
+}
+
+#[test]
+fn template_method_view_binding_keeps_the_clone_check() {
+    // An annotation left to inference takes the value's own type, and a
+    // view converted from its source borrows it: neither is a relation an
+    // instance derives, so the body stays outside the class and still runs.
+    let source = "struct Holder[T: Copyable & Deinitable](Deinitable, Movable):\n    var items: List[Self.T]\n\n    def __init__(out self, var item: Self.T):\n        self.items = List[Self.T]()\n        self.items.append(item^)\n\n    def viewed(self) -> Int:\n        var span: Span[Self.T, _] = self.items\n        return len(span)\n\ndef main():\n    var number = Holder[Int](5)\n    print(number.viewed())\n";
+    let compiler = Compiler::default();
+    let program = compile_entry(&compiler, source);
+    let stats = program.template_stats();
+    assert_eq!(compiler.execute(&program).expect("execute").output, "1\n");
+    assert!(
+        stats.refused.iter().any(|(name, reason)| {
+            name.starts_with("Holder.viewed$") && reason == "its template is not certified"
+        }),
+        "the view binding leaves the body outside the class: {:?}",
         stats.refused
     );
 }

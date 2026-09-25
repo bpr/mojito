@@ -96,9 +96,10 @@ template; a field type under a symbolic index is opaque until a
 | `element_store_from_same_list.mojo` | Is an element stored from another element of the same `List` field accepted whatever the element type? | **differs**: the pin prints `5` `y`, Mojito rejects the `String` instance ("'self' is borrowed mutably and also used at the same call") — `docs/roadmap.md` 3.6 |
 | `comptime_for_body_scope.mojo` | Is each unrolled iteration of a `comptime for` body its own scope? | **differs**: the pin prints `0` `1`, Mojito rejects ("'v' is already declared in this scope") — `docs/roadmap.md` §3 |
 | `overloaded_hash_through_hash.mojo` | Does `hash` reach a struct that overloads `__hash__` on the hasher's type? | **differs**: the pin prints `True`, Mojito stops at run time ("vm: unknown method 'Twin.__hash__'") — `docs/roadmap.md` 3.5 |
-| `mut_self_hash_witness.mojo` | Does a `mut self` `__hash__` witness a read-`self` requirement? | **differs**: the pin prints `True`, Mojito rejects the conformance ("missing required operation") — `docs/roadmap.md` 3.50 |
-| `imported_alias_in_generic_method.mojo` | Does an imported alias of a struct application resolve in a generic struct's method signature? | **differs**: the pin prints `True`, Mojito reports "unknown type '__module$hasher$default_hasher'" — `docs/roadmap.md` 3.51 |
-| `setter_without_getter.mojo` | Is a subscript store accepted on a struct that declares `__setitem__` but no `__getitem__`? | **differs**: the pin rejects the store ("'Sink' has '__setitem__' but no '__getitem__' method"), Mojito prints `3` — `docs/roadmap.md` 3.52 |
+| `mut_self_hash_witness.mojo` | Does a `mut self` `__hash__` witness a read-`self` requirement? | **differs**: the pin prints `True`, Mojito rejects the conformance ("missing required operation") — `docs/roadmap.md` 3.51 |
+| `imported_alias_in_generic_method.mojo` | Does an imported alias of a struct application resolve in a generic struct's method signature? | **differs**: the pin prints `True`, Mojito reports "unknown type '__module$hasher$default_hasher'" — `docs/roadmap.md` 3.52 |
+| `setter_without_getter.mojo` | Is a subscript store accepted on a struct that declares `__setitem__` but no `__getitem__`? | **differs**: the pin rejects the store ("'Sink' has '__setitem__' but no '__getitem__' method"), Mojito prints `3` — `docs/roadmap.md` 3.53 |
+| `bound_call_result_converted_at_binding.mojo` | Does a generic body bind a bound method's call result through an `@implicit` conversion at an annotated `var`? | **differs**: the pin prints `2 a`, Mojito rejects the generic body ("register r1 has no checked type") — `docs/roadmap.md` 3.23 |
 
 ## Re-probes of enforced claims
 

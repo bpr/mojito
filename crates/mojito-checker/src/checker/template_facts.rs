@@ -5215,13 +5215,18 @@ impl BodyShape<'_> {
             }
             // A runtime statement is checked once, whatever runs it, so it
             // neither drops nor copies an occurrence. A scalar local is one
-            // binding wherever it is declared.
+            // binding wherever it is declared. An annotated local holds its
+            // declared type, which the value may convert to.
             StmtKind::VarDecl { name, ty, value } if !self.keyed => {
-                let scalar = self.expression(value) && self.scalar(value);
+                let closed = self.expression(value) && self.scalar(value);
+                let scalar = closed && (ty.is_none() || self.scalar_binding(value));
                 let moved = !scalar
-                    && ty.is_none()
                     && self.moved_result.is_some()
-                    && (self.whole_value(value) || self.reference_read(value));
+                    && (closed
+                        || self.whole_value(value)
+                        || self.reference_read(value)
+                        || (ty.is_some() && self.converted_place(value)))
+                    && (ty.is_none() || self.annotated_binding(value));
                 let kind = if scalar {
                     LocalKind::Scalar
                 } else {
@@ -5616,6 +5621,25 @@ impl BodyShape<'_> {
         admitted && self.holds(MethodFeatures::OPAQUE_MOVES)
     }
 
+    /// A parameter, a local, or a field of `self` that an `@implicit`
+    /// constructor reads in place: no copy is recorded, and an instance
+    /// selecting a constructor that consumes its source refuses
+    /// ([`Checker::realize_conversion`]).
+    fn converted_place(&self, expr: &Expr) -> bool {
+        let named = match &expr.kind {
+            ExprKind::Identifier(name) => {
+                self.params.contains(&name.as_str()) || self.declared(name)
+            }
+            ExprKind::Member { .. } => self.receiver_field(expr),
+            _ => false,
+        };
+        named
+            && self
+                .facts
+                .is_none_or(|facts| fact_at(&facts.conversions, self.occurrence(expr)).is_some())
+            && self.holds(MethodFeatures::OPAQUE_MOVES)
+    }
+
     /// The result of an admitted operator ([`Self::operator`]) whose operands
     /// are not closed scalars: a temporary of the operand's own type, which an
     /// instance's dunder yields exactly as a sibling call's result does.
@@ -5815,7 +5839,28 @@ impl BodyShape<'_> {
         scalar || self.moved_result.is_some_and(|_| self.whole_value(value))
     }
 
-    /// Whether the recorded type of `expr` is exactly `ty`.
+    /// Whether the local an annotated `var` binds to `value` holds a closed
+    /// scalar.
+    fn scalar_binding(&self, value: &Expr) -> bool {
+        self.facts.is_none_or(|facts| {
+            fact_at(&facts.binding_types, self.occurrence(value)).is_some_and(closed_scalar)
+        })
+    }
+
+    /// Whether an annotated `var`'s value reaches the declared type either
+    /// as it is or through a recorded conversion, which an instance selects
+    /// again at its own types. Any other relation the check accepted — an
+    /// annotation left to inference, a view borrowing its source — is a
+    /// fact no derivation carries.
+    fn annotated_binding(&self, value: &Expr) -> bool {
+        let id = self.occurrence(value);
+        self.facts.is_none_or(|facts| {
+            fact_at(&facts.binding_types, id).is_some_and(|declared| {
+                self.typed(value, declared) || fact_at(&facts.conversions, id).is_some()
+            })
+        })
+    }
+
     /// Whether the recorded type of `expr` is exactly `ty`, but for the
     /// origin arguments of a struct: a retained type keeps those slots
     /// unbound, and a `return` reconciles a value's origin tail with the

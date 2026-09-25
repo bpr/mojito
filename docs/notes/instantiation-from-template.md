@@ -270,7 +270,7 @@ they are a set, not a ladder.
 | `POINTER_SLOTS` | over a pointer field of `self` with no tracked provenance: `unsafe_offset(scalar)`, `unsafe_take_pointee()`, `unsafe_deinit_pointee()`, `free`, and the slot `pointer[scalar]` as a store target or a copied place | Such a pointer holds no loan, names no place, and is a pointer under every instance, so its methods are the built-in ones (`infer_pointer_method`), which select no callee and record an adjustment naming at most the pointee. Every other judgment there only produces an error, and the template's is at least as strict. |
 | `SIBLING_CALLS` | a method call on `self`, a field of it, or a `var` local, passing closed scalars, whose contract is a `closed_method_contract` | Obligation 7 below. Arguments are closed scalars in both checks, so nothing about them depends on the instance. |
 | `REFERENCE_RESULT` | a method that returns a reference: every `return` hands out a field of `self`, a pointer slot, or a reference call's result, of exactly the declared referent type | The `return` keeps its value as a handle because the declaration returns a reference (`ReferenceValueUses`, written from the declaration and the statement's syntax alone) and demands neither a copy nor a move. Whether the place lies within the declared origin is judged on its path, the signature, and the receiver's constructor, none of which an instance changes; the loan-escape check reads what obligation 12 already rules out. The signature is checked per clone before the body, derived or not. Any other handle in the body refuses it. |
-| `REFERENCE_CALLS` | a subscript or a named accessor on a field of `self`, passing closed scalars, whose contract is a `closed_reference_contract`, either returned as above or read by value into the result or an unannotated `var` | Obligation 13 below. The call is never a receiver, an operand, a condition, or an argument, each of which records a borrow of its own. A by-value read is admitted only where the template marked the read copyable. An iterator's `__next__` marks its read by another rule and stays out. |
+| `REFERENCE_CALLS` | a subscript or a named accessor on a field of `self`, passing closed scalars, whose contract is a `closed_reference_contract`, either returned as above or read by value into the result or a `var` | Obligation 13 below. The call is never a receiver, an operand, a condition, or an argument, each of which records a borrow of its own. A by-value read is admitted only where the template marked the read copyable. An iterator's `__next__` marks its read by another rule and stays out. |
 | `REFERENCE_LOCALS` | `ref name = place`, where the place is `self`, a field of it, a parameter, a `var` local, or a reference call; then a field read through the binding, the binding copied out whole, a scalar operand, `len` over it, a scalar store through it, or the binding forwarded as the method's own reference result | The declaration decides mutability from the value's reference and the binding it names, re-stamps an origin computed upstream, and runs no check of its own. Its type is a reference whose origin names a binding, so a bundle keeps it by template owner, as it keeps a call's, and an instance substitutes the referent. Every use records the referent. A copy out owes obligation 3, and a copyable read obligation 13. |
 | `REFERENCE_RECEIVERS` | a field read or a closed method call through a reference call's result or a `ref` local whose referent is a struct | A call borrows such a receiver (`BorrowedReferenceReceivers`) because of what the receiver is: a reference result, a `ref` binding, a `ref` field. None of those tests reads the referent. The callee is realized as in obligation 7, from the receiver's own substituted type; a receiver whose type was already closed in the template (`List[Pair]`) selected its clone there. A method of a bare parameter dispatches through the bound and stays out. |
 | `SUBSCRIPT_STORES` | a store through a subscript of a writable `self` or of one of its fields: a closed scalar field of the element a reference getter yields (`self.entries[i].hits = 0`, `+= 1`); an element a declared setter takes, a closed scalar or a whole value of the setter's own parameter type (`self.counts[i] = n`, `self.items[i] = value^`, `self.entries[i] = Entry[Self.T](v^)`, `self[k] = v^`); a closed scalar element stored whole or augmented through the mutable reference its getter yields (`self.counts[i] += 1`, `self.grid[i] = n` on a struct with no setter) or augmented through a closed value getter and a setter (`self.table[i] += 1`); or an element of a closed struct type stored augmented through its in-place dunder (`self.counters[i] += 3`) | A subscript that is a place records its index shape and whether the setter takes the value by keyword (`SubscriptDescriptors`). The first is the syntax, one plain index; the second is the setter's declaration. The getter is a `REFERENCE_CALLS` call and the setter a `SIBLING_CALLS` one, recorded at the subscript and realized by the setter's name; its index and value are the call's arguments (`VALUE_ARGUMENTS`), so a whole value binds a parameter of exactly its own type and owes what it owes at any call (obligations 3, 10, and 14). A store through a mutable reference records no second contract: the checker writes the computed value back through the getter's reference, and its `AugmentedSubscript` record is that getter beside the element's type, kept apart from the adjustment table (`augmented_subscripts`, as `reference_results` are) and rebuilt for an instance from the getter it realized at the site. A store through a value getter and a setter records the setter at the subscript, and the checker keys the computed value it binds there too, since that value is no expression; its `AugmentedSubscript` record keeps the value getter beside the setter in `augmented_subscripts`, as it stands, so the subscripted value's type is closed. A struct element's `+=` selects its `__iadd__` on a synthesized receiver whose facts and identity the checker drops with its scope; the dunder is kept beside the store likewise, over a closed element type. A getter an instance would retarget to its own clone, or a dunder selected through a bound, stays out. A whole element read from the same list (`self.items[i] = self.items[j]`) is accepted for `Int` and refused for `String`, so it stays out until that divergence closes. |
@@ -513,7 +513,17 @@ only `Movable` records nothing there, and its `Int` clone would.
     template admits one too: its call's selection stands, as every call
     inside a generic body is bound once, and only the conversion beneath it
     is chosen again. A keyed body converts in a `comptime if` arm the same
-    way: the instance re-selects only in the arms the elaborator kept.
+    way: the instance re-selects only in the arms the elaborator kept. An
+    annotated `var` converts its value the same way
+    (`var label: Label[Self.T] = 4`, `var box: Wrapper[Self.T] = self.item`):
+    the local holds the declared type, which the binding's recorded type
+    substitutes, and a named place the constructor reads is neither copied
+    nor moved, so it stands at the binding without a copy. The grammar
+    admits an annotation only where the value's recorded type is the
+    declared one or a conversion is kept at the value
+    (`BodyShape::annotated_binding`): an annotation left to inference and a
+    view that borrows its source (`var span: Span[Self.T, _] = self.items`)
+    record neither, and stay out.
 
 The declaration's bounds and `where` clauses are not re-checked: the checker
 discharges them at the requesting call, and the elaborator proves a fully
@@ -680,6 +690,11 @@ tables. In short, for one debug-profile run each:
   `String` instance (`template_method_converting_call_argument.mojo`), and
   so does a module-level `def` template that converts a literal at a direct
   call (`template_def_converting_argument.mojo`).
+  A conversion at an annotated binding (2026-09-24) moves neither count: no
+  bundled body annotates a converting local. A user struct whose method
+  converts a literal or a field of `self` into a local of a type built over
+  its parameter derives for an `Int` and a `String` instance
+  (`template_method_converting_binding.mojo`).
   Widening `OPERATOR_DISPATCH` to every operator a trait names, and to the
   three things a struct instance's dispatch adds beneath the operand
   (2026-09-24), moves neither count (1096 and 340 before and after): no
@@ -727,6 +742,9 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
   over a parameter
   (`var result = List[Self.T]()` in
   `List.__mul__`, `List.__getitem__(slice)`, and the owned `__iter__`s).
+- An annotated `var` whose annotation is left to inference or whose value
+  converts to a view that borrows its source
+  (`var span: Span[Self.T, _] = self.items`).
 - A construction with an `ImmOrigin` or a value compile-time argument, one
   whose constructor has binders of its own or binds a variadic parameter,
   one whose argument is a `ref` local bound to anything but a fieldwise
