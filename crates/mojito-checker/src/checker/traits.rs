@@ -2700,6 +2700,7 @@ impl Checker {
         if !matches!(ty, Ty::Simd { width, .. } if width.known().is_some_and(|width| width > 1)) {
             return;
         }
+        self.hash_leaf_demands.borrow_mut().push(ty.clone());
         let mut recorded = self.hash_leaf_types.borrow_mut();
         if !recorded.contains(ty) {
             recorded.push(ty.clone());

@@ -35,17 +35,23 @@ parameters symbolic, or deriving an instantiation from a checked template. A
 defect found on the way is filed by its kind; a divergence from the pin goes
 to section 3, however small.
 
-- [ ] **1.1 A hasher fed a new leaf type keeps the clone check**
+- [ ] **1.1 A bound `__hash__` on a vector instance derives where the clone
+  check rejects it**
 
-  Problem: a template whose check records a hash leaf type for the first time
-  grows the unkeyed hash-leaf store, and capture refuses it
-  (`UnkeyedFact`: "no derivation recipe for hash leaf types").
-  - A closed vector handed to a hasher
-    (`hasher._update_with_simd(SIMD[DType.uint8, 4](1, 2, 3, 4))`) refuses
-    this way, while a `UInt8` or `UInt64` leaf the program already recorded
-    derives.
-  - The leaf is a closed type, the same under every instance, so an instance
-    could record it again rather than refuse.
+  Problem: `self.value.__hash__(hasher)` in a generic struct's method derives
+  for a `SIMD` instance (`T = SIMD[DType.float32, 2]`, `Float32`, `UInt8`),
+  and that instance's own clone check rejects the same call.
+  - `mojito run` accepts the program, while `mojito check` and
+    `MOJITO_VERIFY_TEMPLATE_FACTS=1` report "type 'SIMD[DType.float32, 2]'
+    has no method '__hash__'".
+  - Derivation re-selects the witness as a hashed leaf
+    (`BoundWitness::HashLeaf` in `realize_bound_dispatch`), which is right
+    at the pin, where `SIMD` declares `__hash__`.
+  - The clone check's compiler-known `SIMD` method arm (`mc_infer.rs`)
+    returns before the builtin `__hash__` arm, so a direct
+    `v.__hash__(h)` on a vector is rejected too.
+  - Either the clone check gains a vector `__hash__` (3.20's blocker) or
+    derivation refuses such an instance; until then the two paths disagree.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

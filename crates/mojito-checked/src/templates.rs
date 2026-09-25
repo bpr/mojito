@@ -1461,6 +1461,11 @@ pub struct CheckedBodyFacts {
     /// places it names are the callee's declaration and the call's own
     /// receiver and arguments, which no instance changes.
     pub call_result_origins: Vec<(OccurrenceId, Vec<TemplateCallResultOrigin>)>,
+    /// The multi-lane vector types the body hashed, deduplicated and in
+    /// canonical order. Each is closed, so an instance records every one
+    /// again, beside those its bound builtins and dispatches record at its
+    /// own types.
+    pub hash_leaves: Vec<Ty>,
     /// How many locals the body declares.
     pub locals: u32,
 }
@@ -1585,6 +1590,7 @@ impl CheckedBodyFacts {
             conversions,
             typed_origins,
             call_result_origins,
+            hash_leaves,
             locals,
         );
         out
@@ -1790,6 +1796,8 @@ impl CheckedBodyFacts {
             })
             .collect(),
             call_result_origins: at(&self.call_result_origins, occurrences, folded),
+            // A leaf names a closed type, not an occurrence.
+            hash_leaves: self.hash_leaves.clone(),
             locals: self.locals,
         }
     }
@@ -1852,6 +1860,7 @@ impl CheckedBodyFacts {
             + self.transferred_origins.len()
             + self.transfer_effects.len()
             + self.transfer_reads.len()
+            + self.hash_leaves.len()
     }
 
     /// The replayed-transfer fields in which this bundle differs from

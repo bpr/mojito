@@ -1818,6 +1818,17 @@ fn template_method_binder_construction_derives() {
 }
 
 #[test]
+fn template_method_hash_leaf_derives() {
+    // A multi-lane vector handed to a hasher, which no other body hashed:
+    // the leaf is closed, so every instance records the template's again.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_hash_leaf.mojo"),
+        "True False\nFalse\nTrue False\nTrue False\n",
+        &[("Lanes.__hash__", 3)],
+    );
+}
+
+#[test]
 fn template_method_struct_binder_construction_keeps_the_clone_check() {
     // A struct binder's construction (`Self.H()`) builds another type under
     // each instance, so the body stays outside the class.

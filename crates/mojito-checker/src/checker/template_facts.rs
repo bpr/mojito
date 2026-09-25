@@ -79,6 +79,8 @@ impl BodyClass {
 pub(super) struct BodyFactBaseline {
     tables: [usize; FactTable::ALL.len()],
     unkeyed: [(&'static str, usize); UNKEYED_STORES],
+    /// The length of the hash-leaf demand log.
+    hash_leaf_demands: usize,
     /// The transferred-origin store as the body found it: what a replay
     /// merges is keyed by owner, so growth is told entry by entry.
     transferred: HashMap<OwnerId, Vec<mojito_types::origin::Origin>>,
@@ -938,6 +940,7 @@ impl Checker {
         BodyFactBaseline {
             tables: FactTable::ALL.map(|table| self.span_table(table).entries()),
             unkeyed: self.unkeyed_fact_entries(),
+            hash_leaf_demands: self.hash_leaf_demands.borrow().len(),
             transferred: self.transferred_origins.borrow().clone(),
             owner_start: self.next_owner.get(),
         }
@@ -1306,6 +1309,7 @@ impl Checker {
                 &[],
             ))
         };
+        let demands = self.hash_leaf_demands.borrow().len();
         let mut facts = substituted_facts(template, instance, indices, &canonical)?;
         // A per-call request the template recorded names the caller's own
         // binders; an instance that closed it would retarget the call in the
@@ -1603,6 +1607,11 @@ impl Checker {
         facts
             .operation_adjustments
             .sort_by_key(|(id, _)| position(id));
+        // The template's leaves are closed; a bound builtin or dispatch
+        // realized above recorded the instance's own.
+        let mut leaves = std::mem::take(&mut facts.hash_leaves);
+        leaves.extend_from_slice(&self.hash_leaf_demands.borrow()[demands..]);
+        facts.hash_leaves = canonical_hash_leaves(leaves);
         Ok(facts)
     }
 
@@ -3223,6 +3232,9 @@ impl Checker {
             .filter(|(now, before)| now != before && now.0 != TRANSFERRED_ORIGINS)
             .map(|((store, _), _)| format!("store:{store}"))
             .collect();
+        if self.symbolic_hash_leaf(baseline) {
+            reasons.push(format!("store:{SYMBOLIC_HASH_LEAVES}"));
+        }
         if self.transfer_residue(reads) {
             reasons.push("effects".to_string());
         }
@@ -3783,6 +3795,7 @@ impl Checker {
             repr_calls: Vec::new(),
             print_calls: Vec::new(),
             method_instantiations: values(&occurrences, &self.method_instantiations.borrow()),
+            hash_leaves: self.hash_leaves_since(baseline.hash_leaf_demands),
             locals: owner_end - baseline.owner_start,
             occurrences: occurrences
                 .into_iter()
@@ -3866,6 +3879,9 @@ impl Checker {
             })
         {
             return Err(IncompleteReason::UnkeyedFact(store));
+        }
+        if self.symbolic_hash_leaf(baseline) {
+            return Err(IncompleteReason::UnkeyedFact(SYMBOLIC_HASH_LEAVES));
         }
         if self.transfer_residue(reads) {
             return Err(IncompleteReason::UnkeyedFact("transfer effects"));
@@ -4259,6 +4275,9 @@ impl Checker {
                 .entry(callee.clone())
                 .or_default();
         }
+        for leaf in &facts.hash_leaves {
+            self.record_hash_leaf(leaf);
+        }
         // The residue goes on the body's own frame, which publishes it under
         // the body's key when it is popped, as an inferred body's would be.
         if let Some(frame) = self.transfer_frames.borrow_mut().last_mut() {
@@ -4510,7 +4529,6 @@ impl Checker {
     fn unkeyed_fact_entries(&self) -> [(&'static str, usize); UNKEYED_STORES] {
         let deletability = self.explicit_destroy_deletability.borrow();
         [
-            ("hash leaf types", self.hash_leaf_types.borrow().len()),
             ("declaration types", self.declaration_types.borrow().len()),
             ("generic parameters", self.generic_parameters.borrow().len()),
             (
@@ -4524,6 +4542,20 @@ impl Checker {
                 deletability.linear_declarations.len(),
             ),
         ]
+    }
+
+    /// The leaves hashed since the demand log held `start` entries,
+    /// deduplicated and in canonical order, so a template's bundle and an
+    /// instance's compare whatever order their checks demanded them in.
+    fn hash_leaves_since(&self, start: usize) -> Vec<Ty> {
+        canonical_hash_leaves(self.hash_leaf_demands.borrow()[start..].to_vec())
+    }
+
+    /// Whether the body's check hashed a leaf whose type names a parameter.
+    fn symbolic_hash_leaf(&self, baseline: &BodyFactBaseline) -> bool {
+        self.hash_leaf_demands.borrow()[baseline.hash_leaf_demands..]
+            .iter()
+            .any(mojito_types::types::is_symbolic)
     }
 
     /// The template-local identity of a binding a body's fact names: one of
@@ -4669,8 +4701,19 @@ impl Checker {
 /// The unkeyed store a replayed transfer merges origins into.
 const TRANSFERRED_ORIGINS: &str = "transferred origins";
 
+/// The refusal a body's check that hashed a symbolic leaf names: an instance
+/// could not record that leaf again, since its type is not every instance's.
+const SYMBOLIC_HASH_LEAVES: &str = "symbolic hash leaf types";
+
+/// Hash leaves deduplicated, in the order of their debug spelling.
+fn canonical_hash_leaves(mut leaves: Vec<Ty>) -> Vec<Ty> {
+    leaves.sort_by_cached_key(|leaf| format!("{leaf:?}"));
+    leaves.dedup();
+    leaves
+}
+
 /// How many fact stores `unkeyed_fact_entries` watches.
-const UNKEYED_STORES: usize = 7;
+const UNKEYED_STORES: usize = 6;
 
 /// An occurrence-keyed fact table, whatever it stores per occurrence.
 trait SpanKeyed {

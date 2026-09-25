@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method that hands a hasher a multi-lane vector
+  (`hasher._update_with_simd(SIMD[DType.uint8, 4](1, 2, 3, 4))`) now derives
+  its instances from the checked template: the template keeps each closed
+  leaf it hashed, and every instance records it again. Such bodies used to
+  keep the clone check whenever their check was the first to hash that
+  vector type.
 - A method that computes over closed `SIMD` values (`UInt64`, `Int32`, a
   `SIMD[DType.uint8, 4]` field) now derives its instances from the checked
   template: an operator, an augmented assignment, a local, a field store, and

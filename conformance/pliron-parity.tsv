@@ -540,6 +540,7 @@ assets/ok/template_method_copied_consuming_receiver.mojo	main	exe-differential	s
 assets/ok/template_method_explicit_destroy_call.mojo	main	exe-differential	sanitized
 assets/ok/template_method_for_loop.mojo	main	exe-differential	sanitized
 assets/ok/template_method_getter.mojo	main	exe-differential	sanitized
+assets/ok/template_method_hash_leaf.mojo	main	exe-differential	sanitized
 assets/ok/template_method_moves.mojo	main	exe-differential	sanitized
 assets/ok/template_method_operator_dispatch.mojo	main	exe-differential	sanitized
 assets/ok/template_method_origin_parameter.mojo	main	exe-differential	sanitized

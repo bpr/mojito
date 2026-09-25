@@ -648,6 +648,10 @@ pub struct Checker {
     /// SIMD leaf types hashed outside the eager width-1 set (multi-lane
     /// vectors): each needs a `_update_with_simd` clone on every hasher.
     hash_leaf_types: RefCell<Vec<Ty>>,
+    /// Every demand `record_hash_leaf` accepted, in order and repeated, so a
+    /// body's capture can tell which leaves its own check hashed even when
+    /// an earlier body recorded them first.
+    hash_leaf_demands: RefCell<Vec<Ty>>,
     /// Per-body accumulation frames for inferred loan-transfer effects.
     transfer_frames: RefCell<Vec<TransferFrame>>,
     /// Inferred per-callable transfer effects, keyed by callable name
@@ -989,6 +993,7 @@ impl Checker {
             method_instantiations: RefCell::new(HashMap::new()),
             struct_instantiations: RefCell::new(Vec::new()),
             hash_leaf_types: RefCell::new(Vec::new()),
+            hash_leaf_demands: RefCell::new(Vec::new()),
             transfer_frames: RefCell::new(Vec::new()),
             transfer_effects: RefCell::new(transfer_effects),
             resolving_parameter_annotation: std::cell::Cell::new(false),
