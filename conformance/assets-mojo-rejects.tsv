@@ -18,7 +18,7 @@
 #
 # The error is the pin's FIRST complaint, so it can mask a later one: lifting
 # a mask moves a row to another family rather than deleting it.
-# swept-count	633
+# swept-count	634
 fixture	family	first-error
 assets/ok/dict_hasher_forwarding.mojo	hasher-protocol	error: 'LoudHasher' does not implement all requirements for 'Hasher'
 assets/ok/hasher_user_conformer.mojo	hasher-protocol	error: 'SumHasher' does not implement all requirements for 'Hasher'

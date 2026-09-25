@@ -918,6 +918,21 @@ tables. In short, for one debug-profile run each:
   closed public `Tuple[Int, Int]` where its clone check names
   `Tuple$t2[…]`, which verification caught on any `Tuple[Self.T, …]`
   parameter.
+  Closed `SIMD` grammar scalars (2026-09-25) move `stdlib_heavy` from 1754
+  to 1764 installed derivations and from 1848 to 1838 inferred clone
+  bodies: `Dict.__hash__` derives for both `Dict` instances. Its clone key
+  names `AHasher` because that is the `Dict`'s own `H` struct parameter, so
+  its method binder `H2` stays symbolic and its `H2()` derives; what kept it
+  was the `UInt64` arithmetic. `Set.__hash__` now passes the grammar and
+  keeps the clone check for its `hash(e)` call alone. The grammar reads a
+  `SIMD` value whose dtype and width are closed as it reads `Int`
+  (`grammar_scalar`), as an operand, a local, a store, and a bool-lane
+  condition (`n != 0` over a `UInt32`), whose truthiness mark no instance
+  changes. A struct's value parameters stay the four closed scalars. A user struct whose methods mix a `UInt64` local,
+  store it back to a field, count a `UInt32` down in a `while`, test an
+  `Int32` in an `if`, double a closed vector field, and pass a `UInt64` to
+  a sibling derives for an `Int` and a `String` instance
+  (`template_method_simd_scalar.mojo`).
   Widening `OPERATOR_DISPATCH` to every operator a trait names, and to the
   three things a struct instance's dispatch adds beneath the operand
   (2026-09-24), moves neither count (1096 and 340 before and after): no
@@ -1023,15 +1038,11 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
   (an implicit copy). A struct's reflective `__hash__` default derives: the
   trait-default expansion declares it before any body is checked. A
   `hasher.update(x)` on a concrete hasher is a Mojito-only spelling (the
-  pin's `update` takes bytes), so no fixture exercises it. `Dict.__hash__`
-  constructs its `H2()` (`ConstructTypeParam`) and keeps the clone check for
-  that reason and for its `UInt64` arithmetic.
-- A closed `SIMD` value anywhere but a checker builtin's argument, a
-  by-value argument, or a `var` local's initializer: a width-one `SIMD` type
-  is not one of the grammar's scalars (`Int`, `UInt`, `Bool`, `Float64`),
-  so an operator or augmented assignment over it, or a store of it, is
-  outside. A closed vector handed to a hasher also grows the unkeyed hash
-  leaf store the first time its type is seen, which refuses the body.
+  pin's `update` takes bytes), so no fixture exercises it.
+- A closed vector handed to a hasher, which grows the unkeyed hash leaf
+  store the first time its type is seen and so refuses the body.
+- A generic module function called from a method (`hash(e)` in
+  `Set.__hash__`), whose instantiation the grammar refuses.
 - A folded name beside a literal (`i * 10`) or under a prefix (`-i`), which
   the instance's check folds to one literal; a value parameter of a body
   with no compile-time control flow, which source validation never checks;

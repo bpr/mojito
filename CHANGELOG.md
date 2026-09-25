@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method that computes over closed `SIMD` values (`UInt64`, `Int32`, a
+  `SIMD[DType.uint8, 4]` field) now derives its instances from the checked
+  template: an operator, an augmented assignment, a local, a field store, and
+  a bool-lane condition (`while n != 0` over a `UInt32`) over one read as
+  they do over `Int`, so `Dict.__hash__` derives. Such bodies used to keep
+  the clone check because the method grammar's only scalars were `Int`,
+  `UInt`, `Bool`, and `Float64`.
 - A method that constructs a value of its own trait-bounded binder
   (`var inner = H()` in `def __hash__[H: Hasher](self, mut hasher: H)`) and
   consumes it with `inner^.finish()` now derives its instances from the

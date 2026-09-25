@@ -6749,17 +6749,30 @@ impl BodyShape<'_> {
 
     /// A runtime condition: a scalar expression whose recorded type is
     /// exactly `Bool`, which `expect_bool` accepts without a truthiness fact,
-    /// or a place tested through `Bool(x)` ([`Self::truthiness_condition`]).
+    /// a closed bool lane tested through `Bool(x)` (`n != 0` over a
+    /// `UInt32`), whose mark no instance changes, or a place tested through
+    /// `Bool(x)` ([`Self::truthiness_condition`]).
     fn condition(&self, expr: &Expr) -> bool {
         let id = self.occurrence(expr);
-        let boolean = self.expression(expr)
+        let expression = self.expression(expr);
+        let boolean = expression
             && self.facts.is_none_or(|facts| {
                 facts
                     .expression_types
                     .iter()
                     .any(|(site, ty)| *site == id && *ty == Ty::Bool)
             });
-        boolean || self.truthiness_condition(expr)
+        let lane = || {
+            expression
+                && self.scalar(expr)
+                && self.facts.is_none_or(|facts| {
+                    facts.truthiness_conditions.contains(&id)
+                        && fact_at(&facts.conversions, id).is_none()
+                        && fact_at(&facts.operation_adjustments, id).is_none()
+                })
+                && self.holds(MethodFeatures::TRUTHINESS)
+        };
+        boolean || lane() || self.truthiness_condition(expr)
     }
 
     /// A condition that reads a parameter, a local, or a field of `self`
@@ -6918,7 +6931,7 @@ impl BodyShape<'_> {
     fn target_local(&self, target: &Expr) -> LocalKind {
         let id = self.occurrence(target);
         self.facts.map_or(LocalKind::Scalar, |facts| {
-            if fact_at(&facts.binding_types, id).is_some_and(closed_scalar) {
+            if fact_at(&facts.binding_types, id).is_some_and(grammar_scalar) {
                 LocalKind::Scalar
             } else {
                 LocalKind::Value
@@ -6943,7 +6956,7 @@ impl BodyShape<'_> {
                 || matches!(binding, Some(Ty::Ref(_)))
             {
                 LocalKind::Reference
-            } else if binding.is_some_and(closed_scalar) {
+            } else if binding.is_some_and(grammar_scalar) {
                 LocalKind::Scalar
             } else {
                 LocalKind::Value
@@ -7025,7 +7038,7 @@ impl BodyShape<'_> {
                     binders.get(index).map(|binder| {
                         if binder.reference {
                             LocalKind::Reference
-                        } else if closed_scalar(&binder.ty) {
+                        } else if grammar_scalar(&binder.ty) {
                             LocalKind::Scalar
                         } else {
                             LocalKind::Value
@@ -7287,7 +7300,7 @@ impl BodyShape<'_> {
     /// scalar.
     fn scalar_binding(&self, value: &Expr) -> bool {
         self.facts.is_none_or(|facts| {
-            fact_at(&facts.binding_types, self.occurrence(value)).is_some_and(closed_scalar)
+            fact_at(&facts.binding_types, self.occurrence(value)).is_some_and(grammar_scalar)
         })
     }
 
@@ -7910,7 +7923,7 @@ impl BodyShape<'_> {
                     !self.folds(operand)
                         && self.facts.is_none_or(|facts| {
                             fact_at(&facts.expression_types, self.occurrence(operand))
-                                .is_some_and(closed_scalar)
+                                .is_some_and(grammar_scalar)
                         })
                 };
                 let folds =
@@ -8595,7 +8608,7 @@ impl BodyShape<'_> {
             facts
                 .expression_types
                 .iter()
-                .any(|(site, ty)| *site == id && closed_scalar_or_literal(ty))
+                .any(|(site, ty)| *site == id && grammar_scalar_or_literal(ty))
         })
     }
 }
@@ -8699,8 +8712,23 @@ const fn closed_scalar(ty: &Ty) -> bool {
     matches!(ty, Ty::Int | Ty::UInt | Ty::Bool | Ty::Float64)
 }
 
-const fn closed_scalar_or_literal(ty: &Ty) -> bool {
-    closed_scalar(ty) || matches!(ty, Ty::IntLiteral | Ty::FloatLiteral)
+/// A value the method grammar reads as a scalar operand or local: a closed
+/// scalar, or a `SIMD` value whose dtype and width are both closed
+/// (`UInt64`, `SIMD[DType.uint8, 4]`), which no instance changes. The
+/// enabled classes' return types and value binders stay [`closed_scalar`].
+const fn grammar_scalar(ty: &Ty) -> bool {
+    closed_scalar(ty)
+        || matches!(
+            ty,
+            Ty::Simd {
+                dtype: mojito_types::types::SimdDtype::Known(_),
+                width: mojito_types::types::SimdWidth::Known(_),
+            }
+        )
+}
+
+const fn grammar_scalar_or_literal(ty: &Ty) -> bool {
+    grammar_scalar(ty) || matches!(ty, Ty::IntLiteral | Ty::FloatLiteral)
 }
 
 const fn holds_comptime_if(statement: &Stmt) -> bool {
