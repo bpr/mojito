@@ -1705,6 +1705,28 @@ fn template_method_reference_receivers_derive() {
 }
 
 #[test]
+fn template_method_reference_arguments_derive() {
+    // A `ref` local, a field reached through a reference, and a reference
+    // call's result handed to a read, a `var`, and a `mut` parameter, and a
+    // `ref` local lent to a hand-written constructor's `ref` parameter.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_reference_argument.mojo"),
+        "2 1 2 1\n2 1 2 1\n2 1 2 1\n2 2 2 1\n1 1 2 2\n",
+        &[
+            ("Shelf.local_entry", 2),
+            ("Shelf.call_entry", 2),
+            ("Shelf.call_item", 2),
+            ("Shelf.local_field", 2),
+            ("Shelf.call_field", 2),
+            ("Shelf.taken", 2),
+            ("Shelf.kept", 2),
+            ("Shelf.counted", 2),
+            ("Shelf.counted_mut", 2),
+        ],
+    );
+}
+
+#[test]
 fn template_method_constructions_derive() {
     // A `copy:` construction of the struct's own type, a fieldwise
     // construction, a bundled collection over the struct's parameter, and a

@@ -9,6 +9,14 @@ to evolve under the `0.x` compatibility rules.
 ### Fixed
 
 - A per-instantiation method clone now inherits its checked template's facts
+  when the body hands a reference on as a call argument: a `ref` local, a
+  field reached through one, or a reference call's result (`self.items[i]`),
+  read where it lies by a read parameter, copied into a `var` one, or kept by
+  a `mut` one, and a place lent to a hand-written constructor's `ref`
+  parameter. Such a body used to keep the clone check. A generic view built
+  that way into a local still does (`docs/roadmap.md` §1).
+
+- A per-instantiation method clone now inherits its checked template's facts
   for a call through the struct parameter's bound whatever shape the
   instance's witness takes: a member of an overload set its arity selects, a
   `[H: Hasher]` witness handed a concrete hasher (which names the per-call

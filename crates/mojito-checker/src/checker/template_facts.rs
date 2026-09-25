@@ -2320,6 +2320,12 @@ impl Checker {
     /// - `REFERENCE_RECEIVERS`: see [`BodyShape::reference_receiver`]. A call
     ///   borrows a receiver reached through a reference because of what the
     ///   receiver is, and the callee is realized as a sibling call's is.
+    /// - `REFERENCE_ARGUMENTS`: see [`BodyShape::reference_argument`]. An
+    ///   argument reached through a reference is read, copied, kept, or lent
+    ///   as a named place is, by its syntax and the callee's conventions; a
+    ///   constructor's `BorrowRefArguments` names the lending positions and
+    ///   each loan's mutability, neither of which an instance changes
+    ///   (`derive_adjustment`).
     ///
     /// Any other handle, borrowed receiver, reference result, interior
     /// reference, or copyable read in the body refuses it
@@ -5238,8 +5244,8 @@ impl BodyShape<'_> {
     /// a subscript or a named accessor whose recorded contract is a
     /// `closed_reference_contract`. It is admitted as a returned place, a
     /// whole value read, a `ref` declaration's value, or the reference a
-    /// field is read or a method called through ([`Self::through`]), never as
-    /// an operand or an argument, each of which records a borrow of its own.
+    /// field is read or a method called through ([`Self::through`]), or an
+    /// argument ([`Self::reference_argument`]), never as an operand.
     /// An iterator's `__next__` marks its copyable read by another rule.
     fn reference_call(&self, expr: &Expr) -> bool {
         let (object, method, arguments) = match &expr.kind {
@@ -5531,8 +5537,8 @@ impl BodyShape<'_> {
     /// whole value, or the `copy:` of a named place, so what the call records
     /// at an argument is decided by the argument's syntax and the
     /// constructor's conventions, and the template's selection binds every
-    /// argument exactly under every instance. A `ref` local and a reference
-    /// call's result record a borrow of their own and stay out.
+    /// argument exactly under every instance. A hand-written constructor's
+    /// `ref` parameter takes a named place or a reference, which it lends.
     fn construction(&self, expr: &Expr) -> bool {
         let ExprKind::Call {
             name,
@@ -5575,6 +5581,22 @@ impl BodyShape<'_> {
                 && field.is_some_and(|(_, ty)| matches!(ty, Ty::Ref(_)))
                 && matches!(&argument.kind, ExprKind::Identifier(name) if self.reference_local(name))
         };
+        // A hand-written constructor's `ref` parameter borrows the place it is
+        // handed, a named place or one reached through a reference. Which
+        // positions lend is the selected constructor's declaration, and the
+        // loan's mutability the place's own, so neither changes per instance.
+        let lent = |position: usize| {
+            self.facts.is_none_or(|facts| {
+                matches!(fact_at(&facts.operation_adjustments, id),
+                    Some(mojito_checked::checked::SemanticAdjustment::BorrowRefArguments {
+                        arguments,
+                        materialized: None,
+                    }) if arguments.iter().any(|(lent, _)| *lent == position))
+            })
+        };
+        let lent_place = |position: usize, argument: &Expr| {
+            lent(position) && (named_place(argument) || self.reference_argument(argument))
+        };
         let value = |field: Option<&(String, Ty)>, argument: &Expr| {
             (self.expression(argument) && self.scalar(argument))
                 || self.whole_value(argument)
@@ -5583,15 +5605,22 @@ impl BodyShape<'_> {
         let admitted = constructed
             && param_args.iter().all(type_argument)
             && (copied
-                || (args
-                    .iter()
-                    .enumerate()
-                    .all(|(position, argument)| value(info.fields.get(position), argument))
-                    && kwargs.iter().all(|keyword| {
-                        let field = info.fields.iter().find(|(name, _)| *name == keyword.name);
-                        value(field, &keyword.value)
-                    })));
+                || (args.iter().enumerate().all(|(position, argument)| {
+                    value(info.fields.get(position), argument) || lent_place(position, argument)
+                }) && kwargs.iter().all(|keyword| {
+                    let field = info.fields.iter().find(|(name, _)| *name == keyword.name);
+                    value(field, &keyword.value)
+                })));
         if admitted {
+            for (position, argument) in args.iter().enumerate() {
+                if !value(info.fields.get(position), argument) && lent_place(position, argument) {
+                    let mut places = self.places.borrow_mut();
+                    let id = self.occurrence(argument);
+                    if !places.contains(&id) {
+                        places.push(id);
+                    }
+                }
+            }
             let fields = args
                 .iter()
                 .enumerate()
@@ -5862,8 +5891,8 @@ impl BodyShape<'_> {
     /// temporary as it stands. A place copied into a `var` parameter is
     /// admitted only where the template recorded the copy, which the
     /// instance owes again at its own type, as a transfer owes `Movable`. A
-    /// `ref` local and a reference call's result stay out: each records a
-    /// borrow of its own.
+    /// reference is read, copied, or kept as a named place is
+    /// ([`Self::reference_argument`]).
     ///
     /// A kept place is a local, a parameter, or a field of `self`, of exactly
     /// the parameter's type, so nothing converts it. Which arguments a call
@@ -5904,7 +5933,12 @@ impl BodyShape<'_> {
             // exactly its own type: moved, a temporary, copied where the
             // template recorded the copy, or read where it lies, which the
             // call's conventions and the argument's syntax decide alone.
-            let read_in_place = named && facts.borrowed_read_call_places.contains(&id);
+            let read_in_place = facts.borrowed_read_call_places.contains(&id)
+                && (named || self.reference_argument(argument));
+            // A reference copied into a `var` parameter, where the template
+            // recorded the copy.
+            let copied_reference =
+                facts.copy_place_value_uses.contains(&id) && self.reference_argument(argument);
             // A value the boundary converts stands for its own type: the
             // conversion is kept beside the boundary, and both are
             // re-selected per instance.
@@ -5915,7 +5949,7 @@ impl BodyShape<'_> {
                     converted
                         || fact_at(&facts.expression_types, id) == Some(&parameter.parameter_ty)
                 })
-                && (read_in_place || self.whole_value(argument))
+                && (read_in_place || copied_reference || self.whole_value(argument))
                 && self.holds(MethodFeatures::VALUE_ARGUMENTS);
         }
         let read_receiver = contract.is_some_and(|call| {
@@ -5924,9 +5958,12 @@ impl BodyShape<'_> {
                 None | Some(mojito_ast::ast::ArgConvention::Imm)
             )
         });
+        // A place reached through a reference may lie within `self`, as a
+        // field of `self` does.
+        let through = !named && self.reference_argument(argument);
         let admitted = !self.keyed
-            && named
-            && (read_receiver || !self.receiver_field(argument))
+            && (named || through)
+            && (read_receiver || !(through || self.receiver_field(argument)))
             && parameter.is_some_and(|parameter| {
                 mojito_checked::templates::kept_place_argument(parameter)
                     && fact_at(&facts.expression_types, id) == Some(&parameter.parameter_ty)
@@ -5938,6 +5975,24 @@ impl BodyShape<'_> {
             }
         }
         admitted && self.holds(MethodFeatures::PLACE_ARGUMENTS)
+    }
+
+    /// A reference handed on as an argument: a `ref` local, a field reached
+    /// through a reference, or a reference call's result.
+    ///
+    /// Like a receiver reached through a reference
+    /// ([`Self::reference_receiver`]), what the call records for it is
+    /// decided by what the argument is and never by its type: a read
+    /// parameter borrows the place it names, a field read keeps its base as
+    /// a handle, and a reference call records its own result, which an
+    /// instance marks a copyable read again at its own referent.
+    fn reference_argument(&self, argument: &Expr) -> bool {
+        let admitted = match &argument.kind {
+            ExprKind::Identifier(name) => self.reference_local(name),
+            ExprKind::Member { .. } => self.reference_member(argument),
+            _ => self.reference_call(argument),
+        };
+        admitted && self.holds(MethodFeatures::REFERENCE_ARGUMENTS)
     }
 
     /// Whether `expr` is `self.<field>` in a method body.

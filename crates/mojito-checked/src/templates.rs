@@ -195,6 +195,16 @@ pub fn derive_adjustment(
         // instance's type after substitution (`realize_inverted_writes`),
         // where a nominal struct takes its own `write_to` instead.
         SemanticAdjustment::InvertedWrite => Some(SemanticAdjustment::InvertedWrite),
+        // Which constructor arguments lend their place is the selected
+        // constructor's declaration, and each loan's mutability the place's
+        // own. A materialized temporary names a binding of one run.
+        SemanticAdjustment::BorrowRefArguments {
+            arguments,
+            materialized: None,
+        } => Some(SemanticAdjustment::BorrowRefArguments {
+            arguments: arguments.clone(),
+            materialized: None,
+        }),
         SemanticAdjustment::InvertedReprWrite => Some(SemanticAdjustment::InvertedReprWrite),
         // A type name is one type's spelling: the instance re-renders it from
         // the substituted type, as the resolution rendered the template's. A
@@ -226,7 +236,10 @@ pub fn derive_adjustment(
         | SemanticAdjustment::ConversionRaises(..)
         | SemanticAdjustment::BorrowShared
         | SemanticAdjustment::BorrowMutable
-        | SemanticAdjustment::BorrowRefArguments { .. }
+        | SemanticAdjustment::BorrowRefArguments {
+            materialized: Some(_),
+            ..
+        }
         | SemanticAdjustment::MaterializeBorrowSource { .. }
         | SemanticAdjustment::BorrowConversionSource { .. }
         | SemanticAdjustment::BorrowViewResult { .. }
@@ -667,9 +680,9 @@ impl MethodFeatures {
     /// clone keeps and binds symbolically as the template does.
     pub const BOUND_BINDERS: Self = Self(1 << 16);
     /// A construction of a declared struct whose compile-time arguments are
-    /// types, passing closed scalars, whole values, or `copy:` of a named
-    /// place; an instance re-selects the constructor's clone on its own
-    /// arguments.
+    /// types, passing closed scalars, whole values, `copy:` of a named place,
+    /// or a place lent to a `ref` parameter; an instance re-selects the
+    /// constructor's clone on its own arguments.
     pub const CONSTRUCTIONS: Self = Self(1 << 17);
     /// A call through a runtime parameter declared with a `def(...)` type,
     /// passing closed scalars or whole values, and such a parameter forwarded
@@ -681,6 +694,11 @@ impl MethodFeatures {
     /// records by its argument's type alone, which an instance judges again
     /// ([`TemplateObligation::ImplicitConversions`]).
     pub const STRING_BUILTINS: Self = Self(1 << 19);
+    /// A reference handed on as a call argument: a `ref` local, a field
+    /// reached through a reference, or a reference call's result, read where
+    /// it lies by a read parameter, copied into a `var` one, or kept by a
+    /// `mut` or `ref` one.
+    pub const REFERENCE_ARGUMENTS: Self = Self(1 << 20);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
