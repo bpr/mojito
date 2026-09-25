@@ -1785,6 +1785,19 @@ fn template_method_raised_string_keeps_the_clone_check() {
 }
 
 #[test]
+fn template_method_struct_argument_derives() {
+    // An instance argument that is a struct declaring fields of its own
+    // parameter types is judged with those fields at its own arguments, so
+    // `Pair[Int, String]` is plain data as `Int` is. Native lowering of the
+    // shape is roadmap 2.4's collision, so it is no `assets/ok` fixture.
+    assert_methods_derive(
+        "@fieldwise_init\nstruct Pair[K: Copyable & Deinitable, V: Copyable & Deinitable](Copyable):\n    var key: Self.K\n    var value: Self.V\n\n\nstruct Shelf[T: Copyable & Deinitable](Movable):\n    var item: Self.T\n    var uses: Int\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n        self.uses = 0\n\n    def bump(mut self) -> Int:\n        self.uses += 1\n        return self.uses\n\n    def replace(mut self, var item: Self.T) -> Int:\n        self.item = item^\n        return self.bump()\n\n\ndef main():\n    var a = Shelf[Pair[Int, String]](Pair[Int, String](1, \"one\"))\n    var b = Shelf[Int](7)\n    print(a.bump(), b.bump())\n    print(a.replace(Pair[Int, String](2, \"two\")), b.replace(8))\n    print(a.item.key, a.item.value, b.item)\n",
+        "1 1\n2 2\n2 two 8\n",
+        &[("Shelf.bump", 2), ("Shelf.replace", 2)],
+    );
+}
+
+#[test]
 fn template_method_built_over_locals_derive() {
     // A local whose type is built over the struct's parameter: a bundled
     // collection moved out, handed on, or left unused, a hand-written struct

@@ -885,8 +885,7 @@ impl Checker {
     /// [`TemplateObligation::PlainDataTransfers`] for one retained type: a
     /// closed type whose storage, with its fields at their own arguments,
     /// holds no loan, no reference, and no callable. `plain_data` judges an
-    /// instance argument and reads a struct's fields as declared, which
-    /// would refuse every struct with a field of a parameter type.
+    /// instance argument, which may be symbolic.
     fn loan_free(&self, ty: &Ty) -> bool {
         let callable_field = matches!(ty, Ty::Struct(name, _)
         if self.structs.get(name).is_some_and(|info| {

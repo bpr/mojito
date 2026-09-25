@@ -122,12 +122,15 @@ impl Checker {
             }
         }
         self.type_carries_loans(ty) || contains_open_captures(ty) || {
-            // A struct's declared fields may hold open-capture callables.
+            // A struct's fields, at the application's arguments, may hold
+            // open-capture callables; a field left open by the arguments
+            // stays conservative.
             match ty {
-                Ty::Struct(name, _) => self.structs.get(name).is_some_and(|info| {
+                Ty::Struct(name, arguments) => self.structs.get(name).is_some_and(|info| {
+                    let subst = struct_subst(&info.decls, arguments);
                     info.fields
                         .iter()
-                        .any(|(_, field)| contains_open_captures(field))
+                        .any(|(_, field)| contains_open_captures(&substitute(field, &subst)))
                 }),
                 _ => false,
             }

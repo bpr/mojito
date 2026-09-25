@@ -9,6 +9,14 @@ to evolve under the `0.x` compatibility rules.
 ### Fixed
 
 - A per-instantiation method clone now inherits its checked template's facts
+  when its instance argument is a struct declaring fields of its own
+  parameter types (`List[DictEntry[Int, String, H]]`,
+  `Optional[DictEntry[…]]`): the argument's fields are judged at its own
+  arguments rather than as declared, which read every such struct as
+  possibly carrying a loan. The clone check's loan bookkeeping narrows the
+  same way.
+
+- A per-instantiation method clone now inherits its checked template's facts
   when the method raises: a bare or typed `raises` declaration whose `raise`
   names `Error("…")` or a construction of the declared error type
   (`Optional.__getitem__`, `Dict.popitem`). Such a body used to keep the
