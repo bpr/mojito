@@ -2562,8 +2562,9 @@ pub(crate) enum EffectRead {
     /// An empty summary read where a callable's name stands as a value,
     /// under that name rather than a call's target.
     Value,
-    /// Transfer effects replayed against a call's own receiver and arguments.
-    Transfers,
+    /// Transfer effects replayed against a call's own receiver and arguments,
+    /// as read.
+    Transfers(Vec<mojito_types::types::TransferEffect>),
     /// Anything else with no recipe: the effects of a named callable behind
     /// a call-through residue, or those baked into a function value.
     Residue,
@@ -2575,9 +2576,12 @@ pub(crate) enum EffectRead {
 
 impl EffectRead {
     /// A read of `effects` that a call replays when `replayed`.
-    pub(crate) const fn of<T>(effects: Option<&Vec<T>>, replayed: bool) -> Self {
+    pub(crate) fn of(
+        effects: Option<&Vec<mojito_types::types::TransferEffect>>,
+        replayed: bool,
+    ) -> Self {
         match effects {
-            Some(effects) if !effects.is_empty() && replayed => Self::Transfers,
+            Some(effects) if !effects.is_empty() && replayed => Self::Transfers(effects.clone()),
             Some(effects) if !effects.is_empty() => Self::Residue,
             _ => Self::Empty,
         }

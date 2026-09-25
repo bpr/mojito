@@ -2403,3 +2403,46 @@ fn template_method_requests_match_an_inferred_run() {
         "6 10\n"
     );
 }
+
+#[test]
+fn template_transfer_replay_reuses_the_template_and_derives_its_instances() {
+    // A method whose body replays a callee's transfer summary is certified
+    // once, served from its own facts in every later transfer round, and
+    // derived for each plain-data instance.
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            &std::fs::read_to_string("assets/ok/template_method_transfer_replay.mojo")
+                .expect("read the fixture"),
+            std::path::Path::new("assets/ok/template_method_transfer_replay.mojo"),
+        )
+        .expect("compile");
+    let stats = program.template_stats();
+    for name in ["Bag.push", "Bag.push_held"] {
+        assert_eq!(
+            certified_count(stats, name),
+            1,
+            "{name}: one template inference"
+        );
+        assert!(
+            stats.reused.iter().any(|reused| reused == name),
+            "{name}: later rounds reuse the template's own facts: {stats:?}"
+        );
+        let derived: std::collections::HashSet<&str> = stats
+            .derived
+            .iter()
+            .map(String::as_str)
+            .filter(|derived| derived.starts_with(&format!("{name}$")))
+            .collect();
+        assert_eq!(derived.len(), 2, "{name}: both instances derive: {stats:?}");
+        assert!(
+            stats
+                .inferred_clones
+                .iter()
+                .all(|clone| !clone.starts_with(&format!("{name}$"))),
+            "{name}: no clone of the certified template is inferred: {stats:?}"
+        );
+    }
+    let execution = compiler.execute(&program).expect("execute");
+    assert_eq!(execution.output, "2 2 2 x\n");
+}

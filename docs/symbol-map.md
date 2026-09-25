@@ -332,9 +332,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (through `operators.rs:struct_infix_dispatch`, the type-level half of
   `infer_infix`, and `operators.rs:scalar_operator_result`, its primitive
   half), `plain_data` is the instance-argument obligation of a
-  `MethodBody` and `loan_free` its transfer obligation
-  (`body_transfer_effects` tells a vanishing transfer from a residue no
-  recipe covers), `residue_plain` its call-through obligation (a callee's
+  `MethodBody` and `loan_free` its transfer obligation (`body_transfers`
+  keeps each replayed transfer by template owner with its source's binding
+  type, `transfer_residue` tells a replay from a residue no recipe covers,
+  `realize_transfers` replays them for an instance, and
+  `install_transfers` installs them), `residue_plain` its call-through
+  obligation (a callee's
   residue is read as `EffectRead::CallThrough`, kept as
   `call_through_reads`, and rekeyed by `note_realized_callee`;
   `realize_callable_call` takes a call through a `def(...)` parameter from

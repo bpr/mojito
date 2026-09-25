@@ -21,9 +21,10 @@ use mojito_checked::templates::{
     BoundBuiltin, CallParameterFact, CheckedBodyFacts, CheckedTemplate, FactTable, FoldedLiteral,
     IncompleteReason, InstanceName, InstanceTrace, MethodFeatures, OccurrenceId,
     TemplateArgumentBoundary, TemplateAugmentedSubscript, TemplateCallContract,
-    TemplateCallResultOrigin, TemplateClass, TemplateCoverage, TemplateId, TemplateInvalidation,
-    TemplateObligation, TemplateOrigin, TemplateOwner, TemplatePlace, TemplateProducer,
-    TemplateReference, TypedOrigins, TypedTable,
+    TemplateCallResultOrigin, TemplateCallTransfer, TemplateClass, TemplateCoverage, TemplateId,
+    TemplateInvalidation, TemplateObligation, TemplateOrigin, TemplateOwner, TemplatePlace,
+    TemplateProducer, TemplateReference, TemplateTransferDest, TemplateTransferEffect,
+    TemplateTransferSource, TypedOrigins, TypedTable,
 };
 use mojito_common::error::TypeError;
 use mojito_common::timing;
@@ -75,6 +76,9 @@ impl BodyClass {
 pub(super) struct BodyFactBaseline {
     tables: [usize; FactTable::ALL.len()],
     unkeyed: [(&'static str, usize); UNKEYED_STORES],
+    /// The transferred-origin store as the body found it: what a replay
+    /// merges is keyed by owner, so growth is told entry by entry.
+    transferred: HashMap<OwnerId, Vec<mojito_types::origin::Origin>>,
     owner_start: u32,
 }
 
@@ -97,6 +101,16 @@ struct BodyReads {
     effect_queries: Vec<(String, EffectRead)>,
     /// Each generic-struct application reached, before any filter.
     struct_applications: Vec<(String, Vec<mojito_types::types::TyArg>)>,
+}
+
+/// The transfers one body inference replayed, in template-local terms
+/// (`CheckedBodyFacts::{call_transfers, transferred_origins,
+/// transfer_effects, transfer_reads}`).
+struct BodyTransfers {
+    call_transfers: Vec<(OccurrenceId, Vec<TemplateCallTransfer>)>,
+    transferred_origins: Vec<(TemplateOwner, Vec<TemplateTransferSource>)>,
+    transfer_effects: Vec<TemplateTransferEffect>,
+    transfer_reads: Vec<(String, Vec<mojito_types::types::TransferEffect>)>,
 }
 
 /// One declaration body as the template mechanism sees it.
@@ -605,24 +619,15 @@ impl Checker {
         self.rebind_assertions.borrow_mut().remove(span);
     }
 
-    /// The transfer effects one body inference replayed or published, as
-    /// `(residue, transfers)`.
-    ///
-    /// `residue` is an effect no derivation accounts for: a named callable's
-    /// effects behind a call-through residue, a function value's baked
-    /// effects, or a destination a captured binding names. `transfers` is the
-    /// rest: a callee's transfer summary replayed on the call's own receiver
-    /// and arguments, the origins it merged, and the effect the body's own
-    /// frame then publishes. Those exist only while a value may carry a loan
-    /// ([`TemplateObligation::PlainDataTransfers`]). A call-through residue
-    /// the body reads or publishes is neither: capture keeps it
+    /// Whether one body inference replayed or published a transfer residue
+    /// no derivation accounts for: a named callable's effects behind a
+    /// call-through residue, a function value's baked effects, or an effect
+    /// or a replayed summary naming a captured binding. A callee's summary
+    /// replayed on the call's own receiver and arguments is retained instead
+    /// ([`TemplateObligation::ReplayedTransfers`]), and a call-through residue
+    /// the body reads or publishes is kept too
     /// ([`TemplateObligation::CallThroughResidue`]).
-    fn body_transfer_effects(
-        &self,
-        occurrences: &[Occurrence],
-        baseline: &BodyFactBaseline,
-        reads: &BodyReads,
-    ) -> (bool, bool) {
+    fn transfer_residue(&self, reads: &BodyReads) -> bool {
         use mojito_types::origin::SigOrigin;
         fn bound(origin: &SigOrigin) -> bool {
             match origin {
@@ -632,43 +637,282 @@ impl Checker {
                 _ => false,
             }
         }
-        let frames = self.transfer_frames.borrow();
-        let frame = frames.last();
-        let residue = reads
-            .effect_queries
-            .iter()
-            .any(|(_, read)| matches!(read, EffectRead::Residue))
-            || frame.is_some_and(|frame| {
-                frame
-                    .effects
-                    .iter()
-                    .any(|effect| bound(&effect.dest) || bound(&effect.src))
-            });
-        let merged = self
-            .unkeyed_fact_entries()
-            .into_iter()
-            .zip(baseline.unkeyed)
-            .any(|(now, before)| now.0 == TRANSFERRED_ORIGINS && now != before);
-        let recorded = {
-            let entries = self.span_table(FactTable::CallTransfers);
-            occurrences
-                .iter()
-                .any(|occurrence| entries.has(&occurrence.span))
+        let bound_effect = |effect: &mojito_types::types::TransferEffect| {
+            bound(&effect.dest) || bound(&effect.src)
         };
-        let transfers = merged
-            || recorded
-            || reads
-                .effect_queries
+        reads.effect_queries.iter().any(|(_, read)| match read {
+            EffectRead::Residue => true,
+            EffectRead::Transfers(effects) => effects.iter().any(bound_effect),
+            _ => false,
+        }) || self
+            .transfer_frames
+            .borrow()
+            .last()
+            .is_some_and(|frame| frame.effects.iter().any(bound_effect))
+    }
+
+    /// The transfers one body inference replayed, in template-local terms:
+    /// the call transfers at its occurrences, the origins the replays merged
+    /// (the store's growth over the baseline), the effects on the body's own
+    /// frame, and the summaries read. Each source is judged by the type of
+    /// the binding it is rooted at; an effect whose source is not a single
+    /// parameter or the receiver, and a merge into a binding outside the
+    /// body, have no such judgment and refuse.
+    fn body_transfers(
+        &self,
+        occurrences: &[Occurrence],
+        baseline: &BodyFactBaseline,
+        reads: &BodyReads,
+        param_owners: &BodyParams,
+        local_owner: &dyn Fn(OwnerId) -> Result<TemplateOwner, IncompleteReason>,
+        local_place: &dyn Fn(
+            &mojito_types::origin::OriginPlace,
+        ) -> Result<TemplatePlace, IncompleteReason>,
+    ) -> Result<BodyTransfers, IncompleteReason> {
+        use mojito_checked::checked::CheckedTransferDest;
+        use mojito_types::origin::{Origin, SigOrigin};
+        let refuse = IncompleteReason::UnkeyedFact("transfer effects");
+        let source = |origin: &Origin| {
+            Ok::<_, IncompleteReason>(TemplateTransferSource {
+                origin: template_origin(origin, local_place)?,
+                root_ty: match origin {
+                    Origin::Place(place) => self.owner_binding_type(place.root),
+                    _ => None,
+                },
+            })
+        };
+        let recorded = self.call_transfers.borrow();
+        let call_transfers = occurrences
+            .iter()
+            .filter_map(|occurrence| {
+                recorded
+                    .get(&occurrence.span)
+                    .map(|transfers| (occurrence.id, transfers))
+            })
+            .map(|(id, transfers)| {
+                transfers
+                    .iter()
+                    .map(|transfer| {
+                        let dest = match transfer.dest {
+                            CheckedTransferDest::Receiver => TemplateTransferDest::Receiver,
+                            CheckedTransferDest::Argument(index) => {
+                                TemplateTransferDest::Argument(index)
+                            }
+                            CheckedTransferDest::Owner(_) => return Err(refuse.clone()),
+                        };
+                        Ok(TemplateCallTransfer {
+                            dest,
+                            dest_path: transfer.dest_path.clone(),
+                            sources: transfer
+                                .sources
+                                .iter()
+                                .map(source)
+                                .collect::<Result<_, _>>()?,
+                            mutable: transfer.mutable,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(|transfers| (id, transfers))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let merged = self.transferred_origins.borrow();
+        let mut transferred_origins = merged
+            .iter()
+            .filter_map(|(owner, origins)| {
+                let before = baseline.transferred.get(owner);
+                let grown: Vec<&Origin> = origins
+                    .iter()
+                    .filter(|origin| before.is_none_or(|before| !before.contains(origin)))
+                    .collect();
+                (!grown.is_empty()).then_some((*owner, grown))
+            })
+            .map(|(owner, grown)| {
+                let dest = match local_owner(owner)? {
+                    dest @ (TemplateOwner::Param(_)
+                    | TemplateOwner::Receiver
+                    | TemplateOwner::Local(_)) => dest,
+                    TemplateOwner::Global(_) | TemplateOwner::CompileTimeParam(_) => {
+                        return Err(IncompleteReason::ExternalBinding);
+                    }
+                };
+                let sources = grown
+                    .into_iter()
+                    .map(source)
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok((dest, sources))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        transferred_origins
+            .sort_by(|(left, _), (right, _)| format!("{left:?}").cmp(&format!("{right:?}")));
+        let frames = self.transfer_frames.borrow();
+        let transfer_effects = frames
+            .last()
+            .map(|frame| frame.effects.as_slice())
+            .unwrap_or_default()
+            .iter()
+            .map(|effect| {
+                let src_owner = match &effect.src {
+                    SigOrigin::Self_ => param_owners.receiver,
+                    SigOrigin::Param(index) => param_owners.runtime.get(*index).copied().flatten(),
+                    _ => None,
+                };
+                let src_ty = src_owner
+                    .and_then(|owner| self.owner_binding_type(owner))
+                    .ok_or_else(|| refuse.clone())?;
+                Ok(TemplateTransferEffect {
+                    effect: effect.clone(),
+                    src_ty,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut transfer_reads: Vec<(String, Vec<mojito_types::types::TransferEffect>)> =
+            Vec::new();
+        for (callee, read) in &reads.effect_queries {
+            if let EffectRead::Transfers(effects) = read
+                && !transfer_reads.iter().any(|(read, _)| read == callee)
+            {
+                transfer_reads.push((callee.clone(), effects.clone()));
+            }
+        }
+        transfer_reads.sort_by(|(left, _), (right, _)| left.cmp(right));
+        Ok(BodyTransfers {
+            call_transfers,
+            transferred_origins,
+            transfer_effects,
+            transfer_reads,
+        })
+    }
+
+    /// [`TemplateObligation::ReplayedTransfers`]: replay the template's
+    /// transfers for the instance.
+    ///
+    /// A source stands where its binding's substituted type may still carry
+    /// a loan, and vanishes where it is plain data, which is what the
+    /// instance's own check records for such a binding. A call whose realized
+    /// callee publishes an empty summary records nothing, so every source
+    /// there must vanish; one whose summary is the one the template read
+    /// replays the kept sources; any other summary refuses. A read whose
+    /// realized summary is empty is observed empty, as a plain-data clone's
+    /// check observes it.
+    fn realize_transfers(
+        &self,
+        facts: &mut CheckedBodyFacts,
+        template: &CheckedBodyFacts,
+        substitute: &dyn Fn(&Ty) -> Ty,
+    ) -> Result<(), &'static str> {
+        let kept = |source: &TemplateTransferSource| {
+            source
+                .root_ty
+                .as_ref()
+                .is_none_or(|ty| !self.loan_free(&substitute(ty)))
+        };
+        let realized_source = |source: &TemplateTransferSource| TemplateTransferSource {
+            origin: source.origin.clone(),
+            root_ty: source.root_ty.as_ref().map(substitute),
+        };
+        let summaries = self.transfer_effects.borrow();
+        let mut call_transfers = Vec::new();
+        for (id, transfers) in &template.call_transfers {
+            let callee = facts
+                .selected_calls
                 .iter()
-                .any(|(_, read)| matches!(read, EffectRead::Transfers))
-            || frame.is_some_and(|frame| !frame.effects.is_empty());
-        (residue, transfers)
+                .find(|(call, _)| call == id)
+                .map(|(_, call)| call.contract.target.as_str())
+                .or_else(|| {
+                    facts
+                        .overload_targets
+                        .iter()
+                        .find(|(call, _)| call == id)
+                        .map(|(_, target)| target.as_str())
+                })
+                .ok_or("a replayed transfer's call names no realized callee")?;
+            let read = facts
+                .transfer_reads
+                .iter()
+                .find(|(read, _)| read == callee)
+                .map(|(_, effects)| effects)
+                .ok_or("a replayed transfer's callee summary was not read")?;
+            let realized: Vec<TemplateCallTransfer> = transfers
+                .iter()
+                .filter_map(|transfer| {
+                    let sources: Vec<_> = transfer
+                        .sources
+                        .iter()
+                        .filter(|source| kept(source))
+                        .map(realized_source)
+                        .collect();
+                    (!sources.is_empty()).then(|| TemplateCallTransfer {
+                        sources,
+                        ..transfer.clone()
+                    })
+                })
+                .collect();
+            let summary = summaries.get(callee).map(Vec::as_slice).unwrap_or_default();
+            if summary.is_empty() {
+                if !realized.is_empty() {
+                    return Err("a transfer survives a callee whose summary is empty");
+                }
+            } else if summary != read.as_slice() {
+                return Err("a callee's transfer summary is no longer the one the template read");
+            }
+            if !realized.is_empty() {
+                call_transfers.push((*id, realized));
+            }
+        }
+        facts.call_transfers = call_transfers;
+        facts.transferred_origins = template
+            .transferred_origins
+            .iter()
+            .filter_map(|(dest, sources)| {
+                let sources: Vec<_> = sources
+                    .iter()
+                    .filter(|source| kept(source))
+                    .map(realized_source)
+                    .collect();
+                (!sources.is_empty()).then(|| (dest.clone(), sources))
+            })
+            .collect();
+        facts.transfer_effects = template
+            .transfer_effects
+            .iter()
+            .filter(|effect| !self.loan_free(&substitute(&effect.src_ty)))
+            .map(|effect| TemplateTransferEffect {
+                effect: effect.effect.clone(),
+                src_ty: substitute(&effect.src_ty),
+            })
+            .collect();
+        let (empty, replayed): (Vec<_>, Vec<_>) = std::mem::take(&mut facts.transfer_reads)
+            .into_iter()
+            .partition(|(callee, _)| summaries.get(callee).is_none_or(Vec::is_empty));
+        facts.transfer_reads = replayed;
+        for (callee, _) in empty {
+            if !facts.effect_free_callees.contains(&callee) {
+                facts.effect_free_callees.push(callee);
+            }
+        }
+        Ok(())
+    }
+
+    /// The type of the binding an owner identifies, from the scope that
+    /// registered it.
+    fn owner_binding_type(&self, owner: OwnerId) -> Option<Ty> {
+        self.owner_scopes
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, scope)| {
+                scope
+                    .iter()
+                    .find(|(_, candidate)| **candidate == owner)
+                    .and_then(|(name, _)| self.scopes.get(index)?.get(name).cloned())
+            })
     }
 
     fn body_fact_baseline(&self) -> BodyFactBaseline {
         BodyFactBaseline {
             tables: FactTable::ALL.map(|table| self.span_table(table).entries()),
             unkeyed: self.unkeyed_fact_entries(),
+            transferred: self.transferred_origins.borrow().clone(),
             owner_start: self.next_owner.get(),
         }
     }
@@ -707,7 +951,12 @@ impl Checker {
         };
         let refusals = RefCell::new(Vec::new());
         let refuse = |reason: &'static str| {
-            if !template {
+            if template {
+                timing::count("template_bodies.reuse_ineligible", 1);
+                timing::note("template_bodies.reuse_ineligible", || {
+                    format!("{name}: {reason}")
+                });
+            } else {
                 timing::count("template_derivations.ineligible", 1);
                 timing::note("template_derivations.ineligible", || {
                     format!("{name}: {reason}")
@@ -871,7 +1120,7 @@ impl Checker {
             && !mentions_callable(ty)
     }
 
-    /// [`TemplateObligation::PlainDataTransfers`] for one retained type: a
+    /// [`TemplateObligation::ReplayedTransfers`] for one source's binding type: a
     /// closed type whose storage, with its fields at their own arguments,
     /// holds no loan, no reference, and no callable. `plain_data` judges an
     /// instance argument, which may be symbolic.
@@ -1069,19 +1318,6 @@ impl Checker {
         if !copies {
             return Err("a copied place is not implicitly copyable for the instance");
         }
-        // A transfer moves the loans its source carries, so a body of
-        // plain-data values replays none. Every retained type is judged: the
-        // template's own parameter may carry one, and so may a closed view.
-        if template.vanishing_transfers
-            && !facts
-                .expression_types
-                .iter()
-                .chain(&facts.binding_types)
-                .all(|(_, ty)| self.loan_free(ty))
-        {
-            return Err("a value may carry a loan where the body replays a transfer");
-        }
-        facts.vanishing_transfers = false;
         // A call-through residue is republished verbatim on the same ground:
         // an argument carries an origin only while its binding's type carries
         // a loan. A type the substitution left alone carries in the instance
@@ -1231,6 +1467,7 @@ impl Checker {
             self.realize_conversion(&mut facts, index, substitution)?;
         }
         realize_boundary_conversions(&mut facts)?;
+        self.realize_transfers(&mut facts, template, &substitute)?;
         facts.struct_applications =
             sorted_applications(std::mem::take(&mut facts.struct_applications));
         facts.effect_free_callees.sort();
@@ -1980,7 +2217,7 @@ impl Checker {
                 TemplateObligation::ReferenceResultReads,
             ])
             .chain(method_body.then_some(TemplateObligation::PlainDataArguments))
-            .chain(method_body.then_some(TemplateObligation::PlainDataTransfers))
+            .chain(method_body.then_some(TemplateObligation::ReplayedTransfers))
             .chain(method_body.then_some(TemplateObligation::ConstructorSelection))
             .collect(),
         });
@@ -2243,7 +2480,7 @@ impl Checker {
         {
             return outside("an effect summary was read outside a direct call");
         }
-        if facts.vanishing_transfers {
+        if facts.replays_transfers() {
             return outside("the body replays a transfer summary");
         }
         let at_call = |id: &OccurrenceId| facts.call_parameters.iter().any(|(call, _)| call == id);
@@ -2343,11 +2580,12 @@ impl Checker {
     ///   copy and the transfer are owed again per instance. An overloaded
     ///   family with symbolic parameter types is admitted only for exact
     ///   arguments, which no member outranks.
-    /// - `VANISHING_TRANSFERS`: see [`Self::body_transfer_effects`]. A
-    ///   replayed transfer moves the loans its source carries; a plain-data
-    ///   value carries none, so an instance whose every retained type is
-    ///   loan-free records no transfer, merges no origin, and publishes no
-    ///   effect ([`TemplateObligation::PlainDataTransfers`]).
+    /// - `REPLAYED_TRANSFERS`: see [`Self::body_transfers`] and
+    ///   [`Self::realize_transfers`]. The template records each replayed
+    ///   transfer, the origins it merged, and the effect its frame derived,
+    ///   every source by the binding it is rooted at; an instance replays
+    ///   them again, dropping a source whose binding is plain data
+    ///   ([`TemplateObligation::ReplayedTransfers`]).
     /// - `OPERATOR_DISPATCH`: see [`BodyShape::operator`] and
     ///   [`Self::realize_operator`]. The template records nothing at an
     ///   operator its bound proves, and both operands are places read where
@@ -2700,7 +2938,7 @@ impl Checker {
                 .overload_targets
                 .iter()
                 .all(|(id, _)| admitted_call(id))
-            || !facts.effect_free_callees.iter().all(|callee| {
+            || !summary_callees(facts).all(|callee| {
                 targets.contains(&callee.as_str())
                     || conformer_copy(callee)
                     || shape.callable_params.contains(&callee.as_str())
@@ -2715,8 +2953,8 @@ impl Checker {
         if residue && !shape.holds(MethodFeatures::CALLABLE_PARAMETERS) {
             return outside("a keyed body publishes or reads a call-through residue");
         }
-        if facts.vanishing_transfers
-            && (shape.keyed || !shape.holds(MethodFeatures::VANISHING_TRANSFERS))
+        if facts.replays_transfers()
+            && (shape.keyed || !shape.holds(MethodFeatures::REPLAYED_TRANSFERS))
         {
             return outside("a keyed body replays a transfer summary");
         }
@@ -2874,7 +3112,7 @@ impl Checker {
             .filter(|(now, before)| now != before && now.0 != TRANSFERRED_ORIGINS)
             .map(|((store, _), _)| format!("store:{store}"))
             .collect();
-        if self.body_transfer_effects(&occurrences, baseline, reads).0 {
+        if self.transfer_residue(reads) {
             reasons.push("effects".to_string());
         }
         let annotation = self.return_annotation_spans();
@@ -3091,7 +3329,6 @@ impl Checker {
             recorded.join(" ; ")
         });
         self.capturable(&occurrences, baseline, reads)?;
-        let vanishing_transfers = self.body_transfer_effects(&occurrences, baseline, reads).1;
         let owner_end = self.next_owner.get();
         let local_owner = |owner: OwnerId| {
             self.template_owner(owner, param_owners, baseline.owner_start, owner_end)
@@ -3202,6 +3439,14 @@ impl Checker {
             binding_types,
             &local_place,
             &mut typed_origins,
+        )?;
+        let transfers = self.body_transfers(
+            &occurrences,
+            baseline,
+            reads,
+            param_owners,
+            &local_owner,
+            &local_place,
         )?;
         let call_result_origins = values(&occurrences, &self.call_result_origins.borrow())
             .into_iter()
@@ -3340,7 +3585,10 @@ impl Checker {
                 .filter(|occurrence| occurrence.transfer)
                 .map(|occurrence| occurrence.id)
                 .collect(),
-            vanishing_transfers,
+            call_transfers: transfers.call_transfers,
+            transferred_origins: transfers.transferred_origins,
+            transfer_effects: transfers.transfer_effects,
+            transfer_reads: transfers.transfer_reads,
             call_throughs,
             call_through_reads,
             conversions: self.body_conversions(&occurrences),
@@ -3436,7 +3684,7 @@ impl Checker {
         {
             return Err(IncompleteReason::UnkeyedFact(store));
         }
-        if self.body_transfer_effects(occurrences, baseline, reads).0 {
+        if self.transfer_residue(reads) {
             return Err(IncompleteReason::UnkeyedFact("transfer effects"));
         }
         // A residue is republished verbatim, so it may name only slots and
@@ -3464,8 +3712,7 @@ impl Checker {
                 .iter()
                 .filter(|occurrence| entries.has(&occurrence.span))
                 .count();
-            // A recorded transfer is kept as the bundle's `vanishing_transfers`.
-            if recorded > 0 && !derivable_table(table) && table != FactTable::CallTransfers {
+            if recorded > 0 && !derivable_table(table) {
                 return Err(IncompleteReason::UnsupportedTable(table));
             }
         }
@@ -3667,6 +3914,7 @@ impl Checker {
                 .borrow_mut()
                 .insert(span(id)?, resolved);
         }
+        self.install_transfers(facts, &span, &rooted, &owner)?;
         for (id, reference) in &facts.reference_binding_types {
             self.binding_types
                 .borrow_mut()
@@ -3832,12 +4080,81 @@ impl Checker {
                 .entry(callee.clone())
                 .or_insert_with(|| residue.clone());
         }
+        for (callee, read) in &facts.transfer_reads {
+            self.effect_observations
+                .borrow_mut()
+                .entry(callee.clone())
+                .or_insert_with(|| read.clone());
+            self.call_through_observations
+                .borrow_mut()
+                .entry(callee.clone())
+                .or_default();
+        }
         // The residue goes on the body's own frame, which publishes it under
         // the body's key when it is popped, as an inferred body's would be.
         if let Some(frame) = self.transfer_frames.borrow_mut().last_mut() {
             for residue in &facts.call_throughs {
                 if !frame.call_throughs.contains(residue) {
                     frame.call_throughs.push(residue.clone());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Install a derivation's replayed transfers: the call transfers at
+    /// their spans, the merged origins at the instance's own bindings, and
+    /// the effects on the body's frame, which publishes them under the body's
+    /// key when it is popped, as an inferred body's would be.
+    fn install_transfers(
+        &self,
+        facts: &CheckedBodyFacts,
+        span: &dyn Fn(&OccurrenceId) -> Result<SourceSpan, TypeError>,
+        rooted: &dyn Fn(&TemplatePlace) -> Result<mojito_types::origin::OriginPlace, TypeError>,
+        owner: &dyn Fn(&TemplateOwner) -> Result<OwnerId, TypeError>,
+    ) -> Result<(), TypeError> {
+        use mojito_checked::checked::{CheckedCallTransfer, CheckedTransferDest};
+        for (id, transfers) in &facts.call_transfers {
+            let resolved = transfers
+                .iter()
+                .map(|transfer| {
+                    Ok(CheckedCallTransfer {
+                        dest: match transfer.dest {
+                            TemplateTransferDest::Receiver => CheckedTransferDest::Receiver,
+                            TemplateTransferDest::Argument(index) => {
+                                CheckedTransferDest::Argument(index)
+                            }
+                        },
+                        dest_path: transfer.dest_path.clone(),
+                        sources: transfer
+                            .sources
+                            .iter()
+                            .map(|source| checked_origin(&source.origin, rooted))
+                            .collect::<Result<_, _>>()?,
+                        mutable: transfer.mutable,
+                    })
+                })
+                .collect::<Result<Vec<_>, TypeError>>()?;
+            self.call_transfers.borrow_mut().insert(span(id)?, resolved);
+        }
+        for (dest, sources) in &facts.transferred_origins {
+            let dest = owner(dest)?;
+            let origins = sources
+                .iter()
+                .map(|source| checked_origin(&source.origin, rooted))
+                .collect::<Result<Vec<_>, TypeError>>()?;
+            let mut overlay = self.transferred_origins.borrow_mut();
+            let merged = overlay.entry(dest).or_default();
+            for origin in origins {
+                if !merged.contains(&origin) {
+                    merged.push(origin);
+                }
+            }
+        }
+        if let Some(frame) = self.transfer_frames.borrow_mut().last_mut() {
+            for effect in &facts.transfer_effects {
+                if !frame.effects.contains(&effect.effect) {
+                    frame.effects.push(effect.effect.clone());
                 }
             }
         }
@@ -4167,9 +4484,9 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::ImplicitConversionTypes
         | FactTable::ImplicitConversionRaises
         | FactTable::ConversionSourceBorrows
-        | FactTable::CallResultOrigins => true,
+        | FactTable::CallResultOrigins
+        | FactTable::CallTransfers => true,
         FactTable::ContextualBases
-        | FactTable::CallTransfers
         | FactTable::SimdConstructions
         | FactTable::ParameterizedMethodCalls
         | FactTable::TupleUnpackPlans
@@ -4331,6 +4648,20 @@ fn for_each_owner(facts: &mut CheckedBodyFacts, visit: &dyn Fn(&mut TemplateOwne
         .flat_map(|(_, slots)| slots)
     {
         origin_owners(&mut resolved.origin, visit);
+    }
+    for source in facts
+        .call_transfers
+        .iter_mut()
+        .flat_map(|(_, transfers)| transfers)
+        .flat_map(|transfer| &mut transfer.sources)
+    {
+        origin_owners(&mut source.origin, visit);
+    }
+    for (dest, sources) in &mut facts.transferred_origins {
+        visit(dest);
+        for source in sources {
+            origin_owners(&mut source.origin, visit);
+        }
     }
     let call_invalidations = calls(&mut facts.selected_calls, &mut facts.augmented_subscripts)
         .flat_map(|call| {
@@ -4780,6 +5111,14 @@ fn callee_reads(reads: &BodyReads) -> (Vec<String>, Vec<String>, CallThroughRead
         }
     }
     call_through_reads.sort_by(|(left, _), (right, _)| left.cmp(right));
+    // A callee whose summary was replayed is read again per instance
+    // (`CheckedBodyFacts::transfer_reads`), not observed empty.
+    let replayed = |callee: &str| {
+        reads
+            .effect_queries
+            .iter()
+            .any(|(read, effects)| read == callee && matches!(effects, EffectRead::Transfers(_)))
+    };
     let names = |value: bool| {
         let mut names: Vec<String> = reads
             .effect_queries
@@ -4787,6 +5126,7 @@ fn callee_reads(reads: &BodyReads) -> (Vec<String>, Vec<String>, CallThroughRead
             .filter(|(callee, read)| {
                 (!value || matches!(read, EffectRead::Value))
                     && !call_through_reads.iter().any(|(read, _)| read == callee)
+                    && !replayed(callee)
             })
             .map(|(callee, _)| callee.clone())
             .collect();
@@ -4800,6 +5140,15 @@ fn callee_reads(reads: &BodyReads) -> (Vec<String>, Vec<String>, CallThroughRead
 /// Each callee whose call-through residue one body read, with the residue.
 type CallThroughReads = Vec<(String, Vec<mojito_checked::checked::CallThroughEffect>)>;
 
+/// Every callee whose transfer summary a body read at a call: those observed
+/// empty and those replayed.
+fn summary_callees(facts: &CheckedBodyFacts) -> impl Iterator<Item = &String> {
+    facts
+        .effect_free_callees
+        .iter()
+        .chain(facts.transfer_reads.iter().map(|(callee, _)| callee))
+}
+
 /// Record that realization resolved the template's callee `selected` to the
 /// instance's `target`: the target's summaries are read as the template read
 /// them, empty or with the residue the template kept.
@@ -4808,9 +5157,11 @@ fn note_realized_callee(facts: &mut CheckedBodyFacts, selected: &str, target: &s
     let residue = facts
         .call_through_reads
         .iter_mut()
-        .find(|(callee, _)| callee == selected || callee == target);
+        .map(|(callee, _)| callee)
+        .chain(facts.transfer_reads.iter_mut().map(|(callee, _)| callee))
+        .find(|callee| *callee == selected || *callee == target);
     match residue {
-        Some(read) => target.clone_into(&mut read.0),
+        Some(read) => target.clone_into(read),
         None if !facts
             .effect_free_callees
             .iter()

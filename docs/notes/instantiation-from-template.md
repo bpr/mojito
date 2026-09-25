@@ -122,11 +122,14 @@ reference, and nowhere else), reference results (the `ReferenceResult`
 adjustment, kept apart from the other adjustments), interior references, and
 copyable reference-result reads.
 
-Three things are recorded and kept as a fact about the body rather than as
-entries. A call transfer (`CallTransfers`), the origins it merged, and the
-effect the body's own frame then publishes exist only while a value may carry
-a loan, so the bundle keeps one flag (`vanishing_transfers`) and an instance
-owes that none of its values can. An operator over two parameter-typed
+A replayed transfer is kept in template-local terms too: each call transfer
+(`call_transfers`), the origins it merged into a binding's bookkeeping
+(`transferred_origins`), the effect the body's own frame then publishes
+(`transfer_effects`), and the callee summary read (`transfer_reads`), every
+source beside the template's type of the binding it is rooted at, since a
+binding whose type may carry loans has its own place as its origin and a
+plain-data one has none. Two things are recorded and kept as a fact about the
+body rather than as entries. An operator over two parameter-typed
 places records nothing in the template, so the grammar names it (`operators`)
 and an instance dispatches it itself. A checker builtin on a bounded parameter
 (`hasher.update(x)`, `writer.write(x)`) selects no callee and records nothing
@@ -302,7 +305,7 @@ they are a set, not a ladder.
 | `PLACE_ARGUMENTS` | a local, a parameter, or a field of `self` handed to a `mut` or bare `ref` parameter of a method call | The callee's declared convention decides that the call keeps the caller's place (`CallPlaceUses`), and the generations a `mut` argument invalidates lie below the argument's own binding, kept by template owner. A kept place is neither copied, moved, nor converted, and its recorded type equals the parameter's. Whether two arguments conflict is judged on their places and conventions. A field of `self` is kept only beside a receiver the call reads. A parameter of a struct parameter's type is admitted only on a call of `self`'s own method, where callee and caller share one binder scope, so the instance substitutes it in the contract and in `CallParameters`. |
 | `ORIGIN_PARAMETERS` | a `ref` parameter with an origin clause, the method's origin binders, a receiver origin naming one of them, and the parameter forwarded as the method's own reference result | The clause lives in the signature, which is checked per clone. The body's facts for such a parameter are a bare `ref` one's: its binding, its type, and a copy where it is read by value. |
 | `VALUE_ARGUMENTS` | a whole value of any type handed to a by-value parameter of a method call: a `^` transfer, a sibling call's result, a place the template copied, or a named place a read parameter takes where it lies | The argument's recorded type equals the parameter's, before and after substitution, or an `@implicit` constructor converts it to the parameter's, and the instance selects that constructor again (obligation 20). What the call records for it is decided without its type: a read parameter borrows a named place and reads a temporary by the argument's syntax and the callee's conventions, and a `var` parameter takes a transfer or a temporary as it stands. A copied place owes obligation 3 and a transfer obligation 10, as elsewhere. A `ref` local and a reference call's result stay out, since each records a borrow of its own. A callee with a parameter of a struct parameter's type may belong to a field of another struct: it has no binders of its own, so its parameter types were recorded at the receiver's arguments, in the caller's binder scope, and the instance substitutes them in the contract and in `CallParameters` alike. An overloaded family whose members declare parameters of parameter types is admitted when every argument's type is exactly its parameter's: no member outranks an exact match, and a family an instance collapses finds no single clone (`method_clone_target`). |
-| `VANISHING_TRANSFERS` | a call whose callee stores an argument outward (`self.items.append(value^)`), so the template replays a transfer summary at it | A transfer moves the loans its source carries. The template's parameter may carry one (`type_may_carry_loans` is true for a symbolic parameter), so its check records a call transfer, merges the origin, and publishes an effect of its own; every value of a plain-data instance carries none, so `replay_transfer_effects` records nothing and the instance's frame publishes nothing, which is what the clone check records. Obligation 14 below. A call-through residue, a function value's baked effects, and a destination a captured binding names are not transfers and still refuse. |
+| `REPLAYED_TRANSFERS` | a call whose callee stores an argument outward (`self.items.append(value^)`, `self.items.append(held^)` from a local), so the template replays a transfer summary at it | A transfer moves the loans its source carries. The template's parameter may carry one (`type_may_carry_loans` is true for a symbolic parameter), so its check records a call transfer whose source is the parameter's own place, merges that origin into the destination's bookkeeping, and publishes an effect of its own; the bundle keeps all three by template owner, each source with its binding's type (`body_transfers`). The template's own reuse installs them again on its own bindings; an instance replays each transfer against its realized callee's summary and keeps a source only while its binding may still carry a loan (`realize_transfers`), so a plain-data instance records nothing at the call and publishes nothing, which is what its clone check records. Obligation 14 below. A call-through residue, a function value's baked effects, a destination a captured binding names, and an effect whose source is not a single parameter or the receiver are not replays and still refuse. |
 | `OPERATOR_DISPATCH` | Every operator a trait names — `==`, `!=`, `<`, `<=`, `>`, `>=`, and the arithmetic, bitwise, and shift ones — over two places of one type that mentions a struct parameter | The template proves the operator through the bound and records nothing at it; `infer_infix` decides a struct operand's dunder from the operand types alone (`struct_infix_dispatch`). Obligation 15 below. Each operand is a place, so both checks read it where it lies; what the instance's dispatch adds beneath the operand is the copy of a consumed one, the conversion of an adapted one, and `NegatedEquality`. An arithmetic operator's result is the operand's own type rather than `Bool`, so it is a temporary of that type wherever the body puts it (`BodyShape::operator_value`, beside a call result and a construction). |
 | `BOUND_DISPATCH` | a method call on a place of a bare parameter type, or on a named place's `^` transfer for a `var self` requirement, proved through a bound: `place.copy()`, `item.__hash__(hasher)`, `item.write_to(writer)`, `item.bump(2)` on a `mut self` requirement, or any requirement whose arguments are closed scalars or named places handed to a bounded `mut`/`ref` parameter, each of a bare parameter type or of a closed type the template proved against the bound | The template records the abstract dispatch (`__trait_dispatch.__hash__$ov$…`), or for `write_to` the inverted write, and nothing the receiver's type decides: a kept argument's place use and generation refresh follow from the requirement's convention, which the witness shares. `infer_method_call` decides a concrete receiver's witness from its type alone, and `bound_witness` repeats that decision from the types. Obligation 16 below. The call through the bound read the summaries of every conformer's method of that name, one key per conformer; each was empty, and the instance re-reads only its own target's. |
 | `BOUND_BUILTINS` | `hasher.update(x)`, `hasher._update_with_simd(x)`, or `writer.write(x…)` on a parameter bounded by `Hasher` or `Writer`, whose arguments are closed scalars, string literals, named whole values, `ref` locals, fields read through a reference, pointer slots, or reference calls | The builtin selects no callee and records at an argument only what its syntax decides: a borrow of a named place or a reference result, an unconsumed temporary, a closed literal's materialization. The argument's type it proved through the bound, and the instance proves it again at its own type (obligation 17), which for a hashed value is where the hash leaf is recorded. |
@@ -417,14 +420,25 @@ only `Movable` records nothing there, and its `Int` clone would.
     (`assets/type_error/template_method_reference_read_requires_copy.mojo` is
     the template's own rejection). `check_reference_result_reads` runs over
     every installed adjustment after the bodies, derived or not.
-14. **Plain-data transfers.** A body that replayed a transfer summary
-    (`vanishing_transfers`) derives only when every retained expression and
-    binding type is closed and holds no loan, reference, or callable in its
-    storage, its fields at their own arguments (`loan_free`; `plain_data`
-    reads a struct's declared fields and would refuse every struct with a
-    field of a parameter type). The template's own body, whose parameter is
-    symbolic, never meets this and is inferred again. Obligation 9 then holds
-    as before: the realized callee's summary must be empty.
+14. **Replayed transfers.** Each transfer the template replayed is replayed
+    again for the instance (`realize_transfers`). The realized callee's
+    summary must be the one the template read, or empty. A source is kept
+    while the substituted type of the binding it is rooted at may still
+    carry a loan, and vanishes where that type is closed and holds no loan,
+    reference, or callable in its storage, its fields at their own arguments
+    (`loan_free`): a plain-data binding has no origin, so the instance's own
+    check records none for it. A transfer, a merged origin, or an effect
+    whose every source vanished is not recorded; a call whose realized
+    summary is empty must lose every source, and a read whose realized
+    summary is empty is observed empty, as obligation 9 observes it. The
+    template's own reuse substitutes nothing and keeps every source. The
+    escape verdict `replay_transfer_effects` reaches is monotone in the
+    sources, so an instance, whose sources are a subset of the template's,
+    cannot fail where the template passed. `MOJITO_VERIFY_TEMPLATE_FACTS=1`
+    checks the identity case and the plain-data instances
+    (`assets/ok/template_method_transfer_replay.mojo`); a loan-carrying
+    instance is never cloned whole today (`docs/roadmap.md` §1), so the
+    per-source judgment there is exact by construction and unverified.
 15. **Operators.** Each admitted operator is dispatched on the substituted
     operand type (`realize_operator`): a closed scalar records nothing, owing
     only that the primitive path has the operation and gives the type the
@@ -825,11 +839,11 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
   surviving trait-bound `def` template. Scalar locals and runtime `if` and
   `while` are covered.
 - Any call that records a conversion, an adjustment, or an origin, and a
-  transfer that does not vanish: a call-through residue that names a
-  compile-time callable (`Tuple.deinit_with[elt_handler]`) or whose argument
-  carries an origin, a named callable's own effects behind a residue, a
-  function value's baked effects, a destination a captured binding names,
-  and an instance whose values may carry a loan. The
+  transfer residue: a call-through residue that names a compile-time
+  callable (`Tuple.deinit_with[elt_handler]`) or whose argument carries an
+  origin, a named callable's own effects behind a residue, a function
+  value's baked effects, a destination a captured binding names, and an
+  effect whose source is a union. The
   `CallableCaptureAccesses` adjustment is a concrete caller's fact: a
   `capturing[_]` parameter's environment stays open in every clone, so no
   template records it.

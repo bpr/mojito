@@ -1,12 +1,13 @@
 # A per-instantiation method clone inherits its checked template's facts when
 # the body calls a method whose callee stores an argument outward
 # (`docs/notes/instantiation-from-template.md`, class MethodBody, feature
-# `vanishing_transfers`). The template, whose parameter may stand for a type
+# `REPLAYED_TRANSFERS`). The template, whose parameter may stand for a type
 # that carries a loan, replays `List.append`'s transfer summary at the call and
-# records a transfer, a merged origin, and an effect of its own. A transfer
-# moves the loans its source carries, and every value of the instances below
-# is plain data, so their own checks record none of that: the derived facts
-# hold nothing at the call either, and the instance's frame publishes nothing.
+# records a transfer, a merged origin, and an effect of its own, each kept by
+# the binding it is rooted at. A transfer moves the loans its source carries,
+# and every value of the instances below is plain data, so the replay for each
+# instance keeps no source: the derived facts hold nothing at the call, and
+# the instance's frame publishes nothing, as their own checks record.
 struct Bag[T: Copyable & Deinitable](Movable):
     var item: Self.T
     var items: List[Self.T]

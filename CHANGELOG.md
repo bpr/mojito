@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A checked template whose body replays a callee's transfer summary
+  (`self.items.append(value^)`) is now reused from its own facts in every
+  later transfer round instead of being inferred again, and its
+  per-instantiation clones replay the same transfers on their own bindings:
+  the template keeps each call transfer, the origins it merged, and the
+  effect its frame derived by template owner, and an instance keeps a source
+  only while its binding's type may still carry a loan. A plain-data
+  instance records nothing at the call, as before.
+
 - A method of a struct with a scalar value parameter or an origin parameter
   (`Array`, `Span`, a user `Grid[T, rows: Int]`) is now certified as a
   checked template, so its facts are reused in every later pass instead of

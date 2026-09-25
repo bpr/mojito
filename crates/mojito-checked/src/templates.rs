@@ -675,8 +675,8 @@ impl MethodFeatures {
     pub const VALUE_ARGUMENTS: Self = Self(1 << 11);
     /// A call whose callee stores an argument outward, so that the template,
     /// whose parameter may stand for a loan-carrying type, replays a transfer
-    /// summary there.
-    pub const VANISHING_TRANSFERS: Self = Self(1 << 12);
+    /// summary there and an instance replays it again.
+    pub const REPLAYED_TRANSFERS: Self = Self(1 << 12);
     /// An operator over two places of one type that mentions a struct
     /// parameter — a comparison, or an arithmetic, bitwise, or shift operator
     /// the bound proves — which an instance dispatches on its own type.
@@ -823,6 +823,48 @@ pub struct TemplateCallResultOrigin {
     pub mutability: Option<mojito_types::origin::Mutability>,
 }
 
+/// One source of a replayed transfer: an origin in template-local terms, and
+/// the template's type of the binding it is rooted at.
+///
+/// A binding whose type may carry loans has its own place as its origin, so
+/// the replay records the place; a plain-data binding has none, so the
+/// replay records nothing for it. An instance substitutes the type and keeps
+/// or drops the source by that judgment. An unrooted origin has no binding
+/// and is kept as written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplateTransferSource {
+    pub origin: TemplateOrigin,
+    pub root_ty: Option<Ty>,
+}
+
+/// One [`crate::checked::CheckedCallTransfer`] in template-local terms.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplateCallTransfer {
+    pub dest: TemplateTransferDest,
+    pub dest_path: Vec<mojito_types::origin::OriginSeg>,
+    pub sources: Vec<TemplateTransferSource>,
+    pub mutable: bool,
+}
+
+/// The actual a replayed transfer stores into. A concrete captured owner
+/// (`CheckedTransferDest::Owner`) is a residue no template retains.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TemplateTransferDest {
+    Receiver,
+    Argument(usize),
+}
+
+/// One effect a replay derived on the body's own frame.
+///
+/// The effect names signature origins, so only the type of the parameter or
+/// receiver its source names is instance-dependent; the template's type of
+/// that binding is kept beside it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplateTransferEffect {
+    pub effect: mojito_types::types::TransferEffect,
+    pub src_ty: Ty,
+}
+
 /// Which retained type table a [`TypedOrigins`] entry completes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TypedTable {
@@ -949,13 +991,15 @@ pub enum TemplateObligation {
     /// clone's. One the template marked must stay marked: a by-value read
     /// rests on it.
     ReferenceResultReads,
-    /// Every value in a body that replayed a transfer summary is plain data at
-    /// the instance's types. A transfer moves the loans its source carries,
-    /// and a plain-data value carries none, so the instance's check records
-    /// no transfer, merges no origin, and publishes no effect of its own. A
-    /// template's own body, whose parameter is still symbolic, never meets
-    /// this and is inferred again.
-    PlainDataTransfers,
+    /// Each transfer the template replayed is replayed again at the
+    /// instance. The realized callee's summary is the one the template read,
+    /// or empty; a source rooted at a binding whose substituted type is plain
+    /// data vanishes, since such a binding has no origin, and a transfer, a
+    /// merged origin, or an effect whose every source vanished is not
+    /// recorded, as the instance's own check records none. The template's
+    /// own reuse keeps every source. The escape verdict is monotone in the
+    /// sources, so a template that passed it cannot fail at an instance.
+    ReplayedTransfers,
     /// The constructor the template selected still binds every argument
     /// exactly at the instance, and the instance's `__init__` clone, where
     /// one exists, is that member's. A construction records no contract, so
@@ -1120,11 +1164,21 @@ pub struct CheckedBodyFacts {
     /// at each one whose type mentioned a parameter
     /// ([`TemplateObligation::Movable`]).
     pub transfers: Vec<OccurrenceId>,
-    /// Whether the body replayed a callee's transfer summary: it recorded a
-    /// call transfer, merged a transferred origin, or published an effect on
-    /// its own frame. None of that is retained, because none of it exists for
-    /// an instance ([`TemplateObligation::PlainDataTransfers`]).
-    pub vanishing_transfers: bool,
+    /// The transfers each call replayed from its callee's summary, in
+    /// template-local terms: which actual receives loans rooted at which of
+    /// the body's own places. An instance replays each again
+    /// ([`TemplateObligation::ReplayedTransfers`]).
+    pub call_transfers: Vec<(OccurrenceId, Vec<TemplateCallTransfer>)>,
+    /// The origins those replays merged into each destination binding's
+    /// bookkeeping, by template owner.
+    pub transferred_origins: Vec<(TemplateOwner, Vec<TemplateTransferSource>)>,
+    /// The effects the replays derived on the body's own frame, which the
+    /// frame publishes under the body's key.
+    pub transfer_effects: Vec<TemplateTransferEffect>,
+    /// Each callee whose transfer summary the body replayed, with what it
+    /// read. An instance rekeys each to its realized callee, whose summary
+    /// must be the same or empty.
+    pub transfer_reads: Vec<(String, Vec<mojito_types::types::TransferEffect>)>,
     /// Operators over two places of one parameter-typed type, at which the
     /// template recorded nothing: a comparison, or an arithmetic, bitwise, or
     /// shift operator its bound proves. An instance dispatches each on its own
@@ -1217,6 +1271,16 @@ fn differing<T: std::fmt::Debug + PartialEq>(
 }
 
 impl CheckedBodyFacts {
+    /// Whether the body replayed a callee's transfer summary: it recorded a
+    /// call transfer, merged a transferred origin, published an effect on its
+    /// own frame, or read a summary that held one.
+    pub const fn replays_transfers(&self) -> bool {
+        !self.call_transfers.is_empty()
+            || !self.transferred_origins.is_empty()
+            || !self.transfer_effects.is_empty()
+            || !self.transfer_reads.is_empty()
+    }
+
     /// The fields in which this (derived) bundle differs from an `other`
     /// (inferred) one, each with both values: what verification mode reports.
     pub fn difference(&self, other: &Self) -> String {
@@ -1433,12 +1497,7 @@ impl CheckedBodyFacts {
         );
         differing(&mut out, "transfers", &self.transfers, &other.transfers);
         differing(&mut out, "operators", &self.operators, &other.operators);
-        differing(
-            &mut out,
-            "vanishing_transfers",
-            &self.vanishing_transfers,
-            &other.vanishing_transfers,
-        );
+        self.transfer_differences(other, &mut out);
         differing(
             &mut out,
             "bound_builtins",
@@ -1655,7 +1714,12 @@ impl CheckedBodyFacts {
             subscript_descriptors: at(&self.subscript_descriptors, occurrences, folded),
             call_place_uses: flagged(&self.call_place_uses),
             transfers: flagged(&self.transfers),
-            vanishing_transfers: self.vanishing_transfers,
+            call_transfers: at(&self.call_transfers, occurrences, folded),
+            // Merged origins, effects, and reads name bindings and callees,
+            // not occurrences.
+            transferred_origins: self.transferred_origins.clone(),
+            transfer_effects: self.transfer_effects.clone(),
+            transfer_reads: self.transfer_reads.clone(),
             operators: flagged(&self.operators),
             bound_builtins: at(&self.bound_builtins, occurrences, folded),
             method_instantiations: at(&self.method_instantiations, occurrences, folded),
@@ -1741,6 +1805,39 @@ impl CheckedBodyFacts {
             + self.constructions.len()
             + self.typed_origins.len()
             + self.call_result_origins.len()
+            + self.call_transfers.len()
+            + self.transferred_origins.len()
+            + self.transfer_effects.len()
+            + self.transfer_reads.len()
+    }
+
+    /// The replayed-transfer fields in which this bundle differs from
+    /// `other`, appended to `out` as [`Self::difference`] appends the rest.
+    fn transfer_differences(&self, other: &Self, out: &mut String) {
+        differing(
+            out,
+            "call_transfers",
+            &self.call_transfers,
+            &other.call_transfers,
+        );
+        differing(
+            out,
+            "transferred_origins",
+            &self.transferred_origins,
+            &other.transferred_origins,
+        );
+        differing(
+            out,
+            "transfer_effects",
+            &self.transfer_effects,
+            &other.transfer_effects,
+        );
+        differing(
+            out,
+            "transfer_reads",
+            &self.transfer_reads,
+            &other.transfer_reads,
+        );
     }
 }
 
