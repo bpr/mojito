@@ -1119,15 +1119,14 @@ impl Checker {
         if !movable {
             return Err("a transferred value is not movable for the instance");
         }
-        // The declaration's own judgment of each binding whose type was a
-        // parameter, at the instance's type. One built over a parameter has
-        // no entry to judge again.
+        // The declaration's own judgment of each binding whose type mentions
+        // a parameter, at the instance's type: deletable where the type is
+        // `Deinitable`, linear where it is still a bare parameter. A type
+        // built over a parameter answers from its own conformance under the
+        // instance's arguments.
         for (id, declared) in &template.binding_types {
             if !mojito_types::types::is_symbolic(declared) {
                 continue;
-            }
-            if !matches!(declared, Ty::Param { .. }) {
-                return Err("a binding's type is built over a parameter");
             }
             let realized = substitute(declared);
             facts.deletable_bindings.retain(|binding| binding != id);
@@ -5222,8 +5221,7 @@ impl BodyShape<'_> {
                 let moved = !scalar
                     && ty.is_none()
                     && self.moved_result.is_some()
-                    && (self.whole_value(value) || self.reference_read(value))
-                    && self.judged_binding(value);
+                    && (self.whole_value(value) || self.reference_read(value));
                 let kind = if scalar {
                     LocalKind::Scalar
                 } else {
@@ -5831,18 +5829,6 @@ impl BodyShape<'_> {
         })
     }
 
-    /// Whether the binding `value` initializes has a type an instance can
-    /// judge again: a bare parameter, whose deletability realization decides
-    /// at the instance's type, or a closed type, which both checks judge
-    /// alike. A type built over a parameter leaves no such entry.
-    fn judged_binding(&self, value: &Expr) -> bool {
-        self.facts.is_none_or(|facts| {
-            fact_at(&facts.binding_types, self.occurrence(value)).is_some_and(|ty| {
-                matches!(ty, Ty::Param { .. }) || !mojito_types::types::is_symbolic(ty)
-            })
-        })
-    }
-
     /// A closed scalar field of a writable `self`, as the target of a store.
     ///
     /// A field reached through a subscript (`self.entries[i].hits`) makes the
@@ -6205,6 +6191,13 @@ impl BodyShape<'_> {
         )
     }
 
+    /// Whether `expr` names a `var` local holding a whole value, which a
+    /// method call or `len` reads or writes in place.
+    fn value_local(&self, expr: &Expr) -> bool {
+        matches!(&expr.kind, ExprKind::Identifier(name)
+            if self.local_kind(name) == Some(LocalKind::Value))
+    }
+
     /// Whether `name` is a `ref` local.
     fn reference_local(&self, name: &str) -> bool {
         self.local_kind(name) == Some(LocalKind::Reference)
@@ -6234,9 +6227,10 @@ impl BodyShape<'_> {
             ExprKind::Member { .. } => {
                 (self.receiver_field(expr) || self.reference_member(expr)) && self.scalar(expr)
             }
-            // A call of a method on `self` or on one of its fields, passing
-            // scalars, whose recorded contract changes per instance only in
-            // its target and its substituted result (`closed_method_contract`).
+            // A call of a method on `self`, on one of its fields, or on a
+            // `var` local, passing scalars, whose recorded contract changes
+            // per instance only in its target and its substituted result
+            // (`closed_method_contract`).
             ExprKind::MethodCall {
                 object,
                 method,
@@ -6245,7 +6239,8 @@ impl BodyShape<'_> {
             } => {
                 let on_self = matches!(&object.kind, ExprKind::Identifier(name) if name == "self");
                 let sibling = ((self.receiver && (on_self || self.receiver_field(object)))
-                    || (!self.keyed && self.reference_receiver(object)))
+                    || (!self.keyed
+                        && (self.reference_receiver(object) || self.value_local(object))))
                     && (!self.keyed || (args.is_empty() && kwargs.is_empty()))
                     && args
                         .iter()
@@ -6285,7 +6280,7 @@ impl BodyShape<'_> {
                 }
                 // The built-in `len` reads its operand in place and realizes
                 // its witness per instance, so a method may hand it a field of
-                // `self` of any type, not only a scalar one.
+                // `self` or a `var` local of any type, not only a scalar one.
                 let builtin_len = self
                     .facts
                     .is_none_or(|facts| facts.builtin_len_calls.contains(&id));
@@ -6295,7 +6290,11 @@ impl BodyShape<'_> {
                     let on_self = self.receiver
                         && matches!(&argument.kind, ExprKind::Identifier(name) if name == "self");
                     self.expression(argument)
-                        || (builtin_len && (held || on_self || self.receiver_field(argument)))
+                        || (builtin_len
+                            && (held
+                                || on_self
+                                || self.receiver_field(argument)
+                                || self.value_local(argument)))
                 })
             }
             _ => false,

@@ -9,6 +9,14 @@ to evolve under the `0.x` compatibility rules.
 ### Fixed
 
 - A per-instantiation method clone now inherits its checked template's facts
+  when the body binds a `var` local whose type is built over the struct's
+  parameter (`var result = List[Self.T]()`, `var view = View(self.items)`):
+  the local's deletability is judged again at the instance's type, and the
+  local may be a method call's receiver or `len`'s operand. Such a body used
+  to keep the clone check; `List.__mul__`, `List.__imul__`, and
+  `Dict.__or__` now derive.
+
+- A per-instantiation method clone now inherits its checked template's facts
   for an augmented element store through a value getter and a setter
   (`self.table[i] += 1`), for a struct element's in-place `__iadd__`
   through either kind of getter (`self.counters[i] += 3`), and for a store

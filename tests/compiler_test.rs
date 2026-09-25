@@ -1732,6 +1732,30 @@ fn template_method_reference_arguments_derive() {
 }
 
 #[test]
+fn template_method_built_over_locals_derive() {
+    // A local whose type is built over the struct's parameter: a bundled
+    // collection moved out, handed on, or left unused, a hand-written struct
+    // named or inferred at its construction, and a view a constructor's `ref`
+    // parameter infers. Each binding's deletability is judged again at the
+    // instance's type. Such a local is also a receiver and `len`'s operand.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_built_over_local.mojo"),
+        "0 0 3 3\n2 y 5 z\n4 4 1 1\n0 0 4 x 0 0\n",
+        &[
+            ("Shelf.made", 2),
+            ("Shelf.fresh", 2),
+            ("Shelf.popped", 2),
+            ("Shelf.cleared", 2),
+            ("Shelf.handed", 2),
+            ("Shelf.wrapped", 2),
+            ("Shelf.inferred", 2),
+            ("Shelf.unused", 2),
+            ("Shelf.viewed", 2),
+        ],
+    );
+}
+
+#[test]
 fn template_method_constructions_derive() {
     // A `copy:` construction of the struct's own type, a fieldwise
     // construction, a bundled collection over the struct's parameter, and a
