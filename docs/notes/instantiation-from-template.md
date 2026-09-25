@@ -119,8 +119,9 @@ discarded results, deletable and linear bindings, linear temporaries, copied
 places, interior invalidations, rebind assertions, reference handles
 (`ReferenceValueUses`, at the value of a `return` in a method that returns a
 reference, and nowhere else), reference results (the `ReferenceResult`
-adjustment, kept apart from the other adjustments), interior references, and
-copyable reference-result reads.
+adjustment, kept apart from the other adjustments), interior references,
+copyable reference-result reads, and iteration protocols (a
+`TemplateIteration`, from which an instance selects the protocol again).
 
 A replayed transfer is kept in template-local terms too: each call transfer
 (`call_transfers`), the origins it merged into a binding's bookkeeping
@@ -240,7 +241,7 @@ bound. `BodyShape` is the grammar; `template_certificate` is the argument.
 | `BoundedOperations` | plus the built-in `len` over a parameter whose bound promises a length | The bound proved the call. The instance owes the witness, which `len_result_for_type` finds, and takes the read-in-place fact `infer_len` adds for a nominal struct. |
 | `MethodScalarBody` | a method with a plain read `self` and no binders of its own, on a struct of plain type parameters: `return`s over closed scalars, parameters, reads of `self`'s scalar fields, the built-in `len` over a field, and argument-free method calls on `self` or a field with a trivial contract | A field read has the field's declared type under the struct's arguments in a template and a clone alike. The generated-declaration leniency a clone's name switches on bears on origin-bearing return annotations only, and the result is a scalar. A trivial call can change per instance only in its target. |
 | `ScalarBranches` | source-validated bodies: `comptime if` arms, scalar `comptime for` loops, scalar locals and assignments, erased `rebind`s, and a loop variable or scalar value parameter read as a runtime value | Every arm was checked once. The instance keeps the occurrences the elaborator selected, and a folded name's literal takes a literal's facts. |
-| `PackElements` | a source-validated body keyed on a type pack (`*Ts`), collected by one variadic parameter: `comptime for` over the pack's indices, each element read as `pack[i]` into a `print` statement, beside what `ScalarBranches` admits; the result may be `None` | The element was checked once at the dependent `Ts[i]` through the pack's bound, and recorded as a place read where it lies. Each unrolled copy carries the folded index, so the instance fixes the element per copy; `print` selects no callee and records at an argument only what its syntax decides, and the instance proves the fixed element `Writable` again (obligation 21). A pack forwarded whole and a local inside the loop stay out. |
+| `PackElements` | a source-validated body keyed on a type pack (`*Ts`), collected by one variadic parameter: `comptime for` over the pack's indices, each element read as `pack[i]` into a `print` statement, beside what `ScalarBranches` admits; the result may be `None` | The element was checked once at the dependent `Ts[i]` through the pack's bound, and recorded as a place read where it lies. Each unrolled copy carries the folded index, so the instance fixes the element per copy; `print` selects no callee and records at an argument only what its syntax decides, and the instance proves the fixed element `Writable` again (`realize_print_call`). A pack forwarded whole and a local inside the loop stay out. |
 | `MethodBody(features)` | a method beyond `MethodScalarBody`; see below | One argument per feature. |
 
 A body source validation did not produce (every class but `ScalarBranches`)
@@ -318,11 +319,17 @@ they are a set, not a ladder.
 | `CONSUMING_CALLS` | a method call on the `^` transfer of a named place the body owns — a `var` local, a `var` parameter, or a field of a consumed `self` — whose callee on the receiver's nominal struct takes it as `var self` or as a named `deinit self` destructor (`entry^.reap_value()`, `self._alloc^.unsafe_leak()`, `result^._take_items()`), passing arguments `VALUE_ARGUMENTS` admits | The move is recorded at the transfer, which owes obligation 10, and not in the contract, so the instance changes the contract only in its target and its substituted types (`consuming_nominal_contract`). The call's one other record, the explicit-destroy mark (`ExplicitDestroyCalls`), says the receiver's struct declares the method with `deinit self`: a struct's destructors are keyed by name on its declaration (`explicit_destructors`), which its arguments do not change, so an instance inherits the mark. Through a bound, a `deinit self` requirement on a `^` receiver is a `BOUND_DISPATCH` call, and its instance's witness is asked again: a struct that implements the requirement with a named destructor takes the mark the template's parameter-typed receiver could not have (`realize_bound_dispatch`). A defaulted argument, evaluated in the callee's scope, stays outside. |
 | `COPIED_RECEIVERS` | a method call whose callee consumes its receiver, on a named place the call copies first rather than on a `^` transfer: a parameter, a `var` local, or a field of `self`, of a parameter, or of a local (`slice.start.or_else(0)`, `self.limit.or_else(n)`), on a nominal struct as `CONSUMING_CALLS` admits it or through a bound to a `var self` requirement (`coin.spend()`) | `infer_method_call` copies such a place whatever its type, where the type is implicitly copyable, and rejects the program otherwise; the mark it records at the call (`ImplicitlyCopiedConsumingReceivers`) is decided by the receiver's syntax and the callee's convention, so an instance inherits it and owes the copy at its own type (obligation 3). The contract is a consuming call's, and nothing moves out of the place. Through a bound, the instance's witness must itself take `var self` or `deinit self`, or the derivation refuses (`realize_bound_dispatch`). |
 | `DIRECT_CALLS` | a direct call of a module-scope function that is not generic, not overloaded, and takes only closed scalars by value (`check_slice_bounds(start, end, self.size)`) | The call selects the same declaration under every instance and binds its arguments at types no substitution changes; the instance realizes it as a `FixedCalls` body's direct call (obligation 5), re-reading the callee's empty effect summaries. |
+| `ITERATION` | a runtime `for` with no `else`, over `self`, a field of it, a parameter, a local, the `^` transfer of a place the body owns, or a sibling call's result; the loop variable is a local whose kind — a handle, a scalar, or a whole value — follows its recorded binding type | The protocol is selected from the iterable's type and resolved against the place the loop borrows and that binding's mutability, which are the loop's syntax and the declaration's. The template keeps those inputs (`TemplateIteration`), and the instance selects again from its substituted type (obligation 21). |
 
 The compiler-private trap `_mojito_abort("message")` is a statement of any
 non-keyed body: the built-in types its literal and selects nothing. A
 declaration of that name would record a binding and parameters at the call,
 and such a call is not admitted.
+
+A built-in scalar conversion of one closed value (`Int(key_hash)`, also
+`UInt`, `Bool`, `Float64`) is an expression of any non-keyed body. It selects
+no callee and records only closed types, which no instance changes
+(`BodyShape::scalar_conversion`).
 
 A bare place of a parameter type is admitted at a consuming position only
 where the template recorded the copy (`copy_place_value_uses`). A type that is
@@ -569,6 +576,26 @@ only `Movable` records nothing there, and its `Int` clone would.
     (`BodyShape::annotated_binding`): an annotation left to inference and a
     view that borrows its source (`var span: Span[Self.T, _] = self.items`)
     record neither, and stay out.
+21. **Iteration protocols.** A loop's protocol is the `__iter__` chain and
+    `__next__` selected from the iterable's type (named for the instance's
+    clone family where one exists), the iterator's declared projection, and
+    origins rooted at the place the loop borrows. Capture keeps what the
+    selection is made from (`TemplateIteration`): the iteration and binding
+    modes, the iterable's type, the source place by template owner (the
+    attached borrowed origin without the projection), and the source
+    binding's mutability, read back as the value that reproduces the
+    recorded protocol. Capture rebuilds the template's own protocol from
+    those inputs through the loop statement's own path
+    (`loop_site_protocol`) and refuses unless it matches exactly, so the
+    recipe cannot drift from `check_stmt`. The instance substitutes the
+    iterable's type, which must stay the same nominal struct or a variadic
+    pack, and selects again (`realize_iterations`); a raising `__iter__`, a
+    missing protocol, and owned iteration's element bound refuse there.
+    Installation resolves the protocol against the instance's own binding of
+    the source (`install_iterations`). The checks a loop makes on an owned,
+    non-`Deinitable` element (no early exit, no unhandled raise) are the
+    template's at least as strictly: a bare parameter element is judged
+    linear in the template.
 
 The declaration's bounds and `where` clauses are not re-checked: the checker
 discharges them at the requesting call, and the elaborator proves a fully
@@ -835,7 +862,8 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
   initializer, a raised string or a raising call, the method's own binders,
   a `var self` method returning `self^`, a consuming call with a defaulted
   argument, a receiver copied into a local (`var result = self`), a tuple
-  element read of a local, a `for` loop, a string
+  element read of a local, a `for` loop with an `else` clause or over an
+  iterable whose type an instance changes in kind, a string
   other than the `_mojito_abort` message or a sink's argument, a call passing
   a `ref` local or a reference call's result, and a local whose type is built
   over a parameter

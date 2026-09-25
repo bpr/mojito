@@ -565,6 +565,9 @@ pub enum IncompleteReason {
     /// A construction bound an origin binder immutably (`ImmOrigin(o)`), a
     /// record the bundle does not carry.
     ImmutableBinder,
+    /// A loop's iterator protocol is not one an instance selects again from
+    /// its iterable's type alone.
+    IterationRecipe,
 }
 
 impl IncompleteReason {
@@ -580,6 +583,7 @@ impl IncompleteReason {
             Self::SymbolicFact => "template_capture_incomplete.symbolic_fact",
             Self::ValidationAborted => "template_capture_incomplete.validation_aborted",
             Self::ImmutableBinder => "template_capture_incomplete.immutable_binder",
+            Self::IterationRecipe => "template_capture_incomplete.iteration_recipe",
         }
     }
 }
@@ -598,6 +602,9 @@ impl std::fmt::Display for IncompleteReason {
             Self::SymbolicFact => f.write_str("a fact's type mentions a parameter"),
             Self::ValidationAborted => f.write_str("source validation ended without a verdict"),
             Self::ImmutableBinder => f.write_str("a construction binds an origin immutably"),
+            Self::IterationRecipe => {
+                f.write_str("a loop's iterator protocol has no re-selection recipe")
+            }
         }
     }
 }
@@ -753,6 +760,11 @@ impl MethodFeatures {
     /// takes only closed scalars by value: it selects the same declaration
     /// under every instance.
     pub const DIRECT_CALLS: Self = Self(1 << 24);
+    /// A runtime `for` over a place, the `^` transfer of an owned place, or a
+    /// sibling call's result: the iterator protocol is selected from the
+    /// iterable's type, which an instance substitutes and selects from again,
+    /// and the loop variable is a local of the body.
+    pub const ITERATION: Self = Self(1 << 25);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
@@ -919,6 +931,23 @@ pub struct TemplateReference {
     pub referent: Ty,
     pub origin: TemplateOrigin,
     pub mutability: mojito_types::origin::Mutability,
+}
+
+/// The iterator protocol of one runtime `for`, in template-local terms
+/// ([`CheckedBodyFacts::iterations`]).
+///
+/// The protocol's symbols, projection, and types follow from the iterable's
+/// type, which an instance substitutes and selects the protocol from again.
+/// The place the loop borrows (`None` for a temporary source) and whether
+/// its binding is mutable are the loop's syntax and the declaration's, so an
+/// instance takes them as they stand, rooted at its own binding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplateIteration {
+    pub mode: crate::checked::IterationMode,
+    pub binding: mojito_ast::ast::LoopBindingMode,
+    pub iterable: Ty,
+    pub source: Option<TemplatePlace>,
+    pub source_mutable: bool,
 }
 
 /// An element store through a subscript, in template-local terms: through
@@ -1203,6 +1232,9 @@ pub struct CheckedBodyFacts {
     /// its setter takes the value by keyword. The subscript's syntax and the
     /// setter's declaration decide both, so an instance inherits the entry.
     pub subscript_descriptors: Vec<(OccurrenceId, SubscriptDescriptors)>,
+    /// The iterator protocol of each runtime `for`, keyed by its iterable,
+    /// which an instance selects again from the substituted iterable type.
+    pub iterations: Vec<(OccurrenceId, TemplateIteration)>,
     /// Arguments a call keeps as the caller's place, for a `mut` or `ref`
     /// parameter. The callee's declared convention decides it, so an instance
     /// inherits the set.
@@ -1548,6 +1580,7 @@ impl CheckedBodyFacts {
             &self.subscript_descriptors,
             &other.subscript_descriptors,
         );
+        differing(&mut out, "iterations", &self.iterations, &other.iterations);
         differing(
             &mut out,
             "call_place_uses",
@@ -1775,6 +1808,7 @@ impl CheckedBodyFacts {
             reference_place_types: at(&self.reference_place_types, occurrences, folded),
             copyable_reference_result_reads: flagged(&self.copyable_reference_result_reads),
             subscript_descriptors: at(&self.subscript_descriptors, occurrences, folded),
+            iterations: at(&self.iterations, occurrences, folded),
             call_place_uses: flagged(&self.call_place_uses),
             transfers: flagged(&self.transfers),
             call_transfers: at(&self.call_transfers, occurrences, folded),
@@ -1863,6 +1897,7 @@ impl CheckedBodyFacts {
             + self.reference_place_types.len()
             + self.copyable_reference_result_reads.len()
             + self.subscript_descriptors.len()
+            + self.iterations.len()
             + self.call_place_uses.len()
             + self.transfers.len()
             + self.bound_builtins.len()

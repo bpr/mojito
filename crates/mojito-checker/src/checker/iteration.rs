@@ -5,6 +5,10 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
+/// The implicit `__iter__` calls a protocol selection found raising: each
+/// operation's description and its error type.
+pub(super) type IteratorRaises = Vec<(String, Ty)>;
+
 impl Checker {
     /// Select source ownership independently from the loop target convention.
     /// A top-level transfer is the source-language request for consuming
@@ -15,6 +19,55 @@ impl Checker {
         } else {
             mojito_checked::checked::IterationMode::Borrowed
         }
+    }
+
+    /// The complete protocol of one loop site, shared by `for` statements,
+    /// comprehensions, and a template's instance: the iterable type's
+    /// `__iter__`/`__next__` selection, resolved against the place the loop
+    /// borrows (`None` for a temporary) and that binding's mutability, with
+    /// the target's binding plan attached. The `__iter__` raises the
+    /// selection found are returned rather than demanded, since only a loop
+    /// site checks them against its raising context.
+    pub(super) fn loop_site_protocol(
+        &self,
+        iter_ty: &Ty,
+        mode: mojito_checked::checked::IterationMode,
+        binding: mojito_ast::ast::LoopBindingMode,
+        source: Option<&mojito_types::origin::OriginPlace>,
+        source_mutable: bool,
+    ) -> Result<(mojito_checked::checked::IterationProtocol, IteratorRaises), TypeError> {
+        let mut raises = Vec::new();
+        let (mut yielded_ty, mut protocol) = self.iteration_protocol(iter_ty, mode, &mut raises)?;
+        self.attach_borrowed_iteration_origin(source, iter_ty, mode, &mut protocol);
+        if let Some(resolved) =
+            Self::resolve_borrowed_iteration_reference(source_mutable, &mut protocol)
+        {
+            yielded_ty = resolved;
+        }
+        if binding == mojito_ast::ast::LoopBindingMode::Ref
+            && Self::is_abstract_iteration_dispatch(&protocol)
+        {
+            return Err(TypeError::Unsupported(
+                "`for ref` over a generic Iterable bound requires a reference-yielding iterator; the abstract Iterator.__next__ yields Element values — bind by value, or iterate the concrete collection"
+                    .to_string(),
+            ));
+        }
+        protocol.binding = Some(Box::new(self.iteration_binding_plan(binding, &yielded_ty)?));
+        Ok((protocol, raises))
+    }
+
+    /// The source a loop site's protocol resolves against: the place `iter`
+    /// names, if any, and whether that binding is mutable (a temporary is
+    /// loop-owned, and so mutable).
+    pub(super) fn iteration_source(
+        &self,
+        iter: &Expr,
+    ) -> (Option<mojito_types::origin::OriginPlace>, bool) {
+        let source = self.origin_place(iter).ok();
+        let mutable = source
+            .as_ref()
+            .is_none_or(|place| self.owner_is_mutable(place.root));
+        (source, mutable)
     }
 
     /// Combine a target convention with the exact checked `__next__` result.
@@ -126,7 +179,7 @@ impl Checker {
     /// errs) and keeps the owned value copy.
     pub(super) fn attach_borrowed_iteration_origin(
         &self,
-        iter: &Expr,
+        source: Option<&mojito_types::origin::OriginPlace>,
         iter_ty: &Ty,
         source_mode: mojito_checked::checked::IterationMode,
         protocol: &mut mojito_checked::checked::IterationProtocol,
@@ -143,7 +196,7 @@ impl Checker {
             && (list_element(iter_ty).is_some()
                 || set_element(iter_ty).is_some()
                 || dict_elements(iter_ty).is_some())
-            && let Ok(mut origin) = self.origin_place(iter)
+            && let Some(mut origin) = source.cloned()
         {
             origin.path.push(mojito_types::origin::OriginSeg::Interior(
                 "element".to_string(),
@@ -154,7 +207,7 @@ impl Checker {
         if protocol.borrowed_origin.is_none()
             && !protocol.prepare.is_empty()
             && matches!(iter_ty, Ty::Struct(..))
-            && let Ok(mut origin) = self.origin_place(iter)
+            && let Some(mut origin) = source.cloned()
         {
             // Loan granularity is the iterator's declared yielded-origin
             // interior projection; an iterator without one borrows the whole
@@ -187,8 +240,7 @@ impl Checker {
     /// declarations are never touched. Returns the resolved yielded type when
     /// anything changed.
     pub(super) fn resolve_borrowed_iteration_reference(
-        &self,
-        iter: &Expr,
+        source_mutable: bool,
         protocol: &mut mojito_checked::checked::IterationProtocol,
     ) -> Option<Ty> {
         use mojito_types::origin::{Mutability, Origin};
@@ -202,11 +254,7 @@ impl Checker {
         let reference = next.reference_result.as_mut()?;
         let mut resolved = matches!(reference.mutability, Mutability::Param(_));
         if resolved {
-            let mutable = match self.origin_place(iter) {
-                Ok(place) => self.owner_is_mutable(place.root),
-                Err(_) => true,
-            };
-            reference.mutability = if mutable {
+            reference.mutability = if source_mutable {
                 Mutability::Mutable
             } else {
                 Mutability::Immutable
@@ -258,6 +306,7 @@ impl Checker {
         &self,
         ty: &Ty,
         mode: mojito_checked::checked::IterationMode,
+        raises: &mut IteratorRaises,
     ) -> Result<(Ty, mojito_checked::checked::IterationProtocol), TypeError> {
         use mojito_checked::checked::{IterationMode, IterationProtocol};
         let builtin = |element| {
@@ -301,7 +350,7 @@ impl Checker {
         }
         match ty {
             Ty::VariadicPack(element) => Ok(builtin((**element).clone())),
-            Ty::Struct(..) => self.struct_iteration_protocol(ty, mode, 0),
+            Ty::Struct(..) => self.struct_iteration_protocol(ty, mode, 0, raises),
             Ty::Param { bounds, .. } => {
                 let owned = mode == IterationMode::Owned;
                 let required = if owned { "IterableOwned" } else { "Iterable" };
@@ -379,6 +428,7 @@ impl Checker {
         c_ty: &Ty,
         mode: mojito_checked::checked::IterationMode,
         depth: usize,
+        raises: &mut IteratorRaises,
     ) -> Result<(Ty, mojito_checked::checked::IterationProtocol), TypeError> {
         use mojito_checked::checked::IterationMode;
         let no_method = |ty: &Ty, m: &str| TypeError::NoSuchMethod {
@@ -449,10 +499,10 @@ impl Checker {
             });
         };
         if let Some(error) = iter_error {
-            self.require_error(
+            raises.push((
                 format!("implicit call to raising method '{cname}.__iter__'"),
                 error.clone(),
-            )?;
+            ));
         }
         // A closed receiver instance iterates through the per-instantiation
         // clone family (`__iter__$y3:Int`) with the same receiver convention.
@@ -491,7 +541,8 @@ impl Checker {
         };
         let iinfo = self.structs.get(iname).ok_or_else(bad_iter)?;
         if !iinfo.methods.contains_key("__next__") && iinfo.methods.contains_key("__iter__") {
-            let (element, mut nested) = self.struct_iteration_protocol(it_ty, mode, depth + 1)?;
+            let (element, mut nested) =
+                self.struct_iteration_protocol(it_ty, mode, depth + 1, raises)?;
             nested.prepare.insert(0, prepare_symbol);
             return Ok((element, nested));
         }

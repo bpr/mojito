@@ -37,6 +37,7 @@ use std::collections::{HashMap, HashSet};
 
 mod bound_dispatch;
 mod constructions;
+mod iterations;
 
 /// Which kind of declaration a body inference visit belongs to, for the
 /// `body_inference.*` timing counters.
@@ -1419,6 +1420,7 @@ impl Checker {
         for call in &template.builtin_len_calls {
             self.realize_builtin_len(&mut facts, *call, occurrences)?;
         }
+        self.realize_iterations(&mut facts, &substitute)?;
         facts.struct_applications = template
             .struct_applications
             .iter()
@@ -2666,6 +2668,11 @@ impl Checker {
     /// - `DIRECT_CALLS`: see `method_direct_calls`. A non-generic scalar
     ///   callee is selected alike under every instance, which realizes it as
     ///   a function template's direct call.
+    /// - `ITERATION`: see [`BodyShape::iterable`] and `realize_iterations`.
+    ///   The protocol a loop records is selected from the iterable's type
+    ///   and resolved against the place it borrows, so an instance keeps the
+    ///   place and selects again from its own substituted type; the loop
+    ///   variable's binding is a local like any other.
     ///
     /// Any other handle, borrowed receiver, reference result, interior
     /// reference, or copyable read in the body refuses it
@@ -3561,6 +3568,7 @@ impl Checker {
             }),
             linear_temporaries: keyed(&|span| self.linear_temporaries.borrow().contains(span)),
             subscript_descriptors: values(&occurrences, &self.subscript_descriptors.borrow()),
+            iterations: self.captured_iterations(&occurrences, &local_place)?,
             call_place_uses: keyed(&|span| self.call_place_uses.borrow().contains(span)),
             transfers: occurrences
                 .iter()
@@ -3957,6 +3965,7 @@ impl Checker {
                 .borrow_mut()
                 .insert(span(id)?, descriptors.clone());
         }
+        self.install_iterations(facts, &span, &rooted)?;
         for id in &facts.call_place_uses {
             self.call_place_uses.borrow_mut().insert(span(id)?);
         }
@@ -4484,6 +4493,7 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::ImplicitConversionRaises
         | FactTable::ConversionSourceBorrows
         | FactTable::CallResultOrigins
+        | FactTable::IterationProtocols
         | FactTable::CallTransfers => true,
         FactTable::ContextualBases
         | FactTable::SimdConstructions
@@ -4493,7 +4503,6 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::WithDesugars
         | FactTable::DeclarationCaptures
         | FactTable::ComprehensionBindings
-        | FactTable::IterationProtocols
         | FactTable::TruthinessConditions => false,
     }
 }
@@ -4648,6 +4657,11 @@ fn for_each_owner(
     }
     for (id, place) in &mut facts.interior_references {
         visit(Some(*id), &mut place.root);
+    }
+    for (id, iteration) in &mut facts.iterations {
+        if let Some(source) = &mut iteration.source {
+            visit(Some(*id), &mut source.root);
+        }
     }
     for (id, reference) in facts
         .reference_results
@@ -5844,6 +5858,27 @@ impl BodyShape<'_> {
                     && orelse.as_ref().is_none_or(|arm| self.block(arm))
                     && self.holds(MethodFeatures::STATEMENTS)
             }
+            // A runtime loop in a method selects its iterator protocol from
+            // the iterable's type, which an instance selects again. The loop
+            // variable is one local wherever the loop runs, of the kind its
+            // recorded binding type makes it.
+            StmtKind::For {
+                var,
+                iter,
+                body,
+                orelse: None,
+                ..
+            } if !self.keyed
+                && (self.moved_result.is_some() || self.reference_result.is_some()) =>
+            {
+                let iterable = self.iterable(iter);
+                let kind = self.loop_local(statement);
+                self.locals.borrow_mut().push((var.clone(), kind));
+                iterable
+                    && self.block(body)
+                    && self.holds(MethodFeatures::STATEMENTS)
+                    && self.holds(MethodFeatures::ITERATION)
+            }
             StmtKind::While {
                 cond,
                 body,
@@ -6232,6 +6267,53 @@ impl BodyShape<'_> {
             }
         };
         admitted && self.holds(MethodFeatures::OPAQUE_MOVES)
+    }
+
+    /// The iterable of a runtime `for`: a place the loop borrows (`self`, a
+    /// field of it, a parameter, a local), the `^` transfer of a place the
+    /// body owns, or a sibling call's result. The loop records its protocol
+    /// at the iterable, which a recipe must then hold
+    /// ([`Checker::realize_iterations`]).
+    fn iterable(&self, iter: &Expr) -> bool {
+        let admitted = match &iter.kind {
+            ExprKind::Transfer(_) => self.whole_value(iter),
+            ExprKind::Identifier(name) => {
+                self.receiver_itself(iter)
+                    || self.params.contains(&name.as_str())
+                    || self.local_kind(name).is_some()
+            }
+            ExprKind::Member { .. } => self.receiver_field(iter) || self.reference_member(iter),
+            _ => self.call_result(iter),
+        };
+        admitted
+            && self
+                .facts
+                .is_none_or(|facts| fact_at(&facts.iterations, self.occurrence(iter)).is_some())
+    }
+
+    /// What a loop variable is, from the binding type its loop recorded: a
+    /// handle where the loop binds a reference, a scalar local where a
+    /// closed scalar, and a whole value otherwise. With no facts yet, the
+    /// syntax alone never rules a use out.
+    fn loop_local(&self, statement: &Stmt) -> LocalKind {
+        let declaration = OccurrenceId {
+            syntax: self.origins.origin(statement.syntax_id),
+            copy: 0,
+        };
+        self.facts.map_or(LocalKind::Scalar, |facts| {
+            // A temporary source leaves the reference's declared origin
+            // unrooted, so its type stays among the plain binding types.
+            let binding = fact_at(&facts.binding_types, declaration);
+            if fact_at(&facts.reference_binding_types, declaration).is_some()
+                || matches!(binding, Some(Ty::Ref(_)))
+            {
+                LocalKind::Reference
+            } else if binding.is_some_and(closed_scalar) {
+                LocalKind::Scalar
+            } else {
+                LocalKind::Value
+            }
+        })
     }
 
     /// A parameter, a local, or a field of `self` that an `@implicit`
@@ -7052,6 +7134,9 @@ impl BodyShape<'_> {
                 if name == "_unqualified_type_name" || name == "repr" {
                     return self.string_builtin(id, name, param_args, args, kwargs);
                 }
+                if self.scalar_conversion(id, name, param_args, args, kwargs) {
+                    return true;
+                }
                 // The built-in `len` reads its operand in place and realizes
                 // its witness per instance, so a method may hand it a field of
                 // `self` or a `var` local of any type, not only a scalar one.
@@ -7073,6 +7158,36 @@ impl BodyShape<'_> {
             }
             _ => false,
         }
+    }
+
+    /// A built-in scalar conversion of one value of a closed type
+    /// (`Int(key_hash)`). It selects no callee and records only closed
+    /// types, which no instance changes; a declaration of that name would
+    /// record a selection at the call, and such a call is not this.
+    fn scalar_conversion(
+        &self,
+        id: OccurrenceId,
+        name: &str,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> bool {
+        let [argument] = args else {
+            return false;
+        };
+        matches!(name, "Int" | "UInt" | "Bool" | "Float64")
+            && param_args.is_empty()
+            && kwargs.is_empty()
+            && self.expression(argument)
+            && self.closed(argument)
+            && self.facts.is_none_or(|facts| {
+                fact_at(&facts.expression_types, id).is_some_and(closed_scalar)
+                    && fact_at(&facts.call_parameters, id).is_none()
+                    && fact_at(&facts.overload_targets, id).is_none()
+                    && fact_at(&facts.generic_instantiations, id).is_none()
+                    && fact_at(&facts.selected_calls, id).is_none()
+                    && fact_at(&facts.conversions, id).is_none()
+            })
     }
 
     /// A call through a parameter declared with a `def(...)` type, passing

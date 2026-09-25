@@ -366,7 +366,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   recorded argument type exactly (`exact_binding`, over
   `call.rs:match_call_slots`; a fieldwise struct's fields likewise), and
   the target becomes the instance's clone of it through
-  `declarations.rs:constructor_clone_target`. A retained struct type that
+  `declarations.rs:constructor_clone_target`. The submodule
+  `template_facts/iterations.rs` keeps a runtime `for`'s protocol as the
+  inputs it is selected from (`captured_iterations`, a `TemplateIteration`
+  proven by rebuilding the recorded protocol), selects it again from an
+  instance's substituted iterable type (`realize_iterations`), and resolves
+  it against the instance's own source binding (`install_iterations`), all
+  through `iteration.rs:loop_site_protocol`, the path the `for` statement
+  and comprehensions share. A retained struct type that
   names a binding in an origin argument is kept by template owner
   (`unbound_struct_origins`/`bind_struct_origins` over `map_struct_origins`,
   the bundle's `typed_origins`), and the return annotation an inference

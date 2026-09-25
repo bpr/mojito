@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method whose body holds a runtime `for` — over a field of `self`, over
+  `self` through its own iterator, over a sibling call's temporary, or owned
+  over a local — now derives its instances from the checked template: the
+  instance selects the iterator protocol again from its substituted iterable
+  type and resolves it against its own binding of the source. A built-in
+  scalar conversion of a closed value (`Int(key_hash)`) derives beside it.
+  Such bodies, like `Dict._find_index`, used to keep the clone check because
+  the iterator protocol had no derivation recipe.
 - A method whose body calls a consuming method on a named place it does not
   own, which the call copies first (`slice.start.or_else(0)`, or a `var self`
   requirement through a bound on a parameter), now derives its

@@ -33,30 +33,23 @@ impl Checker {
                     mojito_ast::ast::ComprehensionClause::For { var, binding, iter } => {
                         self.register_named_bindings(iter)?;
                         let iter_ty = self.convert_literal_iterable(iter, self.infer(iter)?);
-                        let source_mode = Self::iteration_mode(iter);
-                        let (mut yielded_ty, mut protocol) =
-                            self.iteration_protocol(&iter_ty, source_mode)?;
-                        self.attach_borrowed_iteration_origin(
-                            iter,
+                        let (source, source_mutable) = self.iteration_source(iter);
+                        let (protocol, raises) = self.loop_site_protocol(
                             &iter_ty,
-                            source_mode,
-                            &mut protocol,
-                        );
-                        if let Some(resolved) =
-                            self.resolve_borrowed_iteration_reference(iter, &mut protocol)
-                        {
-                            yielded_ty = resolved;
+                            Self::iteration_mode(iter),
+                            *binding,
+                            source.as_ref(),
+                            source_mutable,
+                        )?;
+                        for (operation, error) in raises {
+                            self.require_error(operation, error)?;
                         }
-                        if *binding == mojito_ast::ast::LoopBindingMode::Ref
-                            && Self::is_abstract_iteration_dispatch(&protocol)
-                        {
-                            return Err(TypeError::Unsupported(
-                                "`for ref` over a generic Iterable bound requires a reference-yielding iterator; the abstract Iterator.__next__ yields Element values — bind by value, or iterate the concrete collection"
-                                    .to_string(),
-                            ));
-                        }
-                        let binding_plan = self.iteration_binding_plan(*binding, &yielded_ty)?;
-                        protocol.binding = Some(Box::new(binding_plan.clone()));
+                        let binding_plan =
+                            protocol.binding.as_deref().cloned().ok_or_else(|| {
+                                TypeError::InvariantViolation(
+                                    "a loop protocol lost its binding plan".into(),
+                                )
+                            })?;
                         self.iteration_protocols
                             .borrow_mut()
                             .insert(iter.source_span(), protocol);
