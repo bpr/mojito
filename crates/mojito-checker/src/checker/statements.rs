@@ -341,6 +341,12 @@ impl Checker {
     /// this branch carefully snapshots. The RHS conversion is recorded on the real
     /// `value` span and survives the scope pop; lowering materializes the element
     /// into its own temporary and applies the returned contract.
+    ///
+    /// The temporary is no binding of the body: what the selection recorded
+    /// at it, which is no expression, is dropped with it, as are the
+    /// generations it invalidates below it, and its identity is released when
+    /// its scope pops, so the body's own bindings are numbered as if it had
+    /// never been declared.
     pub(super) fn select_subscript_inplace_operator(
         &mut self,
         place: &Expr,
@@ -348,6 +354,7 @@ impl Checker {
         value: &Expr,
         operand_ty: &Ty,
     ) -> Result<mojito_checked::checked::CheckedCallContract, TypeError> {
+        let temporary = mojito_types::origin::OwnerId(self.next_owner.get());
         self.push_scope();
         let selection = self
             .declare("$inplace_elem", operand_ty.clone())
@@ -357,15 +364,28 @@ impl Checker {
                     place.span,
                 );
                 receiver.source.clone_from(&place.source);
-                self.select_inplace_operator(
+                let mut contract = self.select_inplace_operator(
                     &receiver.source_span(),
                     &receiver,
                     op,
                     value,
                     operand_ty,
-                )
+                )?;
+                self.remove_occurrence_facts(&receiver.source_span());
+                let rooted = |invalidation: &mojito_checked::checked::InteriorInvalidation| {
+                    invalidation.base.root == temporary
+                };
+                contract.boundary.invalidations.retain(|fact| !rooted(fact));
+                for argument in &mut contract.boundary.arguments {
+                    argument.invalidations.retain(|fact| !rooted(fact));
+                }
+                Ok(contract)
             });
         self.pop_scope();
+        self.transferred_origins.borrow_mut().remove(&temporary);
+        if self.next_owner.get() == temporary.0 + 1 {
+            self.next_owner.set(temporary.0);
+        }
         selection
     }
 
@@ -1063,6 +1083,27 @@ impl Checker {
                             .borrow_mut()
                             .remove(&value_source);
                     }
+                    // The computed result is no expression: lowering binds
+                    // its register to the setter directly, so the value is
+                    // keyed at the store's own site and nothing is recorded
+                    // for it as a temporary argument.
+                    self.read_temporary_arguments
+                        .borrow_mut()
+                        .remove(&value_source);
+                    self.unconsumed_temporaries
+                        .borrow_mut()
+                        .remove(&value_source);
+                    for argument in &mut setter.boundary.arguments {
+                        if argument.value_source == value_source {
+                            argument.value_source.clone_from(&site);
+                        }
+                    }
+                    for argument in &mut setter.parameter_arguments {
+                        if argument.value_source.as_ref() == Some(&value_source) {
+                            argument.value_source = Some(site.clone());
+                        }
+                    }
+                    let value_source = site.clone();
                     let before_write = self
                         .interior_invalidations
                         .borrow()

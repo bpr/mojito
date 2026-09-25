@@ -543,6 +543,66 @@ impl Checker {
         }
     }
 
+    /// Remove one occurrence's entry from every occurrence-keyed fact table.
+    /// `replace_body_facts` checks the list against [`FactTable::ALL`]; the
+    /// augmented store drops what it recorded at a synthesized receiver.
+    pub(super) fn remove_occurrence_facts(&self, span: &SourceSpan) {
+        self.overload_targets.borrow_mut().remove(span);
+        self.contextual_bases.borrow_mut().remove(span);
+        self.generic_instantiations.borrow_mut().remove(span);
+        self.method_instantiations.borrow_mut().remove(span);
+        self.call_transfers.borrow_mut().remove(span);
+        self.implicit_conversions.borrow_mut().remove(span);
+        self.implicit_conversion_types.borrow_mut().remove(span);
+        self.implicit_conversion_raises.borrow_mut().remove(span);
+        self.conversion_source_borrows.borrow_mut().remove(span);
+        self.simd_constructions.borrow_mut().remove(span);
+        self.parameterized_method_calls.borrow_mut().remove(span);
+        self.operation_adjustments.borrow_mut().remove(span);
+        self.construction_immutable_binders
+            .borrow_mut()
+            .remove(span);
+        self.call_result_origins.borrow_mut().remove(span);
+        self.tuple_unpack_plans.borrow_mut().remove(span);
+        self.interior_references.borrow_mut().remove(span);
+        self.view_result_interiors.borrow_mut().remove(span);
+        self.call_parameters.borrow_mut().remove(span);
+        self.interior_invalidations.borrow_mut().remove(span);
+        self.expression_types.borrow_mut().remove(span);
+        self.expression_bindings.borrow_mut().remove(span);
+        self.statement_bindings.borrow_mut().remove(span);
+        self.with_desugars.borrow_mut().remove(span);
+        self.declaration_captures.borrow_mut().remove(span);
+        self.comprehension_bindings.borrow_mut().remove(span);
+        self.expression_place_types.borrow_mut().remove(span);
+        self.binding_types.borrow_mut().remove(span);
+        self.expression_effects.borrow_mut().remove(span);
+        self.selected_calls.borrow_mut().remove(span);
+        self.subscript_descriptors.borrow_mut().remove(span);
+        self.iteration_protocols.borrow_mut().remove(span);
+        self.explicit_destroy_calls.borrow_mut().remove(span);
+        self.reference_value_uses.borrow_mut().remove(span);
+        self.copyable_reference_result_reads
+            .borrow_mut()
+            .remove(span);
+        self.discarded_reference_results.borrow_mut().remove(span);
+        self.borrowed_reference_receivers.borrow_mut().remove(span);
+        self.copy_place_value_uses.borrow_mut().remove(span);
+        self.call_place_uses.borrow_mut().remove(span);
+        self.borrowed_read_call_places.borrow_mut().remove(span);
+        self.read_temporary_arguments.borrow_mut().remove(span);
+        self.unconsumed_temporaries.borrow_mut().remove(span);
+        self.linear_temporaries.borrow_mut().remove(span);
+        self.implicitly_copied_consuming_receivers
+            .borrow_mut()
+            .remove(span);
+        self.truthiness_conditions.borrow_mut().remove(span);
+        let mut deletability = self.explicit_destroy_deletability.borrow_mut();
+        deletability.bindings.remove(span);
+        deletability.linear_bindings.remove(span);
+        self.rebind_assertions.borrow_mut().remove(span);
+    }
+
     /// The transfer effects one body inference replayed or published, as
     /// `(residue, transfers)`.
     ///
@@ -1136,6 +1196,17 @@ impl Checker {
             .collect();
         for call in &bound_dispatches {
             self.realize_bound_dispatch(&mut facts, *call, occurrences)?;
+        }
+        // An element store's value getter and in-place dunder stand as the
+        // template selected them (`substituted_element_stores`).
+        let embedded: Vec<String> = facts
+            .augmented_subscripts
+            .iter_mut()
+            .flat_map(|(_, store)| store.contracts_mut())
+            .map(|call| call.contract.target.clone())
+            .collect();
+        for target in &embedded {
+            note_realized_callee(&mut facts, target, target);
         }
         let inverted_writes = self.realize_inverted_writes(&mut facts, occurrences)?;
         for index in 0..facts.selected_calls.len() {
@@ -2549,13 +2620,20 @@ impl Checker {
         if !shape.references_recorded(facts) {
             return outside("a reference is yielded or kept outside the method grammar");
         }
-        // The grammar admitted every method call it judged closed and every
-        // construction. Nothing else may have selected a callee or read an
-        // effect summary.
+        // The grammar admitted every method call it judged closed, every
+        // call an element store embeds, and every construction. Nothing
+        // else may have selected a callee or read an effect summary.
         let targets: Vec<&str> = facts
             .selected_calls
             .iter()
             .map(|(_, call)| call.contract.target.as_str())
+            .chain(facts.augmented_subscripts.iter().flat_map(|(_, store)| {
+                store
+                    .getter
+                    .iter()
+                    .chain(&store.inplace)
+                    .map(|call| call.contract.target.as_str())
+            }))
             .collect();
         let constructions = shape.constructions.borrow();
         let callable_calls = shape.callable_calls.borrow();
@@ -2639,7 +2717,7 @@ impl Checker {
     }
 
     /// The reference each reference call at the body's occurrences yields,
-    /// and each element store made through one.
+    /// and each element store made through one or through a setter.
     ///
     /// A store through a mutable reference getter overwrote the getter's
     /// reference at the site; the contract the store embeds still holds it.
@@ -2649,6 +2727,9 @@ impl Checker {
         local_reference: &dyn Fn(
             &mojito_types::origin::RefTy,
         ) -> Result<TemplateReference, IncompleteReason>,
+        local_contract: &dyn Fn(
+            mojito_checked::checked::CheckedCallContract,
+        ) -> Result<TemplateCallContract, IncompleteReason>,
     ) -> Result<ReferenceStores, IncompleteReason> {
         let adjustments = values(occurrences, &self.operation_adjustments.borrow());
         let references = adjustments
@@ -2659,7 +2740,8 @@ impl Checker {
                         reference
                     }
                     mojito_checked::checked::SemanticAdjustment::AugmentedSubscript(plan)
-                        if self.stores_through_reference(occurrences, *id, adjustment) =>
+                        if plan.setter.is_none()
+                            && self.kept_element_store_at(occurrences, *id, adjustment) =>
                     {
                         plan.getter.reference_result.as_ref()?
                     }
@@ -2672,24 +2754,33 @@ impl Checker {
             .iter()
             .filter_map(|(id, adjustment)| match adjustment {
                 mojito_checked::checked::SemanticAdjustment::AugmentedSubscript(plan)
-                    if self.stores_through_reference(occurrences, *id, adjustment) =>
+                    if self.kept_element_store_at(occurrences, *id, adjustment) =>
                 {
-                    Some((
-                        *id,
-                        TemplateAugmentedSubscript {
-                            operand_ty: plan.operand_ty.clone(),
-                            result_ty: plan.result_ty.clone(),
-                        },
-                    ))
+                    Some((*id, plan))
                 }
                 _ => None,
             })
-            .collect();
+            .map(|(id, plan)| {
+                Ok((
+                    id,
+                    TemplateAugmentedSubscript {
+                        operand_ty: plan.operand_ty.clone(),
+                        result_ty: plan.result_ty.clone(),
+                        getter: plan
+                            .setter
+                            .is_some()
+                            .then(|| local_contract(plan.getter.clone()))
+                            .transpose()?,
+                        inplace: plan.inplace.clone().map(local_contract).transpose()?,
+                    },
+                ))
+            })
+            .collect::<Result<Vec<_>, IncompleteReason>>()?;
         Ok(ReferenceStores { references, stores })
     }
 
-    /// [`Self::reference_element_store`] at the occurrence `id`.
-    fn stores_through_reference(
+    /// [`Self::kept_element_store`] at the occurrence `id`.
+    fn kept_element_store_at(
         &self,
         occurrences: &[Occurrence],
         id: OccurrenceId,
@@ -2698,17 +2789,18 @@ impl Checker {
         occurrences
             .iter()
             .find(|occurrence| occurrence.id == id)
-            .is_some_and(|occurrence| self.reference_element_store(&occurrence.span, adjustment))
+            .is_some_and(|occurrence| self.kept_element_store(&occurrence.span, adjustment))
     }
 
-    /// Whether the adjustment at `site` is an element store through the
-    /// mutable reference the subscript's getter yields: no setter, no
-    /// in-place operator, no synthesized value, and the getter the call
-    /// selected at the site. Such a store is kept apart from the adjustment
-    /// table (`augmented_subscripts`) and rebuilt from the realized call; a
-    /// store through a setter embeds a second contract and a synthesized
-    /// value source, neither an occurrence of the body, and stays in it.
-    fn reference_element_store(
+    /// Whether the adjustment at `site` is an element store the call
+    /// selected at the site stands for: one through the mutable reference
+    /// its getter yields, with no synthesized value, or one read through a
+    /// value getter and written back through the setter selected there, with
+    /// its computed value keyed at the site. Such a store is kept apart from
+    /// the adjustment table (`augmented_subscripts`) with the value getter
+    /// and in-place dunder it embeds beside that call, and rebuilt from the
+    /// realized call.
+    fn kept_element_store(
         &self,
         site: &SourceSpan,
         adjustment: &mojito_checked::checked::SemanticAdjustment,
@@ -2717,10 +2809,12 @@ impl Checker {
         else {
             return false;
         };
-        plan.setter.is_none()
-            && plan.inplace.is_none()
-            && plan.value_source.is_none()
-            && self.selected_calls.borrow().get(site) == Some(&plan.getter)
+        let selected = self.selected_calls.borrow();
+        let selected = selected.get(site);
+        match &plan.setter {
+            None => plan.value_source.is_none() && selected == Some(&plan.getter),
+            Some(setter) => plan.value_source.as_ref() == Some(site) && selected == Some(setter),
+        }
     }
 
     /// Report, for one generic body, everything that keeps it from being
@@ -2779,7 +2873,7 @@ impl Checker {
                 let kept_apart = matches!(
                     adjustment,
                     mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
-                ) || self.reference_element_store(&occurrence.span, adjustment);
+                ) || self.kept_element_store(&occurrence.span, adjustment);
                 (!kept_apart && !adjustment_derives(adjustment)).then(|| {
                     let spelled = format!("{adjustment:?}");
                     let variant = spelled
@@ -2991,10 +3085,6 @@ impl Checker {
                 mutability: reference.mutability,
             })
         };
-        let ReferenceStores {
-            references: reference_results,
-            stores: augmented_subscripts,
-        } = self.captured_reference_stores(&occurrences, &local_reference)?;
         let local_invalidations =
             |invalidations: Vec<mojito_checked::checked::InteriorInvalidation>| {
                 invalidations
@@ -3009,6 +3099,18 @@ impl Checker {
                     })
                     .collect::<Result<Vec<_>, IncompleteReason>>()
             };
+        let template_contract = |contract| {
+            local_contract(
+                contract,
+                &occurrences,
+                &local_reference,
+                &local_invalidations,
+            )
+        };
+        let ReferenceStores {
+            references: reference_results,
+            stores: augmented_subscripts,
+        } = self.captured_reference_stores(&occurrences, &local_reference, &template_contract)?;
         let keyed = |lookup: &dyn Fn(&SourceSpan) -> bool| -> Vec<OccurrenceId> {
             occurrences
                 .iter()
@@ -3081,7 +3183,7 @@ impl Checker {
                     !matches!(
                         adjustment,
                         mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
-                    ) && !self.stores_through_reference(&occurrences, *id, adjustment)
+                    ) && !self.kept_element_store_at(&occurrences, *id, adjustment)
                 })
                 .collect(),
             reference_results,
@@ -3124,53 +3226,7 @@ impl Checker {
             value_callees,
             selected_calls: values(&occurrences, &self.selected_calls.borrow())
                 .into_iter()
-                .map(|(id, mut contract)| {
-                    let boundary = std::mem::take(&mut contract.boundary);
-                    // The reference a call yields is its result type too;
-                    // both name the receiver's binding, so the referent
-                    // stands in for the result until an instance installs it.
-                    let reference_result = contract
-                        .reference_result
-                        .take()
-                        .map(|reference| {
-                            if contract.result_ty != Ty::Ref(reference.clone()) {
-                                return Err(IncompleteReason::ExternalBinding);
-                            }
-                            contract.result_ty = (*reference.referent).clone();
-                            local_reference(&reference)
-                        })
-                        .transpose()?;
-                    let arguments = boundary
-                        .arguments
-                        .into_iter()
-                        .map(|argument| {
-                            // An argument the call synthesized is no
-                            // occurrence of the body.
-                            let value = occurrences
-                                .iter()
-                                .find(|occurrence| occurrence.span == argument.value_source)
-                                .map(|occurrence| occurrence.id)
-                                .ok_or(IncompleteReason::FactOutsideBody(
-                                    FactTable::SelectedCalls,
-                                ))?;
-                            Ok(TemplateArgumentBoundary {
-                                source: argument.source,
-                                value,
-                                adjustments: argument.adjustments,
-                                invalidations: local_invalidations(argument.invalidations)?,
-                            })
-                        })
-                        .collect::<Result<Vec<_>, IncompleteReason>>()?;
-                    Ok((
-                        id,
-                        TemplateCallContract {
-                            contract,
-                            reference_result,
-                            arguments,
-                            invalidations: local_invalidations(boundary.invalidations)?,
-                        },
-                    ))
-                })
+                .map(|(id, call)| Ok((id, template_contract(call)?)))
                 .collect::<Result<Vec<_>, IncompleteReason>>()?,
             struct_applications: sorted_applications(reads.struct_applications.clone()),
             builtin_len_calls: occurrences
@@ -3663,40 +3719,14 @@ impl Checker {
         for id in &facts.linear_temporaries {
             self.linear_temporaries.borrow_mut().insert(span(id)?);
         }
+        let checked_contract =
+            |call: &TemplateCallContract| checked_contract(call, &span, &placed, &referenced);
         for (id, call) in &facts.selected_calls {
-            let arguments = call
-                .arguments
-                .iter()
-                .map(|argument| {
-                    Ok(mojito_checked::checked::CheckedCallArgumentBoundary {
-                        source: argument.source,
-                        value_source: span(&argument.value)?,
-                        adjustments: argument.adjustments.clone(),
-                        invalidations: placed(&argument.invalidations)?,
-                    })
-                })
-                .collect::<Result<Vec<_>, TypeError>>()?;
-            let reference_result = call
-                .reference_result
-                .as_ref()
-                .map(&referenced)
-                .transpose()?;
-            self.selected_calls.borrow_mut().insert(
-                span(id)?,
-                mojito_checked::checked::CheckedCallContract {
-                    result_ty: reference_result
-                        .clone()
-                        .map_or_else(|| call.contract.result_ty.clone(), Ty::Ref),
-                    reference_result,
-                    boundary: mojito_checked::checked::CheckedCallBoundary {
-                        arguments,
-                        invalidations: placed(&call.invalidations)?,
-                    },
-                    ..call.contract.clone()
-                },
-            );
+            self.selected_calls
+                .borrow_mut()
+                .insert(span(id)?, checked_contract(call)?);
         }
-        self.install_element_stores(facts, &span)?;
+        self.install_element_stores(facts, &span, &checked_contract)?;
         // The body's own source decides, exactly as it does for an inferred
         // body, whether an application it reaches is user-reachable.
         let source = spans.values().next().and_then(|span| span.source.clone());
@@ -3763,101 +3793,54 @@ impl Checker {
         )
     }
 
-    /// Install each element store made through a mutable reference getter:
-    /// its getter is the call installed at its site, and the adjustment
-    /// overwrites the getter's reference there as the checker's own insert
-    /// does.
+    /// Install each element store: the call installed at its site is its
+    /// getter for a store through a reference and its setter otherwise, and
+    /// the adjustment overwrites that call's reference as the checker's own
+    /// insert does. A store through a setter binds its computed value at
+    /// the site.
     fn install_element_stores(
         &self,
         facts: &CheckedBodyFacts,
         span: &dyn Fn(&OccurrenceId) -> Result<SourceSpan, TypeError>,
+        checked_contract: &dyn Fn(
+            &TemplateCallContract,
+        ) -> Result<
+            mojito_checked::checked::CheckedCallContract,
+            TypeError,
+        >,
     ) -> Result<(), TypeError> {
         for (id, store) in &facts.augmented_subscripts {
             let site = span(id)?;
-            let getter = self
+            let installed = self
                 .selected_calls
                 .borrow()
                 .get(&site)
                 .cloned()
                 .ok_or_else(|| {
                     TypeError::InvariantViolation(
-                        "a derived element store has no getter at its site".to_string(),
+                        "a derived element store has no call at its site".to_string(),
                     )
                 })?;
+            let (getter, setter) = match &store.getter {
+                Some(getter) => (checked_contract(getter)?, Some(installed)),
+                None => (installed, None),
+            };
+            let value_source = setter.is_some().then(|| site.clone());
             self.operation_adjustments.borrow_mut().insert(
                 site,
                 mojito_checked::checked::SemanticAdjustment::AugmentedSubscript(Box::new(
                     mojito_checked::checked::CheckedAugmentedSubscript {
                         getter,
-                        setter: None,
-                        inplace: None,
+                        setter,
+                        inplace: store.inplace.as_ref().map(checked_contract).transpose()?,
                         operand_ty: store.operand_ty.clone(),
                         result_ty: store.result_ty.clone(),
-                        value_source: None,
+                        value_source,
                     },
                 )),
             );
         }
         Ok(())
-    }
-
-    /// Remove one occurrence's entry from every occurrence-keyed fact table.
-    /// `replace_body_facts` checks the list against [`FactTable::ALL`].
-    fn remove_occurrence_facts(&self, span: &SourceSpan) {
-        self.overload_targets.borrow_mut().remove(span);
-        self.contextual_bases.borrow_mut().remove(span);
-        self.generic_instantiations.borrow_mut().remove(span);
-        self.method_instantiations.borrow_mut().remove(span);
-        self.call_transfers.borrow_mut().remove(span);
-        self.implicit_conversions.borrow_mut().remove(span);
-        self.implicit_conversion_types.borrow_mut().remove(span);
-        self.implicit_conversion_raises.borrow_mut().remove(span);
-        self.conversion_source_borrows.borrow_mut().remove(span);
-        self.simd_constructions.borrow_mut().remove(span);
-        self.parameterized_method_calls.borrow_mut().remove(span);
-        self.operation_adjustments.borrow_mut().remove(span);
-        self.construction_immutable_binders
-            .borrow_mut()
-            .remove(span);
-        self.call_result_origins.borrow_mut().remove(span);
-        self.tuple_unpack_plans.borrow_mut().remove(span);
-        self.interior_references.borrow_mut().remove(span);
-        self.view_result_interiors.borrow_mut().remove(span);
-        self.call_parameters.borrow_mut().remove(span);
-        self.interior_invalidations.borrow_mut().remove(span);
-        self.expression_types.borrow_mut().remove(span);
-        self.expression_bindings.borrow_mut().remove(span);
-        self.statement_bindings.borrow_mut().remove(span);
-        self.with_desugars.borrow_mut().remove(span);
-        self.declaration_captures.borrow_mut().remove(span);
-        self.comprehension_bindings.borrow_mut().remove(span);
-        self.expression_place_types.borrow_mut().remove(span);
-        self.binding_types.borrow_mut().remove(span);
-        self.expression_effects.borrow_mut().remove(span);
-        self.selected_calls.borrow_mut().remove(span);
-        self.subscript_descriptors.borrow_mut().remove(span);
-        self.iteration_protocols.borrow_mut().remove(span);
-        self.explicit_destroy_calls.borrow_mut().remove(span);
-        self.reference_value_uses.borrow_mut().remove(span);
-        self.copyable_reference_result_reads
-            .borrow_mut()
-            .remove(span);
-        self.discarded_reference_results.borrow_mut().remove(span);
-        self.borrowed_reference_receivers.borrow_mut().remove(span);
-        self.copy_place_value_uses.borrow_mut().remove(span);
-        self.call_place_uses.borrow_mut().remove(span);
-        self.borrowed_read_call_places.borrow_mut().remove(span);
-        self.read_temporary_arguments.borrow_mut().remove(span);
-        self.unconsumed_temporaries.borrow_mut().remove(span);
-        self.linear_temporaries.borrow_mut().remove(span);
-        self.implicitly_copied_consuming_receivers
-            .borrow_mut()
-            .remove(span);
-        self.truthiness_conditions.borrow_mut().remove(span);
-        let mut deletability = self.explicit_destroy_deletability.borrow_mut();
-        deletability.bindings.remove(span);
-        deletability.linear_bindings.remove(span);
-        self.rebind_assertions.borrow_mut().remove(span);
     }
 
     /// Entries in the fact stores a body inference can grow that are not
@@ -4214,6 +4197,18 @@ fn for_each_owner(facts: &mut CheckedBodyFacts, visit: &dyn Fn(&mut TemplateOwne
             TemplateOrigin::Unrooted(_) => {}
         }
     }
+    /// Every call contract a bundle keeps: the selected calls and those an
+    /// element store embeds.
+    fn calls<'f>(
+        selected: &'f mut [(OccurrenceId, TemplateCallContract)],
+        stores: &'f mut [(OccurrenceId, TemplateAugmentedSubscript)],
+    ) -> impl Iterator<Item = &'f mut TemplateCallContract> {
+        selected.iter_mut().map(|(_, call)| call).chain(
+            stores
+                .iter_mut()
+                .flat_map(|(_, store)| store.contracts_mut()),
+        )
+    }
     for (_, owner) in facts
         .statement_bindings
         .iter_mut()
@@ -4232,7 +4227,7 @@ fn for_each_owner(facts: &mut CheckedBodyFacts, visit: &dyn Fn(&mut TemplateOwne
     {
         origin_owners(&mut reference.origin, visit);
     }
-    for (_, call) in &mut facts.selected_calls {
+    for call in calls(&mut facts.selected_calls, &mut facts.augmented_subscripts) {
         if let Some(reference) = &mut call.reference_result {
             origin_owners(&mut reference.origin, visit);
         }
@@ -4244,12 +4239,13 @@ fn for_each_owner(facts: &mut CheckedBodyFacts, visit: &dyn Fn(&mut TemplateOwne
     {
         origin_owners(origin, visit);
     }
-    let call_invalidations = facts.selected_calls.iter_mut().flat_map(|(_, call)| {
-        call.arguments
-            .iter_mut()
-            .flat_map(|argument| &mut argument.invalidations)
-            .chain(&mut call.invalidations)
-    });
+    let call_invalidations = calls(&mut facts.selected_calls, &mut facts.augmented_subscripts)
+        .flat_map(|call| {
+            call.arguments
+                .iter_mut()
+                .flat_map(|argument| &mut argument.invalidations)
+                .chain(&mut call.invalidations)
+        });
     for invalidation in facts
         .interior_invalidations
         .iter_mut()
@@ -4806,6 +4802,100 @@ fn adjustment_derives(adjustment: &mojito_checked::checked::SemanticAdjustment) 
     ) || mojito_checked::templates::derive_adjustment(adjustment, &Ty::clone).is_some()
 }
 
+/// One kept call's contract under an instance's own spans and bindings: the
+/// inverse of [`local_contract`].
+fn checked_contract(
+    call: &TemplateCallContract,
+    span: &dyn Fn(&OccurrenceId) -> Result<SourceSpan, TypeError>,
+    placed: &PlacedInvalidations<'_>,
+    referenced: &dyn Fn(&TemplateReference) -> Result<mojito_types::origin::RefTy, TypeError>,
+) -> Result<mojito_checked::checked::CheckedCallContract, TypeError> {
+    let arguments = call
+        .arguments
+        .iter()
+        .map(|argument| {
+            Ok(mojito_checked::checked::CheckedCallArgumentBoundary {
+                source: argument.source,
+                value_source: span(&argument.value)?,
+                adjustments: argument.adjustments.clone(),
+                invalidations: placed(&argument.invalidations)?,
+            })
+        })
+        .collect::<Result<Vec<_>, TypeError>>()?;
+    let reference_result = call.reference_result.as_ref().map(referenced).transpose()?;
+    Ok(mojito_checked::checked::CheckedCallContract {
+        result_ty: reference_result
+            .clone()
+            .map_or_else(|| call.contract.result_ty.clone(), Ty::Ref),
+        reference_result,
+        boundary: mojito_checked::checked::CheckedCallBoundary {
+            arguments,
+            invalidations: placed(&call.invalidations)?,
+        },
+        ..call.contract.clone()
+    })
+}
+
+/// Kept invalidations under an instance's own bindings.
+type PlacedInvalidations<'a> = dyn Fn(
+        &[TemplateInvalidation],
+    ) -> Result<Vec<mojito_checked::checked::InteriorInvalidation>, TypeError>
+    + 'a;
+
+/// One call's contract in template-local terms: its boundary kept by
+/// occurrence and template owner, and its reference result by template
+/// owner.
+fn local_contract(
+    mut contract: mojito_checked::checked::CheckedCallContract,
+    occurrences: &[Occurrence],
+    local_reference: &dyn Fn(
+        &mojito_types::origin::RefTy,
+    ) -> Result<TemplateReference, IncompleteReason>,
+    local_invalidations: &dyn Fn(
+        Vec<mojito_checked::checked::InteriorInvalidation>,
+    ) -> Result<Vec<TemplateInvalidation>, IncompleteReason>,
+) -> Result<TemplateCallContract, IncompleteReason> {
+    let boundary = std::mem::take(&mut contract.boundary);
+    // The reference a call yields is its result type too; both name the
+    // receiver's binding, so the referent stands in for the result until an
+    // instance installs it.
+    let reference_result = contract
+        .reference_result
+        .take()
+        .map(|reference| {
+            if contract.result_ty != Ty::Ref(reference.clone()) {
+                return Err(IncompleteReason::ExternalBinding);
+            }
+            contract.result_ty = (*reference.referent).clone();
+            local_reference(&reference)
+        })
+        .transpose()?;
+    let arguments = boundary
+        .arguments
+        .into_iter()
+        .map(|argument| {
+            // An argument the call synthesized is no occurrence of the body.
+            let value = occurrences
+                .iter()
+                .find(|occurrence| occurrence.span == argument.value_source)
+                .map(|occurrence| occurrence.id)
+                .ok_or(IncompleteReason::FactOutsideBody(FactTable::SelectedCalls))?;
+            Ok(TemplateArgumentBoundary {
+                source: argument.source,
+                value,
+                adjustments: argument.adjustments,
+                invalidations: local_invalidations(argument.invalidations)?,
+            })
+        })
+        .collect::<Result<Vec<_>, IncompleteReason>>()?;
+    Ok(TemplateCallContract {
+        contract,
+        reference_result,
+        arguments,
+        invalidations: local_invalidations(boundary.invalidations)?,
+    })
+}
+
 /// What `captured_reference_stores` reads off the adjustment table: the
 /// reference each reference call yields, and each element store through one.
 struct ReferenceStores {
@@ -4911,7 +5001,7 @@ fn substituted_facts(
         augmented_subscripts: substituted_element_stores(
             &template.augmented_subscripts,
             &substitute,
-        ),
+        )?,
         reference_binding_types: template
             .reference_binding_types
             .iter()
@@ -4930,21 +5020,30 @@ fn substituted_facts(
 }
 
 /// The element stores of an instance: the template's, their types
-/// substituted.
+/// substituted. The value getter and in-place dunder a store embeds are
+/// kept as they stand, so each must name only closed types: an instance
+/// realizes no call but the one at the site.
 fn substituted_element_stores(
     stores: &[(OccurrenceId, TemplateAugmentedSubscript)],
     substitute: &dyn Fn(&Ty) -> Ty,
-) -> Vec<(OccurrenceId, TemplateAugmentedSubscript)> {
+) -> Result<Vec<(OccurrenceId, TemplateAugmentedSubscript)>, &'static str> {
     stores
         .iter()
         .map(|(id, store)| {
-            (
-                *id,
-                TemplateAugmentedSubscript {
-                    operand_ty: substitute(&store.operand_ty),
-                    result_ty: substitute(&store.result_ty),
-                },
-            )
+            let mut store = store.clone();
+            let closed =
+                store.contracts_mut().all(|call| {
+                    !mojito_types::types::is_symbolic(&call.contract.result_ty)
+                        && call.contract.arguments.iter().all(|argument| {
+                            !mojito_types::types::is_symbolic(&argument.parameter_ty)
+                        })
+                });
+            if !closed {
+                return Err("an element store embeds a call of a parameter type");
+            }
+            store.operand_ty = substitute(&store.operand_ty);
+            store.result_ty = substitute(&store.result_ty);
+            Ok((*id, store))
         })
         .collect()
 }
@@ -5197,13 +5296,19 @@ impl BodyShape<'_> {
             StmtKind::AugAssign { place, value, .. } => {
                 let local = matches!(&place.kind, ExprKind::Identifier(name)
                     if self.local(name) || self.mut_params.contains(&name.as_str()));
-                (local
+                let scalar = (local
                     || (!self.keyed
-                        && (self.scalar_field_place(place) || self.reference_element(place))))
+                        && (self.scalar_field_place(place)
+                            || self.reference_element(place)
+                            || self.setter_element(place))))
                     && self.scalar(place)
                     && self.expression(value)
                     && self.scalar(value)
-                    && (self.keyed || self.holds(MethodFeatures::STATEMENTS))
+                    && (self.keyed || self.holds(MethodFeatures::STATEMENTS));
+                scalar
+                    || (!self.keyed
+                        && self.inplace_element(place, value)
+                        && self.holds(MethodFeatures::STATEMENTS))
             }
             _ => false,
         }
@@ -5761,9 +5866,9 @@ impl BodyShape<'_> {
         admitted && (through.is_none() || self.holds(MethodFeatures::SUBSCRIPT_STORES))
     }
 
-    /// A value stored to an element of a field of a writable `self`, where
-    /// the field's struct declares a setter (`self.counts[i] = n`,
-    /// `self.index[b] = entries^`).
+    /// A value stored to an element of a writable `self` or of one of its
+    /// fields, where the subscripted struct declares a setter
+    /// (`self.counts[i] = n`, `self.index[b] = entries^`, `self[k] = v^`).
     ///
     /// The store is a call of `__setitem__` recorded at the subscript, under
     /// the contract a sibling call has: the index and the value are its
@@ -5775,7 +5880,7 @@ impl BodyShape<'_> {
             return false;
         };
         let admitted = self.self_writable
-            && self.receiver_field(object)
+            && (self.receiver_field(object) || self.receiver_itself(object))
             && self.argument(place, index)
             && self.argument(place, value)
             && self.facts.is_none_or(|facts| {
@@ -5790,9 +5895,10 @@ impl BodyShape<'_> {
             && self.holds(MethodFeatures::SUBSCRIPT_STORES)
     }
 
-    /// A closed scalar element of a field of a writable `self`, stored
-    /// through the mutable reference its getter yields (`self.counts[i] +=
-    /// 1`, or `self.cells[i] = n` on a struct that declares no setter).
+    /// A closed scalar element of a writable `self` or of one of its fields,
+    /// stored through the mutable reference its getter yields
+    /// (`self.counts[i] += 1`, or `self.cells[i] = n` on a struct that
+    /// declares no setter).
     ///
     /// The getter is a reference call, and the store records no second
     /// contract: the checker writes the computed value back through the
@@ -5800,16 +5906,66 @@ impl BodyShape<'_> {
     /// type, kept apart as `augmented_subscripts`, and the reference's
     /// mutability is the receiver binding's, which no instance changes.
     fn reference_element(&self, place: &Expr) -> bool {
+        self.through_reference(place)
+            && self.scalar(place)
+            && self.facts.is_none_or(|facts| {
+                fact_at(&facts.augmented_subscripts, self.occurrence(place))
+                    .is_some_and(|store| store.inplace.is_none())
+            })
+    }
+
+    /// A closed scalar element of a writable `self` or of one of its fields
+    /// whose struct declares a value getter and a setter, stored augmented
+    /// (`self.table[i] += 1`).
+    ///
+    /// The setter is the call recorded at the subscript, binding the index
+    /// and the computed value, which the check keys at the subscript too.
+    /// The getter is kept beside it in `augmented_subscripts` as it stands,
+    /// so the subscripted value's type is closed: an instance realizes the
+    /// setter alone, and reads the element through the template's getter.
+    fn setter_element(&self, place: &Expr) -> bool {
+        self.through_setter(place)
+            && self.scalar(place)
+            && self.facts.is_none_or(|facts| {
+                fact_at(&facts.augmented_subscripts, self.occurrence(place))
+                    .is_some_and(|store| store.inplace.is_none())
+            })
+    }
+
+    /// An element of a closed struct type stored augmented through its
+    /// in-place dunder (`self.counters[i] += 3` → `__iadd__`), read through a
+    /// mutable reference getter or through a value getter and a setter.
+    ///
+    /// The dunder is selected on the element's type, which is closed, so the
+    /// contract is kept in `augmented_subscripts` as it stands. It binds the
+    /// operand, a closed scalar, by value.
+    fn inplace_element(&self, place: &Expr, value: &Expr) -> bool {
+        (self.through_reference(place) || self.through_setter(place))
+            && self.expression(value)
+            && self.scalar(value)
+            && self.facts.is_none_or(|facts| {
+                fact_at(&facts.augmented_subscripts, self.occurrence(place)).is_some_and(|store| {
+                    !mojito_types::types::is_symbolic(&store.operand_ty)
+                        && store
+                            .inplace
+                            .as_ref()
+                            .is_some_and(mojito_checked::templates::closed_method_contract)
+                })
+            })
+    }
+
+    /// The subscript `place` of a writable `self` or of one of its fields,
+    /// stored through the mutable reference its getter yields.
+    fn through_reference(&self, place: &Expr) -> bool {
         let ExprKind::Index { object, .. } = &place.kind else {
             return false;
         };
         let id = self.occurrence(place);
         let admitted = self.self_writable
-            && self.receiver_field(object)
+            && (self.receiver_field(object) || self.receiver_itself(object))
             && self.reference_call(place)
-            && self.scalar(place)
             && self.facts.is_none_or(|facts| {
-                fact_at(&facts.augmented_subscripts, id).is_some()
+                fact_at(&facts.augmented_subscripts, id).is_some_and(|store| store.getter.is_none())
                     && fact_at(&facts.selected_calls, id)
                         .and_then(|call| call.reference_result.as_ref())
                         .is_some_and(|reference| {
@@ -5820,6 +5976,35 @@ impl BodyShape<'_> {
             self.subscript(id);
         }
         admitted && self.holds(MethodFeatures::SUBSCRIPT_STORES)
+    }
+
+    /// The subscript `place` of a writable `self` or of one of its fields,
+    /// of a closed type, read through a closed value getter and written back
+    /// through a setter that takes the element by value.
+    fn through_setter(&self, place: &Expr) -> bool {
+        let ExprKind::Index { object, index } = &place.kind else {
+            return false;
+        };
+        let id = self.occurrence(place);
+        let admitted = self.self_writable
+            && (self.receiver_field(object) || self.receiver_itself(object))
+            && self.argument(place, index)
+            && self.facts.is_none_or(|facts| {
+                fact_at(&facts.expression_types, self.occurrence(object))
+                    .is_some_and(|ty| !mojito_types::types::is_symbolic(ty))
+                    && self
+                        .named_contract(facts, place, object, "__setitem__")
+                        .is_some_and(mojito_checked::templates::value_method_contract)
+                    && fact_at(&facts.augmented_subscripts, id)
+                        .and_then(|store| store.getter.as_ref())
+                        .is_some_and(mojito_checked::templates::closed_method_contract)
+            });
+        if admitted {
+            self.subscript(id);
+        }
+        admitted
+            && self.holds(MethodFeatures::SIBLING_CALLS)
+            && self.holds(MethodFeatures::SUBSCRIPT_STORES)
     }
 
     /// Note that the subscript `id` is the base of a store.
@@ -6000,6 +6185,11 @@ impl BodyShape<'_> {
         self.receiver
             && matches!(&expr.kind, ExprKind::Member { object, .. }
                 if matches!(&object.kind, ExprKind::Identifier(name) if name == "self"))
+    }
+
+    /// Whether `expr` is `self` itself in a method body.
+    fn receiver_itself(&self, expr: &Expr) -> bool {
+        self.receiver && matches!(&expr.kind, ExprKind::Identifier(name) if name == "self")
     }
 
     /// Whether `name` is a scalar local.

@@ -216,10 +216,10 @@ pub fn derive_adjustment(
                 ty,
             })
         }
-        // An augmented subscript embeds its getter's contract, whose boundary
-        // names one run's spans and bindings; the store through a mutable
-        // reference getter is kept apart (`augmented_subscripts`) and rebuilt
-        // from the realized call, and a store through a setter stays here.
+        // An augmented subscript embeds its calls' contracts, whose
+        // boundaries name one run's spans and bindings; an element store is
+        // kept apart (`augmented_subscripts`) and rebuilt from the realized
+        // call at its site and the contracts kept beside it.
         SemanticAdjustment::ResolveCallable(..)
         | SemanticAdjustment::ConstructTypeParam { .. }
         | SemanticAdjustment::ReifyTypeArgument { .. }
@@ -796,15 +796,29 @@ pub struct TemplateReference {
     pub mutability: mojito_types::origin::Mutability,
 }
 
-/// An element store through a subscript getter's reference, in
-/// template-local terms.
+/// An element store through a subscript, in template-local terms: through
+/// the reference a getter yields, or read through a value getter and
+/// written back through a setter.
 ///
-/// The getter is the selected call at the site, so only the element's
-/// operand and result types are kept.
+/// The selected call at the site is the getter for a store through a
+/// reference and the setter for a store through a setter, so only the
+/// contracts it does not hold are kept beside the element's types.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TemplateAugmentedSubscript {
     pub operand_ty: Ty,
     pub result_ty: Ty,
+    /// The value getter that reads the element a setter writes back. Absent
+    /// for a store through a reference.
+    pub getter: Option<TemplateCallContract>,
+    /// The in-place dunder a struct element's augmented store selects.
+    pub inplace: Option<TemplateCallContract>,
+}
+
+impl TemplateAugmentedSubscript {
+    /// The contracts the store embeds beside the site's selected call.
+    pub fn contracts_mut(&mut self) -> impl Iterator<Item = &mut TemplateCallContract> {
+        self.getter.iter_mut().chain(&mut self.inplace)
+    }
 }
 
 /// A binding a retained fact names, in template-local terms: checker owner
@@ -1022,15 +1036,17 @@ pub struct CheckedBodyFacts {
     /// [`SemanticAdjustment::ReferenceResult`] entries of the adjustment
     /// table, kept apart because their origins name bindings.
     pub reference_results: Vec<(OccurrenceId, TemplateReference)>,
-    /// The element stores made through the mutable reference a subscript's
-    /// getter yields.
+    /// The element stores made through a subscript's mutable reference, or
+    /// augmented through a value getter and a setter.
     ///
-    /// `self.counts[i] += 1`, or `self.grid[i] = v` on a struct with no
-    /// setter: the [`SemanticAdjustment::AugmentedSubscript`] entries of the
-    /// adjustment table whose getter is the call recorded at the same site,
-    /// kept apart because the embedded contract's boundary names spans and
-    /// bindings of one run. An instance takes the getter it realized for the
-    /// site and substitutes the two types.
+    /// `self.counts[i] += 1`, `self.grid[i] = v` on a struct with no setter,
+    /// or `self.table[i] += 1` through a setter: the
+    /// [`SemanticAdjustment::AugmentedSubscript`] entries of the adjustment
+    /// table whose getter, or setter, is the call recorded at the same site,
+    /// kept apart because the embedded contracts' boundaries name spans and
+    /// bindings of one run. An instance takes the call it realized for the
+    /// site, rebuilds the value getter and in-place dunder kept beside it,
+    /// and substitutes the two types.
     pub augmented_subscripts: Vec<(OccurrenceId, TemplateAugmentedSubscript)>,
     /// The interior generation a subscript's reference belongs to.
     pub interior_references: Vec<(OccurrenceId, TemplatePlace)>,
@@ -1526,7 +1542,17 @@ impl CheckedBodyFacts {
             linear_bindings: flagged(&self.linear_bindings),
             linear_temporaries: flagged(&self.linear_temporaries),
             reference_results: at(&self.reference_results, occurrences, folded),
-            augmented_subscripts: at(&self.augmented_subscripts, occurrences, folded),
+            augmented_subscripts: at(&self.augmented_subscripts, occurrences, folded)
+                .into_iter()
+                .map(|(id, mut store)| {
+                    for call in store.contracts_mut() {
+                        for argument in &mut call.arguments {
+                            argument.value.copy = id.copy;
+                        }
+                    }
+                    (id, store)
+                })
+                .collect(),
             interior_references: at(&self.interior_references, occurrences, folded),
             reference_binding_types: at(&self.reference_binding_types, occurrences, folded),
             reference_place_types: at(&self.reference_place_types, occurrences, folded),

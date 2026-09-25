@@ -35,33 +35,7 @@ parameters symbolic, or deriving an instantiation from a checked template. A
 defect found on the way is filed by its kind; a divergence from the pin goes
 to section 3, however small.
 
-- [ ] **1.1 An augmented store through a value getter and a setter, and a
-  store on `self` itself, keep the clone check**
-
-  Problem: an element store through a declared setter or a mutable-reference
-  getter derives, whole or augmented (`self.items[i] = value^`,
-  `self.counts[i] += 1`), and three neighbouring stores still refuse it.
-  - `self.table[i] += 1` where `__getitem__` returns a value binds the
-    computed result to the setter at a synthesized source span
-    (`statements.rs`, `(source, DUMMY_SPAN)`, one per module), which is no
-    occurrence of the body, and records `ReadTemporaryArguments` and
-    `UnconsumedTemporaries` there. A recipe needs a synthetic occurrence, or
-    the checker keying those facts at the site.
-  - A struct element's `+=` selects its `__iadd__` (`inplace`), a third
-    embedded contract with no recipe.
-  - `Dict.update` stores on `self` itself (`self[k.copy()] = v.copy()`), with
-    a bound-dispatched index and value; `element_store` admits a field of
-    `self` only.
-  - A whole element read from the same list (`self.items[i] = self.items[j]`)
-    is accepted for `Int` and rejected for `String`, so it cannot derive until
-    3.6 closes (`conformance/probes/element_store_from_same_list.mojo`).
-  - No bundled body holds `x[i] += …`, and `Dict._append_new` is kept out by
-    a field read through a `var` parameter, an `Int(…)` conversion, and a
-    method call on a local, so none of these moves `stdlib_heavy`.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
-- [ ] **1.2 A method binding a local of a type built over a parameter keeps
+- [ ] **1.1 A method binding a local of a type built over a parameter keeps
   the clone check**
 
   Problem: a `var` whose type mentions a parameter without being one
@@ -82,21 +56,21 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.3 A conversion whose target is built over a parameter refuses at the
+- [ ] **1.2 A conversion whose target is built over a parameter refuses at the
   binding**
 
   Problem: `var label: Label[Self.T] = 4` records a conversion the instance
   could re-select, and refuses one obligation earlier.
   - The binding's own type mentions the parameter, which the deletability
     obligation judges only for a bare parameter — the same refusal as the
-    entry 1.2 on locals of a built-over type.
+    entry 1.1 on locals of a built-over type.
   - A converting call argument already reaches the recipe's per-instance
     constructor clone (`assets/ok/template_method_converting_call_argument.mojo`),
     so what is left here is the binding, not the conversion.
-  - Depends on 1.2.
+  - Depends on 1.1.
   - Model: Opus, Not Planned.
 
-- [ ] **1.4 A sibling call returning a view keeps the clone check**
+- [ ] **1.3 A sibling call returning a view keeps the clone check**
 
   Problem: `_DictKeyIter(self.items())` constructs from a sibling call whose
   result is a view over `self`, and the call records `BorrowViewResult`,
@@ -110,7 +84,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.5 A method that raises keeps the clone check**
+- [ ] **1.4 A method that raises keeps the clone check**
 
   Problem: `raises` and `raise` are outside the method grammar, so a checked
   accessor is inferred per instantiation beside its unchecked twin.
@@ -121,7 +95,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.6 A struct with a field of a parameter type is never a plain-data
+- [ ] **1.5 A struct with a field of a parameter type is never a plain-data
   argument**
 
   Problem: a `MethodBody` derivation refuses an instance whose argument may
@@ -143,7 +117,7 @@ to section 3, however small.
     the conservative answer.
   - Model: Opus, Planned.
 
-- [ ] **1.7 A folded compile-time value that survives into an instance breaks its
+- [ ] **1.6 A folded compile-time value that survives into an instance breaks its
   trace**
 
   Problem: the elaborator writes a fresh literal where a value parameter or a
@@ -162,7 +136,7 @@ to section 3, however small.
     `SyntaxId::fresh()` in the elaborator.
   - Model: Opus, Planned.
 
-- [ ] **1.8 A struct with an origin or a value parameter derives no method**
+- [ ] **1.7 A struct with an origin or a value parameter derives no method**
 
   Problem: a method derives only on a struct whose parameters are all plain
   types, so `Span` and `Array` keep the clone check for every method.
@@ -173,11 +147,11 @@ to section 3, however small.
   - A receiver origin (`ref[o] self`) is refused for the same reason: the
     binder it names is not a plain type parameter.
   - An origin argument passes through unchanged. A value argument is folded
-    by the elaborator, which is 1.7.
-  - Depends on 1.7 for a value parameter.
+    by the elaborator, which is 1.6.
+  - Depends on 1.6 for a value parameter.
   - Model: Fable, Planned.
 
-- [ ] **1.9 A loan-carrying instance needs its transfers replayed on remapped
+- [ ] **1.8 A loan-carrying instance needs its transfers replayed on remapped
   places**
 
   Problem: a body that replays a transfer summary derives only for an instance
@@ -191,11 +165,11 @@ to section 3, however small.
   - The escape check `replay_transfer_effects` runs is a verdict, which a
     derivation must refuse into, never skip.
   - A struct with an origin parameter mints no instance clones today, so the
-    shape is unreachable until 1.8 lands.
-  - Depends on 1.8.
+    shape is unreachable until 1.7 lands.
+  - Depends on 1.7.
   - Model: Fable, Planned.
 
-- [ ] **1.10 A local declared inside an unrolled loop has no per-copy binding**
+- [ ] **1.9 A local declared inside an unrolled loop has no per-copy binding**
 
   Problem: an unrolled `comptime for` copies its body once per iteration, and
   a derivation mints one binding per template local, not one per copy.
@@ -206,7 +180,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.11 A call to an explicit destructor keeps the clone check**
+- [ ] **1.10 A call to an explicit destructor keeps the clone check**
 
   Problem: `ExplicitDestroyCalls` has no derivation recipe, so a body that
   calls a `deinit self` method other than `__deinit__` is inferred per
@@ -224,14 +198,14 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.12 A consuming method call on a copied place receiver keeps the clone
+- [ ] **1.11 A consuming method call on a copied place receiver keeps the clone
   check**
 
   Problem: `ImplicitlyCopiedConsumingReceivers` has no derivation recipe, so a
   body that calls a consuming method on a place it does not own is inferred
   per instance.
   - It blocks 2 templates and 4 clones per pass in `stdlib_heavy`, always
-    beside 1.11: the slice overloads of `List.__getitem__` and
+    beside 1.10: the slice overloads of `List.__getitem__` and
     `Span.__getitem__` call `or_else` on `slice.start`.
   - The mark records that the receiver is copied before the call consumes it,
     which depends on the receiver's type being `ImplicitlyCopyable`. An
@@ -243,7 +217,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.13 A runtime `for` keeps the clone check**
+- [ ] **1.12 A runtime `for` keeps the clone check**
 
   Problem: `IterationProtocols` has no derivation recipe, so every body with
   a runtime `for` loop is inferred per instance.
@@ -258,7 +232,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.14 A SIMD construction keeps the clone check**
+- [ ] **1.13 A SIMD construction keeps the clone check**
 
   Problem: `SimdConstructions` has no derivation recipe, so a body that
   builds a `SIMD` or `Scalar` value is inferred per instance.
@@ -273,19 +247,19 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.15 A condition on a `Boolable` struct keeps the clone check**
+- [ ] **1.14 A condition on a `Boolable` struct keeps the clone check**
 
   Problem: `TruthinessConditions` has no derivation recipe, so a body whose
   `if` or `while` tests a struct through `__bool__` is inferred per instance.
   - It blocks 4 templates per pass in `stdlib_heavy`: `OptionalReg.or_else`
-    alone, and `os.mkdir`, `os.remove`, and `os.rmdir` beside 1.4 and 1.9.
+    alone, and `os.mkdir`, `os.remove`, and `os.rmdir` beside 1.3 and 1.8.
   - The mark says the condition is not already a `Bool`. A condition of a
     parameter type can become `Bool` itself under substitution, so an
     instance must judge it again.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.16 A tuple unpacking keeps the clone check**
+- [ ] **1.15 A tuple unpacking keeps the clone check**
 
   Problem: `TupleUnpackPlans` has no derivation recipe, so a body that
   unpacks a tuple into several bindings is inferred per instance.
@@ -297,7 +271,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.17 A parameterized method call keeps the clone check**
+- [ ] **1.16 A parameterized method call keeps the clone check**
 
   Problem: `ParameterizedMethodCalls` has no derivation recipe, so a body
   calling `v.m[T](…)` is inferred per instance.
@@ -309,7 +283,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.18 A view-returning method call's interior tags keep the clone
+- [ ] **1.17 A view-returning method call's interior tags keep the clone
   check**
 
   Problem: `ViewResultInteriors` has no derivation recipe, so a body calling
@@ -318,14 +292,14 @@ to section 3, however small.
   - It blocks 5 templates per pass in `stdlib_heavy`, none of them alone:
     `path.basename`, `path.dirname`, `path.split`, `path.splitroot`, and
     `path.expandvars`.
-  - Each of those also waits on 1.4 (`BorrowViewResult`) and 1.9
+  - Each of those also waits on 1.3 (`BorrowViewResult`) and 1.8
     (`CallResultOrigins`), so this recipe frees no body by itself.
   - The tags come from the callee's declared return origin, which an
     instance does not change for a nominal receiver.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.19 A comprehension keeps the clone check**
+- [ ] **1.18 A comprehension keeps the clone check**
 
   Problem: `ComprehensionBindings` has no derivation recipe, so a body
   holding a list, set, or dict comprehension is inferred per instance.
@@ -336,7 +310,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.20 A `with` statement keeps the clone check**
+- [ ] **1.19 A `with` statement keeps the clone check**
 
   Problem: `WithDesugars` has no derivation recipe, so a body holding a
   `with` statement is inferred per instance.
@@ -347,7 +321,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.21 A nested `def` with explicit captures keeps the clone check**
+- [ ] **1.20 A nested `def` with explicit captures keeps the clone check**
 
   Problem: `DeclarationCaptures` has no derivation recipe, so a body
   declaring a nested `def` with a capture list is inferred per instance.
@@ -357,7 +331,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.22 A leading-dot contextual member keeps the clone check**
+- [ ] **1.21 A leading-dot contextual member keeps the clone check**
 
   Problem: `ContextualBases` has no derivation recipe, so a body spelling
   `.Member` against a contextual type is inferred per instance.
@@ -368,7 +342,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.23 An operator with a literal or a call-result operand keeps the
+- [ ] **1.22 An operator with a literal or a call-result operand keeps the
   clone check**
 
   Problem: `BodyShape::operator` admits an operator only over two places, so
@@ -387,6 +361,33 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Planned.
 
+- [ ] **1.23 An augmented element store keeps the clone check where the
+  subscripted value or the element has a parameter-built type**
+
+  Problem: an augmented store through a value getter and a setter derives
+  only where the subscripted value's type is closed, and a struct element's
+  in-place dunder only where the element's type is closed.
+  - `self.box[i] += 1` with `box: Box[Self.T]`, or `self[i] += 1` in a
+    generic struct, reads through a getter an instance would retarget to its
+    own clone. Realization retargets only the call at the site, which is the
+    setter, and keeps the getter as the template selected it
+    (`substituted_element_stores`).
+  - `self.items[i] += x` with `items: List[Self.T]` selects `__iadd__`
+    through `T`'s bound, and no recipe re-selects a contract the store embeds.
+  - A whole element read from the same list (`self.items[i] =
+    self.items[j]`) is accepted for `Int` and rejected for `String`, so it
+    cannot derive until 3.6 closes
+    (`conformance/probes/element_store_from_same_list.mojo`).
+  - `Dict.update` now meets a store on `self`, but its index and value are
+    calls on an element reached through a read parameter's field
+    (`other.entries[i].key.copy()`), which `expression` does not admit.
+  - `Dict._append_new` is kept out by a field read through a `var`
+    parameter, an `Int(…)` conversion, and a method call on a local.
+  - No bundled body holds `x[i] += …`, so none of this moves
+    `stdlib_heavy`.
+  - Depends on 3.6 for the same-list read.
+  - Model: Opus, Planned.
+
 - [ ] **1.24 A surviving trait-bound template with a local of a parameter type
   keeps the clone check**
 
@@ -402,8 +403,8 @@ to section 3, however small.
     of a bare parameter type (`template_facts.rs:whole_value`).
   - A `def` has no plain-data obligation yet, and its parameter may be
     instantiated with a type that carries a loan or is a callable.
-  - A runtime `for` needs the iteration-protocol recipe, which is 1.13.
-  - Depends on 1.13 for a runtime `for`.
+  - A runtime `for` needs the iteration-protocol recipe, which is 1.12.
+  - Depends on 1.12 for a runtime `for`.
   - Model: Fable, Planned.
 
 - [ ] **1.25 Every discovery round still infers every uncovered body again**
@@ -423,7 +424,7 @@ to section 3, however small.
     every fact table, under the identity substitution.
   - The arena is already built once per compilation rather than once per
     round (`DiscoveryResult`).
-  - Depends on 1.1, 1.4, 1.9, and 1.11 through 1.23.
+  - Depends on 1.3, 1.8, and 1.10 through 1.23.
   - Model: Fable, Planned.
 
 - [ ] **1.26 Binder identity is still by spelling below the checker**
@@ -636,8 +637,8 @@ to section 3, however small.
   - A generic owner keys its per-call clone by the instance and the call
     together (`instance_call_method_clone`), which the recipe would mirror.
   - No instance reaches that shape today: a struct argument declaring a field
-    of a parameter type is refused as loan-carrying, which is 1.6.
-  - Depends on 1.6.
+    of a parameter type is refused as loan-carrying, which is 1.5.
+  - Depends on 1.5.
   - Model: Opus, Not Planned.
 
 - [ ] **1.37 The Pliron pivot has no falsifiable proof yet**
@@ -1579,7 +1580,21 @@ words. The representation gap and the two standing ledgers are last.
   - Pinned by `conformance/probes/imported_alias_in_generic_method.mojo`.
   - Model: Opus, Not Planned.
 
-- [ ] **3.52 Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
+- [ ] **3.52 A subscript store on a struct with a setter and no getter is
+  accepted**
+
+  Problem: `s[0] = 3` on a struct that declares `__setitem__` but no
+  `__getitem__` runs in Mojito, while the pin refuses the store ("'Sink' has
+  '__setitem__' but no '__getitem__' method").
+  - The pin accepts the declaration itself while nothing subscripts it.
+  - The lever is the setter selection in `check_nominal_subscript_assignment`
+    (`checker/indexing.rs`), which never asks for a getter.
+  - Fixtures that declare a setter alone need a getter first; the fallout is
+    not enumerated.
+  - Pinned by `conformance/probes/setter_without_getter.mojo`.
+  - Model: Opus, Planned.
+
+- [ ] **3.53 Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
   any order)*
 
   Problem: parts of Mojito's stdlib lean on the Rust runtime where upstream
@@ -1610,7 +1625,7 @@ words. The representation gap and the two standing ledgers are last.
   Four runtime services are deliberately not on that list; they are in
   [`docs/non-goals.md`](non-goals.md).
 
-- [ ] **3.53 Behavioral divergences from the pinned Mojo — burn to zero**
+- [ ] **3.54 Behavioral divergences from the pinned Mojo — burn to zero**
   *(standing)*
 
   Every new divergence lands here with a probe or a `cases.tsv`

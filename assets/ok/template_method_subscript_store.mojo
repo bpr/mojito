@@ -9,6 +9,10 @@
 # takes the value by keyword. The syntax and the setter's declaration decide
 # both, so an instance inherits the entry; the setter's parameter types
 # substitute, and a store through a reference keeps the getter it realized.
+# An augmented store through a closed value getter and a setter, a struct
+# element's in-place `__iadd__`, and a store on `self` itself derive too: the
+# value getter and the dunder are closed calls kept beside the call the site
+# selected, and the setter's computed value is keyed at the subscript.
 struct Entry[T: ImplicitlyCopyable & Deinitable](ImplicitlyCopyable):
     var value: Self.T
     var hits: Int
@@ -35,12 +39,61 @@ struct Grid:
         return self.second
 
 
+# A value getter and a setter: an augmented store reads the element, then
+# writes the result back.
+struct Table(Movable):
+    var first: Int
+    var second: Int
+
+    def __init__(out self):
+        self.first = 0
+        self.second = 0
+
+    def __getitem__(self, i: Int) -> Int:
+        if i == 0:
+            return self.first
+        return self.second
+
+    def __setitem__(mut self, i: Int, value: Int):
+        if i == 0:
+            self.first = value
+        else:
+            self.second = value
+
+
+# An element whose augmented store selects its in-place dunder.
+struct Counter(ImplicitlyCopyable):
+    var n: Int
+
+    def __init__(out self, n: Int):
+        self.n = n
+
+    def __iadd__(mut self, k: Int):
+        self.n += k
+
+
+struct Tally(Movable):
+    var first: Counter
+
+    def __init__(out self):
+        self.first = Counter(0)
+
+    def __getitem__(self, i: Int) -> Counter:
+        return self.first
+
+    def __setitem__(mut self, i: Int, value: Counter):
+        self.first = value
+
+
 struct Shelf[T: ImplicitlyCopyable & Deinitable]:
     var entries: List[Entry[Self.T]]
     var items: List[Self.T]
     var counts: List[Int]
     var buckets: List[List[Int]]
     var grid: Grid
+    var table: Table
+    var counters: List[Counter]
+    var tally: Tally
 
     def __init__(out self):
         self.entries = List[Entry[Self.T]]()
@@ -48,12 +101,22 @@ struct Shelf[T: ImplicitlyCopyable & Deinitable]:
         self.counts = List[Int]()
         self.buckets = List[List[Int]]()
         self.grid = Grid()
+        self.table = Table()
+        self.counters = List[Counter]()
+        self.tally = Tally()
+
+    def __getitem__(self, i: Int) -> Self.T:
+        return self.items[i]
+
+    def __setitem__(mut self, i: Int, var value: Self.T):
+        self.items[i] = value^
 
     def add(mut self, var value: Self.T):
         self.entries.append(Entry[Self.T](value))
         self.items.append(value^)
         self.counts.append(0)
         self.buckets.append(List[Int]())
+        self.counters.append(Counter(0))
 
     def reset(mut self, i: Int):
         self.entries[i].hits = 7
@@ -86,6 +149,22 @@ struct Shelf[T: ImplicitlyCopyable & Deinitable]:
 
     def bump_cell(mut self, i: Int):
         self.grid[i] += 2
+
+    # An augmented store through a value getter and a setter.
+    def bump_table(mut self, i: Int):
+        self.table[i] += 1
+
+    # A struct element's in-place dunder, through a mutable reference and
+    # through a value getter and a setter.
+    def bump_counter(mut self, i: Int):
+        self.counters[i] += 3
+
+    def bump_tally(mut self, i: Int):
+        self.tally[i] += 4
+
+    # A store on `self` itself, through its own setter.
+    def put(mut self, i: Int, var value: Self.T):
+        self[i] = value^
 
     def hits_at(self, i: Int) -> Int:
         return self.entries[i].hits
@@ -140,3 +219,15 @@ def main():
     words.bump_cell(0)
     print(words.hits_at(0), words.count_at(0))
     print(words.item_at(0), words.bucket_len(0), words.entry_at(0), words.cell_at(0))
+    numbers.bump_table(1)
+    numbers.bump_table(1)
+    numbers.bump_counter(1)
+    numbers.bump_tally(0)
+    numbers.put(1, 8)
+    words.bump_table(0)
+    words.bump_counter(0)
+    words.bump_tally(0)
+    words.bump_tally(0)
+    words.put(0, "w")
+    print(numbers.table[1], numbers.counters[1].n, numbers.tally[0].n, numbers.item_at(1))
+    print(words.table[0], words.counters[0].n, words.tally[0].n, words.item_at(0))

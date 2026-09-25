@@ -9,6 +9,14 @@ to evolve under the `0.x` compatibility rules.
 ### Fixed
 
 - A per-instantiation method clone now inherits its checked template's facts
+  for an augmented element store through a value getter and a setter
+  (`self.table[i] += 1`), for a struct element's in-place `__iadd__`
+  through either kind of getter (`self.counters[i] += 3`), and for a store
+  on `self` itself (`self[k] = v^`). Each used to keep the clone check. A
+  subscripted value or an element whose type is built over a parameter still
+  does (`docs/roadmap.md` §1).
+
+- A per-instantiation method clone now inherits its checked template's facts
   when the body hands a reference on as a call argument: a `ref` local, a
   field reached through one, or a reference call's result (`self.items[i]`),
   read where it lies by a read parameter, copied into a `var` one, or kept by

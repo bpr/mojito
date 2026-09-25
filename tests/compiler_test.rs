@@ -1626,13 +1626,14 @@ fn template_method_reference_calls_derive() {
 
 #[test]
 fn template_method_subscript_stores_derive() {
-    // A store through a subscript of a field of `self`: a scalar field of a
-    // reference getter's element, a scalar or a whole value through a
-    // declared setter, and a scalar element stored whole or augmented through
-    // the mutable reference its getter yields.
+    // A store through a subscript of `self` or of one of its fields: a scalar
+    // field of a reference getter's element, a scalar or a whole value
+    // through a declared setter, a scalar element stored whole or augmented
+    // through the mutable reference its getter yields or through a value
+    // getter and a setter, and a struct element's in-place dunder.
     assert_methods_derive(
         include_str!("../assets/ok/template_method_subscript_store.mojo"),
-        "8 0 31\n6 3 7 11\n0 51\ny 1 z 5\n",
+        "8 0 31\n6 3 7 11\n0 51\ny 1 z 5\n2 3 4 8\n1 3 8 w\n",
         &[
             ("Shelf.reset", 2),
             ("Shelf.bump", 2),
@@ -1643,6 +1644,10 @@ fn template_method_subscript_stores_derive() {
             ("Shelf.put_entry", 2),
             ("Shelf.set_cell", 2),
             ("Shelf.bump_cell", 2),
+            ("Shelf.bump_table", 2),
+            ("Shelf.bump_counter", 2),
+            ("Shelf.bump_tally", 2),
+            ("Shelf.put", 2),
         ],
     );
 }

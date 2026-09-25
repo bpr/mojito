@@ -98,6 +98,7 @@ template; a field type under a symbolic index is opaque until a
 | `overloaded_hash_through_hash.mojo` | Does `hash` reach a struct that overloads `__hash__` on the hasher's type? | **differs**: the pin prints `True`, Mojito stops at run time ("vm: unknown method 'Twin.__hash__'") — `docs/roadmap.md` 3.5 |
 | `mut_self_hash_witness.mojo` | Does a `mut self` `__hash__` witness a read-`self` requirement? | **differs**: the pin prints `True`, Mojito rejects the conformance ("missing required operation") — `docs/roadmap.md` 3.50 |
 | `imported_alias_in_generic_method.mojo` | Does an imported alias of a struct application resolve in a generic struct's method signature? | **differs**: the pin prints `True`, Mojito reports "unknown type '__module$hasher$default_hasher'" — `docs/roadmap.md` 3.51 |
+| `setter_without_getter.mojo` | Is a subscript store accepted on a struct that declares `__setitem__` but no `__getitem__`? | **differs**: the pin rejects the store ("'Sink' has '__setitem__' but no '__getitem__' method"), Mojito prints `3` — `docs/roadmap.md` 3.52 |
 
 ## Re-probes of enforced claims
 

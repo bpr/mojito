@@ -181,8 +181,9 @@ pub struct CheckedAugmentedSubscript {
     /// Ordinary value type read from the getter (the referent for `ref` results).
     pub operand_ty: Ty,
     pub result_ty: Ty,
-    /// Synthetic checker-only source used to bind the computed result into the
-    /// selected setter, including inferred compile-time value arguments.
+    /// The source the computed result is bound into the selected setter at,
+    /// including inferred compile-time value arguments: the store's own site,
+    /// since the result is no expression of the body. Absent without a setter.
     pub value_source: Option<SourceSpan>,
 }
 
