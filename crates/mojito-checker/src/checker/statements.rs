@@ -442,6 +442,110 @@ impl Checker {
         Ok(())
     }
 
+    /// The synthetic element reads of unpacking a value of tuple type `vt`:
+    /// each element's checked type and, for a generated Tuple, its accessor.
+    ///
+    /// A `place` is read through the place accessors on the reference it
+    /// yields (`source`); a temporary through the value accessors, which
+    /// exist only for implicitly copyable elements.
+    pub(super) fn tuple_unpack_plan(
+        &self,
+        vt: &Ty,
+        place: bool,
+        source: Option<&mojito_types::origin::RefTy>,
+    ) -> Result<Vec<mojito_checked::checked::CheckedTupleUnpackElement>, TypeError> {
+        let elements = tuple_elements(vt).ok_or_else(|| {
+            TypeError::InvariantViolation(format!("unpacking a value of non-tuple type {vt}"))
+        })?;
+        let mut plan = elements
+            .into_iter()
+            .cloned()
+            .map(|ty| mojito_checked::checked::CheckedTupleUnpackElement {
+                ty,
+                accessor: None,
+                reference: None,
+                carries_loans: false,
+            })
+            .collect::<Vec<_>>();
+        if let Some((name, info, family)) = self.generated_tuple_accessors(vt) {
+            for (index, element) in plan.iter_mut().enumerate() {
+                let method = if place {
+                    format!("{}${index}", family.place)
+                } else {
+                    format!("{}${index}", family.value)
+                };
+                let signature = info
+                    .methods
+                    .get(&method)
+                    .and_then(|overloads| overloads.first())
+                    .ok_or_else(|| {
+                        if place {
+                            TypeError::InvariantViolation(format!(
+                                "generated Tuple '{name}' is missing accessor '{method}'"
+                            ))
+                        } else {
+                            TypeError::NonCopyable {
+                                ty: vt.to_string(),
+                                context:
+                                    "unpacking an rvalue Tuple requires implicitly copyable elements"
+                                        .to_string(),
+                            }
+                        }
+                    })?;
+                element.ty = signature.ret.clone();
+                element.accessor = Some(format!("{name}.{method}"));
+                if let Some(reference_return) = &signature.ref_return {
+                    let self_reference = source.filter(|_| place).ok_or_else(|| {
+                        TypeError::InvariantViolation(format!(
+                            "generated Tuple value accessor '{method}' returns a reference"
+                        ))
+                    })?;
+                    let origin = substitute_sig_origin_with_self(
+                        &reference_return.origin,
+                        &[],
+                        Some(self_reference.origin.clone()),
+                    );
+                    let mutability = match reference_return.mutability {
+                        mojito_types::origin::SigMutability::Immutable => {
+                            mojito_types::origin::Mutability::Immutable
+                        }
+                        mojito_types::origin::SigMutability::Mutable => {
+                            mojito_types::origin::Mutability::Mutable
+                        }
+                        _ if self_reference.mutability
+                            == mojito_types::origin::Mutability::Mutable =>
+                        {
+                            mojito_types::origin::Mutability::Mutable
+                        }
+                        _ => mojito_types::origin::Mutability::Immutable,
+                    };
+                    element.reference = Some(mojito_types::origin::RefTy {
+                        referent: Box::new(signature.ret.clone()),
+                        origin,
+                        mutability,
+                    });
+                }
+            }
+        }
+        for element in &mut plan {
+            element.carries_loans = self.type_carries_loans(&element.ty);
+        }
+        Ok(plan)
+    }
+
+    /// The generated Tuple declaration `vt` names, with its dependent index
+    /// accessor family: `None` for a Tuple still generic.
+    pub(super) fn generated_tuple_accessors<'s>(
+        &'s self,
+        vt: &'s Ty,
+    ) -> Option<(&'s str, &'s StructInfo, DependentIndexAccessorFamily)> {
+        let Ty::Struct(name, _) = vt else {
+            return None;
+        };
+        let info = self.structs.get(name)?;
+        dependent_index_accessor_family(info).map(|family| (name.as_str(), info, family))
+    }
+
     #[allow(
         clippy::cognitive_complexity,
         clippy::too_many_lines,
@@ -1171,86 +1275,33 @@ impl Checker {
                     });
                 }
                 let elems = elems.into_iter().cloned().collect::<Vec<_>>();
-                let mut unpack_plan = elems
-                    .iter()
-                    .cloned()
-                    .map(|ty| mojito_checked::checked::CheckedTupleUnpackElement {
-                        ty,
-                        accessor: None,
-                        reference: None,
-                        carries_loans: false,
-                    })
-                    .collect::<Vec<_>>();
-                if let Ty::Struct(name, _) = &vt
-                    && let Some(info) = self.structs.get(name)
-                    && let Some(family) = dependent_index_accessor_family(info)
-                {
-                    let value_receiver = !is_place_expr(value);
-                    let self_reference = if value_receiver {
-                        None
-                    } else {
-                        Some(self.reference_actual(value)?)
-                    };
-                    for (index, element) in unpack_plan.iter_mut().enumerate() {
-                        let method = if value_receiver {
-                            format!("{}${index}", family.value)
-                        } else {
-                            format!("{}${index}", family.place)
-                        };
-                        let signature = info
-                            .methods
-                            .get(&method)
-                            .and_then(|overloads| overloads.first())
-                            .ok_or_else(|| {
-                                if value_receiver {
-                                    TypeError::NonCopyable {
-                                        ty: vt.to_string(),
-                                        context: "unpacking an rvalue Tuple requires implicitly copyable elements"
-                                            .to_string(),
-                                    }
-                                } else {
-                                    TypeError::InvariantViolation(format!(
-                                        "generated Tuple '{name}' is missing accessor '{method}'"
-                                    ))
-                                }
-                            })?;
-                        element.ty = signature.ret.clone();
-                        element.accessor = Some(format!("{name}.{method}"));
-                        if let Some(reference_return) = &signature.ref_return {
-                            let self_reference = self_reference.as_ref().ok_or_else(|| {
-                                TypeError::InvariantViolation(format!(
-                                    "generated Tuple value accessor '{method}' returns a reference"
-                                ))
-                            })?;
-                            let origin = substitute_sig_origin_with_self(
-                                &reference_return.origin,
-                                &[],
-                                Some(self_reference.origin.clone()),
-                            );
-                            let mutability = match reference_return.mutability {
-                                mojito_types::origin::SigMutability::Immutable => {
-                                    mojito_types::origin::Mutability::Immutable
-                                }
-                                mojito_types::origin::SigMutability::Mutable => {
-                                    mojito_types::origin::Mutability::Mutable
-                                }
-                                _ if self_reference.mutability
-                                    == mojito_types::origin::Mutability::Mutable =>
-                                {
-                                    mojito_types::origin::Mutability::Mutable
-                                }
-                                _ => mojito_types::origin::Mutability::Immutable,
-                            };
-                            element.reference = Some(mojito_types::origin::RefTy {
-                                referent: Box::new(signature.ret.clone()),
-                                origin,
-                                mutability,
-                            });
-                        }
+                // A place is read element by element through the reference it
+                // yields; a generated Tuple's place accessors demand it.
+                let place = is_place_expr(value);
+                let source = match place.then(|| self.reference_actual(value)).transpose() {
+                    Ok(source) => source,
+                    Err(error) if self.generated_tuple_accessors(&vt).is_some() => {
+                        return Err(error);
                     }
-                }
-                for element in &mut unpack_plan {
-                    element.carries_loans = self.type_carries_loans(&element.ty);
+                    Err(_) => None,
+                };
+                let unpack_plan = self.tuple_unpack_plan(&vt, place, source.as_ref())?;
+                if !place || source.is_some() {
+                    let named = targets
+                        .iter()
+                        .filter(|target| {
+                            matches!(&target.kind, ExprKind::Identifier(name) if name != "_")
+                        })
+                        .map(Expr::source_span)
+                        .collect();
+                    self.tuple_unpack_sources.borrow_mut().insert(
+                        value.source_span(),
+                        TupleUnpackSource {
+                            reference: source,
+                            targets: named,
+                            declares: *declares,
+                        },
+                    );
                 }
                 self.tuple_unpack_plans
                     .borrow_mut()

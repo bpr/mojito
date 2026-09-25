@@ -373,7 +373,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   instance's substituted iterable type (`realize_iterations`), and resolves
   it against the instance's own source binding (`install_iterations`), all
   through `iteration.rs:loop_site_protocol`, the path the `for` statement
-  and comprehensions share. A retained struct type that
+  and comprehensions share. The submodule `template_facts/tuple_unpacks.rs`
+  keeps a tuple unpacking's plan as the value's type, the reference the
+  unpacked place yields, and the named targets (`captured_tuple_unpacks`, a
+  `TemplateTupleUnpack` proven by rebuilding the recorded plan), and builds
+  the plan again for an instance (`realize_tuple_unpacks`,
+  `install_tuple_unpacks`) through `statements.rs:tuple_unpack_plan`, the
+  path the unpack statement itself takes. Every type an instance substitutes
+  names the generated Tuple the clone check selects
+  (`inference.rs:canonicalize_public_tuple_types`). A retained struct type that
   names a binding in an origin argument is kept by template owner
   (`unbound_struct_origins`/`bind_struct_origins` over `map_struct_origins`,
   the bundle's `typed_origins`), and the return annotation an inference

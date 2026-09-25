@@ -554,6 +554,7 @@ assets/ok/template_method_string_builtins.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/template_method_subscript_store.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_transfer_replay.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_truthiness_condition.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_tuple_unpack.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_value_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_value_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_vanishing_transfer.mojo	-	ineligible	no-scalar-entry-shape

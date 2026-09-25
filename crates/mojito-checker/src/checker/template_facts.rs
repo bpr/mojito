@@ -38,6 +38,7 @@ use std::collections::{HashMap, HashSet};
 mod bound_dispatch;
 mod constructions;
 mod iterations;
+mod tuple_unpacks;
 
 /// Which kind of declaration a body inference visit belongs to, for the
 /// `body_inference.*` timing counters.
@@ -581,6 +582,7 @@ impl Checker {
             .remove(span);
         self.call_result_origins.borrow_mut().remove(span);
         self.tuple_unpack_plans.borrow_mut().remove(span);
+        self.tuple_unpack_sources.borrow_mut().remove(span);
         self.interior_references.borrow_mut().remove(span);
         self.view_result_interiors.borrow_mut().remove(span);
         self.call_parameters.borrow_mut().remove(span);
@@ -1268,9 +1270,18 @@ impl Checker {
             types: substitution,
             packs,
         } = instance;
-        let substitute =
-            |ty: &Ty| mojito_types::types::substitute_packs(ty, substitution, packs, &[]);
-        let mut facts = substituted_facts(template, instance, indices)?;
+        // A closed public `Tuple` names the specialization the clone check
+        // selects for it (`canonicalize_public_tuple_types`).
+        let canonical = |ty: Ty| self.canonicalize_public_tuple_types(ty);
+        let substitute = |ty: &Ty| {
+            canonical(mojito_types::types::substitute_packs(
+                ty,
+                substitution,
+                packs,
+                &[],
+            ))
+        };
+        let mut facts = substituted_facts(template, instance, indices, &canonical)?;
         // A per-call request the template recorded names the caller's own
         // binders; an instance that closed it would retarget the call in the
         // clone check, which no recipe repeats.
@@ -1371,9 +1382,14 @@ impl Checker {
         // a parameter, at the instance's type: deletable where the type is
         // `Deinitable`, linear where it is still a bare parameter. A type
         // built over a parameter answers from its own conformance under the
-        // instance's arguments.
+        // instance's arguments. A tuple unpacking's target is judged nowhere.
+        let unpacked: Vec<OccurrenceId> = template
+            .tuple_unpacks
+            .iter()
+            .flat_map(|(_, unpack)| unpack.targets.iter().copied())
+            .collect();
         for (id, declared) in &template.binding_types {
-            if !mojito_types::types::is_symbolic(declared) {
+            if !mojito_types::types::is_symbolic(declared) || unpacked.contains(id) {
                 continue;
             }
             let realized = substitute(declared);
@@ -1437,6 +1453,7 @@ impl Checker {
             self.realize_builtin_len(&mut facts, *call, occurrences)?;
         }
         self.realize_iterations(&mut facts, &substitute)?;
+        self.realize_tuple_unpacks(&mut facts, &substitute)?;
         facts.struct_applications = template
             .struct_applications
             .iter()
@@ -1563,6 +1580,12 @@ impl Checker {
         Ok(facts)
     }
 
+    /// A retained type under an instance's arguments, naming the generated
+    /// Tuple the clone check selects for a closed public one.
+    fn instance_ty(&self, ty: &Ty, substitution: &TySubst) -> Ty {
+        self.canonicalize_public_tuple_types(mojito_types::types::substitute(ty, substitution))
+    }
+
     /// Realize one closed method call for an instance: its target, and its
     /// result type by substitution.
     ///
@@ -1666,9 +1689,7 @@ impl Checker {
                 .iter()
                 .find(|bound| bound.source == parameter.source)
                 .and_then(|bound| fact_at(&facts.expression_types, bound.value))
-                .is_some_and(|ty| {
-                    *ty == mojito_types::types::substitute(&parameter.parameter_ty, substitution)
-                })
+                .is_some_and(|ty| *ty == self.instance_ty(&parameter.parameter_ty, substitution))
         });
         if !closed_family && !exact {
             return Err("an overloaded callee declares a parameter of a parameter type");
@@ -1699,10 +1720,9 @@ impl Checker {
         let selected = selected.clone();
         let contract = &mut facts.selected_calls[index].1.contract;
         contract.target.clone_from(&target);
-        contract.result_ty = mojito_types::types::substitute(&contract.result_ty, substitution);
+        contract.result_ty = self.instance_ty(&contract.result_ty, substitution);
         for argument in &mut contract.arguments {
-            argument.parameter_ty =
-                mojito_types::types::substitute(&argument.parameter_ty, substitution);
+            argument.parameter_ty = self.instance_ty(&argument.parameter_ty, substitution);
         }
         if let Some((_, parameters)) = facts
             .call_parameters
@@ -1710,11 +1730,11 @@ impl Checker {
             .find(|(site, _)| *site == id)
         {
             for parameter in parameters {
-                parameter.ty = mojito_types::types::substitute(&parameter.ty, substitution);
+                parameter.ty = self.instance_ty(&parameter.ty, substitution);
             }
         }
         if let Some(reference) = &mut facts.selected_calls[index].1.reference_result {
-            reference.referent = mojito_types::types::substitute(&reference.referent, substitution);
+            reference.referent = self.instance_ty(&reference.referent, substitution);
         }
         if let Some(entry) = facts
             .overload_targets
@@ -2058,7 +2078,7 @@ impl Checker {
         let from = fact_at(&facts.expression_types, *id)
             .ok_or("a converted expression has no retained type")?
             .clone();
-        let to = mojito_types::types::substitute(&result, substitution);
+        let to = self.instance_ty(&result, substitution);
         if self.value_coerces(&from, &to) {
             return Err("the instance's value reaches the target without a conversion");
         }
@@ -2697,6 +2717,9 @@ impl Checker {
     /// - `TRUTHINESS`: see [`BodyShape::truthiness_condition`]. A condition
     ///   read whole from a place is marked for `Bool(x)` by its type alone,
     ///   so an instance repeats `expect_bool`'s judgment at its own type.
+    /// - `TUPLE_UNPACKS`: see [`BodyShape::tuple_unpack`]. The element reads
+    ///   are a function of the value's type and place, from which an
+    ///   instance builds them again.
     ///
     /// Any other handle, borrowed receiver, reference result, interior
     /// reference, or copyable read in the body refuses it
@@ -3597,6 +3620,7 @@ impl Checker {
             subscript_descriptors: values(&occurrences, &self.subscript_descriptors.borrow()),
             simd_constructions: values(&occurrences, &self.simd_constructions.borrow()),
             iterations: self.captured_iterations(&occurrences, &local_place)?,
+            tuple_unpacks: self.captured_tuple_unpacks(&occurrences, &local_reference)?,
             call_place_uses: keyed(&|span| self.call_place_uses.borrow().contains(span)),
             transfers: occurrences
                 .iter()
@@ -3999,6 +4023,7 @@ impl Checker {
                 .insert(span(id)?, *dimensions);
         }
         self.install_iterations(facts, &span, &rooted)?;
+        self.install_tuple_unpacks(facts, &span, &referenced)?;
         for id in &facts.call_place_uses {
             self.call_place_uses.borrow_mut().insert(span(id)?);
         }
@@ -4532,10 +4557,10 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::IterationProtocols
         | FactTable::SimdConstructions
         | FactTable::TruthinessConditions
+        | FactTable::TupleUnpackPlans
         | FactTable::CallTransfers => true,
         FactTable::ContextualBases
         | FactTable::ParameterizedMethodCalls
-        | FactTable::TupleUnpackPlans
         | FactTable::ViewResultInteriors
         | FactTable::WithDesugars
         | FactTable::DeclarationCaptures
@@ -4613,14 +4638,29 @@ fn overload_rebinding_only(derived: &CheckedBodyFacts, inferred: &CheckedBodyFac
 fn renumber_locals(facts: &mut CheckedBodyFacts) -> Result<(), &'static str> {
     let occurrences = facts.occurrences.clone();
     let position = |id: OccurrenceId| occurrences.iter().position(|found| *found == id);
-    let declared: Vec<(usize, u32)> = facts
+    // A tuple unpacking declares each of its targets, whose binding sits at
+    // the target.
+    let unpacked: Vec<OccurrenceId> = facts
+        .tuple_unpacks
+        .iter()
+        .filter(|(_, unpack)| unpack.declares)
+        .flat_map(|(_, unpack)| unpack.targets.iter().copied())
+        .collect();
+    let mut declared: Vec<(usize, u32)> = facts
         .statement_bindings
         .iter()
+        .chain(
+            facts
+                .expression_bindings
+                .iter()
+                .filter(|(id, _)| unpacked.contains(id)),
+        )
         .filter_map(|(id, owner)| match owner {
             TemplateOwner::Local(index) => Some((position(*id)?, *index)),
             _ => None,
         })
         .collect();
+    declared.sort_by_key(|(at, _)| *at);
     let mut ambiguous = false;
     for_each_owner(facts, &mut |at, owner| {
         let TemplateOwner::Local(index) = owner else {
@@ -4697,6 +4737,11 @@ fn for_each_owner(
     for (id, iteration) in &mut facts.iterations {
         if let Some(source) = &mut iteration.source {
             visit(Some(*id), &mut source.root);
+        }
+    }
+    for (id, unpack) in &mut facts.tuple_unpacks {
+        if let Some(source) = &mut unpack.source {
+            origin_owners(&mut source.origin, Some(*id), visit);
         }
     }
     for (id, reference) in facts
@@ -5549,8 +5594,16 @@ fn substituted_facts(
         packs,
     }: &InstanceSubstitution,
     indices: &ElementIndices,
+    canonical: &dyn Fn(Ty) -> Ty,
 ) -> Result<CheckedBodyFacts, &'static str> {
-    let substitute = |ty: &Ty| mojito_types::types::substitute_packs(ty, substitution, packs, &[]);
+    let substitute = |ty: &Ty| {
+        canonical(mojito_types::types::substitute_packs(
+            ty,
+            substitution,
+            packs,
+            &[],
+        ))
+    };
     let typed = |entries: &[(OccurrenceId, Ty)]| -> Vec<(OccurrenceId, Ty)> {
         entries
             .iter()
@@ -5558,7 +5611,12 @@ fn substituted_facts(
                 let values: Vec<_> = indices.get(id).cloned().into_iter().collect();
                 (
                     *id,
-                    mojito_types::types::substitute_packs(ty, substitution, packs, &values),
+                    canonical(mojito_types::types::substitute_packs(
+                        ty,
+                        substitution,
+                        packs,
+                        &values,
+                    )),
                 )
             })
             .collect()
@@ -5915,6 +5973,14 @@ impl BodyShape<'_> {
                     && self.block(body)
                     && self.holds(MethodFeatures::STATEMENTS)
                     && self.holds(MethodFeatures::ITERATION)
+            }
+            StmtKind::Unpack {
+                targets,
+                value,
+                declares,
+            } if !self.keyed => {
+                self.tuple_unpack(targets, value, *declares)
+                    && self.holds(MethodFeatures::STATEMENTS)
             }
             StmtKind::While {
                 cond,
@@ -6356,6 +6422,58 @@ impl BodyShape<'_> {
             && self
                 .facts
                 .is_none_or(|facts| fact_at(&facts.iterations, self.occurrence(iter)).is_some())
+    }
+
+    /// A tuple unpacked from a parameter, a local, a field of `self`, or a
+    /// sibling call's result, into `_` and `var` locals: each declared by the
+    /// statement, or declared before it.
+    ///
+    /// The element reads are synthesized from the value's type and place,
+    /// which an instance derives them from again
+    /// ([`Checker::realize_tuple_unpacks`]); the value records no conversion
+    /// or adjustment an instance could not repeat. A declared target is a
+    /// scalar local where its recorded binding type is a closed scalar, and a
+    /// whole value otherwise, which only a method that may move whole values
+    /// holds.
+    fn tuple_unpack(&self, targets: &[Expr], value: &Expr, declares: bool) -> bool {
+        let id = self.occurrence(value);
+        let source = match &value.kind {
+            ExprKind::Identifier(name) => {
+                self.params.contains(&name.as_str()) || self.declared(name)
+            }
+            ExprKind::Member { .. } => self.receiver_field(value),
+            _ => self.call_result(value),
+        };
+        let recorded = self.facts.is_none_or(|facts| {
+            fact_at(&facts.tuple_unpacks, id).is_some()
+                && fact_at(&facts.conversions, id).is_none()
+                && fact_at(&facts.operation_adjustments, id).is_none()
+        });
+        let bound = targets.iter().all(|target| match &target.kind {
+            ExprKind::Identifier(name) if name == "_" => true,
+            ExprKind::Identifier(name) if declares => {
+                let kind = self.target_local(target);
+                self.locals.borrow_mut().push((name.clone(), kind));
+                kind == LocalKind::Scalar || self.moved_result.is_some()
+            }
+            ExprKind::Identifier(name) => self.declared(name),
+            _ => false,
+        });
+        source && recorded && bound && self.holds(MethodFeatures::TUPLE_UNPACKS)
+    }
+
+    /// What a local an unpacking declares is, from the binding type recorded
+    /// at its target: a scalar local where a closed scalar, and a whole value
+    /// otherwise. With no facts yet, the syntax alone never rules a use out.
+    fn target_local(&self, target: &Expr) -> LocalKind {
+        let id = self.occurrence(target);
+        self.facts.map_or(LocalKind::Scalar, |facts| {
+            if fact_at(&facts.binding_types, id).is_some_and(closed_scalar) {
+                LocalKind::Scalar
+            } else {
+                LocalKind::Value
+            }
+        })
     }
 
     /// What a loop variable is, from the binding type its loop recorded: a

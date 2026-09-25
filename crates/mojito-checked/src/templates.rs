@@ -568,6 +568,9 @@ pub enum IncompleteReason {
     /// A loop's iterator protocol is not one an instance selects again from
     /// its iterable's type alone.
     IterationRecipe,
+    /// A tuple unpacking's plan is not one an instance derives again from
+    /// the unpacked value's type and place alone.
+    TupleUnpackRecipe,
 }
 
 impl IncompleteReason {
@@ -584,6 +587,7 @@ impl IncompleteReason {
             Self::ValidationAborted => "template_capture_incomplete.validation_aborted",
             Self::ImmutableBinder => "template_capture_incomplete.immutable_binder",
             Self::IterationRecipe => "template_capture_incomplete.iteration_recipe",
+            Self::TupleUnpackRecipe => "template_capture_incomplete.tuple_unpack_recipe",
         }
     }
 }
@@ -604,6 +608,9 @@ impl std::fmt::Display for IncompleteReason {
             Self::ImmutableBinder => f.write_str("a construction binds an origin immutably"),
             Self::IterationRecipe => {
                 f.write_str("a loop's iterator protocol has no re-selection recipe")
+            }
+            Self::TupleUnpackRecipe => {
+                f.write_str("a tuple unpacking's element reads have no derivation recipe")
             }
         }
     }
@@ -775,6 +782,11 @@ impl MethodFeatures {
     /// `__bool__` rather than read as a `Bool`: whether it converts is
     /// decided by its type, which an instance judges again.
     pub const TRUTHINESS: Self = Self(1 << 27);
+    /// A tuple unpacked into `var` locals, from a place of the body or a
+    /// sibling call's result: the element reads are synthesized from the
+    /// tuple's type, which an instance substitutes and derives them from
+    /// again.
+    pub const TUPLE_UNPACKS: Self = Self(1 << 28);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
@@ -958,6 +970,24 @@ pub struct TemplateIteration {
     pub iterable: Ty,
     pub source: Option<TemplatePlace>,
     pub source_mutable: bool,
+}
+
+/// The element reads of one tuple unpacking, in template-local terms
+/// ([`CheckedBodyFacts::tuple_unpacks`]).
+///
+/// Each element's type and generated accessor follow from the unpacked
+/// value's type, which an instance substitutes and derives them from again.
+/// The reference a place yields (`None` for a temporary) roots the place
+/// accessors' results, so an instance takes it rooted at its own binding.
+/// The named targets are the statement's syntax: where it declares them,
+/// they are locals of the body, which an instance numbers as its own check
+/// would (`renumber_locals`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplateTupleUnpack {
+    pub value: Ty,
+    pub source: Option<TemplateReference>,
+    pub targets: Vec<OccurrenceId>,
+    pub declares: bool,
 }
 
 /// An element store through a subscript, in template-local terms: through
@@ -1253,6 +1283,10 @@ pub struct CheckedBodyFacts {
     /// The iterator protocol of each runtime `for`, keyed by its iterable,
     /// which an instance selects again from the substituted iterable type.
     pub iterations: Vec<(OccurrenceId, TemplateIteration)>,
+    /// The element reads of each tuple unpacking, keyed by the unpacked
+    /// value, which an instance derives again from the substituted value
+    /// type.
+    pub tuple_unpacks: Vec<(OccurrenceId, TemplateTupleUnpack)>,
     /// Arguments a call keeps as the caller's place, for a `mut` or `ref`
     /// parameter. The callee's declared convention decides it, so an instance
     /// inherits the set.
@@ -1431,6 +1465,7 @@ impl CheckedBodyFacts {
             subscript_descriptors,
             simd_constructions,
             iterations,
+            tuple_unpacks,
             call_place_uses,
             transfers,
             operators,
@@ -1605,6 +1640,7 @@ impl CheckedBodyFacts {
             subscript_descriptors: at(&self.subscript_descriptors, occurrences, folded),
             simd_constructions: at(&self.simd_constructions, occurrences, folded),
             iterations: at(&self.iterations, occurrences, folded),
+            tuple_unpacks: at(&self.tuple_unpacks, occurrences, folded),
             call_place_uses: flagged(&self.call_place_uses),
             transfers: flagged(&self.transfers),
             call_transfers: at(&self.call_transfers, occurrences, folded),
@@ -1696,6 +1732,7 @@ impl CheckedBodyFacts {
             + self.subscript_descriptors.len()
             + self.simd_constructions.len()
             + self.iterations.len()
+            + self.tuple_unpacks.len()
             + self.call_place_uses.len()
             + self.transfers.len()
             + self.bound_builtins.len()

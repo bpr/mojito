@@ -68,7 +68,7 @@ to section 3, however small.
     grammar's operands.
   - A condition over such a value (`if error != 0:` on an `Int32` in
     `os.mkdir`, `os.remove`, `os.rmdir`) has a truthiness recipe, but its
-    operator is outside the grammar; those `def`s also raise (1.35).
+    operator is outside the grammar; those `def`s also raise (1.34).
   - Probe: `var c = UInt64(0); c ^= UInt64(5); hasher._update_with_simd(c)`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -87,19 +87,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.4 A tuple unpacking keeps the clone check**
-
-  Problem: `TupleUnpackPlans` has no derivation recipe, so a body that
-  unpacks a tuple into several bindings is inferred per instance.
-  - It blocks 2 templates per pass in `stdlib_heavy`: `os.removedirs` alone,
-    and `path.expandvars` beside several others.
-  - The plan holds each synthetic element read's checked type and generated
-    accessor. An instance substitutes the types and re-derives the accessors
-    from them.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.5 A parameterized method call keeps the clone check**
+- [ ] **1.4 A parameterized method call keeps the clone check**
 
   Problem: `ParameterizedMethodCalls` has no derivation recipe, so a body
   calling `v.m[T](…)` is inferred per instance.
@@ -111,7 +99,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.6 A view-returning method call's interior tags keep the clone
+- [ ] **1.5 A view-returning method call's interior tags keep the clone
   check**
 
   Problem: `ViewResultInteriors` has no derivation recipe, so a body calling
@@ -129,7 +117,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.7 A comprehension keeps the clone check**
+- [ ] **1.6 A comprehension keeps the clone check**
 
   Problem: `ComprehensionBindings` has no derivation recipe, so a body
   holding a list, set, or dict comprehension is inferred per instance.
@@ -143,7 +131,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.8 A `with` statement keeps the clone check**
+- [ ] **1.7 A `with` statement keeps the clone check**
 
   Problem: `WithDesugars` has no derivation recipe, so a body holding a
   `with` statement is inferred per instance.
@@ -154,7 +142,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.9 A nested `def` with explicit captures keeps the clone check**
+- [ ] **1.8 A nested `def` with explicit captures keeps the clone check**
 
   Problem: `DeclarationCaptures` has no derivation recipe, so a body
   declaring a nested `def` with a capture list is inferred per instance.
@@ -164,7 +152,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.10 A leading-dot contextual member keeps the clone check**
+- [ ] **1.9 A leading-dot contextual member keeps the clone check**
 
   Problem: `ContextualBases` has no derivation recipe, so a body spelling
   `.Member` against a contextual type is inferred per instance.
@@ -175,7 +163,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.11 An operator with a literal or a call-result operand keeps the
+- [ ] **1.10 An operator with a literal or a call-result operand keeps the
   clone check**
 
   Problem: `BodyShape::operator` admits an operator only over two places, so
@@ -194,7 +182,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.12 An augmented element store keeps the clone check where the
+- [ ] **1.11 An augmented element store keeps the clone check where the
   subscripted value or the element has a parameter-built type**
 
   Problem: an augmented store through a value getter and a setter derives
@@ -209,7 +197,7 @@ to section 3, however small.
     through `T`'s bound, and no recipe re-selects a contract the store embeds.
   - A whole element read from the same list (`self.items[i] =
     self.items[j]`) is accepted for `Int` and rejected for `String`, so it
-    cannot derive until 3.6 closes
+    cannot derive until 3.8 closes
     (`conformance/probes/element_store_from_same_list.mojo`).
   - `Dict.update` now meets a store on `self`, but its index and value are
     calls on an element reached through a read parameter's field
@@ -218,10 +206,10 @@ to section 3, however small.
     parameter, an `Int(…)` conversion, and a method call on a local.
   - No bundled body holds `x[i] += …`, so none of this moves
     `stdlib_heavy`.
-  - Depends on 3.6 for the same-list read.
+  - Depends on 3.8 for the same-list read.
   - Model: Opus, Planned.
 
-- [ ] **1.13 A method copying its receiver into a local keeps the clone
+- [ ] **1.12 A method copying its receiver into a local keeps the clone
   check**
 
   Problem: the method grammar admits neither `var result = self` in a read
@@ -236,7 +224,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.14 A tuple element read of a local keeps the clone check**
+- [ ] **1.13 A tuple element read of a local keeps the clone check**
 
   Problem: the method grammar admits no subscript of a tuple-typed local, so
   a body reading `bounds[0]` is inferred per instance.
@@ -248,7 +236,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.15 A surviving trait-bound template with a local of a parameter type
+- [ ] **1.14 A surviving trait-bound template with a local of a parameter type
   keeps the clone check**
 
   Problem: a `def` template may hold scalar locals and runtime `if` and
@@ -268,7 +256,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **1.16 Every discovery round still infers every uncovered body again**
+- [ ] **1.15 Every discovery round still infers every uncovered body again**
 
   Problem: a compilation checks the whole elaborated program once per
   discovery round and once per transfer-effect round, and a checked template
@@ -285,10 +273,10 @@ to section 3, however small.
     every fact table, under the identity substitution.
   - The arena is already built once per compilation rather than once per
     round (`DiscoveryResult`).
-  - Depends on 1.1 through 1.14.
+  - Depends on 1.1 through 1.13.
   - Model: Fable, Planned.
 
-- [ ] **1.17 Binder identity is still by spelling below the checker**
+- [ ] **1.16 Binder identity is still by spelling below the checker**
 
   Problem: a type binder is now its declaration's (`Ty::Param { binder }`,
   `ParamDecl::{Type, Value}.id`), but three readers still bind a type by
@@ -334,7 +322,7 @@ to section 3, however small.
   - Each corner is a keyed-map change behind an existing helper.
   - Model: Opus, Not Planned.
 
-- [ ] **1.18 A pack forwarded into a method or into `print` fails at the
+- [ ] **1.17 A pack forwarded into a method or into `print` fails at the
   clone**
 
   Problem: the pin runs `self.take(*a)` and `print(*a)` inside a pack-keyed
@@ -353,7 +341,7 @@ to section 3, however small.
   - The rewrite exists; the method and builtin callee shapes need routing to it.
   - Model: Opus, Not Planned.
 
-- [ ] **1.19 A nested variadic construction is refused on the template
+- [ ] **1.18 A nested variadic construction is refused on the template
   constructor path**
 
   Problem: `Outer[T, Int](Variant[T, Int](x^))` inside a generic body reports
@@ -375,7 +363,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.20 A per-call method clone and a whole-struct specialization leave no
+- [ ] **1.19 A per-call method clone and a whole-struct specialization leave no
   trace**
 
   Problem: the elaborator traces a `def` clone and a per-instantiation method
@@ -399,7 +387,7 @@ to section 3, however small.
   - The plan is for the per-call trace.
   - Model: Opus, Planned.
 
-- [ ] **1.21 A loan-carrying instance is never cloned whole, so its replayed
+- [ ] **1.20 A loan-carrying instance is never cloned whole, so its replayed
   transfers are unverified**
 
   Problem: the transfer recipe keeps a source only while the substituted
@@ -421,7 +409,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.22 A `Bool` argument does not infer a `Scalar[dt]` lane**
+- [ ] **1.21 A `Bool` argument does not infer a `Scalar[dt]` lane**
 
   Problem: `kind(True)` against a lone `def kind[dt: DType](a: Scalar[dt])`
   reports "cannot infer type parameter 'dt'"; the pin binds `DType.bool`.
@@ -433,7 +421,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.23 A method overload binding a lane through `Scalar[dt]` ties with
+- [ ] **1.22 A method overload binding a lane through `Scalar[dt]` ties with
   a bare parameter**
 
   Problem: `s.kind(x)` over a `Float64`, where `def kind[dt: DType](self, a:
@@ -447,7 +435,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.24 A keyed method's template body cannot construct a SIMD at its own
+- [ ] **1.23 A keyed method's template body cannot construct a SIMD at its own
   lane**
 
   Problem: `def make[dt: DType](self, x: Int) -> Scalar[dt]` whose body
@@ -467,7 +455,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.25 An inferred `SIMD[dt, _]` width leaks into the binding's declared
+- [ ] **1.24 An inferred `SIMD[dt, _]` width leaks into the binding's declared
   type**
 
   Problem: `var v: SIMD[DType.int32, _] = SIMD[DType.int32, 4](1, 2, 3, 4)`
@@ -482,7 +470,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.26 A keyword fieldwise construction of a variadic struct is
+- [ ] **1.25 A keyword fieldwise construction of a variadic struct is
   rejected**
 
   Problem: `Pair[Int, Bool](storage=(1, True))` on an `@fieldwise_init`
@@ -496,7 +484,7 @@ to section 3, however small.
   - One constructor path, with the pin's verdict in hand.
   - Model: Opus, Not Planned.
 
-- [ ] **1.27 An overloaded witness whose members share an arity keeps the
+- [ ] **1.26 An overloaded witness whose members share an arity keeps the
   clone check**
 
   Problem: a call through a bound derives for an instance whose type
@@ -512,7 +500,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.28 A binder baked into a generic struct's witness keeps the clone
+- [ ] **1.27 A binder baked into a generic struct's witness keeps the clone
   check**
 
   Problem: a concrete hasher handed to a `[H: Hasher]` witness derives only
@@ -526,7 +514,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.29 An overloaded method of another struct called on a place built
+- [ ] **1.28 An overloaded method of another struct called on a place built
   over a parameter keeps the clone check**
 
   Problem: `self.items.extend(self.items.copy())`, or the same call on a
@@ -543,7 +531,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.30 A module function called with explicit parameters keeps the
+- [ ] **1.29 A module function called with explicit parameters keeps the
   clone check**
 
   Problem: `self.data = unsafe_alloc[Self.T](0)` is refused by the method
@@ -556,12 +544,12 @@ to section 3, however small.
   - `Set.__iter__` also hands its construction a field of a field
     (`self.items.data`), which `BodyShape::argument` does not admit.
   - The call records the callee's generic instantiation at the substituted
-    arguments, which a recipe would re-key per instance, as 1.5 would for a
+    arguments, which a recipe would re-key per instance, as 1.4 would for a
     method.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.31 An annotated view binding keeps the clone check**
+- [ ] **1.30 An annotated view binding keeps the clone check**
 
   Problem: `var span: Span[Self.T, _] = self.items` is refused by the method
   grammar, which admits an annotated `var` only where the value's recorded
@@ -574,7 +562,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.32 A method called on a sibling call's view result keeps the clone
+- [ ] **1.31 A method called on a sibling call's view result keeps the clone
   check**
 
   Problem: `return self.entries().size()` calls a method on a temporary view,
@@ -586,7 +574,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.33 A sibling call returning an immutable view keeps the clone check**
+- [ ] **1.32 A sibling call returning an immutable view keeps the clone check**
 
   Problem: wrapping a sibling's `View[Self.T, ImmOrigin(origin_of(self))]`
   records an immutable binder (`ConstructionImmutableBinders`), and the
@@ -599,7 +587,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.34 A reference result reached through an element's field keeps the
+- [ ] **1.33 A reference result reached through an element's field keeps the
   clone check**
 
   Problem: `return self.entries[i].value` returns a field of a subscript's
@@ -612,7 +600,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.35 A raise the method grammar does not name keeps the clone check**
+- [ ] **1.34 A raise the method grammar does not name keeps the clone check**
 
   Problem: a raising method derives only where each `raise` names a
   construction or `Error("…")` and no call in its body raises.
@@ -624,11 +612,14 @@ to section 3, however small.
   - A module-level `def` that raises is still outside its class. Every
     bundled one (`os.remove`, `path.getsize`, …) is outside it for other
     reasons too.
+  - `os.removedirs` records no fact table without a recipe since tuple
+    unpackings derive, so the class is the first refusal it meets. Its
+    calls of the generic `rmdir` and `split` are untested until then.
   - No bundled body needs any of these today.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.36 A folded name beside a literal keeps the clone check**
+- [ ] **1.35 A folded name beside a literal keeps the clone check**
 
   Problem: over two literals an operator folds, so `i * 10` or `-i` in a
   `comptime for` body types as `IntLiteral` in the instance where the
@@ -642,7 +633,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.37 A value-keyed `def` with no compile-time control flow keeps the
+- [ ] **1.36 A value-keyed `def` with no compile-time control flow keeps the
   clone check**
 
   Problem: source validation checks a body only when it holds `comptime if`,
@@ -655,7 +646,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.38 A module-level `def` with a `var` parameter keeps the clone
+- [ ] **1.37 A module-level `def` with a `var` parameter keeps the clone
   check**
 
   Problem: the module-level template classes admit only immutable regular
@@ -669,7 +660,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.39 A body keeping a call-through residue is never reused as its own
+- [ ] **1.38 A body keeping a call-through residue is never reused as its own
   template**
 
   Problem: `Dict.clear_with` and `Set.clear_with` derive every clone, but
@@ -682,7 +673,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.40 A `var self` method returning `self^` keeps the clone check**
+- [ ] **1.39 A `var self` method returning `self^` keeps the clone check**
 
   Problem: `return self^` from a `var self` method is outside the method
   grammar, so the owned `List` iterator's `__iter__` is inferred per
@@ -692,7 +683,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.41 An initializer collecting `var *values` keeps the clone check**
+- [ ] **1.40 An initializer collecting `var *values` keeps the clone check**
 
   Problem: a method with a variadic parameter is outside the method
   declaration shape, so the literal initializers of `List`, `Set`, and
@@ -711,7 +702,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.42 A generic module function called from a method keeps the clone
+- [ ] **1.41 A generic module function called from a method keeps the clone
   check**
 
   Problem: `hash(e)` in `Set.__hash__` records the callee's generic
@@ -721,11 +712,11 @@ to section 3, however small.
     is left.
   - The call's selection is bound once in the template
     (`hash$ov$T$Hashable`), and the instance re-keys only the application, as
-    1.30 would for an explicit `[...]` application.
+    1.29 would for an explicit `[...]` application.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.43 A construction whose dtype or width names a parameter has no
+- [ ] **1.42 A construction whose dtype or width names a parameter has no
   recipe**
 
   Problem: inference records a `SIMD` construction's dimensions only when
@@ -733,16 +724,16 @@ to section 3, however small.
   instance's record must be computed from the instance's arguments.
   - No enabled class reaches such a body today: a `DType` or `Int` value
     binder fails the plain-binder rule, and a struct with a value parameter
-    runs its methods on the erased path, so the recipe waits on 1.20.
+    runs its methods on the erased path, so the recipe waits on 1.19.
   - The instance's dimensions are the substituted construction type's
     (`simd_shape`), as a closed construction's are its recorded type's.
   - The method grammar admits only a recorded construction
     (`BodyShape::simd_construction`), so until then such a body keeps the
     clone check.
-  - Depends on 1.20.
+  - Depends on 1.19.
   - Model: Opus, Not Planned.
 
-- [ ] **1.44 The Pliron pivot has no falsifiable proof yet**
+- [ ] **1.43 The Pliron pivot has no falsifiable proof yet**
 
   Problem: [`docs/pliron-backend-pivot-plan.md`](pliron-backend-pivot-plan.md)
   stages a migration to a required Pliron IR framework, but its Stage A1 slice
@@ -995,7 +986,34 @@ words. The representation gap and the two standing ledgers are last.
   - Pinned by `conformance/probes/overloaded_hash_through_hash.mojo`.
   - Model: Opus, Not Planned.
 
-- [ ] **3.6 An element stored from another element of the same list is rejected
+- [ ] **3.6 Unpacking a tuple with a `String` element frees the element twice**
+
+  Problem: `var t = (String("t"), 6)` then `var s, n = t` stops with "use
+  after Pointer deallocation" on the VM, where the pin prints `t 6`.
+  - The same unpack of a `Tuple[String, Int]` parameter runs on the VM and
+    stops with "double free of Pointer allocation" under `--backend pliron`.
+  - A `Tuple[Int, Int]` unpacks cleanly, and passing the tuple without
+    unpacking it runs on both backends.
+  - The element reads are the checker's `CheckedTupleUnpackElement` plan
+    (`StmtKind::Unpack` in `checker/statements.rs`), so the lever is how a
+    place element read through it is copied into the new binding.
+  - Pinned by `conformance/probes/tuple_unpack_string_element.mojo`.
+  - `assets/ok/template_method_tuple_unpack.mojo` keeps its `String`
+    instance to unpacks of a sibling call's result, which both backends run.
+  - Model: Opus, Planned.
+
+- [ ] **3.7 A generic struct's `Tuple` field over its parameter cannot be read**
+
+  Problem: a `Holder[T]` field `var pair: Tuple[Self.T, Int]` stops at
+  `some_int.pair[1]` with "cannot index Tuple$t2[y3:Inty3:Int]", where the
+  pin prints the element.
+  - A non-generic struct's `Tuple[Int, Int]` field indexes cleanly, and
+    the checker accepts both.
+  - The message is the VM's place projection (`backend/vm/places.rs`).
+  - Pinned by `conformance/probes/generic_struct_tuple_field.mojo`.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.8 An element stored from another element of the same list is rejected
   by element type**
 
   Problem: `self.items[i] = self.items[j]` is accepted for `Shelf[Int]` and
@@ -1005,7 +1023,7 @@ words. The representation gap and the two standing ledgers are last.
   - Probe: `conformance/probes/element_store_from_same_list.mojo`.
   - Model: Opus, Planned.
 
-- [ ] **3.7 A place passed to a `ref` parameter may alias a pack element**
+- [ ] **3.9 A place passed to a `ref` parameter may alias a pack element**
 
   Problem: `r(x, x)` against `r[*Ts](ref b: Int, *rest: *Ts)` prints `1` in
   Mojito, while the pinned Mojo reports "aliasing values passed mutably to 'b'
@@ -1020,7 +1038,7 @@ words. The representation gap and the two standing ledgers are last.
     mutability inference is what is missing.
   - Model: Opus, Planned.
 
-- [ ] **3.8 A list literal beside a `List` parameter and a pack is not ambiguous**
+- [ ] **3.10 A list literal beside a `List` parameter and a pack is not ambiguous**
 
   Problem: `g(x, [1, 2], x)` against `g[*Ts](a: Int, *rest: *Ts)` beside
   `g[*Ts](a: Int, b: List[Int], *rest: *Ts)` prints `2` in Mojito, while the
@@ -1034,7 +1052,7 @@ words. The representation gap and the two standing ledgers are last.
   - Pinned by `conformance/probes/pack_overload_list_literal_ambiguity.mojo`.
   - Model: Opus, Not Planned.
 
-- [ ] **3.9 Methods cannot overload on the parameter convention alone**
+- [ ] **3.11 Methods cannot overload on the parameter convention alone**
 
   Problem: `m(self, var a: String)` beside `m(self, a: String)` prints `2`
   then `1` at the pin, while Mojito reports "'m' is already declared in this
@@ -1050,7 +1068,7 @@ words. The representation gap and the two standing ledgers are last.
     requirements compare conventions the same way.
   - Model: Opus, Planned.
 
-- [ ] **3.10 A trivial value handed to a `var` parameter beside a pack is always
+- [ ] **3.12 A trivial value handed to a `var` parameter beside a pack is always
   ambiguous**
 
   Problem: `g(x, x + 1, x)` against `g[*Ts](a: Int, *rest: *Ts)` beside
@@ -1067,7 +1085,7 @@ words. The representation gap and the two standing ledgers are last.
     `docs/non-goals.md` as a kept over-rejection.
   - Model: Opus, Planned.
 
-- [ ] **3.11 A trivial rvalue handed to a `var` parameter beside a read overload is
+- [ ] **3.13 A trivial rvalue handed to a `var` parameter beside a read overload is
   accepted**
 
   Problem: `q(x + 1)` against `q(var a: Int)` beside `q(a: Int)` is "ambiguous
@@ -1075,7 +1093,7 @@ words. The representation gap and the two standing ledgers are last.
   - The pin accepts the literal `q(7)`, the place `q(x)` and the transfer
     `q(x^)` in the same program, so only the non-literal trivial rvalue is
     ambiguous. No rule was recovered.
-  - This is the non-variadic sibling of 3.10, and the two
+  - This is the non-variadic sibling of 3.12, and the two
     disagree: beside a pack the pin calls a bare literal ambiguous, here it
     accepts one.
   - `ArgumentBinding`'s `undecided` bit models the pack rule and is deliberately
@@ -1085,7 +1103,7 @@ words. The representation gap and the two standing ledgers are last.
     `docs/non-goals.md` as a kept divergence.
   - Model: Opus, Planned.
 
-- [ ] **3.12 An exact constructor overload loses to its generic sibling as
+- [ ] **3.14 An exact constructor overload loses to its generic sibling as
   ambiguous**
 
   Problem: `Tag[Int](3)` on a struct declaring `__init__(out self, n: Int)`
@@ -1104,7 +1122,7 @@ words. The representation gap and the two standing ledgers are last.
     pins it yet.
   - Model: Opus, Planned.
 
-- [ ] **3.13 A constructor overload set drops every generic candidate before it is
+- [ ] **3.15 A constructor overload set drops every generic candidate before it is
   ranked**
 
   Problem: `C(s)` for a struct with `__init__(out self, var a: String)` beside
@@ -1122,7 +1140,7 @@ words. The representation gap and the two standing ledgers are last.
     record, or a marker on the clone.
   - Model: Opus, Planned.
 
-- [ ] **3.14 A clone that is still checked re-ranks an overloaded call**
+- [ ] **3.16 A clone that is still checked re-ranks an overloaded call**
 
   Problem: the pinned Mojo binds a call inside a generic body once, while it
   checks the body, and Mojito ranks the overload set again for every
@@ -1142,7 +1160,7 @@ words. The representation gap and the two standing ledgers are last.
   - It closes only as section 1's coverage entries land.
   - Model: Fable, Not Planned.
 
-- [ ] **3.15 A module-level `def` converts to a `def(...) capturing[_]` runtime
+- [ ] **3.17 A module-level `def` converts to a `def(...) capturing[_]` runtime
   parameter**
 
   Problem: `apply(handler: def(element: Int) capturing[_], /)` called as
@@ -1163,7 +1181,7 @@ words. The representation gap and the two standing ledgers are last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.16 A user `Hasher` cannot spell `update` the way the pin requires**
+- [ ] **3.18 A user `Hasher` cannot spell `update` the way the pin requires**
 
   Problem: the `26cfe94f40` pin's `Hasher` requires
   `update(mut self, value: ImmSpan[Byte, _])`, and Mojito requires
@@ -1191,7 +1209,7 @@ words. The representation gap and the two standing ledgers are last.
     before the rename can land.
   - Model: Fable, Planned.
 
-- [ ] **3.17 `Layout` carries its alignment as a runtime field**
+- [ ] **3.19 `Layout` carries its alignment as a runtime field**
 
   Problem: `Layout[Int](count=1, alignment=16)` is a runtime keyword argument
   in Mojito, where the `26cfe94f40` pin takes alignment as a keyword-only
@@ -1211,7 +1229,7 @@ words. The representation gap and the two standing ledgers are last.
     plan must first find what depends on the field.
   - Model: Opus, Planned.
 
-- [ ] **3.18 `repr` of a sized scalar omits or misstates its type name**
+- [ ] **3.20 `repr` of a sized scalar omits or misstates its type name**
 
   Problem: `repr(Float32(0.5))` and `repr(Int8(3))` print `Float32(0.5)` and
   `Int8(3)` at the pin, but `0.5` and `3` on the VM, and `Float64(0.5)` and
@@ -1225,7 +1243,7 @@ words. The representation gap and the two standing ledgers are last.
     stays the float-format divergence the Dragonbox item owns.
   - Model: Opus, Not Planned.
 
-- [ ] **3.19 A call through a `ref` to a callable value is rejected**
+- [ ] **3.21 A call through a `ref` to a callable value is rejected**
 
   Problem: `for f in fns: print(f(5))` and `ref g = fns[0]; print(g(1))` run at
   the pin over a function display, while Mojito reports "'f' has type ref
@@ -1235,7 +1253,7 @@ words. The representation gap and the two standing ledgers are last.
     A `ref`-typed callee has no such path.
   - Model: Opus, Planned.
 
-- [ ] **3.20 Forwarding a named accessor's reference result is rejected**
+- [ ] **3.22 Forwarding a named accessor's reference result is rejected**
 
   Problem: `return self.items.unsafe_get(index)` under
   `ref[origin_of(self.items)._get_owned_interior["element"]]` reports
@@ -1248,7 +1266,7 @@ words. The representation gap and the two standing ledgers are last.
   - Pinned by `conformance/probes/reference_return_forwarded_accessor.mojo`.
   - Model: Opus, Planned.
 
-- [ ] **3.21 A generic method moving its `var` parameter into a sibling call's
+- [ ] **3.23 A generic method moving its `var` parameter into a sibling call's
   `mut` local argument is rejected**
 
   Problem: `self.fill(extra, value^)` in a method of `Bag[T]`, where `fill`
@@ -1264,7 +1282,7 @@ words. The representation gap and the two standing ledgers are last.
     `conformance/probes/generic_method_transfer_into_mut_local.mojo`.
   - Model: Opus, Not Planned.
 
-- [ ] **3.22 A reference-returning `def` is not read through as a `print` argument**
+- [ ] **3.24 A reference-returning `def` is not read through as a `print` argument**
 
   Problem: `print(pick(w))` for a free `def pick[o: Origin](ref[o] x: String)
   -> ref[o] String` reports that `ref String` does not conform to `Writable`.
@@ -1273,7 +1291,7 @@ words. The representation gap and the two standing ledgers are last.
   - Probe: `conformance/probes/reference_result_print_argument.mojo`.
   - Model: Opus, Planned.
 
-- [ ] **3.23 A binder is not inferred through a converting argument**
+- [ ] **3.25 A binder is not inferred through a converting argument**
 
   Problem: `boxed(value)` for `def boxed[U: Copyable & Deinitable](box:
   Wrapper[U])` and a `value: T` reports "cannot infer type parameter 'U' of
@@ -1286,7 +1304,7 @@ words. The representation gap and the two standing ledgers are last.
   - Pinned by `conformance/probes/inferred_binder_through_conversion.mojo`.
   - Model: Opus, Planned.
 
-- [ ] **3.24 A bound call's result converted at an annotated binding fails
+- [ ] **3.26 A bound call's result converted at an annotated binding fails
   MIR verification**
 
   Problem: `var x: Optional[T] = v.copy()` in a generic `def` reports
@@ -1298,7 +1316,7 @@ words. The representation gap and the two standing ledgers are last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.25 Constructing a struct's own type parameter fails in every instance
+- [ ] **3.27 Constructing a struct's own type parameter fails in every instance
   clone**
 
   Problem: `self.x = Self.T()` in a method of `struct Box[T: Copyable &
@@ -1315,7 +1333,7 @@ words. The representation gap and the two standing ledgers are last.
     expressions, not only to annotations.
   - Model: Opus, Planned.
 
-- [ ] **3.26 Two type-pack `__init__` overloads cannot be constructed**
+- [ ] **3.28 Two type-pack `__init__` overloads cannot be constructed**
 
   Problem: `H(x, x, x)` for a struct with `__init__[*Ts](out self, a: Int,
   *rest: *Ts)` beside `__init__[*Ts](out self, a: Int, b: Int, *rest: *Ts)`
@@ -1330,7 +1348,7 @@ words. The representation gap and the two standing ledgers are last.
     the plan must find why constructors are not.
   - Model: Opus, Planned.
 
-- [ ] **3.27 A `def`'s own type pack cannot be queried in a runtime position**
+- [ ] **3.29 A `def`'s own type pack cannot be queried in a runtime position**
 
   Problem: `return 1 + Us.length` fails with "Undefined variable 'Us'", while
   the pinned Mojo runs it.
@@ -1351,7 +1369,7 @@ words. The representation gap and the two standing ledgers are last.
     materialization rewrite each one runs.
   - Model: Opus, Planned.
 
-- [ ] **3.28 A value-returning body that ends in `abort(...)` is rejected**
+- [ ] **3.30 A value-returning body that ends in `abort(...)` is rejected**
 
   Problem: `def f(x: Int) -> Int` whose last statement is `abort("no")` runs
   at the pin, while Mojito reports "'f' does not return a value on every
@@ -1369,7 +1387,7 @@ words. The representation gap and the two standing ledgers are last.
   - The plan must say where the fact lives and what MIR emits after such a call.
   - Model: Opus, Planned.
 
-- [ ] **3.29 Explicit type arguments on a static method of a non-parametric
+- [ ] **3.31 Explicit type arguments on a static method of a non-parametric
   struct are rejected**
 
   Problem: `P.plain[Int](4)` on `@staticmethod def plain[T: Writable](x: T)`
@@ -1383,7 +1401,7 @@ words. The representation gap and the two standing ledgers are last.
   - The plan must first find which pass infers the bare type name as a value.
   - Model: Opus, Planned.
 
-- [ ] **3.30 A compile-time-keyed `def` cannot be passed as a function value**
+- [ ] **3.32 A compile-time-keyed `def` cannot be passed as a function value**
 
   Problem: `apply(as_int, 3)`, where `as_int[T]` holds a `comptime if` or a
   `rebind` and `apply` declares a callable bound, runs at the pin and reports
@@ -1396,7 +1414,7 @@ words. The representation gap and the two standing ledgers are last.
     says when none can be chosen.
   - Model: Fable, Planned.
 
-- [ ] **3.31 An associated alias is not constructible through a parameterized
+- [ ] **3.33 An associated alias is not constructible through a parameterized
   base**
 
   Problem: `Holder[7].Same()` for `comptime Same = Sized[Self.n]` reports
@@ -1406,7 +1424,7 @@ words. The representation gap and the two standing ledgers are last.
     (`associated_type_from_base`), so only the call path is missing.
   - Model: Opus, Planned.
 
-- [ ] **3.32 A member-led arithmetic type argument does not parse in an alias
+- [ ] **3.34 A member-led arithmetic type argument does not parse in an alias
   body**
 
   Problem: `comptime Next = Sized[Self.n + 1]` is a parse error (`Expected ']'
@@ -1419,7 +1437,7 @@ words. The representation gap and the two standing ledgers are last.
     the alias body re-parses as a type or the subscript grammar widens.
   - Model: Opus, Planned.
 
-- [ ] **3.33 An arithmetic `where` operand compiles for `def`s and struct methods
+- [ ] **3.35 An arithmetic `where` operand compiles for `def`s and struct methods
   only**
 
   Problem: `where n + 1 == m` needs its declaration's value parameters in
@@ -1435,7 +1453,7 @@ words. The representation gap and the two standing ledgers are last.
     (`substitute_predicate`) to carry an expression.
   - Model: Opus, Planned.
 
-- [ ] **3.34 A tuple binding with a `Tuple[...]` annotation loses `reverse` and
+- [ ] **3.36 A tuple binding with a `Tuple[...]` annotation loses `reverse` and
   `concat`**
 
   Problem: `var t: Tuple[Int, String] = (1, "x")` followed by `t.reverse()`
@@ -1453,7 +1471,7 @@ words. The representation gap and the two standing ledgers are last.
     minted spelling hides.
   - Model: Opus, Planned.
 
-- [ ] **3.35 A reflection method call in a runtime position is rejected**
+- [ ] **3.37 A reflection method call in a runtime position is rejected**
 
   Problem: `comptime r = reflect[Point]` followed by `print(r.field_count())`
   prints `2` at the pin, while Mojito reports "Undefined variable 'r'".
@@ -1469,7 +1487,7 @@ words. The representation gap and the two standing ledgers are last.
     a `Bool`) and which still need an explicit crossing (a name list).
   - Model: Opus, Planned.
 
-- [ ] **3.36 `reflect[T]` over a function's type parameter is rejected**
+- [ ] **3.38 `reflect[T]` over a function's type parameter is rejected**
 
   Problem: `def f[T: AnyType]()` holding `comptime r = reflect[T]` and
   `comptime count = r.field_count()`, called as `f[Point]()`, prints the
@@ -1487,7 +1505,7 @@ words. The representation gap and the two standing ledgers are last.
     body.
   - Model: Opus, Planned.
 
-- [ ] **3.37 `reflect[T]` of a non-struct type is rejected**
+- [ ] **3.39 `reflect[T]` of a non-struct type is rejected**
 
   Problem: the pinned Mojo answers `reflect[Int].field_count()` with 0, and
   Mojito rejects it with "requires a struct type".
@@ -1499,7 +1517,7 @@ words. The representation gap and the two standing ledgers are last.
     method before the lever is chosen.
   - Model: Opus, Planned.
 
-- [ ] **3.38 Upstream `DType` names with no Mojito dtype are rejected**
+- [ ] **3.40 Upstream `DType` names with no Mojito dtype are rejected**
 
   Problem: `print(DType.uint128)` runs at the pin (`uint128`), while Mojito
   reports "DType.uint128 is not supported yet"
@@ -1523,7 +1541,7 @@ words. The representation gap and the two standing ledgers are last.
     need a manual `rg` pass.
   - Model: Opus, Planned.
 
-- [ ] **3.39 A parametric nested `def` named as a value reports its marker**
+- [ ] **3.41 A parametric nested `def` named as a value reports its marker**
 
   Problem: `apply(inner, 3)` and `var g = inner`, for a nested
   `def inner[U: Copyable]`, report `Undefined variable
@@ -1538,7 +1556,7 @@ words. The representation gap and the two standing ledgers are last.
     compile-time-keyed work widened the class it reaches.
   - Model: Opus, Not Planned.
 
-- [ ] **3.40 `String` always owns a heap buffer, where upstream's has three
+- [ ] **3.42 `String` always owns a heap buffer, where upstream's has three
   representations**
 
   Problem: `String(literal)` allocates and copies the literal's bytes, while
@@ -1551,7 +1569,7 @@ words. The representation gap and the two standing ledgers are last.
     must respect a non-owning flag, on both backends.
   - Model: Opus, Planned.
 
-- [ ] **3.41 Shift operators bind looser than the bitwise ones**
+- [ ] **3.43 Shift operators bind looser than the bitwise ones**
 
   Problem: `a << 1 | b >> 1` parses as `(a << 1 | b) >> 1`, where Python and
   Mojo bind `<<`/`>>` tighter than `&`, `^`, and `|`, so it prints `7` for
@@ -1562,7 +1580,7 @@ words. The representation gap and the two standing ledgers are last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.42 Small SIMD surface gaps the symbolic-lane probes found on concrete
+- [ ] **3.44 Small SIMD surface gaps the symbolic-lane probes found on concrete
   types**
 
   Problem: each of these runs at the pin on a concrete scalar or vector and
@@ -1585,7 +1603,7 @@ words. The representation gap and the two standing ledgers are last.
   - One site each.
   - Model: Opus, Not Planned.
 
-- [ ] **3.43 Each unrolled `comptime for` iteration shares the enclosing scope**
+- [ ] **3.45 Each unrolled `comptime for` iteration shares the enclosing scope**
 
   Problem: `comptime for i in range(2):` with `var v: Int = i` in its body
   prints `0` then `1` at the pin, while Mojito reports "'v' is already
@@ -1600,7 +1618,7 @@ words. The representation gap and the two standing ledgers are last.
   - Each iteration needs its own scope, or its locals renamed.
   - Model: Opus, Planned.
 
-- [ ] **3.44 A trait default body holding a `comptime if` never elaborates**
+- [ ] **3.46 A trait default body holding a `comptime if` never elaborates**
 
   Problem: a trait whose default method holds `comptime if True:` reports
   "unsupported feature: comptime if" for every conformer, where the pin
@@ -1615,7 +1633,7 @@ words. The representation gap and the two standing ledgers are last.
     and where its selection would run.
   - Model: Opus, Planned.
 
-- [ ] **3.45 A field name under a symbolic index prints without `materialize`**
+- [ ] **3.47 A field name under a symbolic index prints without `materialize`**
 
   Problem: `print(names[i])` inside `comptime for i in range(len(names))`
   over `comptime names = reflect[T].field_names()` prints at Mojito, while
@@ -1625,10 +1643,10 @@ words. The representation gap and the two standing ledgers are last.
   - `materialize[names[i]]()` fails at the instance in turn ("Undefined
     variable 'materialize'"): the elaborator's crossing takes a bare binding
     only.
-  - Depends on 3.43 for the `comptime n = names[i]` workaround.
+  - Depends on 3.45 for the `comptime n = names[i]` workaround.
   - Model: Opus, Planned.
 
-- [ ] **3.46 `comptime assert` is not parsed**
+- [ ] **3.48 `comptime assert` is not parsed**
 
   Problem: upstream's `comptime assert conforms_to(FT, Hashable)` is a parse
   error at Mojito.
@@ -1642,7 +1660,7 @@ words. The representation gap and the two standing ledgers are last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.47 A field's value cannot be read by reflection**
+- [ ] **3.49 A field's value cannot be read by reflection**
 
   Problem: `reflect[T].field_ref[i](x)` — the value of field `i` of `x` — is
   unsupported; the upstream hashing, equality, and writing defaults are
@@ -1652,10 +1670,10 @@ words. The representation gap and the two standing ledgers are last.
     it yet.
   - Under validation the result's type is the opaque field type
     (`types[i]`), which the arm-licensing rule already covers.
-  - Depends on 3.46 for the upstream spelling of the defaults.
+  - Depends on 3.48 for the upstream spelling of the defaults.
   - Model: Fable, Planned.
 
-- [ ] **3.48 `Int()` has no zero-argument constructor**
+- [ ] **3.50 `Int()` has no zero-argument constructor**
 
   Problem: `print(Int())` prints `0` at the pin, while Mojito reports "'Int'
   expects 1 argument(s), got 0"; `Float64()` likewise.
@@ -1664,7 +1682,7 @@ words. The representation gap and the two standing ledgers are last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.49 A `var` of an opaque type is not required to be `Deinitable`**
+- [ ] **3.51 A `var` of an opaque type is not required to be `Deinitable`**
 
   Problem: `var v: FT = FT()` under `comptime if conforms_to(FT, Defaultable
   & Writable):` validates at Mojito, while the pin reports "'v' abandoned
@@ -1677,7 +1695,7 @@ words. The representation gap and the two standing ledgers are last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.50 A local compile-time type list is unknown in an instance's annotation**
+- [ ] **3.52 A local compile-time type list is unknown in an instance's annotation**
 
   Problem: `var v: types[i] = ...` over `comptime types =
   reflect[T].field_types()` validates, but the instance reports "unknown
@@ -1685,10 +1703,10 @@ words. The representation gap and the two standing ledgers are last.
   - The elaborator resolves `f.T` over a bound handle (`resolve_reflected_type`,
     `comptime/eval.rs`) and nothing else in an annotation; `comptime FT =
     types[i]` then `var v: FT` is the working spelling.
-  - Depends on 3.43 when the annotation sits in a `comptime for` body.
+  - Depends on 3.45 when the annotation sits in a `comptime for` body.
   - Model: Opus, Not Planned.
 
-- [ ] **3.51 A handle chain in a call's type argument is read as a value**
+- [ ] **3.53 A handle chain in a call's type argument is read as a value**
 
   Problem: `_unqualified_type_name[reflect[T].field_at[i].T]()` reports
   "expected a type, found a value" at the instance.
@@ -1697,7 +1715,7 @@ words. The representation gap and the two standing ledgers are last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.52 A `mut self` witness does not conform to a read-`self`
+- [ ] **3.54 A `mut self` witness does not conform to a read-`self`
   requirement**
 
   Problem: a struct declaring `def __hash__(mut self, mut hasher:
@@ -1712,7 +1730,7 @@ words. The representation gap and the two standing ledgers are last.
   - Pinned by `conformance/probes/mut_self_hash_witness.mojo`.
   - Model: Opus, Planned.
 
-- [ ] **3.53 An imported alias in a generic struct's method signature is an
+- [ ] **3.55 An imported alias in a generic struct's method signature is an
   unknown type**
 
   Problem: `def feed(self, mut hasher: default_hasher)` on a generic struct
@@ -1725,7 +1743,7 @@ words. The representation gap and the two standing ledgers are last.
   - Pinned by `conformance/probes/imported_alias_in_generic_method.mojo`.
   - Model: Opus, Not Planned.
 
-- [ ] **3.54 A subscript store on a struct with a setter and no getter is
+- [ ] **3.56 A subscript store on a struct with a setter and no getter is
   accepted**
 
   Problem: `s[0] = 3` on a struct that declares `__setitem__` but no
@@ -1739,7 +1757,7 @@ words. The representation gap and the two standing ledgers are last.
   - Pinned by `conformance/probes/setter_without_getter.mojo`.
   - Model: Opus, Planned.
 
-- [ ] **3.55 `@explicit_destroy` is accepted on a type that is `Deinitable`
+- [ ] **3.57 `@explicit_destroy` is accepted on a type that is `Deinitable`
   unconditionally**
 
   Problem: Mojito accepts `@explicit_destroy` on `struct Ticket(Movable)`,
@@ -1752,7 +1770,7 @@ words. The representation gap and the two standing ledgers are last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.56 Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
+- [ ] **3.58 Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
   any order)*
 
   Problem: parts of Mojito's stdlib lean on the Rust runtime where upstream
@@ -1783,7 +1801,7 @@ words. The representation gap and the two standing ledgers are last.
   Four runtime services are deliberately not on that list; they are in
   [`docs/non-goals.md`](non-goals.md).
 
-- [ ] **3.57 Behavioral divergences from the pinned Mojo — burn to zero**
+- [ ] **3.59 Behavioral divergences from the pinned Mojo — burn to zero**
   *(standing)*
 
   Every new divergence lands here with a probe or a `cases.tsv`

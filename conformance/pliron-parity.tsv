@@ -554,6 +554,7 @@ assets/ok/template_method_string_builtins.mojo	main	exe-differential	sanitized
 assets/ok/template_method_subscript_store.mojo	main	exe-differential	sanitized
 assets/ok/template_method_transfer_replay.mojo	main	exe-differential	sanitized
 assets/ok/template_method_truthiness_condition.mojo	main	exe-differential	sanitized
+assets/ok/template_method_tuple_unpack.mojo	main	exe-differential	sanitized
 assets/ok/template_method_value_argument.mojo	main	exe-differential	sanitized
 assets/ok/template_method_value_parameter.mojo	main	exe-differential	sanitized
 assets/ok/template_method_vanishing_transfer.mojo	main	exe-differential	sanitized

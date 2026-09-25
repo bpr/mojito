@@ -322,6 +322,7 @@ they are a set, not a ladder.
 | `ITERATION` | a runtime `for` with no `else`, over `self`, a field of it, a parameter, a local, the `^` transfer of a place the body owns, or a sibling call's result; the loop variable is a local whose kind — a handle, a scalar, or a whole value — follows its recorded binding type | The protocol is selected from the iterable's type and resolved against the place the loop borrows and that binding's mutability, which are the loop's syntax and the declaration's. The template keeps those inputs (`TemplateIteration`), and the instance selects again from its substituted type (obligation 21). |
 | `SIMD_CONSTRUCTIONS` | a `SIMD`, `Scalar`, or scalar-alias construction from closed scalars (`UInt8(1)`, `SIMD[DType.uint8, 4](1, 2, 3, 4)`) whose dimensions the template recorded, handed to a checker builtin (`hasher._update_with_simd(UInt8(1))`), to a by-value parameter, or bound to a `var` local | Inference records a construction's dtype and width (`SimdConstructions`) only when both are closed, so a recorded entry is the same under every instance and is installed as it stands. The call selects no callee and converts nothing. A construction whose dtype or width names a parameter records nothing in the template; no enabled class reaches one today, since a `DType` or `Int` value binder is outside every class. |
 | `TRUTHINESS` | an `if` or `while` condition that reads a parameter, a local, or a field of `self` whole and tests it through `__bool__` (`if self._value:` in `OptionalReg.or_else`) | `expect_bool` marks such a condition (`TruthinessConditions`) from its type alone: a `Bool` is read as it stands, and a width-one bool lane or a struct whose `__bool__` returns `Bool` converts through `Bool(x)`. The read itself records only the place's type and binding, neither a copy nor a conversion. Obligation 22 below. |
+| `TUPLE_UNPACKS` | a tuple unpacked from a parameter, a `var` local, a field of `self`, or a sibling call's result into `_` and `var` locals, declared by the statement (`var v, n = t`) or before it (`v, n = t`); a declared target is a scalar or a whole-value local by its recorded binding type | The statement records one plan at the value (`TupleUnpackPlans`): each element's type and, for a generated Tuple, the accessor that reads it and the reference a place accessor yields. The plan is a function of the value's type and the reference the unpacked place yields, which the template keeps (`TemplateTupleUnpack`) beside the named targets. Obligation 23 below. The checker judges no deletability at an unpacking's target, so realization judges none there either. |
 
 The compiler-private trap `_mojito_abort("message")` is a statement of any
 non-keyed body: the built-in types its literal and selects nothing. A
@@ -606,6 +607,22 @@ only `Movable` records nothing there, and its `Int` clone would.
     condition that became `Bool` drops its mark, and one that is no longer
     boolable refuses. A condition the template read as a `Bool` stays one
     under every substitution, so only the template's marks are judged.
+23. **Tuple unpackings.** An unpacking's plan is built from the value's type
+    and, for a place, the reference it yields (`tuple_unpack_plan`, which the
+    statement itself calls). Capture keeps those inputs, the reference by
+    template owner, and rebuilds the template's own plan from them, refusing
+    unless it matches exactly. The instance substitutes the value's type,
+    which names the generated Tuple the clone check selects for a closed
+    public one, and proves its plan builds (`realize_tuple_unpacks`): a
+    temporary of a generated Tuple is read through value accessors, which
+    exist only for implicitly copyable elements. Installation builds the
+    plan against the instance's own binding of the place
+    (`install_tuple_unpacks`). The statement's declared targets are locals
+    of the body, numbered in declaration order beside the statement-bound
+    ones (`renumber_locals`). Every retained type an instance substitutes
+    names the generated Tuple for a closed public one
+    (`canonicalize_public_tuple_types`), as the clone check's annotations
+    do, so a `Tuple[Self.T, Int]` parameter reads as `Tuple$t2[…]` in both.
 
 The declaration's bounds and `where` clauses are not re-checked: the checker
 discharges them at the requesting call, and the elaborator proves a fully
@@ -846,6 +863,17 @@ tables. In short, for one debug-profile run each:
   struct whose methods test a field, a parameter, a `var` parameter in a
   `while`, and a local derives for two instances
   (`template_method_truthiness_condition.mojo`).
+  Tuple unpackings (2026-09-25) move no bundled count (`stdlib_heavy`
+  installs 1754 derivations before and after): `os.removedirs` no longer
+  records a table without a recipe, but is a module-level `def` that raises,
+  and `path.expandvars` returns a `String` and records a view result's
+  interiors. A user struct whose methods unpack a parameter, a sibling
+  call's result, and a tuple into declared locals, with a discarded `_`
+  element, derives for an `Int`, a `String`, and a user-struct instance
+  (`template_method_tuple_unpack.mojo`). A derived instance used to keep a
+  closed public `Tuple[Int, Int]` where its clone check names
+  `Tuple$t2[…]`, which verification caught on any `Tuple[Self.T, …]`
+  parameter.
   Widening `OPERATOR_DISPATCH` to every operator a trait names, and to the
   three things a struct instance's dispatch adds beneath the operand
   (2026-09-24), moves neither count (1096 and 340 before and after): no

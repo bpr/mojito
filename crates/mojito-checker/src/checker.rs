@@ -748,6 +748,10 @@ pub struct Checker {
     /// accessors on the RHS expression for HIR/MIR lowering.
     tuple_unpack_plans:
         RefCell<HashMap<SourceSpan, Vec<mojito_checked::checked::CheckedTupleUnpackElement>>>,
+    /// Per unpacked value, what [`Self::tuple_unpack_plan`] built the plan
+    /// from beside the value's type. Checker-only: a template keeps it as the
+    /// recipe of its plan.
+    tuple_unpack_sources: RefCell<HashMap<SourceSpan, TupleUnpackSource>>,
     /// Place expressions that define a fresh interior-reference generation.
     /// Kept separate from operation adjustments because a Variant projection,
     /// for example, carries both facts at the same checked node.
@@ -1003,6 +1007,7 @@ impl Checker {
             generated_declaration: std::cell::Cell::new(false),
             storage_origin_demands: RefCell::new(None),
             tuple_unpack_plans: RefCell::new(HashMap::new()),
+            tuple_unpack_sources: RefCell::new(HashMap::new()),
             interior_references: RefCell::new(HashMap::new()),
             view_result_interiors: RefCell::new(HashMap::new()),
             call_parameters: RefCell::new(HashMap::new()),
@@ -2448,6 +2453,18 @@ type StructAssociatedMembers = (
     HashMap<String, Vec<GenericConstraint>>,
     HashMap<String, ParameterizedMember>,
 );
+
+/// What one tuple unpacking read its elements from, beside the value's type.
+#[derive(Debug, Clone)]
+struct TupleUnpackSource {
+    /// The reference the unpacked place yields; `None` for a temporary.
+    reference: Option<mojito_types::origin::RefTy>,
+    /// The named targets, in order.
+    targets: Vec<SourceSpan>,
+    /// Whether the statement declares them (`var a, b = t`) rather than
+    /// storing to bindings already in scope.
+    declares: bool,
+}
 
 #[derive(Clone, Copy)]
 struct DependentIndexAccessorFamily {

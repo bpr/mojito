@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method that unpacks a tuple into `var` locals — from a parameter, a
+  local, a field of `self`, or a sibling call's result — now derives its
+  instances from the checked template: the instance builds the element reads
+  again from its substituted tuple type and its own binding of the place.
+  Such bodies used to keep the clone check because tuple unpackings had no
+  derivation recipe. A derived instance also names the generated `Tuple` for
+  a closed public one, as its clone check does, where it used to keep the
+  generic `Tuple[Int, Int]` spelling.
 - A method whose `if` or `while` tests a struct through `__bool__` — a field
   of `self`, a parameter, or a local — now derives its instances from the
   checked template: the instance judges each such condition again at its own
