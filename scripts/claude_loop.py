@@ -34,8 +34,11 @@ import argparse
 import datetime as dt
 import json
 import re
+import shutil
 import subprocess
 import sys
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,6 +46,7 @@ ROOT = Path(__file__).resolve().parent.parent
 ROADMAP = ROOT / "docs" / "roadmap.md"
 LOG_DIR = ROOT / "target" / "claude-loop"
 COMMIT_MSG = ROOT / "commit_msg.txt"
+TICK = 5
 
 MODELS = {
     "Opus": "claude-opus-5-5[1m]",
@@ -184,28 +188,12 @@ def build_prompt(task: Task, planned: bool) -> str:
     return header + work + closing
 
 
-def render_event(event: dict, out) -> dict | None:
-    kind = event.get("type")
-    if kind == "assistant":
-        for item in event.get("message", {}).get("content", []):
-            if item.get("type") == "text" and item.get("text", "").strip():
-                print(item["text"].rstrip(), file=out)
-            elif item.get("type") == "tool_use":
-                inp = item.get("input", {})
-                detail = (
-                    inp.get("description")
-                    or inp.get("file_path")
-                    or inp.get("pattern")
-                    or inp.get("command", "")
-                )
-                print(f"  -> {item.get('name')}: {str(detail)[:120]}", file=out)
-        out.flush()
-    elif kind == "result":
-        return event
-    return None
+def run_claude(args, task: Task, model: str, label: str, prompt: str) -> bool:
+    """Run one session, showing only the task and a ticking elapsed-seconds count.
 
-
-def run_claude(args, task: Task, model: str, prompt: str) -> bool:
+    The session's stream goes to the log alone; the task's line is rewritten in
+    place every `TICK` seconds and left showing the total when the session ends.
+    """
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     log_path = LOG_DIR / f"{stamp}-{task.id}-{task.slug}.jsonl"
@@ -222,28 +210,46 @@ def run_claude(args, task: Task, model: str, prompt: str) -> bool:
         "--verbose",
         *args.claude_arg,
     ]
-    print(f"== {task.describe()}\n== model {model}, log {log_path.relative_to(ROOT)}", flush=True)
-    result = None
-    with log_path.open("w") as log, subprocess.Popen(
-        cmd, cwd=ROOT, stdout=subprocess.PIPE, text=True
+    result: dict = {}
+
+    def drain(stdout) -> None:
+        with log_path.open("w") as log:
+            for line in stdout:
+                log.write(line)
+                log.flush()
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if event.get("type") == "result":
+                    result.update(event)
+
+    began = time.monotonic()
+    with log_path.with_suffix(".stderr").open("w") as err, subprocess.Popen(
+        cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=err, stdin=subprocess.DEVNULL, text=True
     ) as proc:
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            log.write(line)
-            log.flush()
+        reader = threading.Thread(target=drain, args=(proc.stdout,), daemon=True)
+        reader.start()
+        while True:
+            show_progress(task, label, time.monotonic() - began)
             try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                print(line.rstrip())
-                continue
-            result = render_event(event, sys.stdout) or result
-        code = proc.wait()
-    if result:
-        cost = result.get("total_cost_usd")
-        mins = result.get("duration_ms", 0) / 60000
-        print(f"== {task.id} finished: {result.get('subtype')}, {mins:.1f} min"
-              + (f", ${cost:.2f}" if cost is not None else ""), flush=True)
-    return code == 0 and not (result or {}).get("is_error", False)
+                code = proc.wait(timeout=TICK)
+                break
+            except subprocess.TimeoutExpired:
+                pass
+        reader.join()
+    ok = code == 0 and not result.get("is_error", False)
+    show_progress(task, label, time.monotonic() - began, "" if ok else "  FAILED")
+    print(flush=True)
+    return ok
+
+
+def show_progress(task: Task, label: str, seconds: float, suffix: str = "") -> None:
+    line = f"[{seconds:6.0f}s] {label}  {task.id} {task.title}"
+    width = shutil.get_terminal_size().columns - 1 - len(suffix)
+    if len(line) > width:
+        line = line[: max(width - 3, 0)] + "..."
+    print(f"\r\033[K{line}{suffix}", end="", flush=True)
 
 
 def git(*argv: str, stdin: str | None = None) -> str:
@@ -274,13 +280,11 @@ def commit_task(task: Task, untracked_before: set[str], msg_before: str, finishe
     repository root; new root-level files are scratch and stay untracked.
     """
     created = sorted(untracked_files() - untracked_before)
-    kept = [f for f in created if "/" not in f]
     staged = [f for f in created if "/" in f]
     git("add", "--update")
     if staged:
         git("add", "--", *staged)
     if not git("diff", "--cached", "--name-only"):
-        print(f"claude_loop: {task.id} left nothing to commit", flush=True)
         return
     msg = read_commit_msg()
     if not msg or msg == msg_before:
@@ -288,10 +292,6 @@ def commit_task(task: Task, untracked_before: set[str], msg_before: str, finishe
         if not finished:
             msg += "\n\nThe session ended without removing the roadmap entry."
     git("commit", "--quiet", "--file", "-", stdin=msg + "\n")
-    rev = git("rev-parse", "--short", "HEAD").strip()
-    print(f"== {task.id} committed as {rev}", flush=True)
-    if kept:
-        print(f"== left untracked: {', '.join(kept)}", flush=True)
 
 
 def model_for(args, task: Task) -> str:
@@ -362,7 +362,8 @@ def main() -> int:
     while current is not None:
         idx = tasks.index(current)
         successor = tasks[idx + 1].title if idx + 1 < len(tasks) else None
-        prompt = build_prompt(current, planned_for(args, current))
+        planned = planned_for(args, current)
+        prompt = build_prompt(current, planned)
         model = model_for(args, current)
 
         if args.dry_run:
@@ -371,7 +372,9 @@ def main() -> int:
         else:
             untracked_before = untracked_files() if commit else set()
             msg_before = read_commit_msg()
-            ok = run_claude(args, current, model, prompt)
+            label = f"{args.model or current.model or args.default_model}, "
+            label += "Planned" if planned else "Not Planned"
+            ok = run_claude(args, current, model, label, prompt)
             gone = find_by_title(open_tasks(args.section), current.title) is None
             if commit and ((ok and gone) or args.keep_going):
                 commit_task(current, untracked_before, msg_before, ok and gone)
@@ -391,10 +394,8 @@ def main() -> int:
             tasks = open_tasks(args.section)
         current = next_task(tasks, current, successor)
         if until_title and current is not None and find_by_title(tasks, until_title) is None:
-            print(f"claude_loop: --until entry \"{until_title}\" left the roadmap early")
             break
 
-    print(f"claude_loop: {done} task(s) run")
     return 0
 
 
