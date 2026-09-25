@@ -1964,19 +1964,15 @@ impl Checker {
                     ArgSlot::Default => return Ok(false),
                 };
                 let convention = effective_conventions.get(index).copied().flatten();
-                Ok(
-                    !matches!(convention, Some(ArgConvention::Mut | ArgConvention::Ref))
-                        && self.call_read_is_independent_copy(
-                            &self.infer_with_expected(
-                                expression,
-                                resolved
-                                    .param_types
-                                    .get(index)
-                                    .expect("selected method slot has a parameter type"),
-                                true,
-                            )?,
-                        ),
-                )
+                let ty = self.infer_with_expected(
+                    expression,
+                    resolved
+                        .param_types
+                        .get(index)
+                        .expect("selected method slot has a parameter type"),
+                    true,
+                )?;
+                Ok(self.argument_is_independent_copy(convention, expression, &ty))
             })
             .collect::<Result<Vec<_>, TypeError>>()?;
         crate::checker::places::reject_transfer_into_mutable(

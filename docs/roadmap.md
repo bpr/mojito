@@ -171,9 +171,10 @@ to section 3, however small.
   - `self.items[i] += x` with `items: List[Self.T]` selects `__iadd__`
     through `T`'s bound, and no recipe re-selects a contract the store embeds.
   - A whole element read from the same list (`self.items[i] =
-    self.items[j]`) is accepted for `Int` and rejected for `String`, so it
-    cannot derive until 3.11 closes
-    (`conformance/probes/element_store_from_same_list.mojo`).
+    self.items[j]`) now checks the same way for every element type
+    (`assets/ok/element_store_from_same_list.mojo`), so only its admission
+    into the method grammar is left — `element_store` in `template_facts.rs`
+    and the `SUBSCRIPT_STORES` note.
   - `Dict.update` now meets a store on `self`, but its index and value are
     calls on an element reached through a read parameter's field
     (`other.entries[i].key.copy()`), which `expression` does not admit.
@@ -181,7 +182,7 @@ to section 3, however small.
     parameter, an `Int(…)` conversion, and a method call on a local.
   - No bundled body holds `x[i] += …`, so none of this moves
     `stdlib_heavy`.
-  - Depends on 3.11 for the same-list read.
+  - Depends on nothing.
   - Model: Opus, Planned.
 
 - [ ] **1.10 A method copying its receiver into a local keeps the clone
@@ -1061,17 +1062,7 @@ words. The representation gap and the two standing ledgers are last.
   - Pinned by `conformance/probes/generic_struct_tuple_field.mojo`.
   - Model: Opus, Not Planned.
 
-- [ ] **3.11 An element stored from another element of the same list is rejected
-  by element type**
-
-  Problem: `self.items[i] = self.items[j]` is accepted for `Shelf[Int]` and
-  rejected for `Shelf[String]` as a mutable borrow that is not exclusive.
-  - The pin copies the right-hand element out before it borrows the list for
-    the store, whatever the element type.
-  - Probe: `conformance/probes/element_store_from_same_list.mojo`.
-  - Model: Opus, Planned.
-
-- [ ] **3.12 A place passed to a `ref` parameter may alias a pack element**
+- [ ] **3.11 A place passed to a `ref` parameter may alias a pack element**
 
   Problem: `r(x, x)` against `r[*Ts](ref b: Int, *rest: *Ts)` prints `1` in
   Mojito, while the pinned Mojo reports "aliasing values passed mutably to 'b'
@@ -1086,7 +1077,7 @@ words. The representation gap and the two standing ledgers are last.
     mutability inference is what is missing.
   - Model: Opus, Planned.
 
-- [ ] **3.13 A list literal beside a `List` parameter and a pack is not ambiguous**
+- [ ] **3.12 A list literal beside a `List` parameter and a pack is not ambiguous**
 
   Problem: `g(x, [1, 2], x)` against `g[*Ts](a: Int, *rest: *Ts)` beside
   `g[*Ts](a: Int, b: List[Int], *rest: *Ts)` prints `2` in Mojito, while the
@@ -1100,7 +1091,7 @@ words. The representation gap and the two standing ledgers are last.
   - Pinned by `conformance/probes/pack_overload_list_literal_ambiguity.mojo`.
   - Model: Opus, Not Planned.
 
-- [ ] **3.14 Methods cannot overload on the parameter convention alone**
+- [ ] **3.13 Methods cannot overload on the parameter convention alone**
 
   Problem: `m(self, var a: String)` beside `m(self, a: String)` prints `2`
   then `1` at the pin, while Mojito reports "'m' is already declared in this
@@ -1116,7 +1107,7 @@ words. The representation gap and the two standing ledgers are last.
     requirements compare conventions the same way.
   - Model: Opus, Planned.
 
-- [ ] **3.15 A trivial value handed to a `var` parameter beside a pack is always
+- [ ] **3.14 A trivial value handed to a `var` parameter beside a pack is always
   ambiguous**
 
   Problem: `g(x, x + 1, x)` against `g[*Ts](a: Int, *rest: *Ts)` beside
@@ -1133,7 +1124,7 @@ words. The representation gap and the two standing ledgers are last.
     `docs/non-goals.md` as a kept over-rejection.
   - Model: Opus, Planned.
 
-- [ ] **3.16 A trivial rvalue handed to a `var` parameter beside a read overload is
+- [ ] **3.15 A trivial rvalue handed to a `var` parameter beside a read overload is
   accepted**
 
   Problem: `q(x + 1)` against `q(var a: Int)` beside `q(a: Int)` is "ambiguous
@@ -1141,7 +1132,7 @@ words. The representation gap and the two standing ledgers are last.
   - The pin accepts the literal `q(7)`, the place `q(x)` and the transfer
     `q(x^)` in the same program, so only the non-literal trivial rvalue is
     ambiguous. No rule was recovered.
-  - This is the non-variadic sibling of 3.15, and the two
+  - This is the non-variadic sibling of 3.14, and the two
     disagree: beside a pack the pin calls a bare literal ambiguous, here it
     accepts one.
   - `ArgumentBinding`'s `undecided` bit models the pack rule and is deliberately
@@ -1151,7 +1142,7 @@ words. The representation gap and the two standing ledgers are last.
     `docs/non-goals.md` as a kept divergence.
   - Model: Opus, Planned.
 
-- [ ] **3.17 An exact constructor overload loses to its generic sibling as
+- [ ] **3.16 An exact constructor overload loses to its generic sibling as
   ambiguous**
 
   Problem: `Tag[Int](3)` on a struct declaring `__init__(out self, n: Int)`
@@ -1170,7 +1161,7 @@ words. The representation gap and the two standing ledgers are last.
     pins it yet.
   - Model: Opus, Planned.
 
-- [ ] **3.18 A constructor overload set drops every generic candidate before it is
+- [ ] **3.17 A constructor overload set drops every generic candidate before it is
   ranked**
 
   Problem: `C(s)` for a struct with `__init__(out self, var a: String)` beside
@@ -1188,7 +1179,7 @@ words. The representation gap and the two standing ledgers are last.
     record, or a marker on the clone.
   - Model: Opus, Planned.
 
-- [ ] **3.19 A clone that is still checked re-ranks an overloaded call**
+- [ ] **3.18 A clone that is still checked re-ranks an overloaded call**
 
   Problem: the pinned Mojo binds a call inside a generic body once, while it
   checks the body, and Mojito ranks the overload set again for every
@@ -1208,7 +1199,7 @@ words. The representation gap and the two standing ledgers are last.
   - It closes only as section 1's coverage entries land.
   - Model: Fable, Not Planned.
 
-- [ ] **3.20 A module-level `def` converts to a `def(...) capturing[_]` runtime
+- [ ] **3.19 A module-level `def` converts to a `def(...) capturing[_]` runtime
   parameter**
 
   Problem: `apply(handler: def(element: Int) capturing[_], /)` called as
@@ -1229,7 +1220,7 @@ words. The representation gap and the two standing ledgers are last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.21 A user `Hasher` cannot spell `update` the way the pin requires**
+- [ ] **3.20 A user `Hasher` cannot spell `update` the way the pin requires**
 
   Problem: the `26cfe94f40` pin's `Hasher` requires
   `update(mut self, value: ImmSpan[Byte, _])`, and Mojito requires
@@ -1257,7 +1248,7 @@ words. The representation gap and the two standing ledgers are last.
     before the rename can land.
   - Model: Fable, Planned.
 
-- [ ] **3.22 `Layout` carries its alignment as a runtime field**
+- [ ] **3.21 `Layout` carries its alignment as a runtime field**
 
   Problem: `Layout[Int](count=1, alignment=16)` is a runtime keyword argument
   in Mojito, where the `26cfe94f40` pin takes alignment as a keyword-only
@@ -1277,7 +1268,7 @@ words. The representation gap and the two standing ledgers are last.
     plan must first find what depends on the field.
   - Model: Opus, Planned.
 
-- [ ] **3.23 `repr` of a sized scalar omits or misstates its type name**
+- [ ] **3.22 `repr` of a sized scalar omits or misstates its type name**
 
   Problem: `repr(Float32(0.5))` and `repr(Int8(3))` print `Float32(0.5)` and
   `Int8(3)` at the pin, but `0.5` and `3` on the VM, and `Float64(0.5)` and
@@ -1291,7 +1282,7 @@ words. The representation gap and the two standing ledgers are last.
     stays the float-format divergence the Dragonbox item owns.
   - Model: Opus, Not Planned.
 
-- [ ] **3.24 A call through a `ref` to a callable value is rejected**
+- [ ] **3.23 A call through a `ref` to a callable value is rejected**
 
   Problem: `for f in fns: print(f(5))` and `ref g = fns[0]; print(g(1))` run at
   the pin over a function display, while Mojito reports "'f' has type ref
@@ -1301,7 +1292,7 @@ words. The representation gap and the two standing ledgers are last.
     A `ref`-typed callee has no such path.
   - Model: Opus, Planned.
 
-- [ ] **3.25 Forwarding a named accessor's reference result is rejected**
+- [ ] **3.24 Forwarding a named accessor's reference result is rejected**
 
   Problem: `return self.items.unsafe_get(index)` under
   `ref[origin_of(self.items)._get_owned_interior["element"]]` reports
@@ -1314,7 +1305,7 @@ words. The representation gap and the two standing ledgers are last.
   - Pinned by `conformance/probes/reference_return_forwarded_accessor.mojo`.
   - Model: Opus, Planned.
 
-- [ ] **3.26 A generic method moving its `var` parameter into a sibling call's
+- [ ] **3.25 A generic method moving its `var` parameter into a sibling call's
   `mut` local argument is rejected**
 
   Problem: `self.fill(extra, value^)` in a method of `Bag[T]`, where `fill`
@@ -1334,7 +1325,7 @@ words. The representation gap and the two standing ledgers are last.
     runs. Pinned by `conformance/probes/generic_method_transfer_in_try.mojo`.
   - Model: Opus, Not Planned.
 
-- [ ] **3.27 A reference-returning `def` is not read through as a `print` argument**
+- [ ] **3.26 A reference-returning `def` is not read through as a `print` argument**
 
   Problem: `print(pick(w))` for a free `def pick[o: Origin](ref[o] x: String)
   -> ref[o] String` reports that `ref String` does not conform to `Writable`.
@@ -1343,7 +1334,7 @@ words. The representation gap and the two standing ledgers are last.
   - Probe: `conformance/probes/reference_result_print_argument.mojo`.
   - Model: Opus, Planned.
 
-- [ ] **3.28 A binder is not inferred through a converting argument**
+- [ ] **3.27 A binder is not inferred through a converting argument**
 
   Problem: `boxed(value)` for `def boxed[U: Copyable & Deinitable](box:
   Wrapper[U])` and a `value: T` reports "cannot infer type parameter 'U' of
@@ -1356,7 +1347,7 @@ words. The representation gap and the two standing ledgers are last.
   - Pinned by `conformance/probes/inferred_binder_through_conversion.mojo`.
   - Model: Opus, Planned.
 
-- [ ] **3.29 A bound call's result converted at an annotated binding fails
+- [ ] **3.28 A bound call's result converted at an annotated binding fails
   MIR verification**
 
   Problem: `var x: Optional[T] = v.copy()` in a generic `def` reports
@@ -1368,7 +1359,7 @@ words. The representation gap and the two standing ledgers are last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.30 Constructing a struct's own type parameter fails in every instance
+- [ ] **3.29 Constructing a struct's own type parameter fails in every instance
   clone**
 
   Problem: `self.x = Self.T()` in a method of `struct Box[T: Copyable &
@@ -1385,7 +1376,7 @@ words. The representation gap and the two standing ledgers are last.
     expressions, not only to annotations.
   - Model: Opus, Planned.
 
-- [ ] **3.31 Two type-pack `__init__` overloads cannot be constructed**
+- [ ] **3.30 Two type-pack `__init__` overloads cannot be constructed**
 
   Problem: `H(x, x, x)` for a struct with `__init__[*Ts](out self, a: Int,
   *rest: *Ts)` beside `__init__[*Ts](out self, a: Int, b: Int, *rest: *Ts)`
@@ -1400,7 +1391,7 @@ words. The representation gap and the two standing ledgers are last.
     the plan must find why constructors are not.
   - Model: Opus, Planned.
 
-- [ ] **3.32 A `def`'s own type pack cannot be queried in a runtime position**
+- [ ] **3.31 A `def`'s own type pack cannot be queried in a runtime position**
 
   Problem: `return 1 + Us.length` fails with "Undefined variable 'Us'", while
   the pinned Mojo runs it.
@@ -1421,7 +1412,7 @@ words. The representation gap and the two standing ledgers are last.
     materialization rewrite each one runs.
   - Model: Opus, Planned.
 
-- [ ] **3.33 A value-returning body that ends in `abort(...)` is rejected**
+- [ ] **3.32 A value-returning body that ends in `abort(...)` is rejected**
 
   Problem: `def f(x: Int) -> Int` whose last statement is `abort("no")` runs
   at the pin, while Mojito reports "'f' does not return a value on every
@@ -1439,7 +1430,7 @@ words. The representation gap and the two standing ledgers are last.
   - The plan must say where the fact lives and what MIR emits after such a call.
   - Model: Opus, Planned.
 
-- [ ] **3.34 Explicit type arguments on a static method of a non-parametric
+- [ ] **3.33 Explicit type arguments on a static method of a non-parametric
   struct are rejected**
 
   Problem: `P.plain[Int](4)` on `@staticmethod def plain[T: Writable](x: T)`
@@ -1453,7 +1444,7 @@ words. The representation gap and the two standing ledgers are last.
   - The plan must first find which pass infers the bare type name as a value.
   - Model: Opus, Planned.
 
-- [ ] **3.35 A compile-time-keyed `def` cannot be passed as a function value**
+- [ ] **3.34 A compile-time-keyed `def` cannot be passed as a function value**
 
   Problem: `apply(as_int, 3)`, where `as_int[T]` holds a `comptime if` or a
   `rebind` and `apply` declares a callable bound, runs at the pin and reports
@@ -1466,7 +1457,7 @@ words. The representation gap and the two standing ledgers are last.
     says when none can be chosen.
   - Model: Fable, Planned.
 
-- [ ] **3.36 An associated alias is not constructible through a parameterized
+- [ ] **3.35 An associated alias is not constructible through a parameterized
   base**
 
   Problem: `Holder[7].Same()` for `comptime Same = Sized[Self.n]` reports
@@ -1476,7 +1467,7 @@ words. The representation gap and the two standing ledgers are last.
     (`associated_type_from_base`), so only the call path is missing.
   - Model: Opus, Planned.
 
-- [ ] **3.37 A member-led arithmetic type argument does not parse in an alias
+- [ ] **3.36 A member-led arithmetic type argument does not parse in an alias
   body**
 
   Problem: `comptime Next = Sized[Self.n + 1]` is a parse error (`Expected ']'
@@ -1489,7 +1480,7 @@ words. The representation gap and the two standing ledgers are last.
     the alias body re-parses as a type or the subscript grammar widens.
   - Model: Opus, Planned.
 
-- [ ] **3.38 An arithmetic `where` operand compiles for `def`s and struct methods
+- [ ] **3.37 An arithmetic `where` operand compiles for `def`s and struct methods
   only**
 
   Problem: `where n + 1 == m` needs its declaration's value parameters in
@@ -1505,7 +1496,7 @@ words. The representation gap and the two standing ledgers are last.
     (`substitute_predicate`) to carry an expression.
   - Model: Opus, Planned.
 
-- [ ] **3.39 A tuple binding with a `Tuple[...]` annotation loses `reverse` and
+- [ ] **3.38 A tuple binding with a `Tuple[...]` annotation loses `reverse` and
   `concat`**
 
   Problem: `var t: Tuple[Int, String] = (1, "x")` followed by `t.reverse()`
@@ -1523,7 +1514,7 @@ words. The representation gap and the two standing ledgers are last.
     minted spelling hides.
   - Model: Opus, Planned.
 
-- [ ] **3.40 A reflection method call in a runtime position is rejected**
+- [ ] **3.39 A reflection method call in a runtime position is rejected**
 
   Problem: `comptime r = reflect[Point]` followed by `print(r.field_count())`
   prints `2` at the pin, while Mojito reports "Undefined variable 'r'".
@@ -1539,7 +1530,7 @@ words. The representation gap and the two standing ledgers are last.
     a `Bool`) and which still need an explicit crossing (a name list).
   - Model: Opus, Planned.
 
-- [ ] **3.41 `reflect[T]` over a function's type parameter is rejected**
+- [ ] **3.40 `reflect[T]` over a function's type parameter is rejected**
 
   Problem: `def f[T: AnyType]()` holding `comptime r = reflect[T]` and
   `comptime count = r.field_count()`, called as `f[Point]()`, prints the
@@ -1557,7 +1548,7 @@ words. The representation gap and the two standing ledgers are last.
     body.
   - Model: Opus, Planned.
 
-- [ ] **3.42 `reflect[T]` of a non-struct type is rejected**
+- [ ] **3.41 `reflect[T]` of a non-struct type is rejected**
 
   Problem: the pinned Mojo answers `reflect[Int].field_count()` with 0, and
   Mojito rejects it with "requires a struct type".
@@ -1569,7 +1560,7 @@ words. The representation gap and the two standing ledgers are last.
     method before the lever is chosen.
   - Model: Opus, Planned.
 
-- [ ] **3.43 Upstream `DType` names with no Mojito dtype are rejected**
+- [ ] **3.42 Upstream `DType` names with no Mojito dtype are rejected**
 
   Problem: `print(DType.uint128)` runs at the pin (`uint128`), while Mojito
   reports "DType.uint128 is not supported yet"
@@ -1593,7 +1584,7 @@ words. The representation gap and the two standing ledgers are last.
     need a manual `rg` pass.
   - Model: Opus, Planned.
 
-- [ ] **3.44 A parametric nested `def` named as a value reports its marker**
+- [ ] **3.43 A parametric nested `def` named as a value reports its marker**
 
   Problem: `apply(inner, 3)` and `var g = inner`, for a nested
   `def inner[U: Copyable]`, report `Undefined variable
@@ -1608,7 +1599,7 @@ words. The representation gap and the two standing ledgers are last.
     compile-time-keyed work widened the class it reaches.
   - Model: Opus, Not Planned.
 
-- [ ] **3.45 `String` always owns a heap buffer, where upstream's has three
+- [ ] **3.44 `String` always owns a heap buffer, where upstream's has three
   representations**
 
   Problem: `String(literal)` allocates and copies the literal's bytes, while
@@ -1621,7 +1612,7 @@ words. The representation gap and the two standing ledgers are last.
     must respect a non-owning flag, on both backends.
   - Model: Opus, Planned.
 
-- [ ] **3.46 Shift operators bind looser than the bitwise ones**
+- [ ] **3.45 Shift operators bind looser than the bitwise ones**
 
   Problem: `a << 1 | b >> 1` parses as `(a << 1 | b) >> 1`, where Python and
   Mojo bind `<<`/`>>` tighter than `&`, `^`, and `|`, so it prints `7` for
@@ -1632,7 +1623,7 @@ words. The representation gap and the two standing ledgers are last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.47 Small SIMD surface gaps the symbolic-lane probes found on concrete
+- [ ] **3.46 Small SIMD surface gaps the symbolic-lane probes found on concrete
   types**
 
   Problem: each of these runs at the pin on a concrete scalar or vector and
@@ -1655,7 +1646,7 @@ words. The representation gap and the two standing ledgers are last.
   - One site each.
   - Model: Opus, Not Planned.
 
-- [ ] **3.48 Each unrolled `comptime for` iteration shares the enclosing scope**
+- [ ] **3.47 Each unrolled `comptime for` iteration shares the enclosing scope**
 
   Problem: `comptime for i in range(2):` with `var v: Int = i` in its body
   prints `0` then `1` at the pin, while Mojito reports "'v' is already
@@ -1670,7 +1661,7 @@ words. The representation gap and the two standing ledgers are last.
   - Each iteration needs its own scope, or its locals renamed.
   - Model: Opus, Planned.
 
-- [ ] **3.49 A trait default body holding a `comptime if` never elaborates**
+- [ ] **3.48 A trait default body holding a `comptime if` never elaborates**
 
   Problem: a trait whose default method holds `comptime if True:` reports
   "unsupported feature: comptime if" for every conformer, where the pin
@@ -1685,7 +1676,7 @@ words. The representation gap and the two standing ledgers are last.
     and where its selection would run.
   - Model: Opus, Planned.
 
-- [ ] **3.50 A field name under a symbolic index prints without `materialize`**
+- [ ] **3.49 A field name under a symbolic index prints without `materialize`**
 
   Problem: `print(names[i])` inside `comptime for i in range(len(names))`
   over `comptime names = reflect[T].field_names()` prints at Mojito, while
@@ -1695,10 +1686,10 @@ words. The representation gap and the two standing ledgers are last.
   - `materialize[names[i]]()` fails at the instance in turn ("Undefined
     variable 'materialize'"): the elaborator's crossing takes a bare binding
     only.
-  - Depends on 3.48 for the `comptime n = names[i]` workaround.
+  - Depends on 3.47 for the `comptime n = names[i]` workaround.
   - Model: Opus, Planned.
 
-- [ ] **3.51 `comptime assert` is not parsed**
+- [ ] **3.50 `comptime assert` is not parsed**
 
   Problem: upstream's `comptime assert conforms_to(FT, Hashable)` is a parse
   error at Mojito.
@@ -1712,7 +1703,7 @@ words. The representation gap and the two standing ledgers are last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.52 A field's value cannot be read by reflection**
+- [ ] **3.51 A field's value cannot be read by reflection**
 
   Problem: `reflect[T].field_ref[i](x)` — the value of field `i` of `x` — is
   unsupported; the upstream hashing, equality, and writing defaults are
@@ -1722,10 +1713,10 @@ words. The representation gap and the two standing ledgers are last.
     it yet.
   - Under validation the result's type is the opaque field type
     (`types[i]`), which the arm-licensing rule already covers.
-  - Depends on 3.51 for the upstream spelling of the defaults.
+  - Depends on 3.50 for the upstream spelling of the defaults.
   - Model: Fable, Planned.
 
-- [ ] **3.53 `Int()` has no zero-argument constructor**
+- [ ] **3.52 `Int()` has no zero-argument constructor**
 
   Problem: `print(Int())` prints `0` at the pin, while Mojito reports "'Int'
   expects 1 argument(s), got 0"; `Float64()` likewise.
@@ -1734,7 +1725,7 @@ words. The representation gap and the two standing ledgers are last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.54 A `var` of an opaque type is not required to be `Deinitable`**
+- [ ] **3.53 A `var` of an opaque type is not required to be `Deinitable`**
 
   Problem: `var v: FT = FT()` under `comptime if conforms_to(FT, Defaultable
   & Writable):` validates at Mojito, while the pin reports "'v' abandoned
@@ -1747,7 +1738,7 @@ words. The representation gap and the two standing ledgers are last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.55 A local compile-time type list is unknown in an instance's annotation**
+- [ ] **3.54 A local compile-time type list is unknown in an instance's annotation**
 
   Problem: `var v: types[i] = ...` over `comptime types =
   reflect[T].field_types()` validates, but the instance reports "unknown
@@ -1755,10 +1746,10 @@ words. The representation gap and the two standing ledgers are last.
   - The elaborator resolves `f.T` over a bound handle (`resolve_reflected_type`,
     `comptime/eval.rs`) and nothing else in an annotation; `comptime FT =
     types[i]` then `var v: FT` is the working spelling.
-  - Depends on 3.48 when the annotation sits in a `comptime for` body.
+  - Depends on 3.47 when the annotation sits in a `comptime for` body.
   - Model: Opus, Not Planned.
 
-- [ ] **3.56 A handle chain in a call's type argument is read as a value**
+- [ ] **3.55 A handle chain in a call's type argument is read as a value**
 
   Problem: `_unqualified_type_name[reflect[T].field_at[i].T]()` reports
   "expected a type, found a value" at the instance.
@@ -1767,7 +1758,7 @@ words. The representation gap and the two standing ledgers are last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.57 A `mut self` witness does not conform to a read-`self`
+- [ ] **3.56 A `mut self` witness does not conform to a read-`self`
   requirement**
 
   Problem: a struct declaring `def __hash__(mut self, mut hasher:
@@ -1782,7 +1773,7 @@ words. The representation gap and the two standing ledgers are last.
   - Pinned by `conformance/probes/mut_self_hash_witness.mojo`.
   - Model: Opus, Planned.
 
-- [ ] **3.58 An imported alias in a generic struct's method signature is an
+- [ ] **3.57 An imported alias in a generic struct's method signature is an
   unknown type**
 
   Problem: `def feed(self, mut hasher: default_hasher)` on a generic struct
@@ -1795,7 +1786,7 @@ words. The representation gap and the two standing ledgers are last.
   - Pinned by `conformance/probes/imported_alias_in_generic_method.mojo`.
   - Model: Opus, Not Planned.
 
-- [ ] **3.59 A subscript store on a struct with a setter and no getter is
+- [ ] **3.58 A subscript store on a struct with a setter and no getter is
   accepted**
 
   Problem: `s[0] = 3` on a struct that declares `__setitem__` but no
@@ -1809,7 +1800,7 @@ words. The representation gap and the two standing ledgers are last.
   - Pinned by `conformance/probes/setter_without_getter.mojo`.
   - Model: Opus, Planned.
 
-- [ ] **3.60 `@explicit_destroy` is accepted on a type that is `Deinitable`
+- [ ] **3.59 `@explicit_destroy` is accepted on a type that is `Deinitable`
   unconditionally**
 
   Problem: Mojito accepts `@explicit_destroy` on `struct Ticket(Movable)`,
@@ -1822,7 +1813,7 @@ words. The representation gap and the two standing ledgers are last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.61 Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
+- [ ] **3.60 Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
   any order)*
 
   Problem: parts of Mojito's stdlib lean on the Rust runtime where upstream
@@ -1853,7 +1844,7 @@ words. The representation gap and the two standing ledgers are last.
   Four runtime services are deliberately not on that list; they are in
   [`docs/non-goals.md`](non-goals.md).
 
-- [ ] **3.62 Behavioral divergences from the pinned Mojo — burn to zero**
+- [ ] **3.61 Behavioral divergences from the pinned Mojo — burn to zero**
   *(standing)*
 
   Every new divergence lands here with a probe or a `cases.tsv`

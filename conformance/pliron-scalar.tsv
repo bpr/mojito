@@ -113,6 +113,7 @@ assets/ok/dunder_contains.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dunder_index.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dunder_setitem.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dunder_vec2.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/element_store_from_same_list.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/env_roundtrip.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/errno_strerror.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/exceptions.mojo	-	ineligible	no-scalar-entry-shape

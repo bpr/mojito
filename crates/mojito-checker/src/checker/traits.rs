@@ -2403,6 +2403,31 @@ impl Checker {
         }
     }
 
+    /// Whether a call binds an argument to a value independent of the caller's
+    /// place, so it cannot conflict with a `mut`/`ref` access in the same call.
+    /// A consuming slot copies the place out before the callee runs, whatever
+    /// the type — `xs[i] = xs[j]`, `bump(mut s, var s)`, both of which the
+    /// pinned Mojo accepts — and that copy is the one `check_consuming_as`
+    /// records as `CopyPlaceValue`. A `^` transfer is the move the exclusivity
+    /// rule itself reports, a `mut`/`ref` slot borrows, and every other slot is
+    /// a shared read, which only a register-like value disarms. The carried-
+    /// origin rule draws the same line in `origins::exclusivity::own_place`.
+    pub(super) fn argument_is_independent_copy(
+        &self,
+        convention: Option<ArgConvention>,
+        argument: &Expr,
+        ty: &Ty,
+    ) -> bool {
+        if matches!(argument.kind, ExprKind::Transfer(_)) {
+            return false;
+        }
+        match convention {
+            Some(ArgConvention::Mut | ArgConvention::Ref) => false,
+            Some(ArgConvention::Var | ArgConvention::Deinit) => true,
+            _ => self.call_read_is_independent_copy(ty),
+        }
+    }
+
     /// Whether a shared call argument is materialized independently before
     /// within-call exclusivity is checked. Upstream keeps nominal memory values
     /// (including `String`) as overlapping reads even when their type conforms

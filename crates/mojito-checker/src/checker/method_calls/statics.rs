@@ -533,12 +533,8 @@ impl Checker {
                     return Ok(false);
                 };
                 let convention = effective_conventions.get(index).copied().flatten();
-                Ok(
-                    !matches!(convention, Some(ArgConvention::Mut | ArgConvention::Ref))
-                        && self.call_read_is_independent_copy(
-                            &self.infer_with_expected(expression, parameter, true)?,
-                        ),
-                )
+                let ty = self.infer_with_expected(expression, parameter, true)?;
+                Ok(self.argument_is_independent_copy(convention, expression, &ty))
             })
             .collect::<Result<Vec<_>, TypeError>>()?;
         crate::checker::places::check_call_aliasing(

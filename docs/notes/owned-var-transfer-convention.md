@@ -19,8 +19,23 @@ and the decisions that are not derivable from the code.
   hand-written `__init__(out self, *, copy: Self)`: **accepts** — the explicit
   copy initializer is the conformance (`struct_implicitly_copyable_conformance_ok`).
 - `bump(mut x: String, y: String)` called as `bump(s, s)`: **rejects**
-  although `String` is `ImplicitlyCopyable`. Nominal memory values never
-  disarm within-call exclusivity by copying (`call_read_is_independent_copy`).
+  although `String` is `ImplicitlyCopyable`. A nominal memory value read by
+  borrow never disarms within-call exclusivity by copying
+  (`call_read_is_independent_copy`).
+
+## Pinned verdicts (2026-09-25 probes)
+
+The rule above is about a *read* slot. A consuming slot copies the place out
+before the callee runs, so it reaches no caller place at all and overlaps
+nothing. `own_place` (`checker/origins/exclusivity.rs`) already drew that line
+for carried origins; `argument_is_independent_copy` (`checker/traits.rs`) now
+draws it for the syntactic place rule too.
+
+- `bump(mut x: String, var y: String)` called as `bump(s, s)`: **accepts**.
+- `f(mut a: List[String], var b: String)` called as `f(x, x[1])`: **accepts**.
+- `self.items[i] = self.items[j]` over a `List[String]` field: **accepts**,
+  and a self-store (`i == j`) keeps the value, because `List.__setitem__`
+  takes `var value: Self.T` (`assets/ok/element_store_from_same_list.mojo`).
 
 ## Where the decision lives
 

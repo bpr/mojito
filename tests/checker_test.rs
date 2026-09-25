@@ -4157,6 +4157,29 @@ fn borrow_check_rejects_mutable_aliasing() {
 }
 
 #[test]
+fn consuming_slot_copies_its_place_before_a_mutable_borrow() {
+    // A consuming slot copies its place out before the callee runs, so it
+    // overlaps no `mut` access in the same call whatever the type — the pin
+    // accepts all three of these. A *read* slot still borrows, so the nominal
+    // read alias below remains an error.
+    ok_std(
+        "def bump(mut a: String, var b: String):\n    a = b^\n\ndef main():\n    var s = String(\"x\")\n    bump(s, s)\n    print(s)\n",
+    );
+    ok_std(
+        "def main():\n    var xs = List[String]()\n    xs.append(String(\"a\"))\n    xs.append(String(\"b\"))\n    xs[0] = xs[1]\n    print(xs[0])\n",
+    );
+    ok_std(
+        "def take(mut a: List[String], var b: String):\n    a[0] = b^\n\ndef main():\n    var xs = List[String]()\n    xs.append(String(\"a\"))\n    xs.append(String(\"b\"))\n    take(xs, xs[1])\n    print(xs[0])\n",
+    );
+    assert!(matches!(
+        err_std(
+            "def bump(mut a: String, b: String):\n    a = b\n\ndef main():\n    var s = String(\"x\")\n    bump(s, s)\n    print(s)\n"
+        ),
+        TypeError::AliasingViolation { .. }
+    ));
+}
+
+#[test]
 fn borrow_check_rejects_move_while_borrowed() {
     // Moving a variable (`^`) while it is also borrowed in the same call is a
     // conflict (can't move an aliased value).

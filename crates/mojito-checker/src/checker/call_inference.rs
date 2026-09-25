@@ -1361,14 +1361,8 @@ impl Checker {
                     ArgSlot::Default => return Ok(false),
                 };
                 let convention = effective_conventions.get(index).copied().flatten();
-                Ok(
-                    !matches!(convention, Some(ArgConvention::Mut | ArgConvention::Ref))
-                        && self.call_read_is_independent_copy(&self.infer_with_expected(
-                            expression,
-                            &params[index],
-                            true,
-                        )?),
-                )
+                let ty = self.infer_with_expected(expression, &params[index], true)?;
+                Ok(self.argument_is_independent_copy(convention, expression, &ty))
             })
             .collect::<Result<Vec<_>, TypeError>>()?;
         self.check_free_call_aliasing(
@@ -1638,10 +1632,8 @@ impl Checker {
                     ArgSlot::Default => return Ok(false),
                 };
                 let convention = effective_conventions.get(index).copied().flatten();
-                Ok(
-                    !matches!(convention, Some(ArgConvention::Mut | ArgConvention::Ref))
-                        && self.call_read_is_independent_copy(&self.infer(expression)?),
-                )
+                let ty = self.infer(expression)?;
+                Ok(self.argument_is_independent_copy(convention, expression, &ty))
             })
             .collect::<Result<Vec<_>, TypeError>>()?;
         self.check_free_call_aliasing(

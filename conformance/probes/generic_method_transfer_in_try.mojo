@@ -2,7 +2,7 @@
 # inside `try`/`finally` (and so inside any `with` statement)?
 # The pin prints `finally` then `2`. Mojito reports "use of uninitialized
 # value 'value'" from the template's own check, even when the method is never
-# called; without the `try` it runs. `docs/roadmap.md` 3.26.
+# called; without the `try` it runs. `docs/roadmap.md` 3.25.
 struct Bag[T: ImplicitlyCopyable & Deinitable](Movable):
     var items: List[Self.T]
 
