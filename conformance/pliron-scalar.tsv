@@ -518,6 +518,7 @@ assets/ok/struct_value_param_frozen.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/telemetry.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tempfile_mkdtemp.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_def_converting_argument.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_folded_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_inner_request.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_borrowed_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_bound_copy.mojo	-	ineligible	no-scalar-entry-shape

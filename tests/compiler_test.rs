@@ -1390,6 +1390,49 @@ fn template_pack_instances_derive() {
 }
 
 #[test]
+fn template_folded_values_derive() {
+    // A loop variable and a value parameter read as runtime values fold to
+    // each instance's literal. The literal keeps the name's identity and
+    // takes its own type, its materialization to the template's `Int`, and
+    // the temporary a read argument makes of it; the derived facts agree
+    // with the clone's own check.
+    let source = "def bump(x: Int) -> Int:\n    return x + 1\n\ndef mixed[n: Int]() -> Int:\n    var acc = n\n    comptime for i in range(n):\n        acc = acc * 2 + i\n        acc += bump(i)\n    comptime if n > 2:\n        return acc\n    return n\n\ndef main():\n    print(mixed[0]())\n    print(mixed[3]())\n";
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compiler.compile_unlinked(source).expect("compile");
+        let stats = program.template_stats();
+        assert_eq!(certified_count(stats, "mixed"), 1, "one template inference");
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        let derived: std::collections::HashSet<&str> = served
+            .iter()
+            .map(String::as_str)
+            .filter(|name| name.starts_with("mixed$"))
+            .collect();
+        assert_eq!(derived.len(), 2, "every instance derives: {stats:?}");
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "0\n39\n"
+        );
+    }
+    // Over two literals an operator folds, so a folded operand beside a
+    // literal keeps the clone check.
+    let folding = "def scaled[n: Int]() -> Int:\n    var acc = 0\n    comptime for i in range(n):\n        acc += i * 10\n    return acc\n\ndef main():\n    print(scaled[3]())\n";
+    let (output, stats) = run_source(folding);
+    assert_eq!(output, "30\n");
+    assert!(
+        stats
+            .derived
+            .iter()
+            .all(|name| !name.starts_with("scaled$")),
+        "{stats:?}"
+    );
+}
+
+#[test]
 fn discovery_scan_matches_the_checked_arena() {
     // Request discovery reads a `DiscoveryResult` instead of the assembled
     // arena. Every request kind is a function of the expressions visited,

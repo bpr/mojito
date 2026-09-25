@@ -18,7 +18,7 @@ use super::{
 };
 use mojito_ast::ast::{Expr, ExprKind, Stmt, StmtKind};
 use mojito_checked::templates::{
-    BoundBuiltin, CallParameterFact, CheckedBodyFacts, CheckedTemplate, FactTable,
+    BoundBuiltin, CallParameterFact, CheckedBodyFacts, CheckedTemplate, FactTable, FoldedLiteral,
     IncompleteReason, InstanceName, InstanceTrace, MethodFeatures, OccurrenceId,
     TemplateArgumentBoundary, TemplateAugmentedSubscript, TemplateCallContract,
     TemplateCallResultOrigin, TemplateClass, TemplateCoverage, TemplateId, TemplateInvalidation,
@@ -172,11 +172,12 @@ struct Occurrence {
     operator: Option<(mojito_ast::ast::InfixOp, SyntaxId, SyntaxId)>,
     /// Whether this is a `^` transfer.
     transfer: bool,
-    /// Whether this is an integer literal.
-    literal: bool,
-    /// A subscript's index, when the elaborator folded it to an integer
-    /// literal: the iteration a pack element was copied for.
-    folded_index: Option<i64>,
+    /// The value of an integer or `Bool` literal, which may be a folded
+    /// compile-time value.
+    literal: Option<mojito_types::ct::CtValue>,
+    /// A subscript's index occurrence and value, when the elaborator folded
+    /// it to an integer literal: the iteration a pack element was copied for.
+    folded_index: Option<(SyntaxId, i64)>,
 }
 
 /// What an instance's arguments stand for in its template's facts.
@@ -823,25 +824,13 @@ impl Checker {
             return refuse("the clone's occurrences are not the template's");
         }
         let ids: Vec<OccurrenceId> = occurrences.iter().map(|occurrence| occurrence.id).collect();
-        // A loop variable the elaborator folded: the identifier's facts are
-        // not the literal's. The literal at a pack element's index says
-        // which element the copy is.
-        let folded: Vec<OccurrenceId> = occurrences
-            .iter()
-            .filter(|occurrence| {
-                occurrence.literal
-                    && checked
-                        .facts
-                        .expression_bindings
-                        .iter()
-                        .any(|(id, _)| id.syntax == occurrence.id.syntax)
-            })
-            .map(|occurrence| occurrence.id)
-            .collect();
+        let Some(folded) = folded_literals(&checked.facts, &occurrences) else {
+            return refuse("a folded compile-time value does not fit its template type");
+        };
         let indices = occurrences
             .iter()
             .filter_map(|occurrence| {
-                let index = occurrence.folded_index?;
+                let (_, index) = occurrence.folded_index?;
                 let (_, binder) =
                     checked
                         .facts
@@ -2162,6 +2151,13 @@ impl Checker {
                 .collect(),
             packs,
             loop_vars: RefCell::new(Vec::new()),
+            values: decls
+                .iter()
+                .filter_map(|decl| match decl {
+                    ParamDecl::Value { name, .. } => Some(name.as_str()),
+                    ParamDecl::Type { .. } => None,
+                })
+                .collect(),
             print_calls: RefCell::new(Vec::new()),
             borrowed_params: Vec::new(),
             mut_params: Vec::new(),
@@ -2550,6 +2546,7 @@ impl Checker {
             callable_calls: RefCell::new(Vec::new()),
             packs: Vec::new(),
             loop_vars: RefCell::new(Vec::new()),
+            values: Vec::new(),
             print_calls: RefCell::new(Vec::new()),
             borrowed_params: params_passed(&[ArgConvention::Mut, ArgConvention::Ref]),
             mut_params: params_passed(&[ArgConvention::Mut]),
@@ -2958,7 +2955,7 @@ impl Checker {
                     method_call: None,
                     operator: None,
                     transfer: false,
-                    literal: false,
+                    literal: None,
                     folded_index: None,
                 });
             }
@@ -3013,10 +3010,19 @@ impl Checker {
                         _ => None,
                     },
                     transfer: matches!(expr.kind, ExprKind::Transfer(_)),
-                    literal: matches!(expr.kind, ExprKind::Int(_)),
+                    literal: match &expr.kind {
+                        ExprKind::Int(value) => Some(value.to_i64().map_or_else(
+                            || mojito_types::ct::CtValue::IntLiteral(value.clone()),
+                            mojito_types::ct::CtValue::Int,
+                        )),
+                        ExprKind::Bool(value) => Some(mojito_types::ct::CtValue::Bool(*value)),
+                        _ => None,
+                    },
                     folded_index: match &expr.kind {
                         ExprKind::Index { index, .. } => match &index.kind {
-                            ExprKind::Int(value) => value.to_i64(),
+                            ExprKind::Int(value) => value
+                                .to_i64()
+                                .map(|value| (self.origins.origin(index.syntax_id), value)),
                             _ => None,
                         },
                         _ => None,
@@ -5237,6 +5243,9 @@ struct BodyShape<'a> {
     packs: Vec<&'a str>,
     /// The `comptime for` variables in scope, innermost last.
     loop_vars: RefCell<Vec<String>>,
+    /// The declaration's scalar value parameters, which the elaborator
+    /// folds to a literal in every instance, as it folds a loop variable.
+    values: Vec<&'a str>,
     /// The `print(...)` calls admitted, whose arguments an instance proves
     /// `Writable` at its own types.
     print_calls: RefCell<Vec<OccurrenceId>>,
@@ -5276,9 +5285,10 @@ impl BodyShape<'_> {
                 .all(|arm| self.block(arm, in_loop)),
             // An unrolled body is copied once per iteration, every copy
             // sharing the bindings around the loop. A local declared inside
-            // would need one binding per copy, which no recipe mints yet, and
-            // the loop variable folds to a literal wherever it survives, so
-            // neither is admitted: the variable may only key a condition.
+            // would need one binding per copy, which no recipe mints yet, so
+            // none is admitted. The loop variable folds to a literal wherever
+            // it survives, which `folded_value` admits where the literal's
+            // facts are the name's.
             StmtKind::ComptimeFor { var, body, .. } if self.keyed => {
                 self.loop_vars.borrow_mut().push(var.clone());
                 let admitted = self.block(body, true);
@@ -6370,7 +6380,7 @@ impl BodyShape<'_> {
             // use site of `expression` also demands.
             ExprKind::Identifier(name) => match self.local_kind(name) {
                 Some(kind) => kind != LocalKind::Value,
-                None => self.params.contains(&name.as_str()),
+                None => self.params.contains(&name.as_str()) || self.folded_value(expr),
             },
             // A field of `self`, admitted where its recorded type is a closed
             // scalar: every use site of `expression` also demands `scalar`.
@@ -6403,9 +6413,24 @@ impl BodyShape<'_> {
                     || self.bound_dispatch(expr, object, args, kwargs)
                     || self.bound_builtin(expr, object, method, args, kwargs)
             }
-            ExprKind::Prefix(_, value) => self.expression(value) && self.scalar(value),
+            ExprKind::Prefix(_, value) => {
+                !self.folds(value) && self.expression(value) && self.scalar(value)
+            }
+            // A folded operand is a literal in every instance, so its other
+            // operand holds a runtime value: over two literals the operator
+            // would fold, and yield a literal type the template never had.
             ExprKind::Infix(op, left, right) => {
-                (self.expression(left)
+                let runtime = |operand: &Expr| {
+                    !self.folds(operand)
+                        && self.facts.is_none_or(|facts| {
+                            fact_at(&facts.expression_types, self.occurrence(operand))
+                                .is_some_and(closed_scalar)
+                        })
+                };
+                let folds =
+                    (!self.folds(left) || runtime(right)) && (!self.folds(right) || runtime(left));
+                (folds
+                    && self.expression(left)
                     && self.expression(right)
                     && self.scalar(left)
                     && self.scalar(right))
@@ -6586,6 +6611,33 @@ impl BodyShape<'_> {
             }
         }
         admitted
+    }
+
+    /// Whether `expr` names a compile-time value the elaborator folds to a
+    /// literal in every instance: a `comptime for` variable or a value
+    /// parameter no local shadows.
+    fn folds(&self, expr: &Expr) -> bool {
+        matches!(&expr.kind, ExprKind::Identifier(name)
+            if self.keyed
+                && self.local_kind(name).is_none()
+                && !self.params.contains(&name.as_str())
+                && (self.values.contains(&name.as_str())
+                    || self.loop_vars.borrow().iter().any(|var| var == name)))
+    }
+
+    /// A folded compile-time value read where it stands, as an `Int` or a
+    /// `Bool`: the instance's literal materializes to exactly that type
+    /// ([`folded_literals`]).
+    fn folded_value(&self, expr: &Expr) -> bool {
+        self.folds(expr)
+            && self.facts.is_none_or(|facts| {
+                let id = self.occurrence(expr);
+                matches!(
+                    fact_at(&facts.expression_types, id),
+                    Some(Ty::Int | Ty::Bool)
+                ) && fact_at(&facts.expression_bindings, id).is_some()
+                    && fact_at(&facts.operation_adjustments, id).is_none()
+            })
     }
 
     /// `pack[i]`: an element of a pack-typed parameter at the innermost
@@ -6938,6 +6990,75 @@ impl BodyShape<'_> {
                 .any(|(site, ty)| *site == id && closed_scalar_or_literal(ty))
         })
     }
+}
+
+/// The literals an instance holds where its template read a compile-time
+/// value by name, each with the facts its own check records there; `None`
+/// when a value does not fit the type the template recorded for the name.
+///
+/// A literal whose syntax the template recorded a binding at is the fold of
+/// that name: nothing else keeps a name's identity on a literal. An `Int` of
+/// the instance fits the template's `Int` exactly and a `Bool` its `Bool`, so
+/// the literal materializes to the type the template's facts around it were
+/// judged at. A pack element's index is consumed by the fold instead. Where
+/// the template lent the name to a read parameter, or printed it, the
+/// literal is a temporary the call reads.
+fn folded_literals(
+    template: &CheckedBodyFacts,
+    occurrences: &[Occurrence],
+) -> Option<Vec<FoldedLiteral>> {
+    use mojito_types::ct::CtValue;
+    let indices: HashSet<SyntaxId> = occurrences
+        .iter()
+        .filter_map(|occurrence| occurrence.folded_index.map(|(index, _)| index))
+        .collect();
+    let printed: HashSet<SyntaxId> = occurrences
+        .iter()
+        .filter(|occurrence| {
+            occurrence.callee.as_deref() == Some("print")
+                && template
+                    .print_calls
+                    .iter()
+                    .any(|id| id.syntax == occurrence.id.syntax)
+        })
+        .flat_map(|occurrence| occurrence.arguments.iter().copied())
+        .collect();
+    let named = |occurrence: &Occurrence| {
+        template
+            .expression_bindings
+            .iter()
+            .any(|(id, _)| id.syntax == occurrence.id.syntax)
+    };
+    occurrences
+        .iter()
+        .filter(|occurrence| occurrence.literal.is_some() && named(occurrence))
+        .map(|occurrence| {
+            let recorded = template
+                .expression_types
+                .iter()
+                .find(|(id, _)| id.syntax == occurrence.id.syntax)
+                .map(|(_, ty)| ty);
+            let (ty, materialized) = match (&occurrence.literal, recorded) {
+                (Some(CtValue::Int(_)), _) if indices.contains(&occurrence.id.syntax) => {
+                    (Ty::IntLiteral, None)
+                }
+                (Some(CtValue::Int(_)), Some(Ty::Int)) => (Ty::IntLiteral, Some(Ty::Int)),
+                (Some(CtValue::Bool(_)), Some(Ty::Bool)) => (Ty::Bool, None),
+                _ => return None,
+            };
+            let read_temporary = template
+                .borrowed_read_call_places
+                .iter()
+                .any(|id| id.syntax == occurrence.id.syntax);
+            Some(FoldedLiteral {
+                occurrence: occurrence.id,
+                ty,
+                materialized,
+                read_temporary,
+                unconsumed_temporary: read_temporary || printed.contains(&occurrence.id.syntax),
+            })
+        })
+        .collect()
 }
 
 /// A body's struct applications as one canonical ordered set, since a derived

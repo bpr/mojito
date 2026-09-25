@@ -204,11 +204,19 @@ facts, requests, and effect reads with it, and a copied one carries them once
 per copy.
 
 An instance occurrence with no template occurrence behind it refuses the
-derivation. A folded value parameter is such a case today: the elaborator
-writes a fresh literal where the identifier stood. A folded `comptime for`
-variable is not: the literal keeps the identifier's identity, takes a
-literal's facts (its own type, nothing else) rather than the variable's, and
-where it indexes a pack it says which element the copy is — the template's
+derivation. A folded value parameter or `comptime for` variable is not one:
+the literal the elaborator writes keeps the identifier's identity and takes a
+literal's facts rather than the name's (`folded_literals`,
+`FoldedLiteral`). Those are its own type (`IntLiteral`, or `Bool`); its
+`MaterializeLiteral` to the template's recorded `Int`, which an `Int`
+instance value fits exactly; and, where the template lent the name to a read
+parameter or printed it, the temporary the call reads. What a `var` or an
+assignment records at its value — the binding's type, its deletability, the
+store's invalidations — is the statement's and survives the fold. The
+grammar admits such a name only where those facts are the literal's: never
+as a prefix operand, nor beside a literal-typed or folded operand, since an
+operator over two literals folds to a literal the template never typed. Where
+a literal indexes a pack it says which element the copy is — the template's
 `Ts[i]` at that occurrence is replaced under `i` bound to the literal and the
 pack bound to its element list (`substitute_packs`), and folds to the
 element.
@@ -228,8 +236,8 @@ bound. `BodyShape` is the grammar; `template_certificate` is the argument.
 | `FixedCalls` | plus direct calls of module-scope functions, passing literals, parameters, and further such calls | Selection is retained. No copy or adjustment was recorded, so every argument either matched its parameter exactly and still does after substitution, or converts through an `@implicit` constructor the instance selects again (obligation 20), which never re-ranks the callee. Borrows depend on slots and conventions, not types. The callee's effect summaries were empty and are re-read. |
 | `BoundedOperations` | plus the built-in `len` over a parameter whose bound promises a length | The bound proved the call. The instance owes the witness, which `len_result_for_type` finds, and takes the read-in-place fact `infer_len` adds for a nominal struct. |
 | `MethodScalarBody` | a method with a plain read `self` and no binders of its own, on a struct of plain type parameters: `return`s over closed scalars, parameters, reads of `self`'s scalar fields, the built-in `len` over a field, and argument-free method calls on `self` or a field with a trivial contract | A field read has the field's declared type under the struct's arguments in a template and a clone alike. The generated-declaration leniency a clone's name switches on bears on origin-bearing return annotations only, and the result is a scalar. A trivial call can change per instance only in its target. |
-| `ScalarBranches` | source-validated bodies: `comptime if` arms, scalar `comptime for` loops, scalar locals and assignments, erased `rebind`s | Every arm was checked once. The instance keeps the occurrences the elaborator selected. |
-| `PackElements` | a source-validated body keyed on a type pack (`*Ts`), collected by one variadic parameter: `comptime for` over the pack's indices, each element read as `pack[i]` into a `print` statement, beside what `ScalarBranches` admits; the result may be `None` | The element was checked once at the dependent `Ts[i]` through the pack's bound, and recorded as a place read where it lies. Each unrolled copy carries the folded index, so the instance fixes the element per copy; `print` selects no callee and records at an argument only what its syntax decides, and the instance proves the fixed element `Writable` again (obligation 21). A pack forwarded whole, a loop variable used anywhere but as the index, and a local inside the loop stay out. |
+| `ScalarBranches` | source-validated bodies: `comptime if` arms, scalar `comptime for` loops, scalar locals and assignments, erased `rebind`s, and a loop variable or scalar value parameter read as a runtime value | Every arm was checked once. The instance keeps the occurrences the elaborator selected, and a folded name's literal takes a literal's facts. |
+| `PackElements` | a source-validated body keyed on a type pack (`*Ts`), collected by one variadic parameter: `comptime for` over the pack's indices, each element read as `pack[i]` into a `print` statement, beside what `ScalarBranches` admits; the result may be `None` | The element was checked once at the dependent `Ts[i]` through the pack's bound, and recorded as a place read where it lies. Each unrolled copy carries the folded index, so the instance fixes the element per copy; `print` selects no callee and records at an argument only what its syntax decides, and the instance proves the fixed element `Writable` again (obligation 21). A pack forwarded whole and a local inside the loop stay out. |
 | `MethodBody(features)` | a method beyond `MethodScalarBody`; see below | One argument per feature. |
 
 A body source validation did not produce (every class but `ScalarBranches`)
@@ -240,7 +248,8 @@ once whatever runs it, so none drops or copies an occurrence. A condition's
 recorded type must be exactly `Bool`, which `expect_bool` accepts without a
 truthiness fact. A keyed body keeps its own rules: a local is never declared
 inside a `comptime for`, where an unrolled body would need one binding per
-copy, and the loop variable may only key a condition.
+copy, and a folded name is read only where its literal records what the
+name's occurrence would.
 
 ### `MethodBody`
 
@@ -723,6 +732,12 @@ tables. In short, for one debug-profile run each:
   their struct's origin parameter. A user struct whose accessors raise
   `Error("…")` or a construction of the declared error type derives for an
   `Int` and a `String` instance (`template_method_raises.mojo`).
+  A folded value surviving into an instance (2026-09-25) moves no bundled
+  count (`stdlib_heavy` installs 1624 derivations before and after): no
+  bundled `def` reads a loop variable or value parameter as a runtime value.
+  A keyed `def` that accumulates, assigns, prints, or passes its loop
+  variable and reads its value parameter derives for every trip count
+  (`template_folded_value.mojo`).
   Widening `OPERATOR_DISPATCH` to every operator a trait names, and to the
   three things a struct instance's dispatch adds beneath the operand
   (2026-09-24), moves neither count (1096 and 340 before and after): no
@@ -824,8 +839,10 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
   pin's `update` takes bytes), so no fixture exercises it. `Dict.__hash__` constructs its `H2()` (`ConstructTypeParam`) and
   `Optional.__hash__` a `UInt8` tag (`SimdConstructions`), so both keep the
   clone check for those reasons.
-- A folded value parameter, or a loop variable surviving into an instance
-  anywhere but as a pack element's index.
+- A folded name beside a literal (`i * 10`) or under a prefix (`-i`), which
+  the instance's check folds to one literal; a value parameter of a body
+  with no compile-time control flow, which source validation never checks;
+  and a folded name lent to an owned parameter.
 - A local declared inside a `comptime for`.
 - A pack forwarded whole (`print(*a)`), a pack-keyed struct's methods (a
   validated method has no class, and a whole-struct clone leaves no trace),

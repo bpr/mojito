@@ -752,6 +752,25 @@ pub struct OccurrenceId {
     pub copy: u32,
 }
 
+/// A compile-time value an instance holds as a literal where its template
+/// read a value parameter or a `comptime for` variable by name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoldedLiteral {
+    pub occurrence: OccurrenceId,
+    /// The literal's own type.
+    pub ty: Ty,
+    /// The type the literal materializes to where it stands for a runtime
+    /// value: the template's recorded type for the name. A pack element's
+    /// index is consumed by the fold and materializes to nothing.
+    pub materialized: Option<Ty>,
+    /// Whether the literal is a temporary lent to a read parameter, where
+    /// the template lent the name's place.
+    pub read_temporary: bool,
+    /// Whether the literal is a temporary no one consumes: a read argument,
+    /// or a `print` argument.
+    pub unconsumed_temporary: bool,
+}
+
 /// One [`crate::checked::InteriorInvalidation`] with its bindings in
 /// template-local terms.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1498,12 +1517,12 @@ impl CheckedBodyFacts {
     /// whose identity it kept. An occurrence the elaborator dropped — an
     /// untaken arm, a loop that ran zero times — takes its facts, requests,
     /// and effect reads with it; one it copied per loop iteration carries
-    /// them once per copy. A `folded` occurrence — a loop variable the
-    /// elaborator wrote as the iteration's integer literal — keeps its
-    /// identity and none of the variable's facts: a literal records its own
-    /// type and nothing else.
+    /// them once per copy. A `folded` occurrence — a compile-time value the
+    /// elaborator wrote as the instance's literal — keeps its identity and
+    /// none of the value's facts: a literal records its own type and, where
+    /// it stands for a runtime value, its materialization.
     #[must_use]
-    pub fn selected(&self, occurrences: &[OccurrenceId], folded: &[OccurrenceId]) -> Self {
+    pub fn selected(&self, occurrences: &[OccurrenceId], literals: &[FoldedLiteral]) -> Self {
         fn at<V: Clone>(
             table: &[(OccurrenceId, V)],
             occurrences: &[OccurrenceId],
@@ -1520,7 +1539,14 @@ impl CheckedBodyFacts {
                 })
                 .collect()
         }
-        let flagged = |table: &[OccurrenceId]| -> Vec<OccurrenceId> {
+        let folded: Vec<OccurrenceId> = literals.iter().map(|literal| literal.occurrence).collect();
+        let folded = folded.as_slice();
+        let literal = |occurrence: &OccurrenceId| {
+            literals
+                .iter()
+                .find(|literal| literal.occurrence == *occurrence)
+        };
+        let flagged_except = |table: &[OccurrenceId], folded: &[OccurrenceId]| {
             occurrences
                 .iter()
                 .copied()
@@ -1528,15 +1554,26 @@ impl CheckedBodyFacts {
                     !folded.contains(occurrence)
                         && table.iter().any(|id| id.syntax == occurrence.syntax)
                 })
-                .collect()
+                .collect::<Vec<_>>()
+        };
+        let flagged = |table: &[OccurrenceId]| flagged_except(table, folded);
+        let flagged_or = |table: &[OccurrenceId], held: fn(&FoldedLiteral) -> bool| {
+            occurrences
+                .iter()
+                .copied()
+                .filter(|occurrence| match literal(occurrence) {
+                    Some(literal) => held(literal),
+                    None => table.iter().any(|id| id.syntax == occurrence.syntax),
+                })
+                .collect::<Vec<_>>()
         };
         Self {
             occurrences: occurrences.to_vec(),
             expression_types: occurrences
                 .iter()
                 .filter_map(|occurrence| {
-                    if folded.contains(occurrence) {
-                        return Some((*occurrence, Ty::IntLiteral));
+                    if let Some(literal) = literal(occurrence) {
+                        return Some((*occurrence, literal.ty.clone()));
                     }
                     self.expression_types
                         .iter()
@@ -1545,17 +1582,33 @@ impl CheckedBodyFacts {
                 })
                 .collect(),
             expression_place_types: at(&self.expression_place_types, occurrences, folded),
-            binding_types: at(&self.binding_types, occurrences, folded),
+            // A local's facts, and a store's invalidations, are keyed at the
+            // value stored, which a fold leaves the statement's.
+            binding_types: at(&self.binding_types, occurrences, &[]),
             expression_bindings: at(&self.expression_bindings, occurrences, folded),
             statement_bindings: at(&self.statement_bindings, occurrences, folded),
             expression_effects: at(&self.expression_effects, occurrences, folded),
-            operation_adjustments: at(&self.operation_adjustments, occurrences, folded),
+            operation_adjustments: occurrences
+                .iter()
+                .filter_map(|occurrence| match literal(occurrence) {
+                    Some(literal) => literal.materialized.clone().map(|target| {
+                        (*occurrence, SemanticAdjustment::MaterializeLiteral(target))
+                    }),
+                    None => self
+                        .operation_adjustments
+                        .iter()
+                        .find(|(id, _)| id.syntax == occurrence.syntax)
+                        .map(|(_, fact)| (*occurrence, fact.clone())),
+                })
+                .collect(),
             generic_instantiations: at(&self.generic_instantiations, occurrences, folded),
             overload_targets: at(&self.overload_targets, occurrences, folded),
             call_parameters: at(&self.call_parameters, occurrences, folded),
             borrowed_read_call_places: flagged(&self.borrowed_read_call_places),
             borrowed_reference_receivers: flagged(&self.borrowed_reference_receivers),
-            read_temporary_arguments: flagged(&self.read_temporary_arguments),
+            read_temporary_arguments: flagged_or(&self.read_temporary_arguments, |literal| {
+                literal.read_temporary
+            }),
             // Realization recomputes these from the calls that remain and
             // the value reads, which name no occurrence.
             effect_free_callees: Vec::new(),
@@ -1574,12 +1627,14 @@ impl CheckedBodyFacts {
             struct_applications: self.struct_applications.clone(),
             rebind_assertions: at(&self.rebind_assertions, occurrences, folded),
             copy_place_value_uses: flagged(&self.copy_place_value_uses),
-            interior_invalidations: at(&self.interior_invalidations, occurrences, folded),
-            unconsumed_temporaries: flagged(&self.unconsumed_temporaries),
+            interior_invalidations: at(&self.interior_invalidations, occurrences, &[]),
+            unconsumed_temporaries: flagged_or(&self.unconsumed_temporaries, |literal| {
+                literal.unconsumed_temporary
+            }),
             discarded_reference_results: flagged(&self.discarded_reference_results),
             reference_value_uses: at(&self.reference_value_uses, occurrences, folded),
-            deletable_bindings: flagged(&self.deletable_bindings),
-            linear_bindings: flagged(&self.linear_bindings),
+            deletable_bindings: flagged_except(&self.deletable_bindings, &[]),
+            linear_bindings: flagged_except(&self.linear_bindings, &[]),
             linear_temporaries: flagged(&self.linear_temporaries),
             reference_results: at(&self.reference_results, occurrences, folded),
             augmented_subscripts: at(&self.augmented_subscripts, occurrences, folded)
@@ -1621,17 +1676,20 @@ impl CheckedBodyFacts {
             ]
             .into_iter()
             .flat_map(|table| {
-                occurrences.iter().flat_map(move |occurrence| {
-                    self.typed_origins
-                        .iter()
-                        .filter(move |typed| {
-                            typed.table == table && typed.occurrence.syntax == occurrence.syntax
-                        })
-                        .map(|typed| TypedOrigins {
-                            occurrence: *occurrence,
-                            ..typed.clone()
-                        })
-                })
+                occurrences
+                    .iter()
+                    .filter(|occurrence| !folded.contains(occurrence))
+                    .flat_map(move |occurrence| {
+                        self.typed_origins
+                            .iter()
+                            .filter(move |typed| {
+                                typed.table == table && typed.occurrence.syntax == occurrence.syntax
+                            })
+                            .map(|typed| TypedOrigins {
+                                occurrence: *occurrence,
+                                ..typed.clone()
+                            })
+                    })
             })
             .collect(),
             call_result_origins: at(&self.call_result_origins, occurrences, folded),

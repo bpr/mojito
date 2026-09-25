@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A compile-time-keyed `def` clone now inherits its checked template's facts
+  when the body reads a `comptime for` variable or a scalar value parameter
+  as a runtime value (`sum += i`, `acc = acc * 2 + i`, `bump(i)`,
+  `print(i)`, `var seen = flag`): the literal the elaborator folds there
+  takes a literal's facts and its materialization to the template's type.
+  Such a body used to keep the clone check.
+
 - A per-instantiation method clone now inherits its checked template's facts
   when its instance argument is a struct declaring fields of its own
   parameter types (`List[DictEntry[Int, String, H]]`,
