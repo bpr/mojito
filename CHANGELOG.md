@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method that builds a list, set, or dict comprehension over a place of the
+  body or a sibling call's result (`[x for x in self.items if x != drop]`)
+  now derives its instances from the checked template: each clause selects
+  its iterator protocol again at the instance's type, and each binder is
+  declared from that protocol's binding. Such bodies used to keep the clone
+  check because comprehension binders had no derivation recipe.
 - A method that binds a view over an owned interior of a field or local
   (`var view = self.name.strip()`) now derives its instances from the
   checked template, keeping the interior projection and the immutable origin

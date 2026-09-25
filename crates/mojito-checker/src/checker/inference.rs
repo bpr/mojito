@@ -24,6 +24,7 @@ impl Checker {
 
         let scope_base = self.scopes.len();
         let mut bindings = Vec::new();
+        let mut iterables = Vec::new();
         self.raise_observation_frames
             .borrow_mut()
             .push((self.handled_raise_depth, false));
@@ -66,6 +67,7 @@ impl Checker {
                                 "comprehension binder '{var}' has no stable owner"
                             ))
                         })?;
+                        iterables.push(iter.source_span());
                         bindings.push(mojito_checked::checked::CheckedComprehensionBinding {
                             name: var.clone(),
                             owner,
@@ -142,6 +144,9 @@ impl Checker {
             self.comprehension_bindings
                 .borrow_mut()
                 .insert(expression.source_span(), bindings.clone());
+            self.comprehension_iterables
+                .borrow_mut()
+                .insert(expression.source_span(), iterables.clone());
             Ok(())
         })();
         while self.scopes.len() > scope_base {

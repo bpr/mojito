@@ -373,7 +373,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   instance's substituted iterable type (`realize_iterations`), and resolves
   it against the instance's own source binding (`install_iterations`), all
   through `iteration.rs:loop_site_protocol`, the path the `for` statement
-  and comprehensions share. The submodule `template_facts/tuple_unpacks.rs`
+  and comprehensions share. The submodule `template_facts/comprehensions.rs`
+  keeps each comprehension binder as its owner and its clause's iterable
+  (`captured_comprehension_bindings`, a `TemplateComprehensionBinding`
+  proven against the recorded binding and the checker-only
+  `comprehension_iterables` table `inference.rs:check_comprehension`
+  fills), and declares it again for an instance from the protocol
+  installed at that iterable (`install_comprehension_bindings`). The
+  submodule `template_facts/tuple_unpacks.rs`
   keeps a tuple unpacking's plan as the value's type, the reference the
   unpacked place yields, and the named targets (`captured_tuple_unpacks`, a
   `TemplateTupleUnpack` proven by rebuilding the recorded plan), and builds

@@ -752,6 +752,10 @@ pub struct Checker {
     /// from beside the value's type. Checker-only: a template keeps it as the
     /// recipe of its plan.
     tuple_unpack_sources: RefCell<HashMap<SourceSpan, TupleUnpackSource>>,
+    /// Per comprehension, the iterable of the clause that declares each of
+    /// its generator binders, in clause order. Checker-only: a template keeps
+    /// it as the recipe of each binder's plan.
+    comprehension_iterables: RefCell<HashMap<SourceSpan, Vec<SourceSpan>>>,
     /// Place expressions that define a fresh interior-reference generation.
     /// Kept separate from operation adjustments because a Variant projection,
     /// for example, carries both facts at the same checked node.
@@ -1008,6 +1012,7 @@ impl Checker {
             storage_origin_demands: RefCell::new(None),
             tuple_unpack_plans: RefCell::new(HashMap::new()),
             tuple_unpack_sources: RefCell::new(HashMap::new()),
+            comprehension_iterables: RefCell::new(HashMap::new()),
             interior_references: RefCell::new(HashMap::new()),
             view_result_interiors: RefCell::new(HashMap::new()),
             call_parameters: RefCell::new(HashMap::new()),

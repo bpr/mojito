@@ -120,8 +120,10 @@ places, interior invalidations, rebind assertions, reference handles
 (`ReferenceValueUses`, at the value of a `return` in a method that returns a
 reference, and nowhere else), reference results (the `ReferenceResult`
 adjustment, kept apart from the other adjustments), interior references,
-copyable reference-result reads, and iteration protocols (a
-`TemplateIteration`, from which an instance selects the protocol again).
+copyable reference-result reads, iteration protocols (a
+`TemplateIteration`, from which an instance selects the protocol again), and
+comprehension binders (a `TemplateComprehensionBinding`, which an instance
+declares again from its clause's protocol).
 
 A replayed transfer is kept in template-local terms too: each call transfer
 (`call_transfers`), the origins it merged into a binding's bookkeeping
@@ -332,6 +334,7 @@ they are a set, not a ladder.
 | `TRUTHINESS` | an `if` or `while` condition that reads a parameter, a local, or a field of `self` whole and tests it through `__bool__` (`if self._value:` in `OptionalReg.or_else`) | `expect_bool` marks such a condition (`TruthinessConditions`) from its type alone: a `Bool` is read as it stands, and a width-one bool lane or a struct whose `__bool__` returns `Bool` converts through `Bool(x)`. The read itself records only the place's type and binding, neither a copy nor a conversion. Obligation 22 below. |
 | `TUPLE_UNPACKS` | a tuple unpacked from a parameter, a `var` local, a field of `self`, or a sibling call's result into `_` and `var` locals, declared by the statement (`var v, n = t`) or before it (`v, n = t`); a declared target is a scalar or a whole-value local by its recorded binding type | The statement records one plan at the value (`TupleUnpackPlans`): each element's type and, for a generated Tuple, the accessor that reads it and the reference a place accessor yields. The plan is a function of the value's type and the reference the unpacked place yields, which the template keeps (`TemplateTupleUnpack`) beside the named targets. Obligation 23 below. The checker judges no deletability at an unpacking's target, so realization judges none there either. |
 | `PARAMETERIZED_CALLS` | a method called with explicit compile-time arguments, each a literal or a type (`self.scaler.scaled[3](x)`, `self.scaler.show[Int](x)`), on a receiver a sibling call admits whose type is a non-generic struct | The call records the selected method's declared compile-time parameters (`ParameterizedMethodCalls`), which are the callee's declaration and are installed as they stand, and a per-call clone request (`MethodInstantiation`). Once that clone exists the contract names it (`Scaler.scaled$i3`) and declares no parameters, and the instance keeps the target (`realize_method_call`); before it exists the contract still carries the declared parameters, which the grammar refuses. A request that substitution would change (`show[Self.T]`), or one keyed by a generic receiver, refuses. |
+| `COMPREHENSIONS` | a list, set, or dict comprehension, as a whole value (returned, bound to a `var`, or the element of another comprehension), whose `for` clauses iterate what `ITERATION` admits, whose filters are runtime conditions, and whose produced key and value are closed scalars or whole values; each binder is a local scoped to the clauses after it and the produced elements, of the kind its recorded binding type makes it | Each clause records its protocol at its iterable as a loop does, and each binder's plan, type, and droppability (`ComprehensionBindings`) follow from that protocol and that type. The template keeps the binder's owner and the iterable whose protocol declares it (`TemplateComprehensionBinding`); obligation 24 below. The collection's `ConstructCollection` adjustment names the target struct's own insert method, which substitution keeps. |
 
 The compiler-private trap `_mojito_abort("message")` is a statement of any
 non-keyed body: the built-in types its literal and selects nothing. A
@@ -632,6 +635,20 @@ only `Movable` records nothing there, and its `Int` clone would.
     names the generated Tuple for a closed public one
     (`canonicalize_public_tuple_types`), as the clone check's annotations
     do, so a `Tuple[Self.T, Int]` parameter reads as `Tuple$t2[…]` in both.
+24. **Comprehension binders.** A binder's plan is its clause's protocol's
+    binding, its type that plan's binding type, and its droppability
+    `is_deinitable` of that type (`check_comprehension`). Capture proves all
+    three against the recorded binding and keeps only the binder's owner and
+    its clause's iterable (`captured_comprehension_bindings`). The instance
+    selects the clause's protocol again (obligation 21), and installation
+    declares the binder from it on the instance's own binding
+    (`install_comprehension_bindings`). A binder is minted while the
+    statement holding the comprehension is checked, before that statement's
+    own binding, so where a body holds one its locals are numbered in the
+    template's order rather than by pre-order (`renumber_locals`); only a
+    body with no unrolled copies holds one. A filter over a linear binder is
+    rejected by the template's check, and an instance's binder is droppable
+    wherever the template's was.
 
 The declaration's bounds and `where` clauses are not re-checked: the checker
 discharges them at the requesting call, and the elaborator proves a fully
@@ -931,7 +948,8 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
   a `var self` method returning `self^`, a consuming call with a defaulted
   argument, a receiver copied into a local (`var result = self`), a tuple
   element read of a local, a `for` loop with an `else` clause or over an
-  iterable whose type an instance changes in kind, a string
+  iterable whose type an instance changes in kind, a `for` loop or
+  comprehension over a module function's result (`range(n)`), a string
   other than the `_mojito_abort` message or a sink's argument, a call passing
   a `ref` local or a reference call's result, and a local whose type is built
   over a parameter

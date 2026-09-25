@@ -529,6 +529,7 @@ assets/ok/template_method_bound_witness_shapes.mojo	main	exe-differential	saniti
 assets/ok/template_method_built_over_local.mojo	main	exe-differential	sanitized
 assets/ok/template_method_callable_parameter.mojo	main	exe-differential	sanitized
 assets/ok/template_method_calls.mojo	main	exe-differential	sanitized
+assets/ok/template_method_comprehension.mojo	main	exe-differential	sanitized
 assets/ok/template_method_construction.mojo	main	exe-differential	sanitized
 assets/ok/template_method_converting_argument.mojo	main	exe-differential	sanitized
 assets/ok/template_method_converting_binding.mojo	main	exe-differential	sanitized

@@ -36,6 +36,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 mod bound_dispatch;
+mod comprehensions;
 mod constructions;
 mod iterations;
 mod tuple_unpacks;
@@ -593,6 +594,7 @@ impl Checker {
         self.with_desugars.borrow_mut().remove(span);
         self.declaration_captures.borrow_mut().remove(span);
         self.comprehension_bindings.borrow_mut().remove(span);
+        self.comprehension_iterables.borrow_mut().remove(span);
         self.expression_place_types.borrow_mut().remove(span);
         self.binding_types.borrow_mut().remove(span);
         self.expression_effects.borrow_mut().remove(span);
@@ -1453,6 +1455,7 @@ impl Checker {
             self.realize_builtin_len(&mut facts, *call, occurrences)?;
         }
         self.realize_iterations(&mut facts, &substitute)?;
+        Self::realize_comprehension_bindings(&mut facts, &substitute);
         self.realize_tuple_unpacks(&mut facts, &substitute)?;
         facts.struct_applications = template
             .struct_applications
@@ -2736,6 +2739,10 @@ impl Checker {
     ///   declared compile-time parameters are the callee's, and on a
     ///   non-generic receiver the per-call clone the call targets is the same
     ///   under every instance (`realize_method_call`).
+    /// - `COMPREHENSIONS`: see [`BodyShape::comprehension`]. Each clause's
+    ///   protocol is an `ITERATION` loop's, and each binder is declared from
+    ///   that protocol's binding plan, which an instance selects again
+    ///   (`install_comprehension_bindings`).
     ///
     /// Any other handle, borrowed receiver, reference result, interior
     /// reference, or copyable read in the body refuses it
@@ -3636,6 +3643,8 @@ impl Checker {
             ),
             view_result_interiors: values(&occurrences, &self.view_result_interiors.borrow()),
             iterations: self.captured_iterations(&occurrences, &local_place)?,
+            comprehension_bindings: self
+                .captured_comprehension_bindings(&occurrences, &local_owner)?,
             tuple_unpacks: self.captured_tuple_unpacks(&occurrences, &local_reference)?,
             call_place_uses: keyed(&|span| self.call_place_uses.borrow().contains(span)),
             transfers: occurrences
@@ -4039,6 +4048,7 @@ impl Checker {
                 .insert(span(id)?, decls.clone());
         }
         self.install_iterations(facts, &span, &rooted)?;
+        self.install_comprehension_bindings(facts, &span, &owner)?;
         self.install_tuple_unpacks(facts, &span, &referenced)?;
         for id in &facts.call_place_uses {
             self.call_place_uses.borrow_mut().insert(span(id)?);
@@ -4614,11 +4624,11 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::TupleUnpackPlans
         | FactTable::ParameterizedMethodCalls
         | FactTable::ViewResultInteriors
+        | FactTable::ComprehensionBindings
         | FactTable::CallTransfers => true,
-        FactTable::ContextualBases
-        | FactTable::WithDesugars
-        | FactTable::DeclarationCaptures
-        | FactTable::ComprehensionBindings => false,
+        FactTable::ContextualBases | FactTable::WithDesugars | FactTable::DeclarationCaptures => {
+            false
+        }
     }
 }
 
@@ -4745,12 +4755,29 @@ fn renumber_locals(facts: &mut CheckedBodyFacts) -> Result<(), &'static str> {
                 .iter()
                 .filter(|(id, _)| unpacked.contains(id)),
         )
+        .map(|(id, owner)| (id, owner))
+        .chain(
+            facts
+                .comprehension_bindings
+                .iter()
+                .flat_map(|(id, binders)| binders.iter().map(move |binder| (id, &binder.owner))),
+        )
         .filter_map(|(id, owner)| match owner {
             TemplateOwner::Local(index) => Some((position(*id)?, *index)),
             _ => None,
         })
         .collect();
-    declared.sort_by_key(|(at, _)| *at);
+    // A comprehension's binders are declared while the statement holding it
+    // is checked, before the statement's own binding, so pre-order is not
+    // the checking order there. Only a body with no unrolled copies holds
+    // one, and it keeps every declaration, in the template's own order.
+    if facts.comprehension_bindings.is_empty() {
+        declared.sort_by_key(|(at, _)| *at);
+    } else if occurrences.iter().all(|id| id.copy == 0) {
+        declared.sort_by_key(|(_, index)| *index);
+    } else {
+        return Err("a comprehension sits in an unrolled copy");
+    }
     let mut ambiguous = false;
     for_each_owner(facts, &mut |at, owner| {
         let TemplateOwner::Local(index) = owner else {
@@ -4832,6 +4859,11 @@ fn for_each_owner(
     for (id, unpack) in &mut facts.tuple_unpacks {
         if let Some(source) = &mut unpack.source {
             origin_owners(&mut source.origin, Some(*id), visit);
+        }
+    }
+    for (id, binders) in &mut facts.comprehension_bindings {
+        for binder in binders {
+            visit(Some(*id), &mut binder.owner);
         }
     }
     for (id, reference) in facts
@@ -6466,7 +6498,11 @@ impl BodyShape<'_> {
             ExprKind::Transfer(inner) => {
                 (source(inner) && !borrowed(inner)) || self.call_result(inner)
             }
-            _ if self.call_result(expr) || self.construction(expr) || self.operator_value(expr) => {
+            _ if self.call_result(expr)
+                || self.construction(expr)
+                || self.operator_value(expr)
+                || self.comprehension(expr) =>
+            {
                 true
             }
             // The pointee, taken out of its slot: a temporary.
@@ -6629,6 +6665,70 @@ impl BodyShape<'_> {
             _ => false,
         };
         call && self.expression(expr)
+    }
+
+    /// A list, set, or dict comprehension: a temporary of the collection
+    /// type, built through its insert method (`ConstructCollection`).
+    ///
+    /// Each generator clause iterates what a runtime `for` may, and records
+    /// its protocol at the iterable ([`Self::iterable`]). Its binder is a
+    /// local scoped to the clauses after it and to the produced elements, of
+    /// the kind its recorded binding type makes it, and is declared from the
+    /// protocol's binding plan, which an instance selects again
+    /// ([`Checker::install_comprehension_bindings`]). A filter is a runtime
+    /// condition, and each produced key or value a closed scalar or a whole
+    /// value the collection consumes.
+    fn comprehension(&self, expr: &Expr) -> bool {
+        let ExprKind::Comprehension {
+            key,
+            value,
+            clauses,
+            ..
+        } = &expr.kind
+        else {
+            return false;
+        };
+        let binders = self
+            .facts
+            .map(|facts| fact_at(&facts.comprehension_bindings, self.occurrence(expr)));
+        if self.keyed || binders.is_some_and(|binders| binders.is_none()) {
+            return false;
+        }
+        let kind = |index: usize| {
+            binders
+                .flatten()
+                .map_or(Some(LocalKind::Scalar), |binders| {
+                    binders.get(index).map(|binder| {
+                        if binder.reference {
+                            LocalKind::Reference
+                        } else if closed_scalar(&binder.ty) {
+                            LocalKind::Scalar
+                        } else {
+                            LocalKind::Value
+                        }
+                    })
+                })
+        };
+        let element = |element: &Expr| {
+            (self.expression(element) && self.scalar(element)) || self.whole_value(element)
+        };
+        let scope = self.locals.borrow().len();
+        let mut declared = 0;
+        let admitted = clauses.iter().all(|clause| match clause {
+            mojito_ast::ast::ComprehensionClause::For { var, iter, .. } => {
+                let iterable = self.iterable(iter);
+                let binder = kind(declared);
+                declared += 1;
+                binder.is_some_and(|binder| {
+                    self.locals.borrow_mut().push((var.clone(), binder));
+                    iterable
+                })
+            }
+            mojito_ast::ast::ComprehensionClause::If(condition) => self.condition(condition),
+        }) && key.as_deref().is_none_or(element)
+            && element(value);
+        self.locals.borrow_mut().truncate(scope);
+        admitted && self.holds(MethodFeatures::COMPREHENSIONS)
     }
 
     /// A construction of a declared struct: a temporary of the constructed
