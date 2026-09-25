@@ -250,7 +250,7 @@ assignments, `if`/`elif`/`else`, `while`, `break`, `continue`, a bare
 `return`, and a discarded call or `_ =` value. A runtime statement is checked
 once whatever runs it, so none drops or copies an occurrence. A condition's
 recorded type must be exactly `Bool`, which `expect_bool` accepts without a
-truthiness fact. A keyed body keeps its own rules: a local is never declared
+truthiness fact, unless the body holds `TRUTHINESS`. A keyed body keeps its own rules: a local is never declared
 inside a `comptime for`, where an unrolled body would need one binding per
 copy, and a folded name is read only where its literal records what the
 name's occurrence would.
@@ -299,7 +299,7 @@ they are a set, not a ladder.
 | `POINTER_SLOTS` | over a pointer field of `self` with no tracked provenance, or whose provenance is the struct's own origin parameter (`Span._data`): `unsafe_offset(scalar)`, `unsafe_take_pointee()`, `unsafe_deinit_pointee()`, `free`, and the slot `pointer[scalar]` as a store target or a copied place | Such a pointer holds no loan, names no place, and is a pointer under every instance, so its methods are the built-in ones (`infer_pointer_method`), which select no callee and record an adjustment naming at most the pointee. Every other judgment there only produces an error, and the template's is at least as strict. |
 | `SIBLING_CALLS` | a method call on `self`, a field of it, or a `var` local, passing closed scalars, whose contract is a `closed_method_contract`; its result may be a view over the receiver (`_DictKeyIter(self.items())`) | Obligation 7 below. Arguments are closed scalars in both checks, so nothing about them depends on the instance. A view result's `BorrowViewResult` loan and the origins its contract resolves are the callee's declared `origin_of(self)` return over the call's own receiver, which no instance changes; a constructor the view is handed to matches its field or parameter but for those origin arguments. |
 | `REFERENCE_RESULT` | a method that returns a reference: every `return` hands out a field of `self`, a pointer slot, or a reference call's result, of exactly the declared referent type | The `return` keeps its value as a handle because the declaration returns a reference (`ReferenceValueUses`, written from the declaration and the statement's syntax alone) and demands neither a copy nor a move. Whether the place lies within the declared origin is judged on its path, the signature, and the receiver's constructor, none of which an instance changes; the loan-escape check reads what obligation 12 already rules out. The signature is checked per clone before the body, derived or not. Any other handle in the body refuses it. |
-| `REFERENCE_CALLS` | a subscript or a named accessor on a field of `self`, passing closed scalars, whose contract is a `closed_reference_contract`, either returned as above or read by value into the result or a `var` | Obligation 13 below. The call is never a receiver, an operand, a condition, or an argument, each of which records a borrow of its own. A by-value read is admitted only where the template marked the read copyable. An iterator's `__next__` marks its read by another rule and stays out. |
+| `REFERENCE_CALLS` | a subscript or a named accessor on `self`, a field of it, or a `var` local (`result.value()` in `List.index`), passing closed scalars, whose contract is a `closed_reference_contract`, either returned as above or read by value into the result or a `var` | Obligation 13 below. The call is never a receiver, an operand, a condition, or an argument, each of which records a borrow of its own. A by-value read is admitted only where the template marked the read copyable. An iterator's `__next__` marks its read by another rule and stays out. |
 | `REFERENCE_LOCALS` | `ref name = place`, where the place is `self`, a field of it, a parameter, a `var` local, or a reference call; then a field read through the binding, the binding copied out whole, a scalar operand, `len` over it, a scalar store through it, or the binding forwarded as the method's own reference result | The declaration decides mutability from the value's reference and the binding it names, re-stamps an origin computed upstream, and runs no check of its own. Its type is a reference whose origin names a binding, so a bundle keeps it by template owner, as it keeps a call's, and an instance substitutes the referent. Every use records the referent. A copy out owes obligation 3, and a copyable read obligation 13. |
 | `REFERENCE_RECEIVERS` | a field read or a closed method call through a reference call's result or a `ref` local whose referent is a struct | A call borrows such a receiver (`BorrowedReferenceReceivers`) because of what the receiver is: a reference result, a `ref` binding, a `ref` field. None of those tests reads the referent. The callee is realized as in obligation 7, from the receiver's own substituted type; a receiver whose type was already closed in the template (`List[Pair]`) selected its clone there. A method of a bare parameter dispatches through the bound and stays out. |
 | `SUBSCRIPT_STORES` | a store through a subscript of a writable `self` or of one of its fields: a closed scalar field of the element a reference getter yields (`self.entries[i].hits = 0`, `+= 1`); an element a declared setter takes, a closed scalar or a whole value of the setter's own parameter type (`self.counts[i] = n`, `self.items[i] = value^`, `self.entries[i] = Entry[Self.T](v^)`, `self[k] = v^`); a closed scalar element stored whole or augmented through the mutable reference its getter yields (`self.counts[i] += 1`, `self.grid[i] = n` on a struct with no setter) or augmented through a closed value getter and a setter (`self.table[i] += 1`); or an element of a closed struct type stored augmented through its in-place dunder (`self.counters[i] += 3`) | A subscript that is a place records its index shape and whether the setter takes the value by keyword (`SubscriptDescriptors`). The first is the syntax, one plain index; the second is the setter's declaration. The getter is a `REFERENCE_CALLS` call and the setter a `SIBLING_CALLS` one, recorded at the subscript and realized by the setter's name; its index and value are the call's arguments (`VALUE_ARGUMENTS`), so a whole value binds a parameter of exactly its own type and owes what it owes at any call (obligations 3, 10, and 14). A store through a mutable reference records no second contract: the checker writes the computed value back through the getter's reference, and its `AugmentedSubscript` record is that getter beside the element's type, kept apart from the adjustment table (`augmented_subscripts`, as `reference_results` are) and rebuilt for an instance from the getter it realized at the site. A store through a value getter and a setter records the setter at the subscript, and the checker keys the computed value it binds there too, since that value is no expression; its `AugmentedSubscript` record keeps the value getter beside the setter in `augmented_subscripts`, as it stands, so the subscripted value's type is closed. A struct element's `+=` selects its `__iadd__` on a synthesized receiver whose facts and identity the checker drops with its scope; the dunder is kept beside the store likewise, over a closed element type. A getter an instance would retarget to its own clone, or a dunder selected through a bound, stays out. A whole element read from the same list (`self.items[i] = self.items[j]`) is accepted for `Int` and refused for `String`, so it stays out until that divergence closes. |
@@ -321,6 +321,7 @@ they are a set, not a ladder.
 | `DIRECT_CALLS` | a direct call of a module-scope function that is not generic, not overloaded, and takes only closed scalars by value (`check_slice_bounds(start, end, self.size)`) | The call selects the same declaration under every instance and binds its arguments at types no substitution changes; the instance realizes it as a `FixedCalls` body's direct call (obligation 5), re-reading the callee's empty effect summaries. |
 | `ITERATION` | a runtime `for` with no `else`, over `self`, a field of it, a parameter, a local, the `^` transfer of a place the body owns, or a sibling call's result; the loop variable is a local whose kind — a handle, a scalar, or a whole value — follows its recorded binding type | The protocol is selected from the iterable's type and resolved against the place the loop borrows and that binding's mutability, which are the loop's syntax and the declaration's. The template keeps those inputs (`TemplateIteration`), and the instance selects again from its substituted type (obligation 21). |
 | `SIMD_CONSTRUCTIONS` | a `SIMD`, `Scalar`, or scalar-alias construction from closed scalars (`UInt8(1)`, `SIMD[DType.uint8, 4](1, 2, 3, 4)`) whose dimensions the template recorded, handed to a checker builtin (`hasher._update_with_simd(UInt8(1))`), to a by-value parameter, or bound to a `var` local | Inference records a construction's dtype and width (`SimdConstructions`) only when both are closed, so a recorded entry is the same under every instance and is installed as it stands. The call selects no callee and converts nothing. A construction whose dtype or width names a parameter records nothing in the template; no enabled class reaches one today, since a `DType` or `Int` value binder is outside every class. |
+| `TRUTHINESS` | an `if` or `while` condition that reads a parameter, a local, or a field of `self` whole and tests it through `__bool__` (`if self._value:` in `OptionalReg.or_else`) | `expect_bool` marks such a condition (`TruthinessConditions`) from its type alone: a `Bool` is read as it stands, and a width-one bool lane or a struct whose `__bool__` returns `Bool` converts through `Bool(x)`. The read itself records only the place's type and binding, neither a copy nor a conversion. Obligation 22 below. |
 
 The compiler-private trap `_mojito_abort("message")` is a statement of any
 non-keyed body: the built-in types its literal and selects nothing. A
@@ -328,9 +329,11 @@ declaration of that name would record a binding and parameters at the call,
 and such a call is not admitted.
 
 A built-in scalar conversion of one closed value (`Int(key_hash)`, also
-`UInt`, `Bool`, `Float64`) is an expression of any non-keyed body. It selects
-no callee and records only closed types, which no instance changes
-(`BodyShape::scalar_conversion`).
+`UInt`, `Bool`, `Float64`) is an expression of any non-keyed body, and so is
+one of a named place of a closed struct type (`Bool(result)` in
+`List.index`), whose conversion dunder reads the place where it lies. It
+selects no callee and records only closed types and a borrow its syntax
+decides, which no instance changes (`BodyShape::scalar_conversion`).
 
 A bare place of a parameter type is admitted at a consuming position only
 where the template recorded the copy (`copy_place_value_uses`). A type that is
@@ -597,6 +600,12 @@ only `Movable` records nothing there, and its `Int` clone would.
     non-`Deinitable` element (no early exit, no unhandled raise) are the
     template's at least as strictly: a bare parameter element is judged
     linear in the template.
+22. **Truthiness conditions.** A condition's mark is `expect_bool`'s verdict
+    on its type (`condition_truthiness`), which an instance asks again at
+    its own recorded type for each condition the template marked: a
+    condition that became `Bool` drops its mark, and one that is no longer
+    boolable refuses. A condition the template read as a `Bool` stays one
+    under every substitution, so only the template's marks are judged.
 
 The declaration's bounds and `where` clauses are not re-checked: the checker
 discharges them at the requesting call, and the elaborator proves a fully
@@ -827,6 +836,16 @@ tables. In short, for one debug-profile run each:
   `_update_with_simd` and pass a `UInt8` construction to a sibling derives
   for an `Int`, a `String`, and a user-struct instance
   (`template_method_simd_construction.mojo`).
+  Truthiness conditions (2026-09-25), with `Bool(x)` of a closed struct
+  place and a reference call on a `var` local beside them, move
+  `stdlib_heavy` from 1748 to 1760 installed derivations, from 1866 to 1854
+  inferred clone bodies, and from 705 to 715 reused templates:
+  `OptionalReg.or_else` is reused and `List.index` derives for every
+  instance. `os.mkdir`, `os.remove`, and `os.rmdir` test a struct too but
+  stay outside for a `raises` module `def` or a non-read parameter. A user
+  struct whose methods test a field, a parameter, a `var` parameter in a
+  `while`, and a local derives for two instances
+  (`template_method_truthiness_condition.mojo`).
   Widening `OPERATOR_DISPATCH` to every operator a trait names, and to the
   three things a struct instance's dispatch adds beneath the operand
   (2026-09-24), moves neither count (1096 and 340 before and after): no

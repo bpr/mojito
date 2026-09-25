@@ -2012,26 +2012,30 @@ impl Checker {
     }
 
     /// Require `expr` to be usable as a condition (`if`/`while`/ternary/
-    /// comprehension filter): `Bool`, or a struct whose `__bool__` supplies
-    /// its truth value (`if collection:`), recorded for MIR to convert.
+    /// comprehension filter), recording a truthiness mark for MIR to convert
+    /// where [`Self::condition_truthiness`] asks for one.
     fn expect_bool(&self, expr: &Expr, context: &str) -> Result<(), TypeError> {
         let ty = self.infer(expr)?;
-        if ty == Ty::Bool {
-            Ok(())
-        } else if scalar_simd_dtype(&ty) == Some(Dtype::Bool) {
-            // A width-1 bool lane (`if a == b` over `UInt64`s) is Boolable:
-            // the condition converts through `Bool(x)` like a struct's
-            // `__bool__`, so the branch sees a `Bool` register.
+        if self.condition_truthiness(&ty, context)? {
             self.truthiness_conditions
                 .borrow_mut()
                 .insert(expr.source_span());
-            Ok(())
-        } else if let Some(result) = self.struct_dunder(&ty, "__bool__", &[]) {
+        }
+        Ok(())
+    }
+
+    /// Whether a condition of type `ty` converts through `Bool(x)`: `false`
+    /// for a `Bool`, `true` for a width-1 bool lane (`if a == b` over
+    /// `UInt64`s) or a struct whose `__bool__` supplies its truth value
+    /// (`if collection:`), and an error for anything else.
+    fn condition_truthiness(&self, ty: &Ty, context: &str) -> Result<bool, TypeError> {
+        if *ty == Ty::Bool {
+            Ok(false)
+        } else if scalar_simd_dtype(ty) == Some(Dtype::Bool) {
+            Ok(true)
+        } else if let Some(result) = self.struct_dunder(ty, "__bool__", &[]) {
             require_dunder_ret(result?, &Ty::Bool, "__bool__")?;
-            self.truthiness_conditions
-                .borrow_mut()
-                .insert(expr.source_span());
-            Ok(())
+            Ok(true)
         } else {
             Err(TypeError::TypeMismatch {
                 expected: "Bool".to_string(),

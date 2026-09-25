@@ -770,6 +770,11 @@ impl MethodFeatures {
     /// by-value parameter: its dtype and width are the same under every
     /// instance, and it selects no callee.
     pub const SIMD_CONSTRUCTIONS: Self = Self(1 << 26);
+    /// An `if` or `while` condition that is a place read whole — a
+    /// parameter, a local, or a field of `self` — of a type tested through
+    /// `__bool__` rather than read as a `Bool`: whether it converts is
+    /// decided by its type, which an instance judges again.
+    pub const TRUTHINESS: Self = Self(1 << 27);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
@@ -1191,6 +1196,10 @@ pub struct CheckedBodyFacts {
     /// syntax and the callee's convention, so an instance inherits the set
     /// and owes the copy: the receiver's type must be implicitly copyable.
     pub implicitly_copied_consuming_receivers: Vec<OccurrenceId>,
+    /// Conditions tested through `Bool(x)` rather than read as a `Bool`.
+    /// Whether one is marked is decided by its type, so an instance judges
+    /// each marked condition again at its own type.
+    pub truthiness_conditions: Vec<OccurrenceId>,
     /// Expressions kept as a reference handle rather than read through, and
     /// whether the handle is writable. Only the value of a `return` in a
     /// method that returns a reference derives: the declaration and the
@@ -1408,6 +1417,7 @@ impl CheckedBodyFacts {
             discarded_reference_results,
             explicit_destroy_calls,
             implicitly_copied_consuming_receivers,
+            truthiness_conditions,
             reference_value_uses,
             deletable_bindings,
             linear_bindings,
@@ -1571,6 +1581,7 @@ impl CheckedBodyFacts {
             implicitly_copied_consuming_receivers: flagged(
                 &self.implicitly_copied_consuming_receivers,
             ),
+            truthiness_conditions: flagged(&self.truthiness_conditions),
             reference_value_uses: at(&self.reference_value_uses, occurrences, folded),
             deletable_bindings: flagged_except(&self.deletable_bindings, &[]),
             linear_bindings: flagged_except(&self.linear_bindings, &[]),
@@ -1671,6 +1682,7 @@ impl CheckedBodyFacts {
             + self.discarded_reference_results.len()
             + self.explicit_destroy_calls.len()
             + self.implicitly_copied_consuming_receivers.len()
+            + self.truthiness_conditions.len()
             + self.reference_value_uses.len()
             + self.deletable_bindings.len()
             + self.linear_bindings.len()

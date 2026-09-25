@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method whose `if` or `while` tests a struct through `__bool__` — a field
+  of `self`, a parameter, or a local — now derives its instances from the
+  checked template: the instance judges each such condition again at its own
+  type. `Bool(x)` of a closed struct place and a reference call on a `var`
+  local derive beside it. Such bodies, like `OptionalReg.or_else` and
+  `List.index`, used to keep the clone check because truthiness conditions
+  had no derivation recipe.
 - A method whose body constructs a closed `SIMD` or scalar-alias value
   (`UInt8(1)`) and hands it to a hasher, to a by-value parameter, or to a
   `var` local now derives its instances from the checked template: the

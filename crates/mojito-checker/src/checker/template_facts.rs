@@ -1392,6 +1392,22 @@ impl Checker {
             fact_at(&facts.expression_types, *temporary)
                 .is_some_and(|ty| matches!(ty, Ty::Param { .. }))
         });
+        // `expect_bool`'s judgment of each condition the template tested
+        // through `Bool(x)`, at the instance's type: a `Bool` is read as it
+        // stands. A condition the template read as a `Bool` stays one.
+        let mut truthiness = Vec::new();
+        for condition in &facts.truthiness_conditions {
+            let converts = fact_at(&facts.expression_types, *condition)
+                .ok_or("a truthiness condition has no recorded type")
+                .and_then(|ty| {
+                    self.condition_truthiness(ty, "condition")
+                        .map_err(|_| "a condition is not boolable for the instance")
+                })?;
+            if converts {
+                truthiness.push(*condition);
+            }
+        }
+        facts.truthiness_conditions = truthiness;
         renumber_locals(&mut facts)?;
         let folded = |owner: &TemplateOwner| matches!(owner, TemplateOwner::CompileTimeParam(_));
         if facts
@@ -2574,7 +2590,8 @@ impl Checker {
     /// - `STATEMENTS`: a runtime statement is checked once whatever runs it,
     ///   so `if`, `while`, `break`, `continue`, and a bare `return` neither
     ///   drop nor copy an occurrence. A condition's recorded type is exactly
-    ///   `Bool`, which `expect_bool` accepts without a truthiness fact. A
+    ///   `Bool`, which `expect_bool` accepts without a truthiness fact, unless
+    ///   the body holds `TRUTHINESS`. A
     ///   stored field is a closed scalar, so the store is never an in-place
     ///   operator of the field's type. Invalidations name `self` and locals
     ///   by template owner.
@@ -2677,6 +2694,9 @@ impl Checker {
     ///   closed construction records its dtype and width, which the instance
     ///   installs as they stand; its value goes to a checker builtin, a
     ///   by-value parameter, or a `var` local.
+    /// - `TRUTHINESS`: see [`BodyShape::truthiness_condition`]. A condition
+    ///   read whole from a place is marked for `Bool(x)` by its type alone,
+    ///   so an instance repeats `expect_bool`'s judgment at its own type.
     ///
     /// Any other handle, borrowed receiver, reference result, interior
     /// reference, or copyable read in the body refuses it
@@ -3557,6 +3577,9 @@ impl Checker {
                     .borrow()
                     .contains(span)
             }),
+            truthiness_conditions: keyed(&|span| {
+                self.truthiness_conditions.borrow().contains(span)
+            }),
             reference_value_uses: values(&occurrences, &self.reference_value_uses.borrow()),
             deletable_bindings: keyed(&|span| {
                 self.explicit_destroy_deletability
@@ -4174,7 +4197,7 @@ impl Checker {
 
     /// Install the bare per-occurrence marks: temporaries no one consumes,
     /// discarded results, explicit-destroy calls, consuming calls on a copied
-    /// receiver, and each binding's deletability.
+    /// receiver, truthiness conditions, and each binding's deletability.
     fn install_occurrence_marks(
         &self,
         facts: &CheckedBodyFacts,
@@ -4198,6 +4221,9 @@ impl Checker {
         }
         for id in &facts.linear_temporaries {
             self.linear_temporaries.borrow_mut().insert(span(id)?);
+        }
+        for id in &facts.truthiness_conditions {
+            self.truthiness_conditions.borrow_mut().insert(span(id)?);
         }
         let mut deletability = self.explicit_destroy_deletability.borrow_mut();
         for id in &facts.deletable_bindings {
@@ -4505,6 +4531,7 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::CallResultOrigins
         | FactTable::IterationProtocols
         | FactTable::SimdConstructions
+        | FactTable::TruthinessConditions
         | FactTable::CallTransfers => true,
         FactTable::ContextualBases
         | FactTable::ParameterizedMethodCalls
@@ -4512,8 +4539,7 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::ViewResultInteriors
         | FactTable::WithDesugars
         | FactTable::DeclarationCaptures
-        | FactTable::ComprehensionBindings
-        | FactTable::TruthinessConditions => false,
+        | FactTable::ComprehensionBindings => false,
     }
 }
 
@@ -6009,7 +6035,7 @@ impl BodyShape<'_> {
         let on_self =
             self.receiver && matches!(&object.kind, ExprKind::Identifier(name) if name == "self");
         let admitted = !self.keyed
-            && (self.receiver_field(object) || on_self)
+            && (self.receiver_field(object) || on_self || self.value_local(object))
             && arguments
                 .iter()
                 .all(|argument| self.expression(argument) && self.scalar(argument))
@@ -6211,16 +6237,46 @@ impl BodyShape<'_> {
     }
 
     /// A runtime condition: a scalar expression whose recorded type is
-    /// exactly `Bool`, which `expect_bool` accepts without a truthiness fact.
+    /// exactly `Bool`, which `expect_bool` accepts without a truthiness fact,
+    /// or a place tested through `Bool(x)` ([`Self::truthiness_condition`]).
     fn condition(&self, expr: &Expr) -> bool {
         let id = self.occurrence(expr);
-        self.expression(expr)
+        let boolean = self.expression(expr)
             && self.facts.is_none_or(|facts| {
                 facts
                     .expression_types
                     .iter()
                     .any(|(site, ty)| *site == id && *ty == Ty::Bool)
-            })
+            });
+        boolean || self.truthiness_condition(expr)
+    }
+
+    /// A condition that reads a parameter, a local, or a field of `self`
+    /// whole and tests it through `__bool__`.
+    ///
+    /// The read records only the place's type and binding, and the mark is
+    /// decided by that type alone, which an instance judges again
+    /// (`realize_instance_facts`). Nothing else may be recorded at the
+    /// condition: it is neither copied nor converted.
+    fn truthiness_condition(&self, expr: &Expr) -> bool {
+        let place = match &expr.kind {
+            ExprKind::Identifier(name) => {
+                self.params.contains(&name.as_str())
+                    || self.declared(name)
+                    || self.reference_local(name)
+            }
+            ExprKind::Member { .. } => self.receiver_field(expr) || self.reference_member(expr),
+            _ => false,
+        };
+        let id = self.occurrence(expr);
+        let admitted = place
+            && self.facts.is_none_or(|facts| {
+                facts.truthiness_conditions.contains(&id)
+                    && !facts.copy_place_value_uses.contains(&id)
+                    && fact_at(&facts.conversions, id).is_none()
+                    && fact_at(&facts.operation_adjustments, id).is_none()
+            });
+        admitted && self.holds(MethodFeatures::TRUTHINESS)
     }
 
     /// A whole value of any type, moved or copied out of a parameter, a
@@ -7174,9 +7230,11 @@ impl BodyShape<'_> {
     }
 
     /// A built-in scalar conversion of one value of a closed type
-    /// (`Int(key_hash)`). It selects no callee and records only closed
-    /// types, which no instance changes; a declaration of that name would
-    /// record a selection at the call, and such a call is not this.
+    /// (`Int(key_hash)`, or `Bool(result)` of a closed struct place, which
+    /// its conversion dunder reads in place). It selects no callee and
+    /// records only closed types, which no instance changes; a declaration
+    /// of that name would record a selection at the call, and such a call is
+    /// not this.
     fn scalar_conversion(
         &self,
         id: OccurrenceId,
@@ -7188,10 +7246,19 @@ impl BodyShape<'_> {
         let [argument] = args else {
             return false;
         };
+        let place = match &argument.kind {
+            ExprKind::Identifier(name) => {
+                self.params.contains(&name.as_str())
+                    || self.declared(name)
+                    || self.reference_local(name)
+            }
+            ExprKind::Member { .. } => self.receiver_field(argument),
+            _ => false,
+        };
         matches!(name, "Int" | "UInt" | "Bool" | "Float64")
             && param_args.is_empty()
             && kwargs.is_empty()
-            && self.expression(argument)
+            && (self.expression(argument) || place)
             && self.closed(argument)
             && self.facts.is_none_or(|facts| {
                 fact_at(&facts.expression_types, id).is_some_and(closed_scalar)
