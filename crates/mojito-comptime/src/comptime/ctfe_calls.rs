@@ -392,6 +392,7 @@ pub(super) fn collect_vm_ctfe_stmt_calls(statement: &Stmt, calls: &mut HashSet<S
             collect_vm_ctfe_expr_calls(iter, calls);
             collect_vm_ctfe_block_calls(body, calls);
         }
+        StmtKind::Scope(body) => collect_vm_ctfe_block_calls(body, calls),
         StmtKind::With { items, body } => {
             for item in items {
                 collect_vm_ctfe_expr_calls(&item.context, calls);

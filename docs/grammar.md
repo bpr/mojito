@@ -963,7 +963,11 @@ time and keeps only the taken branch — the others are **dropped before type-ch
 so an unselected branch may contain code valid only for other specializations; `comptime
 for` unrolls over a compile-time **`range(...)` or a compile-time tuple/list**
 (`comptime for s in ("a", "b"):`), substituting the loop variable with its literal value
-in each body copy, bounded by an iteration **quota**. A zero-step range is empty
+in each body copy, bounded by an iteration **quota**. Each copy, like a selected
+`comptime if` arm, is a scope of its own, as upstream's: a kept block that declares a
+binding is emitted as an elaborator-only `StmtKind::Scope` (no source spelling), so a
+`var` in the body is one binding per iteration and may shadow a local of the enclosing
+block. A zero-step range is empty
 in both direct unrolling and VM-backed CTFE, so it produces no body copies and
 does not consume loop fuel. Shared compile-time values
 are `Int`/`Bool`/`String`/`Tuple`/`List` (integer arithmetic & comparisons, `and`/`or`/

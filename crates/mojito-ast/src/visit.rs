@@ -165,6 +165,7 @@ pub fn walk_stmt<V: Visitor>(visitor: &mut V, statement: &Stmt) {
             walk_block(visitor, body);
             walk_optional_block(visitor, orelse.as_deref());
         }
+        StmtKind::Scope(body) => walk_block(visitor, body),
         StmtKind::For {
             var,
             iter,
@@ -674,6 +675,7 @@ pub fn walk_stmt_mut<V: MutVisitor>(visitor: &mut V, statement: &mut Stmt) {
                 walk_block_mut(visitor, body);
             }
         }
+        StmtKind::Scope(body) => walk_block_mut(visitor, body),
         StmtKind::For { iter, body, .. } | StmtKind::ComptimeFor { iter, body, .. } => {
             walk_expr_mut(visitor, iter);
             walk_block_mut(visitor, body);

@@ -451,15 +451,28 @@ fn check_block(
         env.push();
     }
     for statement in body {
-        let Some(next) = check_stmt(
-            statement,
-            env,
-            binding_types,
-            comprehension_bindings,
-            deletability,
-            types,
-        )?
-        else {
+        // A kept compile-time block runs once, straight through, and its locals'
+        // obligations end with it.
+        let next = match &statement.kind {
+            StmtKind::Scope(block) => check_block(
+                block,
+                env,
+                true,
+                binding_types,
+                comprehension_bindings,
+                deletability,
+                types,
+            )?,
+            _ => check_stmt(
+                statement,
+                env,
+                binding_types,
+                comprehension_bindings,
+                deletability,
+                types,
+            )?,
+        };
+        let Some(next) = next else {
             return Ok(None);
         };
         env = next;
@@ -1527,6 +1540,7 @@ fn consumed_roots_in_stmts(statements: &[Stmt], env: &Env, roots: &mut HashSet<u
                 consumed_roots_in_expr(iter, env, roots);
                 consumed_roots_in_stmts(body, env, roots);
             }
+            StmtKind::Scope(body) => consumed_roots_in_stmts(body, env, roots),
             StmtKind::Try {
                 body,
                 except,

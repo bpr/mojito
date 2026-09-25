@@ -44,7 +44,9 @@ pub(super) fn block_can_escape_owned_iteration(statements: &[Stmt], nested_loops
                     .as_ref()
                     .is_some_and(|body| block_can_escape_owned_iteration(body, nested_loops))
         }
-        StmtKind::With { body, .. } => block_can_escape_owned_iteration(body, nested_loops),
+        StmtKind::With { body, .. } | StmtKind::Scope(body) => {
+            block_can_escape_owned_iteration(body, nested_loops)
+        }
         // Nested declarations do not execute as part of the loop body.
         StmtKind::Def { .. } | StmtKind::Struct { .. } | StmtKind::Trait { .. } => false,
         _ => false,

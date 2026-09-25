@@ -918,7 +918,8 @@ pub enum TemplateOwner {
     Param(usize),
     /// A method's `self`.
     Receiver,
-    /// The n-th local the body declares, in checking order.
+    /// The n-th local the body declares, in checking order. An instance
+    /// counts each unrolled copy of a declaration as a local of its own.
     Local(u32),
     /// A module-scope binding, by name. An instance's call may name a clone
     /// where the template names the generic, so a derivation re-reads the

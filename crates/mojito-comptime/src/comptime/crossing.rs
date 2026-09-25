@@ -116,6 +116,7 @@ impl Elab<'_> {
                 self.cross_opt_block(orelse, env, shadowed)?;
                 self.cross_opt_block(finalbody, env, shadowed)
             }
+            StmtKind::Scope(body) => self.cross_block(body, env, shadowed),
             StmtKind::With { items, body } => {
                 for item in items {
                     self.cross_expr(&mut item.context, env, shadowed)?;
@@ -435,7 +436,9 @@ fn collect_runtime_locals(stmts: &[Stmt], out: &mut HashSet<String>) {
                     collect_runtime_locals(orelse, out);
                 }
             }
-            StmtKind::ComptimeFor { body, .. } => collect_runtime_locals(body, out),
+            StmtKind::ComptimeFor { body, .. } | StmtKind::Scope(body) => {
+                collect_runtime_locals(body, out);
+            }
             StmtKind::Try {
                 body,
                 except,

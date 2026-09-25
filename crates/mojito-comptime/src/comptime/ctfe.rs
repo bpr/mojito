@@ -750,6 +750,7 @@ impl Elab<'_> {
                 self.rewrite_vm_ctfe_expr(iter, scope)?;
                 self.rewrite_vm_ctfe_block(body, scope)
             }
+            StmtKind::Scope(body) => self.rewrite_vm_ctfe_block(body, scope),
             StmtKind::Return(None) | StmtKind::Pass => Ok(()),
             _ => Ok(()),
         }
@@ -1034,6 +1035,7 @@ impl Elab<'_> {
                         .as_ref()
                         .is_none_or(|body| self.vm_ctfe_safe_block(body, visiting, needed))
             }
+            StmtKind::Scope(body) => self.vm_ctfe_safe_block(body, visiting, needed),
             StmtKind::With { items, body } => {
                 items
                     .iter()

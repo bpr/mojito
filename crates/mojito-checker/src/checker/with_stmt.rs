@@ -341,6 +341,7 @@ fn splice_nested(stmt: &mut Stmt, desugars: &HashMap<SourceSpan, Vec<Stmt>>) {
         }
         StmtKind::ComptimeFor { body, .. }
         | StmtKind::With { body, .. }
+        | StmtKind::Scope(body)
         | StmtKind::Def { body, .. } => splice_with_desugars(body, desugars),
         StmtKind::Try {
             body,

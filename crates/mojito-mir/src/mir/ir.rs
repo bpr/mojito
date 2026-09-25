@@ -52,6 +52,7 @@ pub(super) fn region_crosses_control(body: &[Stmt]) -> bool {
                     || orelse.as_ref().is_some_and(|b| walk(b, loop_depth))
             }
             StmtKind::While { body, .. } | StmtKind::For { body, .. } => walk(body, loop_depth + 1),
+            StmtKind::Scope(body) => walk(body, loop_depth),
             StmtKind::Try {
                 body,
                 except,

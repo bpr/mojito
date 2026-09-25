@@ -2659,6 +2659,7 @@ impl Flatten<'_> {
             StmtKind::If { .. }
             | StmtKind::While { .. }
             | StmtKind::For { .. }
+            | StmtKind::Scope(_)
             | StmtKind::Break
             | StmtKind::Continue
             | StmtKind::Return(_)

@@ -1010,6 +1010,11 @@ fn reassigned_names(
                     scan(inner, counts);
                 }
             }
+            StmtKind::Scope(body) => {
+                for inner in body {
+                    scan(inner, counts);
+                }
+            }
             StmtKind::For {
                 var, body, orelse, ..
             } => {

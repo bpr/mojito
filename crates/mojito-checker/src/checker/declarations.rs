@@ -109,7 +109,7 @@ pub(super) fn stmt_returns(stmt: &Stmt) -> bool {
         StmtKind::ComptimeFor { body, .. } => block_holds_return(body),
         // A `with` body runs exactly once (its desugar is a `try`/`finally`
         // whose cleanup cannot divert control), so it diverges iff the body does.
-        StmtKind::With { body, .. } => definitely_returns(body),
+        StmtKind::With { body, .. } | StmtKind::Scope(body) => definitely_returns(body),
         // A `try` definitely diverges when: a `finally` does (it overrides every
         // path); or the **normal-completion** path diverges (the body — or, if the
         // body may complete, the `else`) *and* the **exceptional** path does (every
@@ -150,6 +150,9 @@ pub(super) fn definitely_initializes_named_result(body: &[Stmt], name: &str) -> 
             }
             StmtKind::Return(Some(_)) | StmtKind::Raise(_) => return true,
             StmtKind::Return(None) => return initialized,
+            StmtKind::Scope(body) => {
+                initialized |= definitely_initializes_named_result(body, name);
+            }
             StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
                 let Some(orelse) = orelse else { continue };
                 if branches
@@ -255,8 +258,9 @@ fn init_field_flow(body: &[Stmt], field: &str, mut initialized: bool) -> InitFie
             StmtKind::While { body, .. } | StmtKind::For { body, .. } => {
                 valid &= init_field_flow(body, field, initialized).valid;
             }
-            // A `with` body runs exactly once, straight through.
-            StmtKind::With { body, .. } => {
+            // A `with` body, like a kept compile-time block, runs exactly
+            // once, straight through.
+            StmtKind::With { body, .. } | StmtKind::Scope(body) => {
                 let flow = init_field_flow(body, field, initialized);
                 valid &= flow.valid;
                 match flow.normal {

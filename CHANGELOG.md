@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `var` declared inside a `comptime for` body that unrolls more than once
+  is now one binding per iteration, as upstream: each unrolled copy that
+  declares a binding is its own scope, so the body may also shadow an outer
+  local, and an owning local is destroyed within its iteration. The copies
+  used to share one scope, and the second declaration was rejected as
+  already declared. A selected `comptime if` arm is likewise a scope, so its
+  `var` no longer collides with a later one of the same name. A compile-time-keyed `def` holding such a scalar local
+  now derives its instances from the checked template, each copy of the
+  declaration a local of its own, instead of keeping the clone check.
+
 - A checked template whose body replays a callee's transfer summary
   (`self.items.append(value^)`) is now reused from its own facts in every
   later transfer round instead of being inferred again, and its

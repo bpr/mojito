@@ -182,6 +182,7 @@ impl Elab<'_> {
                 }
                 Ok(())
             }
+            StmtKind::Scope(body) => self.mono_block(body, consts, mono),
             StmtKind::With { items, body } => {
                 for WithItem { context, .. } in items.iter_mut() {
                     self.mono_expr(context, consts, mono)?;

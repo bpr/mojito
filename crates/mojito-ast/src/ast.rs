@@ -1101,6 +1101,13 @@ pub enum StmtKind {
         orelse: Option<Vec<Stmt>>,
         finalbody: Option<Vec<Stmt>>,
     },
+    /// A block compile-time elaboration kept that declares a binding — one
+    /// unrolled copy of a `comptime for` body, or the arm a `comptime if`
+    /// selected: a lexical scope with no runtime effect of its own, so each
+    /// iteration's locals are its own and an arm's end with it. Elaboration
+    /// emits it with the compile-time statement's identity; the parser never
+    /// produces one.
+    Scope(Vec<Stmt>),
     /// `pass`
     Pass,
     /// `break` — exit the innermost loop.
@@ -1716,6 +1723,7 @@ pub fn lambdas_in_stmt<'a>(stmt: &'a Stmt, out: &mut Vec<&'a Expr>) {
         | StmtKind::Struct { .. }
         | StmtKind::Trait { .. }
         | StmtKind::Try { .. }
+        | StmtKind::Scope(_)
         | StmtKind::Return(None)
         | StmtKind::Import { .. }
         | StmtKind::FromImport { .. }
@@ -2139,6 +2147,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                     self.expr(iter);
                     self.block(body);
                 }
+                StmtKind::Scope(body) => self.block(body),
                 StmtKind::With { items, body } => {
                     for item in items {
                         self.expr(&mut item.context);

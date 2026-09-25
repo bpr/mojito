@@ -383,6 +383,9 @@ impl NestedMono {
                 }
             }
             StmtKind::Raise(value) | StmtKind::Expr(value) => self.qualify_expression(value),
+            StmtKind::Scope(body) => {
+                self.qualify_block(body, definition_depth);
+            }
             StmtKind::With { items, body } => {
                 for item in items.iter_mut() {
                     self.qualify_expression(&mut item.context);
@@ -1041,6 +1044,7 @@ impl NestedMono {
                 }
                 Ok(())
             }
+            StmtKind::Scope(body) => self.scan_block(elab, body, runtime_packs),
             StmtKind::With { items, body } => {
                 for item in items.iter_mut() {
                     self.scan_expression(elab, &mut item.context, runtime_packs)?;
@@ -1618,7 +1622,9 @@ impl NestedMono {
                     self.replace_templates(body);
                 }
             }
-            StmtKind::ComptimeFor { body, .. } | StmtKind::With { body, .. } => {
+            StmtKind::ComptimeFor { body, .. }
+            | StmtKind::With { body, .. }
+            | StmtKind::Scope(body) => {
                 self.replace_templates(body);
             }
             StmtKind::Try {

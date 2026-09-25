@@ -1254,7 +1254,10 @@ the zero-iteration path.
 
 Explicit declarations instead keep one runtime slot per stable checked binding,
 including same-spelled declarations in sibling scopes produced by compile-time
-unrolling. HIR may suffix the internal slot name, but downstream place lookup is
+unrolling: an unrolled `comptime for` copy or a selected `comptime if` arm
+that declares a binding is an elaborator-emitted `StmtKind::Scope`, a straight-line block every phase treats as
+a lexical scope, and a template derivation counts each copy of a declaration as a
+local of its own (`renumber_locals`). HIR may suffix the internal slot name, but downstream place lookup is
 by owner identity; independently inferred sibling types therefore never merge
 in `MirFunction::var_tys`. A substituted local `ref` alias has no runtime handle
 payload, yet its analytical slot retains the checked `Ty::Ref` capability used

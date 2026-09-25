@@ -2104,8 +2104,8 @@ fn build_checked_expressions(
         fn block(&mut self, statements: &[Stmt]) {
             use mojito_ast::ast::StmtKind::{
                 Assign, AugAssign, Break, Comptime, ComptimeFor, ComptimeIf, Continue, Def, Expr,
-                For, FromImport, If, Import, Pass, Raise, RefDecl, Return, SetPlace, Struct, Trait,
-                Try, Unpack, VarDecl, While, With,
+                For, FromImport, If, Import, Pass, Raise, RefDecl, Return, Scope, SetPlace, Struct,
+                Trait, Try, Unpack, VarDecl, While, With,
             };
             for statement in statements {
                 match &statement.kind {
@@ -2220,6 +2220,7 @@ fn build_checked_expressions(
                         self.expr(iter);
                         self.block(body);
                     }
+                    Scope(body) => self.block(body),
                     While { cond, body, orelse } => {
                         self.expr(cond);
                         self.block(body);
@@ -2410,9 +2411,9 @@ fn build_checked_declarations(
                             .chain(orelse.iter().map(Vec::as_slice))
                             .chain(finalbody.iter().map(Vec::as_slice))
                             .collect(),
-                        StmtKind::With { body, .. } | StmtKind::ComptimeFor { body, .. } => {
-                            vec![body]
-                        }
+                        StmtKind::With { body, .. }
+                        | StmtKind::ComptimeFor { body, .. }
+                        | StmtKind::Scope(body) => vec![body],
                         _ => Vec::new(),
                     };
                     for body in nested {

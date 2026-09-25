@@ -155,6 +155,7 @@ fn find_nested_defs<'a>(body: &'a [Stmt], out: &mut Vec<&'a Stmt>) {
                     find_nested_defs(orelse, out);
                 }
             }
+            StmtKind::Scope(body) => find_nested_defs(body, out),
             StmtKind::Try {
                 body,
                 except,

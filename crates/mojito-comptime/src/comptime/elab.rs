@@ -144,12 +144,12 @@ impl Elab<'_> {
             StmtKind::ComptimeIf { branches, orelse } => {
                 for (cond, body) in branches {
                     if self.eval(cond, env)?.as_bool("comptime if condition")? {
-                        out.extend(self.block(body, env, in_fn)?);
+                        splice_selected_block(stmt, self.block(body, env, in_fn)?, out);
                         return Ok(());
                     }
                 }
                 if let Some(body) = orelse {
-                    out.extend(self.block(body, env, in_fn)?);
+                    splice_selected_block(stmt, self.block(body, env, in_fn)?, out);
                 }
             }
             StmtKind::ComptimeFor { var, iter, body } => {
@@ -168,7 +168,7 @@ impl Elab<'_> {
                         .iter()
                         .map(|s| rewrite_stmt_cloned(s, subs, false))
                         .collect();
-                    out.extend(self.block(&substituted, env, in_fn)?);
+                    splice_selected_block(stmt, self.block(&substituted, env, in_fn)?, out);
                 }
             }
             StmtKind::VarDecl { name, ty, value } => {
@@ -871,6 +871,31 @@ impl Elab<'_> {
 /// The `$` keeps it apart from every source identifier.
 pub(super) fn pack_binding_marker(binding: &str) -> String {
     format!("$pack${binding}")
+}
+
+/// Append the block elaboration kept of a compile-time statement — the arm a
+/// `comptime if` selected, or one unrolled copy of a `comptime for` body — to
+/// `out`. Each is a scope of its own, so a block that declares a binding is
+/// wrapped in one; a block that declares nothing is spliced as it is.
+fn splice_selected_block(source: &Stmt, block: Vec<Stmt>, out: &mut Vec<Stmt>) {
+    if block.iter().any(declares_binding) {
+        out.push(rebuilt(source, StmtKind::Scope(block)));
+    } else {
+        out.extend(block);
+    }
+}
+
+/// Whether an elaborated statement declares a name in the block it sits in.
+const fn declares_binding(statement: &Stmt) -> bool {
+    matches!(
+        statement.kind,
+        StmtKind::VarDecl { .. }
+            | StmtKind::RefDecl { .. }
+            | StmtKind::Unpack { declares: true, .. }
+            | StmtKind::Comptime { .. }
+            | StmtKind::Def { .. }
+            | StmtKind::Struct { .. }
+    )
 }
 
 /// Whether an elaboration error names the enclosing struct's `Self` or one

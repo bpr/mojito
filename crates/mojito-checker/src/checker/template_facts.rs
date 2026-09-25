@@ -1369,7 +1369,7 @@ impl Checker {
             fact_at(&facts.expression_types, *temporary)
                 .is_some_and(|ty| matches!(ty, Ty::Param { .. }))
         });
-        renumber_locals(&mut facts);
+        renumber_locals(&mut facts)?;
         let folded = |owner: &TemplateOwner| matches!(owner, TemplateOwner::CompileTimeParam(_));
         if facts
             .expression_bindings
@@ -2417,7 +2417,7 @@ impl Checker {
             callable_calls: RefCell::new(Vec::new()),
             repr_calls: RefCell::new(Vec::new()),
         };
-        if !shape.block(body, false)
+        if !shape.block(body)
             || !shape.operators.borrow().is_empty()
             || !shape.bound_builtins.borrow().is_empty()
             || !shape.constructions.borrow().is_empty()
@@ -2856,7 +2856,7 @@ impl Checker {
             constructions: RefCell::new(Vec::new()),
             repr_calls: RefCell::new(Vec::new()),
         };
-        if !shape.block(&method.body, false) {
+        if !shape.block(&method.body) {
             return outside("the body is outside the method grammar");
         }
         let class = || {
@@ -4560,125 +4560,160 @@ fn overload_rebinding_only(derived: &CheckedBodyFacts, inferred: &CheckedBodyFac
 /// Number the locals an instance keeps as its own check would mint them.
 ///
 /// A template numbers every local its body declares, in checking order. An
-/// instance declares only those in the arms the elaborator selected, and never
-/// a `comptime for` variable, so the survivors are renumbered densely in
-/// declaration order. A local no retained declaration introduces is left
+/// instance declares only those in the arms the elaborator selected, once per
+/// unrolled copy of their declaration, and never a `comptime for` variable.
+/// A fact naming a local names the declaration in scope where the fact sits:
+/// the latest copy at or before its occurrence in pre-order, since each
+/// unrolled copy is a scope of its own. A fact that sits at no occurrence may
+/// name only a local declared once. The declarations are renumbered densely
+/// in declaration order. A local no retained declaration introduces is left
 /// alone; installing it then fails as a lost binding.
-fn renumber_locals(facts: &mut CheckedBodyFacts) {
-    let declared: Vec<u32> = facts
+fn renumber_locals(facts: &mut CheckedBodyFacts) -> Result<(), &'static str> {
+    let occurrences = facts.occurrences.clone();
+    let position = |id: OccurrenceId| occurrences.iter().position(|found| *found == id);
+    let declared: Vec<(usize, u32)> = facts
         .statement_bindings
         .iter()
-        .filter_map(|(_, owner)| match owner {
-            TemplateOwner::Local(local) => Some(*local),
+        .filter_map(|(id, owner)| match owner {
+            TemplateOwner::Local(index) => Some((position(*id)?, *index)),
             _ => None,
         })
         .collect();
-    let renumber = |owner: &mut TemplateOwner| {
-        if let TemplateOwner::Local(local) = owner
-            && let Some(dense) = declared.iter().position(|kept| kept == local)
-        {
-            *local = u32::try_from(dense).unwrap_or(u32::MAX);
+    let mut ambiguous = false;
+    for_each_owner(facts, &mut |at, owner| {
+        let TemplateOwner::Local(index) = owner else {
+            return;
+        };
+        let mut copies = declared
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, local))| local == index);
+        let declaration = if let Some(at) = at {
+            let at = position(at);
+            copies.rfind(|(_, (declared_at, _))| at.is_some_and(|at| *declared_at <= at))
+        } else {
+            let only = copies.next();
+            ambiguous |= copies.next().is_some();
+            only
+        };
+        if let Some((dense, _)) = declaration {
+            *index = u32::try_from(dense).unwrap_or(u32::MAX);
         }
-    };
-    for_each_owner(facts, &renumber);
+    });
+    if ambiguous {
+        return Err("a local declared in several unrolled copies is named outside any occurrence");
+    }
     facts.locals = u32::try_from(declared.len()).unwrap_or(u32::MAX);
+    Ok(())
 }
 
-/// Visit every binding a bundle names by template owner: the binding tables,
-/// each invalidation's root and exception, and the root of every place a
-/// reference's origin holds.
-fn for_each_owner(facts: &mut CheckedBodyFacts, visit: &dyn Fn(&mut TemplateOwner)) {
-    fn origin_owners(origin: &mut TemplateOrigin, visit: &dyn Fn(&mut TemplateOwner)) {
+/// Visit every binding a bundle names by template owner, with the occurrence
+/// the fact naming it sits at: the binding tables, each invalidation's root
+/// and exception, and the root of every place a reference's origin holds. A
+/// transferred origin is the body's, and sits at none.
+fn for_each_owner(
+    facts: &mut CheckedBodyFacts,
+    visit: &mut dyn FnMut(Option<OccurrenceId>, &mut TemplateOwner),
+) {
+    fn origin_owners(
+        origin: &mut TemplateOrigin,
+        at: Option<OccurrenceId>,
+        visit: &mut dyn FnMut(Option<OccurrenceId>, &mut TemplateOwner),
+    ) {
         match origin {
-            TemplateOrigin::Place(place) => visit(&mut place.root),
+            TemplateOrigin::Place(place) => visit(at, &mut place.root),
             TemplateOrigin::Union(members) => members
                 .iter_mut()
-                .for_each(|member| origin_owners(member, visit)),
+                .for_each(|member| origin_owners(member, at, visit)),
             TemplateOrigin::Unrooted(_) => {}
         }
     }
-    /// Every call contract a bundle keeps: the selected calls and those an
-    /// element store embeds.
+    /// Every call contract a bundle keeps, at its call: the selected calls
+    /// and those an element store embeds.
     fn calls<'f>(
         selected: &'f mut [(OccurrenceId, TemplateCallContract)],
         stores: &'f mut [(OccurrenceId, TemplateAugmentedSubscript)],
-    ) -> impl Iterator<Item = &'f mut TemplateCallContract> {
-        selected.iter_mut().map(|(_, call)| call).chain(
-            stores
-                .iter_mut()
-                .flat_map(|(_, store)| store.contracts_mut()),
-        )
+    ) -> impl Iterator<Item = (OccurrenceId, &'f mut TemplateCallContract)> {
+        selected
+            .iter_mut()
+            .map(|(id, call)| (*id, call))
+            .chain(stores.iter_mut().flat_map(|(id, store)| {
+                let id = *id;
+                store.contracts_mut().map(move |call| (id, call))
+            }))
     }
-    for (_, owner) in facts
+    for (id, owner) in facts
         .statement_bindings
         .iter_mut()
         .chain(&mut facts.expression_bindings)
     {
-        visit(owner);
+        visit(Some(*id), owner);
     }
-    for (_, place) in &mut facts.interior_references {
-        visit(&mut place.root);
+    for (id, place) in &mut facts.interior_references {
+        visit(Some(*id), &mut place.root);
     }
-    for (_, reference) in facts
+    for (id, reference) in facts
         .reference_results
         .iter_mut()
         .chain(&mut facts.reference_binding_types)
         .chain(&mut facts.reference_place_types)
     {
-        origin_owners(&mut reference.origin, visit);
+        origin_owners(&mut reference.origin, Some(*id), visit);
     }
-    for call in calls(&mut facts.selected_calls, &mut facts.augmented_subscripts) {
+    for (id, call) in calls(&mut facts.selected_calls, &mut facts.augmented_subscripts) {
         if let Some(reference) = &mut call.reference_result {
-            origin_owners(&mut reference.origin, visit);
+            origin_owners(&mut reference.origin, Some(id), visit);
         }
         for origin in &mut call.result_origins {
-            origin_owners(origin, visit);
+            origin_owners(origin, Some(id), visit);
         }
     }
-    for origin in facts
-        .typed_origins
-        .iter_mut()
-        .flat_map(|typed| &mut typed.origins)
-    {
-        origin_owners(origin, visit);
+    for typed in &mut facts.typed_origins {
+        for origin in &mut typed.origins {
+            origin_owners(origin, Some(typed.occurrence), visit);
+        }
     }
-    for resolved in facts
-        .call_result_origins
-        .iter_mut()
-        .flat_map(|(_, slots)| slots)
-    {
-        origin_owners(&mut resolved.origin, visit);
+    for (id, slots) in &mut facts.call_result_origins {
+        for resolved in slots {
+            origin_owners(&mut resolved.origin, Some(*id), visit);
+        }
     }
-    for source in facts
-        .call_transfers
-        .iter_mut()
-        .flat_map(|(_, transfers)| transfers)
-        .flat_map(|transfer| &mut transfer.sources)
-    {
-        origin_owners(&mut source.origin, visit);
+    for (id, transfers) in &mut facts.call_transfers {
+        for source in transfers
+            .iter_mut()
+            .flat_map(|transfer| &mut transfer.sources)
+        {
+            origin_owners(&mut source.origin, Some(*id), visit);
+        }
     }
     for (dest, sources) in &mut facts.transferred_origins {
-        visit(dest);
+        visit(None, dest);
         for source in sources {
-            origin_owners(&mut source.origin, visit);
+            origin_owners(&mut source.origin, None, visit);
         }
     }
     let call_invalidations = calls(&mut facts.selected_calls, &mut facts.augmented_subscripts)
-        .flat_map(|call| {
+        .flat_map(|(id, call)| {
             call.arguments
                 .iter_mut()
                 .flat_map(|argument| &mut argument.invalidations)
                 .chain(&mut call.invalidations)
+                .map(move |invalidation| (id, invalidation))
         });
-    for invalidation in facts
+    let invalidations = facts
         .interior_invalidations
         .iter_mut()
-        .flat_map(|(_, invalidations)| invalidations)
-        .chain(call_invalidations)
-    {
-        visit(&mut invalidation.root);
+        .flat_map(|(id, invalidations)| {
+            let id = *id;
+            invalidations
+                .iter_mut()
+                .map(move |invalidation| (id, invalidation))
+        })
+        .chain(call_invalidations);
+    for (id, invalidation) in invalidations {
+        visit(Some(id), &mut invalidation.root);
         if let Some(except) = &mut invalidation.except {
-            visit(except);
+            visit(Some(id), except);
         }
     }
 }
@@ -5637,7 +5672,7 @@ enum LocalKind {
 }
 
 impl BodyShape<'_> {
-    fn statement(&self, statement: &Stmt, in_loop: bool) -> bool {
+    fn statement(&self, statement: &Stmt) -> bool {
         match &statement.kind {
             StmtKind::Return(value) if self.reference_result.is_some() => value
                 .as_ref()
@@ -5656,20 +5691,19 @@ impl BodyShape<'_> {
                 .iter()
                 .map(|(_, arm)| arm)
                 .chain(orelse)
-                .all(|arm| self.block(arm, in_loop)),
+                .all(|arm| self.block(arm)),
             // An unrolled body is copied once per iteration, every copy
-            // sharing the bindings around the loop. A local declared inside
-            // would need one binding per copy, which no recipe mints yet, so
-            // none is admitted. The loop variable folds to a literal wherever
-            // it survives, which `folded_value` admits where the literal's
-            // facts are the name's.
+            // sharing the bindings around the loop; a local declared inside
+            // is one binding per copy (`renumber_locals`). The loop variable
+            // folds to a literal wherever it survives, which `folded_value`
+            // admits where the literal's facts are the name's.
             StmtKind::ComptimeFor { var, body, .. } if self.keyed => {
                 self.loop_vars.borrow_mut().push(var.clone());
-                let admitted = self.block(body, true);
+                let admitted = self.block(body);
                 self.loop_vars.borrow_mut().pop();
                 admitted
             }
-            StmtKind::VarDecl { name, value, .. } if self.keyed && !in_loop => {
+            StmtKind::VarDecl { name, value, .. } if self.keyed => {
                 let scalar = self.expression(value) && self.scalar(value);
                 self.locals
                     .borrow_mut()
@@ -5714,8 +5748,8 @@ impl BodyShape<'_> {
             StmtKind::If { branches, orelse } if !self.keyed => {
                 branches
                     .iter()
-                    .all(|(condition, arm)| self.condition(condition) && self.block(arm, in_loop))
-                    && orelse.as_ref().is_none_or(|arm| self.block(arm, in_loop))
+                    .all(|(condition, arm)| self.condition(condition) && self.block(arm))
+                    && orelse.as_ref().is_none_or(|arm| self.block(arm))
                     && self.holds(MethodFeatures::STATEMENTS)
             }
             StmtKind::While {
@@ -5723,9 +5757,7 @@ impl BodyShape<'_> {
                 body,
                 orelse: None,
             } if !self.keyed => {
-                self.condition(cond)
-                    && self.block(body, in_loop)
-                    && self.holds(MethodFeatures::STATEMENTS)
+                self.condition(cond) && self.block(body) && self.holds(MethodFeatures::STATEMENTS)
             }
             // A scalar field of a writable `self`: the store is a plain
             // scalar write, never an in-place operator of the field's type.
@@ -6544,11 +6576,9 @@ impl BodyShape<'_> {
     }
 
     /// A nested block: its locals go out of scope with it.
-    fn block(&self, statements: &[Stmt], in_loop: bool) -> bool {
+    fn block(&self, statements: &[Stmt]) -> bool {
         let outer = self.locals.borrow().len();
-        let admitted = statements
-            .iter()
-            .all(|statement| self.statement(statement, in_loop));
+        let admitted = statements.iter().all(|statement| self.statement(statement));
         self.locals.borrow_mut().truncate(outer);
         admitted
     }

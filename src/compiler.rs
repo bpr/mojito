@@ -149,6 +149,10 @@ pub fn validate_module_scope(stmts: &[Stmt]) -> Result<(), TypeError> {
             | StmtKind::Import { .. }
             | StmtKind::FromImport { .. }
             | StmtKind::Pass => continue,
+            StmtKind::Scope(body) => {
+                validate_module_scope(body)?;
+                continue;
+            }
             StmtKind::VarDecl { .. } => "variable declaration",
             StmtKind::RefDecl { .. } => "reference declaration",
             StmtKind::Assign { .. } | StmtKind::SetPlace { .. } => "assignment",

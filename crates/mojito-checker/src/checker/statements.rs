@@ -1626,6 +1626,9 @@ impl Checker {
             }
             StmtKind::ComptimeIf { .. } => Err(TypeError::Unsupported("comptime if".to_string())),
             StmtKind::ComptimeFor { .. } => Err(TypeError::Unsupported("comptime for".to_string())),
+            // A kept compile-time block is straight-line code, so what it
+            // initializes stays initialized after it.
+            StmtKind::Scope(body) => self.check_scoped_block(body, ret, in_loop),
 
             StmtKind::If { branches, orelse } => {
                 self.check_conditional(branches, orelse.as_deref(), ret, in_loop, false)

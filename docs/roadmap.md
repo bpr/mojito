@@ -35,18 +35,7 @@ parameters symbolic, or deriving an instantiation from a checked template. A
 defect found on the way is filed by its kind; a divergence from the pin goes
 to section 3, however small.
 
-- [ ] **1.1 A local declared inside an unrolled loop has no per-copy binding**
-
-  Problem: an unrolled `comptime for` copies its body once per iteration, and
-  a derivation mints one binding per template local, not one per copy.
-  - `BodyShape` therefore rejects a `var` inside a `comptime for`, and the
-    body keeps the clone check.
-  - `OccurrenceId::copy` already tells the copies apart. The missing piece is
-    a `TemplateOwner::Local` that carries the copy of its declaration.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
-- [ ] **1.2 A call to an explicit destructor keeps the clone check**
+- [ ] **1.1 A call to an explicit destructor keeps the clone check**
 
   Problem: `ExplicitDestroyCalls` has no derivation recipe, so a body that
   calls a `deinit self` method other than `__deinit__` is inferred per
@@ -64,14 +53,14 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.3 A consuming method call on a copied place receiver keeps the clone
+- [ ] **1.2 A consuming method call on a copied place receiver keeps the clone
   check**
 
   Problem: `ImplicitlyCopiedConsumingReceivers` has no derivation recipe, so a
   body that calls a consuming method on a place it does not own is inferred
   per instance.
   - It blocks 2 templates and 4 clones per pass in `stdlib_heavy`, always
-    beside 1.2: the slice overloads of `List.__getitem__` and
+    beside 1.1: the slice overloads of `List.__getitem__` and
     `Span.__getitem__` call `or_else` on `slice.start`.
   - The mark records that the receiver is copied before the call consumes it,
     which depends on the receiver's type being `ImplicitlyCopyable`. An
@@ -86,7 +75,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.4 A runtime `for` keeps the clone check**
+- [ ] **1.3 A runtime `for` keeps the clone check**
 
   Problem: `IterationProtocols` has no derivation recipe, so every body with
   a runtime `for` loop is inferred per instance.
@@ -101,7 +90,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.5 A SIMD construction keeps the clone check**
+- [ ] **1.4 A SIMD construction keeps the clone check**
 
   Problem: `SimdConstructions` has no derivation recipe, so a body that
   builds a `SIMD` or `Scalar` value is inferred per instance.
@@ -116,7 +105,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.6 A condition on a `Boolable` struct keeps the clone check**
+- [ ] **1.5 A condition on a `Boolable` struct keeps the clone check**
 
   Problem: `TruthinessConditions` has no derivation recipe, so a body whose
   `if` or `while` tests a struct through `__bool__` is inferred per instance.
@@ -131,7 +120,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.7 A tuple unpacking keeps the clone check**
+- [ ] **1.6 A tuple unpacking keeps the clone check**
 
   Problem: `TupleUnpackPlans` has no derivation recipe, so a body that
   unpacks a tuple into several bindings is inferred per instance.
@@ -143,7 +132,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.8 A parameterized method call keeps the clone check**
+- [ ] **1.7 A parameterized method call keeps the clone check**
 
   Problem: `ParameterizedMethodCalls` has no derivation recipe, so a body
   calling `v.m[T](…)` is inferred per instance.
@@ -155,7 +144,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.9 A view-returning method call's interior tags keep the clone
+- [ ] **1.8 A view-returning method call's interior tags keep the clone
   check**
 
   Problem: `ViewResultInteriors` has no derivation recipe, so a body calling
@@ -173,7 +162,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.10 A comprehension keeps the clone check**
+- [ ] **1.9 A comprehension keeps the clone check**
 
   Problem: `ComprehensionBindings` has no derivation recipe, so a body
   holding a list, set, or dict comprehension is inferred per instance.
@@ -184,7 +173,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.11 A `with` statement keeps the clone check**
+- [ ] **1.10 A `with` statement keeps the clone check**
 
   Problem: `WithDesugars` has no derivation recipe, so a body holding a
   `with` statement is inferred per instance.
@@ -195,7 +184,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.12 A nested `def` with explicit captures keeps the clone check**
+- [ ] **1.11 A nested `def` with explicit captures keeps the clone check**
 
   Problem: `DeclarationCaptures` has no derivation recipe, so a body
   declaring a nested `def` with a capture list is inferred per instance.
@@ -205,7 +194,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.13 A leading-dot contextual member keeps the clone check**
+- [ ] **1.12 A leading-dot contextual member keeps the clone check**
 
   Problem: `ContextualBases` has no derivation recipe, so a body spelling
   `.Member` against a contextual type is inferred per instance.
@@ -216,7 +205,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.14 An operator with a literal or a call-result operand keeps the
+- [ ] **1.13 An operator with a literal or a call-result operand keeps the
   clone check**
 
   Problem: `BodyShape::operator` admits an operator only over two places, so
@@ -235,7 +224,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.15 An augmented element store keeps the clone check where the
+- [ ] **1.14 An augmented element store keeps the clone check where the
   subscripted value or the element has a parameter-built type**
 
   Problem: an augmented store through a value getter and a setter derives
@@ -262,7 +251,7 @@ to section 3, however small.
   - Depends on 3.6 for the same-list read.
   - Model: Opus, Planned.
 
-- [ ] **1.16 A surviving trait-bound template with a local of a parameter type
+- [ ] **1.15 A surviving trait-bound template with a local of a parameter type
   keeps the clone check**
 
   Problem: a `def` template may hold scalar locals and runtime `if` and
@@ -277,11 +266,11 @@ to section 3, however small.
     of a bare parameter type (`template_facts.rs:whole_value`).
   - A `def` has no plain-data obligation yet, and its parameter may be
     instantiated with a type that carries a loan or is a callable.
-  - A runtime `for` needs the iteration-protocol recipe, which is 1.4.
-  - Depends on 1.4 for a runtime `for`.
+  - A runtime `for` needs the iteration-protocol recipe, which is 1.3.
+  - Depends on 1.3 for a runtime `for`.
   - Model: Fable, Planned.
 
-- [ ] **1.17 Every discovery round still infers every uncovered body again**
+- [ ] **1.16 Every discovery round still infers every uncovered body again**
 
   Problem: a compilation checks the whole elaborated program once per
   discovery round and once per transfer-effect round, and a checked template
@@ -298,10 +287,10 @@ to section 3, however small.
     every fact table, under the identity substitution.
   - The arena is already built once per compilation rather than once per
     round (`DiscoveryResult`).
-  - Depends on 1.2 through 1.15.
+  - Depends on 1.1 through 1.14.
   - Model: Fable, Planned.
 
-- [ ] **1.18 Binder identity is still by spelling below the checker**
+- [ ] **1.17 Binder identity is still by spelling below the checker**
 
   Problem: a type binder is now its declaration's (`Ty::Param { binder }`,
   `ParamDecl::{Type, Value}.id`), but three readers still bind a type by
@@ -347,7 +336,7 @@ to section 3, however small.
   - Each corner is a keyed-map change behind an existing helper.
   - Model: Opus, Not Planned.
 
-- [ ] **1.19 A pack forwarded into a method or into `print` fails at the
+- [ ] **1.18 A pack forwarded into a method or into `print` fails at the
   clone**
 
   Problem: the pin runs `self.take(*a)` and `print(*a)` inside a pack-keyed
@@ -366,7 +355,7 @@ to section 3, however small.
   - The rewrite exists; the method and builtin callee shapes need routing to it.
   - Model: Opus, Not Planned.
 
-- [ ] **1.20 A nested variadic construction is refused on the template
+- [ ] **1.19 A nested variadic construction is refused on the template
   constructor path**
 
   Problem: `Outer[T, Int](Variant[T, Int](x^))` inside a generic body reports
@@ -388,7 +377,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.21 A per-call method clone and a whole-struct specialization leave no
+- [ ] **1.20 A per-call method clone and a whole-struct specialization leave no
   trace**
 
   Problem: the elaborator traces a `def` clone and a per-instantiation method
@@ -412,7 +401,7 @@ to section 3, however small.
   - The plan is for the per-call trace.
   - Model: Opus, Planned.
 
-- [ ] **1.22 A loan-carrying instance is never cloned whole, so its replayed
+- [ ] **1.21 A loan-carrying instance is never cloned whole, so its replayed
   transfers are unverified**
 
   Problem: the transfer recipe keeps a source only while the substituted
@@ -434,7 +423,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.23 A `Bool` argument does not infer a `Scalar[dt]` lane**
+- [ ] **1.22 A `Bool` argument does not infer a `Scalar[dt]` lane**
 
   Problem: `kind(True)` against a lone `def kind[dt: DType](a: Scalar[dt])`
   reports "cannot infer type parameter 'dt'"; the pin binds `DType.bool`.
@@ -446,7 +435,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.24 A method overload binding a lane through `Scalar[dt]` ties with
+- [ ] **1.23 A method overload binding a lane through `Scalar[dt]` ties with
   a bare parameter**
 
   Problem: `s.kind(x)` over a `Float64`, where `def kind[dt: DType](self, a:
@@ -460,7 +449,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.25 A keyed method's template body cannot construct a SIMD at its own
+- [ ] **1.24 A keyed method's template body cannot construct a SIMD at its own
   lane**
 
   Problem: `def make[dt: DType](self, x: Int) -> Scalar[dt]` whose body
@@ -480,7 +469,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.26 An inferred `SIMD[dt, _]` width leaks into the binding's declared
+- [ ] **1.25 An inferred `SIMD[dt, _]` width leaks into the binding's declared
   type**
 
   Problem: `var v: SIMD[DType.int32, _] = SIMD[DType.int32, 4](1, 2, 3, 4)`
@@ -495,7 +484,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.27 A keyword fieldwise construction of a variadic struct is
+- [ ] **1.26 A keyword fieldwise construction of a variadic struct is
   rejected**
 
   Problem: `Pair[Int, Bool](storage=(1, True))` on an `@fieldwise_init`
@@ -509,7 +498,7 @@ to section 3, however small.
   - One constructor path, with the pin's verdict in hand.
   - Model: Opus, Not Planned.
 
-- [ ] **1.28 An overloaded witness whose members share an arity keeps the
+- [ ] **1.27 An overloaded witness whose members share an arity keeps the
   clone check**
 
   Problem: a call through a bound derives for an instance whose type
@@ -525,7 +514,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.29 A binder baked into a generic struct's witness keeps the clone
+- [ ] **1.28 A binder baked into a generic struct's witness keeps the clone
   check**
 
   Problem: a concrete hasher handed to a `[H: Hasher]` witness derives only
@@ -539,7 +528,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.30 An overloaded method of another struct called on a place built
+- [ ] **1.29 An overloaded method of another struct called on a place built
   over a parameter keeps the clone check**
 
   Problem: `self.items.extend(self.items.copy())`, or the same call on a
@@ -556,7 +545,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.31 A module function called with explicit parameters keeps the
+- [ ] **1.30 A module function called with explicit parameters keeps the
   clone check**
 
   Problem: `self.data = unsafe_alloc[Self.T](0)` is refused by the method
@@ -569,12 +558,12 @@ to section 3, however small.
   - `Set.__iter__` also hands its construction a field of a field
     (`self.items.data`), which `BodyShape::argument` does not admit.
   - The call records the callee's generic instantiation at the substituted
-    arguments, which a recipe would re-key per instance, as 1.8 would for a
+    arguments, which a recipe would re-key per instance, as 1.7 would for a
     method.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.32 An annotated view binding keeps the clone check**
+- [ ] **1.31 An annotated view binding keeps the clone check**
 
   Problem: `var span: Span[Self.T, _] = self.items` is refused by the method
   grammar, which admits an annotated `var` only where the value's recorded
@@ -587,7 +576,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.33 A method called on a sibling call's view result keeps the clone
+- [ ] **1.32 A method called on a sibling call's view result keeps the clone
   check**
 
   Problem: `return self.entries().size()` calls a method on a temporary view,
@@ -599,7 +588,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.34 A sibling call returning an immutable view keeps the clone check**
+- [ ] **1.33 A sibling call returning an immutable view keeps the clone check**
 
   Problem: wrapping a sibling's `View[Self.T, ImmOrigin(origin_of(self))]`
   records an immutable binder (`ConstructionImmutableBinders`), and the
@@ -612,7 +601,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.35 A reference result reached through an element's field keeps the
+- [ ] **1.34 A reference result reached through an element's field keeps the
   clone check**
 
   Problem: `return self.entries[i].value` returns a field of a subscript's
@@ -625,7 +614,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.36 A raise the method grammar does not name keeps the clone check**
+- [ ] **1.35 A raise the method grammar does not name keeps the clone check**
 
   Problem: a raising method derives only where each `raise` names a
   construction or `Error("…")` and no call in its body raises.
@@ -641,7 +630,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.37 A folded name beside a literal keeps the clone check**
+- [ ] **1.36 A folded name beside a literal keeps the clone check**
 
   Problem: over two literals an operator folds, so `i * 10` or `-i` in a
   `comptime for` body types as `IntLiteral` in the instance where the
@@ -655,7 +644,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.38 A value-keyed `def` with no compile-time control flow keeps the
+- [ ] **1.37 A value-keyed `def` with no compile-time control flow keeps the
   clone check**
 
   Problem: source validation checks a body only when it holds `comptime if`,
@@ -668,7 +657,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.39 The Pliron pivot has no falsifiable proof yet**
+- [ ] **1.38 The Pliron pivot has no falsifiable proof yet**
 
   Problem: [`docs/pliron-backend-pivot-plan.md`](pliron-backend-pivot-plan.md)
   stages a migration to a required Pliron IR framework, but its Stage A1 slice

@@ -801,6 +801,7 @@ fn collect_function_implicit_names(
                 }
                 collect_function_implicit_names(body, explicit, names);
             }
+            StmtKind::Scope(body) => collect_function_implicit_names(body, explicit, names),
             StmtKind::Def { .. } | StmtKind::Struct { .. } | StmtKind::Trait { .. } => {}
             _ => {}
         }
@@ -1102,6 +1103,8 @@ impl Lower {
                 self.seal(Terminator::Jump(join));
                 self.cur = join;
             }
+
+            StmtKind::Scope(body) => self.scoped_block(body),
 
             StmtKind::While { cond, body, orelse } => {
                 let header = self.new_block();
@@ -1498,7 +1501,8 @@ fn explicit_local_names(body: &[Stmt]) -> HashSet<String> {
                 }
                 StmtKind::While { body, .. }
                 | StmtKind::For { body, .. }
-                | StmtKind::With { body, .. } => walk(body, names),
+                | StmtKind::With { body, .. }
+                | StmtKind::Scope(body) => walk(body, names),
                 StmtKind::Try {
                     body,
                     except,

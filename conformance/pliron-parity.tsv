@@ -52,6 +52,7 @@ assets/ok/comptime_alias_value_body.mojo	main	exe-differential	sanitized
 assets/ok/comptime_collections.mojo	main	exe-differential	sanitized
 assets/ok/comptime_ctfe.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for.mojo	main	exe-differential	sanitized
+assets/ok/comptime_for_iteration_scope.mojo	main	exe-differential	sanitized
 assets/ok/comptime_frozen_struct.mojo	main	exe-differential	sanitized
 assets/ok/comptime_hash.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if.mojo	main	exe-differential	sanitized
@@ -520,6 +521,7 @@ assets/ok/tempfile_mkdtemp.mojo	main	exe-differential	sanitized
 assets/ok/template_def_converting_argument.mojo	main	exe-differential	sanitized
 assets/ok/template_folded_value.mojo	main	exe-differential	sanitized
 assets/ok/template_inner_request.mojo	main	exe-differential	sanitized
+assets/ok/template_loop_local.mojo	main	exe-differential	sanitized
 assets/ok/template_method_borrowed_parameter.mojo	main	exe-differential	sanitized
 assets/ok/template_method_bound_copy.mojo	main	exe-differential	sanitized
 assets/ok/template_method_bound_dispatch.mojo	main	exe-differential	sanitized

@@ -1043,6 +1043,9 @@ impl PackRewriter {
                     self.expand_scoped_block(body);
                 }
             }
+            StmtKind::Scope(body) => {
+                self.expand_scoped_block(body);
+            }
             StmtKind::With { items, body } => {
                 self.push_value_scope();
                 for item in items {
@@ -1734,6 +1737,9 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
                 rewrite_block(b, subs, into_defs);
             }
         }
+        StmtKind::Scope(body) => {
+            rewrite_block(body, subs, into_defs);
+        }
         StmtKind::With { items, body } => {
             let mut bound_names: HashSet<String> = HashSet::new();
             for WithItem { context, var } in items {
@@ -2112,6 +2118,9 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
             if let Some(body) = finalbody {
                 substitute_type_bindings_in_block(body, subs);
             }
+        }
+        StmtKind::Scope(body) => {
+            substitute_type_bindings_in_block(body, subs);
         }
         StmtKind::With { items, body } => {
             for WithItem { context, .. } in items {

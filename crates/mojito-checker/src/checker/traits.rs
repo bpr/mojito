@@ -3019,7 +3019,9 @@ fn parametric_origin_writes_in_body(
                         walk(branch, fields, out);
                     }
                 }
-                StmtKind::ComptimeFor { body, .. } | StmtKind::With { body, .. } => {
+                StmtKind::ComptimeFor { body, .. }
+                | StmtKind::With { body, .. }
+                | StmtKind::Scope(body) => {
                     walk(body, fields, out);
                 }
                 StmtKind::Try {
