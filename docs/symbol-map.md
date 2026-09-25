@@ -94,11 +94,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `StmtKind::Def` arm delegates to it, and lambda mode (`lambda = true`)
   applies the lambda-specific capture-default/thinness/diagnostic deltas.
 - `checker/with_stmt.rs` owns the `with` statement: `check_with` classifies
-  the manager (`context_manager_shape`: consuming `__enter__`, plain and
-  error-taking `__exit__` overloads, upstream's rejections), synthesizes the
-  desugar (`Synth` node factory, hidden `$with<id>_*` names) and checks it in
-  a block scope, and `splice_with_desugars` replaces every checked `with` in
-  the final tree before `explicit_destroy`; `KEEP_ALIVE_BUILTIN` names the
+  the manager into a `WithForm` (`context_manager_form`: consuming
+  `__enter__`, plain and error-taking `__exit__` overloads, upstream's
+  rejections), synthesizes the desugar (`Synth` node factory, whose node
+  identities are `SyntaxId::derived` from the statement's, hidden
+  `$with<id>_*` names) and checks it in a block scope, recording a
+  `WithDesugar` (form and statements); `with_desugar` builds the same
+  statements from a statement and a form without a check, for a derived
+  instance (`template_facts.rs:instance_with_desugars`); and
+  `splice_with_desugars` replaces every checked `with` in the final tree
+  before `explicit_destroy`; `KEEP_ALIVE_BUILTIN` names the
   `_mojito_keep_alive` liveness anchor the call inference accepts and MIR's
   `lower_stmt.rs` lowers to `KeepAlive`.
 - `checker/inference.rs` owns expression inference (`infer`/`infer_impl`),
@@ -386,7 +391,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `TemplateTupleUnpack` proven by rebuilding the recorded plan), and builds
   the plan again for an instance (`realize_tuple_unpacks`,
   `install_tuple_unpacks`) through `statements.rs:tuple_unpack_plan`, the
-  path the unpack statement itself takes. Every type an instance substitutes
+  path the unpack statement itself takes. A `with` statement's form
+  (`WithForm`, the `WithDesugars` table's recipe) is kept at the statement;
+  `instance_with_desugars` builds an instance's desugars from it before its
+  occurrences are walked (`occurrences_over`, which reads each desugar in its
+  statement's place), and installation hands them to the final splice. Every type an instance substitutes
   names the generated Tuple the clone check selects
   (`inference.rs:canonicalize_public_tuple_types`). A retained struct type that
   names a binding in an origin argument is kept by template owner
@@ -413,7 +422,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   value, and pack bindings), recorded by `specialize.rs:generate_def_spec`,
   and `MethodInstanceTrace`, recorded by `generate_instance_clones`;
   `GeneratedDeclarations` lists what an elaboration generated; the
-  occurrence-level trace is `ast.rs:rekey_syntax`'s `SyntaxOrigins` plus
+  occurrence-level trace is `ast.rs:rekey_syntax`'s `SyntaxOrigins` (which
+  traces a `mojito-common` `token.rs:SyntaxId::derived` node through its
+  parent) plus
   `comptime.rs:rebuilt` and the identity a folded `comptime for` variable
   keeps (`rewrite.rs:rewrite_expr`). `compiler.rs:instance_traces` carries
   one to the other. A pack-keyed instance (`TemplateClass::PackElements`)

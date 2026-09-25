@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method holding a `with` statement now derives its instances from the
+  checked template: the template keeps the form its manager's declarations
+  select, and each instance builds its own desugar from its syntax, whose
+  synthesized nodes now take identities derived from the statement's. Such
+  bodies used to keep the clone check because the desugar's nodes took fresh
+  identities no instance could trace.
 - A method that builds a list, set, or dict comprehension over a place of the
   body or a sibling call's result (`[x for x in self.items if x != drop]`)
   now derives its instances from the checked template: each clause selects

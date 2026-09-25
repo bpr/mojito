@@ -791,7 +791,7 @@ pub struct Checker {
     statement_bindings: RefCell<HashMap<SourceSpan, mojito_types::origin::OwnerId>>,
     /// Each checked `with` statement's desugar (keyed by the statement),
     /// spliced into the final tree after the last transfer round.
-    with_desugars: RefCell<HashMap<SourceSpan, Vec<Stmt>>>,
+    with_desugars: RefCell<HashMap<SourceSpan, with_stmt::WithDesugar>>,
     /// Explicit capture entries resolved at the nested declaration site. Keeping
     /// unused entries is essential: a move capture still transfers at declaration.
     declaration_captures:

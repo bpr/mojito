@@ -24,6 +24,48 @@ impl SyntaxId {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         Self((1_u64 << 63) | NEXT.fetch_add(1, Ordering::Relaxed))
     }
+
+    /// The identity of the `ordinal`-th node synthesized from the node
+    /// `parent`: the same pair always yields the same identity, so a desugar
+    /// rebuilt for one statement names the same occurrences each time. The
+    /// second-highest bit keeps these disjoint from fresh and re-keyed IDs.
+    pub fn derived(parent: Self, ordinal: u32) -> Self {
+        let mut derivations = derivations();
+        if let Some(id) = derivations.forward.get(&(parent, ordinal)) {
+            return *id;
+        }
+        let id = Self(DERIVED_BIT | derivations.forward.len() as u64);
+        derivations.forward.insert((parent, ordinal), id);
+        derivations.backward.insert(id, (parent, ordinal));
+        id
+    }
+
+    /// The parent and ordinal a [`Self::derived`] identity was made from.
+    pub fn derivation(self) -> Option<(Self, u32)> {
+        if self.0 & (1_u64 << 63 | DERIVED_BIT) != DERIVED_BIT {
+            return None;
+        }
+        derivations().backward.get(&self).copied()
+    }
+}
+
+/// The bit that marks a [`SyntaxId::derived`] identity.
+const DERIVED_BIT: u64 = 1_u64 << 62;
+
+/// Every derived identity handed out, both ways.
+#[derive(Default)]
+struct Derivations {
+    forward: std::collections::HashMap<(SyntaxId, u32), SyntaxId>,
+    backward: std::collections::HashMap<SyntaxId, (SyntaxId, u32)>,
+}
+
+fn derivations() -> std::sync::MutexGuard<'static, Derivations> {
+    static DERIVATIONS: std::sync::OnceLock<std::sync::Mutex<Derivations>> =
+        std::sync::OnceLock::new();
+    DERIVATIONS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// A byte range together with the linked source file it belongs to. Parser-only
@@ -251,5 +293,22 @@ impl Token {
             "False" => Self::BoolLiteral(false),
             _ => return None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SyntaxId;
+
+    #[test]
+    fn derived_identities_are_stable_and_invertible() {
+        let parent = SyntaxId::fresh();
+        let first = SyntaxId::derived(parent, 0);
+        assert_eq!(SyntaxId::derived(parent, 0), first);
+        assert_ne!(SyntaxId::derived(parent, 1), first);
+        assert_ne!(SyntaxId::derived(SyntaxId::fresh(), 0), first);
+        assert_eq!(first.derivation(), Some((parent, 0)));
+        assert_eq!(parent.derivation(), None);
+        assert_eq!(SyntaxId(7).derivation(), None);
     }
 }

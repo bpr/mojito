@@ -102,6 +102,7 @@ template; a field type under a symbolic index is opaque until a
 | `bound_call_result_converted_at_binding.mojo` | Does a generic body bind a bound method's call result through an `@implicit` conversion at an annotated `var`? | **differs**: the pin prints `2 a`, Mojito rejects the generic body ("register r1 has no checked type") — `docs/roadmap.md` 3.29 |
 | `comprehension_binder_transfer.mojo` | May a comprehension element transfer its owned binder (`[x^ for x in items^]`)? | **differs**: the pin rejects `x^` ("expression does not designate a value with an origin"), Mojito prints `2` — `docs/roadmap.md` 3.5 |
 | `comprehension_binder_method_call.mojo` | Does a method called on a borrowed comprehension binder run? | **differs**: the pin prints `2`, Mojito stops at run time ("call passed 0 args to 1-parameter function 'P.get'") — `docs/roadmap.md` 3.8 |
+| `generic_method_transfer_in_try.mojo` | Does a generic method move its `var` parameter into a field's `append` inside `try`/`finally`, as under a `with`? | **differs**: the pin prints `finally` `2`, Mojito rejects the template ("use of uninitialized value 'value'") — `docs/roadmap.md` 3.26 |
 
 ## Re-probes of enforced claims
 

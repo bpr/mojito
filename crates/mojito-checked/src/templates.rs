@@ -816,6 +816,11 @@ impl MethodFeatures {
     /// `ITERATION` loop's, and each binder is a local of the body declared
     /// from that protocol's binding plan, which an instance selects again.
     pub const COMPREHENSIONS: Self = Self(1 << 30);
+    /// A `with` statement: the checker desugars it into ordinary statements
+    /// whose shape its manager struct's declarations decide
+    /// ([`WithForm`]), and an instance builds the same desugar again from
+    /// its own syntax and that form.
+    pub const WITH_STATEMENTS: Self = Self(1 << 31);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
@@ -1017,6 +1022,28 @@ pub struct TemplateComprehensionBinding {
     pub iterable: OccurrenceId,
     pub reference: bool,
     pub ty: Ty,
+}
+
+/// The shape of one `with` statement's desugar
+/// ([`CheckedBodyFacts::with_forms`]).
+///
+/// The manager struct's declared `__enter__` and `__exit__` members and
+/// whether the context may raise decide it, never a substituted type, so an
+/// instance builds its desugar from its own syntax and the template's form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WithForm {
+    /// A consuming `__enter__` and no `__exit__`: the enter result stands in
+    /// for the manager to the end of the block. `returns_none` is whether
+    /// `__enter__` returns nothing, so an unnamed result is not bound.
+    ConsumingEnter { returns_none: bool },
+    /// No `__exit__`: the manager itself lives to the end of the block.
+    KeptManager,
+    /// `try: body finally: manager.__exit__()`.
+    PlainExit,
+    /// In a raising context, beside the plain `__exit__`, an
+    /// `__exit__(self, err: Error) -> Bool` takes the body's error and
+    /// decides whether it is raised again.
+    ErrorExit,
 }
 
 /// The element reads of one tuple unpacking, in template-local terms
@@ -1344,6 +1371,9 @@ pub struct CheckedBodyFacts {
     /// The generator binders of each comprehension, keyed by the
     /// comprehension, in clause order.
     pub comprehension_bindings: Vec<(OccurrenceId, Vec<TemplateComprehensionBinding>)>,
+    /// The desugar form of each `with` statement, keyed by the statement,
+    /// from which an instance builds its own desugar.
+    pub with_forms: Vec<(OccurrenceId, WithForm)>,
     /// The element reads of each tuple unpacking, keyed by the unpacked
     /// value, which an instance derives again from the substituted value
     /// type.
@@ -1529,6 +1559,7 @@ impl CheckedBodyFacts {
             view_result_interiors,
             iterations,
             comprehension_bindings,
+            with_forms,
             tuple_unpacks,
             call_place_uses,
             transfers,
@@ -1707,6 +1738,7 @@ impl CheckedBodyFacts {
             view_result_interiors: at(&self.view_result_interiors, occurrences, folded),
             iterations: at(&self.iterations, occurrences, folded),
             comprehension_bindings: at(&self.comprehension_bindings, occurrences, folded),
+            with_forms: at(&self.with_forms, occurrences, folded),
             tuple_unpacks: at(&self.tuple_unpacks, occurrences, folded),
             call_place_uses: flagged(&self.call_place_uses),
             transfers: flagged(&self.transfers),
@@ -1802,6 +1834,7 @@ impl CheckedBodyFacts {
             + self.view_result_interiors.len()
             + self.iterations.len()
             + self.comprehension_bindings.len()
+            + self.with_forms.len()
             + self.tuple_unpacks.len()
             + self.call_place_uses.len()
             + self.transfers.len()

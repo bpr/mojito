@@ -21,11 +21,21 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::WithItem;
+use mojito_checked::templates::WithForm;
+use mojito_common::token::SyntaxId;
 
 /// The compiler-private liveness anchor the desugar emits at the end of a
 /// block: `_mojito_keep_alive(name)` keeps `name` alive to that point without
 /// copying or moving it (HIR lowers it to `KeepAlive`).
 pub const KEEP_ALIVE_BUILTIN: &str = "_mojito_keep_alive";
+
+/// A checked `with` statement's desugar: the statements that replace it and
+/// the form its manager's protocol decided.
+#[derive(Debug, Clone)]
+pub(super) struct WithDesugar {
+    pub(super) form: WithForm,
+    pub(super) statements: Vec<Stmt>,
+}
 
 /// Replace every checked `with` statement in `stmts` (recursively, through
 /// every nested block and declaration body) by its recorded desugar. A `with`
@@ -33,7 +43,7 @@ pub const KEEP_ALIVE_BUILTIN: &str = "_mojito_keep_alive";
 /// verbatim for monomorphization — stays as written.
 pub(super) fn splice_with_desugars(
     stmts: &mut Vec<Stmt>,
-    desugars: &HashMap<SourceSpan, Vec<Stmt>>,
+    desugars: &HashMap<SourceSpan, WithDesugar>,
 ) {
     let mut index = 0;
     while index < stmts.len() {
@@ -43,12 +53,26 @@ pub(super) fn splice_with_desugars(
             // The replacement may itself hold a nested `with` (a later item of
             // a multi-item statement, or one written in the body); re-examine
             // from the same index.
-            stmts.splice(index..=index, replacement.iter().cloned());
+            stmts.splice(index..=index, replacement.statements.iter().cloned());
             continue;
         }
         splice_nested(&mut stmts[index], desugars);
         index += 1;
     }
+}
+
+/// The desugar of the `with` statement `stmt` in `form`, built without a
+/// check: the statements [`Checker::check_with`] builds for it, node for
+/// node and identity for identity.
+pub(super) fn with_desugar(stmt: &Stmt, form: WithForm) -> Option<Vec<Stmt>> {
+    let StmtKind::With { items, body } = &stmt.kind else {
+        return None;
+    };
+    let (item, synth, body) = first_item(stmt, items, body)?;
+    let manager = synth.name("mgr");
+    let mut desugar = vec![manager_declaration(item, &synth, &manager)];
+    desugar.extend(desugar_tail(item, body, &synth, &manager, form));
+    Some(desugar)
 }
 
 impl Checker {
@@ -63,26 +87,9 @@ impl Checker {
         ret: Option<&Ty>,
         in_loop: bool,
     ) -> Result<(), TypeError> {
-        let [item, rest @ ..] = items else {
-            return Err(TypeError::InvariantViolation(
-                "with statement without a context item".to_string(),
-            ));
-        };
-        let synth = Synth {
-            span: stmt.span,
-            module: stmt.module.clone(),
-            source: item.context.source.clone(),
-            id: stmt.syntax_id.0,
-        };
-        // `with a as x, b as y: body` is `with a as x: with b as y: body`.
-        let body = if rest.is_empty() {
-            body.to_vec()
-        } else {
-            vec![synth.stmt(StmtKind::With {
-                items: rest.to_vec(),
-                body: body.to_vec(),
-            })]
-        };
+        let (item, synth, body) = first_item(stmt, items, body).ok_or_else(|| {
+            TypeError::InvariantViolation("with statement without a context item".to_string())
+        })?;
         self.push_scope();
         let result = self.check_with_item(item, body, &synth, ret, in_loop);
         self.pop_scope();
@@ -100,86 +107,239 @@ impl Checker {
         synth: &Synth,
         ret: Option<&Ty>,
         in_loop: bool,
-    ) -> Result<Vec<Stmt>, TypeError> {
+    ) -> Result<WithDesugar, TypeError> {
         let manager = synth.name("mgr");
-        let mut desugar = vec![synth.stmt(StmtKind::VarDecl {
-            name: manager.clone(),
-            ty: None,
-            value: item.context.clone(),
-        })];
-        self.check_stmt(&desugar[0], ret, in_loop)?;
+        let mut statements = vec![manager_declaration(item, synth, &manager)];
+        self.check_stmt(&statements[0], ret, in_loop)?;
         let manager_ty = self.lookup(&manager).cloned().ok_or_else(|| {
             TypeError::InvariantViolation("with manager binding was not declared".to_string())
         })?;
-        let shape = self.context_manager_shape(&manager_ty)?;
+        let form = self.context_manager_form(&manager_ty)?;
+        statements.extend(desugar_tail(item, body, synth, &manager, form));
+        for statement in &statements[1..] {
+            self.check_stmt(statement, ret, in_loop)?;
+        }
+        Ok(WithDesugar { form, statements })
+    }
 
-        // Enter: `[var NAME =] manager[^].__enter__()`.
-        let receiver = if shape.enter_consumes {
-            synth.expr(ExprKind::Transfer(Box::new(synth.identifier(&manager))))
-        } else {
-            synth.identifier(&manager)
+    /// The desugar form a manager's protocol selects, from its declared
+    /// methods and whether the context may raise, reporting the pinned
+    /// Mojo's diagnostics for the unsupported combinations.
+    fn context_manager_form(&self, ty: &Ty) -> Result<WithForm, TypeError> {
+        let no_enter = || {
+            TypeError::ContextManager(format!("'{ty}' does not implement the '__enter__' method"))
         };
-        let enter = synth.expr(ExprKind::MethodCall {
-            object: Box::new(receiver),
-            method: "__enter__".to_string(),
+        let Ty::Struct(name, _) = ty else {
+            return Err(no_enter());
+        };
+        let info = self.structs.get(name).ok_or_else(no_enter)?;
+        let nullary =
+            |sig: &&MethodSig| sig.has_self && sig.required.iter().all(|required| !required);
+        let enter = info
+            .methods
+            .get("__enter__")
+            .and_then(|sigs| sigs.iter().find(nullary))
+            .ok_or_else(no_enter)?;
+        let enter_consumes = enter.self_convention == Some(ArgConvention::Var);
+        let exits = info
+            .methods
+            .get("__exit__")
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let plain_exit = exits.iter().any(|sig| nullary(&sig));
+        let error_exit = exits.iter().any(|sig| {
+            sig.has_self
+                && sig.params.len() == 1
+                && sig.params[0] == Ty::Error
+                && sig.ret == Ty::Bool
+        });
+        if enter_consumes && (plain_exit || error_exit) {
+            return Err(TypeError::ContextManager(format!(
+                "context manager of type '{ty}' defines a consuming __enter__ method as well as an __exit__ method; either remove 'var' from its '__enter__' method or remove the '__exit__' method"
+            )));
+        }
+        if error_exit && !plain_exit {
+            return Err(TypeError::BadCall {
+                func: "__exit__".to_string(),
+                reason: "missing required argument: 'err'".to_string(),
+            });
+        }
+        Ok(if enter_consumes {
+            WithForm::ConsumingEnter {
+                returns_none: enter.ret == Ty::None,
+            }
+        } else if !plain_exit {
+            WithForm::KeptManager
+        } else if error_exit && self.raising_allowed() {
+            WithForm::ErrorExit
+        } else {
+            WithForm::PlainExit
+        })
+    }
+}
+
+/// Node factory for one `with` statement's desugar: every synthesized node
+/// carries the statement's span and provenance, and the next identity
+/// derived from the statement's own ([`SyntaxId::derived`]), so building the
+/// desugar again yields the same occurrences. Hidden names are unique per
+/// statement.
+struct Synth {
+    span: mojito_common::token::Span,
+    module: Option<String>,
+    source: Option<String>,
+    parent: SyntaxId,
+    next: std::cell::Cell<u32>,
+}
+
+impl Synth {
+    fn stmt(&self, kind: StmtKind) -> Stmt {
+        let mut statement = Stmt::new(kind, self.span);
+        statement.module.clone_from(&self.module);
+        statement.syntax_id = self.identity();
+        statement
+    }
+
+    fn expr(&self, kind: ExprKind) -> Expr {
+        let mut expression = Expr::new(kind, self.span);
+        expression.source.clone_from(&self.source);
+        expression.syntax_id = self.identity();
+        expression
+    }
+
+    fn identifier(&self, name: &str) -> Expr {
+        self.expr(ExprKind::Identifier(name.to_string()))
+    }
+
+    fn name(&self, role: &str) -> String {
+        format!("$with{}_{role}", self.parent.0)
+    }
+
+    fn identity(&self) -> SyntaxId {
+        let ordinal = self.next.get();
+        self.next.set(ordinal + 1);
+        SyntaxId::derived(self.parent, ordinal)
+    }
+}
+
+/// The first context item of `with items: body`, the node factory for its
+/// desugar, and the body it guards: `with a as x, b as y: body` is
+/// `with a as x: with b as y: body`.
+fn first_item<'a>(
+    stmt: &Stmt,
+    items: &'a [WithItem],
+    body: &[Stmt],
+) -> Option<(&'a WithItem, Synth, Vec<Stmt>)> {
+    let [item, rest @ ..] = items else {
+        return None;
+    };
+    let synth = Synth {
+        span: stmt.span,
+        module: stmt.module.clone(),
+        source: item.context.source.clone(),
+        parent: stmt.syntax_id,
+        next: std::cell::Cell::new(0),
+    };
+    let body = if rest.is_empty() {
+        body.to_vec()
+    } else {
+        vec![synth.stmt(StmtKind::With {
+            items: rest.to_vec(),
+            body: body.to_vec(),
+        })]
+    };
+    Some((item, synth, body))
+}
+
+/// `var manager = context`, the desugar's first statement.
+fn manager_declaration(item: &WithItem, synth: &Synth, manager: &str) -> Stmt {
+    synth.stmt(StmtKind::VarDecl {
+        name: manager.to_string(),
+        ty: None,
+        value: item.context.clone(),
+    })
+}
+
+/// Everything the desugar holds after the manager's declaration: the
+/// `__enter__` call and the guarded body in `form`.
+fn desugar_tail(
+    item: &WithItem,
+    body: Vec<Stmt>,
+    synth: &Synth,
+    manager: &str,
+    form: WithForm,
+) -> Vec<Stmt> {
+    let consumes = matches!(form, WithForm::ConsumingEnter { .. });
+    // Enter: `[var NAME =] manager[^].__enter__()`.
+    let receiver = if consumes {
+        synth.expr(ExprKind::Transfer(Box::new(synth.identifier(manager))))
+    } else {
+        synth.identifier(manager)
+    };
+    let enter = synth.expr(ExprKind::MethodCall {
+        object: Box::new(receiver),
+        method: "__enter__".to_string(),
+        args: Vec::new(),
+        kwargs: Vec::new(),
+    });
+    // A consuming `__enter__`'s result stands in for the manager (the
+    // pinned Mojo destroys it at the block end even when unbound).
+    let bound = match (&item.var, form) {
+        (Some(name), _) => Some(name.clone()),
+        (
+            None,
+            WithForm::ConsumingEnter {
+                returns_none: false,
+            },
+        ) => Some(synth.name("enter")),
+        (None, _) => None,
+    };
+    let mut desugar = vec![match &bound {
+        Some(name) => synth.stmt(StmtKind::VarDecl {
+            name: name.clone(),
+            ty: None,
+            value: enter,
+        }),
+        None => synth.stmt(StmtKind::Expr(enter)),
+    }];
+
+    let keep_alive = |name: &str| {
+        synth.stmt(StmtKind::Expr(synth.expr(ExprKind::Call {
+            name: KEEP_ALIVE_BUILTIN.to_string(),
+            param_args: Vec::new(),
+            args: vec![synth.identifier(name)],
+            kwargs: Vec::new(),
+        })))
+    };
+    let plain_exit = || {
+        synth.stmt(StmtKind::Expr(synth.expr(ExprKind::MethodCall {
+            object: Box::new(synth.identifier(manager)),
+            method: "__exit__".to_string(),
             args: Vec::new(),
             kwargs: Vec::new(),
-        });
-        // A consuming `__enter__`'s result stands in for the manager (the
-        // pinned Mojo destroys it at the block end even when unbound).
-        let bound = match &item.var {
-            Some(name) => Some(name.clone()),
-            None if shape.enter_consumes && !shape.enter_returns_none => Some(synth.name("enter")),
-            None => None,
+        })))
+    };
+    let protect =
+        |body: Vec<Stmt>, except: Option<(Option<String>, Vec<Stmt>)>, finalbody: Vec<Stmt>| {
+            synth.stmt(StmtKind::Try {
+                body,
+                except,
+                orelse: None,
+                finalbody: Some(finalbody),
+            })
         };
-        desugar.push(match &bound {
-            Some(name) => synth.stmt(StmtKind::VarDecl {
-                name: name.clone(),
-                ty: None,
-                value: enter,
-            }),
-            None => synth.stmt(StmtKind::Expr(enter)),
-        });
 
-        let keep_alive = |name: &str| {
-            synth.stmt(StmtKind::Expr(synth.expr(ExprKind::Call {
-                name: KEEP_ALIVE_BUILTIN.to_string(),
-                param_args: Vec::new(),
-                args: vec![synth.identifier(name)],
-                kwargs: Vec::new(),
-            })))
-        };
-        let plain_exit = || {
-            synth.stmt(StmtKind::Expr(synth.expr(ExprKind::MethodCall {
-                object: Box::new(synth.identifier(&manager)),
-                method: "__exit__".to_string(),
-                args: Vec::new(),
-                kwargs: Vec::new(),
-            })))
-        };
-        let protect =
-            |body: Vec<Stmt>, except: Option<(Option<String>, Vec<Stmt>)>, finalbody: Vec<Stmt>| {
-                synth.stmt(StmtKind::Try {
-                    body,
-                    except,
-                    orelse: None,
-                    finalbody: Some(finalbody),
-                })
-            };
-
-        if shape.enter_consumes {
-            // Shape A: no `__exit__`; the stand-in lives to the block end.
-            match &bound {
-                Some(name) => desugar.push(protect(body, None, vec![keep_alive(name)])),
-                None => desugar.extend(body),
-            }
-        } else if !shape.plain_exit {
-            // No `__exit__`: the manager itself lives to the block end.
-            desugar.push(protect(body, None, vec![keep_alive(&manager)]));
-        } else if shape.error_exit && self.raising_allowed() {
-            // Shape C: `var handled = False` / `try: body except err:
-            // handled = True; if not manager.__exit__(err): raise err
-            // finally: if not handled: manager.__exit__()`.
+    match form {
+        // No `__exit__`; the stand-in lives to the block end.
+        WithForm::ConsumingEnter { .. } => match &bound {
+            Some(name) => desugar.push(protect(body, None, vec![keep_alive(name)])),
+            None => desugar.extend(body),
+        },
+        // No `__exit__`: the manager itself lives to the block end.
+        WithForm::KeptManager => desugar.push(protect(body, None, vec![keep_alive(manager)])),
+        // `var handled = False` / `try: body except err: handled = True; if
+        // not manager.__exit__(err): raise err finally: if not handled:
+        // manager.__exit__()`.
+        WithForm::ErrorExit => {
             let handled = synth.name("handled");
             let error = synth.name("err");
             desugar.push(synth.stmt(StmtKind::VarDecl {
@@ -188,7 +348,7 @@ impl Checker {
                 value: synth.expr(ExprKind::Bool(false)),
             }));
             let error_exit = synth.expr(ExprKind::MethodCall {
-                object: Box::new(synth.identifier(&manager)),
+                object: Box::new(synth.identifier(manager)),
                 method: "__exit__".to_string(),
                 args: vec![synth.identifier(&error)],
                 kwargs: Vec::new(),
@@ -217,113 +377,14 @@ impl Checker {
                 orelse: None,
             })];
             desugar.push(protect(body, Some((Some(error), handler)), cleanup));
-        } else {
-            // Shape B: `try: body finally: manager.__exit__()`.
-            desugar.push(protect(body, None, vec![plain_exit()]));
         }
-        for statement in &desugar[1..] {
-            self.check_stmt(statement, ret, in_loop)?;
-        }
-        Ok(desugar)
+        // `try: body finally: manager.__exit__()`.
+        WithForm::PlainExit => desugar.push(protect(body, None, vec![plain_exit()])),
     }
-
-    /// Classify a context manager's protocol from its declared methods,
-    /// reporting the pinned Mojo's diagnostics for the unsupported
-    /// combinations.
-    fn context_manager_shape(&self, ty: &Ty) -> Result<ManagerShape, TypeError> {
-        let no_enter = || {
-            TypeError::ContextManager(format!("'{ty}' does not implement the '__enter__' method"))
-        };
-        let Ty::Struct(name, _) = ty else {
-            return Err(no_enter());
-        };
-        let info = self.structs.get(name).ok_or_else(no_enter)?;
-        let nullary =
-            |sig: &&MethodSig| sig.has_self && sig.required.iter().all(|required| !required);
-        let enter = info
-            .methods
-            .get("__enter__")
-            .and_then(|sigs| sigs.iter().find(nullary))
-            .ok_or_else(no_enter)?;
-        let enter_consumes = enter.self_convention == Some(ArgConvention::Var);
-        let enter_returns_none = enter.ret == Ty::None;
-        let exits = info
-            .methods
-            .get("__exit__")
-            .map(Vec::as_slice)
-            .unwrap_or_default();
-        let plain_exit = exits.iter().any(|sig| nullary(&sig));
-        let error_exit = exits.iter().any(|sig| {
-            sig.has_self
-                && sig.params.len() == 1
-                && sig.params[0] == Ty::Error
-                && sig.ret == Ty::Bool
-        });
-        if enter_consumes && (plain_exit || error_exit) {
-            return Err(TypeError::ContextManager(format!(
-                "context manager of type '{ty}' defines a consuming __enter__ method as well as an __exit__ method; either remove 'var' from its '__enter__' method or remove the '__exit__' method"
-            )));
-        }
-        if error_exit && !plain_exit {
-            return Err(TypeError::BadCall {
-                func: "__exit__".to_string(),
-                reason: "missing required argument: 'err'".to_string(),
-            });
-        }
-        Ok(ManagerShape {
-            enter_consumes,
-            enter_returns_none,
-            plain_exit,
-            error_exit,
-        })
-    }
+    desugar
 }
 
-/// The context-manager protocol a manager type offers.
-#[allow(
-    clippy::struct_excessive_bools,
-    reason = "TODO: group the flags into a state enum"
-)]
-struct ManagerShape {
-    enter_consumes: bool,
-    enter_returns_none: bool,
-    plain_exit: bool,
-    error_exit: bool,
-}
-
-/// Node factory for one `with` statement's desugar: every synthesized node
-/// carries the statement's span and provenance and a fresh occurrence
-/// identity, and hidden names are unique per statement.
-struct Synth {
-    span: mojito_common::token::Span,
-    module: Option<String>,
-    source: Option<String>,
-    id: u64,
-}
-
-impl Synth {
-    fn stmt(&self, kind: StmtKind) -> Stmt {
-        let mut statement = Stmt::new(kind, self.span);
-        statement.module.clone_from(&self.module);
-        statement
-    }
-
-    fn expr(&self, kind: ExprKind) -> Expr {
-        let mut expression = Expr::new(kind, self.span);
-        expression.source.clone_from(&self.source);
-        expression
-    }
-
-    fn identifier(&self, name: &str) -> Expr {
-        self.expr(ExprKind::Identifier(name.to_string()))
-    }
-
-    fn name(&self, role: &str) -> String {
-        format!("$with{}_{role}", self.id)
-    }
-}
-
-fn splice_nested(stmt: &mut Stmt, desugars: &HashMap<SourceSpan, Vec<Stmt>>) {
+fn splice_nested(stmt: &mut Stmt, desugars: &HashMap<SourceSpan, WithDesugar>) {
     match &mut stmt.kind {
         StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
             for (_, block) in branches {

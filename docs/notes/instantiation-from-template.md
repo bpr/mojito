@@ -123,7 +123,8 @@ adjustment, kept apart from the other adjustments), interior references,
 copyable reference-result reads, iteration protocols (a
 `TemplateIteration`, from which an instance selects the protocol again), and
 comprehension binders (a `TemplateComprehensionBinding`, which an instance
-declares again from its clause's protocol).
+declares again from its clause's protocol), and `with` desugars (a
+`WithForm`, from which an instance builds its own desugar).
 
 A replayed transfer is kept in template-local terms too: each call transfer
 (`call_transfers`), the origins it merged into a binding's bookkeeping
@@ -208,6 +209,13 @@ symbol.
   final tree and now returns `SyntaxOrigins`, the identity each re-keyed node
   had before. The elaborator's `rebuilt` keeps a statement's identity when it
   rebuilds that statement with new contents.
+- **Synthesized occurrences.** A node the checker synthesizes from a
+  statement — today the `with` desugar's — takes `SyntaxId::derived(parent,
+  ordinal)`: one identity per statement and position, so every rebuild of one
+  statement's desugar names the same nodes. `SyntaxOrigins::origin` traces
+  such a node through its parent (`derived(origin(parent), ordinal)`), so an
+  instance's synthesized node traces to the template's as a copied source
+  node does.
 
 An `OccurrenceId` is that pre-rekey identity plus a copy number. A template's
 occurrences are all copy zero. An unrolled `comptime for` copies one template
@@ -335,6 +343,7 @@ they are a set, not a ladder.
 | `TUPLE_UNPACKS` | a tuple unpacked from a parameter, a `var` local, a field of `self`, or a sibling call's result into `_` and `var` locals, declared by the statement (`var v, n = t`) or before it (`v, n = t`); a declared target is a scalar or a whole-value local by its recorded binding type | The statement records one plan at the value (`TupleUnpackPlans`): each element's type and, for a generated Tuple, the accessor that reads it and the reference a place accessor yields. The plan is a function of the value's type and the reference the unpacked place yields, which the template keeps (`TemplateTupleUnpack`) beside the named targets. Obligation 23 below. The checker judges no deletability at an unpacking's target, so realization judges none there either. |
 | `PARAMETERIZED_CALLS` | a method called with explicit compile-time arguments, each a literal or a type (`self.scaler.scaled[3](x)`, `self.scaler.show[Int](x)`), on a receiver a sibling call admits whose type is a non-generic struct | The call records the selected method's declared compile-time parameters (`ParameterizedMethodCalls`), which are the callee's declaration and are installed as they stand, and a per-call clone request (`MethodInstantiation`). Once that clone exists the contract names it (`Scaler.scaled$i3`) and declares no parameters, and the instance keeps the target (`realize_method_call`); before it exists the contract still carries the declared parameters, which the grammar refuses. A request that substitution would change (`show[Self.T]`), or one keyed by a generic receiver, refuses. |
 | `COMPREHENSIONS` | a list, set, or dict comprehension, as a whole value (returned, bound to a `var`, or the element of another comprehension), whose `for` clauses iterate what `ITERATION` admits, whose filters are runtime conditions, and whose produced key and value are closed scalars or whole values; each binder is a local scoped to the clauses after it and the produced elements, of the kind its recorded binding type makes it | Each clause records its protocol at its iterable as a loop does, and each binder's plan, type, and droppability (`ComprehensionBindings`) follow from that protocol and that type. The template keeps the binder's owner and the iterable whose protocol declares it (`TemplateComprehensionBinding`); obligation 24 below. The collection's `ConstructCollection` adjustment names the target struct's own insert method, which substitution keeps. |
+| `WITH_STATEMENTS` | a `with` statement, one item or several, each context a whole value, in any form the checker desugars: a plain `__exit__`, an error `__exit__` in a raising method, a consuming `__enter__` with or without `as`, or no `__exit__`; the body a block of the grammar | The checker desugars the statement into ordinary statements (`with_stmt.rs`), and the grammar judges that desugar in its place once the facts are captured: the manager a `var` local, its `__enter__` and `__exit__` sibling calls, the guarding `try`, the error handler's `raise` of its own binder, and the `_mojito_keep_alive` anchor, which selects nothing. The occurrence walk reads each desugar in its statement's place (`occurrences_over`). Which form the desugar takes is the manager struct's declared `__enter__` and `__exit__` members and the raising context, never a substituted type, so the template keeps the form (`WithForm`, from the `WithDesugars` table) and an instance builds its desugar again from its own syntax (`instance_with_desugars`, `with_stmt.rs:with_desugar`), which installation hands to the final splice. Obligation 25 below. |
 
 The compiler-private trap `_mojito_abort("message")` is a statement of any
 non-keyed body: the built-in types its literal and selects nothing. A
@@ -649,6 +658,15 @@ only `Movable` records nothing there, and its `Int` clone would.
     body with no unrolled copies holds one. A filter over a linear binder is
     rejected by the template's check, and an instance's binder is droppable
     wherever the template's was.
+25. **`with` desugars.** The instance's desugar is built from its own
+    statement in the template's form, node for node: the check and the
+    derivation share one builder, and every synthesized node's identity is
+    derived from the statement's, so the instance's occurrences are the
+    template's exactly (the derivation refuses a statement with no recorded
+    form). The facts at those occurrences are the ordinary ones — the
+    manager's binding, its construction, its sibling calls, the handler's
+    binder — and are realized as elsewhere. A verifying inference rebuilds
+    the same desugar, and `replace_body_facts` keeps it across its clear.
 
 The declaration's bounds and `where` clauses are not re-checked: the checker
 discharges them at the requesting call, and the elaborator proves a fully

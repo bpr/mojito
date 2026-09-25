@@ -3758,7 +3758,10 @@ select one of a few ordinary statement shapes (`VarDecl`, `Try`, `If`,
 `Raise`, `Expr`), the checker checks that desugar in a block scope, and after
 the last transfer round it splices the desugar into the checked tree in the
 statement's place. HIR, MIR, ownership analysis, and the backends therefore
-never see a `With` node. The one compiler-private spelling it emits is
+never see a `With` node. Each synthesized node's identity is derived from the
+statement's (`SyntaxId::derived`), so every rebuild of one statement's desugar
+names the same occurrences, and an instance derived from a checked template
+builds its own from the template's recorded form. The one compiler-private spelling it emits is
 `_mojito_keep_alive(name)`, a statement MIR lowers to the existing
 `KeepAlive` liveness anchor (resolved through the argument's checked binding,
 so a later block rebinding the same `as` name anchors its own slot): it keeps

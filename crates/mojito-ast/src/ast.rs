@@ -2319,9 +2319,18 @@ pub struct SyntaxOrigins {
 }
 
 impl SyntaxOrigins {
-    /// The identity `id` was copied with: itself unless it was re-keyed.
+    /// The identity `id` was copied with: itself unless it was re-keyed. A
+    /// node synthesized from another ([`SyntaxId::derived`]) was copied with
+    /// the identity synthesized at the same ordinal from its parent's origin.
+    ///
+    /// [`SyntaxId::derived`]: mojito_common::token::SyntaxId::derived
     pub fn origin(&self, id: mojito_common::token::SyntaxId) -> mojito_common::token::SyntaxId {
-        self.replaced.get(&id).copied().unwrap_or(id)
+        if let Some(original) = self.replaced.get(&id) {
+            return *original;
+        }
+        id.derivation().map_or(id, |(parent, ordinal)| {
+            mojito_common::token::SyntaxId::derived(self.origin(parent), ordinal)
+        })
     }
 }
 
@@ -2345,7 +2354,26 @@ pub fn stamp_source(statements: &mut [Stmt], source: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::Dtype;
+    use super::{Dtype, Stmt, StmtKind, rekey_syntax};
+    use mojito_common::token::SyntaxId;
+
+    #[test]
+    fn a_node_derived_from_a_rekeyed_copy_traces_to_the_original() {
+        let original = Stmt::new(StmtKind::Pass, (0, 4));
+        let mut statements = vec![original.clone(), original.clone()];
+        let origins = rekey_syntax(&mut statements);
+        let (kept, copy) = (statements[0].syntax_id, statements[1].syntax_id);
+        assert_eq!(kept, original.syntax_id);
+        assert_ne!(copy, kept);
+        assert_eq!(
+            origins.origin(SyntaxId::derived(copy, 2)),
+            SyntaxId::derived(kept, 2)
+        );
+        assert_eq!(
+            origins.origin(SyntaxId::derived(SyntaxId::derived(copy, 0), 1)),
+            SyntaxId::derived(SyntaxId::derived(kept, 0), 1)
+        );
+    }
 
     #[test]
     fn dtype_predicates_follow_upstream_code_masks() {

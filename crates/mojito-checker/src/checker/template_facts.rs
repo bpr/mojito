@@ -24,7 +24,7 @@ use mojito_checked::templates::{
     TemplateCallResultOrigin, TemplateCallTransfer, TemplateClass, TemplateCoverage, TemplateId,
     TemplateInvalidation, TemplateObligation, TemplateOrigin, TemplateOwner, TemplatePlace,
     TemplateProducer, TemplateReference, TemplateTransferDest, TemplateTransferEffect,
-    TemplateTransferSource, TypedOrigins, TypedTable,
+    TemplateTransferSource, TypedOrigins, TypedTable, WithForm,
 };
 use mojito_common::error::TypeError;
 use mojito_common::timing;
@@ -167,6 +167,15 @@ impl BodyRole {
 enum BodyDeclaration<'a> {
     Def(&'a Stmt),
     Method(&'a mojito_ast::ast::Method),
+}
+
+/// The facts a body takes instead of being inferred, with its occurrence
+/// spans by the identity each kept from the template, and the desugar of
+/// each of its `with` statements, built from the template's form.
+struct DerivedBody {
+    facts: CheckedBodyFacts,
+    spans: HashMap<OccurrenceId, SourceSpan>,
+    desugars: HashMap<SourceSpan, super::with_stmt::WithDesugar>,
 }
 
 /// One statement or expression occurrence of a body.
@@ -421,9 +430,18 @@ impl Checker {
             None
         };
         let verify = self.template_catalog.borrow().verify();
-        if let Some((facts, spans)) = &derived
+        if let Some(DerivedBody {
+            facts,
+            spans,
+            desugars,
+        }) = &derived
             && !verify
         {
+            self.with_desugars.borrow_mut().extend(
+                desugars
+                    .iter()
+                    .map(|(span, desugar)| (span.clone(), desugar.clone())),
+            );
             self.install_body_facts(facts, spans, param_owners)?;
             // An inference re-resolves the return annotation over the body's
             // own places at each `return` (`reconcile_return_origin_tails`),
@@ -501,7 +519,10 @@ impl Checker {
             }
             return Ok(());
         };
-        if let Some((realized, _)) = &derived {
+        if let Some(DerivedBody {
+            facts: realized, ..
+        }) = &derived
+        {
             let inferred = self
                 .capture_body_facts(body, param_owners, &baseline, &reads)
                 .map_err(|reason| {
@@ -940,7 +961,7 @@ impl Checker {
         &self,
         site: &BodySite<'_>,
         param_owners: &BodyParams,
-    ) -> Option<(CheckedBodyFacts, HashMap<OccurrenceId, SourceSpan>)> {
+    ) -> Option<DerivedBody> {
         let name = &site.display;
         let template = site.role == BodyRole::Template;
         let trace = if template {
@@ -988,10 +1009,8 @@ impl Checker {
         param_owners: &BodyParams,
         trace: &InstanceTrace,
         template: bool,
-        refuse: &dyn Fn(
-            &'static str,
-        ) -> Option<(CheckedBodyFacts, HashMap<OccurrenceId, SourceSpan>)>,
-    ) -> Option<(CheckedBodyFacts, HashMap<OccurrenceId, SourceSpan>)> {
+        refuse: &dyn Fn(&'static str) -> Option<DerivedBody>,
+    ) -> Option<DerivedBody> {
         let name = &site.display;
         let body = site.body;
         let catalog = self.template_catalog.borrow();
@@ -1043,7 +1062,10 @@ impl Checker {
         {
             return refuse("an instance argument carries a loan, a reference, or a callable");
         }
-        let occurrences = self.body_occurrences(body);
+        let Some(desugars) = self.instance_with_desugars(body, &checked.facts.with_forms) else {
+            return refuse("a `with` statement has no desugar form in its template");
+        };
+        let occurrences = self.occurrences_over(body, &desugars);
         // Every occurrence of the body is one the template checked. A class
         // without compile-time control flow keeps them all, once each; a
         // keyed one keeps the arms the elaborator selected, once per loop
@@ -1107,13 +1129,14 @@ impl Checker {
             .collect();
         let selected = checked.facts.selected(&ids, &folded);
         match self.realize_instance_facts(&selected, &substitution, &indices, &occurrences) {
-            Ok(facts) => Some((
+            Ok(facts) => Some(DerivedBody {
                 facts,
-                occurrences
+                spans: occurrences
                     .into_iter()
                     .map(|occurrence| (occurrence.id, occurrence.span))
                     .collect(),
-            )),
+                desugars,
+            }),
             Err(reason) => refuse(reason),
         }
     }
@@ -2453,10 +2476,14 @@ impl Checker {
             .filter(|parameter| pack_collector(parameter))
             .map(|parameter| parameter.name.as_str())
             .collect();
+        let desugars = self.with_desugars.borrow();
         let shape = BodyShape {
             origins: &self.syntax_origins,
             facts,
             structs: &self.structs,
+            desugars: &desugars,
+            desugar_depth: std::cell::Cell::new(0),
+            error_binders: RefCell::new(Vec::new()),
             params: params
                 .iter()
                 .map(|parameter| parameter.name.as_str())
@@ -2893,10 +2920,14 @@ impl Checker {
             .params
             .iter()
             .any(|parameter| parameter.convention.is_some());
+        let desugars = self.with_desugars.borrow();
         let shape = BodyShape {
             origins: &self.syntax_origins,
             facts,
             structs: &self.structs,
+            desugars: &desugars,
+            desugar_depth: std::cell::Cell::new(0),
+            error_binders: RefCell::new(Vec::new()),
             params: method
                 .params
                 .iter()
@@ -3236,6 +3267,18 @@ impl Checker {
     /// Every statement and expression occurrence of a body in pre-order, by
     /// the identity it had before the final re-key and its copy number.
     fn body_occurrences(&self, body: &[Stmt]) -> Vec<Occurrence> {
+        self.occurrences_over(body, &self.with_desugars.borrow())
+    }
+
+    /// The occurrences of `body` with each `with` statement's children read
+    /// from its desugar in `desugars`: the statement stays an occurrence,
+    /// and the nodes the desugar synthesized are occurrences beside the ones
+    /// it kept from the source.
+    fn occurrences_over(
+        &self,
+        body: &[Stmt],
+        desugars: &HashMap<SourceSpan, super::with_stmt::WithDesugar>,
+    ) -> Vec<Occurrence> {
         struct Occurrences<'a> {
             origins: &'a mojito_ast::ast::SyntaxOrigins,
             found: Vec<Occurrence>,
@@ -3358,8 +3401,47 @@ impl Checker {
             found: Vec::new(),
             copies: HashMap::new(),
         };
-        mojito_ast::visit::walk_block(&mut occurrences, body);
+        let expanded = expand_with_statements(body, desugars);
+        mojito_ast::visit::walk_block(&mut occurrences, expanded.as_deref().unwrap_or(body));
         occurrences.found
+    }
+
+    /// The desugar of each `with` statement of an instance body, nested ones
+    /// included, built from its own syntax in the form the template's
+    /// statement recorded; `None` when a statement has no recorded form.
+    fn instance_with_desugars(
+        &self,
+        body: &[Stmt],
+        forms: &[(OccurrenceId, WithForm)],
+    ) -> Option<HashMap<SourceSpan, super::with_stmt::WithDesugar>> {
+        struct Withs(Vec<Stmt>);
+
+        impl mojito_ast::visit::Visitor for Withs {
+            fn visit_stmt(&mut self, statement: &Stmt) {
+                if matches!(statement.kind, StmtKind::With { .. }) {
+                    self.0.push(statement.clone());
+                }
+            }
+        }
+
+        let mut pending = Withs(Vec::new());
+        mojito_ast::visit::walk_block(&mut pending, body);
+        let mut desugars = HashMap::new();
+        while let Some(statement) = pending.0.pop() {
+            let span = statement.source_span();
+            if desugars.contains_key(&span) {
+                continue;
+            }
+            let syntax = self.syntax_origins.origin(statement.syntax_id);
+            let form = forms
+                .iter()
+                .find(|(id, _)| id.syntax == syntax)
+                .map(|(_, form)| *form)?;
+            let statements = super::with_stmt::with_desugar(&statement, form)?;
+            mojito_ast::visit::walk_block(&mut pending, &statements);
+            desugars.insert(span, super::with_stmt::WithDesugar { form, statements });
+        }
+        Some(desugars)
     }
 
     /// What one body inference recorded, in template-local terms. Every
@@ -3645,6 +3727,10 @@ impl Checker {
             iterations: self.captured_iterations(&occurrences, &local_place)?,
             comprehension_bindings: self
                 .captured_comprehension_bindings(&occurrences, &local_owner)?,
+            with_forms: values(&occurrences, &self.with_desugars.borrow())
+                .into_iter()
+                .map(|(id, desugar)| (id, desugar.form))
+                .collect(),
             tuple_unpacks: self.captured_tuple_unpacks(&occurrences, &local_reference)?,
             call_place_uses: keyed(&|span| self.call_place_uses.borrow().contains(span)),
             transfers: occurrences
@@ -4261,6 +4347,18 @@ impl Checker {
         param_owners: &BodyParams,
     ) -> Result<(), TypeError> {
         let occurrences = self.body_occurrences(body);
+        // A `with` desugar is the body's syntax, which the derived facts
+        // describe; it outlives the clear.
+        let desugars: Vec<_> = {
+            let recorded = self.with_desugars.borrow();
+            occurrences
+                .iter()
+                .filter_map(|occurrence| {
+                    let desugar = recorded.get(&occurrence.span)?;
+                    Some((occurrence.span.clone(), desugar.clone()))
+                })
+                .collect()
+        };
         for occurrence in &occurrences {
             self.remove_occurrence_facts(&occurrence.span);
         }
@@ -4281,7 +4379,9 @@ impl Checker {
                 .map(|occurrence| (occurrence.id, occurrence.span))
                 .collect(),
             param_owners,
-        )
+        )?;
+        self.with_desugars.borrow_mut().extend(desugars);
+        Ok(())
     }
 
     /// Install the bare per-occurrence marks: temporaries no one consumes,
@@ -4625,11 +4725,56 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::ParameterizedMethodCalls
         | FactTable::ViewResultInteriors
         | FactTable::ComprehensionBindings
+        | FactTable::WithDesugars
         | FactTable::CallTransfers => true,
-        FactTable::ContextualBases | FactTable::WithDesugars | FactTable::DeclarationCaptures => {
-            false
+        FactTable::ContextualBases | FactTable::DeclarationCaptures => false,
+    }
+}
+
+/// `body` with each `with` statement that has a desugar in `desugars` made a
+/// scope of that desugar under the statement's own identity, or `None` when
+/// the body holds no such statement.
+fn expand_with_statements(
+    body: &[Stmt],
+    desugars: &HashMap<SourceSpan, super::with_stmt::WithDesugar>,
+) -> Option<Vec<Stmt>> {
+    struct Finds<'a> {
+        desugars: &'a HashMap<SourceSpan, super::with_stmt::WithDesugar>,
+        found: bool,
+    }
+
+    impl mojito_ast::visit::Visitor for Finds<'_> {
+        fn visit_stmt(&mut self, statement: &Stmt) {
+            self.found |= matches!(statement.kind, StmtKind::With { .. })
+                && self.desugars.contains_key(&statement.source_span());
         }
     }
+
+    struct Expand<'a>(&'a HashMap<SourceSpan, super::with_stmt::WithDesugar>);
+
+    impl mojito_ast::visit::MutVisitor for Expand<'_> {
+        fn visit_stmt_mut(&mut self, statement: &mut Stmt) {
+            if matches!(statement.kind, StmtKind::With { .. })
+                && let Some(desugar) = self.0.get(&statement.source_span())
+            {
+                statement.kind = StmtKind::Scope(desugar.statements.clone());
+            }
+        }
+    }
+
+    if desugars.is_empty() {
+        return None;
+    }
+    let mut finds = Finds {
+        desugars,
+        found: false,
+    };
+    mojito_ast::visit::walk_block(&mut finds, body);
+    finds.found.then(|| {
+        let mut expanded = body.to_vec();
+        mojito_ast::visit::walk_block_mut(&mut Expand(desugars), &mut expanded);
+        expanded
+    })
 }
 
 /// The immutable binders a view-returning call records beside its result
@@ -5915,6 +6060,15 @@ struct BodyShape<'a> {
     facts: Option<&'a CheckedBodyFacts>,
     /// The declared structs, which a call may construct.
     structs: &'a HashMap<String, super::StructInfo>,
+    /// Each checked `with` statement's desugar, which the grammar judges in
+    /// the statement's place once the facts are captured.
+    desugars: &'a HashMap<SourceSpan, super::with_stmt::WithDesugar>,
+    /// How many `with` desugars the statement being judged lies in: only a
+    /// desugar's own `try` and liveness anchor are admitted.
+    desugar_depth: std::cell::Cell<u32>,
+    /// The error binders of the desugar handlers in scope, which a `raise`
+    /// may raise again.
+    error_binders: RefCell<Vec<String>>,
     params: Vec<&'a str>,
     /// The `mut` and `ref` parameters among them: a place the body borrows,
     /// so never the source of a `^` transfer.
@@ -6096,6 +6250,36 @@ impl BodyShape<'_> {
                     && self.holds(MethodFeatures::STATEMENTS)
                     && self.holds(MethodFeatures::ITERATION)
             }
+            StmtKind::With { items, body } if !self.keyed && self.moved_result.is_some() => {
+                self.with_statement(statement, items, body)
+                    && self.holds(MethodFeatures::STATEMENTS)
+                    && self.holds(MethodFeatures::WITH_STATEMENTS)
+            }
+            // A `with` desugar's guard: the body, then its cleanup, and for
+            // an error exit a handler binding the body's error.
+            StmtKind::Try {
+                body,
+                except,
+                orelse: None,
+                finalbody: Some(finalbody),
+            } if self.desugar_depth.get() > 0 => {
+                self.block(body)
+                    && except.as_ref().is_none_or(|(binder, handler)| {
+                        let Some(binder) = binder else {
+                            return false;
+                        };
+                        let scope = self.locals.borrow().len();
+                        self.locals
+                            .borrow_mut()
+                            .push((binder.clone(), LocalKind::Value));
+                        self.error_binders.borrow_mut().push(binder.clone());
+                        let admitted = self.block(handler);
+                        self.error_binders.borrow_mut().pop();
+                        self.locals.borrow_mut().truncate(scope);
+                        admitted
+                    })
+                    && self.block(finalbody)
+            }
             StmtKind::Unpack {
                 targets,
                 value,
@@ -6130,6 +6314,7 @@ impl BodyShape<'_> {
                     && self.closed(value);
                 call || (self.moved_result.is_some() && self.pointer_statement(value))
                     || (!self.keyed && self.abort(value))
+                    || (self.desugar_depth.get() > 0 && self.keep_alive(value))
                     || (self.keyed && self.print_call(value))
             }
             StmtKind::Assign { name, value } if name == "_" => {
@@ -6415,7 +6600,81 @@ impl BodyShape<'_> {
                     && fact_at(&facts.call_parameters, id).is_none()
                     && fact_at(&facts.expression_bindings, id).is_none()
             });
-        error || self.construction(value)
+        let reraised = matches!(&value.kind, ExprKind::Identifier(name)
+            if self.error_binders.borrow().contains(name))
+            && self
+                .facts
+                .is_none_or(|facts| fact_at(&facts.expression_types, id) == Some(&Ty::Error));
+        error || reraised || self.construction(value)
+    }
+
+    /// A `with` statement. Before capture it is judged from its syntax: each
+    /// context a whole value, each `as` name a local scoped to the block,
+    /// and the block. After capture the desugar the check recorded stands
+    /// in its place, judged as the body's own statements are: the manager a
+    /// `var` local, its `__enter__` and `__exit__` sibling calls, the
+    /// guarding `try`, and the liveness anchor. Its form is the manager
+    /// struct's declaration, which an instance builds its own desugar from
+    /// (`Checker::instance_with_desugars`).
+    fn with_statement(
+        &self,
+        statement: &Stmt,
+        items: &[mojito_ast::ast::WithItem],
+        body: &[Stmt],
+    ) -> bool {
+        let Some(facts) = self.facts else {
+            let scope = self.locals.borrow().len();
+            let admitted = items.iter().all(|item| {
+                let context = self.whole_value(&item.context);
+                if let Some(name) = &item.var {
+                    let kind = self.entered_kind(&item.context);
+                    self.locals.borrow_mut().push((name.clone(), kind));
+                }
+                context
+            }) && self.block(body);
+            self.locals.borrow_mut().truncate(scope);
+            return admitted;
+        };
+        let Some(desugar) = self.desugars.get(&statement.source_span()) else {
+            return false;
+        };
+        if fact_at(&facts.with_forms, self.occurrence_of(statement)) != Some(&desugar.form) {
+            return false;
+        }
+        self.desugar_depth.set(self.desugar_depth.get() + 1);
+        let admitted = self.block(&desugar.statements);
+        self.desugar_depth.set(self.desugar_depth.get() - 1);
+        admitted
+    }
+
+    /// The kind of local a `with` binds its context's `__enter__` result
+    /// to, read from the manager struct's declaration when the context
+    /// constructs one: the facts that decide it are not captured yet.
+    fn entered_kind(&self, context: &Expr) -> LocalKind {
+        let scalar = matches!(&context.kind, ExprKind::Call { name, .. }
+            if self.structs.get(name).and_then(|info| info.methods.get("__enter__"))
+                .is_some_and(|sigs| sigs.iter().any(|sig| sig.has_self && closed_scalar(&sig.ret))));
+        if scalar {
+            LocalKind::Scalar
+        } else {
+            LocalKind::Value
+        }
+    }
+
+    /// The `with` desugar's liveness anchor, `_mojito_keep_alive(name)` of
+    /// a local: it selects no callee and records only the local's read.
+    fn keep_alive(&self, expr: &Expr) -> bool {
+        let id = self.occurrence(expr);
+        matches!(&expr.kind, ExprKind::Call { name, param_args, args, kwargs }
+            if name == super::with_stmt::KEEP_ALIVE_BUILTIN
+                && param_args.is_empty()
+                && kwargs.is_empty()
+                && matches!(args.as_slice(), [local]
+                    if matches!(&local.kind, ExprKind::Identifier(name) if self.declared(name))))
+            && self.facts.is_none_or(|facts| {
+                fact_at(&facts.call_parameters, id).is_none()
+                    && fact_at(&facts.expression_bindings, id).is_none()
+            })
     }
 
     /// Note that the body holds `feature`.
@@ -8191,6 +8450,13 @@ impl BodyShape<'_> {
     fn occurrence(&self, expr: &Expr) -> OccurrenceId {
         OccurrenceId {
             syntax: self.origins.origin(expr.syntax_id),
+            copy: 0,
+        }
+    }
+
+    fn occurrence_of(&self, statement: &Stmt) -> OccurrenceId {
+        OccurrenceId {
+            syntax: self.origins.origin(statement.syntax_id),
             copy: 0,
         }
     }

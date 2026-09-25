@@ -561,6 +561,7 @@ assets/ok/template_method_value_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_value_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_vanishing_transfer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_view_result_interior.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_with_statement.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_overload_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_overload_binding_local.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_pack_elements.mojo	-	ineligible	no-scalar-entry-shape
