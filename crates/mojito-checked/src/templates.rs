@@ -573,9 +573,6 @@ pub enum IncompleteReason {
     /// The source validation run that checked this body ended without a
     /// verdict, so nothing it recorded is certified.
     ValidationAborted,
-    /// A construction bound an origin binder immutably (`ImmOrigin(o)`), a
-    /// record the bundle does not carry.
-    ImmutableBinder,
     /// A loop's iterator protocol is not one an instance selects again from
     /// its iterable's type alone.
     IterationRecipe,
@@ -602,7 +599,6 @@ impl IncompleteReason {
             Self::AmbiguousOccurrence => "template_capture_incomplete.ambiguous_occurrence",
             Self::SymbolicFact => "template_capture_incomplete.symbolic_fact",
             Self::ValidationAborted => "template_capture_incomplete.validation_aborted",
-            Self::ImmutableBinder => "template_capture_incomplete.immutable_binder",
             Self::IterationRecipe => "template_capture_incomplete.iteration_recipe",
             Self::TupleUnpackRecipe => "template_capture_incomplete.tuple_unpack_recipe",
             Self::ComprehensionRecipe => "template_capture_incomplete.comprehension_recipe",
@@ -624,7 +620,6 @@ impl std::fmt::Display for IncompleteReason {
             Self::AmbiguousOccurrence => f.write_str("two occurrences share one identity"),
             Self::SymbolicFact => f.write_str("a fact's type mentions a parameter"),
             Self::ValidationAborted => f.write_str("source validation ended without a verdict"),
-            Self::ImmutableBinder => f.write_str("a construction binds an origin immutably"),
             Self::IterationRecipe => {
                 f.write_str("a loop's iterator protocol has no re-selection recipe")
             }
@@ -1332,6 +1327,11 @@ pub struct TemplateConversion {
 /// its setter takes the assigned value by keyword.
 pub type SubscriptDescriptors = (Vec<Option<mojito_types::types::SliceKind>>, bool);
 
+/// An origin slot a construction binds immutably, under the field path of
+/// the nested construction or view that bound it (`KeyView(self.entries())`
+/// over an `ImmOrigin` view records `(["iter"], o)`).
+pub type TemplateImmutableBinder = (Vec<String>, mojito_types::origin::OriginParamId);
+
 /// The facts one body check recorded, keyed by the body's own syntax
 /// occurrences rather than by a checker run's spans.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1572,6 +1572,13 @@ pub struct CheckedBodyFacts {
     /// places it names are the callee's declaration and the call's own
     /// receiver and arguments, which no instance changes.
     pub call_result_origins: Vec<(OccurrenceId, Vec<TemplateCallResultOrigin>)>,
+    /// The origin slots each construction binds immutably, where it binds
+    /// any: through an `ImmOrigin` view a sibling call returns, wrapped
+    /// under its field. A record names the constructed struct's own slots by
+    /// declaration order and its fields by name, which no instance changes,
+    /// so an instance inherits it verbatim. A view-returning call's record is
+    /// not kept here: installation derives it from `call_result_origins`.
+    pub construction_immutable_binders: Vec<(OccurrenceId, Vec<TemplateImmutableBinder>)>,
     /// The multi-lane vector types the body hashed, deduplicated and in
     /// canonical order. Each is closed, so an instance records every one
     /// again, beside those its bound builtins and dispatches record at its
@@ -1704,6 +1711,7 @@ impl CheckedBodyFacts {
             conversions,
             typed_origins,
             call_result_origins,
+            construction_immutable_binders,
             hash_leaves,
             locals,
         );
@@ -1913,6 +1921,11 @@ impl CheckedBodyFacts {
             })
             .collect(),
             call_result_origins: at(&self.call_result_origins, occurrences, folded),
+            construction_immutable_binders: at(
+                &self.construction_immutable_binders,
+                occurrences,
+                folded,
+            ),
             // A leaf names a closed type, not an occurrence.
             hash_leaves: self.hash_leaves.clone(),
             locals: self.locals,
@@ -1976,6 +1989,7 @@ impl CheckedBodyFacts {
             + self.constructions.len()
             + self.typed_origins.len()
             + self.call_result_origins.len()
+            + self.construction_immutable_binders.len()
             + self.call_transfers.len()
             + self.transferred_origins.len()
             + self.transfer_effects.len()

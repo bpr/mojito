@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A method wrapping a sibling's immutable view in a construction
+  (`return KeyView(self.entries())` over an `ImmOrigin(origin_of(self))`
+  result) now reuses the template's checked facts; it used to be checked
+  again as a clone per instance, refused with "a construction binds an origin
+  immutably".
+
 - A method calling another method on a call's temporary result
   (`return self.entries().size()`, `self.name.strip().upper()`) now reuses
   the template's checked facts; it used to be checked again as a clone per

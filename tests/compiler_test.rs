@@ -1849,6 +1849,18 @@ fn template_method_sibling_views_derive() {
 }
 
 #[test]
+fn template_method_immutable_sibling_views_derive() {
+    // A sibling's `ImmOrigin` view wrapped by a construction, returned and
+    // bound to a local: the construction's immutable-binder record names the
+    // view's slot under the wrapping field, which no instance changes.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_immutable_sibling_view.mojo"),
+        "2 1\n2 1\n",
+        &[("Shelf.keys", 2), ("Shelf.bound", 2)],
+    );
+}
+
+#[test]
 fn template_method_temporary_receivers_derive() {
     // A method called on a call's temporary result: a sibling's view over
     // `self`, a sibling's owned copy of `Self`, a field's copied list, and a

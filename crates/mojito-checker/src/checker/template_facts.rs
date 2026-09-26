@@ -4021,6 +4021,7 @@ impl Checker {
             self.captured_nested_defs(body, &occurrences, &local_owner, &local_place)?;
         Ok(CheckedBodyFacts {
             expression_types,
+            construction_immutable_binders: self.captured_immutable_binders(&occurrences),
             expression_place_types,
             binding_types,
             typed_origins,
@@ -4306,26 +4307,6 @@ impl Checker {
         }
         drop(targets);
         drop(types);
-        // A construction's immutable-binder record is kept only as the fact
-        // that it is empty, which installation writes again: the grammar
-        // admits no `ImmOrigin` argument, so it is never otherwise. A
-        // view-returning call's record is the immutable slots of its result
-        // origins, which installation derives again from those.
-        let immutable_binders = self.construction_immutable_binders.borrow();
-        let result_origins = self.call_result_origins.borrow();
-        if occurrences.iter().any(|occurrence| {
-            immutable_binders
-                .get(&occurrence.span)
-                .is_some_and(|binders| {
-                    !binders.is_empty()
-                        && result_origins
-                            .get(&occurrence.span)
-                            .is_none_or(|slots| *binders != call_result_immutable_binders(slots))
-                })
-        }) {
-            return Err(IncompleteReason::ImmutableBinder);
-        }
-        drop(result_origins);
         // A type is retained as written, and a binding identity inside one
         // would never be remapped for an instance. Two exceptions are kept by
         // template owner: a reference at the top of a place or binding type
@@ -4596,12 +4577,18 @@ impl Checker {
                 .borrow_mut()
                 .insert(span(id)?, instantiation.clone());
         }
-        // A construction's immutable-binder record, empty as the grammar
-        // requires: what `infer_construction` writes at every construction.
+        // A construction's immutable-binder record: the kept one where it
+        // binds a slot immutably, else the empty one `infer_construction`
+        // writes at every construction.
         for id in &facts.constructions {
             self.construction_immutable_binders
                 .borrow_mut()
                 .insert(span(id)?, Vec::new());
+        }
+        for (id, binders) in &facts.construction_immutable_binders {
+            self.construction_immutable_binders
+                .borrow_mut()
+                .insert(span(id)?, binders.clone());
         }
         for (id, writable) in &facts.reference_value_uses {
             self.reference_value_uses
@@ -4668,6 +4655,28 @@ impl Checker {
             }
         }
         Ok(())
+    }
+
+    /// The immutable-binder records a body keeps. A view-returning call's is
+    /// the immutable slots of its result origins, which installation derives
+    /// again, and an empty one is what installation writes at every
+    /// construction; any other names slots and field paths alone.
+    fn captured_immutable_binders(
+        &self,
+        occurrences: &[Occurrence],
+    ) -> Vec<(OccurrenceId, Vec<super::ImmutableOriginBinder>)> {
+        let binders = self.construction_immutable_binders.borrow();
+        let result_origins = self.call_result_origins.borrow();
+        occurrences
+            .iter()
+            .filter_map(|occurrence| {
+                let record = binders.get(&occurrence.span)?;
+                let derived = result_origins
+                    .get(&occurrence.span)
+                    .is_some_and(|slots| *record == call_result_immutable_binders(slots));
+                (!record.is_empty() && !derived).then(|| (occurrence.id, record.clone()))
+            })
+            .collect()
     }
 
     /// Install what a view-returning call records about its result: the

@@ -556,6 +556,7 @@ assets/ok/template_method_foreign_overload.mojo	-	ineligible	no-scalar-entry-sha
 assets/ok/template_method_generic_witness.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_getter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_hash_leaf.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_immutable_sibling_view.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_moves.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_nested_def.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_operator_dispatch.mojo	-	ineligible	no-scalar-entry-shape
