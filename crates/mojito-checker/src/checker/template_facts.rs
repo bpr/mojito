@@ -17,7 +17,7 @@ use super::body_carry::ObservedEffects;
 use super::{
     Checker, EffectRead, callable_contract_target, callable_lowered_name, method_binder_owner,
 };
-use mojito_ast::ast::{Expr, ExprKind, Stmt, StmtKind};
+use mojito_ast::ast::{CaptureKind, Expr, ExprKind, Stmt, StmtKind};
 use mojito_checked::templates::{
     BoundBuiltin, CallParameterFact, CheckedBodyFacts, CheckedTemplate, FactTable, FoldedLiteral,
     IncompleteReason, InstanceName, InstanceTrace, MethodFeatures, OccurrenceId,
@@ -509,12 +509,20 @@ impl Checker {
         let baseline = (derived.is_some() || admitted || census || timing::notes_enabled())
             .then(|| self.body_fact_baseline(body));
         Self::count_body_inference(BodyClass::of(generated, !decls.is_empty()), || name.clone());
+        // A nested body records what it reads for its enclosing body too.
+        let queries =
+            baseline.is_some() || matches!(self.effect_query_frames.borrow().last(), Some(Some(_)));
+        let applications = baseline.is_some()
+            || matches!(
+                self.struct_application_frames.borrow().last(),
+                Some(Some(_))
+            );
         self.effect_query_frames
             .borrow_mut()
-            .push(baseline.is_some().then(Vec::new));
+            .push(queries.then(Vec::new));
         self.struct_application_frames
             .borrow_mut()
-            .push(baseline.is_some().then(Vec::new));
+            .push(applications.then(Vec::new));
         let inferred = self.check_block(body, Some(ret_ty), false);
         let reads = BodyReads {
             effect_queries: self
@@ -530,7 +538,10 @@ impl Checker {
                 .flatten()
                 .unwrap_or_default(),
         };
-        // An application a nested body reached is the enclosing body's too.
+        // What a nested body read and reached is the enclosing body's too.
+        if let Some(Some(outer)) = self.effect_query_frames.borrow_mut().last_mut() {
+            outer.extend(reads.effect_queries.iter().cloned());
+        }
         if let Some(Some(outer)) = self.struct_application_frames.borrow_mut().last_mut() {
             outer.extend(reads.struct_applications.iter().cloned());
         }
@@ -1477,6 +1488,21 @@ impl Checker {
         });
         if !movable {
             return Err("a transferred value is not movable for the instance");
+        }
+        // `check_capture_capability`'s demand on a nested `def`'s owned
+        // capture, at the instance's type.
+        let capturable = template
+            .nested_defs
+            .iter()
+            .flat_map(|(_, recipe)| &recipe.captures)
+            .filter(|capture| mojito_types::types::is_symbolic(&capture.ty))
+            .all(|capture| match capture.kind {
+                CaptureKind::Copy => self.is_implicitly_copyable(&substitute(&capture.ty)),
+                CaptureKind::Move => self.is_movable(&substitute(&capture.ty)),
+                CaptureKind::Imm | CaptureKind::Mut | CaptureKind::Ref => true,
+            });
+        if !capturable {
+            return Err("a nested def's owned capture is not capturable for the instance");
         }
         // The declaration's own judgment of each binding whose type mentions
         // a parameter, at the instance's type: deletable where the type is
@@ -3210,11 +3236,12 @@ impl Checker {
     ///   (`TemplateObligation::RebindEqualities`): one that does not hold
     ///   refuses the derivation, and the clone check reports it.
     /// - `NESTED_DEFS`: see [`BodyShape::nested_def`]. A nested `def`'s
-    ///   declaration facts are its closed signature, keyed by its statement,
-    ///   and its captures name the body's own bindings, so an instance writes
-    ///   them again under its own statement and bindings
+    ///   declaration facts are its signature, keyed by its statement and
+    ///   substituted, and its captures name the body's own bindings, so an
+    ///   instance writes them again under its own statement and bindings
     ///   (`install_nested_defs`); a call of it selects the declaration the
-    ///   body introduces, under every instance.
+    ///   body introduces, under every instance. A nested body's effect reads
+    ///   are the enclosing body's too.
     /// - `STATIC_CALLS`: see [`BodyShape::static_call`]. A static of a
     ///   non-generic struct records at most its overload member and, behind
     ///   a leading-dot root, the expected type's head, neither of which an
@@ -7049,18 +7076,16 @@ enum LocalKind {
 impl BodyShape<'_> {
     fn statement(&self, statement: &Stmt) -> bool {
         match &statement.kind {
-            // A nested body returns to its own caller: a closed scalar of its
-            // declared result, or nothing.
+            // A nested body returns to its own caller: a closed scalar, a
+            // whole value of its declared result, or nothing.
             StmtKind::Return(value) if self.nested_depth.get() > 0 => {
-                value
-                    .as_ref()
-                    .is_none_or(|value| self.expression(value) && self.scalar(value))
-                    && self.holds(MethodFeatures::STATEMENTS)
+                value.as_ref().is_none_or(|value| {
+                    (self.expression(value) && self.scalar(value)) || self.whole_value(value)
+                }) && self.holds(MethodFeatures::STATEMENTS)
             }
             StmtKind::Def { .. }
                 if !self.keyed
                     && self.moved_result.is_some()
-                    && self.nested_depth.get() == 0
                     && self.loop_vars.borrow().is_empty() =>
             {
                 self.nested_def(statement)
@@ -7631,18 +7656,20 @@ impl BodyShape<'_> {
         error || literal || reraised || self.construction(value)
     }
 
-    /// A nested `def` over closed scalars (`NESTED_DEFS`).
+    /// A nested `def` (`NESTED_DEFS`), at any depth.
     ///
     /// It declares no compile-time parameters, decorators, `where` clause,
     /// or `raises`, and takes regular read parameters with no default. Its
-    /// recorded parameter and result types are closed scalars (or no
-    /// result), so its signature is the same under every instance. Each
-    /// capture names a local or a parameter of the body, by `imm`, `mut`, or
-    /// copy, which an instance maps to its own binding. Its body is judged
-    /// in place with its parameters as scalar locals, and its name is a
-    /// local the body may only call.
+    /// recorded parameter and result types substitute in the recipe, where
+    /// they may mention the struct's parameters, and each parameter's
+    /// deletability is judged at the instance's type. Each capture, listed
+    /// or reached through a capture-all default, names a local, a parameter,
+    /// or `self`, by any convention, which an instance maps to its own
+    /// binding; an owned one owes its capability again at the instance's
+    /// type. Its body is judged in place with its parameters as locals read
+    /// where they lie, returning a closed scalar or a whole value, and its
+    /// name is a local the body may only call.
     fn nested_def(&self, statement: &Stmt) -> bool {
-        use mojito_ast::ast::CaptureKind;
         let StmtKind::Def {
             name,
             decorators,
@@ -7674,21 +7701,15 @@ impl BodyShape<'_> {
                     && parameter.origin.is_none()
             });
         let captured = captures.as_ref().is_none_or(|list| {
-            list.default.is_none()
-                && list.entries.iter().all(|capture| {
-                    matches!(
-                        capture.kind,
-                        CaptureKind::Imm | CaptureKind::Mut | CaptureKind::Copy
-                    ) && (self.declared(&capture.name)
-                        || self.params.contains(&capture.name.as_str()))
-                })
-        });
-        let recipe = self.facts.map(|facts| {
-            fact_at(&facts.nested_defs, self.occurrence_of(statement)).filter(|recipe| {
-                recipe.param_types.iter().all(closed_scalar)
-                    && (closed_scalar(&recipe.return_ty) || recipe.return_ty == Ty::None)
+            list.entries.iter().all(|capture| {
+                self.declared(&capture.name)
+                    || self.params.contains(&capture.name.as_str())
+                    || (self.receiver && capture.name == "self")
             })
         });
+        let recipe = self
+            .facts
+            .map(|facts| fact_at(&facts.nested_defs, self.occurrence_of(statement)));
         if !declaration || !captured || recipe.is_some_and(|recipe| recipe.is_none()) {
             return false;
         }
@@ -8047,7 +8068,9 @@ impl BodyShape<'_> {
                 !matches!(method.as_str(), "unsafe_take_pointee" | "unsafe_offset")
             }
             ExprKind::Invoke { callee, .. } => matches!(callee.kind, ExprKind::Member { .. }),
-            ExprKind::Call { param_args, .. } => !param_args.is_empty(),
+            ExprKind::Call {
+                name, param_args, ..
+            } => !param_args.is_empty() || self.local_kind(name) == Some(LocalKind::Callable),
             _ => false,
         };
         call && self.expression(expr)
@@ -8967,6 +8990,36 @@ impl BodyShape<'_> {
     /// parameter borrows the place it names, a field read keeps its base as
     /// a handle, and a reference call records its own result, which an
     /// instance marks a copyable read again at its own referent.
+    /// An argument of a call of a nested `def`: a closed scalar, or a whole
+    /// value of exactly the read parameter's recorded type, read where it
+    /// lies when it is a named place and a temporary otherwise. The call
+    /// records its parameters and no contract, and its read parameters take
+    /// no conversion, so an instance substitutes both sides alike.
+    fn nested_argument(&self, call: OccurrenceId, index: usize, argument: &Expr) -> bool {
+        if self.expression(argument) && self.scalar(argument) {
+            return true;
+        }
+        let named = match &argument.kind {
+            ExprKind::Identifier(name) => {
+                self.declared(name) || self.params.contains(&name.as_str())
+            }
+            _ => self.receiver_field(argument),
+        };
+        let place = named || self.reference_argument(argument);
+        let Some(facts) = self.facts else {
+            return place || self.whole_value(argument);
+        };
+        let id = self.occurrence(argument);
+        let parameter = fact_at(&facts.call_parameters, call).and_then(|params| params.get(index));
+        let read_in_place = facts.borrowed_read_call_places.contains(&id) && place;
+        parameter.is_some_and(|parameter| {
+            parameter.convention.is_none()
+                && fact_at(&facts.expression_types, id) == Some(&parameter.ty)
+        }) && !facts.call_place_uses.contains(&id)
+            && (read_in_place || self.whole_value(argument))
+            && self.holds(MethodFeatures::VALUE_ARGUMENTS)
+    }
+
     fn reference_argument(&self, argument: &Expr) -> bool {
         let admitted = match &argument.kind {
             ExprKind::Identifier(name) => self.reference_local(name),
@@ -9174,7 +9227,8 @@ impl BodyShape<'_> {
                         && kwargs.is_empty()
                         && args
                             .iter()
-                            .all(|argument| self.expression(argument) && self.scalar(argument))
+                            .enumerate()
+                            .all(|(index, argument)| self.nested_argument(id, index, argument))
                         && self.holds(MethodFeatures::NESTED_DEFS);
                 }
                 if name == "_unqualified_type_name" || name == "repr" {

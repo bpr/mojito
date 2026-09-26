@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct method declaring a nested `def` over the struct parameter's type
+  (`def same(x: Self.T) -> Self.T`), with a capture-all default (`{imm}`), a
+  `ref`, transferred, or `self` capture, or a nested `def` inside another now
+  reuses the template's checked facts. Such methods used to be checked again
+  per instance.
 - A struct method passing a string literal to a method's `StringSpan` or
   `String` parameter (`self.name.rstrip(" z")`) now reuses the template's
   checked facts. Such methods used to be checked again per instance.

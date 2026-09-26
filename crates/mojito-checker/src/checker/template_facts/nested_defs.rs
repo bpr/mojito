@@ -116,7 +116,7 @@ impl Checker {
     /// statement's identity. It declares no compile-time parameters, its
     /// types name no place but its callable's environment, which is kept by
     /// template place, and each capture's binding and origins are the
-    /// body's own.
+    /// body's own, `self` included.
     pub(super) fn captured_nested_defs(
         &self,
         body: &[Stmt],

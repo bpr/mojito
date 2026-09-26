@@ -3042,6 +3042,34 @@ fn body_fact_carry_over_lowers_the_same_program() {
 }
 
 #[test]
+fn template_nested_def_forms_derive() {
+    // A nested `def` over the struct parameter's type, with a capture-all
+    // default, a `ref`, transferred, or `self` capture, or a nested `def` of
+    // its own, keeps its declaration's facts in the recipe.
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/template_method_nested_def_forms.mojo");
+    let source = std::fs::read_to_string(path).expect("fixture");
+    assert_methods_derive(
+        &source,
+        "5 w\n6 f\n7 p\n2 4\n5 8\n57 60\n6 7\n4 5\n5 8\n10 14\n7 9\n22 24\n",
+        &[
+            ("Shelf.echoed", 2),
+            ("Shelf.fresh", 2),
+            ("Shelf.picked", 2),
+            ("Shelf.counted", 2),
+            ("Shelf.defaulted", 2),
+            ("Shelf.copied", 2),
+            ("Shelf.referenced", 2),
+            ("Shelf.moved", 2),
+            ("Shelf.selfish", 2),
+            ("Shelf.bumped", 2),
+            ("Shelf.layered", 2),
+            ("Shelf.deep", 2),
+        ],
+    );
+}
+
+#[test]
 fn template_string_literal_argument_derives() {
     // A string literal handed to a method's `StringSpan` or `String`
     // parameter converts by its syntax and the callee's declared parameter.
