@@ -3394,29 +3394,55 @@ fn expand_packs<S: std::hash::BuildHasher>(
         }
         Ty::Dependent(dependent) => {
             let context = ParamContext::detached();
-            let mut bindings = ParamBindings::new();
-            for (id, ty) in subst {
-                bindings.bind_type(id.clone(), ty.clone());
-            }
-            let lists = packs.iter().map(|(id, elements)| {
-                let list = elements
-                    .iter()
-                    .map(|element| CtValue::Type(Box::new(element.clone())))
-                    .collect();
-                (id, CtValue::Tuple(list))
-            });
-            let values = values.iter().map(|(id, value)| (id, value.clone()));
-            for (id, value) in lists.chain(values) {
-                if let Ok(constant) = context.constant(value) {
-                    bindings.bind(id.clone(), constant);
-                }
-            }
             context
-                .replace(dependent.expr(), &bindings)
+                .replace(
+                    dependent.expr(),
+                    &pack_bindings(&context, subst, packs, values),
+                )
                 .map_or_else(|_| ty.clone(), DependentType::resolve)
+        }
+        // A lane dtype or width naming a folded value binder closes and
+        // re-canonicalizes (`Scalar[dt]` at `dt = DType.int` is `Int`).
+        Ty::Simd { .. } if !values.is_empty() && is_symbolic(ty) => {
+            let context = ParamContext::detached();
+            replace_parameters(
+                &context,
+                ty,
+                &pack_bindings(&context, subst, packs, values),
+                0,
+            )
+            .unwrap_or_else(|_| ty.clone())
         }
         _ => ty.clone(),
     }
+}
+
+/// The bindings [`expand_packs`] replaces a dependent or lane-shaped type
+/// under: the types, each pack as the tuple of its elements, and the values.
+fn pack_bindings<S: std::hash::BuildHasher>(
+    context: &ParamContext,
+    subst: &TySubst,
+    packs: &HashMap<ParamId, Vec<Ty>, S>,
+    values: &[(ParamId, CtValue)],
+) -> ParamBindings {
+    let mut bindings = ParamBindings::new();
+    for (id, ty) in subst {
+        bindings.bind_type(id.clone(), ty.clone());
+    }
+    let lists = packs.iter().map(|(id, elements)| {
+        let list = elements
+            .iter()
+            .map(|element| CtValue::Type(Box::new(element.clone())))
+            .collect();
+        (id, CtValue::Tuple(list))
+    });
+    let values = values.iter().map(|(id, value)| (id, value.clone()));
+    for (id, value) in lists.chain(values) {
+        if let Ok(constant) = context.constant(value) {
+            bindings.bind(id.clone(), constant);
+        }
+    }
+    bindings
 }
 
 /// Bind a generic signature's own value binders to their slots. A type the

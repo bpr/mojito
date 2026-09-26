@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A compile-time-keyed `def` constructing a `SIMD` value whose dtype or
+  width names its own value binder (`SIMD[dt, w](v)`, `Scalar[dt](v)` under
+  `comptime if`) now reuses the template's checked facts, each instance
+  taking the construction's dimensions from its substituted type; a `DType`
+  binder no longer keeps such a body out. A surviving trait-bound `def`
+  constructing a closed `SIMD` value (`UInt8(1)`) reuses them too. Such
+  bodies used to be checked again per instance.
 - A struct method calling a generic module function on a value of the
   struct's parameter type (`hash(e)` in `Set.__hash__`, `hash(self.value)`)
   now reuses the template's checked facts, keeping the overload the template

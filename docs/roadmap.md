@@ -126,24 +126,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.6 A construction whose dtype or width names a parameter has no
-  recipe**
-
-  Problem: inference records a `SIMD` construction's dimensions only when
-  both are closed, so a template's `Scalar[dt](x)` records nothing, and its
-  instance's record must be computed from the instance's arguments.
-  - No enabled class reaches such a body today: a `DType` or `Int` value
-    binder fails the plain-binder rule, and a struct with a value parameter
-    runs its methods on the erased path, so the recipe waits on 1.1.
-  - The instance's dimensions are the substituted construction type's
-    (`simd_shape`), as a closed construction's are its recorded type's.
-  - The method grammar admits only a recorded construction
-    (`BodyShape::simd_construction`), so until then such a body keeps the
-    clone check.
-  - Depends on 1.1.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.7 A field read of a field or of a `var` parameter keeps the clone
+- [ ] **1.6 A field read of a field or of a `var` parameter keeps the clone
   check**
 
   Problem: the method grammar reads a field only of `self`, of a `var`
@@ -162,7 +145,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.8 A string literal passed to a method's `StringSpan` parameter
+- [ ] **1.7 A string literal passed to a method's `StringSpan` parameter
   keeps the clone check**
 
   Problem: `var view = self.name.rstrip(" z")` is refused by the method
@@ -176,7 +159,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.9 A nested `def` beyond closed scalars keeps the clone check**
+- [ ] **1.8 A nested `def` beyond closed scalars keeps the clone check**
 
   Problem: a nested `def` derives only over closed scalar parameters and
   result, with explicit `imm`, `mut`, or `var` captures of the method's own
@@ -193,7 +176,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.10 A static method of a generic struct keeps the clone check**
+- [ ] **1.9 A static method of a generic struct keeps the clone check**
 
   Problem: a static call derives only on a non-generic struct
   (`BodyShape::static_call`), so `Pair[Self.T].twice(v)`, and `.twice(v)`
@@ -208,7 +191,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.11 A method called on a read parameter keeps the clone check**
+- [ ] **1.10 A method called on a read parameter keeps the clone check**
 
   Problem: `value.head()` on a `value: Box[Self.T]` parameter is outside the
   method grammar, so a body calling it, alone or as an operator's operand
@@ -220,7 +203,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.12 An operator with a literal left operand keeps the clone check**
+- [ ] **1.11 An operator with a literal left operand keeps the clone check**
 
   Problem: `1 + self.bag` dispatches the right operand's reflected dunder
   (`__radd__`), which the template records at the operator as it does in a
@@ -231,7 +214,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.13 A method called on a subscripted element keeps the clone
+- [ ] **1.12 A method called on a subscripted element keeps the clone
   check**
 
   Problem: `self.items[i] = self.items[j].copy()` calls `copy` on an element,
@@ -244,7 +227,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.14 An augmented assignment to a place through its in-place dunder
+- [ ] **1.13 An augmented assignment to a place through its in-place dunder
   keeps the clone check**
 
   Problem: `self.total += x` on a `T` whose bound requires `__iadd__`, or
@@ -258,7 +241,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.15 A tuple element read as a whole value keeps the clone check**
+- [ ] **1.14 A tuple element read as a whole value keeps the clone check**
 
   Problem: the method grammar reads a tuple element only as a scalar, so a
   body binding or returning an element of a parameter type
@@ -274,7 +257,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.16 A surviving `def` template that builds and consumes a hasher keeps
+- [ ] **1.15 A surviving `def` template that builds and consumes a hasher keeps
   the clone check**
 
   Problem: `hash_seeded[T: Hashable](value: T, seed: U256)` constructs a
@@ -292,7 +275,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.17 A bundled template's instance over a loan-carrying argument
+- [ ] **1.16 A bundled template's instance over a loan-carrying argument
   keeps its erased body**
 
   Problem: `List[Span[Int, origin_of(xs)]]` mints no clones, so its methods
@@ -311,7 +294,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.18 A per-call method clone over a loan-carrying argument keeps the
+- [ ] **1.17 A per-call method clone over a loan-carrying argument keeps the
   erased path**
 
   Problem: a generic method called with a loan-carrying argument of its own
@@ -324,7 +307,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.19 A frame effect whose source is not a single binding refuses
+- [ ] **1.18 A frame effect whose source is not a single binding refuses
   capture**
 
   Problem: a template's frame transfer effect is captured only when its
@@ -339,7 +322,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.20 Native monomorphization binds type parameters by spelling**
+- [ ] **1.19 Native monomorphization binds type parameters by spelling**
 
   Problem: `Bindings.types` and `Specializer.enclosing_types`
   (`crates/mojito-native/src/native/mono`) are keyed by a binder's name, so a
@@ -356,7 +339,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **1.21 A `where`-clause operand names its binder by spelling**
+- [ ] **1.20 A `where`-clause operand names its binder by spelling**
 
   Problem: a compiled `where` clause names its binder by spelling
   (`GenericConstraint::{Conforms, ConformsPack, PackPredicate,
@@ -368,11 +351,11 @@ to section 3, however small.
     type parameter and a value reference by identity (2026-09-26). These
     operands are what still reads a spelling there.
   - The constraints are serialized in MIR text, so batch the schema change
-    with 1.20's.
+    with 1.19's.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **1.22 Two overloads of one generic method share their binders**
+- [ ] **1.21 Two overloads of one generic method share their binders**
 
   Problem: a method's binders are owned by `Struct.method`
   (`method_binder_owner`), so two overloads of one method whose slots agree
@@ -388,7 +371,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.23 The elaborator's binders have no owner**
+- [ ] **1.22 The elaborator's binders have no owner**
 
   Problem: every binder the elaborator classifies is
   `ParamId { owner: "$elaborated", slot }` (`comptime/params.rs`,
@@ -400,7 +383,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.24 An overloaded witness ranked past its conversions keeps the
+- [ ] **1.23 An overloaded witness ranked past its conversions keeps the
   clone check**
 
   Problem: a call through a bound derives for an instance whose type
@@ -419,7 +402,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.25 A hasher leaf under a method's own hasher binder disagrees
+- [ ] **1.24 A hasher leaf under a method's own hasher binder disagrees
   with its clone check**
 
   Problem: `MOJITO_VERIFY_TEMPLATE_FACTS=1` fails on
@@ -438,7 +421,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.26 `os.removedirs` keeps the clone check**
+- [ ] **1.25 `os.removedirs` keeps the clone check**
 
   Problem: a module-level `def` that raises derives, but the function grammar
   still refuses `os.removedirs` and the bundled bodies it calls.
@@ -455,7 +438,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.27 A folded name in a division, comparison, or `~` keeps the clone
+- [ ] **1.26 A folded name in a division, comparison, or `~` keeps the clone
   check**
 
   Problem: over folded values and literals alone, only integer arithmetic
@@ -474,7 +457,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.28 A `print` statement in a runtime body keeps the clone check**
+- [ ] **1.27 A `print` statement in a runtime body keeps the clone check**
 
   Problem: `BodyShape::statement` admits `print(...)` only in a keyed
   `def` shape, so a runtime `def` or any method body that prints keeps the
@@ -488,7 +471,38 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.29 The Pliron pivot has no falsifiable proof yet**
+- [ ] **1.28 A `DType`- or lane-keyed `def` without compile-time control flow
+  has no template**
+
+  Problem: `def lane[dt: DType](v: Int) -> Int` constructing `Scalar[dt](v)`
+  with no `comptime if` is cloned per call, and every clone reports "its
+  template has no retained facts".
+  - The elaborator specializes a `def` keyed on a `DType` binder, or using a
+    parameter as a lane width, per call and drops the template, so the
+    executable check never sees it.
+  - Source validation checks only a body with compile-time control flow or a
+    `rebind`, so it never sees one either.
+  - The derivation half exists: a keyed body's value-shaped construction
+    derives (`assets/ok/template_value_shaped_construction.mojo`), so what is
+    missing is a producer for the template.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.29 A value built by a value-shaped construction is not a grammar
+  scalar**
+
+  Problem: in a keyed `def`, `var lanes = SIMD[DType.int64, w](v)` derives,
+  but `lanes + lanes` or `lanes.reduce_add()` keeps the clone check.
+  - Such a local's recorded type names the folded binder
+    (`SIMD[DType.int64, w]`), and the grammar's scalars are closed types
+    (`grammar_scalar`), so only a binding and `len` read it.
+  - An operator or method over it would need its operation facts substituted
+    at the folded dimensions, as the construction's record is
+    (`realize_value_shaped_constructions`).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.30 The Pliron pivot has no falsifiable proof yet**
 
   Problem: [`docs/pliron-backend-pivot-plan.md`](pliron-backend-pivot-plan.md)
   stages a migration to a required Pliron IR framework, but its Stage A1 slice

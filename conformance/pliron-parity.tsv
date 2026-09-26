@@ -607,6 +607,7 @@ assets/ok/template_scalar_loop.mojo	main	exe-differential	sanitized
 assets/ok/template_two_arms.mojo	main	exe-differential	sanitized
 assets/ok/template_two_types.mojo	main	exe-differential	sanitized
 assets/ok/template_value_keyed_def.mojo	main	exe-differential	sanitized
+assets/ok/template_value_shaped_construction.mojo	main	exe-differential	sanitized
 assets/ok/template_where_instances.mojo	main	exe-differential	sanitized
 assets/ok/temporary_argument_field_deinit.mojo	main	exe-differential	sanitized
 assets/ok/temporary_receiver_deinit.mojo	main	exe-differential	sanitized

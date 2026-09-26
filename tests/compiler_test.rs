@@ -1541,6 +1541,34 @@ fn template_value_keyed_def_derives() {
 }
 
 #[test]
+fn template_value_shaped_construction_derives() {
+    // A keyed `def` constructing a `SIMD` whose dtype or width names its own
+    // value binder records no dimensions in its template; each instance's
+    // are its substituted construction type's.
+    let source = "def both[dt: DType, w: Int](v: Int) -> Int:\n    var acc = v\n    comptime if dt.is_integral():\n        var lanes = SIMD[dt, w](v)\n        acc += len(lanes) * 10\n    else:\n        var one = Scalar[dt](v)\n        acc += len(one)\n    return acc\n\ndef main():\n    print(both[DType.int16, 4](2), both[DType.float32, 2](9))\n";
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compiler.compile_unlinked(source).expect("compile");
+        let stats = program.template_stats();
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        let derived: std::collections::HashSet<&str> = served
+            .iter()
+            .map(String::as_str)
+            .filter(|name| name.starts_with("both$"))
+            .collect();
+        assert_eq!(derived.len(), 2, "every instance derives: {stats:?}");
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "42 10\n"
+        );
+    }
+}
+
+#[test]
 fn template_per_call_method_clones_derive() {
     // A per-call clone bakes the method's own bounded binder beside the
     // struct's; its trace names both, so it derives from the checked

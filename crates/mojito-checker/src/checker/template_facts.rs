@@ -239,6 +239,9 @@ struct InstanceSubstitution {
     types: TySubst,
     /// Each baked type pack's element types.
     packs: HashMap<mojito_types::param_expr::ParamId, Vec<Ty>>,
+    /// Each folded value binder's value, which a lane dtype or width the
+    /// template left open takes (`SIMD[DType.int32, w]`).
+    values: Vec<(mojito_types::param_expr::ParamId, mojito_types::ct::CtValue)>,
 }
 
 /// The loop index each pack-element occurrence of an instance was copied
@@ -1274,12 +1277,24 @@ impl Checker {
                         .map(|decl| Ok((decl.id().clone(), elements.collect::<Result<_, _>>()?)))
                 })
                 .collect::<Result<_, _>>()?;
-            return Ok(InstanceSubstitution { types, packs });
+            let values = trace
+                .value_bindings
+                .iter()
+                .filter_map(|(name, value)| {
+                    decl_named(name).map(|decl| (decl.id().clone(), value.clone()))
+                })
+                .collect();
+            return Ok(InstanceSubstitution {
+                types,
+                packs,
+                values,
+            });
         };
         if site.role == BodyRole::Template {
             return Ok(InstanceSubstitution {
                 types: HashMap::new(),
                 packs: HashMap::new(),
+                values: Vec::new(),
             });
         }
         let unresolved = || {
@@ -1319,7 +1334,11 @@ impl Checker {
                 return Err(unresolved());
             }
         }
-        Ok(InstanceSubstitution { types, packs })
+        Ok(InstanceSubstitution {
+            types,
+            packs,
+            values: Vec::new(),
+        })
     }
 
     /// A template's facts for one instance: every retained type substituted,
@@ -1347,6 +1366,7 @@ impl Checker {
         let InstanceSubstitution {
             types: substitution,
             packs,
+            values,
         } = instance;
         // A closed public `Tuple` names the specialization the clone check
         // selects for it (`canonicalize_public_tuple_types`).
@@ -1356,11 +1376,12 @@ impl Checker {
                 ty,
                 substitution,
                 packs,
-                &[],
+                values,
             ))
         };
         let demands = self.hash_leaf_demands.borrow().len();
         let mut facts = substituted_facts(template, instance, indices, &canonical)?;
+        realize_value_shaped_constructions(template, &mut facts, occurrences)?;
         // A per-call request the template recorded names the caller's own
         // binders; an instance that closed it would retarget the call in the
         // clone check, which no recipe repeats.
@@ -2758,11 +2779,16 @@ impl Checker {
                 callable_bound: None,
                 ..
             } => true,
+            // A keyed body reads a `DType` binder only as a lane dtype, which
+            // the grammar admits in a construction alone
+            // ([`BodyShape::simd_construction`]).
             ParamDecl::Value {
                 ty,
                 variadic: false,
                 ..
-            } => matches!(**ty, Ty::Bool | Ty::Int),
+            } => {
+                matches!(**ty, Ty::Bool | Ty::Int) || (self.source_validation && **ty == Ty::Dtype)
+            }
             ParamDecl::Type { .. } | ParamDecl::Value { .. } => false,
         });
         if !plain_binders || decls.len() != type_params.len() {
@@ -3725,6 +3751,11 @@ impl Checker {
             origins: &'a mojito_ast::ast::SyntaxOrigins,
             found: Vec<Occurrence>,
             copies: HashMap<SyntaxId, u32>,
+            /// The `DType` object of each `DType.<member>` constant met so
+            /// far, which is part of the constant rather than an occurrence:
+            /// the elaborator folds a `DType` binder to such a constant under
+            /// the name's identity alone.
+            constant_objects: HashSet<SyntaxId>,
         }
 
         impl Occurrences<'_> {
@@ -3760,6 +3791,14 @@ impl Checker {
             }
 
             fn visit_expr(&mut self, expr: &Expr) {
+                if self.constant_objects.contains(&expr.syntax_id) {
+                    return;
+                }
+                if let ExprKind::Member { object, .. } = &expr.kind
+                    && matches!(&object.kind, ExprKind::Identifier(name) if name == "DType")
+                {
+                    self.constant_objects.insert(object.syntax_id);
+                }
                 let id = self.next_copy(expr.syntax_id);
                 self.found.push(Occurrence {
                     id,
@@ -3852,6 +3891,7 @@ impl Checker {
             origins: &self.syntax_origins,
             found: Vec::new(),
             copies: HashMap::new(),
+            constant_objects: HashSet::new(),
         };
         let expanded = expand_with_statements(body, desugars);
         mojito_ast::visit::walk_block(&mut occurrences, expanded.as_deref().unwrap_or(body));
@@ -5238,8 +5278,8 @@ impl SpanKeyed for HashSet<SourceSpan> {
 /// The features a [`TemplateClass::FunctionBody`] may hold: runtime
 /// statements, whole values moved or copied between a parameter, a local, an
 /// argument, and the result, a runtime `for` over a place, a condition
-/// tested through `__bool__`, and a `raises` declaration. Each recipe is a
-/// method body's, on a body without a receiver.
+/// tested through `__bool__`, a `SIMD` construction, and a `raises`
+/// declaration. Each recipe is a method body's, on a body without a receiver.
 const FUNCTION_FEATURES: MethodFeatures = MethodFeatures::STATEMENTS
     .union(MethodFeatures::OPAQUE_MOVES)
     .union(MethodFeatures::VALUE_ARGUMENTS)
@@ -5248,7 +5288,8 @@ const FUNCTION_FEATURES: MethodFeatures = MethodFeatures::STATEMENTS
     .union(MethodFeatures::RAISES)
     .union(MethodFeatures::OWNED_PARAMETERS)
     .union(MethodFeatures::CONSUMING_CALLS)
-    .union(MethodFeatures::POINTER_SLOTS);
+    .union(MethodFeatures::POINTER_SLOTS)
+    .union(MethodFeatures::SIMD_CONSTRUCTIONS);
 
 const fn derivable_table(table: FactTable) -> bool {
     match table {
@@ -6641,6 +6682,34 @@ struct ReferenceStores {
     stores: Vec<(OccurrenceId, TemplateAugmentedSubscript)>,
 }
 
+/// The dimensions of each construction whose dtype or width named a folded
+/// value binder (`Scalar[dt](x)`), which the template left unrecorded: the
+/// instance's are its substituted construction type's, as a closed
+/// construction's are its recorded type's.
+fn realize_value_shaped_constructions(
+    template: &CheckedBodyFacts,
+    facts: &mut CheckedBodyFacts,
+    occurrences: &[Occurrence],
+) -> Result<(), &'static str> {
+    for occurrence in occurrences {
+        let id = occurrence.id;
+        let open = fact_at(&template.expression_types, id).is_some_and(|ty| {
+            matches!(ty, Ty::Simd { .. }) && mojito_types::types::is_symbolic(ty)
+        });
+        if !open
+            || occurrence.callee.is_none()
+            || fact_at(&template.simd_constructions, id).is_some()
+        {
+            continue;
+        }
+        let dimensions = fact_at(&facts.expression_types, id)
+            .and_then(mojito_types::types::simd_shape)
+            .ok_or("a construction's lane dtype or width stays open in the instance")?;
+        facts.simd_constructions.push((id, dimensions));
+    }
+    Ok(())
+}
+
 /// The template's facts with every retained type substituted for an
 /// instance, before any call is realized: an adjustment through its recipe,
 /// a type keyed by a pack-element occurrence under that copy's loop index,
@@ -6650,6 +6719,7 @@ fn substituted_facts(
     InstanceSubstitution {
         types: substitution,
         packs,
+        values,
     }: &InstanceSubstitution,
     indices: &ElementIndices,
     canonical: &dyn Fn(Ty) -> Ty,
@@ -6659,14 +6729,19 @@ fn substituted_facts(
             ty,
             substitution,
             packs,
-            &[],
+            values,
         ))
     };
     let typed = |entries: &[(OccurrenceId, Ty)]| -> Vec<(OccurrenceId, Ty)> {
         entries
             .iter()
             .map(|(id, ty)| {
-                let values: Vec<_> = indices.get(id).cloned().into_iter().collect();
+                let values: Vec<_> = indices
+                    .get(id)
+                    .cloned()
+                    .into_iter()
+                    .chain(values.iter().cloned())
+                    .collect();
                 (
                     *id,
                     canonical(mojito_types::types::substitute_packs(
@@ -7020,7 +7095,8 @@ impl BodyShape<'_> {
                 admitted
             }
             StmtKind::VarDecl { name, value, .. } if self.keyed => {
-                let scalar = self.expression(value) && self.scalar(value);
+                let scalar =
+                    (self.expression(value) && self.scalar(value)) || self.simd_value(value);
                 self.locals
                     .borrow_mut()
                     .push((name.clone(), LocalKind::Scalar));
@@ -9216,6 +9292,12 @@ impl BodyShape<'_> {
     /// are closed, so a recorded one is the same under every instance. It
     /// selects no callee and converts nothing, and its value is admitted
     /// only where a closed value may go ([`Self::simd_value`]).
+    ///
+    /// A construction whose dtype or width names one of the declaration's
+    /// own value binders (`Scalar[dt](x)`, `SIMD[DType.int32, w](x)`)
+    /// records no dimensions: the elaborator folds each binder in the
+    /// instance, whose record is the substituted construction type's shape
+    /// (`realize_value_shaped_constructions`).
     fn simd_construction(
         &self,
         id: OccurrenceId,
@@ -9231,10 +9313,11 @@ impl BodyShape<'_> {
                 .iter()
                 .all(|argument| self.expression(argument) && self.scalar(argument))
             && self.facts.is_none_or(|facts| {
-                fact_at(&facts.simd_constructions, id).is_some()
-                    && fact_at(&facts.expression_types, id)
-                        .is_some_and(|ty| !mojito_types::types::is_symbolic(ty))
-                    && fact_at(&facts.call_parameters, id).is_none()
+                let recorded = fact_at(&facts.simd_constructions, id).is_some();
+                fact_at(&facts.expression_types, id).is_some_and(|ty| {
+                    (recorded && !mojito_types::types::is_symbolic(ty))
+                        || (!recorded && self.value_shaped_simd(ty))
+                }) && fact_at(&facts.call_parameters, id).is_none()
                     && fact_at(&facts.overload_targets, id).is_none()
                     && fact_at(&facts.generic_instantiations, id).is_none()
                     && fact_at(&facts.selected_calls, id).is_none()
@@ -9242,6 +9325,18 @@ impl BodyShape<'_> {
                     && fact_at(&facts.operation_adjustments, id).is_none()
             });
         admitted && self.holds(MethodFeatures::SIMD_CONSTRUCTIONS)
+    }
+
+    /// A `SIMD` type whose open slots name only the declaration's own
+    /// value binders, which every instance folds to literals.
+    fn value_shaped_simd(&self, ty: &Ty) -> bool {
+        let mut named = HashSet::new();
+        mojito_types::types::referenced_parameters(ty, &mut named);
+        matches!(ty, Ty::Simd { .. })
+            && !named.is_empty()
+            && named
+                .iter()
+                .all(|name| self.values.contains(&name.as_str()))
     }
 
     /// Whether `expr` is an admitted closed `SIMD` construction, a value of

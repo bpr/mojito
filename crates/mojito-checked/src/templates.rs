@@ -212,6 +212,10 @@ pub fn derive_adjustment(
             Some(SemanticAdjustment::BorrowViewResult { materialized: None })
         }
         SemanticAdjustment::InvertedReprWrite => Some(SemanticAdjustment::InvertedReprWrite),
+        // A `DType` member names one closed dtype under every instance.
+        SemanticAdjustment::DtypeConstant { dtype } => {
+            Some(SemanticAdjustment::DtypeConstant { dtype: *dtype })
+        }
         // A collection display or comprehension builds its target through
         // the target struct's own insert method, named by the struct, which
         // substitution keeps; only its arguments substitute.
@@ -284,7 +288,6 @@ pub fn derive_adjustment(
         | SemanticAdjustment::SimdCast { .. }
         | SemanticAdjustment::SimdToBits { .. }
         | SemanticAdjustment::SimdLength { .. }
-        | SemanticAdjustment::DtypeConstant { .. }
         | SemanticAdjustment::DtypeFloatQuery { .. }
         | SemanticAdjustment::SimdShuffle { .. }
         | SemanticAdjustment::ConstructVariant { .. }
