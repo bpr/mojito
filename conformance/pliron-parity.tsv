@@ -543,6 +543,7 @@ assets/ok/template_method_for_loop.mojo	main	exe-differential	sanitized
 assets/ok/template_method_getter.mojo	main	exe-differential	sanitized
 assets/ok/template_method_hash_leaf.mojo	main	exe-differential	sanitized
 assets/ok/template_method_moves.mojo	main	exe-differential	sanitized
+assets/ok/template_method_nested_def.mojo	main	exe-differential	sanitized
 assets/ok/template_method_operator_dispatch.mojo	main	exe-differential	sanitized
 assets/ok/template_method_origin_parameter.mojo	main	exe-differential	sanitized
 assets/ok/template_method_parameterized_call.mojo	main	exe-differential	sanitized

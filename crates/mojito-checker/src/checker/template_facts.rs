@@ -39,6 +39,7 @@ mod bound_dispatch;
 mod comprehensions;
 mod constructions;
 mod iterations;
+mod nested_defs;
 mod tuple_unpacks;
 
 /// Which kind of declaration a body inference visit belongs to, for the
@@ -79,6 +80,9 @@ impl BodyClass {
 pub(super) struct BodyFactBaseline {
     tables: [usize; FactTable::ALL.len()],
     unkeyed: [(&'static str, usize); UNKEYED_STORES],
+    /// How many of those unkeyed entries the body's nested `def` statements
+    /// key, which a recipe accounts for (`nested_def_entries`).
+    nested_defs: [usize; UNKEYED_STORES],
     /// The length of the hash-leaf demand log.
     hash_leaf_demands: usize,
     /// The transferred-origin store as the body found it: what a replay
@@ -479,7 +483,7 @@ impl Checker {
         let admitted = matches!(shape, Some(TemplateCoverage::Certified(_)));
         let census = site.participates && !decls.is_empty() && timing::enabled();
         let baseline = (derived.is_some() || admitted || census || timing::notes_enabled())
-            .then(|| self.body_fact_baseline());
+            .then(|| self.body_fact_baseline(body));
         Self::count_body_inference(BodyClass::of(generated, !decls.is_empty()), || name.clone());
         self.effect_query_frames
             .borrow_mut()
@@ -618,6 +622,7 @@ impl Checker {
         self.declaration_captures.borrow_mut().remove(span);
         self.comprehension_bindings.borrow_mut().remove(span);
         self.comprehension_iterables.borrow_mut().remove(span);
+        self.nested_def_params.borrow_mut().remove(span);
         self.expression_place_types.borrow_mut().remove(span);
         self.binding_types.borrow_mut().remove(span);
         self.expression_effects.borrow_mut().remove(span);
@@ -936,10 +941,11 @@ impl Checker {
             })
     }
 
-    fn body_fact_baseline(&self) -> BodyFactBaseline {
+    fn body_fact_baseline(&self, body: &[Stmt]) -> BodyFactBaseline {
         BodyFactBaseline {
             tables: FactTable::ALL.map(|table| self.span_table(table).entries()),
             unkeyed: self.unkeyed_fact_entries(),
+            nested_defs: self.nested_def_entries(body),
             hash_leaf_demands: self.hash_leaf_demands.borrow().len(),
             transferred: self.transferred_origins.borrow().clone(),
             owner_start: self.next_owner.get(),
@@ -1460,12 +1466,20 @@ impl Checker {
         {
             return Err("an occurrence still names a folded compile-time parameter");
         }
+        // A nested `def`'s call selects the declaration the body itself
+        // introduces, whose signature no instance changes, and reads its
+        // summaries under the same name.
+        let nested_calls = nested_def_calls(template);
+        for (_, callee) in &nested_calls {
+            note_realized_callee(&mut facts, callee, callee);
+        }
         for (id, _) in &template.call_parameters {
             // A method call records its (empty) parameters here too. Its
             // callee is realized from its contract below, and a call through
             // a callable parameter from the instance's own binding of it.
             if template.selected_calls.iter().any(|(call, _)| call == id)
                 || template.callable_calls.contains(id)
+                || nested_calls.iter().any(|(call, _)| call == id)
             {
                 continue;
             }
@@ -1480,6 +1494,7 @@ impl Checker {
         }
         self.realize_iterations(&mut facts, &substitute)?;
         Self::realize_comprehension_bindings(&mut facts, &substitute);
+        Self::realize_nested_defs(&mut facts, &substitute);
         self.realize_tuple_unpacks(&mut facts, &substitute)?;
         facts.struct_applications = template
             .struct_applications
@@ -2504,6 +2519,7 @@ impl Checker {
                 })
                 .collect(),
             print_calls: RefCell::new(Vec::new()),
+            nested_depth: std::cell::Cell::new(0),
             borrowed_params: Vec::new(),
             mut_params: Vec::new(),
             keyed,
@@ -2791,6 +2807,12 @@ impl Checker {
     ///   a literal's facts (`folded_literals`), and a local declared inside
     ///   the loop is one binding per copy (`renumber_locals`), as in a keyed
     ///   `def`. A `rebind`-keyed body stays outside.
+    /// - `NESTED_DEFS`: see [`BodyShape::nested_def`]. A nested `def`'s
+    ///   declaration facts are its closed signature, keyed by its statement,
+    ///   and its captures name the body's own bindings, so an instance writes
+    ///   them again under its own statement and bindings
+    ///   (`install_nested_defs`); a call of it selects the declaration the
+    ///   body introduces, under every instance.
     ///
     /// Any other handle, borrowed receiver, reference result, interior
     /// reference, or copyable read in the body refuses it
@@ -2976,6 +2998,7 @@ impl Checker {
                 })
                 .collect(),
             print_calls: RefCell::new(Vec::new()),
+            nested_depth: std::cell::Cell::new(0),
             borrowed_params: params_passed(&[ArgConvention::Mut, ArgConvention::Ref]),
             mut_params: params_passed(&[ArgConvention::Mut]),
             keyed: false,
@@ -3238,11 +3261,9 @@ impl Checker {
         };
         let occurrences = self.body_occurrences(site.body);
         let mut reasons: Vec<String> = self
-            .unkeyed_fact_entries()
+            .unkeyed_growth(site.body, baseline)
             .into_iter()
-            .zip(baseline.unkeyed)
-            .filter(|(now, before)| now != before && now.0 != TRANSFERRED_ORIGINS)
-            .map(|((store, _), _)| format!("store:{store}"))
+            .map(|store| format!("store:{store}"))
             .collect();
         if self.symbolic_hash_leaf(baseline) {
             reasons.push(format!("store:{SYMBOLIC_HASH_LEAVES}"));
@@ -3525,7 +3546,7 @@ impl Checker {
                 .collect();
             recorded.join(" ; ")
         });
-        self.capturable(&occurrences, baseline, reads)?;
+        self.capturable(body, &occurrences, baseline, reads)?;
         let owner_end = self.next_owner.get();
         let local_owner = |owner: OwnerId| {
             self.template_owner(owner, param_owners, baseline.owner_start, owner_end)
@@ -3661,6 +3682,8 @@ impl Checker {
                     .map(|slots| (id, slots))
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let (nested_defs, capture_accesses) =
+            self.captured_nested_defs(body, &occurrences, &local_owner, &local_place)?;
         Ok(CheckedBodyFacts {
             expression_types,
             expression_place_types,
@@ -3675,10 +3698,8 @@ impl Checker {
             operation_adjustments: values(&occurrences, &self.operation_adjustments.borrow())
                 .into_iter()
                 .filter(|(id, adjustment)| {
-                    !matches!(
-                        adjustment,
-                        mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
-                    ) && !self.kept_element_store_at(&occurrences, *id, adjustment)
+                    !kept_apart(adjustment)
+                        && !self.kept_element_store_at(&occurrences, *id, adjustment)
                 })
                 .collect(),
             reference_results,
@@ -3781,6 +3802,8 @@ impl Checker {
             iterations: self.captured_iterations(&occurrences, &local_place)?,
             comprehension_bindings: self
                 .captured_comprehension_bindings(&occurrences, &local_owner)?,
+            nested_defs,
+            capture_accesses,
             with_forms: values(&occurrences, &self.with_desugars.borrow())
                 .into_iter()
                 .map(|(id, desugar)| (id, desugar.form))
@@ -3878,18 +3901,12 @@ impl Checker {
     /// without a recipe, and no retained type naming a place.
     fn capturable(
         &self,
+        body: &[Stmt],
         occurrences: &[Occurrence],
         baseline: &BodyFactBaseline,
         reads: &BodyReads,
     ) -> Result<(), IncompleteReason> {
-        if let Some((store, _)) = self
-            .unkeyed_fact_entries()
-            .into_iter()
-            .zip(baseline.unkeyed)
-            .find_map(|(now, before)| {
-                (now != before && now.0 != TRANSFERRED_ORIGINS).then_some(now)
-            })
-        {
+        if let Some(store) = self.unkeyed_growth(body, baseline).first() {
             return Err(IncompleteReason::UnkeyedFact(store));
         }
         if self.symbolic_hash_leaf(baseline) {
@@ -4193,6 +4210,7 @@ impl Checker {
         }
         self.install_iterations(facts, &span, &rooted)?;
         self.install_comprehension_bindings(facts, &span, &owner)?;
+        self.install_nested_defs(facts, &span, &owner, &rooted)?;
         self.install_tuple_unpacks(facts, &span, &referenced)?;
         for id in &facts.call_place_uses {
             self.call_place_uses.borrow_mut().insert(span(id)?);
@@ -4535,9 +4553,28 @@ impl Checker {
         Ok(())
     }
 
+    /// The unkeyed stores the body's check grew beyond the entries its
+    /// nested `def` statements key, which their recipe carries. The
+    /// transferred-origin store is told entry by entry elsewhere.
+    fn unkeyed_growth(&self, body: &[Stmt], baseline: &BodyFactBaseline) -> Vec<&'static str> {
+        let nested = self.nested_def_entries(body);
+        self.unkeyed_fact_entries()
+            .into_iter()
+            .zip(baseline.unkeyed)
+            .zip(nested.into_iter().zip(baseline.nested_defs))
+            .filter(|(((store, now), (_, before)), (keyed, keyed_before))| {
+                let grown = now.checked_sub(*before);
+                let recipe = keyed.checked_sub(*keyed_before);
+                *store != TRANSFERRED_ORIGINS && grown != recipe
+            })
+            .map(|(((store, _), _), _)| store)
+            .collect()
+    }
+
     /// Entries in the fact stores a body inference can grow that are not
-    /// keyed by one of its occurrences. A derivation has no recipe for any
-    /// of them yet, so growth refuses the body and names the store.
+    /// keyed by one of its occurrences. A derivation has a recipe only for
+    /// the entries a nested `def` statement keys (`unkeyed_growth`), so any
+    /// other growth refuses the body and names the store.
     fn unkeyed_fact_entries(&self) -> [(&'static str, usize); UNKEYED_STORES] {
         let deletability = self.explicit_destroy_deletability.borrow();
         [
@@ -4812,7 +4849,8 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::ComprehensionBindings
         | FactTable::WithDesugars
         | FactTable::CallTransfers => true,
-        FactTable::ContextualBases | FactTable::DeclarationCaptures => false,
+        FactTable::DeclarationCaptures => true,
+        FactTable::ContextualBases => false,
     }
 }
 
@@ -4992,6 +5030,14 @@ fn renumber_locals(facts: &mut CheckedBodyFacts) -> Result<(), &'static str> {
                 .iter()
                 .flat_map(|(id, binders)| binders.iter().map(move |binder| (id, &binder.owner))),
         )
+        // A nested `def` declares its parameters at its statement, after
+        // the name the statement binds.
+        .chain(
+            facts
+                .nested_defs
+                .iter()
+                .flat_map(|(id, recipe)| recipe.params.iter().map(move |param| (id, param))),
+        )
         .filter_map(|(id, owner)| match owner {
             TemplateOwner::Local(index) => Some((position(*id)?, *index)),
             _ => None,
@@ -5094,6 +5140,25 @@ fn for_each_owner(
     for (id, binders) in &mut facts.comprehension_bindings {
         for binder in binders {
             visit(Some(*id), &mut binder.owner);
+        }
+    }
+    for (id, recipe) in &mut facts.nested_defs {
+        for param in &mut recipe.params {
+            visit(Some(*id), param);
+        }
+        for origin in &mut recipe.function_origins {
+            origin_owners(origin, Some(*id), visit);
+        }
+        for capture in &mut recipe.captures {
+            visit(Some(*id), &mut capture.owner);
+            for captured in &mut capture.origins {
+                origin_owners(&mut captured.origin, Some(*id), visit);
+            }
+        }
+    }
+    for (id, accesses) in &mut facts.capture_accesses {
+        for access in accesses {
+            origin_owners(&mut access.origin, Some(*id), visit);
         }
     }
     for (id, reference) in facts
@@ -5303,9 +5368,10 @@ fn rooted_reference(ty: &Ty) -> Option<&mojito_types::origin::RefTy> {
     }
 }
 
-/// A type with every struct origin argument mapped by `origin`, in pre-order:
-/// the one traversal behind keeping a struct's origin tail by template owner
-/// (`unbound_struct_origins`) and giving it an instance's bindings back
+/// A type with every struct origin argument, and every origin a capturing
+/// callable's environment retains, mapped by `origin`, in pre-order: the one
+/// traversal behind keeping those origins by template owner
+/// (`unbound_struct_origins`) and giving them an instance's bindings back
 /// (`bind_struct_origins`). A pointer's or a reference's own origin is not a
 /// struct argument and passes through.
 fn map_struct_origins<E>(
@@ -5314,7 +5380,7 @@ fn map_struct_origins<E>(
         &mojito_types::origin::Origin,
     ) -> Result<mojito_types::origin::Origin, E>,
 ) -> Result<Ty, E> {
-    use mojito_types::origin::Origin;
+    use mojito_types::origin::{CallableEnvironment, CaptureOriginSet, Origin};
     use mojito_types::types::TyArg;
     fn all<E>(
         types: &[Ty],
@@ -5359,6 +5425,25 @@ fn map_struct_origins<E>(
             let mut reference = reference.clone();
             reference.referent = Box::new(map_struct_origins(&reference.referent, origin)?);
             Ty::Ref(reference)
+        }
+        Ty::Func {
+            environment: CallableEnvironment::Capturing(CaptureOriginSet::Concrete(members)),
+            ..
+        } => {
+            let members = members
+                .iter()
+                .map(|member| {
+                    Ok(mojito_types::origin::CaptureOrigin {
+                        origin: origin(&member.origin)?,
+                        access: member.access,
+                    })
+                })
+                .collect::<Result<Vec<_>, E>>()?;
+            let mut callable = ty.clone();
+            if let Ty::Func { environment, .. } = &mut callable {
+                *environment = CallableEnvironment::Capturing(CaptureOriginSet::Concrete(members));
+            }
+            callable
         }
         _ => ty.clone(),
     })
@@ -5434,6 +5519,25 @@ fn bind_struct_origins(
         })?;
         checked_origin(origin, rooted)
     })
+    .map(|bound| canonical_environment(&bound))
+}
+
+/// A capturing callable's environment in the canonical order
+/// `CaptureOriginSet::concrete` gives it, which rebinding its origins to
+/// other bindings may have broken.
+fn canonical_environment(ty: &Ty) -> Ty {
+    use mojito_types::origin::{CallableEnvironment, CaptureOriginSet};
+    let mut ty = ty.clone();
+    if let Ty::Func {
+        environment: environment @ CallableEnvironment::Capturing(CaptureOriginSet::Concrete(_)),
+        ..
+    } = &mut ty
+        && let CallableEnvironment::Capturing(CaptureOriginSet::Concrete(members)) =
+            std::mem::take(environment)
+    {
+        *environment = CallableEnvironment::Capturing(CaptureOriginSet::concrete(members));
+    }
+    ty
 }
 
 /// Whether a type names a checker-local place: an origin rooted at a binding
@@ -5458,6 +5562,13 @@ fn names_place(ty: &Ty) -> bool {
         Ty::Struct(_, arguments) => arguments.iter().any(|argument| {
             matches!(argument, mojito_types::types::TyArg::Origin(origin) if rooted(origin))
         }),
+        Ty::Func {
+            environment:
+                mojito_types::origin::CallableEnvironment::Capturing(
+                    mojito_types::origin::CaptureOriginSet::Concrete(members),
+                ),
+            ..
+        } => members.iter().any(|member| rooted(&member.origin)),
         _ => false,
     }
     })
@@ -5539,6 +5650,7 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
     let constructions = shape.constructions.borrow();
     let callable_calls = shape.callable_calls.borrow();
     let direct_calls = method_direct_calls(facts);
+    let nested_calls = nested_def_calls(facts);
     if !direct_calls.is_empty() {
         shape.holds(MethodFeatures::DIRECT_CALLS);
     }
@@ -5547,6 +5659,7 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
             || constructions.contains(id)
             || callable_calls.contains(id)
             || direct_calls.iter().any(|(call, _)| call == id)
+            || nested_calls.iter().any(|(call, _)| call == id)
     };
     // A call through a bound reads the summaries of every conformer's
     // method of that name, one key per conformer (`Struct.method`, or the
@@ -5581,6 +5694,7 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
         || !summary_callees(facts).all(|callee| {
             targets.contains(&callee.as_str())
                 || direct_calls.iter().any(|(_, direct)| direct == callee)
+                || nested_calls.iter().any(|(_, nested)| nested == callee)
                 || conformer_copy(callee)
                 || shape.callable_params.contains(&callee.as_str())
         })
@@ -5609,6 +5723,26 @@ fn method_direct_calls(facts: &CheckedBodyFacts) -> Vec<(OccurrenceId, &str)> {
                     .all(|parameter| parameter.convention.is_none() && closed_scalar(&parameter.ty))
         })
         .filter_map(|(id, _)| template_callee(facts, *id).map(|callee| (*id, callee)))
+        .collect()
+}
+
+/// The calls a method body makes of a nested `def` it declares, each with
+/// the callee's name: the call's binding is the one the declaration's
+/// statement introduced.
+fn nested_def_calls(facts: &CheckedBodyFacts) -> Vec<(OccurrenceId, &str)> {
+    facts
+        .call_parameters
+        .iter()
+        .filter_map(|(call, _)| {
+            let callee = fact_at(&facts.expression_bindings, *call)?;
+            facts
+                .nested_defs
+                .iter()
+                .find(|(declaration, _)| {
+                    fact_at(&facts.statement_bindings, *declaration) == Some(callee)
+                })
+                .map(|(_, recipe)| (*call, recipe.name.as_str()))
+        })
         .collect()
 }
 
@@ -6118,6 +6252,17 @@ fn substituted_element_stores(
         .collect()
 }
 
+/// Whether an adjustment names a binding, so a bundle keeps it apart by
+/// template owner: a call's reference result, or the places a capturing
+/// call's environment reaches.
+const fn kept_apart(adjustment: &mojito_checked::checked::SemanticAdjustment) -> bool {
+    matches!(
+        adjustment,
+        mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
+            | mojito_checked::checked::SemanticAdjustment::CallableCaptureAccesses(_)
+    )
+}
+
 fn fact_at<V>(table: &[(OccurrenceId, V)], id: OccurrenceId) -> Option<&V> {
     table
         .iter()
@@ -6253,6 +6398,8 @@ struct BodyShape<'a> {
     /// The `print(...)` calls admitted, whose arguments an instance proves
     /// `Writable` at its own types.
     print_calls: RefCell<Vec<OccurrenceId>>,
+    /// How many nested `def` bodies the statement being judged lies in.
+    nested_depth: std::cell::Cell<u32>,
 }
 
 /// What a local of a certified body is.
@@ -6264,11 +6411,29 @@ enum LocalKind {
     Value,
     /// A `ref` binding: a handle on a place, never a value to move.
     Reference,
+    /// A nested `def`'s name, which the body may only call.
+    Callable,
 }
 
 impl BodyShape<'_> {
     fn statement(&self, statement: &Stmt) -> bool {
         match &statement.kind {
+            // A nested body returns to its own caller: a closed scalar of its
+            // declared result, or nothing.
+            StmtKind::Return(value) if self.nested_depth.get() > 0 => {
+                value
+                    .as_ref()
+                    .is_none_or(|value| self.expression(value) && self.scalar(value))
+                    && self.holds(MethodFeatures::STATEMENTS)
+            }
+            StmtKind::Def { .. }
+                if !self.keyed
+                    && self.moved_result.is_some()
+                    && self.nested_depth.get() == 0
+                    && self.loop_vars.borrow().is_empty() =>
+            {
+                self.nested_def(statement)
+            }
             StmtKind::Return(value) if self.reference_result.is_some() => value
                 .as_ref()
                 .is_some_and(|value| self.returned_place(value)),
@@ -6746,6 +6911,85 @@ impl BodyShape<'_> {
                 .facts
                 .is_none_or(|facts| fact_at(&facts.expression_types, id) == Some(&Ty::Error));
         error || reraised || self.construction(value)
+    }
+
+    /// A nested `def` over closed scalars (`NESTED_DEFS`).
+    ///
+    /// It declares no compile-time parameters, decorators, `where` clause,
+    /// or `raises`, and takes regular read parameters with no default. Its
+    /// recorded parameter and result types are closed scalars (or no
+    /// result), so its signature is the same under every instance. Each
+    /// capture names a local or a parameter of the body, by `imm`, `mut`, or
+    /// copy, which an instance maps to its own binding. Its body is judged
+    /// in place with its parameters as scalar locals, and its name is a
+    /// local the body may only call.
+    fn nested_def(&self, statement: &Stmt) -> bool {
+        use mojito_ast::ast::CaptureKind;
+        let StmtKind::Def {
+            name,
+            decorators,
+            type_params,
+            params,
+            positional_only,
+            keyword_only,
+            captures,
+            raises,
+            raises_type,
+            where_clauses,
+            body,
+            ..
+        } = &statement.kind
+        else {
+            return false;
+        };
+        let declaration = decorators.is_empty()
+            && type_params.is_empty()
+            && positional_only.is_none()
+            && keyword_only.is_none()
+            && !*raises
+            && raises_type.is_none()
+            && where_clauses.is_empty()
+            && params.iter().all(|parameter| {
+                parameter.kind == mojito_ast::ast::ParamKind::Regular
+                    && parameter.convention.is_none()
+                    && parameter.default.is_none()
+                    && parameter.origin.is_none()
+            });
+        let captured = captures.as_ref().is_none_or(|list| {
+            list.default.is_none()
+                && list.entries.iter().all(|capture| {
+                    matches!(
+                        capture.kind,
+                        CaptureKind::Imm | CaptureKind::Mut | CaptureKind::Copy
+                    ) && (self.declared(&capture.name)
+                        || self.params.contains(&capture.name.as_str()))
+                })
+        });
+        let recipe = self.facts.map(|facts| {
+            fact_at(&facts.nested_defs, self.occurrence_of(statement)).filter(|recipe| {
+                recipe.param_types.iter().all(closed_scalar)
+                    && (closed_scalar(&recipe.return_ty) || recipe.return_ty == Ty::None)
+            })
+        });
+        if !declaration || !captured || recipe.is_some_and(|recipe| recipe.is_none()) {
+            return false;
+        }
+        let scope = self.locals.borrow().len();
+        self.locals.borrow_mut().extend(
+            params
+                .iter()
+                .map(|parameter| (parameter.name.clone(), LocalKind::Scalar)),
+        );
+        self.nested_depth.set(self.nested_depth.get() + 1);
+        let admitted = self.block(body);
+        self.nested_depth.set(self.nested_depth.get() - 1);
+        self.locals.borrow_mut().truncate(scope);
+        self.locals
+            .borrow_mut()
+            .push((name.clone(), LocalKind::Callable));
+        admitted
+            && self.holds(MethodFeatures::STATEMENTS)
+            && self.holds(MethodFeatures::NESTED_DEFS)
     }
 
     /// A `with` statement. Before capture it is judged from its syntax: each
@@ -7957,7 +8201,7 @@ impl BodyShape<'_> {
             // A `ref` local is read through its handle, as the scalar every
             // use site of `expression` also demands.
             ExprKind::Identifier(name) => match self.local_kind(name) {
-                Some(kind) => kind != LocalKind::Value,
+                Some(kind) => !matches!(kind, LocalKind::Value | LocalKind::Callable),
                 None => self.params.contains(&name.as_str()) || self.folded_value(expr),
             },
             // A field of `self`, admitted where its recorded type is a closed
@@ -8025,6 +8269,15 @@ impl BodyShape<'_> {
                 });
                 if self.callable_params.contains(&name.as_str()) {
                     return self.callable_call(id, param_args, args, kwargs, known);
+                }
+                if self.local_kind(name) == Some(LocalKind::Callable) {
+                    return known
+                        && param_args.is_empty()
+                        && kwargs.is_empty()
+                        && args
+                            .iter()
+                            .all(|argument| self.expression(argument) && self.scalar(argument))
+                        && self.holds(MethodFeatures::NESTED_DEFS);
                 }
                 if name == "_unqualified_type_name" || name == "repr" {
                     return self.string_builtin(id, name, param_args, args, kwargs);

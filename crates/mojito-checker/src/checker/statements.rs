@@ -2655,6 +2655,11 @@ impl Checker {
                 allowed.extend(enclosing.iter().copied());
             }
             self.aggregate_escape_contexts.push((base, allowed));
+            if !module_level && !lambda {
+                self.nested_def_params
+                    .borrow_mut()
+                    .insert(stmt.source_span(), owners.clone());
+            }
             self.transfer_frames.borrow_mut().push(TransferFrame {
                 callable: name.clone(),
                 keeps_symbolic_selection: false,

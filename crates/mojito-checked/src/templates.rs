@@ -585,6 +585,9 @@ pub enum IncompleteReason {
     /// A comprehension binder is not one an instance declares again from
     /// its clause's iterator protocol alone.
     ComprehensionRecipe,
+    /// A nested `def`'s declaration facts are not ones an instance keys
+    /// again at its own statement alone.
+    NestedDefRecipe,
 }
 
 impl IncompleteReason {
@@ -603,6 +606,7 @@ impl IncompleteReason {
             Self::IterationRecipe => "template_capture_incomplete.iteration_recipe",
             Self::TupleUnpackRecipe => "template_capture_incomplete.tuple_unpack_recipe",
             Self::ComprehensionRecipe => "template_capture_incomplete.comprehension_recipe",
+            Self::NestedDefRecipe => "template_capture_incomplete.nested_def_recipe",
         }
     }
 }
@@ -630,6 +634,7 @@ impl std::fmt::Display for IncompleteReason {
             Self::ComprehensionRecipe => {
                 f.write_str("a comprehension binder has no derivation recipe")
             }
+            Self::NestedDefRecipe => f.write_str("a nested def has no derivation recipe"),
         }
     }
 }
@@ -845,6 +850,12 @@ impl MethodFeatures {
     /// per unrolled copy, and a `comptime for` variable read as a runtime
     /// value folds to the copy's literal.
     pub const COMPTIME_CONTROL: Self = Self(1 << 32);
+    /// A nested `def` over closed scalar parameters and result, whose
+    /// captures name the body's own locals and parameters, called with
+    /// closed scalars: its declaration's facts are its signature, which no
+    /// instance changes, and its captures are rooted at bindings an instance
+    /// maps to its own.
+    pub const NESTED_DEFS: Self = Self(1 << 33);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
@@ -1046,6 +1057,48 @@ pub struct TemplateComprehensionBinding {
     pub iterable: OccurrenceId,
     pub reference: bool,
     pub ty: Ty,
+}
+
+/// A nested `def` a method body declares, in template-local terms
+/// ([`CheckedBodyFacts::nested_defs`]).
+///
+/// Its declaration's facts are keyed by the statement's own identity rather
+/// than by an occurrence: the parameter and return types, the callable type
+/// the name is bound to, the declared effect, and each parameter's
+/// deletability, which an instance judges again at its own types. The
+/// callable type keeps its capture environment's places unbound, their
+/// origins beside it by template owner, as a retained struct type keeps its
+/// origin slots. The parameters are locals of the body, declared at the
+/// statement after the name, which the instance mints in the same order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplateNestedDef {
+    pub name: String,
+    pub params: Vec<TemplateOwner>,
+    pub param_types: Vec<Ty>,
+    pub return_ty: Ty,
+    pub function_ty: Ty,
+    pub function_origins: Vec<TemplateOrigin>,
+    pub effect: crate::checked::DeclarationEffect,
+    pub captures: Vec<TemplateCapture>,
+}
+
+/// One entry of a nested `def`'s capture list, in template-local terms: the
+/// captured binding by template owner, and each origin its environment
+/// retains rooted at one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplateCapture {
+    pub name: String,
+    pub owner: TemplateOwner,
+    pub ty: Ty,
+    pub kind: mojito_ast::ast::CaptureKind,
+    pub origins: Vec<TemplateCaptureOrigin>,
+}
+
+/// A capture origin whose place is in template-local terms.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplateCaptureOrigin {
+    pub origin: TemplateOrigin,
+    pub access: mojito_types::origin::CaptureAccess,
 }
 
 /// The shape of one `with` statement's desugar
@@ -1398,6 +1451,13 @@ pub struct CheckedBodyFacts {
     /// The desugar form of each `with` statement, keyed by the statement,
     /// from which an instance builds its own desugar.
     pub with_forms: Vec<(OccurrenceId, WithForm)>,
+    /// Each nested `def` the body declares, keyed by its statement.
+    pub nested_defs: Vec<(OccurrenceId, TemplateNestedDef)>,
+    /// The captured places each call of a capturing nested `def` reads or
+    /// writes: the [`SemanticAdjustment::CallableCaptureAccesses`] entries
+    /// of the adjustment table, kept apart because their origins name
+    /// bindings.
+    pub capture_accesses: Vec<(OccurrenceId, Vec<TemplateCaptureOrigin>)>,
     /// The element reads of each tuple unpacking, keyed by the unpacked
     /// value, which an instance derives again from the substituted value
     /// type.
@@ -1593,6 +1653,8 @@ impl CheckedBodyFacts {
             iterations,
             comprehension_bindings,
             with_forms,
+            nested_defs,
+            capture_accesses,
             tuple_unpacks,
             call_place_uses,
             transfers,
@@ -1773,6 +1835,8 @@ impl CheckedBodyFacts {
             iterations: at(&self.iterations, occurrences, folded),
             comprehension_bindings: at(&self.comprehension_bindings, occurrences, folded),
             with_forms: at(&self.with_forms, occurrences, folded),
+            nested_defs: at(&self.nested_defs, occurrences, folded),
+            capture_accesses: at(&self.capture_accesses, occurrences, folded),
             tuple_unpacks: at(&self.tuple_unpacks, occurrences, folded),
             call_place_uses: flagged(&self.call_place_uses),
             transfers: flagged(&self.transfers),
@@ -1871,6 +1935,8 @@ impl CheckedBodyFacts {
             + self.iterations.len()
             + self.comprehension_bindings.len()
             + self.with_forms.len()
+            + self.nested_defs.len()
+            + self.capture_accesses.len()
             + self.tuple_unpacks.len()
             + self.call_place_uses.len()
             + self.transfers.len()

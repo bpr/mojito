@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method of a generic struct that declares and calls a nested `def` now
+  derives its instances from the checked template: the nested signature is
+  closed scalars, keyed by its statement, and each `imm`, `mut`, or `var`
+  capture of a local or parameter, of any type, is rebound to the
+  instance's own binding. Such bodies used to keep the clone check because
+  a nested declaration's facts and its capture list had no derivation
+  recipe.
 - A method that loops, or builds a comprehension, over `range(...)` in a
   generic struct now derives its instances from the checked template: the
   call selects a member of `range`'s overload set from closed scalar

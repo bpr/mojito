@@ -395,7 +395,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`WithForm`, the `WithDesugars` table's recipe) is kept at the statement;
   `instance_with_desugars` builds an instance's desugars from it before its
   occurrences are walked (`occurrences_over`, which reads each desugar in its
-  statement's place), and installation hands them to the final splice. Every type an instance substitutes
+  statement's place), and installation hands them to the final splice. The
+  submodule `template_facts/nested_defs.rs` keeps each nested `def`'s
+  declaration facts, keyed by its statement's identity, as a
+  `TemplateNestedDef` (`captured_nested_defs`, with the parameter owners
+  the checker-only `nested_def_params` table `statements.rs:check_def_inner`
+  fills), counts the unkeyed entries those statements key so capture tells
+  them from other growth (`nested_def_entries`), and writes them again under
+  an instance's own statement and bindings (`install_nested_defs`); a
+  capturing callable's environment is kept like a struct's origin slots
+  (`map_struct_origins`). Every type an instance substitutes
   names the generated Tuple the clone check selects
   (`inference.rs:canonicalize_public_tuple_types`). A retained struct type that
   names a binding in an origin argument is kept by template owner
