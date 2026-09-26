@@ -8846,8 +8846,8 @@ impl BodyShape<'_> {
     }
 
     /// One argument of a method call: a closed scalar bound by value, a whole
-    /// value of any type bound by value, or a place the call keeps for a
-    /// `mut` or bare `ref` parameter.
+    /// value of any type or a string literal bound by value, or a place the
+    /// call keeps for a `mut` or bare `ref` parameter.
     ///
     /// A whole value binds a parameter of exactly its own type, or one an
     /// `@implicit` constructor converts it to, which the instance selects
@@ -8880,9 +8880,10 @@ impl BodyShape<'_> {
             }
             _ => self.receiver_field(argument),
         };
+        let literal = matches!(argument.kind, ExprKind::Str(_));
         let Some(facts) = self.facts else {
             return self.expression(argument)
-                || (!self.keyed && (named || self.whole_value(argument)));
+                || (!self.keyed && (named || literal || self.whole_value(argument)));
         };
         let id = self.occurrence(argument);
         let contract = fact_at(&facts.selected_calls, self.occurrence(call));
@@ -8912,6 +8913,17 @@ impl BodyShape<'_> {
             // conversion is kept beside the boundary, and both are
             // re-selected per instance.
             let converted = converted_argument(facts, contract, id);
+            // A string literal is a temporary of its own closed type, bound
+            // to a parameter of that type or converted into it.
+            if literal {
+                return !self.keyed
+                    && by_value
+                    && parameter.is_some_and(|parameter| {
+                        converted || parameter.parameter_ty == Ty::StringLiteral
+                    })
+                    && fact_at(&facts.expression_types, id) == Some(&Ty::StringLiteral)
+                    && self.holds(MethodFeatures::VALUE_ARGUMENTS);
+            }
             return !self.keyed
                 && by_value
                 && parameter.is_some_and(|parameter| {

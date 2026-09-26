@@ -8,6 +8,9 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct method passing a string literal to a method's `StringSpan` or
+  `String` parameter (`self.name.rstrip(" z")`) now reuses the template's
+  checked facts. Such methods used to be checked again per instance.
 - A struct method reading or writing a field of a field of `self`
   (`self.scaler.base`, `self.inner.count += v`), or reading a field of a
   struct parameter (`entry._hash`), now reuses the template's checked facts;

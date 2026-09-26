@@ -585,6 +585,7 @@ assets/ok/template_method_simd_scalar.mojo	main	exe-differential	sanitized
 assets/ok/template_method_statements.mojo	main	exe-differential	sanitized
 assets/ok/template_method_static_call.mojo	main	exe-differential	sanitized
 assets/ok/template_method_string_builtins.mojo	main	exe-differential	sanitized
+assets/ok/template_method_string_literal_argument.mojo	main	exe-differential	sanitized
 assets/ok/template_method_subscript_store.mojo	main	exe-differential	sanitized
 assets/ok/template_method_temporary_receiver.mojo	main	exe-differential	sanitized
 assets/ok/template_method_transfer_replay.mojo	main	exe-differential	sanitized

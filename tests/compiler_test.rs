@@ -3042,6 +3042,28 @@ fn body_fact_carry_over_lowers_the_same_program() {
 }
 
 #[test]
+fn template_string_literal_argument_derives() {
+    // A string literal handed to a method's `StringSpan` or `String`
+    // parameter converts by its syntax and the callee's declared parameter.
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/template_method_string_literal_argument.mojo");
+    let source = std::fs::read_to_string(path).expect("fixture");
+    assert_methods_derive(
+        &source,
+        "4 3\n-1 2 True True\n2 1\n2 1 a-b-a! cab!\n4 4\n",
+        &[
+            ("Named.trimmed_length", 2),
+            ("Named.position", 2),
+            ("Named.has_z", 2),
+            ("Named.local_trimmed", 2),
+            ("Named.tag_count", 2),
+            ("Named.tag_joined", 2),
+            ("Named.tag_taken", 2),
+        ],
+    );
+}
+
+#[test]
 fn template_field_of_field_derives() {
     // A field of a `self` field holding a struct, and a field of a struct
     // parameter, is read and written at the same path under every instance.
