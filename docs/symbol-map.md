@@ -465,7 +465,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   declaration-level trace is `comptime.rs`'s `DefInstanceTrace` (type,
   value, and pack bindings), recorded by `specialize.rs:generate_def_spec`,
   and `MethodInstanceTrace`, recorded by `generate_instance_clones`, by
-  `per_call_method_clones` (`trace_per_call_clone`) for a per-call clone,
+  `per_call_method_clones` (`trace_per_call_clone`) for a per-call clone
+  (except those `generate_value_struct_spec` mints for a checker request
+  on the value specialization, which are untraced),
   and by `generate_struct_spec` and `generate_value_struct_spec`
   (`trace_struct_members`) for a member of a struct specialized whole, the
   latter completing its per-call leaves' traces (`restamp_leaf_traces`);

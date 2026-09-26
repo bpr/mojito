@@ -105,6 +105,7 @@ assets/ok/dtype_float_queries.mojo	main	exe-differential	sanitized
 assets/ok/dtype_keyed_bool_lane.mojo	main	exe-differential	sanitized
 assets/ok/dtype_keyed_method.mojo	main	exe-differential	sanitized
 assets/ok/dtype_keyed_method_forward.mojo	main	exe-differential	sanitized
+assets/ok/dtype_keyed_method_value_struct.mojo	main	exe-differential	sanitized
 assets/ok/dtype_keyed_overload_beside_plain.mojo	main	exe-differential	sanitized
 assets/ok/dtype_keyed_overload_family.mojo	main	exe-differential	sanitized
 assets/ok/dtype_runtime_surface.mojo	main	exe-differential	sanitized

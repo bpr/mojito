@@ -207,6 +207,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method with its own compile-time parameter on a struct keyed on a value
+  (`def rep[dt: DType](self, a: SIMD[dt, Self.n])` on `Width[n: Int]`) now
+  clones per call, explicit (`w.rep[DType.int16](v)`) or inferred. Such a
+  call used to keep the template, failing MIR verification with "'dt' has
+  register type Error", or trapping as an unspecialized method.
+
 - A struct method keyed on its own `DType` may forward that lane to a
   `DType`-keyed `def` (`return helper[dt](x)`), and each per-call clone
   reaches the def's clone for its lane. Elaborating the method's template

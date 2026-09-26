@@ -1400,10 +1400,16 @@ impl Elab<'_> {
         let mangled = mangle(orig, vals)?;
         let mut specialized_methods = Vec::with_capacity(methods.len());
         let mut simd_clones = Vec::new();
+        let mut call_clones = Vec::new();
         let mut members = Vec::new();
         let leaf_traces = self.method_traces.borrow().len();
+        let requests = self
+            .method_requests
+            .get(&mangled)
+            .map_or(&[][..], Vec::as_slice);
         for method in methods {
             let template_body = traced_template_body(method);
+            let source_body = method.body.clone();
             let mut method = method.clone();
             // A SIMD-keyed method (`_update_with_simd(mut self, value:
             // SIMD[_, _])`) checks only as per-leaf clones, minted here for
@@ -1468,9 +1474,28 @@ impl Elab<'_> {
             for condition in &mut method.where_clauses {
                 *condition = materialize_expression(condition, &method_subs);
             }
+            // A method with its own baked binder specializes per call from
+            // its unelaborated body over the folded struct values; the
+            // checker retargets the call to `mangle(method, call values)` on
+            // this specialization.
+            if !requests.is_empty() {
+                let source = Method {
+                    body: source_body,
+                    ..method.clone()
+                };
+                call_clones.extend(self.per_call_method_clones(
+                    &source,
+                    requests,
+                    &PerCallBase::default(),
+                    &env,
+                ));
+            }
             specialized_methods.push(method);
         }
+        let call_clone_names: Vec<String> =
+            call_clones.iter().map(|clone| clone.name.clone()).collect();
         specialized_methods.extend(simd_clones);
+        specialized_methods.extend(call_clones);
         let mut spec = mk(
             StmtKind::Struct {
                 name: mangled.clone(),
@@ -1495,6 +1520,16 @@ impl Elab<'_> {
             None => mangled,
         };
         mojito_ast::ast::stamp_source(std::slice::from_mut(&mut spec), &tag);
+        // A per-call clone shares its template member's spans, so it gets a
+        // tag of its own for its span-keyed checked facts.
+        if let StmtKind::Struct { methods, .. } = &mut spec.kind {
+            for method in methods
+                .iter_mut()
+                .filter(|method| call_clone_names.contains(&method.name))
+            {
+                mojito_ast::ast::stamp_source(&mut method.body, &format!("{tag}.{}", method.name));
+            }
+        }
         spec.module = None;
         self.restamp_leaf_traces(&spec, leaf_traces, &folded);
         self.trace_struct_members(

@@ -756,8 +756,11 @@ concrete struct exactly as its body's calls do.
 
 Per-call clones of a method with its own compile-time parameters share one
 minting path (`per_call_method_clones`): the elaborator's struct walk mints
-them for a named owner and `generate_instance_clones` for an instance
-(instance values first, then the call's), a pack binding expands `*args:
+them for a named owner, `generate_instance_clones` for an instance
+(instance values first, then the call's), and `generate_value_struct_spec`
+for a struct specialized whole per value (the requests keyed by the
+specialization's mangled name, no base values, untraced, each clone body
+under its own source tag), a pack binding expands `*args:
 *Ts` to the `$pack[...]` element list inside `specialize_method_clone`
 exactly as a def specialization does, and the template's method body
 becomes the `unspecialized_method_stub` trap when it only elaborates with
