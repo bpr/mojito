@@ -365,7 +365,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   realizes an element store's embedded value getter,
   `realize_element_getters`, and `realize_element_dunders` re-selects an
   embedded in-place dunder dispatched through a bound,
-  `bound_dispatch.rs:realize_embedded_dispatch`), `realize_builtin_len` takes the `len`
+  `bound_dispatch.rs:realize_embedded_dispatch`; `realize_inplace_updates`
+  realizes an augmented assignment's in-place dunder kept at its place in
+  the `inplace_updates` table, through the same two helpers, and
+  `install_body_facts` writes it back as the `AugmentedInPlace` adjustment),
+  `realize_builtin_len` takes the `len`
   witness, `realize_operator` repeats an operator's type-driven dispatch
   (through `operators.rs:struct_infix_dispatch`, the type-level half of
   `infer_infix`, `operators.rs:struct_reflected_dispatch`, its reflected

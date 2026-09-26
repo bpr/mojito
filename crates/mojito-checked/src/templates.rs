@@ -253,10 +253,11 @@ pub fn derive_adjustment(
                 ty,
             })
         }
-        // An augmented subscript embeds its calls' contracts, whose
+        // An augmented subscript or place embeds its calls' contracts, whose
         // boundaries name one run's spans and bindings; an element store is
         // kept apart (`augmented_subscripts`) and rebuilt from the realized
-        // call at its site and the contracts kept beside it.
+        // call at its site and the contracts kept beside it, and an in-place
+        // update of a place (`inplace_updates`) from its realized dunder.
         SemanticAdjustment::ResolveCallable(..)
         | SemanticAdjustment::ConstructTypeParam { .. }
         | SemanticAdjustment::ReifyTypeArgument { .. }
@@ -1491,6 +1492,15 @@ pub struct CheckedBodyFacts {
     /// site, rebuilds the value getter and in-place dunder kept beside it,
     /// and substitutes the two types.
     pub augmented_subscripts: Vec<(OccurrenceId, TemplateAugmentedSubscript)>,
+    /// The in-place dunder each augmented assignment to a place selects.
+    ///
+    /// `self.total += x` or `into += x`: the
+    /// [`SemanticAdjustment::AugmentedInPlace`] entries of the adjustment
+    /// table, keyed at the updated place, kept apart because the contract's
+    /// boundaries name spans and bindings of one run. An instance re-selects
+    /// a dunder dispatched through a bound on its own type of the place, and
+    /// retargets a nominal one to the place's struct's clone.
+    pub inplace_updates: Vec<(OccurrenceId, TemplateCallContract)>,
     /// The interior generation a subscript's reference belongs to.
     pub interior_references: Vec<(OccurrenceId, TemplatePlace)>,
     /// The type of each `ref` binding, keyed by its declaration: a reference
@@ -1745,6 +1755,7 @@ impl CheckedBodyFacts {
             linear_temporaries,
             reference_results,
             augmented_subscripts,
+            inplace_updates,
             interior_references,
             reference_binding_types,
             reference_place_types,
@@ -1942,6 +1953,15 @@ impl CheckedBodyFacts {
                     (id, store)
                 })
                 .collect(),
+            inplace_updates: at(&self.inplace_updates, occurrences, folded)
+                .into_iter()
+                .map(|(id, mut call)| {
+                    for argument in &mut call.arguments {
+                        argument.value.copy = id.copy;
+                    }
+                    (id, call)
+                })
+                .collect(),
             interior_references: at(&self.interior_references, occurrences, folded),
             reference_binding_types: at(&self.reference_binding_types, occurrences, folded),
             reference_place_types: at(&self.reference_place_types, occurrences, folded),
@@ -2050,6 +2070,7 @@ impl CheckedBodyFacts {
             + self.linear_temporaries.len()
             + self.reference_results.len()
             + self.augmented_subscripts.len()
+            + self.inplace_updates.len()
             + self.interior_references.len()
             + self.reference_binding_types.len()
             + self.reference_place_types.len()

@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct method updating a field or a `mut` parameter through its
+  in-place dunder (`self.total += x` on a bound `T`, `self.meter +=
+  Meter(1)`, `into += x`) now reuses its checked template's facts in every
+  instance: a dunder dispatched through the bound is re-selected on the
+  instance's type, and a struct's own dunder retargets to the instance's
+  clone. Such methods used to be checked again per instance.
 - A struct method calling a method on a subscripted element
   (`self.items[i] = self.items[j].copy()`, `other.entries[i].key.copy()`),
   or taking the built-in `len` of a parameter or its field, now reuses its

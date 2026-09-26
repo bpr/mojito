@@ -1908,6 +1908,45 @@ fn template_method_parameter_built_stores_derive() {
 }
 
 #[test]
+fn template_method_inplace_places_derive() {
+    // An augmented assignment to a field or a `mut` parameter through its
+    // in-place dunder: one dispatched through the bare parameter's bound is
+    // re-selected on the instance's type, and a struct's own dunder, raising
+    // or not, is realized on that struct, its clone where it has one.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_inplace_place.mojo"),
+        "6 5 6 2 17\nnegative 8\n5 21 1 9 4 31\n",
+        &[
+            ("Rack.add", 2),
+            ("Rack.bump_meter", 2),
+            ("Rack.bump_meter_by", 2),
+            ("Rack.bump_tick", 2),
+            ("Rack.bump_inner", 2),
+            ("Rack.bump_checked", 2),
+            ("Rack.absorb", 2),
+        ],
+    );
+}
+
+#[test]
+fn template_method_inplace_local_keeps_the_clone_check() {
+    // The grammar updates a field or a `mut` parameter through its in-place
+    // dunder; a `var` local of a struct type stays outside it.
+    let source = "struct Meter(ImplicitlyCopyable):\n    var n: Int\n\n    def __init__(out self, n: Int):\n        self.n = n\n\n    def __iadd__(mut self, rhs: Self):\n        self.n += rhs.n\n\n\nstruct Rack[T: ImplicitlyCopyable & Deinitable]:\n    var meter: Meter\n    var item: Self.T\n\n    def __init__(out self, item: Self.T):\n        self.meter = Meter(1)\n        self.item = item\n\n    def bumped(self) -> Int:\n        var m = self.meter\n        m += Meter(3)\n        return m.n\n\n\ndef main():\n    print(Rack[Int](1).bumped(), Rack[String](\"x\").bumped())\n";
+    let compiler = Compiler::default();
+    let program = compile_entry(&compiler, source);
+    let stats = program.template_stats();
+    assert_eq!(compiler.execute(&program).expect("execute").output, "4 4\n");
+    assert!(
+        stats.refused.iter().any(|(name, reason)| {
+            name.starts_with("Rack.bumped$") && reason == "its template is not certified"
+        }),
+        "an in-place update of a local leaves the body outside the class: {:?}",
+        stats.refused
+    );
+}
+
+#[test]
 fn template_method_borrowed_parameters_derive() {
     // A `mut` or bare `ref` parameter is bound from its convention alone: a
     // `mut` one may be stored to, scalar or whole, and a `ref` one is read.

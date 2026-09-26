@@ -25,6 +25,13 @@ use mojito_checked::templates::{
 use mojito_types::types::{ParamDecl, Ty, TyArg, TySubst};
 use std::collections::HashMap;
 
+/// The witness an embedded dispatch re-selects: its target, and the
+/// parameters a call at an occurrence of its own records for it.
+pub(super) struct EmbeddedWitness {
+    pub(super) target: String,
+    pub(super) parameters: Vec<CallParameterFact>,
+}
+
 /// What an instance's type selects for a requirement the template dispatched
 /// through a bound.
 enum BoundWitness<'a> {
@@ -172,21 +179,24 @@ impl Checker {
         Ok(())
     }
 
-    /// Realize a call a store embeds that the template dispatched through
-    /// a bound (the in-place dunder of `self.items[i] += x` on a bare `T`),
-    /// on the instance's type of its receiver, returning the witness.
+    /// Realize a call a statement embeds that the template dispatched
+    /// through a bound (the in-place dunder of `self.items[i] += x` or
+    /// `self.total += x` on a bare `T`), on the instance's type of its
+    /// receiver, returning the witness.
     ///
-    /// The call has no occurrence of its own, so the witness rewrites only
-    /// the contract: its target, result, and parameter types, as
-    /// [`Self::realize_bound_dispatch`] writes them for a call at an
-    /// occurrence. A witness with binders of its own, or no nominal
-    /// struct's method, is the clone check's to judge.
+    /// The call is not selected at an occurrence, so the witness rewrites
+    /// only the contract: its target, result, and parameter types, as
+    /// [`Self::realize_bound_dispatch`] writes them for a selected call. The
+    /// witness's parameters are returned for a statement that records them
+    /// at its place, as `install_witness` does. A witness with binders of
+    /// its own, or no nominal struct's method, is the clone check's to
+    /// judge.
     pub(super) fn realize_embedded_dispatch(
         &self,
         types: &[(OccurrenceId, Ty)],
         call: &mut TemplateCallContract,
         receiver: &Ty,
-    ) -> Result<String, &'static str> {
+    ) -> Result<EmbeddedWitness, &'static str> {
         let method = call
             .contract
             .target
@@ -250,7 +260,18 @@ impl Checker {
         for (argument, declared) in call.contract.arguments.iter_mut().zip(&declared.params) {
             argument.parameter_ty = parameter_ty(declared);
         }
-        Ok(target)
+        let parameters = declared
+            .names
+            .iter()
+            .zip(&declared.conventions)
+            .zip(&call.contract.arguments)
+            .map(|((name, convention), argument)| CallParameterFact {
+                name: name.clone(),
+                convention: *convention,
+                ty: argument.parameter_ty.clone(),
+            })
+            .collect();
+        Ok(EmbeddedWitness { target, parameters })
     }
 
     /// Realize every inverted write whose receiver the instance makes a

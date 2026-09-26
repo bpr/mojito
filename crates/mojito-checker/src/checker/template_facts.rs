@@ -1709,6 +1709,10 @@ impl Checker {
             // callee is realized from its contract below, and a call through
             // a callable parameter from the instance's own binding of it.
             if template.selected_calls.iter().any(|(call, _)| call == id)
+                || template
+                    .inplace_updates
+                    .iter()
+                    .any(|(update, _)| update == id)
                 || template.callable_calls.contains(id)
                 || nested_calls.iter().any(|(call, _)| call == id)
             {
@@ -1750,6 +1754,7 @@ impl Checker {
         // (`substituted_element_stores`).
         self.realize_element_getters(&mut facts, occurrences, substitution)?;
         self.realize_element_dunders(&mut facts)?;
+        self.realize_inplace_updates(&mut facts, substitution)?;
         let inverted_writes = self.realize_inverted_writes(&mut facts, occurrences)?;
         for index in 0..facts.selected_calls.len() {
             let id = facts.selected_calls[index].0;
@@ -2214,10 +2219,72 @@ impl Checker {
             let selected = inplace.contract.target.clone();
             let target = if mojito_symbol::symbol::is_trait_dispatch_symbol(&selected) {
                 self.realize_embedded_dispatch(&facts.expression_types, inplace, &store.operand_ty)?
+                    .target
             } else {
                 selected.clone()
             };
             realized.push((selected, target));
+        }
+        for (selected, target) in realized {
+            note_realized_callee(facts, &selected, &target);
+        }
+        Ok(())
+    }
+
+    /// Realize the in-place dunder each augmented assignment to a place
+    /// selects, on the instance's type of the place. One the template
+    /// dispatched through the place's bound is re-selected there, and the
+    /// witness's parameters are recorded at the place, as the checker's own
+    /// selection records them ([`Self::realize_embedded_dispatch`]). A
+    /// nominal one is the place's struct's own method, realized as any call
+    /// on that struct is ([`Self::realize_method_contract`]).
+    fn realize_inplace_updates(
+        &self,
+        facts: &mut CheckedBodyFacts,
+        substitution: &TySubst,
+    ) -> Result<(), &'static str> {
+        let mut realized = Vec::new();
+        let mut parameters = Vec::new();
+        for (id, call) in &mut facts.inplace_updates {
+            let place = fact_at(&facts.expression_types, *id)
+                .ok_or("an updated place has no retained type")?;
+            let selected = call.contract.target.clone();
+            if mojito_symbol::symbol::is_trait_dispatch_symbol(&selected) {
+                let witness =
+                    self.realize_embedded_dispatch(&facts.expression_types, call, place)?;
+                parameters.push((*id, witness.parameters));
+                realized.push((selected, witness.target));
+                continue;
+            }
+            let Ty::Struct(owner, arguments) = place else {
+                return Err("an updated place's in-place dunder is not a struct's method");
+            };
+            let method = selected
+                .rsplit_once('.')
+                .and_then(|(_, method)| method.split('$').next())
+                .ok_or("an in-place update names no method")?;
+            let target = self
+                .realize_method_contract(
+                    &facts.expression_types,
+                    call,
+                    (owner, arguments),
+                    method,
+                    substitution,
+                )?
+                .unwrap_or_else(|| selected.clone());
+            if let Some((_, parameters)) = facts
+                .call_parameters
+                .iter_mut()
+                .find(|(site, _)| site == id)
+            {
+                for parameter in parameters {
+                    parameter.ty = self.instance_ty(&parameter.ty, substitution);
+                }
+            }
+            realized.push((selected, target));
+        }
+        for (id, parameters) in parameters {
+            upsert(&mut facts.call_parameters, id, parameters);
         }
         for (selected, target) in realized {
             note_realized_callee(facts, &selected, &target);
@@ -3250,6 +3317,9 @@ impl Checker {
         {
             return outside("a call has an effect other than raising");
         }
+        if !facts.inplace_updates.is_empty() {
+            return outside("an augmented assignment dispatches an in-place dunder");
+        }
         let adjustments_derive = facts
             .operation_adjustments
             .iter()
@@ -3925,6 +3995,27 @@ impl Checker {
         Ok(ReferenceStores { references, stores })
     }
 
+    /// The in-place dunder each augmented assignment to a place at the
+    /// body's occurrences selects, keyed at the place.
+    fn captured_inplace_updates(
+        &self,
+        occurrences: &[Occurrence],
+        local_contract: &dyn Fn(
+            mojito_checked::checked::CheckedCallContract,
+        ) -> Result<TemplateCallContract, IncompleteReason>,
+    ) -> Result<Vec<(OccurrenceId, TemplateCallContract)>, IncompleteReason> {
+        values(occurrences, &self.operation_adjustments.borrow())
+            .into_iter()
+            .filter_map(|(id, adjustment)| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::AugmentedInPlace(call) => {
+                    Some((id, *call))
+                }
+                _ => None,
+            })
+            .map(|(id, call)| local_contract(call).map(|call| (id, call)))
+            .collect()
+    }
+
     /// [`Self::kept_element_store`] at the occurrence `id`.
     fn kept_element_store_at(
         &self,
@@ -4036,6 +4127,7 @@ impl Checker {
                 let kept_apart = matches!(
                     adjustment,
                     mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
+                        | mojito_checked::checked::SemanticAdjustment::AugmentedInPlace(_)
                 ) || self.kept_element_store(&occurrence.span, adjustment)
                     || self.own_binder_construction(&occurrence.span, adjustment);
                 (!kept_apart && !adjustment_derives(adjustment)).then(|| {
@@ -4369,6 +4461,7 @@ impl Checker {
             references: reference_results,
             stores: augmented_subscripts,
         } = self.captured_reference_stores(&occurrences, &local_reference, &template_contract)?;
+        let inplace_updates = self.captured_inplace_updates(&occurrences, &template_contract)?;
         let keyed = |lookup: &dyn Fn(&SourceSpan) -> bool| -> Vec<OccurrenceId> {
             occurrences
                 .iter()
@@ -4472,6 +4565,7 @@ impl Checker {
                 .collect(),
             reference_results,
             augmented_subscripts,
+            inplace_updates,
             interior_references: values(&occurrences, &self.interior_references.borrow())
                 .into_iter()
                 .map(|(id, place)| local_place(&place).map(|place| (id, place)))
@@ -5038,6 +5132,7 @@ impl Checker {
                 .insert(span(id)?, checked_contract(call)?);
         }
         self.install_element_stores(facts, &span, &checked_contract)?;
+        self.install_inplace_updates(facts, &span, &checked_contract)?;
         // The body's own source decides, exactly as it does for an inferred
         // body, whether an application it reaches is user-reachable.
         let source = spans.values().next().and_then(|span| span.source.clone());
@@ -5339,6 +5434,30 @@ impl Checker {
                         result_ty: store.result_ty.clone(),
                         value_source,
                     },
+                )),
+            );
+        }
+        Ok(())
+    }
+
+    /// Install each in-place update as the adjustment at its place, as the
+    /// checker's own selection records it.
+    fn install_inplace_updates(
+        &self,
+        facts: &CheckedBodyFacts,
+        span: &dyn Fn(&OccurrenceId) -> Result<SourceSpan, TypeError>,
+        checked_contract: &dyn Fn(
+            &TemplateCallContract,
+        ) -> Result<
+            mojito_checked::checked::CheckedCallContract,
+            TypeError,
+        >,
+    ) -> Result<(), TypeError> {
+        for (id, call) in &facts.inplace_updates {
+            self.operation_adjustments.borrow_mut().insert(
+                span(id)?,
+                mojito_checked::checked::SemanticAdjustment::AugmentedInPlace(Box::new(
+                    checked_contract(call)?,
                 )),
             );
         }
@@ -5942,14 +6061,16 @@ fn for_each_owner(
             TemplateOrigin::Unrooted(_) => {}
         }
     }
-    /// Every call contract a bundle keeps, at its call: the selected calls
-    /// and those an element store embeds.
+    /// Every call contract a bundle keeps, at its call: the selected calls,
+    /// those an element store embeds, and each place's in-place update.
     fn calls<'f>(
         selected: &'f mut [(OccurrenceId, TemplateCallContract)],
         stores: &'f mut [(OccurrenceId, TemplateAugmentedSubscript)],
+        updates: &'f mut [(OccurrenceId, TemplateCallContract)],
     ) -> impl Iterator<Item = (OccurrenceId, &'f mut TemplateCallContract)> {
         selected
             .iter_mut()
+            .chain(updates)
             .map(|(id, call)| (*id, call))
             .chain(stores.iter_mut().flat_map(|(id, store)| {
                 let id = *id;
@@ -6008,7 +6129,11 @@ fn for_each_owner(
     {
         origin_owners(&mut reference.origin, Some(*id), visit);
     }
-    for (id, call) in calls(&mut facts.selected_calls, &mut facts.augmented_subscripts) {
+    for (id, call) in calls(
+        &mut facts.selected_calls,
+        &mut facts.augmented_subscripts,
+        &mut facts.inplace_updates,
+    ) {
         if let Some(reference) = &mut call.reference_result {
             origin_owners(&mut reference.origin, Some(id), visit);
         }
@@ -6040,14 +6165,18 @@ fn for_each_owner(
             origin_owners(&mut source.origin, None, visit);
         }
     }
-    let call_invalidations = calls(&mut facts.selected_calls, &mut facts.augmented_subscripts)
-        .flat_map(|(id, call)| {
-            call.arguments
-                .iter_mut()
-                .flat_map(|argument| &mut argument.invalidations)
-                .chain(&mut call.invalidations)
-                .map(move |invalidation| (id, invalidation))
-        });
+    let call_invalidations = calls(
+        &mut facts.selected_calls,
+        &mut facts.augmented_subscripts,
+        &mut facts.inplace_updates,
+    )
+    .flat_map(|(id, call)| {
+        call.arguments
+            .iter_mut()
+            .flat_map(|argument| &mut argument.invalidations)
+            .chain(&mut call.invalidations)
+            .map(move |invalidation| (id, invalidation))
+    });
     let invalidations = facts
         .interior_invalidations
         .iter_mut()
@@ -6471,12 +6600,14 @@ fn mentions_callable(ty: &Ty) -> bool {
 /// its grammar did not admit.
 ///
 /// The grammar admitted every method call it judged closed, every call an
-/// element store embeds, every construction, every call through a callable
-/// parameter, and every direct call `method_direct_calls` names.
+/// element store embeds, every in-place update of a place, every
+/// construction, every call through a callable parameter, and every direct
+/// call `method_direct_calls` names.
 fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
     let targets: Vec<&str> = facts
         .selected_calls
         .iter()
+        .chain(&facts.inplace_updates)
         .map(|(_, call)| call.contract.target.as_str())
         .chain(facts.augmented_subscripts.iter().flat_map(|(_, store)| {
             store
@@ -6499,14 +6630,15 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
     }
     let admitted_call = |id: &OccurrenceId| {
         facts.selected_calls.iter().any(|(call, _)| call == id)
+            || facts.inplace_updates.iter().any(|(update, _)| update == id)
             || constructions.contains(id)
             || callable_calls.contains(id)
             || direct_calls.iter().any(|(call, _)| call == id)
             || nested_calls.iter().any(|(call, _)| call == id)
             || static_calls.iter().any(|(call, _)| call == id)
     };
-    // A call through a bound, at an occurrence or embedded in an element
-    // store, reads the summaries of every conformer's method of that name,
+    // A call through a bound, at an occurrence or embedded in a store,
+    // reads the summaries of every conformer's method of that name,
     // one key per conformer (`Struct.method`, or the overload symbol
     // `Struct.method$ov$…`), none of them a target.
     let dispatched: Vec<&str> = targets
@@ -6861,7 +6993,11 @@ fn realize_boundary_conversions(facts: &mut CheckedBodyFacts) -> Result<(), &'st
         .iter()
         .map(|(id, conversion)| (*id, conversion.target.clone()))
         .collect();
-    for (_, call) in &mut facts.selected_calls {
+    for (_, call) in facts
+        .selected_calls
+        .iter_mut()
+        .chain(&mut facts.inplace_updates)
+    {
         for argument in &mut call.arguments {
             for adjustment in &mut argument.adjustments {
                 let mojito_checked::checked::CheckedCallValueAdjustment::ImplicitConversion {
@@ -7389,14 +7525,16 @@ fn substituted_element_stores(
         .collect()
 }
 
-/// Whether an adjustment names a binding, so a bundle keeps it apart by
-/// template owner: a call's reference result, or the places a capturing
-/// call's environment reaches.
+/// Whether an adjustment names a binding or a span, so a bundle keeps it
+/// apart by template owner or occurrence: a call's reference result, the
+/// places a capturing call's environment reaches, or an in-place update's
+/// contract, whose boundary names spans (`inplace_updates`).
 const fn kept_apart(adjustment: &mojito_checked::checked::SemanticAdjustment) -> bool {
     matches!(
         adjustment,
         mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
             | mojito_checked::checked::SemanticAdjustment::CallableCaptureAccesses(_)
+            | mojito_checked::checked::SemanticAdjustment::AugmentedInPlace(_)
     )
 }
 
@@ -7819,7 +7957,7 @@ impl BodyShape<'_> {
                     && (self.keyed || self.holds(MethodFeatures::STATEMENTS));
                 scalar
                     || (!self.keyed
-                        && self.inplace_element(place, value)
+                        && (self.inplace_element(place, value) || self.inplace_place(place, value))
                         && self.holds(MethodFeatures::STATEMENTS))
             }
             _ => false,
@@ -9053,6 +9191,42 @@ impl BodyShape<'_> {
             })
     }
 
+    /// A place of a struct or bare parameter type updated through its
+    /// in-place dunder (`self.total += x`, `self.meter += Meter(1)`,
+    /// `into += x`): a field of a writable `self`, or a `mut` parameter.
+    ///
+    /// The contract is kept at the place in `inplace_updates`, and the
+    /// operand is judged against it as a method call's argument. A struct's
+    /// own dunder may raise in a method declared `raises`. A dunder
+    /// dispatched through a bare parameter's bound is re-selected on the
+    /// instance's type of the place ([`Checker::realize_embedded_dispatch`]).
+    /// A struct's own dunder is realized as any method call on that struct
+    /// is, which names the instance's clone of a struct built over the
+    /// parameter (`realize_inplace_updates`).
+    fn inplace_place(&self, place: &Expr, value: &Expr) -> bool {
+        let writable = (self.self_writable() && self.receiver_field(place))
+            || matches!(&place.kind, ExprKind::Identifier(name)
+                if self.mut_params.contains(&name.as_str()));
+        writable
+            && self.argument(place, value)
+            && self.facts.is_none_or(|facts| {
+                let id = self.occurrence(place);
+                fact_at(&facts.inplace_updates, id).is_some_and(|call| {
+                    let dispatched =
+                        mojito_symbol::symbol::is_trait_dispatch_symbol(&call.contract.target);
+                    let raising = !dispatched
+                        && mojito_checked::templates::raising_method_contract(call)
+                        && self.holds(MethodFeatures::RAISES);
+                    (mojito_checked::templates::value_method_contract(call) || raising)
+                        && match fact_at(&facts.expression_types, id) {
+                            Some(Ty::Param { .. }) => dispatched,
+                            Some(Ty::Struct(..)) => !dispatched,
+                            _ => false,
+                        }
+                })
+            })
+    }
+
     /// The subscript `place` of a writable `self` or of one of its fields,
     /// stored through the mutable reference its getter yields.
     fn through_reference(&self, place: &Expr) -> bool {
@@ -9499,7 +9673,10 @@ impl BodyShape<'_> {
                 || (!self.keyed && (named || literal || self.whole_value(argument)));
         };
         let id = self.occurrence(argument);
-        let contract = fact_at(&facts.selected_calls, self.occurrence(call));
+        // An in-place update's contract is kept at its place, where no call
+        // is selected.
+        let contract = fact_at(&facts.selected_calls, self.occurrence(call))
+            .or_else(|| fact_at(&facts.inplace_updates, self.occurrence(call)));
         let parameter = contract.and_then(|call| {
             let bound = call.arguments.iter().find(|bound| bound.value == id)?;
             call.contract
