@@ -3151,7 +3151,10 @@ impl Checker {
     ///   variable read as a runtime value is the copy's literal, which takes
     ///   a literal's facts (`folded_literals`), and a local declared inside
     ///   the loop is one binding per copy (`renumber_locals`), as in a keyed
-    ///   `def`. A `rebind`-keyed body stays outside.
+    ///   `def`. A `rebind` in such a body is erased and its equality taken on
+    ///   faith, which each instance discharges at its own type
+    ///   (`TemplateObligation::RebindEqualities`): one that does not hold
+    ///   refuses the derivation, and the clone check reports it.
     /// - `NESTED_DEFS`: see [`BodyShape::nested_def`]. A nested `def`'s
     ///   declaration facts are its closed signature, keyed by its statement,
     ///   and its captures name the body's own bindings, so an instance writes
@@ -3180,14 +3183,6 @@ impl Checker {
                 GrammarNotes::default(),
             )
         };
-        // Source validation checks a body keyed by compile-time control flow
-        // (`COMPTIME_CONTROL`) or by a `rebind`. A `rebind` asserts an
-        // equality only an instance can discharge, and no recipe repeats it.
-        if self.source_validation
-            && super::rebind::body_keys_rebind(&method.body, &self.rebind_keyed_bodies)
-        {
-            return outside("a rebind-keyed method has no class yet");
-        }
         // `__init__(out self, …)` is an ordinary owned receiver here: which
         // fields a body initializes is its syntax, and definite initialization
         // is judged outside the body check. The copy and move initializers

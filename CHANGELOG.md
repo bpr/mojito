@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `rebind`-keyed method of a generic struct (`rebind[Int](self.value)`
+  under `comptime if Self.T == Int`) now reuses the template's checked facts,
+  each instance discharging the `rebind`'s equality at its own type. Such
+  methods used to be checked again per instance.
 - Integer arithmetic over folded `comptime for` variables, value parameters,
   and literals alone (`sum += i * 10 + j`, `acc += -i`) now reuses the
   template's checked facts: the instance's whole expression is an
