@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `var self` method returning its receiver (`return self^`), such as the
+  owned `List` iterator's `__iter__`, now reuses the template's checked
+  facts, the transfer owing `Movable` at each instance's type. Such methods
+  used to be checked again per instance.
 - A trait-bound module-level `def` taking a `var` parameter
   (`def dealloc[T: AnyType](var allocation: Allocation[T], /)`) now reuses
   the template's checked facts: the parameter may be consumed through a

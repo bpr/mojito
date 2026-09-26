@@ -592,6 +592,7 @@ assets/ok/template_method_tuple_unpack.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_value_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_value_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_vanishing_transfer.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_var_self.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_vector_hash_leaf.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_view_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_view_result_interior.mojo	-	ineligible	no-scalar-entry-shape

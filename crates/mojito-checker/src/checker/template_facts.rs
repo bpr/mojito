@@ -2856,7 +2856,7 @@ impl Checker {
             mut_params: Vec::new(),
             keyed,
             receiver: false,
-            self_writable: false,
+            self_convention: None,
             // A runtime body may hold a whole value of any type in a local
             // or an argument, and iterate a place, as a method's may
             // (`FunctionBody`); a keyed body keeps source validation's rules.
@@ -3370,15 +3370,7 @@ impl Checker {
             mut_params: params_passed(&[ArgConvention::Mut]),
             keyed: false,
             receiver: method.has_self,
-            self_writable: matches!(
-                method.self_convention,
-                Some(
-                    ArgConvention::Mut
-                        | ArgConvention::Var
-                        | ArgConvention::Out
-                        | ArgConvention::Deinit
-                )
-            ),
+            self_convention: method.self_convention,
             moved_result: (!returns_reference).then_some(ret_ty),
             reference_result: returns_reference.then_some(ret_ty),
             features: std::cell::Cell::new({
@@ -6883,9 +6875,10 @@ struct BodyShape<'a> {
     keyed: bool,
     /// Whether the body is a method's, which may read `self`'s fields.
     receiver: bool,
-    /// Whether `self` is a `mut`, `var`, or `deinit` receiver, whose scalar
-    /// fields the body may write.
-    self_writable: bool,
+    /// The receiver's declared convention: a `mut`, `var`, `out`, or `deinit`
+    /// receiver's fields the body may write, and a `var` receiver it owns
+    /// whole and may transfer out (`return self^`).
+    self_convention: Option<mojito_ast::ast::ArgConvention>,
     /// The declared result, when the body may move a whole value of any type
     /// into it: a method that returns no reference.
     moved_result: Option<&'a Ty>,
@@ -7758,7 +7751,7 @@ impl BodyShape<'_> {
     }
 
     /// A whole value of any type, moved or copied out of a parameter, a
-    /// local, or a field of `self`. It is never an operand, a receiver, or a
+    /// local, or a field of `self`, or a `var` receiver moved out whole. It is never an operand, a receiver, or a
     /// condition, and as an argument it binds a parameter of its own type
     /// ([`Self::argument`]), so nothing dispatches on its type.
     ///
@@ -7786,7 +7779,7 @@ impl BodyShape<'_> {
             ExprKind::Identifier(name) => {
                 self.borrowed_params.contains(&name.as_str())
                     || self.reference_local(name)
-                    || self.receiver_itself(place)
+                    || (self.receiver_itself(place) && !self.self_owned())
             }
             ExprKind::Member { .. } => !self.receiver_field(place),
             _ => false,
@@ -8252,7 +8245,7 @@ impl BodyShape<'_> {
         let scalar = || self.expression(value) && self.scalar(value);
         let offset = || matches!(value.kind, ExprKind::MethodCall { .. }) && self.pointer(value);
         self.moved_result.is_some()
-            && ((self.self_writable && self.receiver_field(place))
+            && ((self.self_writable() && self.receiver_field(place))
                 || self.local_field(place)
                 || self.slot(place))
             && (self.whole_value(value) || scalar() || offset())
@@ -8315,7 +8308,7 @@ impl BodyShape<'_> {
     /// off the syntax and the setter's declaration, so an instance inherits
     /// the entry.
     fn scalar_field_place(&self, place: &Expr) -> bool {
-        let admitted = ((self.self_writable && self.receiver_field(place))
+        let admitted = ((self.self_writable() && self.receiver_field(place))
             || self.local_field(place)
             || self.reference_member(place))
             && self.scalar(place);
@@ -8344,7 +8337,7 @@ impl BodyShape<'_> {
         let ExprKind::Index { object, index } = &place.kind else {
             return false;
         };
-        let admitted = self.self_writable
+        let admitted = self.self_writable()
             && (self.receiver_field(object) || self.receiver_itself(object))
             && self.argument(place, index)
             && self.argument(place, value)
@@ -8436,7 +8429,7 @@ impl BodyShape<'_> {
             return false;
         };
         let id = self.occurrence(place);
-        let admitted = self.self_writable
+        let admitted = self.self_writable()
             && (self.receiver_field(object) || self.receiver_itself(object))
             && self.reference_call(place)
             && self.facts.is_none_or(|facts| {
@@ -8462,7 +8455,7 @@ impl BodyShape<'_> {
             return false;
         };
         let id = self.occurrence(place);
-        let admitted = self.self_writable
+        let admitted = self.self_writable()
             && (self.receiver_field(object) || self.receiver_itself(object))
             && self.argument(place, index)
             && self.facts.is_none_or(|facts| {
@@ -8899,6 +8892,28 @@ impl BodyShape<'_> {
     /// Whether `expr` is `self` itself in a method body.
     fn receiver_itself(&self, expr: &Expr) -> bool {
         self.receiver && matches!(&expr.kind, ExprKind::Identifier(name) if name == "self")
+    }
+
+    /// Whether the body may write `self`'s fields.
+    const fn self_writable(&self) -> bool {
+        use mojito_ast::ast::ArgConvention;
+        matches!(
+            self.self_convention,
+            Some(
+                ArgConvention::Mut
+                    | ArgConvention::Var
+                    | ArgConvention::Out
+                    | ArgConvention::Deinit
+            )
+        )
+    }
+
+    /// Whether the body owns `self` whole and may transfer it out.
+    const fn self_owned(&self) -> bool {
+        matches!(
+            self.self_convention,
+            Some(mojito_ast::ast::ArgConvention::Var)
+        )
     }
 
     /// Whether `name` is a scalar local.

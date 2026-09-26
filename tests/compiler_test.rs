@@ -1761,6 +1761,21 @@ fn template_method_moves_derive() {
 }
 
 #[test]
+fn template_method_var_self_derive() {
+    // A `var self` method returning `self^`, which owes `Movable` at the
+    // instance's type; the owned `List` iterator's `__iter__` is one.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_var_self.mojo"),
+        "1 1 x 4\n4\n5\n",
+        &[
+            ("Box.bumped", 2),
+            ("Box.itself", 2),
+            ("__module$std$collections$list$_ListOwnedIter.__iter__", 1),
+        ],
+    );
+}
+
+#[test]
 fn template_method_reference_results_derive() {
     // A `ref self` accessor returning a field or a pointer slot as a handle,
     // behind a scalar guard or the bundled bounds check that aborts.
