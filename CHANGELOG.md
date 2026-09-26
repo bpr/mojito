@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct method calling a method on a parameter holding a struct, or on
+  its field (`self.item == value.head()`, `other.items.__len__()`), now
+  reuses the template's checked facts. Such methods used to be checked again
+  per instance.
 - A struct method calling a static method of a generic struct
   (`Counter[Self.T].start(n)`, `Pair.keep(local^)`, or `.twice(self.item)`
   against an expected `Pair[Self.T]`) now reuses the template's checked

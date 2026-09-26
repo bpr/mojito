@@ -8624,6 +8624,8 @@ impl BodyShape<'_> {
                 && (self.reference_receiver(object)
                     || self.value_local(object)
                     || self.local_field(object)
+                    || self.parameter_receiver(object)
+                    || self.parameter_field(object)
                     || self.call_result(object))))
             && (!self.keyed || (args.is_empty() && kwargs.is_empty()))
             && args
@@ -9179,6 +9181,19 @@ impl BodyShape<'_> {
             && matches!(&expr.kind, ExprKind::Member { object, .. } if self.value_local(object))
     }
 
+    /// Whether `expr` names a parameter holding a struct, such as `value` of a
+    /// `value: Box[Self.T]` parameter: the parameter is bound to the
+    /// instance's argument and read where it lies, as `self` is, and its
+    /// recorded type is the declared one under the instance's arguments.
+    fn parameter_receiver(&self, expr: &Expr) -> bool {
+        !self.keyed
+            && matches!(&expr.kind, ExprKind::Identifier(name)
+                if self.params.contains(&name.as_str())
+                    && !self.callable_params.contains(&name.as_str())
+                    && self.local_kind(name).is_none())
+            && self.nominal(expr)
+    }
+
     /// Whether `expr` is a field of a parameter holding a struct, such as
     /// `entry._hash` of a `var entry` parameter: the parameter is bound to
     /// the instance's argument, and the field has its declared type under
@@ -9186,11 +9201,7 @@ impl BodyShape<'_> {
     fn parameter_field(&self, expr: &Expr) -> bool {
         !self.keyed
             && matches!(&expr.kind, ExprKind::Member { object, .. }
-                if matches!(&object.kind, ExprKind::Identifier(name)
-                    if self.params.contains(&name.as_str())
-                        && !self.callable_params.contains(&name.as_str())
-                        && self.local_kind(name).is_none())
-                    && self.nominal(object))
+                if self.parameter_receiver(object))
     }
 
     /// Whether `name` is a `ref` local.

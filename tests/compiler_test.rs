@@ -2040,6 +2040,26 @@ fn template_method_temporary_receivers_derive() {
 }
 
 #[test]
+fn template_method_parameter_receivers_derive() {
+    // A method called on a parameter: on a read one alone, as an operator's
+    // operand, bound to a local, and on its field; on a `mut` and a `var`
+    // one, mutating it.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_parameter_receiver.mojo"),
+        "True False\n4 z\n2 2\n1 1\nTrue False\n2 2 2 2\n4 4\n",
+        &[
+            ("Box.same", 2),
+            ("Box.grab", 2),
+            ("Box.total", 2),
+            ("Box.count", 2),
+            ("Box.matches", 2),
+            ("Box.fill", 2),
+            ("Box.owned", 2),
+        ],
+    );
+}
+
+#[test]
 fn template_method_element_field_results_derive() {
     // A reference result reached through a subscripted element's field,
     // read and written through, and `Dict.__getitem__`, which returns one.
