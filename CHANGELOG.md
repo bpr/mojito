@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call through a trait bound whose witness belongs to a generic struct
+  now reuses the template's checked facts when a concrete hasher bakes the
+  witness's `[H: Hasher]` binder (naming the per-call clone keyed by the
+  instance and the call) and when the witness is a synthesized
+  `Copyable.copy` (`List._get_copy` over `DictEntry`); both used to be
+  checked again as a clone.
+
 - A call through a trait bound whose instance type overloads the
   requirement with members of one arity (`total(self, by: Int)` beside
   `total(self, by: String)`) now reuses the template's checked facts,

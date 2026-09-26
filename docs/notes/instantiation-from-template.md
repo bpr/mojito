@@ -548,17 +548,23 @@ only `Movable` records nothing there, and its `Int` clone would.
     request it records (`MethodInstantiations`) is one discovery leaves
     alone; a closed argument (a concrete hasher) bakes it, the request is one
     discovery serves, and once the elaborator has minted the per-call clone
-    (`specialized_method_clone`) the call names that clone, as the clone
-    check retargets to it. A `mut self` requirement keeps the receiver's
+    (`specialized_method_clone`, or `instance_call_method_clone` for a
+    generic struct's witness, keyed by the instance and the call together)
+    the call names that clone, as the clone check retargets to it. A
+    witness the instance has no clone of names the template's method, its
+    availability condition judged at the instance's arguments; beside the
+    instance's other clones that is admitted only for a synthesized trait
+    default (`Copyable.copy`, the reflective `__hash__`; `MethodSig::
+    synthesized_default`), which the elaborator never clones. A `mut self` requirement keeps the receiver's
     place and generation refresh as the template recorded them, and a
     `var self` one is admitted only on a named place's `^` transfer, which
     records the move at the receiver itself. An inverted write whose receiver the
     instance makes a struct other than `String` becomes the struct's own
     `write_to` call the same way (`realize_inverted_writes`): the adjustment
     and the receiver's borrow go, and the writer becomes a kept place with
-    its generation refresh. A witness of another shape, a binder baked into
-    a generic struct's witness, and a type that is neither a built-in nor a
-    declared struct refuse. Bound dispatches are realized
+    its generation refresh. A witness of another shape, a source witness
+    withheld from an instance that has other clones, and a type that is
+    neither a built-in nor a declared struct refuse. Bound dispatches are realized
     before the closed calls, which then leave a nominal target as it stands.
 17. **Bound builtins.** Each `hasher.update(x)` must find its argument's
     substituted type `Hashable` (`is_hashable`, which records a wide SIMD
@@ -1101,8 +1107,7 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
 - A bound dispatch whose instance witness overloads the requirement with
   members of one arity the conversion count does not rank (a rival with
   binders or defaults, a tie, or an argument whose type may come from the
-  parameter), or bakes a binder of a generic struct's witness,
-  and a `var self` requirement called on a place rather than a `^` transfer
+  parameter), and a `var self` requirement called on a place rather than a `^` transfer
   (an implicit copy). A struct's reflective `__hash__` default derives: the
   trait-default expansion declares it before any body is checked. A
   `hasher.update(x)` on a concrete hasher is a Mojito-only spelling (the

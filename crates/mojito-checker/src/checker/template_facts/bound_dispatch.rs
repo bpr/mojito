@@ -520,14 +520,19 @@ impl Checker {
             if overloaded {
                 return Err("the instance bakes a binder of an overloaded witness");
             }
-            // A generic owner keys its per-call clone by the instance too,
-            // and no instance argument reaches one (`plain_data`).
-            if !struct_arguments.is_empty() {
-                return Err("the instance bakes a binder of a generic struct's witness");
-            }
-            if let Some(clone) =
+            // A generic owner keys its per-call clone by the instance too.
+            let clone = if struct_arguments.is_empty() {
                 self.specialized_method_clone(owner, method, &declared.decls, &request.arguments)
-            {
+            } else {
+                self.instance_call_method_clone(
+                    owner,
+                    struct_arguments,
+                    method,
+                    &declared.decls,
+                    &request.arguments,
+                )
+            };
+            if let Some(clone) = clone {
                 let [minted] = info
                     .methods
                     .get(&clone)
@@ -584,14 +589,31 @@ impl Checker {
                 &info.decls,
                 struct_arguments,
             );
+            // A synthesized trait default is never cloned: the template's
+            // body serves every instance. Any other witness missing beside
+            // the instance's clones was withheld from it or collapsed.
             let suffix = clone_name
                 .as_deref()
                 .and_then(|clone| clone.strip_prefix(method));
-            if suffix.is_some_and(|suffix| info.methods.keys().any(|name| name.ends_with(suffix))) {
+            if !declared.synthesized_default
+                && suffix
+                    .is_some_and(|suffix| info.methods.keys().any(|name| name.ends_with(suffix)))
+            {
                 return Err("the instance has clones, but not of the witness");
             }
+            // The erased witness serves the instance, its availability
+            // condition judged at the instance's arguments as the clone
+            // check judges it.
             if !declared.availability.is_empty() && !struct_arguments.is_empty() {
-                return Err("the instance's witness has an availability condition and no clone");
+                let named: HashMap<String, TyArg> = info
+                    .decls
+                    .iter()
+                    .map(|decl| decl.name().trim_start_matches('*').to_string())
+                    .zip(struct_arguments.iter().cloned())
+                    .collect();
+                if self.method_constraint_result(declared, &named).is_err() {
+                    return Err("the instance's witness is unavailable at the instance");
+                }
             }
             if overloaded {
                 crate::checker::overload_support::method_lowered_name(

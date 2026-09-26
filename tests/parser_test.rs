@@ -201,6 +201,7 @@ fn parses_struct_with_field_and_method() {
                         field: "x".into(),
                     }
                 ))))],
+                synthesized: false,
             }],
             fieldwise_init: true,
             template_shell: false,

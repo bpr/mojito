@@ -91,6 +91,7 @@ pub(super) fn synthesize_copyable_copy(program: &mut [Stmt]) {
             where_clauses,
             self_ty: None,
             body: vec![mk(StmtKind::Return(Some(result)), span)],
+            synthesized: true,
         });
     }
 }
@@ -190,6 +191,7 @@ pub(super) fn synthesize_hashable_hash(program: &mut [Stmt]) {
             where_clauses,
             self_ty: None,
             body,
+            synthesized: true,
         });
     }
 }

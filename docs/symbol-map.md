@@ -380,7 +380,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   receiver type, its convention, a method name, and the recorded argument
   types to the requirement's witness (a place read, a hashed leaf, or a
   struct's own method with its binders bound, chosen from an overload set
-  by arity, and retargeted to a baked binder's per-call clone), with
+  by arity, and retargeted to a baked binder's per-call clone, keyed by the
+  instance too when the struct is generic), with
   `witness_binders` judging one declaration, `realize_bound_dispatch` rewrites the
   abstract contract with it (and marks a witness that is a named `deinit self`
   destructor as an explicit-destroy call, refusing a copied receiver whose

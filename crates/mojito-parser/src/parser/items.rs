@@ -704,6 +704,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             where_clauses,
             self_ty: None,
             body,
+            synthesized: false,
         })
     }
 

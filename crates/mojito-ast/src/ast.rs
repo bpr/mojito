@@ -740,6 +740,11 @@ pub struct Method {
     /// struct scope's parametric `Self`. The parser never sets it.
     pub self_ty: Option<Type>,
     pub body: Vec<Stmt>,
+    /// Materialized from a built-in trait's default (Copyable's `copy`,
+    /// Hashable's `__hash__`) rather than written in source: its body
+    /// serves every instance of a generic struct, which mints no clone of
+    /// it. The parser never sets it.
+    pub synthesized: bool,
 }
 
 /// A method in a `trait`: either a **requirement** (`def …:` with a `...`
