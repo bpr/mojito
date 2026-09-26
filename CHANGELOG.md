@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method of a generic struct that copies its read `self` into a local
+  (`var result = self`) and then reads and stores the local's fields
+  (`result.size -= 1`, `result.value = value^`, or `Span`'s contiguous slice
+  storing `result._data.unsafe_offset(start)`) now derives its instances from
+  the checked template. Such bodies used to keep the clone check.
 - Augmented assignment on a value of a bare type parameter whose bound
   requires the in-place dunder (`a += b` with `T: Accum`, a trait declaring
   `__iadd__`, or `self.items[i] += x` over `List[Self.T]`) now dispatches

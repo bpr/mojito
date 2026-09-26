@@ -1997,6 +1997,22 @@ fn template_method_copied_consuming_receiver_derives() {
 }
 
 #[test]
+fn template_method_copied_receivers_derive() {
+    // A read method copying `self` into a `var` local, then storing a scalar,
+    // a whole value, or an in-place update to the local's fields and reading
+    // them back. `Span`'s contiguous slice stores a pointer offset the same way.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_copied_receiver.mojo"),
+        "1 2 1 1\n5 q\n2 1\n2 2 3 2 b\n",
+        &[
+            ("Window.shifted", 2),
+            ("Window.replaced", 2),
+            ("Window.trimmed", 2),
+        ],
+    );
+}
+
+#[test]
 fn template_method_defaulted_destructor_keeps_the_clone_check() {
     // A destructor's defaulted argument is evaluated in the callee's scope,
     // which no recipe keeps yet, so the body stays outside the class.

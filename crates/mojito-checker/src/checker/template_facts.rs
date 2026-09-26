@@ -7265,14 +7265,21 @@ impl BodyShape<'_> {
                 self.params.contains(&name.as_str())
                     || self.declared(name)
                     || self.reference_local(name)
+                    || self.receiver_itself(place)
             }
-            ExprKind::Member { .. } => self.receiver_field(place) || self.reference_member(place),
+            ExprKind::Member { .. } => {
+                self.receiver_field(place)
+                    || self.local_field(place)
+                    || self.reference_member(place)
+            }
             _ => false,
         };
         // A place the body only borrows is copied, never moved out of.
         let borrowed = |place: &Expr| match &place.kind {
             ExprKind::Identifier(name) => {
-                self.borrowed_params.contains(&name.as_str()) || self.reference_local(name)
+                self.borrowed_params.contains(&name.as_str())
+                    || self.reference_local(name)
+                    || self.receiver_itself(place)
             }
             ExprKind::Member { .. } => !self.receiver_field(place),
             _ => false,
@@ -7666,9 +7673,9 @@ impl BodyShape<'_> {
         admitted && self.holds(MethodFeatures::CONSTRUCTIONS)
     }
 
-    /// A pointer into storage `self` owns: a field of `self` whose recorded
-    /// type is a pointer with no tracked provenance, or an element offset
-    /// from one. Such a pointer holds no loan and names no place, and it is a
+    /// A pointer into storage `self` owns: a field of `self`, or of a `var`
+    /// local copied from it, whose recorded type is a pointer with no
+    /// tracked provenance, or an element offset from one. Such a pointer holds no loan and names no place, and it is a
     /// pointer under every instance, so its methods are the built-in ones.
     fn pointer(&self, expr: &Expr) -> bool {
         let admitted = match &expr.kind {
@@ -7677,7 +7684,7 @@ impl BodyShape<'_> {
             // checker-local place, so the retained type is the template's
             // under every instance.
             ExprKind::Member { .. } => {
-                self.receiver_field(expr)
+                (self.receiver_field(expr) || self.local_field(expr))
                     && self.facts.is_none_or(|facts| {
                         fact_at(&facts.expression_types, self.occurrence(expr)).is_some_and(|ty| {
                             matches!(ty, Ty::Pointer { origin, .. }
@@ -7721,13 +7728,18 @@ impl BodyShape<'_> {
                 && self.pointer(object))
     }
 
-    /// A whole value stored to a field of a writable `self` whose declared
-    /// type is the value's own, so neither check converts it.
+    /// A whole value stored to a field of a writable `self` or of a `var`
+    /// local whose declared type is the value's own, so neither check
+    /// converts it. An element offset from a pointer is such a value, a
+    /// temporary of the pointer's own type.
     fn whole_store(&self, place: &Expr, value: &Expr) -> bool {
         let scalar = || self.expression(value) && self.scalar(value);
+        let offset = || matches!(value.kind, ExprKind::MethodCall { .. }) && self.pointer(value);
         self.moved_result.is_some()
-            && ((self.self_writable && self.receiver_field(place)) || self.slot(place))
-            && (self.whole_value(value) || scalar())
+            && ((self.self_writable && self.receiver_field(place))
+                || self.local_field(place)
+                || self.slot(place))
+            && (self.whole_value(value) || scalar() || offset())
             && self.facts.is_none_or(|facts| {
                 let stored = fact_at(&facts.expression_place_types, self.occurrence(place));
                 stored.is_some()
@@ -7788,6 +7800,7 @@ impl BodyShape<'_> {
     /// the entry.
     fn scalar_field_place(&self, place: &Expr) -> bool {
         let admitted = ((self.self_writable && self.receiver_field(place))
+            || self.local_field(place)
             || self.reference_member(place))
             && self.scalar(place);
         let through = match &place.kind {
@@ -7981,7 +7994,10 @@ impl BodyShape<'_> {
     ) -> bool {
         let on_self = matches!(&object.kind, ExprKind::Identifier(name) if name == "self");
         ((self.receiver && (on_self || self.receiver_field(object)))
-            || (!self.keyed && (self.reference_receiver(object) || self.value_local(object))))
+            || (!self.keyed
+                && (self.reference_receiver(object)
+                    || self.value_local(object)
+                    || self.local_field(object))))
             && (!self.keyed || (args.is_empty() && kwargs.is_empty()))
             && args
                 .iter()
@@ -8384,6 +8400,16 @@ impl BodyShape<'_> {
             if self.local_kind(name) == Some(LocalKind::Value))
     }
 
+    /// Whether `expr` is a field of a `var` local holding a whole value. The
+    /// local is the body's own, so the body reads and writes the field in
+    /// place as it does a field of a writable `self`, and the field has its
+    /// declared type under the local's recorded arguments in a template and a
+    /// clone alike.
+    fn local_field(&self, expr: &Expr) -> bool {
+        !self.keyed
+            && matches!(&expr.kind, ExprKind::Member { object, .. } if self.value_local(object))
+    }
+
     /// Whether `name` is a `ref` local.
     fn reference_local(&self, name: &str) -> bool {
         self.local_kind(name) == Some(LocalKind::Reference)
@@ -8412,6 +8438,7 @@ impl BodyShape<'_> {
             // scalar: every use site of `expression` also demands `scalar`.
             ExprKind::Member { .. } => {
                 (self.receiver_field(expr)
+                    || self.local_field(expr)
                     || self.reference_member(expr)
                     || self.struct_value(expr))
                     && self.scalar(expr)
