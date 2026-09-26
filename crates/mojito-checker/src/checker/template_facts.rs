@@ -400,8 +400,8 @@ impl Checker {
     /// before the site is entered) whether selections made under source
     /// validation stand (`TransferFrame::keeps_symbolic_selection`): its
     /// trace names a validated template, or, for a body no trace covers (a
-    /// per-call clone, a seam without the elaborator's traces), a clone's
-    /// name marks it.
+    /// member of a struct specialized whole, a seam without the elaborator's
+    /// traces), a clone's name marks it.
     fn mark_symbolic_selection(&self, site: &BodySite<'_>) {
         let keeps = {
             let catalog = self.template_catalog.borrow();
@@ -1194,33 +1194,35 @@ impl Checker {
     /// the receiver type the checker already resolved for it, in the struct's
     /// binder order: the raw request passes through origin erasure and
     /// literal defaulting before the clone is minted, so only the resolved
-    /// receiver says what `Self.T` is inside the clone.
+    /// receiver says what `Self.T` is inside the clone. A per-call clone's
+    /// own binders are the source types and packs its trace names, resolved
+    /// as a `def` clone's are.
     fn instance_substitution(
         &self,
         site: &BodySite<'_>,
         template: &CheckedTemplate,
         trace: &InstanceTrace,
     ) -> Result<InstanceSubstitution, TypeError> {
+        // A binding names the template's own binder; the declaration
+        // carries its identity. The source type is resolved as the clone's
+        // own signature resolved it: a generated declaration's spelling of
+        // an already-checked type (`StringLiteral`) is admitted where a
+        // user-spelled one is not.
+        let resolve = |source: &mojito_ast::ast::Type| {
+            let generated = self.generated_declaration.replace(true);
+            self.bare_string_literal_parameter
+                .set(super::declarations::is_string_literal_annotation(source));
+            let ty = self.ty_from_anno(source);
+            self.bare_string_literal_parameter.set(false);
+            self.generated_declaration.set(generated);
+            ty
+        };
         let Some(arguments) = &site.receiver_arguments else {
-            // A binding names the template's own binder; the declaration
-            // carries its identity. The source type is resolved as the
-            // clone's own signature resolved it: a generated declaration's
-            // spelling of an already-checked type (`StringLiteral`) is
-            // admitted where a user-spelled one is not.
             let decl_named = |name: &str| {
                 template
                     .param_decls
                     .iter()
                     .find(|decl| decl.name().trim_start_matches('*') == name)
-            };
-            let resolve = |source: &mojito_ast::ast::Type| {
-                let generated = self.generated_declaration.replace(true);
-                self.bare_string_literal_parameter
-                    .set(super::declarations::is_string_literal_annotation(source));
-                let ty = self.ty_from_anno(source);
-                self.bare_string_literal_parameter.set(false);
-                self.generated_declaration.set(generated);
-                ty
             };
             let types = trace
                 .type_bindings
@@ -1252,19 +1254,14 @@ impl Checker {
             )
         };
         // The declarations are the struct's binders followed by the method's
-        // own, which a clone keeps symbolic (`BOUND_BINDERS`) and the
-        // receiver does not bind.
+        // own. A per-instantiation clone keeps its own symbolic
+        // (`BOUND_BINDERS`); a per-call clone bakes them, and its trace
+        // names the source type or element list written for each.
         let (struct_decls, own) = template
             .param_decls
             .split_at_checked(arguments.len())
             .ok_or_else(unresolved)?;
-        if !own
-            .iter()
-            .all(|decl| matches!(decl, ParamDecl::Type { bounds, .. } if !bounds.is_empty()))
-        {
-            return Err(unresolved());
-        }
-        struct_decls
+        let mut types: TySubst = struct_decls
             .iter()
             .zip(arguments)
             .map(|(decl, argument)| match (decl, argument) {
@@ -1273,11 +1270,22 @@ impl Checker {
                 }
                 _ => Err(unresolved()),
             })
-            .collect::<Result<_, _>>()
-            .map(|types| InstanceSubstitution {
-                types,
-                packs: HashMap::new(),
-            })
+            .collect::<Result<_, _>>()?;
+        let mut packs = HashMap::new();
+        for decl in own {
+            let name = decl.name().trim_start_matches('*');
+            if let Some((_, source)) = trace.type_bindings.iter().find(|(bound, _)| bound == name) {
+                types.insert(decl.id().clone(), resolve(source)?);
+            } else if let Some((_, sources)) =
+                trace.pack_bindings.iter().find(|(bound, _)| bound == name)
+            {
+                let elements = sources.iter().map(resolve).collect::<Result<_, _>>()?;
+                packs.insert(decl.id().clone(), elements);
+            } else if !matches!(decl, ParamDecl::Type { bounds, .. } if !bounds.is_empty()) {
+                return Err(unresolved());
+            }
+        }
+        Ok(InstanceSubstitution { types, packs })
     }
 
     /// A template's facts for one instance: every retained type substituted,

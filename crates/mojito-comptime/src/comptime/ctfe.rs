@@ -1438,9 +1438,7 @@ impl Elab<'_> {
                     clones.extend(self.per_call_method_clones(
                         method,
                         &requests,
-                        &[],
-                        &[],
-                        None,
+                        &super::specialize::PerCallBase::default(),
                         &consts,
                     ));
                     method.body = vec![super::specialize::unspecialized_method_stub(name, method)];

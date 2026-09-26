@@ -654,16 +654,16 @@ pub struct GeneratedDeclarations {
     pub methods: Vec<(String, String)>,
 }
 
-/// The declaration-level expansion trace of one per-instantiation method
-/// clone.
+/// The declaration-level expansion trace of one per-instantiation or
+/// per-call method clone.
 ///
 /// The clone is appended to its template struct's own method list
-/// (`get$y3:Int` on `Box`), so it is identified by that struct, its name, the
-/// source tag stamped on its body, and the byte range of its own body's
-/// first statement — same-name overloads clone under one name and one tag,
-/// and a `Method` has no range of its own. Only whole-instance clones are
-/// traced: a per-call clone also bakes the method's own parameters and
-/// leaves no trace yet.
+/// (`get$y3:Int` on `Box`, `kind$y3:Int$y4:Bool` for a call of `kind[Bool]`
+/// on `Box[Int]`), so it is identified by that struct, its name, the source
+/// tag stamped on its body, and the byte range of its own body's first
+/// statement — same-name overloads clone under one name and one tag, and a
+/// `Method` has no range of its own. A member of a struct specialized whole
+/// (`Tuple$…`) is not traced.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MethodInstanceTrace {
     pub owner: String,
@@ -678,8 +678,14 @@ pub struct MethodInstanceTrace {
     /// body is copied whole, or the first statement the elaborator kept of a
     /// body that opens with compile-time control flow.
     pub clone_body: mojito_common::token::Span,
-    /// The struct's type parameters, with the source type written for each.
+    /// The struct's type parameters, then a per-call clone's own, with the
+    /// source type written for each.
     pub type_bindings: Vec<(String, Type)>,
+    /// A per-call clone's own value parameters, folded into its body.
+    pub value_bindings: Vec<(String, CtValue)>,
+    /// A per-call clone's own type packs, each with the source element types
+    /// written in its signature.
+    pub pack_bindings: Vec<(String, Vec<Type>)>,
 }
 
 /// The declaration-level expansion trace of one generated `def` clone.

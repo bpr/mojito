@@ -371,23 +371,7 @@ impl Elab<'_> {
                 // parameters baked; a closed instance of a generic struct
                 // mints its clones in `generate_instance_clones` instead.
                 if !self.is_specializable(stmt) {
-                    let requests = self.method_requests.get(name.as_str());
-                    for method in &stmt_methods(stmt) {
-                        let clones = self.per_call_method_clones(
-                            method,
-                            requests.map_or(&[][..], Vec::as_slice),
-                            &[],
-                            &[],
-                            None,
-                            env,
-                        );
-                        self.per_call_clones.borrow_mut().extend(
-                            clones
-                                .iter()
-                                .map(|clone| (name.clone(), clone.name.clone())),
-                        );
-                        methods.extend(clones);
-                    }
+                    methods.extend(self.plain_struct_per_call_clones(stmt, name, env));
                 }
                 out.push(rebuilt(
                     stmt,
@@ -871,6 +855,42 @@ impl Elab<'_> {
 /// The `$` keeps it apart from every source identifier.
 pub(super) fn pack_binding_marker(binding: &str) -> String {
     format!("$pack${binding}")
+}
+
+impl Elab<'_> {
+    /// The per-call clones a non-generic struct's own generic methods mint
+    /// for the checker-discovered requests against it, each recorded as
+    /// generated and traced to its template.
+    fn plain_struct_per_call_clones(
+        &self,
+        stmt: &Stmt,
+        name: &str,
+        env: &HashMap<String, CtValue>,
+    ) -> Vec<mojito_ast::ast::Method> {
+        let requests = self.method_requests.get(name);
+        let base = super::specialize::PerCallBase {
+            owner: Some(super::specialize::PerCallOwner {
+                name,
+                module: stmt.module.as_deref(),
+            }),
+            ..super::specialize::PerCallBase::default()
+        };
+        let mut clones = Vec::new();
+        for method in &stmt_methods(stmt) {
+            clones.extend(self.per_call_method_clones(
+                method,
+                requests.map_or(&[][..], Vec::as_slice),
+                &base,
+                env,
+            ));
+        }
+        self.per_call_clones.borrow_mut().extend(
+            clones
+                .iter()
+                .map(|clone| (name.to_string(), clone.name.clone())),
+        );
+        clones
+    }
 }
 
 /// Append the block elaboration kept of a compile-time statement — the arm a

@@ -451,7 +451,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `derive_adjustment`) is `crates/mojito-checked/src/templates.rs`. The
   declaration-level trace is `comptime.rs`'s `DefInstanceTrace` (type,
   value, and pack bindings), recorded by `specialize.rs:generate_def_spec`,
-  and `MethodInstanceTrace`, recorded by `generate_instance_clones`;
+  and `MethodInstanceTrace`, recorded by `generate_instance_clones` and by
+  `per_call_method_clones` (`trace_per_call_clone`) for a per-call clone;
   `GeneratedDeclarations` lists what an elaboration generated; the
   occurrence-level trace is `ast.rs:rekey_syntax`'s `SyntaxOrigins` (which
   traces a `mojito-common` `token.rs:SyntaxId::derived` node through its

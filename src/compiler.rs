@@ -767,8 +767,8 @@ fn instance_traces(
                     declaration: trace.body,
                 },
                 type_bindings: trace.type_bindings,
-                value_bindings: Vec::new(),
-                pack_bindings: Vec::new(),
+                value_bindings: trace.value_bindings,
+                pack_bindings: trace.pack_bindings,
                 residual: Vec::new(),
             },
         )

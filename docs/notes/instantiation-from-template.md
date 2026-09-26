@@ -30,7 +30,7 @@ HIR or MIR.
 | Re-selection of a call through a bound (`bound_witness`, `realize_bound_dispatch`, `realize_inverted_writes`, `realize_bound_builtin`) | `crates/mojito-checker/src/checker/template_facts/bound_dispatch.rs` |
 | Body entry points | `template_facts.rs:Checker::check_def_body` (from `statements.rs:check_def_inner`) and `check_method_body` (from `declarations.rs:bind_and_check_method`), both over one `BodySite` |
 | Occurrence-level trace | `crates/mojito-ast/src/ast.rs:rekey_syntax` returning `SyntaxOrigins` |
-| Declaration-level trace | `crates/mojito-comptime/src/comptime.rs:DefInstanceTrace` (`specialize.rs:generate_def_spec`) and `MethodInstanceTrace` (`generate_instance_clones`) |
+| Declaration-level trace | `crates/mojito-comptime/src/comptime.rs:DefInstanceTrace` (`specialize.rs:generate_def_spec`) and `MethodInstanceTrace` (`generate_instance_clones`, `specialize.rs:per_call_method_clones`) |
 | What the elaborator generated | `comptime.rs:GeneratedDeclarations`, carried as `templates.rs:GeneratedNames` |
 | Statement identity through elaboration | `comptime.rs:rebuilt` |
 | Catalog lifetime, trace hand-over, one finalization | `src/compiler.rs:compile_linked`, `instance_traces` |
@@ -209,8 +209,13 @@ symbol.
   `MethodInstanceTrace`, and the clone is named by its struct, its name, its
   body's source tag, and the range of its body's first statement
   (`InstanceName`): same-name overloads clone under one name and one tag. A
-  per-call clone, which also bakes the method's own parameters, leaves no
-  trace yet.
+  per-call clone (`echo$y3:Int$y6:String` for `b.echo[String]` on
+  `Box[Int]`) joins the same list and records the same trace, whose type
+  bindings name the struct's binders and then the method's own, with the
+  method's folded values and expanded packs beside them. The checker
+  substitutes the method's own binders from the trace and the struct's from
+  the receiver. A clone minted into a struct specialized whole, or into the
+  CTFE subprogram, is not traced.
 - **What was generated.** `GeneratedDeclarations` lists every `def` clone,
   every struct specialized whole (`Tuple$…`), and every per-call method clone.
   That list, or an explicit receiver type, is the only test for "generated": a
@@ -1065,8 +1070,10 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
   `self[k.copy()] = v.copy()`) likewise.
 - An instance whose argument may carry a loan, which includes every struct
   with a field of a parameter type (`DictEntry[K, V, H]`).
-- Per-call method clones and members of a struct specialized whole, which
-  leave no trace.
+- Members of a struct specialized whole, which leave no trace; a per-call
+  clone folding a method's own value binder (`scaled[n: Int]`), which the
+  method grammar refuses; and a SIMD-keyed hasher leaf
+  (`_update_with_simd(value: SIMD[_, _])`), whose template is a trap stub.
 - A surviving trait-bound `def` template whose body constructs a struct,
   calls a bound builtin, or consumes a local through a method
   (`hash_seeded`), or holds any feature outside `FUNCTION_FEATURES`. A local

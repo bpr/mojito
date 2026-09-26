@@ -1395,9 +1395,7 @@ impl Elab<'_> {
                 simd_clones.extend(self.per_call_method_clones(
                     &method,
                     &requests,
-                    &[],
-                    &[],
-                    None,
+                    &PerCallBase::default(),
                     &env,
                 ));
                 method.body = vec![unspecialized_method_stub(orig, &method)];
@@ -2433,9 +2431,15 @@ impl Elab<'_> {
             clones.extend(self.per_call_method_clones(
                 method,
                 per_call_requests,
-                values,
-                &bindings,
-                Some(&receiver),
+                &PerCallBase {
+                    values,
+                    bindings: &bindings,
+                    receiver: Some(&receiver),
+                    owner: Some(PerCallOwner {
+                        name,
+                        module: template.module.as_deref(),
+                    }),
+                },
                 &consts,
             ));
             // A synthesized trait-default body (Copyable's `copy`, Hashable's
@@ -2495,6 +2499,8 @@ impl Elab<'_> {
                                 Some((binding.name.clone(), binding.source.clone()?))
                             })
                             .collect(),
+                        value_bindings: Vec::new(),
+                        pack_bindings: Vec::new(),
                     });
             }
             clones.push(clone);
@@ -2560,11 +2566,15 @@ impl Elab<'_> {
         &self,
         method: &Method,
         requests: &[MethodSpecializationRequest],
-        base_values: &[CtValue],
-        base_bindings: &[MethodBinding],
-        receiver: Option<&Type>,
+        base: &PerCallBase<'_>,
         consts: &HashMap<String, CtValue>,
     ) -> Vec<Method> {
+        let PerCallBase {
+            values: base_values,
+            bindings: base_bindings,
+            receiver,
+            owner,
+        } = *base;
         let specializable = method
             .type_params
             .iter()
@@ -2623,9 +2633,73 @@ impl Elab<'_> {
             };
             clone.where_clauses.clear();
             clone.self_ty = receiver.cloned();
+            if let Some(owner) = owner {
+                self.trace_per_call_clone(owner, method, &clone, &bindings, base_bindings.len());
+            }
             clones.push(clone);
         }
         clones
+    }
+
+    /// Record how a per-call clone came from its template: the struct's
+    /// type bindings (an instance's, first) and the method's own, the
+    /// method's folded values, and its expanded type packs.
+    fn trace_per_call_clone(
+        &self,
+        owner: PerCallOwner<'_>,
+        method: &Method,
+        clone: &Method,
+        bindings: &[MethodBinding],
+        struct_bindings: usize,
+    ) {
+        let (Some(first), Some(clone_first)) = (method.body.first(), clone.body.first()) else {
+            return;
+        };
+        let own = &bindings[struct_bindings..];
+        let pack = |binding: &MethodBinding| {
+            method.type_params.iter().any(|parameter| {
+                parameter.name.strip_prefix('*') == Some(binding.name.as_str())
+                    && parameter.value_type.is_none()
+            })
+        };
+        let pack_bindings = own
+            .iter()
+            .filter(|binding| pack(binding))
+            .filter_map(|binding| {
+                let CtValue::Tuple(elements) = &binding.value else {
+                    return None;
+                };
+                let sources = elements
+                    .iter()
+                    .map(|element| match element {
+                        CtValue::Type(ty) => self.pack_element_source_type(ty),
+                        _ => None,
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                Some((binding.name.clone(), sources))
+            })
+            .collect();
+        self.method_traces
+            .borrow_mut()
+            .push(super::MethodInstanceTrace {
+                owner: owner.name.to_string(),
+                owner_module: owner.module.map(str::to_string),
+                clone_module: super::clone_source_tag(owner.module, owner.name, &clone.name),
+                clone_name: clone.name.clone(),
+                template_name: method.name.clone(),
+                body: first.span,
+                clone_body: clone_first.span,
+                type_bindings: bindings
+                    .iter()
+                    .filter_map(|binding| Some((binding.name.clone(), binding.source.clone()?)))
+                    .collect(),
+                value_bindings: own
+                    .iter()
+                    .filter(|binding| binding.source.is_none() && !pack(binding))
+                    .map(|binding| (binding.name.clone(), binding.value.clone()))
+                    .collect(),
+                pack_bindings,
+            });
     }
 
     /// The method names a trait requires, including those of the traits it
@@ -3047,6 +3121,27 @@ impl Elab<'_> {
         }
         self.conformance.require(ty, "ImplicitlyCopyable").is_ok()
     }
+}
+
+/// What a per-call method clone inherits from where it is minted: an
+/// instance's baked values and bindings (empty for a non-generic struct),
+/// the instance clone's explicit receiver type, and the struct whose method
+/// list the clone joins under its own source tag, which a trace names. A
+/// clone minted into a struct specialized whole, or into the CTFE
+/// subprogram, names no owner and leaves no trace.
+#[derive(Clone, Copy, Default)]
+pub(super) struct PerCallBase<'a> {
+    pub(super) values: &'a [CtValue],
+    pub(super) bindings: &'a [MethodBinding],
+    pub(super) receiver: Option<&'a Type>,
+    pub(super) owner: Option<PerCallOwner<'a>>,
+}
+
+/// The struct a traced per-call clone joins, and its module.
+#[derive(Clone, Copy)]
+pub(super) struct PerCallOwner<'a> {
+    pub(super) name: &'a str,
+    pub(super) module: Option<&'a str>,
 }
 
 /// One baked compile-time parameter of a per-call method clone: its name,

@@ -1437,6 +1437,38 @@ fn template_folded_values_derive() {
 }
 
 #[test]
+fn template_per_call_method_clones_derive() {
+    // A per-call clone bakes the method's own bounded binder beside the
+    // struct's; its trace names both, so it derives from the checked
+    // template, and the derived facts agree with the clone's own check. A
+    // per-instantiation clone keeps the method's binder symbolic.
+    let source = "struct Box[T: Copyable & Deinitable](Movable):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def echo[U: Copyable & Deinitable](self, other: U) -> U:\n        return other.copy()\n\nstruct Plain:\n    var x: Int\n\n    def __init__(out self, x: Int):\n        self.x = x\n\n    def echo[U: Copyable & Deinitable](self, other: U) -> U:\n        return other.copy()\n\ndef main():\n    var b = Box[Int](4)\n    print(b.echo[String](\"e\"), b.echo(7))\n    var p = Plain(7)\n    print(p.echo(1.5))\n";
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compiler.compile_unlinked(source).expect("compile");
+        let stats = program.template_stats();
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        let per_call: std::collections::HashSet<&str> = served
+            .iter()
+            .map(String::as_str)
+            .filter(|name| {
+                (name.starts_with("Box.echo$") && name.matches('$').count() == 2)
+                    || name.starts_with("Plain.echo$")
+            })
+            .collect();
+        assert_eq!(per_call.len(), 3, "every per-call clone derives: {stats:?}");
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "e 7\n1.5\n"
+        );
+    }
+}
+
+#[test]
 fn discovery_scan_matches_the_checked_arena() {
     // Request discovery reads a `DiscoveryResult` instead of the assembled
     // arena. Every request kind is a function of the expressions visited,

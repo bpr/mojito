@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A per-call method clone (`b.echo[String](x)` on `Box[Int]`, or a generic
+  method of a non-generic struct) now leaves an expansion trace naming the
+  struct's and the method's own baked parameters. A clone of a checked
+  template whose own binders are trait-bounded types derives its facts from
+  that template instead of being checked again. SIMD-keyed hasher leaves and
+  methods with their own value binders are traced but still checked.
+
 - A checker pass now carries the facts of every body whose inputs are
   unchanged since the previous pass instead of inferring it again: each
   module-level `def` and struct method records the fact-store entries it
