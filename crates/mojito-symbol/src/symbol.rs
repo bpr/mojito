@@ -756,13 +756,15 @@ pub fn is_index_normalization_symbol(symbol: &str) -> bool {
 /// (and at which arities).
 ///
 /// Definitions of non-overloaded names keep their plain source name, so
-/// lowering consults this before qualifying anything.
+/// lowering consults this before qualifying anything. The scan also keeps the
+/// parameter names of each synthesized `@fieldwise_init` constructor.
 #[derive(Debug, Default, Clone)]
 pub struct OverloadSets {
     functions: HashMap<String, HashSet<usize>>,
     all_functions: HashSet<String>,
     methods: HashMap<String, HashSet<usize>>,
     comptimes: HashMap<String, i64>,
+    fieldwise_constructors: HashMap<String, Vec<String>>,
 }
 
 impl OverloadSets {
@@ -770,6 +772,7 @@ impl OverloadSets {
         let mut functions: HashMap<String, Vec<usize>> = HashMap::new();
         let mut methods: HashMap<String, Vec<usize>> = HashMap::new();
         let mut comptimes = HashMap::new();
+        let mut fieldwise_constructors = HashMap::new();
         for stmt in program {
             match &stmt.kind {
                 StmtKind::Comptime { name, value, .. } => {
@@ -784,8 +787,18 @@ impl OverloadSets {
                         .push(params.len());
                 }
                 StmtKind::Struct {
-                    name, methods: ms, ..
+                    name,
+                    methods: ms,
+                    fields,
+                    fieldwise_init,
+                    ..
                 } => {
+                    if *fieldwise_init && !ms.iter().any(|method| method.name == "__init__") {
+                        fieldwise_constructors.insert(
+                            name.clone(),
+                            fields.iter().map(|field| field.name.clone()).collect(),
+                        );
+                    }
                     for method in ms {
                         let method_name = lifecycle_method_name(method);
                         methods
@@ -802,7 +815,15 @@ impl OverloadSets {
             functions: keep_overloaded(functions),
             methods: keep_overloaded(methods),
             comptimes,
+            fieldwise_constructors,
         }
+    }
+
+    /// The parameter names of struct `name`'s synthesized `@fieldwise_init`
+    /// constructor (its field names, in order); `None` when the struct has no
+    /// such constructor.
+    pub fn fieldwise_parameters(&self, name: &str) -> Option<&[String]> {
+        self.fieldwise_constructors.get(name).map(Vec::as_slice)
     }
 
     /// Whether free function `name` is overloaded and defines arity `arity`.

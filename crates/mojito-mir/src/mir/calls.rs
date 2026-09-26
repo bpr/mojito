@@ -6,6 +6,15 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
+/// A call's positional registers and places, then its keyword registers and
+/// places.
+pub(super) type FieldwiseCallArguments = (
+    Vec<Reg>,
+    Vec<Option<MirPlace>>,
+    Vec<(String, Reg)>,
+    Vec<Option<MirPlace>>,
+);
+
 impl Flatten<'_> {
     /// Lower one ordinary call argument together with the caller storage that
     /// checking selected for a `mut`/`ref` parameter. Dynamic indexed places
@@ -506,6 +515,44 @@ impl Flatten<'_> {
             places.push(place);
         }
         (registers, places)
+    }
+
+    /// Fold a keyword `@fieldwise_init` construction into its positional form:
+    /// the arguments were evaluated in source order, and the call lists their
+    /// registers in field order, so no backend binds keywords to fields. A
+    /// call on any other target is returned unchanged.
+    pub(super) fn fieldwise_keywords_positional(
+        &self,
+        constructed: &str,
+        call: FieldwiseCallArguments,
+    ) -> FieldwiseCallArguments {
+        let (regs, places, keywords, keyword_places) = call;
+        if keywords.is_empty() {
+            return (regs, places, keywords, keyword_places);
+        }
+        let keyword_names: Vec<&str> = keywords.iter().map(|(name, _)| name.as_str()).collect();
+        let Some(slots) = self
+            .overloads
+            .fieldwise_parameters(constructed)
+            .and_then(|names| {
+                mojito_ast::call::match_fieldwise_slots(names, regs.len(), &keyword_names).ok()
+            })
+        else {
+            return (regs, places, keywords, keyword_places);
+        };
+        let (ordered_regs, ordered_places) = slots
+            .into_iter()
+            .filter_map(|slot| match slot {
+                mojito_ast::call::ArgSlot::Positional(index) => {
+                    Some((regs[index], places[index].clone()))
+                }
+                mojito_ast::call::ArgSlot::Keyword(index) => {
+                    Some((keywords[index].1, keyword_places[index].clone()))
+                }
+                mojito_ast::call::ArgSlot::Default => None,
+            })
+            .unzip();
+        (ordered_regs, ordered_places, Vec::new(), Vec::new())
     }
 
     /// Store an accessor-produced reference in a hidden local and establish its

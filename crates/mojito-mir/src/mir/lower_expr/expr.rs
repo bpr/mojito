@@ -643,6 +643,14 @@ impl Flatten<'_> {
                 } else {
                     self.lower_call_keywords(kwargs, view_result)
                 };
+                let (regs, arg_places, kw, kwarg_places) = match self.checked_ty(e) {
+                    Some(Ty::Struct(constructed, _)) if constructed == *name => self
+                        .fieldwise_keywords_positional(
+                            &constructed,
+                            (regs, arg_places, kw, kwarg_places),
+                        ),
+                    _ => (regs, arg_places, kw, kwarg_places),
+                };
                 // Builtin string producers wrapped by the nominal-String
                 // conversion keep their own callee but type their register
                 // as the compile-time string the wrap consumes.

@@ -123,6 +123,7 @@ assets/ok/explicit_transfer_convention.mojo	main	exe-differential	sanitized
 assets/ok/external_call_write_stdout.mojo	main	exe-differential	sanitized
 assets/ok/field_store_overwrite_drop.mojo	main	exe-differential	sanitized
 assets/ok/field_store_overwrite_drop_shapes.mojo	main	exe-differential	sanitized
+assets/ok/fieldwise_keyword_construction.mojo	main	exe-differential	sanitized
 assets/ok/file_descriptor_stdout_order.mojo	main	exe-differential	sanitized
 assets/ok/file_handle_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/float16_display.mojo	main	exe-differential	sanitized

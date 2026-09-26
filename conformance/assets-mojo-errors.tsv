@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	440
+# swept-count	441
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -224,6 +224,7 @@ assets/type_error/explicit_destroy_raising.mojo	compile-reject	agree	error: use 
 assets/type_error/external_call_string_argument.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/external_call_unknown_callee.mojo	runs	subset	the pin runs it; Mojito rejects: is not in Mojito's libc allowlist
 assets/type_error/fieldwise_anytype_field.mojo	compile-reject	agree	error: field 'a' has non-'Deinitable' type 'T'
+assets/type_error/fieldwise_unknown_keyword.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/function_type.mojo	compile-reject	agree	error: cannot implicitly convert 'def wrong(value: String) thin -> Int' value to 'def(Int) thin -> Int' in 'var' initializer
 assets/type_error/function_type_where_call_violates.mojo	compile-reject	agree	error: violated constraint
 assets/type_error/function_type_where_missing_on_contract.mojo	compile-reject	agree	error: invalid call to 'apply': 'apply' parameter 'F' has 'def[w: Int](Int) thin -> None' type, but value has type 'def kernel[w: Int](x: Int) thin -> None where (w > Int(0))'

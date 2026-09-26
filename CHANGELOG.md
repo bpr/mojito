@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `@fieldwise_init` struct now constructs from keyword arguments naming
+  its fields (`P(b=True, a=1)`, `Pair[Int, Bool](storage=(1, True))`,
+  `Pair(storage=(2, False))`), in any order and after leading positionals,
+  evaluated in source order as the pinned Mojo does; each used to report
+  "'P' expects 2 argument(s), got 0".
+
 - `len` now answers a SIMD vector's lane count (`1` for a scalar alias and
   `Float64`), and a `SIMD[dt, _]` local annotation takes its width from the
   initializer, so `var v: SIMD[DType.int32, _] = SIMD[DType.int32, 4](...)`

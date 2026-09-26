@@ -2516,6 +2516,16 @@ impl Checker {
         if !info.fieldwise_init {
             return Err(TypeError::NoConstructor(name.to_string()));
         }
+        // The synthesized constructor names its parameters after the fields:
+        // keyword arguments bind by name, and the fieldwise tail below sees
+        // the arguments in field order.
+        let ordered: Vec<Expr>;
+        let args = if kwargs.is_empty() {
+            args
+        } else {
+            ordered = fieldwise_arguments(name, info, args, kwargs)?;
+            ordered.as_slice()
+        };
         let decls = info.decls.clone();
         let field_tys: Vec<Ty> = info.fields.iter().map(|(_, t)| t.clone()).collect();
         if field_tys.len() != args.len() {
@@ -2552,7 +2562,7 @@ impl Checker {
         let (subst, tyargs) =
             self.resolve_use_params(name, &decls, param_args, &field_tys, &arg_tys)?;
         if let Some(specialized) =
-            self.finish_variadic_construction(span, name, param_args, &tyargs, args, kwargs)
+            self.finish_variadic_construction(span, name, param_args, &tyargs, args, &[])
         {
             return specialized;
         }
@@ -3275,4 +3285,26 @@ fn block_holds_return(body: &[Stmt]) -> bool {
     let mut finder = Finder(false);
     mojito_ast::visit::walk_block(&mut finder, body);
     finder.0
+}
+
+/// A fieldwise construction's arguments in field order, keywords bound to the
+/// fields they name.
+fn fieldwise_arguments(
+    name: &str,
+    info: &StructInfo,
+    args: &[Expr],
+    kwargs: &[mojito_ast::ast::KwArg],
+) -> Result<Vec<Expr>, TypeError> {
+    let field_names: Vec<String> = info.fields.iter().map(|(field, _)| field.clone()).collect();
+    let keyword_names: Vec<&str> = kwargs.iter().map(|k| k.name.as_str()).collect();
+    let slots = mojito_ast::call::match_fieldwise_slots(&field_names, args.len(), &keyword_names)
+        .map_err(|error| error.into_type_error(name))?;
+    Ok(slots
+        .into_iter()
+        .filter_map(|slot| match slot {
+            ArgSlot::Positional(position) => Some(args[position].clone()),
+            ArgSlot::Keyword(position) => Some(kwargs[position].value.clone()),
+            ArgSlot::Default => None,
+        })
+        .collect())
 }

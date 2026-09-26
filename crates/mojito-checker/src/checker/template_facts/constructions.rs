@@ -177,26 +177,35 @@ fn struct_substitution(info: &StructInfo, arguments: &[TyArg]) -> Result<TySubst
 }
 
 /// A fieldwise construction: each argument initializes the field at its
-/// position, whose declared type it must still equal under the instance. A
-/// reference field takes a handle, whose recorded type is the referent.
+/// position or the field its keyword names, whose declared type it must still
+/// equal under the instance. A reference field takes a handle, whose recorded
+/// type is the referent.
 fn realize_fieldwise(
     info: &StructInfo,
     struct_substitution: &TySubst,
     positional: &[Ty],
     keywords: &[(&str, Ty)],
 ) -> Result<(), &'static str> {
-    if !info.fieldwise_init || !keywords.is_empty() || positional.len() != info.fields.len() {
-        return Err("a construction matches no constructor of its struct");
+    const NO_MATCH: &str = "a construction matches no constructor of its struct";
+    if !info.fieldwise_init {
+        return Err(NO_MATCH);
     }
-    let exact = positional
-        .iter()
-        .zip(&info.fields)
-        .all(
-            |(argument, (_, field))| match substitute(field, struct_substitution) {
-                Ty::Ref(reference) => *argument == *reference.referent,
-                field => binds(argument, &field),
-            },
-        );
+    let field_names: Vec<String> = info.fields.iter().map(|(name, _)| name.clone()).collect();
+    let keyword_names: Vec<&str> = keywords.iter().map(|(name, _)| *name).collect();
+    let slots =
+        mojito_ast::call::match_fieldwise_slots(&field_names, positional.len(), &keyword_names)
+            .map_err(|_| NO_MATCH)?;
+    let exact = slots.iter().zip(&info.fields).all(|(slot, (_, field))| {
+        let argument = match slot {
+            ArgSlot::Positional(index) => &positional[*index],
+            ArgSlot::Keyword(index) => &keywords[*index].1,
+            ArgSlot::Default => return false,
+        };
+        match substitute(field, struct_substitution) {
+            Ty::Ref(reference) => *argument == *reference.referent,
+            field => binds(argument, &field),
+        }
+    });
     if !exact {
         return Err("a construction's argument does not match its field for the instance");
     }

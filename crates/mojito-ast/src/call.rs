@@ -182,6 +182,31 @@ pub fn match_call_slots(
     })
 }
 
+/// Match a `@fieldwise_init` construction's arguments to the struct's fields.
+///
+/// The synthesized constructor takes one required parameter per field, named
+/// after it, in declaration order, so every returned slot is positional or
+/// keyword, never a default.
+pub fn match_fieldwise_slots(
+    field_names: &[String],
+    npos: usize,
+    kw_names: &[&str],
+) -> Result<Vec<ArgSlot>, MatchError> {
+    match_call_slots(
+        field_names,
+        &vec![true; field_names.len()],
+        None,
+        None,
+        npos,
+        kw_names,
+        CallVariadics {
+            positional: false,
+            keyword: false,
+        },
+    )
+    .map(|matched| matched.slots)
+}
+
 /// Convert a parser marker to the regular-parameter index space used by calls.
 #[allow(
     clippy::single_option_map,
