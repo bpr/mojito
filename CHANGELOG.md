@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A method calling another method on a call's temporary result
+  (`return self.entries().size()`, `self.name.strip().upper()`) now reuses
+  the template's checked facts; it used to be checked again as a clone per
+  instance.
+
 - A method binding a view annotated with an inferred origin
   (`var span: Span[Self.T, _] = self.items`), or handing a place to a
   sibling's view parameter, now reuses the template's checked facts; it used

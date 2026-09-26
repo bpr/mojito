@@ -8424,9 +8424,11 @@ impl BodyShape<'_> {
     }
 
     /// A call of a method on `self`, on one of its fields, on a `var` local,
-    /// or through a reference, passing admitted arguments, whose recorded
+    /// through a reference, or on a call's temporary result
+    /// (`self.entries().size()`), passing admitted arguments, whose recorded
     /// contract changes per instance only in its target and its substituted
-    /// result ([`Self::sibling_call`]).
+    /// result ([`Self::sibling_call`]). A temporary receiver's read and its
+    /// destruction are recorded at the call's occurrence, by syntax.
     fn method_call(
         &self,
         expr: &Expr,
@@ -8440,7 +8442,8 @@ impl BodyShape<'_> {
             || (!self.keyed
                 && (self.reference_receiver(object)
                     || self.value_local(object)
-                    || self.local_field(object))))
+                    || self.local_field(object)
+                    || self.call_result(object))))
             && (!self.keyed || (args.is_empty() && kwargs.is_empty()))
             && args
                 .iter()

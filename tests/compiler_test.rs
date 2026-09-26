@@ -1849,6 +1849,28 @@ fn template_method_sibling_views_derive() {
 }
 
 #[test]
+fn template_method_temporary_receivers_derive() {
+    // A method called on a call's temporary result: a sibling's view over
+    // `self`, a sibling's owned copy of `Self`, a field's copied list, and a
+    // field's stripped string view, alone, with an argument, as operands, and
+    // bound to a local.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_temporary_receiver.mojo"),
+        "2 1 1 0\n3 1 2 1\n4 2 2 1\n2 1 AB C\n",
+        &[
+            ("Shelf.direct", 2),
+            ("Shelf.skipped", 2),
+            ("Shelf.summed", 2),
+            ("Shelf.copied", 2),
+            ("Shelf.bound", 2),
+            ("Shelf.total", 2),
+            ("Shelf.trimmed", 2),
+            ("Shelf.shout", 2),
+        ],
+    );
+}
+
+#[test]
 fn template_method_raises_derive() {
     // A method that raises: `Error("…")` under a bare `raises`, and a
     // construction of the declared error type, built over the struct's
