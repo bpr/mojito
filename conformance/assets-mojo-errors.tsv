@@ -403,6 +403,7 @@ assets/type_error/set_requires_hashable_element.mojo	compile-reject	agree	error:
 assets/type_error/setter_overload_competing_pair.mojo	compile-reject	agree	error: 'Sink' has '__setitem__' but no '__getitem__' method
 assets/type_error/simd_bool_positional_splat.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_generic_width_rejected.mojo	compile-reject	agree	error: SIMD vector length must be a power of two between 1 and 2^15, found '!kgen.simd<3, si32>'
+assets/type_error/simd_inferred_width_dtype_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int64, 4]' value to 'SIMD[.int32, _]'
 assets/type_error/simd_shuffle_width_mismatch.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_size_removed_alias.mojo	compile-reject	agree	error: use of unknown declaration 'SIMDSize'
 assets/type_error/simd_subscript_indexer.mojo	compile-reject	agree	error: invalid call to '__getitem__': value passed to 'idx' cannot be converted from 'Offset' to 'Int'

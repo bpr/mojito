@@ -56,6 +56,13 @@ impl FnLowering<'_> {
                 self.reg_values.insert(dest.0, length);
                 Ok(())
             }
+            Some(ty @ (Ty::Float64 | Ty::Simd { .. }))
+                if let Some((_, width)) = mojito_types::types::simd_shape(&ty) =>
+            {
+                let length = self.int_constant(ctx, width);
+                self.reg_values.insert(dest.0, length);
+                Ok(())
+            }
             other => Err(self.unsupported_reg(
                 format!(
                     "`len` over `{}`",

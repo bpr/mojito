@@ -2644,9 +2644,18 @@ impl Checker {
     /// The annotated type of an initialized local with the origin slots its
     /// annotation left to inference bound from the initializer's type
     /// (`var p: P = P(Pointer(to=xs))` declares a `P[origin_of(xs)]`, as
-    /// upstream infers it), recursing through type arguments.
+    /// upstream infers it), recursing through type arguments. A `SIMD[dt, _]`
+    /// width hole takes the initializer's lane count the same way.
     pub(super) fn bind_unbound_tails(declared: &Ty, found: &Ty) -> Ty {
         match (declared, found) {
+            (Ty::Simd { dtype, width }, _) if width.is_inferred() => {
+                mojito_types::types::simd_slots(found)
+                    .filter(|(_, found_width)| !found_width.is_expr())
+                    .and_then(|(_, found_width)| {
+                        mojito_types::types::simd_ty_from_slots(dtype.clone(), found_width).ok()
+                    })
+                    .unwrap_or_else(|| declared.clone())
+            }
             (Ty::Struct(name, declared_args), Ty::Struct(found_name, found_args))
                 if name == found_name && declared_args.len() == found_args.len() =>
             {

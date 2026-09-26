@@ -700,6 +700,15 @@ impl Checker {
                                  explicitly or bind a non-generic function"
                             )));
                         }
+                        // A `SIMD[dt, _]` width is solved from the initializer
+                        // before the conversion, so the value converts to the
+                        // vector the binding declares.
+                        let expected = match &expected {
+                            Ty::Simd { width, .. } if width.is_inferred() => {
+                                Self::bind_unbound_tails(&expected, &found)
+                            }
+                            _ => expected,
+                        };
                         if contains_infer(&expected) {
                             if contains_infer(&found) {
                                 return Err(TypeError::CannotInferTypeParam {

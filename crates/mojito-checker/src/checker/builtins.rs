@@ -674,9 +674,15 @@ impl Checker {
         if string_len_unavailable(ty).is_some() {
             return Ok(None);
         }
+        // `SIMD.__len__` returns the lane count; `Float64` is `SIMD[DType.float64, 1]`.
         if matches!(
             ty,
-            Ty::ComptimeList(_) | Ty::Tuple(_) | Ty::RuntimePack(_) | Ty::VariadicPack(_)
+            Ty::ComptimeList(_)
+                | Ty::Tuple(_)
+                | Ty::RuntimePack(_)
+                | Ty::VariadicPack(_)
+                | Ty::Simd { .. }
+                | Ty::Float64
         ) {
             return Ok(Some(Ty::Int));
         }

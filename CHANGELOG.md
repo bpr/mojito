@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `len` now answers a SIMD vector's lane count (`1` for a scalar alias and
+  `Float64`), and a `SIMD[dt, _]` local annotation takes its width from the
+  initializer, so `var v: SIMD[DType.int32, _] = SIMD[DType.int32, 4](...)`
+  then `len(v)` prints `4`; both used to report "no matching function in
+  call to 'len'", and a `Float64` initializer under `SIMD[DType.float64, _]`
+  used to be a type mismatch.
+
 - A method keyed by its own `DType` or SIMD-width parameter may now
   construct a vector at that lane (`def make[dt: DType](self, x: Int) ->
   Scalar[dt]: return Scalar[dt](x)`), on a plain or generic struct; the
