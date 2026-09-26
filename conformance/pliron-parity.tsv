@@ -282,6 +282,8 @@ assets/ok/ownership_marker_traits.mojo	main	exe-differential	sanitized
 assets/ok/pack_bare_in_struct_header.mojo	main	exe-differential	sanitized
 assets/ok/pack_element_rebind.mojo	main	exe-differential	sanitized
 assets/ok/pack_element_temporaries.mojo	main	exe-differential	sanitized
+assets/ok/pack_forwarding_method.mojo	main	exe-differential	sanitized
+assets/ok/pack_forwarding_print.mojo	main	exe-differential	sanitized
 assets/ok/pack_overload_arity.mojo	main	exe-differential	sanitized
 assets/ok/pack_overload_beside_keyed.mojo	main	exe-differential	sanitized
 assets/ok/pack_overload_bounds.mojo	main	exe-differential	sanitized

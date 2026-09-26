@@ -356,7 +356,7 @@ impl Elab<'_> {
                             // or per-call clone, which folds it bound.
                             Err(error)
                                 if names_struct_parameter(&error, type_params)
-                                    || names_struct_parameter(&error, &m.type_params) =>
+                                    || names_method_parameter(&error, &m) =>
                             {
                                 vec![super::specialize::unspecialized_method_stub(name, &m)]
                             }
@@ -909,6 +909,22 @@ fn names_struct_parameter(error: &ComptimeError, type_params: &[TypeParam]) -> b
         || type_params.iter().any(|parameter| {
             text.contains(&format!("'{}'", parameter.name.trim_start_matches('*')))
         })
+}
+
+/// Whether an elaboration error names one of the method's own compile-time
+/// parameters or its type-pack collector (`a.__len__()` for `*a: *Ts`), which
+/// only a clone binds.
+fn names_method_parameter(error: &ComptimeError, method: &mojito_ast::ast::Method) -> bool {
+    if names_struct_parameter(error, &method.type_params) {
+        return true;
+    }
+    let text = error.to_string();
+    method.params.iter().any(|parameter| {
+        parameter.kind == ParamKind::Variadic
+            && matches!(&parameter.ty, Type::Named(name, arguments)
+                if name.starts_with('*') && arguments.is_empty())
+            && text.contains(&format!("'{}'", parameter.name))
+    })
 }
 
 /// The source methods of a struct statement (empty for any other statement).

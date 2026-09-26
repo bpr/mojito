@@ -21,6 +21,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A pack-keyed body can forward its pack whole into a pack-keyed method
+  (`self.take(*a)`) or into `print` (`print(*a)`, with or without `sep` and
+  `end`), which used to fail with "'a' is not a compile-time type" and
+  "call spread outside a specialized type pack". A method template that
+  reads `a.__len__()` of its own collector no longer fails to elaborate.
+
 - One overload of a type-pack `def` can forward its collected pack whole to
   a same-named sibling (`def tally[*Ts](first: Int, *rest: *Ts)` returning
   `first + tally(*rest)`), which used to fail with "no overload matches the

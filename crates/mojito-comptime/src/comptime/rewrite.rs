@@ -1309,7 +1309,12 @@ impl PackRewriter {
                 for argument in kwargs {
                     self.expand_expression(&mut argument.value);
                 }
-                if name == "__RuntimeTuple" || name == "Tuple" {
+                // `print` is compiler-known and binds a forwarded pack as its
+                // elements, as a tuple construction does.
+                if name == "__RuntimeTuple"
+                    || name == "Tuple"
+                    || (name == "print" && self.resolve_value(name).is_none())
+                {
                     *args = self.expand_tuple_spread_arguments(std::mem::take(args));
                 }
             }
@@ -1354,12 +1359,15 @@ impl PackRewriter {
                 ..
             } => {
                 self.expand_expression(object);
-                for argument in args {
+                for argument in args.iter_mut() {
                     self.expand_expression(argument);
                 }
                 for argument in kwargs {
                     self.expand_expression(&mut argument.value);
                 }
+                // A method's own type pack binds a forwarded pack element by
+                // element; the instance the call selects is the checker's.
+                *args = self.expand_tuple_spread_arguments(std::mem::take(args));
             }
             ExprKind::Slice {
                 object,

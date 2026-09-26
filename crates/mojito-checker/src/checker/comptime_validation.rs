@@ -708,9 +708,6 @@ impl Checker {
                 "'{name}' called with a spread of the unbound pack '{binding}'"
             ))
         };
-        if !kwargs.is_empty() {
-            return Some(Err(boundary()));
-        }
         let constructed = match name {
             "__RuntimeTuple" => Ty::Tuple(vec![pack]),
             mojito_types::types::TUPLE_TYPE_NAME => mojito_types::types::tuple_type(vec![pack]),
@@ -718,6 +715,9 @@ impl Checker {
             // (`forwarded_pack_argument`, `bind_forwarded_pack`).
             _ => return None,
         };
+        if !kwargs.is_empty() {
+            return Some(Err(boundary()));
+        }
         if param_args.is_empty() {
             return Some(Ok(constructed));
         }
