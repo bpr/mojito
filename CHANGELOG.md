@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A method calling a generic module function with explicit type arguments
+  (`self.data = unsafe_alloc[Self.T](n)`), and a construction handed an
+  untracked pointer field, now reuse the template's checked facts, so the
+  owned `List.__iter__` and `Optional.__iter__` and `List._realloc` are no
+  longer checked again per instance.
+
 - A call to another struct's overloaded method on a place built over the
   struct parameter (`self.items.extend(self.items.copy())` in a user struct
   over `List[Self.T]`, or on a `var` local) now reuses the template's checked

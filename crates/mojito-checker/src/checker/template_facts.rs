@@ -3093,10 +3093,11 @@ impl Checker {
     /// - `COPIED_RECEIVERS`: see [`BodyShape::copied_consuming_call`]. The
     ///   call's copy of its receiver is decided by the receiver's syntax and
     ///   the callee's convention, and the instance owes it at its own type.
-    /// - `DIRECT_CALLS`: see `method_direct_calls`. A non-generic scalar
-    ///   callee, or the member of an overload set taking closed scalars
-    ///   (`range(n)`), is selected alike under every instance, which
-    ///   realizes it as a function template's direct call.
+    /// - `DIRECT_CALLS`: see `method_direct_calls`. A callee taking closed
+    ///   scalars, the member of an overload set (`range(n)`) or a generic
+    ///   one applied to types (`unsafe_alloc[Self.T](n)`), is selected alike
+    ///   under every instance, which realizes it as a function template's
+    ///   direct call, substituting the application's arguments.
     /// - `ITERATION`: see [`BodyShape::iterable`] and `realize_iterations`.
     ///   The protocol a loop records is selected from the iterable's type
     ///   and resolved against the place it borrows, so an instance keeps the
@@ -6074,7 +6075,10 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
         .call_parameters
         .iter()
         .any(|(id, _)| !admitted_call(id))
-        || !facts.generic_instantiations.is_empty()
+        || !facts
+            .generic_instantiations
+            .iter()
+            .all(|(id, _)| direct_calls.iter().any(|(call, _)| call == id))
         || !facts
             .overload_targets
             .iter()
@@ -6089,24 +6093,25 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
         })
 }
 
-/// The direct calls a method body makes of a module-scope function that is
-/// not generic and takes only closed scalars, each with its callee.
+/// The direct calls a method body makes of a module-scope function that
+/// takes only closed scalars, each with its callee.
 ///
 /// The call selects the same declaration under every instance, or the same
 /// member of an overload set, which ranks only the closed argument types,
-/// and binds its arguments by value at types no substitution changes, so an
-/// instance realizes it as a function template's direct call
-/// ([`Checker::realize_direct_call`]).
+/// and binds its arguments by value at types no substitution changes. A
+/// generic callee's application (`unsafe_alloc[Self.T](n)`) is recorded with
+/// the template's arguments, which the instance substitutes, so an instance
+/// realizes it as a function template's direct call
+/// ([`Checker::realize_direct_call`]): the application's existing clone, or
+/// the one the elaborator retargeted the call to.
 fn method_direct_calls(facts: &CheckedBodyFacts) -> Vec<(OccurrenceId, &str)> {
     facts
         .call_parameters
         .iter()
         .filter(|(id, parameters)| {
             !facts.selected_calls.iter().any(|(call, _)| call == id)
-                && !facts
-                    .generic_instantiations
-                    .iter()
-                    .any(|(call, _)| call == id)
+                && fact_at(&facts.generic_instantiations, *id)
+                    .is_none_or(|application| application.variadic.is_none())
                 && parameters
                     .iter()
                     .all(|parameter| parameter.convention.is_none() && closed_scalar(&parameter.ty))
@@ -7871,14 +7876,16 @@ impl BodyShape<'_> {
             if self.operator(expr, *op, left, right))
     }
 
-    /// The result of a sibling call, of any type: a temporary, whose type is
-    /// the contract's substituted result.
+    /// The result of a sibling call or of a generic callee's explicit
+    /// application, of any type: a temporary, whose type is the contract's
+    /// or the application's substituted result.
     fn call_result(&self, expr: &Expr) -> bool {
         let call = match &expr.kind {
             ExprKind::MethodCall { method, .. } => {
                 !matches!(method.as_str(), "unsafe_take_pointee" | "unsafe_offset")
             }
             ExprKind::Invoke { callee, .. } => matches!(callee.kind, ExprKind::Member { .. }),
+            ExprKind::Call { param_args, .. } => !param_args.is_empty(),
             _ => false,
         };
         call && self.expression(expr)
@@ -8053,9 +8060,13 @@ impl BodyShape<'_> {
         let lent_place = |position: usize, argument: &Expr| {
             lent(position) && (named_place(argument) || self.reference_argument(argument))
         };
+        // An untracked pointer is plain data under every instance: a read
+        // parameter reads it where it lies and a `var` one copies it, as the
+        // template did.
         let value = |field: Option<&(String, Ty)>, argument: &Expr| {
             (self.expression(argument) && self.scalar(argument))
                 || self.whole_value(argument)
+                || self.pointer(argument)
                 || reference_field(field, argument)
         };
         let admitted = constructed
@@ -8098,18 +8109,21 @@ impl BodyShape<'_> {
         admitted && self.holds(MethodFeatures::CONSTRUCTIONS)
     }
 
-    /// A pointer into storage `self` owns: a field of `self`, or of a `var`
-    /// local copied from it, whose recorded type is a pointer with no
-    /// tracked provenance, or an element offset from one. Such a pointer holds no loan and names no place, and it is a
-    /// pointer under every instance, so its methods are the built-in ones.
+    /// A pointer into storage `self` owns: a field of `self`, a `var` local
+    /// (`var new_data = unsafe_alloc[Self.T](n)`), or a field of one, whose
+    /// recorded type is a pointer with no tracked provenance, or an element
+    /// offset from one. Such a pointer holds no loan and names no place, and
+    /// it is a pointer under every instance, so its methods are the built-in
+    /// ones.
     fn pointer(&self, expr: &Expr) -> bool {
         let admitted = match &expr.kind {
-            // An untracked pointer field, or one whose provenance is the
-            // struct's own origin parameter (`Span._data`): neither names a
-            // checker-local place, so the retained type is the template's
-            // under every instance.
-            ExprKind::Member { .. } => {
-                (self.receiver_field(expr) || self.local_field(expr))
+            // An untracked pointer field or `var` local, or a field whose
+            // provenance is the struct's own origin parameter (`Span._data`):
+            // neither names a checker-local place, so the retained type is
+            // the template's under every instance.
+            ExprKind::Member { .. } | ExprKind::Identifier(_) => {
+                let local = matches!(&expr.kind, ExprKind::Identifier(name) if self.declared(name));
+                (self.receiver_field(expr) || self.local_field(expr) || local)
                     && self.facts.is_none_or(|facts| {
                         fact_at(&facts.expression_types, self.occurrence(expr)).is_some_and(|ty| {
                             matches!(ty, Ty::Pointer { origin, .. }
@@ -8952,7 +8966,16 @@ impl BodyShape<'_> {
                 let builtin_len = self
                     .facts
                     .is_none_or(|facts| facts.builtin_len_calls.contains(&id));
-                known && param_args.is_empty() && kwargs.is_empty() && args.iter().all(|argument| {
+                // A generic callee applied to types only
+                // (`unsafe_alloc[Self.T](n)`) records its application,
+                // which the instance substitutes.
+                let applied = param_args.is_empty()
+                    || (param_args.iter().all(type_argument)
+                        && !self.structs.contains_key(name)
+                        && self.facts.is_none_or(|facts| {
+                            fact_at(&facts.generic_instantiations, id).is_some()
+                        }));
+                known && applied && kwargs.is_empty() && args.iter().all(|argument| {
                     let held = matches!(&argument.kind, ExprKind::Identifier(name)
                             if self.reference_local(name));
                     let on_self = self.receiver

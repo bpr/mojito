@@ -2140,6 +2140,24 @@ fn template_method_built_over_locals_derive() {
 }
 
 #[test]
+fn template_method_explicit_applications_derive() {
+    // A generic module function applied to the struct's parameter
+    // (`unsafe_alloc[Self.T](n)`), stored to a field or bound to a local
+    // that later lands in one, and an untracked pointer field handed to a
+    // constructor's read parameter.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_explicit_application.mojo"),
+        "8\n8\n3\n",
+        &[
+            ("Pool.__init__", 2),
+            ("Pool.regrow", 2),
+            ("Pool.take", 2),
+            ("Handle.__init__", 2),
+        ],
+    );
+}
+
+#[test]
 fn template_method_constructions_derive() {
     // A `copy:` construction of the struct's own type, a fieldwise
     // construction, a bundled collection over the struct's parameter, and a
