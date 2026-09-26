@@ -2068,6 +2068,9 @@ pub struct TemplateCatalog {
     validation_aborted: bool,
     /// Compare each derived bundle with the clone check's own facts.
     verify: bool,
+    /// Carry an unchanged body's raw facts from one checker pass to the
+    /// next instead of inferring it again (`checker/fact_store.rs`).
+    body_fact_reuse: bool,
     stats: TemplateStats,
     /// The compilation's parameter-expression context. The catalog is what
     /// already travels through source validation and every discovery round,
@@ -2104,6 +2107,9 @@ pub struct TemplateStats {
     /// Certified template bodies served from their own retained facts in a
     /// later pass.
     pub reused: Vec<String>,
+    /// Bodies of any kind whose facts a later pass carried over from the
+    /// previous pass instead of inferring them again.
+    pub carried: Vec<String>,
     /// Traced clones that were inferred: outside every enabled class, or
     /// inferred for verification.
     pub inferred_clones: Vec<String>,
@@ -2134,9 +2140,20 @@ impl TemplateCatalog {
     pub fn new(verify: bool) -> Self {
         Self {
             verify,
+            body_fact_reuse: true,
             param_context: mojito_types::param_expr::ParamContext::new(),
             ..Self::default()
         }
+    }
+
+    /// Whether a body whose inputs are unchanged since the previous checker
+    /// pass takes its facts from that pass. Verification always infers.
+    pub const fn body_fact_reuse(&self) -> bool {
+        self.body_fact_reuse && !self.verify
+    }
+
+    pub const fn set_body_fact_reuse(&mut self, reuse: bool) {
+        self.body_fact_reuse = reuse;
     }
 
     pub const fn param_context(&self) -> &mojito_types::param_expr::ParamContext {

@@ -1138,6 +1138,7 @@ Entry point:
 checker::check(program: &[Stmt]) -> Result<(), TypeError>
 checker::check_program(program: &[Stmt]) -> Result<CheckedProgram, TypeError>
 checker::check_program_for_discovery(program, materialized_callables, catalog) -> Result<DiscoveryResult, TypeError>
+checker::check_program_carrying(program, materialized_callables, catalog, previous: Option<PassCarry>) -> Result<PassCarry, TypeError>
 checker::check_program_with_templates(program, materialized_callables, catalog) -> Result<CheckedProgram, TypeError>
 ```
 
@@ -1153,6 +1154,29 @@ is the arena builder's own traversal with node construction switched off, so
 they see exactly the expressions the arena would hold. Only the round that
 converges is finalized (`DiscoveryResult::finalize`). A `DiscoveryResult` is
 not executable and never reaches HIR or MIR.
+
+The driver actually calls `check_program_carrying`, which returns the
+`DiscoveryResult` inside a `PassCarry`: the pass's fact stores, one record
+per body site, and its binding-identity watermark. Every fact store the
+checker writes during a body is a logged store (`mojito-checked`'s
+`fact_store.rs`: a map, set, or vector plus the log of keys written), so a
+site — a module-level `def` or a struct method — records the log ranges it
+spans, the effect entries it read exactly as read, and a hash of its syntax
+(`checker/body_carry.rs`). The next pass, whether a transfer pass over the
+same tree or the first pass of the next discovery round, starts from the
+previous pass's committed effect maps and, at a site whose record is clean
+and whose reads still equal the committed entries, copies the logged entries
+instead of inferring. The driver marks a record dirty before the next round
+when a request the body recorded was served (`compiler.rs:ServedRequests`),
+and a rewritten call changes the syntax hash. Binding identities never
+collide: a pass starts its counter at the previous watermark, and a body
+inferred again allocates inside the range it had (`scopes.rs:reserve_owners`)
+so an unchanged prefix keeps its identities. The copy is exact by
+construction — nothing outside the body window is skipped — and
+`tests/compiler_test.rs` pins that a compilation with carry-over lowers the
+same MIR as one without (`MOJITO_BODY_FACT_REUSE=0`), up to identity
+numbering. The catalog's template derivation is not consulted for a carried
+body; verification mode (`MOJITO_VERIFY_TEMPLATE_FACTS`) disables carry-over.
 
 The checked handoff owns the elaborated AST for diagnostics and
 an explicit semantic arena. Every checked expression has a `CheckedNodeId`, child

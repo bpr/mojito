@@ -1215,7 +1215,37 @@ impl Checker {
         self.push_scope();
         self.raising_context
             .push(self.declared_error(m.raises, m.raises_type.as_ref())?);
-        let mut result = self.bind_and_check_method(self_ty, m, &ret_ty, ref_return, effect_key);
+        // A method body is a carry site (`body_carry`): keyed by its first
+        // statement, which the final re-key made unique, and named as the
+        // template mechanism names it (`Owner.method`, overloads alike).
+        let site = m
+            .body
+            .first()
+            .filter(|_| self.carries_bodies())
+            .map(|first| {
+                let display = self.method_site.as_ref().map_or_else(
+                    || effect_key.clone(),
+                    |(_, owner)| format!("{owner}.{}", m.name),
+                );
+                (
+                    first.source_span(),
+                    display,
+                    super::body_carry::method_syntax_hash(m),
+                )
+            });
+        let carried = site
+            .as_ref()
+            .is_some_and(|(key, display, syntax)| self.carry_body(key, display, *syntax));
+        let mut result = if carried {
+            Ok(())
+        } else {
+            let start = site.as_ref().map(|(key, _, _)| self.enter_body_site(key));
+            let checked = self.bind_and_check_method(self_ty, m, &ret_ty, ref_return, effect_key);
+            if let (Some((key, display, syntax)), Some(start)) = (site, start) {
+                self.leave_body_site(key, &display, &start, syntax);
+            }
+            checked
+        };
         // Definite initialization (conservative, flow-insensitive first pass): an
         // `__init__` must assign every declared field somewhere in its body, so a
         // constructed value has no unset fields. Path-sensitive DI (assign exactly

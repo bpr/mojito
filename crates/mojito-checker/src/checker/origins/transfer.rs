@@ -22,6 +22,12 @@ impl Checker {
         // reruns the check when this callee's final effects differ from what
         // the stalest query here saw.
         self.note_effect_query(callee, EffectRead::of(effects.as_ref(), true));
+        self.note_body_effect_read(
+            callee,
+            super::super::body_carry::ObservedEffects::Transfers(
+                effects.clone().unwrap_or_default(),
+            ),
+        );
         self.effect_observations
             .borrow_mut()
             .entry(callee.to_string())
@@ -58,6 +64,12 @@ impl Checker {
                 EffectRead::Empty => EffectRead::Value,
                 read => read,
             },
+        );
+        self.note_body_effect_read(
+            name,
+            super::super::body_carry::ObservedEffects::Transfers(
+                effects.clone().unwrap_or_default(),
+            ),
         );
         self.effect_observations
             .borrow_mut()
@@ -194,6 +206,12 @@ impl Checker {
                 _ => EffectRead::Empty,
             },
         );
+        self.note_body_effect_read(
+            callee,
+            super::super::body_carry::ObservedEffects::CallThroughs(
+                throughs.clone().unwrap_or_default(),
+            ),
+        );
         self.call_through_observations
             .borrow_mut()
             .entry(callee.to_string())
@@ -289,6 +307,12 @@ impl Checker {
         };
         let effects = self.transfer_effects.borrow().get(&key).cloned();
         self.note_effect_query(&key, EffectRead::of(effects.as_ref(), false));
+        self.note_body_effect_read(
+            &key,
+            super::super::body_carry::ObservedEffects::Transfers(
+                effects.clone().unwrap_or_default(),
+            ),
+        );
         self.effect_observations
             .borrow_mut()
             .entry(key)

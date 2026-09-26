@@ -6,6 +6,19 @@ to evolve under the `0.x` compatibility rules.
 
 ## [Unreleased]
 
+### Changed
+
+- A checker pass now carries the facts of every body whose inputs are
+  unchanged since the previous pass instead of inferring it again: each
+  module-level `def` and struct method records the fact-store entries it
+  wrote, the effect entries it read, and a hash of its syntax, and the next
+  transfer pass or discovery round copies the entries when the record is
+  clean and every read still matches. Hello World's six full body passes
+  become one full pass and three cheap ones (2.3 s to 1.5 s release, 15 s
+  to 7.9 s debug on the reference machine). `MOJITO_BODY_FACT_REUSE=0` and
+  `Compiler::with_body_fact_reuse(false)` infer everything, and
+  `TemplateStats::carried` lists the carried bodies.
+
 ### Fixed
 
 - A surviving trait-bound module-level `def` whose body holds a whole value

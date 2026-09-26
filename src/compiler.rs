@@ -23,6 +23,7 @@ use crate::runtime::Value;
 use crate::timing;
 use crate::{Stmt, ast::StmtKind, parse};
 use crate::{Ty, TyArg};
+use std::collections::HashSet;
 use std::fmt;
 use std::path::Path;
 use std::sync::OnceLock;
@@ -136,6 +137,10 @@ pub struct Compiler {
     /// the derived and inferred facts to agree. `None` defers to the
     /// `MOJITO_VERIFY_TEMPLATE_FACTS` environment variable.
     verify_template_facts: Option<bool>,
+    /// Carry an unchanged body's facts from one checker pass to the next
+    /// instead of inferring it again. `None` defers to the
+    /// `MOJITO_BODY_FACT_REUSE` environment variable (`0` disables).
+    body_fact_reuse: Option<bool>,
 }
 /// Reject runtime statements at module scope, matching Mojo's source rules.
 /// Declarations, imports, compile-time constants, and `pass` are permitted.
@@ -185,7 +190,15 @@ impl Compiler {
             backend,
             allow_executable_module_scope: false,
             verify_template_facts: None,
+            body_fact_reuse: None,
         }
+    }
+    /// Turn body-fact carry-over on or off, whatever the environment says:
+    /// off, every checker pass infers every body it does not derive.
+    #[must_use]
+    pub const fn with_body_fact_reuse(mut self, reuse: bool) -> Self {
+        self.body_fact_reuse = Some(reuse);
+        self
     }
     /// Turn template-fact verification on or off, whatever the environment
     /// says: every derivable body is then also inferred, and the two fact
@@ -286,6 +299,9 @@ impl Compiler {
                     .is_some_and(|value| !value.is_empty())
             }),
         );
+        templates_catalog.set_body_fact_reuse(self.body_fact_reuse.unwrap_or_else(|| {
+            std::env::var_os("MOJITO_BODY_FACT_REUSE").is_none_or(|value| value != "0")
+        }));
         crate::checker::validate_comptime_templates_into(&prepared, &mut templates_catalog)
             .map_err(CompilerError::Type)?;
         // The abstract references of the elaboration `checked` was checked
@@ -316,10 +332,11 @@ impl Compiler {
             templates_catalog.set_traces(instance_traces(def_traces, method_traces));
             templates_catalog.set_generated(generated_names(generated));
             let _check = timing::span("discovery.initial.check");
-            crate::checker::check_program_for_discovery(
+            crate::checker::check_program_carrying(
                 &discovery,
                 &std::collections::HashMap::new(),
                 &mut templates_catalog,
+                None,
             )
             .map_err(CompilerError::Type)?
         };
@@ -328,23 +345,32 @@ impl Compiler {
             let _round = timing::round("discovery.round", round);
             let requests = timing::span("requests");
             let mut grew = false;
-            for request in tuple_specialization_requests(&checked) {
+            // What this round serves for the first time: a body that
+            // recorded one of these is inferred again next round, whatever
+            // else its record still matches (`PassCarry::for_next_round`).
+            let mut served = ServedRequests::default();
+            for request in tuple_specialization_requests(checked.result()) {
                 if !tuple_requests.contains(&request) {
+                    served.tuple_elements.push(request.elements().to_vec());
                     tuple_requests.push(request);
                     grew = true;
                 }
             }
-            for request in tstring_specialization_requests(&checked) {
+            for request in tstring_specialization_requests(checked.result()) {
                 if !tstring_requests.contains(&request) {
                     last_new_callee = String::from("TString");
+                    served.tstring_elements.push(request.elements().to_vec());
                     tstring_requests.push(request);
                     grew = true;
                 }
             }
-            for request in def_specialization_requests(&checked, &templates)
+            for request in def_specialization_requests(checked.result(), &templates)
                 .into_iter()
-                .chain(scalar_range_requests(&checked, &range_templates))
-                .chain(variadic_struct_requests(&checked, &variadic_templates))
+                .chain(scalar_range_requests(checked.result(), &range_templates))
+                .chain(variadic_struct_requests(
+                    checked.result(),
+                    &variadic_templates,
+                ))
             {
                 if conflicted.contains(request.occurrence()) {
                     continue;
@@ -355,6 +381,7 @@ impl Compiler {
                 {
                     None => {
                         last_new_callee = request.callee().to_string();
+                        served.callees.push(request.callee().to_string());
                         def_requests.push(request);
                         grew = true;
                     }
@@ -365,7 +392,7 @@ impl Compiler {
                 }
             }
             for request in
-                method_specialization_requests(&checked, &variadic_templates, &user_structs)
+                method_specialization_requests(checked.result(), &variadic_templates, &user_structs)
             {
                 if conflicted.contains(request.occurrence()) {
                     continue;
@@ -376,6 +403,9 @@ impl Compiler {
                 {
                     None => {
                         last_new_callee = format!("{}.{}", request.owner(), request.method());
+                        served
+                            .methods
+                            .push((request.owner().to_string(), request.method().to_string()));
                         method_requests.push(request);
                         grew = true;
                     }
@@ -385,9 +415,10 @@ impl Compiler {
                     Some(_) => {}
                 }
             }
-            for leaf in checked.hash_leaf_types() {
+            for leaf in checked.result().hash_leaf_types() {
                 if !hash_leaf_requests.contains(leaf) {
                     last_new_callee = String::from("_update_with_simd");
+                    served.hash_leaves.push(leaf.clone());
                     hash_leaf_requests.push(leaf.clone());
                     grew = true;
                 }
@@ -397,12 +428,13 @@ impl Compiler {
             // compile-time-keyed stub must mint its clones: keeping the
             // erased path at the cap below would trap at run time.
             let mut stub_reaching_instance = None;
-            for request in struct_instance_requests(&checked) {
+            for request in struct_instance_requests(checked.result()) {
                 if !struct_requests.contains(&request) {
                     last_new_callee = request.template().to_string();
                     if stub_reaching_structs.contains(request.template()) {
                         stub_reaching_instance = Some(request.template().to_string());
                     }
+                    served.instances.push(request.clone());
                     struct_requests.push(request);
                     instances_grew = true;
                 }
@@ -459,6 +491,7 @@ impl Compiler {
             // served; the checker's recordings of them are not new work.
             for instance in minted {
                 if !struct_requests.contains(&instance) {
+                    served.instances.push(instance.clone());
                     struct_requests.push(instance);
                 }
             }
@@ -468,10 +501,13 @@ impl Compiler {
             templates_catalog.set_traces(instance_traces(def_traces, method_traces));
             templates_catalog.set_generated(generated_names(generated));
             let _check = timing::span("check");
-            checked = crate::checker::check_program_for_discovery(
+            let dirty = served.dirty_sites(&checked);
+            timing::count("body_facts.dirty_sites", dirty.len() as u64);
+            checked = crate::checker::check_program_carrying(
                 &elaborated,
                 &tuple_materialized_callables(&tuple_requests),
                 &mut templates_catalog,
+                Some(checked.for_next_round(&dirty)),
             )
             .map_err(CompilerError::Type)?;
         }
@@ -486,7 +522,7 @@ impl Compiler {
         let checked = {
             let _arena = timing::span("arena");
             timing::count("arena_builds", 1);
-            checked.finalize()
+            checked.into_result().finalize()
         };
         reject_unserved_template_calls(&checked, linked, &unserved_template_uses)?;
         let mir = {
@@ -541,6 +577,68 @@ impl Compiler {
     pub fn run_path(&self, entry: &Path) -> Result<Execution, CompilerError> {
         let program = self.compile_path(entry)?;
         self.execute(&program)
+    }
+}
+
+/// The requests a discovery round serves for the first time, for telling
+/// which body records of the previous round are stale.
+#[derive(Default)]
+struct ServedRequests {
+    tuple_elements: Vec<Vec<Ty>>,
+    tstring_elements: Vec<Vec<Ty>>,
+    callees: Vec<String>,
+    methods: Vec<(String, String)>,
+    hash_leaves: Vec<Ty>,
+    instances: Vec<StructInstanceRequest>,
+}
+
+impl ServedRequests {
+    /// The body sites whose facts a newly served request would change:
+    /// those that reached a struct application it instantiates, hashed a
+    /// leaf it clones, recorded an instantiation of a callee or method it
+    /// clones, or typed an expression, place, or binding with a tuple or
+    /// t-string it materializes. (A rewritten call occurrence changes the
+    /// body's syntax hash instead.)
+    fn dirty_sites(&self, carry: &crate::checker::PassCarry) -> HashSet<crate::token::SourceSpan> {
+        let instances: Vec<(&str, &[TyArg])> = self
+            .instances
+            .iter()
+            .map(|instance| (instance.template(), instance.arguments()))
+            .collect();
+        let tuples = !self.tuple_elements.is_empty();
+        let tstrings = !self.tstring_elements.is_empty();
+        carry
+            .sites()
+            .filter(|site| {
+                site.struct_instantiations().iter().any(|reached| {
+                    instances.contains(&(reached.template.as_str(), reached.arguments.as_slice()))
+                }) || site
+                    .hash_leaf_types()
+                    .iter()
+                    .any(|leaf| self.hash_leaves.contains(leaf))
+                    || site
+                        .instantiated_callees()
+                        .any(|callee| self.callees.iter().any(|served| served == callee))
+                    || site.instantiated_methods().any(|(owner, method)| {
+                        self.methods.iter().any(|(served_owner, served_method)| {
+                            served_owner == owner && served_method == method
+                        })
+                    })
+                    || ((tuples || tstrings)
+                        && site.recorded_types().any(|ty| {
+                            let mut sets = Vec::new();
+                            if tuples {
+                                collect_public_tuple_types(ty, &mut sets);
+                            }
+                            sets.iter().any(|set| self.tuple_elements.contains(set))
+                                || (tstrings
+                                    && closed_tstring_elements(ty).is_some_and(|elements| {
+                                        self.tstring_elements.contains(&elements)
+                                    }))
+                        }))
+            })
+            .map(|site| site.key().clone())
+            .collect()
     }
 }
 

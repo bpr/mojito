@@ -1,5 +1,6 @@
 //! Checked semantic handoff between the frontend and lowering.
 
+use crate::fact_store::{FactMap, FactSet, FactVec};
 use mojito_ast::ast::Stmt;
 use mojito_ast::ast::{Expr, ExprKind, PrefixOp};
 use mojito_common::token::{SourceSpan, Span};
@@ -997,47 +998,47 @@ impl CheckedTables {
 #[derive(Debug, Clone)]
 pub struct DiscoveryResult {
     pub statements: Vec<Stmt>,
-    pub overload_targets: HashMap<SourceSpan, String>,
-    pub contextual_bases: HashMap<SourceSpan, String>,
-    pub generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
-    pub method_instantiations: HashMap<SourceSpan, MethodInstantiation>,
-    pub struct_instantiations: Vec<StructInstantiation>,
-    pub hash_leaf_types: Vec<Ty>,
-    pub call_transfers: HashMap<SourceSpan, Vec<CheckedCallTransfer>>,
-    pub implicit_conversions: HashMap<SourceSpan, String>,
-    pub implicit_conversion_types: HashMap<SourceSpan, Ty>,
-    pub conversion_source_borrows: HashMap<SourceSpan, bool>,
-    pub conversion_raises: HashMap<SourceSpan, Ty>,
-    pub checked_types: HashMap<AnnotationSite, Ty>,
-    pub generic_parameters: HashMap<GenericSite, Vec<mojito_types::types::ParamDecl>>,
-    pub expression_types: HashMap<SourceSpan, Ty>,
-    pub expression_bindings: HashMap<SourceSpan, mojito_types::origin::OwnerId>,
-    pub statement_bindings: HashMap<SourceSpan, mojito_types::origin::OwnerId>,
-    pub declaration_captures: HashMap<SourceSpan, Vec<CheckedCapture>>,
-    pub comprehension_bindings: HashMap<SourceSpan, Vec<CheckedComprehensionBinding>>,
-    pub expression_place_types: HashMap<SourceSpan, Ty>,
-    pub binding_types: HashMap<SourceSpan, Ty>,
-    pub expression_effects: HashMap<SourceSpan, EffectFacts>,
-    pub selected_calls: HashMap<SourceSpan, CheckedCallContract>,
+    pub overload_targets: FactMap<SourceSpan, String>,
+    pub contextual_bases: FactMap<SourceSpan, String>,
+    pub generic_instantiations: FactMap<SourceSpan, GenericInstantiation>,
+    pub method_instantiations: FactMap<SourceSpan, MethodInstantiation>,
+    pub struct_instantiations: FactVec<StructInstantiation>,
+    pub hash_leaf_types: FactVec<Ty>,
+    pub call_transfers: FactMap<SourceSpan, Vec<CheckedCallTransfer>>,
+    pub implicit_conversions: FactMap<SourceSpan, String>,
+    pub implicit_conversion_types: FactMap<SourceSpan, Ty>,
+    pub conversion_source_borrows: FactMap<SourceSpan, bool>,
+    pub conversion_raises: FactMap<SourceSpan, Ty>,
+    pub checked_types: FactMap<AnnotationSite, Ty>,
+    pub generic_parameters: FactMap<GenericSite, Vec<mojito_types::types::ParamDecl>>,
+    pub expression_types: FactMap<SourceSpan, Ty>,
+    pub expression_bindings: FactMap<SourceSpan, mojito_types::origin::OwnerId>,
+    pub statement_bindings: FactMap<SourceSpan, mojito_types::origin::OwnerId>,
+    pub declaration_captures: FactMap<SourceSpan, Vec<CheckedCapture>>,
+    pub comprehension_bindings: FactMap<SourceSpan, Vec<CheckedComprehensionBinding>>,
+    pub expression_place_types: FactMap<SourceSpan, Ty>,
+    pub binding_types: FactMap<SourceSpan, Ty>,
+    pub expression_effects: FactMap<SourceSpan, EffectFacts>,
+    pub selected_calls: FactMap<SourceSpan, CheckedCallContract>,
     pub subscript_descriptors:
-        HashMap<SourceSpan, (Vec<Option<mojito_types::types::SliceKind>>, bool)>,
-    pub iteration_protocols: HashMap<SourceSpan, IterationProtocol>,
-    pub simd_constructions: HashMap<SourceSpan, (mojito_ast::ast::Dtype, i64)>,
-    pub operation_adjustments: HashMap<SourceSpan, SemanticAdjustment>,
-    pub parameterized_method_calls: HashMap<SourceSpan, Vec<mojito_types::types::ParamDecl>>,
-    pub tuple_unpack_plans: HashMap<SourceSpan, Vec<CheckedTupleUnpackElement>>,
-    pub interior_references: HashMap<SourceSpan, mojito_types::origin::OriginPlace>,
-    pub interior_invalidations: HashMap<SourceSpan, Vec<InteriorInvalidation>>,
+        FactMap<SourceSpan, (Vec<Option<mojito_types::types::SliceKind>>, bool)>,
+    pub iteration_protocols: FactMap<SourceSpan, IterationProtocol>,
+    pub simd_constructions: FactMap<SourceSpan, (mojito_ast::ast::Dtype, i64)>,
+    pub operation_adjustments: FactMap<SourceSpan, SemanticAdjustment>,
+    pub parameterized_method_calls: FactMap<SourceSpan, Vec<mojito_types::types::ParamDecl>>,
+    pub tuple_unpack_plans: FactMap<SourceSpan, Vec<CheckedTupleUnpackElement>>,
+    pub interior_references: FactMap<SourceSpan, mojito_types::origin::OriginPlace>,
+    pub interior_invalidations: FactMap<SourceSpan, Vec<InteriorInvalidation>>,
     pub explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
-    pub explicit_destroy_calls: HashSet<SourceSpan>,
-    pub reference_value_uses: HashMap<SourceSpan, bool>,
-    pub copy_place_value_uses: HashSet<SourceSpan>,
-    pub call_place_uses: HashSet<SourceSpan>,
-    pub borrowed_read_call_places: HashSet<SourceSpan>,
-    pub read_temporary_arguments: HashSet<SourceSpan>,
-    pub implicitly_copied_consuming_receivers: HashSet<SourceSpan>,
-    pub truthiness_conditions: HashSet<SourceSpan>,
-    pub declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
+    pub explicit_destroy_calls: FactSet<SourceSpan>,
+    pub reference_value_uses: FactMap<SourceSpan, bool>,
+    pub copy_place_value_uses: FactSet<SourceSpan>,
+    pub call_place_uses: FactSet<SourceSpan>,
+    pub borrowed_read_call_places: FactSet<SourceSpan>,
+    pub read_temporary_arguments: FactSet<SourceSpan>,
+    pub implicitly_copied_consuming_receivers: FactSet<SourceSpan>,
+    pub truthiness_conditions: FactSet<SourceSpan>,
+    pub declaration_effects: FactMap<AnnotationSite, DeclarationEffect>,
 }
 
 impl DiscoveryResult {
@@ -1046,19 +1047,19 @@ impl DiscoveryResult {
     pub fn finalize(self) -> CheckedProgram {
         CheckedProgram::new(
             self.statements,
-            self.overload_targets,
+            self.overload_targets.into_inner(),
             &self.contextual_bases,
-            self.generic_instantiations,
-            self.method_instantiations,
-            self.struct_instantiations,
-            self.hash_leaf_types,
-            self.call_transfers,
-            self.implicit_conversions,
-            self.implicit_conversion_types,
+            self.generic_instantiations.into_inner(),
+            self.method_instantiations.into_inner(),
+            self.struct_instantiations.into_inner(),
+            self.hash_leaf_types.into_inner(),
+            self.call_transfers.into_inner(),
+            self.implicit_conversions.into_inner(),
+            self.implicit_conversion_types.into_inner(),
             &self.conversion_source_borrows,
             &self.conversion_raises,
-            self.checked_types,
-            self.generic_parameters,
+            self.checked_types.into_inner(),
+            self.generic_parameters.into_inner(),
             &self.expression_types,
             &self.expression_bindings,
             &self.statement_bindings,
@@ -1085,7 +1086,7 @@ impl DiscoveryResult {
             &self.read_temporary_arguments,
             &self.implicitly_copied_consuming_receivers,
             &self.truthiness_conditions,
-            self.declaration_effects,
+            self.declaration_effects.into_inner(),
         )
     }
 
@@ -1129,11 +1130,11 @@ impl DiscoveryResult {
         );
     }
 
-    pub const fn generic_instantiations(&self) -> &HashMap<SourceSpan, GenericInstantiation> {
+    pub fn generic_instantiations(&self) -> &HashMap<SourceSpan, GenericInstantiation> {
         &self.generic_instantiations
     }
 
-    pub const fn method_instantiations(&self) -> &HashMap<SourceSpan, MethodInstantiation> {
+    pub fn method_instantiations(&self) -> &HashMap<SourceSpan, MethodInstantiation> {
         &self.method_instantiations
     }
 

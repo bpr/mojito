@@ -211,13 +211,22 @@ every round, because a program they reject must be rejected.
 Within each outer discovery check, transfer and call-through effects start with
 an incomplete seed. If a call site observed an effect summary that later grew,
 the checker constructs a fresh `Checker` and checks the entire expanded program
-again. Hello World currently takes two such rounds for every outer check.
+again. Hello World used to take two such rounds for every outer check.
 
-Investigate registering callable signatures once and propagating effect
-summaries through a call-graph SCC/worklist. Only callers whose callee summary
-changed should need reconsideration. Whether expression checking can wait for
-stable summaries, or must be updated incrementally with them, is a semantic
-design question to resolve before implementation.
+Resolved (2026-09-26) by carrying facts between passes rather than by a
+worklist: every fact store logs its writes, each body site records the log
+ranges it wrote and the effect entries it read, and the next pass — a
+transfer pass or the first pass of the next discovery round, which now
+starts from the previous round's committed effect maps — copies a body's
+entries when its record is clean and every read is still current
+(`docs/architecture.md`, `checker/body_carry.rs`). Hello World on the
+reference machine: 2.3 s to 1.5 s release and 15 s to 7.9 s debug; the six
+full body passes become one full pass (0.31 s release) and three carried
+ones (about 0.09 s each, `check_program.bodies` under `--timings`), with
+6 bodies re-inferred in the second transfer pass and 100–250 in each later
+round (new clones, rewritten calls, and served requests). What a carried
+pass still costs is the copy itself and the per-site syntax hash
+(`docs/roadmap.md` 5.4).
 
 ### 3. Comptime elaboration rebuilds invariant indexes each round
 

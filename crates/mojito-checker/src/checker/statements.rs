@@ -366,7 +366,7 @@ impl Checker {
         value: &Expr,
         operand_ty: &Ty,
     ) -> Result<mojito_checked::checked::CheckedCallContract, TypeError> {
-        let temporary = mojito_types::origin::OwnerId(self.next_owner.get());
+        let temporary = self.peek_owner();
         self.push_scope();
         let selection = self
             .declare("$inplace_elem", operand_ty.clone())
@@ -2554,186 +2554,210 @@ impl Checker {
         }
         self.raising_context.push(declared_error);
         let mut result = Ok(());
-        // Value parameters are ordinary `Int` locals in the body.
-        for d in &decls {
-            if let ParamDecl::Value { name, ty, .. } = d {
-                if self.source_validation
-                    && let Some(bindings) = self.compile_time_bindings.last_mut()
-                {
-                    bindings.insert(name.trim_start_matches('*').to_string());
-                }
-                result = self.declare_immutable(
-                    name.trim_start_matches('*'),
-                    if matches!(d, ParamDecl::Value { variadic: true, .. }) {
-                        Ty::VariadicPack(ty.clone())
-                    } else {
-                        (**ty).clone()
-                    },
-                );
-                if result.is_err() {
-                    break;
+        // A module-level body is a carry site: its parameter bindings, its
+        // frames, and its inference are what the previous pass recorded for
+        // it, or what this pass records.
+        let site = (module_level && check_body && self.carries_bodies())
+            .then(|| (stmt.source_span(), super::body_carry::def_syntax_hash(stmt)));
+        let carried = site
+            .as_ref()
+            .is_some_and(|(key, syntax)| self.carry_body(key, name, *syntax));
+        let site_start = if carried {
+            None
+        } else {
+            site.as_ref().map(|(key, _)| self.enter_body_site(key))
+        };
+        if carried {
+            // Nothing to bind or infer: the pops below balance the pushes above.
+        } else {
+            // Value parameters are ordinary `Int` locals in the body.
+            for d in &decls {
+                if let ParamDecl::Value { name, ty, .. } = d {
+                    if self.source_validation
+                        && let Some(bindings) = self.compile_time_bindings.last_mut()
+                    {
+                        bindings.insert(name.trim_start_matches('*').to_string());
+                    }
+                    result = self.declare_immutable(
+                        name.trim_start_matches('*'),
+                        if matches!(d, ParamDecl::Value { variadic: true, .. }) {
+                            Ty::VariadicPack(ty.clone())
+                        } else {
+                            (**ty).clone()
+                        },
+                    );
+                    if result.is_err() {
+                        break;
+                    }
                 }
             }
-        }
-        if result.is_ok() {
-            for ((param, ty), opaque) in params.iter().zip(&param_tys).zip(&opaque_params) {
-                // A `*args` parameter is compiler pack storage inside the
-                // body; it must not impersonate the nominal stdlib List.
-                let bind_ty = match param.kind {
-                    mojito_ast::ast::ParamKind::Variadic => match ty {
-                        Ty::RuntimePack(elements) => Ty::Tuple(elements.clone()),
-                        _ => Ty::VariadicPack(Box::new(ty.clone())),
-                    },
-                    mojito_ast::ast::ParamKind::KwVariadic => self.kwargs_collector_ty(
-                        ty.clone(),
-                        &format!("keyword collector '{}'", param.name),
-                    )?,
-                    mojito_ast::ast::ParamKind::Regular => {
-                        opaque.clone().unwrap_or_else(|| ty.clone())
-                    }
-                };
-                // Duplicate parameter names are a redeclaration.
-                result = self.declare_with_mutability(
-                    &param.name,
-                    bind_ty.clone(),
-                    param.kind == mojito_ast::ast::ParamKind::KwVariadic
-                        || matches!(param.convention, Some(mojito_ast::ast::ArgConvention::Out))
-                        || ref_parameter_is_writable(param, type_params),
-                );
-                if result.is_ok() {
-                    self.record_owned_pack(param);
-                }
-                if result.is_ok()
-                    && matches!(param.convention, Some(mojito_ast::ast::ArgConvention::Ref))
-                {
-                    let binder = self.reference_parameter_struct_binder(param.origin.as_deref());
-                    self.register_reference_parameter(
+            if result.is_ok() {
+                for ((param, ty), opaque) in params.iter().zip(&param_tys).zip(&opaque_params) {
+                    // A `*args` parameter is compiler pack storage inside the
+                    // body; it must not impersonate the nominal stdlib List.
+                    let bind_ty = match param.kind {
+                        mojito_ast::ast::ParamKind::Variadic => match ty {
+                            Ty::RuntimePack(elements) => Ty::Tuple(elements.clone()),
+                            _ => Ty::VariadicPack(Box::new(ty.clone())),
+                        },
+                        mojito_ast::ast::ParamKind::KwVariadic => self.kwargs_collector_ty(
+                            ty.clone(),
+                            &format!("keyword collector '{}'", param.name),
+                        )?,
+                        mojito_ast::ast::ParamKind::Regular => {
+                            opaque.clone().unwrap_or_else(|| ty.clone())
+                        }
+                    };
+                    // Duplicate parameter names are a redeclaration.
+                    result = self.declare_with_mutability(
                         &param.name,
                         bind_ty.clone(),
-                        ref_parameter_is_writable(param, type_params),
-                        binder,
+                        param.kind == mojito_ast::ast::ParamKind::KwVariadic
+                            || matches!(
+                                param.convention,
+                                Some(mojito_ast::ast::ArgConvention::Out)
+                            )
+                            || ref_parameter_is_writable(param, type_params),
                     );
-                }
-                if result.is_ok()
-                    && !matches!(bind_ty, Ty::Ref(_))
-                    && self.type_carries_loans(&bind_ty)
-                    && let Some(owner) = self.lookup_owner(&param.name)
-                {
-                    self.set_aggregate_origins(
-                        &param.name,
-                        vec![mojito_types::origin::Origin::Place(
-                            mojito_types::origin::OriginPlace {
-                                root: owner,
-                                path: Vec::new(),
-                            },
-                        )],
-                    );
-                }
-                if result.is_err() {
-                    break;
+                    if result.is_ok() {
+                        self.record_owned_pack(param);
+                    }
+                    if result.is_ok()
+                        && matches!(param.convention, Some(mojito_ast::ast::ArgConvention::Ref))
+                    {
+                        let binder =
+                            self.reference_parameter_struct_binder(param.origin.as_deref());
+                        self.register_reference_parameter(
+                            &param.name,
+                            bind_ty.clone(),
+                            ref_parameter_is_writable(param, type_params),
+                            binder,
+                        );
+                    }
+                    if result.is_ok()
+                        && !matches!(bind_ty, Ty::Ref(_))
+                        && self.type_carries_loans(&bind_ty)
+                        && let Some(owner) = self.lookup_owner(&param.name)
+                    {
+                        self.set_aggregate_origins(
+                            &param.name,
+                            vec![mojito_types::origin::Origin::Place(
+                                mojito_types::origin::OriginPlace {
+                                    root: owner,
+                                    path: Vec::new(),
+                                },
+                            )],
+                        );
+                    }
+                    if result.is_err() {
+                        break;
+                    }
                 }
             }
-        }
-        // A function body is a fresh loop context: `break`/`continue`
-        // do not cross into a nested `def`.
-        if result.is_ok() {
-            let owners: Vec<_> = caller_regular
-                .iter()
-                .map(|param| {
-                    self.lookup_owner(&param.name)
-                        .expect("bound function parameter")
-                })
-                .collect();
-            let base = *self
-                .function_bases
-                .last()
-                .expect("function scope is active");
-            let mut allowed: std::collections::HashSet<_> = owners.iter().copied().collect();
-            // Variadic collectors are parameters too (see the method
-            // twin in declarations.rs).
-            allowed.extend(
-                params
-                    .iter()
-                    .filter(|param| param.kind != mojito_ast::ast::ParamKind::Regular)
-                    .filter_map(|param| self.lookup_owner(&param.name)),
-            );
-            // A nested def can reach the enclosing callable's outliving
-            // storage (`self`, parameters) through captures; stores
-            // into those owners face the same store-outward rule, with
-            // this def's own frame deciding source locality.
-            if let Some((_, enclosing)) = self.aggregate_escape_contexts.last() {
-                allowed.extend(enclosing.iter().copied());
-            }
-            self.aggregate_escape_contexts.push((base, allowed));
-            if !module_level && !lambda {
-                self.nested_def_params
-                    .borrow_mut()
-                    .insert(stmt.source_span(), owners.clone());
-            }
-            self.transfer_frames.borrow_mut().push(TransferFrame {
-                callable: name.clone(),
-                keeps_symbolic_selection: false,
-                param_owners: owners.clone(),
-                param_borrowed: caller_regular
+            // A function body is a fresh loop context: `break`/`continue`
+            // do not cross into a nested `def`.
+            if result.is_ok() {
+                let owners: Vec<_> = caller_regular
                     .iter()
                     .map(|param| {
-                        matches!(
-                            param.convention,
-                            Some(
-                                mojito_ast::ast::ArgConvention::Mut
-                                    | mojito_ast::ast::ArgConvention::Ref
+                        self.lookup_owner(&param.name)
+                            .expect("bound function parameter")
+                    })
+                    .collect();
+                let base = *self
+                    .function_bases
+                    .last()
+                    .expect("function scope is active");
+                let mut allowed: std::collections::HashSet<_> = owners.iter().copied().collect();
+                // Variadic collectors are parameters too (see the method
+                // twin in declarations.rs).
+                allowed.extend(
+                    params
+                        .iter()
+                        .filter(|param| param.kind != mojito_ast::ast::ParamKind::Regular)
+                        .filter_map(|param| self.lookup_owner(&param.name)),
+                );
+                // A nested def can reach the enclosing callable's outliving
+                // storage (`self`, parameters) through captures; stores
+                // into those owners face the same store-outward rule, with
+                // this def's own frame deciding source locality.
+                if let Some((_, enclosing)) = self.aggregate_escape_contexts.last() {
+                    allowed.extend(enclosing.iter().copied());
+                }
+                self.aggregate_escape_contexts.push((base, allowed));
+                if !module_level && !lambda {
+                    self.nested_def_params
+                        .borrow_mut()
+                        .insert(stmt.source_span(), owners.clone());
+                }
+                self.transfer_frames.borrow_mut().push(TransferFrame {
+                    callable: name.clone(),
+                    keeps_symbolic_selection: false,
+                    param_owners: owners.clone(),
+                    param_borrowed: caller_regular
+                        .iter()
+                        .map(|param| {
+                            matches!(
+                                param.convention,
+                                Some(
+                                    mojito_ast::ast::ArgConvention::Mut
+                                        | mojito_ast::ast::ArgConvention::Ref
+                                )
                             )
-                        )
-                    })
-                    .collect(),
-                self_owner: None,
-                value_callables: decls
-                    .iter()
-                    .filter_map(|decl| match decl {
-                        ParamDecl::Value { name, ty, .. }
-                            if matches!(**ty, Ty::Func { .. } | Ty::GenericFunc { .. }) =>
-                        {
-                            Some(name.trim_start_matches('*').to_string())
-                        }
-                        _ => None,
-                    })
-                    .collect(),
-                effects: Vec::new(),
-                call_throughs: Vec::new(),
-            });
-            self.raise_observation_frames
-                .borrow_mut()
-                .push((self.handled_raise_depth, false));
-            self.return_ref_contracts
-                .push(ref_return.map(|signature| (signature, owners, None)));
-            self.return_annotations
-                .push(Self::body_return_annotation(ret_anno.as_ref(), name));
-            self.named_result_context.push(named_result.is_some());
-            if check_body {
-                let scopes = self.scopes.len();
-                if module_level {
-                    self.pack_element_views.borrow_mut().clear();
+                        })
+                        .collect(),
+                    self_owner: None,
+                    value_callables: decls
+                        .iter()
+                        .filter_map(|decl| match decl {
+                            ParamDecl::Value { name, ty, .. }
+                                if matches!(**ty, Ty::Func { .. } | Ty::GenericFunc { .. }) =>
+                            {
+                                Some(name.trim_start_matches('*').to_string())
+                            }
+                            _ => None,
+                        })
+                        .collect(),
+                    effects: Vec::new(),
+                    call_throughs: Vec::new(),
+                });
+                self.raise_observation_frames
+                    .borrow_mut()
+                    .push((self.handled_raise_depth, false));
+                self.return_ref_contracts
+                    .push(ref_return.map(|signature| (signature, owners, None)));
+                self.return_annotations
+                    .push(Self::body_return_annotation(ret_anno.as_ref(), name));
+                self.named_result_context.push(named_result.is_some());
+                if check_body {
+                    let scopes = self.scopes.len();
+                    if module_level {
+                        self.pack_element_views.borrow_mut().clear();
+                    }
+                    let checked = self.check_def_body(stmt, &decls, &ret_ty, module_level);
+                    result = self.symbolic_verdict(name, body, scopes, checked);
                 }
-                let checked = self.check_def_body(stmt, &decls, &ret_ty, module_level);
-                result = self.symbolic_verdict(name, body, scopes, checked);
+                self.named_result_context.pop();
+                self.return_annotations.pop();
+                self.return_ref_contracts.pop();
+                self.raise_observation_frames.borrow_mut().pop();
+                if let Some(frame) = self.transfer_frames.borrow_mut().pop() {
+                    if !frame.effects.is_empty() {
+                        self.transfer_effects
+                            .borrow_mut()
+                            .insert(frame.callable.clone(), frame.effects);
+                    }
+                    if !frame.call_throughs.is_empty() {
+                        self.call_through_effects
+                            .borrow_mut()
+                            .insert(frame.callable, frame.call_throughs);
+                    }
+                }
+                self.aggregate_escape_contexts.pop();
             }
-            self.named_result_context.pop();
-            self.return_annotations.pop();
-            self.return_ref_contracts.pop();
-            self.raise_observation_frames.borrow_mut().pop();
-            if let Some(frame) = self.transfer_frames.borrow_mut().pop() {
-                if !frame.effects.is_empty() {
-                    self.transfer_effects
-                        .borrow_mut()
-                        .insert(frame.callable.clone(), frame.effects);
-                }
-                if !frame.call_throughs.is_empty() {
-                    self.call_through_effects
-                        .borrow_mut()
-                        .insert(frame.callable, frame.call_throughs);
-                }
-            }
-            self.aggregate_escape_contexts.pop();
+        }
+        if let (Some((key, syntax)), Some(start)) = (site, site_start) {
+            self.leave_body_site(key, name, &start, syntax);
         }
         // A function with a non-`None` return type must return on every
         // path (falling off the end would yield `None`).

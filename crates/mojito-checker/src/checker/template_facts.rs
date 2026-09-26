@@ -13,6 +13,7 @@
 //! refuses a body instead of being dropped silently. The design record is
 //! `docs/notes/instantiation-from-template.md`.
 
+use super::body_carry::ObservedEffects;
 use super::{
     Checker, EffectRead, callable_contract_target, callable_lowered_name, method_binder_owner,
 };
@@ -948,7 +949,7 @@ impl Checker {
             unkeyed: self.unkeyed_fact_entries(),
             nested_defs: self.nested_def_entries(body),
             hash_leaf_demands: self.hash_leaf_demands.borrow().len(),
-            transferred: self.transferred_origins.borrow().clone(),
+            transferred: (**self.transferred_origins.borrow()).clone(),
             owner_start: self.next_owner.get(),
         }
     }
@@ -4171,6 +4172,12 @@ impl Checker {
         if let Some(store) = self.unkeyed_growth(body, baseline).first() {
             return Err(IncompleteReason::UnkeyedFact(store));
         }
+        // The body's locals are told from every other binding by their
+        // identity range; a check whose range split (`reserve_owners`)
+        // has no such range.
+        if self.owner_range_split.get() {
+            return Err(IncompleteReason::UnkeyedFact("binding identities"));
+        }
         if self.symbolic_hash_leaf(baseline) {
             return Err(IncompleteReason::UnkeyedFact(SYMBOLIC_HASH_LEAVES));
         }
@@ -4293,11 +4300,9 @@ impl Checker {
     ) -> Result<(), TypeError> {
         let corrupt =
             |what: &str| TypeError::InvariantViolation(format!("template derivation lost {what}"));
-        let local_start = self.next_owner.get();
-        let local_end = local_start
-            .checked_add(facts.locals)
-            .ok_or_else(|| corrupt("its binding identity range"))?;
-        self.next_owner.set(local_end);
+        let local_start = self
+            .reserve_owners(facts.locals)
+            .map_err(|_| corrupt("its binding identity range"))?;
         let owner = |owner: &TemplateOwner| match owner {
             TemplateOwner::Param(index) => param_owners
                 .runtime
@@ -4547,6 +4552,8 @@ impl Checker {
             self.record_struct_instantiation(template, arguments, source.as_deref());
         }
         for callee in &facts.effect_free_callees {
+            self.note_body_effect_read(callee, ObservedEffects::Transfers(Vec::new()));
+            self.note_body_effect_read(callee, ObservedEffects::CallThroughs(Vec::new()));
             self.effect_observations
                 .borrow_mut()
                 .entry(callee.clone())
@@ -4557,12 +4564,15 @@ impl Checker {
                 .or_default();
         }
         for (callee, residue) in &facts.call_through_reads {
+            self.note_body_effect_read(callee, ObservedEffects::CallThroughs(residue.clone()));
             self.call_through_observations
                 .borrow_mut()
                 .entry(callee.clone())
                 .or_insert_with(|| residue.clone());
         }
         for (callee, read) in &facts.transfer_reads {
+            self.note_body_effect_read(callee, ObservedEffects::Transfers(read.clone()));
+            self.note_body_effect_read(callee, ObservedEffects::CallThroughs(Vec::new()));
             self.effect_observations
                 .borrow_mut()
                 .entry(callee.clone())
@@ -5054,6 +5064,34 @@ impl<V: std::fmt::Debug> SpanKeyed for HashMap<SourceSpan, V> {
 
     fn describe(&self, span: &SourceSpan) -> Option<String> {
         self.get(span).map(|fact| format!("{fact:?}"))
+    }
+}
+
+impl<V: std::fmt::Debug> SpanKeyed for mojito_checked::fact_store::FactMap<SourceSpan, V> {
+    fn entries(&self) -> usize {
+        self.len()
+    }
+
+    fn has(&self, span: &SourceSpan) -> bool {
+        self.contains_key(span)
+    }
+
+    fn describe(&self, span: &SourceSpan) -> Option<String> {
+        self.get(span).map(|fact| format!("{fact:?}"))
+    }
+}
+
+impl SpanKeyed for mojito_checked::fact_store::FactSet<SourceSpan> {
+    fn entries(&self) -> usize {
+        self.len()
+    }
+
+    fn has(&self, span: &SourceSpan) -> bool {
+        self.contains(span)
+    }
+
+    fn describe(&self, span: &SourceSpan) -> Option<String> {
+        self.contains(span).then(|| "set".to_string())
     }
 }
 

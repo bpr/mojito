@@ -9,12 +9,45 @@ impl Checker {
     /// Allocate a stable identity for a source binding's storage (or for a
     /// materialized borrow-source temporary, which has no source name).
     pub(super) fn fresh_owner(&self) -> Result<mojito_types::origin::OwnerId, TypeError> {
-        let owner = mojito_types::origin::OwnerId(self.next_owner.get());
-        self.next_owner
-            .set(self.next_owner.get().checked_add(1).ok_or_else(|| {
-                TypeError::InvariantViolation("checker exhausted binding identities".to_string())
-            })?);
-        Ok(owner)
+        Ok(mojito_types::origin::OwnerId(self.reserve_owners(1)?))
+    }
+
+    /// The identity the next `fresh_owner` returns.
+    pub(super) const fn peek_owner(&self) -> mojito_types::origin::OwnerId {
+        mojito_types::origin::OwnerId(self.owner_cursor(1))
+    }
+
+    /// Allocate `count` consecutive identities and return the first.
+    ///
+    /// A body inferred again under a record allocates from the range it had
+    /// (`body_carry`); a block that would cross that range's ceiling moves
+    /// to the fresh region above every recorded range, once, and notes the
+    /// split (`owner_range_split`).
+    pub(super) fn reserve_owners(&self, count: u32) -> Result<u32, TypeError> {
+        let start = self.owner_cursor(count);
+        if start != self.next_owner.get() {
+            self.owner_ceiling.set(None);
+            self.owner_range_split.set(true);
+        }
+        let end = start.checked_add(count).ok_or_else(|| {
+            TypeError::InvariantViolation("checker exhausted binding identities".to_string())
+        })?;
+        self.next_owner.set(end);
+        if self.owner_ceiling.get().is_none() {
+            self.fresh_owner_cursor
+                .set(self.fresh_owner_cursor.get().max(end));
+        }
+        Ok(start)
+    }
+
+    /// Where a block of `count` identities starts: the cursor, or the fresh
+    /// region when the block would cross the current ceiling.
+    const fn owner_cursor(&self, count: u32) -> u32 {
+        let next = self.next_owner.get();
+        match self.owner_ceiling.get() {
+            Some(ceiling) if next.saturating_add(count) > ceiling => self.fresh_owner_cursor.get(),
+            _ => next,
+        }
     }
 
     /// Bind `name` in the innermost scope. Repeated function declarations form an

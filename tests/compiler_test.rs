@@ -1067,8 +1067,12 @@ fn template_two_types_infers_the_template_once() {
     let stats = program.template_stats();
     assert_eq!(certified_count(stats, "tag"), 1, "one template inference");
     assert!(
-        stats.reused.iter().any(|name| name == "tag"),
-        "later passes reuse the template's own facts: {stats:?}"
+        stats
+            .reused
+            .iter()
+            .chain(&stats.carried)
+            .any(|name| name == "tag"),
+        "later passes reuse or carry the template's own facts: {stats:?}"
     );
     let derived: std::collections::HashSet<&str> = stats
         .derived
@@ -1905,25 +1909,31 @@ fn template_method_value_parameter_templates_reuse() {
         expected
     );
     let stats = program.template_stats();
-    for name in [
-        "Grid.count",
-        "Grid.total",
-        "Grid.full",
-        "Array.__len__",
-        "Array.__getitem__",
-        "Array.unsafe_get",
-        "Span.__len__",
-        "Span.__getitem__",
-        "Cell.hits_of",
+    // `Span.__getitem__` is two overloads (an index and a contiguous
+    // slice), each its own template body under the one name.
+    for (name, bodies) in [
+        ("Grid.count", 1),
+        ("Grid.total", 1),
+        ("Grid.full", 1),
+        ("Array.__len__", 1),
+        ("Array.__getitem__", 1),
+        ("Array.unsafe_get", 1),
+        ("Span.__len__", 1),
+        ("Span.__getitem__", 2),
+        ("Cell.hits_of", 1),
     ] {
         assert_eq!(
             certified_count(stats, name),
-            1,
-            "{name}: one template inference"
+            bodies,
+            "{name}: one template inference per body"
         );
         assert!(
-            stats.reused.iter().any(|reused| reused == name),
-            "{name}: later passes reuse the template's own facts: {stats:?}"
+            stats
+                .reused
+                .iter()
+                .chain(&stats.carried)
+                .any(|reused| reused == name),
+            "{name}: later passes reuse or carry the template's own facts: {stats:?}"
         );
     }
     let derived: std::collections::HashSet<&str> = stats
@@ -2602,8 +2612,12 @@ fn template_transfer_replay_reuses_the_template_and_derives_its_instances() {
             "{name}: one template inference"
         );
         assert!(
-            stats.reused.iter().any(|reused| reused == name),
-            "{name}: later rounds reuse the template's own facts: {stats:?}"
+            stats
+                .reused
+                .iter()
+                .chain(&stats.carried)
+                .any(|reused| reused == name),
+            "{name}: later rounds reuse or carry the template's own facts: {stats:?}"
         );
         let derived: std::collections::HashSet<&str> = stats
             .derived
@@ -2622,4 +2636,83 @@ fn template_transfer_replay_reuses_the_template_and_derives_its_instances() {
     }
     let execution = compiler.execute(&program).expect("execute");
     assert_eq!(execution.output, "2 2 2 x\n");
+}
+
+/// The text with every binding identity (`$v12`, `$comprow$12`) and
+/// synthesized name (`$with12_mgr`) renumbered by first appearance: a body
+/// carried from an earlier pass keeps the identities it was given there,
+/// and a synthesized name counts process-wide, which only the numbering
+/// shows.
+fn renumber_binding_identities(text: &str) -> String {
+    let mut names = std::collections::HashMap::new();
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(dollar) = rest.find('$') {
+        let (before, tail) = rest.split_at(dollar);
+        out.push_str(before);
+        let tag = tail[1..]
+            .bytes()
+            .take_while(u8::is_ascii_alphabetic)
+            .count();
+        let digits = &tail[1 + tag..];
+        let count = digits.bytes().take_while(u8::is_ascii_digit).count();
+        if count == 0 {
+            out.push('$');
+            rest = &tail[1..];
+            continue;
+        }
+        let prefix_len = tail.len() - digits.len();
+        let (number, after) = digits.split_at(count);
+        let next = names.len();
+        let canonical = *names.entry(number.to_string()).or_insert(next);
+        out.push_str(&tail[..prefix_len]);
+        out.push_str(&canonical.to_string());
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
+#[test]
+fn body_fact_carry_over_lowers_the_same_program() {
+    // A body whose inputs are unchanged since the previous checker pass
+    // takes that pass's facts instead of being inferred again. The program
+    // lowered with carry-over must be the one lowered without, up to the
+    // numbering of binding identities, and both must run alike.
+    for fixture in [
+        "closures.mojo",
+        "nested_comprehensions.mojo",
+        "dict_methods_growth.mojo",
+        "with_multiple_dependent.mojo",
+    ] {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("assets/ok")
+            .join(fixture);
+        let carrying = Compiler::default();
+        let carried = carrying
+            .compile_path(&path)
+            .unwrap_or_else(|error| panic!("{fixture} with carry-over: {error}"));
+        let inferring = Compiler::default().with_body_fact_reuse(false);
+        let inferred = inferring
+            .compile_path(&path)
+            .unwrap_or_else(|error| panic!("{fixture} without carry-over: {error}"));
+        assert!(
+            !carried.template_stats().carried.is_empty(),
+            "{fixture}: a later pass carries some body"
+        );
+        assert!(
+            inferred.template_stats().carried.is_empty(),
+            "{fixture}: carry-over is off"
+        );
+        assert_eq!(
+            renumber_binding_identities(&carried.emit_mir().expect("emit")),
+            renumber_binding_identities(&inferred.emit_mir().expect("emit")),
+            "{fixture}: the lowered program differs"
+        );
+        assert_eq!(
+            carrying.execute(&carried).expect("execute").output,
+            inferring.execute(&inferred).expect("execute").output,
+            "{fixture}: the output differs"
+        );
+    }
 }

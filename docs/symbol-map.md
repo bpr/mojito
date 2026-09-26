@@ -258,6 +258,23 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `checker/scopes.rs` owns lexical scope, binding declaration/mutability, and
   nested-def capture-access checks (a compile-time binding of a validated
   body — a `comptime for` variable or a value parameter — captures nothing).
+  It also owns binding-identity allocation: `reserve_owners` hands out
+  identities from the cursor, or from the fresh region above every range a
+  previous pass recorded once a body inferred again would cross the ceiling
+  of the range it had (`owner_range_split` then refuses template capture).
+- `checker/body_carry.rs` owns carrying a body's facts from one checker pass
+  to the next. `PassCarry` is what `checker.rs:check_program_carrying`
+  returns (the `DiscoveryResult`, the checker-internal stores, one
+  `BodyRecord` per site, the identity watermark); `carried_stores!` lists
+  every store a site is measured and copied over; `Checker::carry_body`
+  serves a site whose record is clean and whose effect reads (recorded by
+  `note_body_effect_read` beside each `effect_observations` write) are still
+  current, and `enter_body_site`/`leave_body_site` bracket an inferred one
+  (from `statements.rs:check_def` at module level and
+  `declarations.rs:check_method_inner`). `def_syntax_hash`/`method_syntax_hash`
+  are the syntax fingerprints a later round compares, and
+  `PassCarry::for_next_round`/`sites` are the driver's dirtiness hooks
+  (`compiler.rs:ServedRequests::dirty_sites`).
 - `checker/comptime_validation.rs` owns source validation of compile-time
   control flow: `validate_comptime_templates_into` (in `checker.rs`) runs a
   checker in `source_validation` mode over the prepared program, lending it
@@ -445,9 +462,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   substitutes per copy through `mojito-types`' `types.rs:substitute_packs`.
   The design record is `docs/notes/instantiation-from-template.md`.
 - `checked.rs`'s `DiscoveryResult` is what a discovery round's check returns
-  (`checker.rs:check_program_for_discovery`): `CheckedProgram::new`'s inputs,
-  owned, with `scan_expressions` for the request collectors and `finalize`
-  for the round that converges.
+  (`checker.rs:check_program_for_discovery`, inside the `PassCarry` of
+  `check_program_carrying`): `CheckedProgram::new`'s inputs, owned, with
+  `scan_expressions` for the request collectors and `finalize` for the round
+  that converges. Its tables are `fact_store.rs`'s logged stores.
+- `fact_store.rs` owns `FactMap`, `FactSet`, and `FactVec`: a `HashMap`,
+  `HashSet`, or `Vec` that logs every key written, read through `Deref`,
+  with `mark`/`logged` for a range of the log. Every checker fact store is
+  one, so `checker/body_carry.rs` can copy exactly what a body wrote.
 - `explicit_destroy.rs` owns the explicit-destruction analysis, run from
   `checker.rs`'s `run_explicit_destroy` twice: once over the elaborated
   program (`DestroyScope::Program`) and once over source validation's

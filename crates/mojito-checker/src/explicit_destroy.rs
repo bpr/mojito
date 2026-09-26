@@ -2,6 +2,7 @@
 
 use mojito_ast::ast::{ArgConvention, Expr, ExprKind, SourceType, Stmt, StmtKind, TStringPart};
 use mojito_checked::checked::{AnnotationSite, ExplicitDestroyInfo};
+use mojito_checked::fact_store::FactSet;
 use mojito_common::error::TypeError;
 use mojito_common::token::SourceSpan;
 use mojito_types::types::Ty;
@@ -14,16 +15,16 @@ use std::collections::HashSet;
 /// Conditional conformances cannot be recovered from a nominal type name after
 /// checking: `List[T]` is linear in general, while it is ordinarily droppable
 /// under a proven `T: Deinitable` constraint.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct CheckedDeletability {
-    pub declarations: HashSet<AnnotationSite>,
-    pub bindings: HashSet<SourceSpan>,
+    pub declarations: FactSet<AnnotationSite>,
+    pub bindings: FactSet<SourceSpan>,
     /// Parameters typed by a type parameter (or an opaque dependent pack
     /// element) whose bounds do not prove `Deinitable`: an owned one is
     /// linear, as upstream.
-    pub linear_declarations: HashSet<AnnotationSite>,
+    pub linear_declarations: FactSet<AnnotationSite>,
     /// Bindings whose declared type is such a type parameter.
-    pub linear_bindings: HashSet<SourceSpan>,
+    pub linear_bindings: FactSet<SourceSpan>,
 }
 
 /// Which declarations [`check`] walks.
