@@ -21,6 +21,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A generic body can construct a variadic struct from a nested variadic
+  construction over its own parameters (`Outer[T, Int](Variant[T, Int](x^))`),
+  which used to fail with "expected Variant[T, Int], found Variant[(T, Int)]":
+  a constructor parameter spreading the struct's pack now binds it as one
+  list, the spelling every annotation of a user pack already resolves to.
+
 - A pack-keyed body can forward its pack whole into a pack-keyed method
   (`self.take(*a)`) or into `print` (`print(*a)`, with or without `sep` and
   `end`), which used to fail with "'a' is not a compile-time type" and

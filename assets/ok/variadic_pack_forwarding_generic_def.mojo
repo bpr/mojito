@@ -1,7 +1,8 @@
 # A variadic struct applied over an enclosing generic's own parameters:
 # a comptime-class def forwards its pack (`Variant[*Ts]`), a bound-generic
 # def spells the pack partially (`Variant[T, String]`) and is called by
-# inference, and a variadic struct stores the forwarded pack in a field.
+# inference, and a variadic struct stores the forwarded pack in a field,
+# constructed from a generic body over its own parameter too.
 # The retained template bodies check against the template's shell; each
 # clone's signature requests the concrete specialization.
 # requires: discovery
@@ -19,6 +20,9 @@ struct Outer[*Ts: Movable & Deinitable]:
     def __init__(out self, var v: Variant[*Self.Ts]):
         self.v = v^
 
+def wrap_outer[T: Movable & Deinitable](var x: T) -> Outer[T, Int]:
+    return Outer[T, Int](Variant[T, Int](x^))
+
 def main():
     var value = first_variant[Int, String]()
     print(value.isa[Int](), value.isa[String]())
@@ -28,3 +32,5 @@ def main():
     print(flag.isa[Bool](), flag.isa[String]())
     var o = Outer[Int, Bool](Variant[Int, Bool](True))
     print(o.v.isa[Int](), o.v.isa[Bool]())
+    var nested = wrap_outer(String("hi"))
+    print(nested.v.isa[String](), nested.v.isa[Int]())

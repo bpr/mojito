@@ -699,7 +699,9 @@ pub fn pack_spread(elements: &[Ty]) -> Option<&Ty> {
 ///
 /// A spread is a whole argument list (see [`pack_spread`]), so this is the
 /// one place a single type becomes several: `Tuple[*Ts]` at `Ts = [Int,
-/// Bool]` is `Tuple[Int, Bool]`.
+/// Bool]` is `Tuple[Int, Bool]`. Any other struct binds its pack as one
+/// list, the spelling its annotation resolves to: `Variant[*Ts]` becomes
+/// `Variant[(Int, Bool)]`.
 pub fn expand_pack_spread(ty: &Ty, pack: &str, elements: &[Ty]) -> Ty {
     let spreads = |list: &[Ty]| {
         matches!(pack_spread(list), Some(Ty::Param { binder, .. })
@@ -718,8 +720,17 @@ pub fn expand_pack_spread(ty: &Ty, pack: &str, elements: &[Ty]) -> Ty {
         Ty::Struct(name, arguments) => {
             let spread = pack_spread_argument(arguments)
                 .is_some_and(|spread| spreads(std::slice::from_ref(spread)));
-            let arguments = if spread {
+            let arguments = if spread && binds_pack_elementwise(name) {
                 elements.iter().cloned().map(TyArg::Ty).collect()
+            } else if spread {
+                vec![TyArg::Val(CtValue::Tuple(
+                    elements
+                        .iter()
+                        .cloned()
+                        .map(Box::new)
+                        .map(CtValue::Type)
+                        .collect(),
+                ))]
             } else {
                 map_tyargs(arguments, |ty| expand_pack_spread(ty, pack, elements))
             };
@@ -747,6 +758,18 @@ pub fn pack_spread_argument(arguments: &[TyArg]) -> Option<&Ty> {
         [TyArg::Ty(pack)] => pack_spread(std::slice::from_ref(pack)),
         _ => None,
     }
+}
+
+/// Whether a struct spells its bound pack element by element: the public
+/// `Tuple` and `TString`, whose identity is that spelling, by public name or
+/// generated specialization symbol.
+pub fn binds_pack_elementwise(name: &str) -> bool {
+    [TUPLE_TYPE_NAME, TSTRING_TYPE_NAME].iter().any(|public| {
+        name == *public
+            || name.ends_with(&format!("${public}"))
+            || name.starts_with(&format!("{public}$"))
+            || name.contains(&format!("${public}$"))
+    })
 }
 
 pub fn tuple_elements(ty: &Ty) -> Option<Vec<&Ty>> {
