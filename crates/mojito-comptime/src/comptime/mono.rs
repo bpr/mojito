@@ -1102,12 +1102,14 @@ impl Elab<'_> {
                             },
                         );
                         let (values, kept) = match resolved {
-                            // An explicit application of a compile-time-keyed
-                            // template over an enclosing body's own parameters
-                            // (`show[T](x)`) stays on the stub, as an inferred
-                            // one does.
+                            // An explicit application of a compile-time- or
+                            // `DType`-keyed template over an enclosing body's
+                            // own parameters (`show[T](x)`, a method's own lane
+                            // in `helper[dt](x)`) stays on the stub, as an
+                            // inferred one does.
                             Err(_)
-                                if self.comptime_generics.contains(name.as_str())
+                                if (self.comptime_generics.contains(name.as_str())
+                                    || self.dtype_generics.contains(name.as_str()))
                                     && param_args_mention_any(
                                         param_args,
                                         &mono.symbolic_type_params,

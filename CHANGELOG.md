@@ -207,6 +207,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A struct method keyed on its own `DType` may forward that lane to a
+  `DType`-keyed `def` (`return helper[dt](x)`), and each per-call clone
+  reaches the def's clone for its lane. Elaborating the method's template
+  used to reject the bracket with "'dt' is not a compile-time type".
+
 - A view moved into a container (`views.append(Span(xs))`) no longer makes
   the viewed list exclusive: reading `xs` while the container holds the view
   used to fail with "conflicts with live reference". A forwarded value's
