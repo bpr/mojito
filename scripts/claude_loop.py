@@ -8,7 +8,10 @@ new `claude -p` process, so no context carries over from one task to the next.
 
 The loop never stops on a bad task. A session that fails, or that leaves its
 entry on the roadmap, is reported and committed as it stands, and the next task
-starts; the exit status is 1 if any task went that way. Uncommitted tracked
+starts; the exit status is 1 if any task went that way. The one thing that does
+stop a run is three sessions in a row failing inside a minute, which means the
+environment is refusing to work (expired credentials, an exhausted rate limit)
+rather than the tasks being hard. Uncommitted tracked
 changes present when the loop starts are committed on their own first, so no
 task's commit sweeps them up, and `--no-commit` leaves everything uncommitted.
 
@@ -55,6 +58,8 @@ ROADMAP = ROOT / "docs" / "roadmap.md"
 LOG_DIR = ROOT / "target" / "claude-loop"
 COMMIT_MSG = ROOT / "commit_msg.txt"
 TICK = 5
+QUICK_FAIL = 60
+QUICK_FAIL_LIMIT = 3
 
 MODELS = {
     "Opus": "claude-opus-5-5[1m]",
@@ -412,6 +417,7 @@ def main() -> int:
         sys.exit(f"claude_loop: --until {args.until} comes before the start task {current.id}")
 
     done = 0
+    quick = 0
     troubled: list[str] = []
     while current is not None:
         idx = tasks.index(current)
@@ -430,6 +436,7 @@ def main() -> int:
             label = f"{args.model or current.model or args.default_model}, {mode}"
             began = time.time()
             ok = run_claude(args, current, model, label, prompt)
+            quick = quick + 1 if not ok and time.time() - began < QUICK_FAIL else 0
             if mode == "plan":
                 landed = plan_written(current, began)
                 if ok and not landed:
@@ -448,6 +455,12 @@ def main() -> int:
                 troubled.append(current.title)
 
         done += 1
+        if quick >= QUICK_FAIL_LIMIT:
+            print(f"claude_loop: {quick} sessions in a row failed inside "
+                  f"{QUICK_FAIL}s, which is the environment rather than the "
+                  "tasks; stopping with the rest of the run untouched",
+                  file=sys.stderr)
+            break
         if current.title == until_title or (args.count and done >= args.count):
             break
 
