@@ -551,6 +551,7 @@ assets/ok/template_method_copied_consuming_receiver.mojo	main	exe-differential	s
 assets/ok/template_method_copied_receiver.mojo	main	exe-differential	sanitized
 assets/ok/template_method_explicit_destroy_call.mojo	main	exe-differential	sanitized
 assets/ok/template_method_for_loop.mojo	main	exe-differential	sanitized
+assets/ok/template_method_foreign_overload.mojo	main	exe-differential	sanitized
 assets/ok/template_method_generic_witness.mojo	main	exe-differential	sanitized
 assets/ok/template_method_getter.mojo	main	exe-differential	sanitized
 assets/ok/template_method_hash_leaf.mojo	main	exe-differential	sanitized

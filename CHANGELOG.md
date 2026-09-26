@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call to another struct's overloaded method on a place built over the
+  struct parameter (`self.items.extend(self.items.copy())` in a user struct
+  over `List[Self.T]`, or on a `var` local) now reuses the template's checked
+  facts; it used to be checked again as a clone, refused with "a called
+  method's clone family has no member for the selected overload".
+
 - A call through a trait bound whose witness belongs to a generic struct
   now reuses the template's checked facts when a concrete hasher bakes the
   witness's `[H: Hasher]` binder (naming the per-call clone keyed by the

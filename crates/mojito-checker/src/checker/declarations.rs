@@ -1678,7 +1678,14 @@ impl Checker {
             return Some(format!("{name}.{clone}"));
         }
         let self_ty = self.self_instance_ty(name);
-        let substituted = |ty: &Ty| substitute(ty, subst);
+        // `sig` is declared over the struct's own binders, and `arguments`
+        // may still name the caller's, which `subst` binds: a call from
+        // another struct's method passes that method's substitution.
+        let own = mojito_types::types::struct_argument_substitution(
+            &self.structs.get(name)?.decls,
+            arguments,
+        );
+        let substituted = |ty: &Ty| substitute(&substitute(ty, &own), subst);
         let selected = MethodSig {
             params: sig.params.iter().map(substituted).collect(),
             variadic: sig.variadic.as_deref().map(substituted).map(Box::new),

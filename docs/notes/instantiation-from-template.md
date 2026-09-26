@@ -1021,6 +1021,17 @@ tables. In short, for one debug-profile run each:
   derivation. A user struct whose methods read elements of a closed tuple,
   of a `Tuple[Self.T, Int]`, and of `slice.indices(n)` derives for two
   instances (`template_method_tuple_element.mojo`).
+  Another struct's overloaded method on a place built over the parameter
+  (2026-09-26) moves no bundled count (`stdlib_heavy` installs 573
+  derivations before and after): the bundled callers of `List.extend` are
+  `List`'s own methods, whose substitution binds the callee's binders
+  already. From a user struct's method the substitution binds that
+  struct's binders, while the callee's declared signature names its own, so
+  `method_clone_target` substituted nothing and compared `List[T]` with the
+  clone family's `List[Int]`. It now reads the signature at the receiver's
+  arguments first. A user struct over `List[Self.T]` extending a field and
+  a `var` local derives for two instances
+  (`template_method_foreign_overload.mojo`).
 - Hello World mints no per-instantiation clones at all. Its generated bodies
   are members of structs specialized whole and per-call clones, from
   concrete-only templates.
