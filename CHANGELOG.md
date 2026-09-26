@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method of a generic struct that reads a scalar element of a tuple-typed
+  local at a literal index (`var start = bounds[0]`), including the tuple
+  `slice.indices(n)` returns, now derives its instances from the checked
+  template. Such bodies used to keep the clone check, among them the
+  `StridedSlice` overload of `List.__getitem__`.
 - A method of a generic struct that copies its read `self` into a local
   (`var result = self`) and then reads and stores the local's fields
   (`result.size -= 1`, `result.value = value^`, or `Span`'s contiguous slice

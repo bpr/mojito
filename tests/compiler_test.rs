@@ -2013,6 +2013,36 @@ fn template_method_copied_receivers_derive() {
 }
 
 #[test]
+fn template_method_tuple_elements_derive() {
+    // Elements of a tuple-typed local read at literal indices, from a closed
+    // tuple, one built over the struct's parameter, and `slice.indices(n)`,
+    // as `List`'s strided slice reads its bounds.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_tuple_element.mojo"),
+        "3 5\n40 60\n1 2\n3 1 5 4 d a\n",
+        &[("Holder.span", 2), ("Holder.tag", 2), ("Holder.width", 2)],
+    );
+}
+
+#[test]
+fn template_method_whole_tuple_element_keeps_the_clone_check() {
+    // The grammar reads a tuple element only as a scalar; an element of the
+    // struct's parameter type, read as a whole value, stays outside it.
+    let source = "@fieldwise_init\nstruct Holder[T: ImplicitlyCopyable & Deinitable](Deinitable, ImplicitlyCopyable, Movable):\n    var value: Self.T\n    var size: Int\n\n    def tagged(self) -> Tuple[Self.T, Int]:\n        return (self.value, self.size)\n\n    def first(self) -> Self.T:\n        var entry = self.tagged()\n        var head = entry[0]\n        return head\n\n\ndef main():\n    print(Holder[Int](7, 3).first(), Holder[String](\"w\", 5).first())\n";
+    let compiler = Compiler::default();
+    let program = compile_entry(&compiler, source);
+    let stats = program.template_stats();
+    assert_eq!(compiler.execute(&program).expect("execute").output, "7 w\n");
+    assert!(
+        stats.refused.iter().any(|(name, reason)| {
+            name.starts_with("Holder.first$") && reason == "its template is not certified"
+        }),
+        "a whole-value tuple element leaves the body outside the class: {:?}",
+        stats.refused
+    );
+}
+
+#[test]
 fn template_method_defaulted_destructor_keeps_the_clone_check() {
     // A destructor's defaulted argument is evaluated in the callee's scope,
     // which no recipe keeps yet, so the body stays outside the class.
