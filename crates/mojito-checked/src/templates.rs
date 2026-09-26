@@ -880,10 +880,12 @@ impl MethodFeatures {
     /// instance changes, and its captures are rooted at bindings an instance
     /// maps to its own.
     pub const NESTED_DEFS: Self = Self(1 << 33);
-    /// A static method of a non-generic struct called on its type, spelled
-    /// (`Color.of(n)`) or through a leading-dot root the expected type
-    /// resolves (`.of(n)`), passing closed scalars: the struct, the member
-    /// selected, and the resolved base are the same under every instance.
+    /// A static method of a struct called on its type, spelled
+    /// (`Color.of(n)`, `Pair[Self.T].twice(v)`) or through a leading-dot
+    /// root the expected type resolves (`.of(n)`), passing closed scalars,
+    /// or a generic struct's sole static passing whole values of its
+    /// parameters' types: the member selected and the resolved base are the
+    /// same under every instance.
     pub const STATIC_CALLS: Self = Self(1 << 34);
     /// A `var` parameter of a module-level function: it is bound owned from
     /// its declared convention alone and rooted at its own binding under

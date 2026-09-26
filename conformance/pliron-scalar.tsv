@@ -558,6 +558,7 @@ assets/ok/template_method_field_of_field.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_for_loop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_foreign_overload.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_generic_call.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_generic_static_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_generic_witness.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_getter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_hash_leaf.mojo	-	ineligible	no-scalar-entry-shape

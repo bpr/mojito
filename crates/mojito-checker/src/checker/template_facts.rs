@@ -3242,8 +3242,8 @@ impl Checker {
     ///   (`install_nested_defs`); a call of it selects the declaration the
     ///   body introduces, under every instance. A nested body's effect reads
     ///   are the enclosing body's too.
-    /// - `STATIC_CALLS`: see [`BodyShape::static_call`]. A static of a
-    ///   non-generic struct records at most its overload member and, behind
+    /// - `STATIC_CALLS`: see [`BodyShape::static_call`]. A static records at
+    ///   most its overload member (none for a generic struct's) and, behind
     ///   a leading-dot root, the expected type's head, neither of which an
     ///   instance changes, so it inherits both.
     ///
@@ -8680,16 +8680,29 @@ impl BodyShape<'_> {
         admitted && self.holds(MethodFeatures::PARAMETERIZED_CALLS)
     }
 
-    /// A static method of a non-generic struct called on its type, passing
-    /// closed scalars: `Color.of(n)`, or `.of(n)` where the expected type
-    /// resolved the leading-dot root to such a struct (`ContextualBases`).
+    /// A static method of a struct called on its type: `Color.of(n)`,
+    /// `Pair[Self.T].twice(v)`, `Pair.twice(v)`, or `.twice(v)` where the
+    /// expected type resolved the leading-dot root to such a struct
+    /// (`ContextualBases`).
     ///
     /// The receiver is a type, so the call records no contract, no call
     /// parameters, and no application; it records at most the overload
     /// member the closed arguments ranked, and a contextual root records the
-    /// head of the expected struct type. None of these change per instance:
-    /// the struct declares no parameters, and an expected type that is a
-    /// bare parameter refuses the leading-dot form outright.
+    /// head of the expected struct type, which is the same under every
+    /// instance. An expected type that is a bare parameter refuses the
+    /// leading-dot form outright.
+    ///
+    /// A generic struct's static is one declaration with no binders of its
+    /// own, no availability condition, and no reference or variadic
+    /// parameter, so the call names the same declaration whatever solves the
+    /// struct's parameters, and records no overload target. Those are solved
+    /// from the receiver's `[...]` type arguments, or from the arguments'
+    /// types, and an instance solves them at the substituted types, as its
+    /// struct application is substituted. Where the instance's struct has a
+    /// clone of the static the call retargets to it by the receiver's
+    /// arguments, and records nothing that names it. An argument is a closed
+    /// scalar or a whole value bound to a parameter of its own type
+    /// ([`Self::static_argument`]).
     fn static_call(
         &self,
         expr: &Expr,
@@ -8698,8 +8711,11 @@ impl BodyShape<'_> {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> bool {
-        let ExprKind::Identifier(spelled) = &object.kind else {
-            return false;
+        use mojito_ast::ast::{ArgConvention, ParamArg};
+        let (spelled, applied) = match &object.kind {
+            ExprKind::Identifier(spelled) => (spelled, &[][..]),
+            ExprKind::TypeApply { name, args } => (name, args.as_slice()),
+            _ => return false,
         };
         let contextual = spelled == mojito_ast::ast::CONTEXTUAL_SENTINEL;
         let base = if contextual {
@@ -8713,12 +8729,40 @@ impl BodyShape<'_> {
         } else {
             spelled.as_str()
         };
-        let static_member = self
-            .structs
-            .get(base)
-            .filter(|info| info.decls.is_empty())
-            .and_then(|info| info.methods.get(method))
-            .is_some_and(|signatures| signatures.iter().all(|sig| !sig.has_self));
+        let info = self.structs.get(base);
+        let generic = info.is_some_and(|info| !info.decls.is_empty());
+        let plain_static = |sig: &super::MethodSig| {
+            !sig.has_self
+                && sig.decls.is_empty()
+                && sig.availability.is_empty()
+                && sig.variadic.is_none()
+                && sig.kw_variadic.is_none()
+                && sig.ref_return.is_none()
+                && sig.ref_params.iter().all(Option::is_none)
+                && sig.view_return.is_empty()
+                && sig
+                    .conventions
+                    .iter()
+                    .all(|convention| matches!(convention, None | Some(ArgConvention::Var)))
+        };
+        let static_member = info
+            .and_then(|info| {
+                let receiver = if generic {
+                    applied
+                        .iter()
+                        .all(|argument| matches!(argument, ParamArg::Type(_)))
+                } else {
+                    applied.is_empty()
+                };
+                receiver.then(|| info.methods.get(method)).flatten()
+            })
+            .is_some_and(|signatures| {
+                if generic {
+                    matches!(signatures.as_slice(), [sig] if plain_static(sig))
+                } else {
+                    signatures.iter().all(|sig| !sig.has_self)
+                }
+            });
         let shadowed =
             self.local_kind(spelled).is_some() || self.params.contains(&spelled.as_str());
         let id = self.occurrence(expr);
@@ -8726,17 +8770,19 @@ impl BodyShape<'_> {
             && !shadowed
             && (static_member || (contextual && self.facts.is_none()))
             && kwargs.is_empty()
-            && args
-                .iter()
-                .all(|argument| self.expression(argument) && self.scalar(argument))
+            && args.iter().all(|argument| {
+                (self.expression(argument) && self.scalar(argument))
+                    || ((generic || self.facts.is_none()) && self.static_argument(argument))
+            })
             && self.facts.is_none_or(|facts| {
                 fact_at(&facts.expression_types, id)
-                    .is_some_and(|ty| !mojito_types::types::is_symbolic(ty))
+                    .is_some_and(|ty| generic || !mojito_types::types::is_symbolic(ty))
                     && fact_at(&facts.call_parameters, id).is_none()
                     && fact_at(&facts.selected_calls, id).is_none()
                     && fact_at(&facts.generic_instantiations, id).is_none()
                     && fact_at(&facts.method_instantiations, id).is_none()
                     && fact_at(&facts.parameterized_method_calls, id).is_none()
+                    && (!generic || fact_at(&facts.overload_targets, id).is_none())
                     && args.iter().all(|argument| {
                         fact_at(&facts.conversions, self.occurrence(argument)).is_none()
                     })
@@ -8747,6 +8793,32 @@ impl BodyShape<'_> {
                 .push((id, format!("{base}.{method}")));
         }
         admitted && self.holds(MethodFeatures::STATIC_CALLS)
+    }
+
+    /// A whole value passed to a static call ([`Self::static_call`]) that
+    /// records no contract: moved, a temporary, copied where the template
+    /// recorded the copy, or a named place read where it lies.
+    ///
+    /// The call records no conversion at it, so it binds a parameter of its
+    /// own type under every instance, and what the call records for it is
+    /// decided by its syntax and the callee's convention alone, as for a
+    /// method's argument ([`Self::argument`]). A copy into a `var` parameter
+    /// is owed again at the instance's type.
+    fn static_argument(&self, argument: &Expr) -> bool {
+        let named = match &argument.kind {
+            ExprKind::Identifier(name) => {
+                self.declared(name) || self.params.contains(&name.as_str())
+            }
+            _ => self.receiver_field(argument),
+        };
+        let admitted = !self.keyed
+            && self.facts.is_none_or(|facts| {
+                let id = self.occurrence(argument);
+                let read_in_place = facts.borrowed_read_call_places.contains(&id) && named;
+                !facts.call_place_uses.contains(&id)
+                    && (read_in_place || self.whole_value(argument))
+            });
+        admitted && self.holds(MethodFeatures::VALUE_ARGUMENTS)
     }
 
     /// Whether the call at `expr` recorded a closed contract naming `method`

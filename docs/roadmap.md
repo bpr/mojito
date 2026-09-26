@@ -126,22 +126,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.6 A static method of a generic struct keeps the clone check**
-
-  Problem: a static call derives only on a non-generic struct
-  (`BodyShape::static_call`), so `Pair[Self.T].twice(v)`, and `.twice(v)`
-  against an expected `Pair[Self.T]`, keep the body's clone check.
-  - The leading-dot base is already carried (`contextual_bases`): it is the
-    head `Pair` under every instance.
-  - The call solves the struct's parameters from the receiver's `[...]`
-    arguments or from its own arguments, and may retarget to an instance
-    clone (`infer_struct_static_method`), which a recipe would re-key per
-    instance, as a sibling call's target is.
-  - It blocks no body in `stdlib_heavy` today.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.7 A method called on a read parameter keeps the clone check**
+- [ ] **1.6 A method called on a read parameter keeps the clone check**
 
   Problem: `value.head()` on a `value: Box[Self.T]` parameter is outside the
   method grammar, so a body calling it, alone or as an operator's operand
@@ -153,7 +138,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.8 An operator with a literal left operand keeps the clone check**
+- [ ] **1.7 An operator with a literal left operand keeps the clone check**
 
   Problem: `1 + self.bag` dispatches the right operand's reflected dunder
   (`__radd__`), which the template records at the operator as it does in a
@@ -164,7 +149,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.9 A method called on a subscripted element keeps the clone
+- [ ] **1.8 A method called on a subscripted element keeps the clone
   check**
 
   Problem: `self.items[i] = self.items[j].copy()` calls `copy` on an element,
@@ -177,7 +162,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.10 An augmented assignment to a place through its in-place dunder
+- [ ] **1.9 An augmented assignment to a place through its in-place dunder
   keeps the clone check**
 
   Problem: `self.total += x` on a `T` whose bound requires `__iadd__`, or
@@ -191,7 +176,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.11 A tuple element read as a whole value keeps the clone check**
+- [ ] **1.10 A tuple element read as a whole value keeps the clone check**
 
   Problem: the method grammar reads a tuple element only as a scalar, so a
   body binding or returning an element of a parameter type
@@ -207,7 +192,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.12 A surviving `def` template that builds and consumes a hasher keeps
+- [ ] **1.11 A surviving `def` template that builds and consumes a hasher keeps
   the clone check**
 
   Problem: `hash_seeded[T: Hashable](value: T, seed: U256)` constructs a
@@ -225,7 +210,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.13 A bundled template's instance over a loan-carrying argument
+- [ ] **1.12 A bundled template's instance over a loan-carrying argument
   keeps its erased body**
 
   Problem: `List[Span[Int, origin_of(xs)]]` mints no clones, so its methods
@@ -244,7 +229,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.14 A per-call method clone over a loan-carrying argument keeps the
+- [ ] **1.13 A per-call method clone over a loan-carrying argument keeps the
   erased path**
 
   Problem: a generic method called with a loan-carrying argument of its own
@@ -257,7 +242,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.15 A frame effect whose source is not a single binding refuses
+- [ ] **1.14 A frame effect whose source is not a single binding refuses
   capture**
 
   Problem: a template's frame transfer effect is captured only when its
@@ -272,7 +257,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.16 Native monomorphization binds type parameters by spelling**
+- [ ] **1.15 Native monomorphization binds type parameters by spelling**
 
   Problem: `Bindings.types` and `Specializer.enclosing_types`
   (`crates/mojito-native/src/native/mono`) are keyed by a binder's name, so a
@@ -289,7 +274,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **1.17 A `where`-clause operand names its binder by spelling**
+- [ ] **1.16 A `where`-clause operand names its binder by spelling**
 
   Problem: a compiled `where` clause names its binder by spelling
   (`GenericConstraint::{Conforms, ConformsPack, PackPredicate,
@@ -301,11 +286,11 @@ to section 3, however small.
     type parameter and a value reference by identity (2026-09-26). These
     operands are what still reads a spelling there.
   - The constraints are serialized in MIR text, so batch the schema change
-    with 1.16's.
+    with 1.15's.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **1.18 Two overloads of one generic method share their binders**
+- [ ] **1.17 Two overloads of one generic method share their binders**
 
   Problem: a method's binders are owned by `Struct.method`
   (`method_binder_owner`), so two overloads of one method whose slots agree
@@ -321,7 +306,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.19 The elaborator's binders have no owner**
+- [ ] **1.18 The elaborator's binders have no owner**
 
   Problem: every binder the elaborator classifies is
   `ParamId { owner: "$elaborated", slot }` (`comptime/params.rs`,
@@ -333,7 +318,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.20 An overloaded witness ranked past its conversions keeps the
+- [ ] **1.19 An overloaded witness ranked past its conversions keeps the
   clone check**
 
   Problem: a call through a bound derives for an instance whose type
@@ -352,7 +337,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.21 A hasher leaf under a method's own hasher binder disagrees
+- [ ] **1.20 A hasher leaf under a method's own hasher binder disagrees
   with its clone check**
 
   Problem: `MOJITO_VERIFY_TEMPLATE_FACTS=1` fails on
@@ -371,7 +356,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.22 `os.removedirs` keeps the clone check**
+- [ ] **1.21 `os.removedirs` keeps the clone check**
 
   Problem: a module-level `def` that raises derives, but the function grammar
   still refuses `os.removedirs` and the bundled bodies it calls.
@@ -388,7 +373,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.23 A folded name in a division, comparison, or `~` keeps the clone
+- [ ] **1.22 A folded name in a division, comparison, or `~` keeps the clone
   check**
 
   Problem: over folded values and literals alone, only integer arithmetic
@@ -407,7 +392,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.24 A `print` statement in a runtime body keeps the clone check**
+- [ ] **1.23 A `print` statement in a runtime body keeps the clone check**
 
   Problem: `BodyShape::statement` admits `print(...)` only in a keyed
   `def` shape, so a runtime `def` or any method body that prints keeps the
@@ -421,7 +406,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.25 A `DType`- or lane-keyed `def` without compile-time control flow
+- [ ] **1.24 A `DType`- or lane-keyed `def` without compile-time control flow
   has no template**
 
   Problem: `def lane[dt: DType](v: Int) -> Int` constructing `Scalar[dt](v)`
@@ -438,7 +423,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.26 A value built by a value-shaped construction is not a grammar
+- [ ] **1.25 A value built by a value-shaped construction is not a grammar
   scalar**
 
   Problem: in a keyed `def`, `var lanes = SIMD[DType.int64, w](v)` derives,
@@ -452,7 +437,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.27 A borrowed iterator built from a cast pointer keeps the clone
+- [ ] **1.26 A borrowed iterator built from a cast pointer keeps the clone
   check**
 
   Problem: the `ref self` overload of `Set.__iter__` builds its iterator
@@ -465,7 +450,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.28 A method call leaving a defaulted parameter to its default keeps
+- [ ] **1.27 A method call leaving a defaulted parameter to its default keeps
   the clone check**
 
   Problem: `self.name.find("y")` is refused by the method grammar, while
@@ -479,7 +464,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.29 A nested `def` with a parameter convention, a default, or
+- [ ] **1.28 A nested `def` with a parameter convention, a default, or
   `raises` keeps the clone check**
 
   Problem: `BodyShape::nested_def` admits only regular read parameters with
@@ -488,6 +473,25 @@ to section 3, however small.
     nested `def` keep the clone check.
   - Found while nested `def`s joined the method grammar beyond closed
     scalars (2026-09-26); it blocks no body in `stdlib_heavy` today.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.29 An overloaded static method of a generic struct keeps the clone
+  check**
+
+  Problem: `BodyShape::static_call` admits a generic struct's static only
+  when it is the one declaration of its name, so `Pair[Self.T].pick(v, 1)`
+  beside a `pick(v: Self.T, f: Float64)` overload keeps the clone check.
+  - The call records the member it ranked as an overload target, which
+    names the erased template in the template and the instance's clone in
+    an instance, so a recipe would re-key it per instance, as a sibling
+    call's target is (`realize_method_contract`).
+  - A member declaring a parameter of the struct's parameter type may rank
+    differently at an instance's types.
+  - A static with binders of its own, an availability condition, or a
+    reference or variadic parameter stays outside too.
+  - Found while generic statics joined the method grammar (2026-09-26); it
+    blocks no body in `stdlib_heavy` today.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1712,7 +1716,45 @@ words. The representation gap and the two standing ledgers are last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.69 Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
+- [ ] **3.69 A static call copies a place into a `var` parameter whatever its
+  type**
+
+  Problem: `Box.keep(self.item)` with `keep(var v: Self.T)` runs on Mojito
+  for a `String` instance and stops with "double free of Pointer
+  allocation". The pin rejects it ("value of type 'T' cannot be implicitly
+  copied").
+  - A method call's `var` argument demands `ImplicitlyCopyable` of a copied
+    place; the static path (`finish_static_call`) does not.
+  - Pinned by `conformance/probes/static_var_parameter_implicit_copy.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.70 A generic `def` cannot spell a static call's receiver with its
+  own binder**
+
+  Problem: `return Pair[T].keep(x.copy())` in `def make[T: ...](x: T)` fails
+  with "unknown type 'T'", where the pin runs it.
+  - The same spelling in a generic struct's method, `Pair[Self.T].keep(...)`,
+    runs on both.
+  - Pinned by `conformance/probes/generic_def_static_receiver_binder.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.71 A leading-dot static call cannot take its struct's parameters
+  from the expected type**
+
+  Problem: `return .start(n)` against an expected `Counter[Self.T]` fails
+  with "cannot infer type parameter 'T' of 'Counter' from the arguments",
+  where the pin runs it.
+  - The contextual root is rewritten to the expected type's head name alone
+    (`with_contextual_root`), so the call can solve the parameters only from
+    its arguments.
+  - Spelled `Counter[Self.T].start(n)` it runs on both.
+  - Pinned by `conformance/probes/contextual_static_expected_parameters.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.72 Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
   any order)*
 
   Problem: parts of Mojito's stdlib lean on the Rust runtime where upstream
@@ -1743,7 +1785,7 @@ words. The representation gap and the two standing ledgers are last.
   Four runtime services are deliberately not on that list; they are in
   [`docs/non-goals.md`](non-goals.md).
 
-- [ ] **3.70 Behavioral divergences from the pinned Mojo — burn to zero**
+- [ ] **3.73 Behavioral divergences from the pinned Mojo — burn to zero**
   *(standing)*
 
   Every new divergence lands here with a probe or a `cases.tsv`

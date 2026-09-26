@@ -3070,6 +3070,28 @@ fn template_nested_def_forms_derive() {
 }
 
 #[test]
+fn template_generic_static_call_derives() {
+    // A generic struct's static solves the struct's parameters at the
+    // instance's types and records nothing naming the clone it retargets to.
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/template_method_generic_static_call.mojo");
+    let source = std::fs::read_to_string(path).expect("fixture");
+    assert_methods_derive(
+        &source,
+        "20 30\n7 7\n4 5\n3 x\n3 x\n3 x\n3 x\n",
+        &[
+            ("Shelf.counter", 2),
+            ("Shelf.width", 2),
+            ("Shelf.checked", 2),
+            ("Shelf.spelled", 2),
+            ("Shelf.inferred", 2),
+            ("Shelf.contextual", 2),
+            ("Shelf.moved", 2),
+        ],
+    );
+}
+
+#[test]
 fn template_string_literal_argument_derives() {
     // A string literal handed to a method's `StringSpan` or `String`
     // parameter converts by its syntax and the callee's declared parameter.
