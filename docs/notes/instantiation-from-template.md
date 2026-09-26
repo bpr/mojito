@@ -1099,7 +1099,9 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
   dispatches the reflected dunder and records it at the operator in the
   template too.
 - A bound dispatch whose instance witness overloads the requirement with
-  two members of one arity, or bakes a binder of a generic struct's witness,
+  members of one arity the conversion count does not rank (a rival with
+  binders or defaults, a tie, or an argument whose type may come from the
+  parameter), or bakes a binder of a generic struct's witness,
   and a `var self` requirement called on a place rather than a `^` transfer
   (an implicit copy). A struct's reflective `__hash__` default derives: the
   trait-default expansion declares it before any body is checked. A

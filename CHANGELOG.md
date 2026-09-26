@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call through a trait bound whose instance type overloads the
+  requirement with members of one arity (`total(self, by: Int)` beside
+  `total(self, by: String)`) now reuses the template's checked facts,
+  ranking the members on the recorded argument types; it used to be
+  checked again as a clone.
+
 - A `@fieldwise_init` struct now constructs from keyword arguments naming
   its fields (`P(b=True, a=1)`, `Pair[Int, Bool](storage=(1, True))`,
   `Pair(storage=(2, False))`), in any order and after leading positionals,

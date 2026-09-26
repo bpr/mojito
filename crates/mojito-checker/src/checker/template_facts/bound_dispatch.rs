@@ -60,6 +60,9 @@ struct DispatchedArgument {
     parameter_ty: Ty,
     convention: Option<ArgConvention>,
     requires_place: bool,
+    /// Whether the clone check would rank a member on the recorded type: a
+    /// positional argument whose type no expected type changes.
+    ranked: bool,
 }
 
 impl Checker {
@@ -109,12 +112,17 @@ impl Checker {
                 let ty = fact_at(&facts.expression_types, value)
                     .cloned()
                     .ok_or("a dispatched argument has no retained type")?;
+                let ranked = matches!(parameter.source, CheckedCallArgumentSource::Positional(_))
+                    && occurrences
+                        .iter()
+                        .any(|occurrence| occurrence.id == value && occurrence.context_free);
                 Ok(DispatchedArgument {
                     value,
                     ty,
                     parameter_ty: parameter.parameter_ty.clone(),
                     convention: parameter.convention,
                     requires_place: parameter.requires_place,
+                    ranked,
                 })
             })
             .collect::<Result<Vec<_>, &'static str>>()?;
@@ -206,6 +214,7 @@ impl Checker {
                     parameter_ty: parameter.parameter_ty.clone(),
                     convention: parameter.convention,
                     requires_place: parameter.requires_place,
+                    ranked: false,
                 })
             })
             .collect::<Result<Vec<_>, &'static str>>()?;
@@ -303,6 +312,7 @@ impl Checker {
                 ty: writer_ty,
                 convention: Some(ArgConvention::Mut),
                 requires_place: true,
+                ranked: false,
             }];
             let witness = self.bound_witness(&ty, None, method, &arguments)?;
             let BoundWitness::Method { .. } = &witness else {
@@ -453,9 +463,9 @@ impl Checker {
                 )?,
             )
         } else {
-            // An overload set is ranked on the recorded argument types
-            // only where the arity alone decides it: one member fits,
-            // and no other member could take as many arguments.
+            // One member fits the recorded arguments, and every other
+            // member that could take as many loses the clone check's
+            // ranking on their types.
             let mut fitting = candidates.iter().filter_map(|declared| {
                 self.witness_binders(
                     declared,
@@ -470,11 +480,13 @@ impl Checker {
             let (Some(selected), None) = (fitting.next(), fitting.next()) else {
                 return Err("no lone member of the instance's overloaded witness fits");
             };
-            let rivals = candidates
-                .iter()
-                .filter(|declared| takes_arity(declared, arguments.len()))
-                .count();
-            if rivals > 1 {
+            let (witness, _) = selected;
+            let contested = candidates.iter().any(|rival| {
+                !std::ptr::eq(rival, witness)
+                    && takes_arity(rival, arguments.len())
+                    && !self.outranks(witness, rival, receiver, &substitution, arguments)
+            });
+            if contested {
                 return Err("the instance's overloaded witness needs ranking by type");
             }
             selected
@@ -695,6 +707,68 @@ impl Checker {
             }
         }
         Ok(binders)
+    }
+
+    /// Whether the clone check's ranking on the recorded argument types
+    /// selects the `witness` over a `rival` of the same overload set: some
+    /// argument reaches no rival parameter, by coercion or by an implicit
+    /// conversion, or the rival needs more conversions, which rank above
+    /// every other term. Only a rival of the argument count with no binders
+    /// of its own, beside a witness with none, is ranked, and only on
+    /// arguments the clone check would type the way the template recorded
+    /// them.
+    fn outranks(
+        &self,
+        witness: &MethodSig,
+        rival: &MethodSig,
+        receiver: &Ty,
+        substitution: &TySubst,
+        arguments: &[DispatchedArgument],
+    ) -> bool {
+        if !witness.decls.is_empty()
+            || !rival.decls.is_empty()
+            || rival.params.len() != arguments.len()
+            || rival.variadic.is_some()
+            || !arguments.iter().all(|argument| argument.ranked)
+        {
+            return false;
+        }
+        let parameters = |declared: &MethodSig| {
+            declared
+                .params
+                .iter()
+                .map(|ty| self.witness_parameter_ty(ty, receiver, substitution, &TySubst::new()))
+                .collect::<Vec<_>>()
+        };
+        let (selected, contender) = (parameters(witness), parameters(rival));
+        if contender
+            .iter()
+            .any(|ty| matches!(ty, Ty::Ref(_)) || mojito_types::types::is_symbolic(ty))
+        {
+            return false;
+        }
+        let reached =
+            arguments
+                .iter()
+                .zip(&contender)
+                .try_fold(true, |all, (argument, parameter)| {
+                    let reaches = self.value_coerces(&argument.ty, parameter)
+                        || self
+                            .implicit_conversion_target(&argument.ty, parameter)
+                            .ok()?
+                            .is_some();
+                    Some(all && reaches)
+                });
+        let conversions = |parameters: &[Ty]| {
+            arguments
+                .iter()
+                .zip(parameters)
+                .map(|(argument, parameter)| {
+                    crate::checker::overload_support::conversion_count(&argument.ty, parameter)
+                })
+                .sum::<usize>()
+        };
+        reached.is_some_and(|all| !all || conversions(&selected) < conversions(&contender))
     }
 
     /// Write a struct witness into the instance's facts at `id`: the

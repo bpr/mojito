@@ -2448,20 +2448,39 @@ fn template_method_bound_witness_shapes_derive() {
 }
 
 #[test]
-fn template_method_same_arity_witness_overloads_keep_the_clone_check() {
-    // Two `total` members take one argument each: only a ranking on the
-    // argument's type would choose, so the instance is checked as a clone.
-    let source = "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total(self, by: String) -> Int:\n        return self.count\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n\n    def sum(self) -> Int:\n        return self.entry.total(1)\n\n\ndef main():\n    print(Ledger[Counter](Counter(2)).sum())\n";
+fn template_method_same_arity_witness_overloads_derive() {
+    // Two `total` members take one argument each, and the instance ranks
+    // them on the recorded argument types as its clone check would: a
+    // `String` member never takes an `Int`, and a `Float64` one takes it
+    // only through a conversion the `Int` member does not need.
+    assert_methods_derive(
+        "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total(self, by: String) -> Int:\n        return self.count\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n\n    def sum(self) -> Int:\n        return self.entry.total(1)\n\n\ndef main():\n    print(Ledger[Counter](Counter(2)).sum())\n",
+        "3\n",
+        &[("Ledger.sum", 1)],
+    );
+    assert_methods_derive(
+        "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Float64) -> Int:\n        return self.count + 10\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n    var step: Int\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n        self.step = 4\n\n    def sum(self) -> Int:\n        return self.entry.total(1)\n\n    def stepped(self) -> Int:\n        return self.entry.total(self.step)\n\n\ndef main():\n    var ledger = Ledger[Counter](Counter(2))\n    print(ledger.sum(), ledger.stepped())\n",
+        "3 6\n",
+        &[("Ledger.sum", 1), ("Ledger.stepped", 1)],
+    );
+}
+
+#[test]
+fn template_method_operator_argument_witness_keeps_the_clone_check() {
+    // An operator's type may come from the parameter it is handed to, so
+    // the recorded type does not rank the two `total` members and the
+    // instance is checked as a clone.
+    let source = "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total(self, by: String) -> Int:\n        return self.count\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n    var step: Int\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n        self.step = 2\n\n    def sum(self) -> Int:\n        return self.entry.total(self.step + 1)\n\n\ndef main():\n    print(Ledger[Counter](Counter(2)).sum())\n";
     let compiler = Compiler::default();
     let program = compile_entry(&compiler, source);
     let stats = program.template_stats();
-    assert_eq!(compiler.execute(&program).expect("execute").output, "3\n");
+    assert_eq!(compiler.execute(&program).expect("execute").output, "5\n");
     assert!(
         stats.refused.iter().any(|(name, reason)| {
             name.starts_with("Ledger.sum$")
                 && reason == "the instance's overloaded witness needs ranking by type"
         }),
-        "the same-arity overload set refuses the derivation: {:?}",
+        "the operator argument refuses the derivation: {:?}",
         stats.refused
     );
 }

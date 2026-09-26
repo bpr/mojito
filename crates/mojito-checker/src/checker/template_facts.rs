@@ -220,6 +220,9 @@ struct Occurrence {
     operator: Option<(mojito_ast::ast::InfixOp, SyntaxId, SyntaxId, bool)>,
     /// Whether this is a `^` transfer.
     transfer: bool,
+    /// Whether its checked type is the same under any expected type
+    /// ([`context_free`]).
+    context_free: bool,
     /// The value of an integer or `Bool` literal, which may be a folded
     /// compile-time value.
     literal: Option<mojito_types::ct::CtValue>,
@@ -3709,6 +3712,7 @@ impl Checker {
                     method_call: None,
                     operator: None,
                     transfer: false,
+                    context_free: false,
                     literal: None,
                     folded_index: None,
                 });
@@ -3775,6 +3779,7 @@ impl Checker {
                         _ => None,
                     },
                     transfer: matches!(expr.kind, ExprKind::Transfer(_)),
+                    context_free: context_free(expr),
                     literal: match &expr.kind {
                         ExprKind::Int(value) => Some(value.to_i64().map_or_else(
                             || mojito_types::ct::CtValue::IntLiteral(value.clone()),
@@ -6225,6 +6230,19 @@ fn method_call_at(occurrences: &[Occurrence], id: OccurrenceId) -> Option<(Occur
         },
         method,
     ))
+}
+
+/// Whether an expression checks to one type under any expected type: a
+/// literal, a named value, a field read of one, or a transfer of one. A
+/// collection literal, a leading-dot member, or a call may take its type
+/// from the parameter it is handed to.
+fn context_free(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Str(_) => true,
+        ExprKind::Identifier(name) => name != mojito_ast::ast::CONTEXTUAL_SENTINEL,
+        ExprKind::Member { object: value, .. } | ExprKind::Transfer(value) => context_free(value),
+        _ => false,
+    }
 }
 
 /// Set the entry a table holds at `id`, or add one.
