@@ -1883,6 +1883,21 @@ fn template_method_temporary_receivers_derive() {
 }
 
 #[test]
+fn template_method_element_field_results_derive() {
+    // A reference result reached through a subscripted element's field,
+    // read and written through, and `Dict.__getitem__`, which returns one.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_element_field_result.mojo"),
+        "15\n20\n2\na\nbcd\n3\n7\n",
+        &[
+            ("Table.value_at", 2),
+            ("Table.key_at", 2),
+            ("Dict.__getitem__", 1),
+        ],
+    );
+}
+
+#[test]
 fn template_method_raises_derive() {
     // A method that raises: `Error("…")` under a bare `raises`, and a
     // construction of the declared error type, built over the struct's

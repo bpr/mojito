@@ -549,6 +549,7 @@ assets/ok/template_method_converting_binding.mojo	main	exe-differential	sanitize
 assets/ok/template_method_converting_call_argument.mojo	main	exe-differential	sanitized
 assets/ok/template_method_copied_consuming_receiver.mojo	main	exe-differential	sanitized
 assets/ok/template_method_copied_receiver.mojo	main	exe-differential	sanitized
+assets/ok/template_method_element_field_result.mojo	main	exe-differential	sanitized
 assets/ok/template_method_explicit_application.mojo	main	exe-differential	sanitized
 assets/ok/template_method_explicit_destroy_call.mojo	main	exe-differential	sanitized
 assets/ok/template_method_for_loop.mojo	main	exe-differential	sanitized

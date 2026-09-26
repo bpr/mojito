@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A method returning a field of a subscripted element as a reference
+  (`return self.entries[i].value`, as `Dict.__getitem__` does) now reuses the
+  template's checked facts; it used to be checked again as a clone per
+  instance.
+
 - A method wrapping a sibling's immutable view in a construction
   (`return KeyView(self.entries())` over an `ImmOrigin(origin_of(self))`
   result) now reuses the template's checked facts; it used to be checked

@@ -7148,9 +7148,10 @@ impl BodyShape<'_> {
     }
 
     /// The value of a `return` in a method that returns a reference: a field
-    /// of `self`, a pointer slot, a `ref` local, a `mut` or `ref` parameter, or
-    /// a reference a call on a field yields, of exactly the declared referent
-    /// type, so neither check converts it.
+    /// of `self`, a pointer slot, a `ref` local, a `mut` or `ref` parameter, a
+    /// reference a call on a field yields, or a field read through such a
+    /// reference, of exactly the declared referent type, so neither check
+    /// converts it.
     ///
     /// The `return` keeps the place as a handle because the declaration
     /// returns a reference, whatever the place's type, and demands neither a
@@ -7164,7 +7165,8 @@ impl BodyShape<'_> {
         let admitted = (forwarded
             || self.receiver_field(value)
             || self.slot(value)
-            || self.reference_call(value))
+            || self.reference_call(value)
+            || self.reference_member(value))
             && self
                 .reference_result
                 .is_some_and(|referent| self.typed(value, referent))
