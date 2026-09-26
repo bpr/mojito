@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A direct `v.__hash__(hasher)` on a sized scalar or a `SIMD` vector
+  (`UInt8(3).__hash__(h)`, `SIMD[DType.float32, 2](...).__hash__(h)`) now
+  checks and feeds the hasher as `hash(v)` does. It used to report "has no
+  method '__hash__'", so a generic struct's `self.value.__hash__(hasher)` ran
+  for such an instance while `mojito check` and template verification
+  rejected the same body.
 - A method of a generic struct whose operator takes a call's result, another
   operator, or a right-hand literal as an operand (`self.first_value() ==
   value`, `self.low + (self.high + self.low)`, `self.low + 5`) now derives its

@@ -1829,6 +1829,22 @@ fn template_method_hash_leaf_derives() {
 }
 
 #[test]
+fn template_method_vector_hash_leaf_derives() {
+    // A bound `__hash__` on a sized scalar or a multi-lane vector instance:
+    // derivation's hashed leaf is the one the instance's clone check accepts.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_vector_hash_leaf.mojo"),
+        "5089976597503910097\nTrue True\n",
+        &[("Box.digest", 2)],
+    );
+    assert_methods_derive(
+        include_str!("../conformance/probes/native_simd_instance_mangle.mojo"),
+        "1547189026303444902\n",
+        &[("Box.digest", 1)],
+    );
+}
+
+#[test]
 fn template_method_struct_binder_construction_keeps_the_clone_check() {
     // A struct binder's construction (`Self.H()`) builds another type under
     // each instance, so the body stays outside the class.

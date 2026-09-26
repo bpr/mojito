@@ -454,7 +454,11 @@ impl Checker {
             self.builtin_args(&format!("DType.{method}"), 0, args)?;
             return Ok(Ty::Bool);
         }
-        if let Ty::Simd { dtype, width } = &obj_ty {
+        // `__hash__` is the builtin hashable-leaf arm's, shared with the
+        // other builtin scalars.
+        if let Ty::Simd { dtype, width } = &obj_ty
+            && method != "__hash__"
+        {
             let (dtype, width) = (dtype.clone(), width.clone());
             reject_kwargs(kwargs)?;
             // Compiler-known SIMD methods: `cast` converts dtypes
