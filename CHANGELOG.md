@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A method keyed by its own `DType` or SIMD-width parameter may now
+  construct a vector at that lane (`def make[dt: DType](self, x: Int) ->
+  Scalar[dt]: return Scalar[dt](x)`), on a plain or generic struct; the
+  program used to fail with "register r0 has no checked type".
+
 - A method overloaded on a `Scalar[dt]` pattern and a bare type parameter
   (`def kind[dt: DType](self, a: Scalar[dt])` beside `def kind[T:
   Copyable](self, a: T)`) now selects the pattern for an argument with a

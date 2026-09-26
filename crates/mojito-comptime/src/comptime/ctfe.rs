@@ -1398,7 +1398,8 @@ impl Elab<'_> {
         let mut program = super::rewrite::materialize_block(program, &consts, &type_names);
         // A retained struct's method that only elaborates with its own
         // compile-time parameters bound (a `comptime for` over a method pack,
-        // `FormatStruct.params`) crosses the boundary as the trap stub the
+        // `FormatStruct.params`), or only lowers with them bound (a vector
+        // built at its own lane), crosses the boundary as the trap stub the
         // pre-check elaboration installs; no compile-time program calls it
         // unspecialized.
         for statement in &mut program {
@@ -1418,6 +1419,7 @@ impl Elab<'_> {
                     !type_params.is_empty() && super::block_has_rebind(&method.body)
                 } else {
                     super::block_keys_specialization(&method.body)
+                        || super::synth::constructs_at_own_lane(method)
                 };
                 if keyed {
                     method.body = vec![super::specialize::unspecialized_method_stub(name, method)];

@@ -208,6 +208,68 @@ pub(super) fn is_simd_keyed_method(method: &mojito_ast::ast::Method) -> bool {
         .any(|parameter| parameter.name == SIMD_WILDCARD_PARAM)
 }
 
+/// Whether a struct method's template body constructs a vector at a lane its
+/// own parameters spell (`Scalar[dt](x)`, `SIMD[DType.int32, w](v)`). Such a
+/// construction checks, but lowers only once the lane is bound: every call
+/// retargets to a per-call clone and the template body is a trap stub, as a
+/// free `def`'s template never reaches the program.
+pub(super) fn constructs_at_own_lane(method: &mojito_ast::ast::Method) -> bool {
+    struct Finder<'a> {
+        own: &'a [TypeParam],
+        found: bool,
+    }
+
+    struct Names<'a> {
+        own: &'a [TypeParam],
+        found: bool,
+    }
+
+    impl mojito_ast::visit::Visitor for Names<'_> {
+        fn visit_expr(&mut self, expr: &Expr) {
+            if let ExprKind::Identifier(name) = &expr.kind {
+                self.found |= self.own.iter().any(|parameter| &parameter.name == name);
+            }
+        }
+
+        fn visit_type(&mut self, ty: &Type) {
+            if let Type::Named(name, arguments) = ty
+                && arguments.is_empty()
+            {
+                self.found |= self.own.iter().any(|parameter| &parameter.name == name);
+            }
+        }
+    }
+
+    impl mojito_ast::visit::Visitor for Finder<'_> {
+        fn visit_expr(&mut self, expr: &Expr) {
+            let ExprKind::Call {
+                name, param_args, ..
+            } = &expr.kind
+            else {
+                return;
+            };
+            if name != "SIMD" && name != "Scalar" {
+                return;
+            }
+            let mut names = Names {
+                own: self.own,
+                found: false,
+            };
+            for argument in param_args {
+                mojito_ast::visit::walk_param_arg(&mut names, argument);
+            }
+            self.found |= names.found;
+        }
+    }
+
+    let mut finder = Finder {
+        own: &method.type_params,
+        found: false,
+    };
+    mojito_ast::visit::walk_block(&mut finder, &method.body);
+    finder.found
+}
+
 /// Desugar upstream's `value: SIMD[_, _]` parameter spelling on a struct
 /// method into an inferred type parameter: the argument's own vector type
 /// keys a per-call clone (`_update_with_simd$y3:Int`), the only shape under

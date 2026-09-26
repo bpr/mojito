@@ -333,7 +333,11 @@ impl Elab<'_> {
                         // A SIMD-keyed method (`value: SIMD[_, _]`) checks
                         // only as a per-call clone with its vector type
                         // bound; the template body is a trap stub.
-                        if super::synth::is_simd_keyed_method(&m) {
+                        // A vector constructed at the method's own lane
+                        // (`Scalar[dt](x)`) is stubbed the same way.
+                        if super::synth::is_simd_keyed_method(&m)
+                            || super::synth::constructs_at_own_lane(&m)
+                        {
                             m.body = vec![super::specialize::unspecialized_method_stub(name, &m)];
                             return Ok(m);
                         }

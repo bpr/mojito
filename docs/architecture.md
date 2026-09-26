@@ -755,7 +755,10 @@ them for a named owner and `generate_instance_clones` for an instance
 *Ts` to the `$pack[...]` element list inside `specialize_method_clone`
 exactly as a def specialization does, and the template's method body
 becomes the `unspecialized_method_stub` trap when it only elaborates with
-the struct's or its own parameters bound. `specialize_method_clone` bakes
+the struct's or its own parameters bound, or constructs a vector at a lane
+its own parameters spell (`Scalar[dt](x)`, `synth::constructs_at_own_lane`):
+that construction checks symbolically but lowers only with the lane bound.
+`specialize_method_clone` bakes
 the clone's *value* bindings into its signature types before its type
 bindings, as a def specialization does, so a value parameter standing in a
 type position (`a: Scalar[dt]`, `-> SIMD[DType.int32, w]`) spells its bound

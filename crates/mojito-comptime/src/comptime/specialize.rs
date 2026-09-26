@@ -1414,6 +1414,11 @@ impl Elab<'_> {
                 specialized_methods.push(method);
                 continue;
             }
+            // A vector constructed at the method's own lane lowers only in
+            // the per-call clones; the instance's template body is the stub.
+            if super::synth::constructs_at_own_lane(&method) {
+                method.body = vec![unspecialized_method_stub(orig, &method)];
+            }
             // A regular runtime parameter shadows a same-named compile-time
             // binding inside its own body.
             let mut method_env = env.clone();
@@ -2499,6 +2504,13 @@ impl Elab<'_> {
             };
             clone.where_clauses.clear();
             clone.self_ty = Some(receiver.clone());
+            // Its own lane still unbound, a vector construction lowers only
+            // in the per-call clones: this one stands as the stub.
+            if super::synth::constructs_at_own_lane(&clone) {
+                clone.body = vec![unspecialized_method_stub(name, &clone)];
+                clones.push(clone);
+                continue;
+            }
             let clone_body = clone.body.first().map(|first| first.span);
             if let (Some(first), Some(clone_body)) = (method.body.first(), clone_body) {
                 self.method_traces
