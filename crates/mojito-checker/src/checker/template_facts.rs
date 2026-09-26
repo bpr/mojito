@@ -1521,17 +1521,13 @@ impl Checker {
         for call in &bound_dispatches {
             self.realize_bound_dispatch(&mut facts, *call, occurrences)?;
         }
-        // An element store's value getter and in-place dunder stand as the
-        // template selected them (`substituted_element_stores`).
-        let embedded: Vec<String> = facts
-            .augmented_subscripts
-            .iter_mut()
-            .flat_map(|(_, store)| store.contracts_mut())
-            .map(|call| call.contract.target.clone())
-            .collect();
-        for target in &embedded {
-            note_realized_callee(&mut facts, target, target);
-        }
+        // An element store's value getter is realized on the instance's
+        // subscripted value, and its in-place dunder on the instance's
+        // element where the template dispatched it through the element's
+        // bound; a closed one stands as the template selected it
+        // (`substituted_element_stores`).
+        self.realize_element_getters(&mut facts, occurrences, substitution)?;
+        self.realize_element_dunders(&mut facts)?;
         let inverted_writes = self.realize_inverted_writes(&mut facts, occurrences)?;
         for index in 0..facts.selected_calls.len() {
             let id = facts.selected_calls[index].0;
@@ -1661,25 +1657,14 @@ impl Checker {
         substitution: &TySubst,
     ) -> Result<(), &'static str> {
         let id = facts.selected_calls[index].0;
-        let (receiver, method) = occurrences
-            .iter()
-            .find(|occurrence| occurrence.id == id)
-            .and_then(|occurrence| occurrence.method_call.clone())
+        let (receiver, method) = method_call_at(occurrences, id)
             .ok_or("a selected call is not a method call in the instance")?;
-        let receiver = OccurrenceId {
-            syntax: receiver,
-            copy: id.copy,
-        };
         let Some(Ty::Struct(owner, arguments)) =
             fact_at(&facts.expression_types, receiver).cloned()
         else {
             return Err("a method call's receiver is not a nominal struct");
         };
-        let info = self
-            .structs
-            .get(&owner)
-            .ok_or("a method call's receiver struct is not declared")?;
-        let selected = &facts.selected_calls[index].1.contract.target;
+        let selected = facts.selected_calls[index].1.contract.target.clone();
         // A per-call clone (`Scaler.scaled$i3`) bakes the callee's binders
         // into its target. On a non-generic receiver the request names no
         // instance, and substitution left its arguments as they were, so the
@@ -1688,32 +1673,140 @@ impl Checker {
             if !arguments.is_empty() || !request.owner_arguments.is_empty() {
                 return Err("a per-call clone request is keyed by a generic receiver");
             }
-            let target = selected.clone();
-            note_realized_callee(facts, &target, &target);
+            note_realized_callee(facts, &selected, &selected);
             return Ok(());
         }
         // A subscript that is the target of a store selected the setter.
-        let method = if method == "__getitem__" && names_method(selected, &owner, "__setitem__") {
+        let method = if method == "__getitem__" && names_method(&selected, &owner, "__setitem__") {
             "__setitem__".to_string()
         } else {
             method
         };
+        let Some(target) = self.realize_method_contract(
+            &facts.expression_types,
+            &mut facts.selected_calls[index].1,
+            (&owner, &arguments),
+            &method,
+            substitution,
+        )?
+        else {
+            note_realized_callee(facts, &selected, &selected);
+            return Ok(());
+        };
+        if let Some((_, parameters)) = facts
+            .call_parameters
+            .iter_mut()
+            .find(|(site, _)| *site == id)
+        {
+            for parameter in parameters {
+                parameter.ty = self.instance_ty(&parameter.ty, substitution);
+            }
+        }
+        if let Some(entry) = facts
+            .overload_targets
+            .iter_mut()
+            .find(|(site, _)| *site == id)
+        {
+            entry.1.clone_from(&target);
+        }
+        note_realized_callee(facts, &selected, &target);
+        Ok(())
+    }
+
+    /// Realize the value getter each element store through a setter embeds,
+    /// on the instance's own subscripted value, as the setter selected at
+    /// the site is realized ([`Self::realize_method_contract`]).
+    fn realize_element_getters(
+        &self,
+        facts: &mut CheckedBodyFacts,
+        occurrences: &[Occurrence],
+        substitution: &TySubst,
+    ) -> Result<(), &'static str> {
+        let mut realized = Vec::new();
+        for (id, store) in &mut facts.augmented_subscripts {
+            let Some(getter) = &mut store.getter else {
+                continue;
+            };
+            let (receiver, method) = method_call_at(occurrences, *id)
+                .ok_or("an element store is not a subscript in the instance")?;
+            let Some(Ty::Struct(owner, arguments)) = fact_at(&facts.expression_types, receiver)
+            else {
+                return Err("an element store's subscripted value is not a nominal struct");
+            };
+            let selected = getter.contract.target.clone();
+            let target = self
+                .realize_method_contract(
+                    &facts.expression_types,
+                    getter,
+                    (owner, arguments),
+                    &method,
+                    substitution,
+                )?
+                .unwrap_or_else(|| selected.clone());
+            realized.push((selected, target));
+        }
+        for (selected, target) in realized {
+            note_realized_callee(facts, &selected, &target);
+        }
+        Ok(())
+    }
+
+    /// Realize the in-place dunder each element store embeds: one the
+    /// template dispatched through the element's bound is re-selected on
+    /// the instance's element type ([`Self::realize_embedded_dispatch`]),
+    /// and a closed one stands.
+    fn realize_element_dunders(&self, facts: &mut CheckedBodyFacts) -> Result<(), &'static str> {
+        let mut realized = Vec::new();
+        for (_, store) in &mut facts.augmented_subscripts {
+            let Some(inplace) = &mut store.inplace else {
+                continue;
+            };
+            let selected = inplace.contract.target.clone();
+            let target = if mojito_symbol::symbol::is_trait_dispatch_symbol(&selected) {
+                self.realize_embedded_dispatch(&facts.expression_types, inplace, &store.operand_ty)?
+            } else {
+                selected.clone()
+            };
+            realized.push((selected, target));
+        }
+        for (selected, target) in realized {
+            note_realized_callee(facts, &selected, &target);
+        }
+        Ok(())
+    }
+
+    /// Rewrite one method call's contract for an instance whose receiver is
+    /// the struct `owner` under `arguments`: the target is the instance's
+    /// clone of the selected declaration, where one exists, and the result,
+    /// parameter, and referent types substitute. `None` where the template
+    /// already selected the receiver's clone, whose contract stands.
+    fn realize_method_contract(
+        &self,
+        types: &[(OccurrenceId, Ty)],
+        call: &mut TemplateCallContract,
+        (owner, arguments): (&str, &[mojito_types::types::TyArg]),
+        method: &str,
+        substitution: &TySubst,
+    ) -> Result<Option<String>, &'static str> {
+        let info = self
+            .structs
+            .get(owner)
+            .ok_or("a method call's receiver struct is not declared")?;
+        let selected = &call.contract.target;
         let family = info
             .methods
-            .get(&method)
+            .get(method)
             .ok_or("a called method is missing")?;
-        let self_ty = self.self_instance_ty(&owner);
+        let self_ty = self.self_instance_ty(owner);
         let clone_name =
-            mojito_symbol::symbol::instance_method_clone_name(&method, &info.decls, &arguments);
+            mojito_symbol::symbol::instance_method_clone_name(method, &info.decls, arguments);
         // A receiver whose type was already closed in the template (`List[Pair]`)
         // selected its clone there, on the arguments a clone check ranks too.
         let selected_clone = clone_name
             .as_deref()
-            .is_some_and(|clone| names_method(selected, &owner, clone));
+            .is_some_and(|clone| names_method(selected, owner, clone));
         if selected_clone {
-            let target = selected.clone();
-            note_realized_callee(facts, &target, &target);
-            return Ok(());
+            return Ok(None);
         }
         let declared = match family.as_slice() {
             [only] => only,
@@ -1721,8 +1814,8 @@ impl Checker {
                 .iter()
                 .find(|member| {
                     super::overload_support::method_lowered_name(
-                        &owner,
-                        &method,
+                        owner,
+                        method,
                         member,
                         self_ty.as_ref(),
                     ) == *selected
@@ -1743,29 +1836,28 @@ impl Checker {
         // under every instance, which no other member can outrank; two
         // members an instance makes identical collapse, and
         // `method_clone_target` finds no single clone for them.
-        let call = &facts.selected_calls[index].1;
         let exact = call.contract.arguments.iter().all(|parameter| {
             call.arguments
                 .iter()
                 .find(|bound| bound.source == parameter.source)
-                .and_then(|bound| fact_at(&facts.expression_types, bound.value))
+                .and_then(|bound| fact_at(types, bound.value))
                 .is_some_and(|ty| *ty == self.instance_ty(&parameter.parameter_ty, substitution))
         });
         if !closed_family && !exact {
             return Err("an overloaded callee declares a parameter of a parameter type");
         }
         let target = if self
-            .instance_method_clone(&owner, &method, &arguments)
+            .instance_method_clone(owner, method, arguments)
             .is_some()
         {
-            self.method_clone_target(&owner, &method, &arguments, declared, substitution)
+            self.method_clone_target(owner, method, arguments, declared, substitution)
                 .ok_or("a called method's clone family has no member for the selected overload")?
         } else {
             // No clone of this method. If the instance has clones of others,
             // this one was withheld from it or collapsed.
             let suffix = clone_name
                 .as_deref()
-                .and_then(|clone| clone.strip_prefix(method.as_str()));
+                .and_then(|clone| clone.strip_prefix(method));
             if suffix.is_some_and(|suffix| info.methods.keys().any(|name| name.ends_with(suffix))) {
                 return Err("the instance has clones, but not of a called method");
             }
@@ -1777,34 +1869,16 @@ impl Checker {
         // The callee has no binders of its own, so its parameter types were
         // recorded at the receiver's arguments: in the caller's binder scope,
         // whether the receiver is `self` or a field of another struct.
-        let selected = selected.clone();
-        let contract = &mut facts.selected_calls[index].1.contract;
+        let contract = &mut call.contract;
         contract.target.clone_from(&target);
         contract.result_ty = self.instance_ty(&contract.result_ty, substitution);
         for argument in &mut contract.arguments {
             argument.parameter_ty = self.instance_ty(&argument.parameter_ty, substitution);
         }
-        if let Some((_, parameters)) = facts
-            .call_parameters
-            .iter_mut()
-            .find(|(site, _)| *site == id)
-        {
-            for parameter in parameters {
-                parameter.ty = self.instance_ty(&parameter.ty, substitution);
-            }
-        }
-        if let Some(reference) = &mut facts.selected_calls[index].1.reference_result {
+        if let Some(reference) = &mut call.reference_result {
             reference.referent = self.instance_ty(&reference.referent, substitution);
         }
-        if let Some(entry) = facts
-            .overload_targets
-            .iter_mut()
-            .find(|(site, _)| *site == id)
-        {
-            entry.1.clone_from(&target);
-        }
-        note_realized_callee(facts, &selected, &target);
-        Ok(())
+        Ok(Some(target))
     }
 
     /// Realize one call through a callable parameter for an instance.
@@ -5692,18 +5766,17 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
             || nested_calls.iter().any(|(call, _)| call == id)
             || static_calls.iter().any(|(call, _)| call == id)
     };
-    // A call through a bound reads the summaries of every conformer's
-    // method of that name, one key per conformer (`Struct.method`, or the
-    // overload symbol `Struct.method$ov$…`), none of them a target.
-    let dispatched: Vec<&str> = facts
-        .selected_calls
+    // A call through a bound, at an occurrence or embedded in an element
+    // store, reads the summaries of every conformer's method of that name,
+    // one key per conformer (`Struct.method`, or the overload symbol
+    // `Struct.method$ov$…`), none of them a target.
+    let dispatched: Vec<&str> = targets
         .iter()
-        .filter(|(_, call)| mojito_symbol::symbol::is_trait_dispatch_symbol(&call.contract.target))
-        .filter_map(|(_, call)| {
-            let target = &call.contract.target;
+        .filter(|target| mojito_symbol::symbol::is_trait_dispatch_symbol(target))
+        .filter_map(|target| {
             let member = target
                 .rsplit_once('.')
-                .map_or(target.as_str(), |(_, member)| member);
+                .map_or(*target, |(_, member)| member);
             member.split('$').next()
         })
         .collect();
@@ -5823,6 +5896,23 @@ fn origin_binder(binder: &mojito_ast::ast::TypeParam) -> bool {
         && binder.callable_bound.is_none()
         && binder.default.is_none()
         && !binder.infer_only
+}
+
+/// The receiver and method of the method call at `id`, the receiver in
+/// `id`'s own copy.
+fn method_call_at(occurrences: &[Occurrence], id: OccurrenceId) -> Option<(OccurrenceId, String)> {
+    let (receiver, method) = occurrences
+        .iter()
+        .find(|occurrence| occurrence.id == id)?
+        .method_call
+        .clone()?;
+    Some((
+        OccurrenceId {
+            syntax: receiver,
+            copy: id.copy,
+        },
+        method,
+    ))
 }
 
 /// Whether the lowered callee `target` is `owner`'s `method`, or a clone or
@@ -6256,9 +6346,11 @@ fn substituted_facts(
 }
 
 /// The element stores of an instance: the template's, their types
-/// substituted. The value getter and in-place dunder a store embeds are
-/// kept as they stand, so each must name only closed types: an instance
-/// realizes no call but the one at the site.
+/// substituted. The value getter a store embeds is realized with the call
+/// at the site (`realize_element_getters`), and an in-place dunder
+/// dispatched through a bound on the instance's element
+/// (`realize_element_dunders`); any other dunder is kept as it stands, so
+/// it must name only closed types.
 fn substituted_element_stores(
     stores: &[(OccurrenceId, TemplateAugmentedSubscript)],
     substitute: &dyn Fn(&Ty) -> Ty,
@@ -6267,13 +6359,13 @@ fn substituted_element_stores(
         .iter()
         .map(|(id, store)| {
             let mut store = store.clone();
-            let closed =
-                store.contracts_mut().all(|call| {
-                    !mojito_types::types::is_symbolic(&call.contract.result_ty)
+            let closed = store.inplace.as_ref().is_none_or(|call| {
+                mojito_symbol::symbol::is_trait_dispatch_symbol(&call.contract.target)
+                    || !mojito_types::types::is_symbolic(&call.contract.result_ty)
                         && call.contract.arguments.iter().all(|argument| {
                             !mojito_types::types::is_symbolic(&argument.parameter_ty)
                         })
-                });
+            });
             if !closed {
                 return Err("an element store embeds a call of a parameter type");
             }
@@ -7764,9 +7856,9 @@ impl BodyShape<'_> {
     ///
     /// The setter is the call recorded at the subscript, binding the index
     /// and the computed value, which the check keys at the subscript too.
-    /// The getter is kept beside it in `augmented_subscripts` as it stands,
-    /// so the subscripted value's type is closed: an instance realizes the
-    /// setter alone, and reads the element through the template's getter.
+    /// The getter is kept beside it in `augmented_subscripts`, and an
+    /// instance realizes it on its own subscripted value as it realizes the
+    /// setter (`realize_element_getters`).
     fn setter_element(&self, place: &Expr) -> bool {
         self.through_setter(place)
             && self.scalar(place)
@@ -7776,24 +7868,34 @@ impl BodyShape<'_> {
             })
     }
 
-    /// An element of a closed struct type stored augmented through its
-    /// in-place dunder (`self.counters[i] += 3` → `__iadd__`), read through a
-    /// mutable reference getter or through a value getter and a setter.
+    /// A struct element stored augmented through its in-place dunder
+    /// (`self.counters[i] += 3` → `__iadd__`), read through a mutable
+    /// reference getter or through a value getter and a setter.
     ///
-    /// The dunder is selected on the element's type, which is closed, so the
-    /// contract is kept in `augmented_subscripts` as it stands. It binds the
-    /// operand, a closed scalar, by value.
+    /// On an element of a closed type the dunder is selected on that type,
+    /// so the contract is kept in `augmented_subscripts` as it stands, and
+    /// binds the operand, a closed scalar, by value. On an element of a
+    /// bare parameter type the dunder is dispatched through the parameter's
+    /// bound, and an instance selects its witness on its own element type
+    /// (`realize_element_dunders`); the operand is then a value of the
+    /// element's own type, bound by value to the witness's `Self`.
     fn inplace_element(&self, place: &Expr, value: &Expr) -> bool {
         (self.through_reference(place) || self.through_setter(place))
             && self.expression(value)
-            && self.scalar(value)
             && self.facts.is_none_or(|facts| {
-                fact_at(&facts.augmented_subscripts, self.occurrence(place)).is_some_and(|store| {
-                    !mojito_types::types::is_symbolic(&store.operand_ty)
-                        && store
-                            .inplace
-                            .as_ref()
-                            .is_some_and(mojito_checked::templates::closed_method_contract)
+                let store = fact_at(&facts.augmented_subscripts, self.occurrence(place));
+                store.is_some_and(|store| {
+                    store.inplace.as_ref().is_some_and(|inplace| {
+                        let closed = !mojito_types::types::is_symbolic(&store.operand_ty)
+                            && self.scalar(value)
+                            && mojito_checked::templates::closed_method_contract(inplace);
+                        let dispatched = mojito_symbol::symbol::is_trait_dispatch_symbol(
+                            &inplace.contract.target,
+                        ) && mojito_checked::templates::value_method_contract(
+                            inplace,
+                        ) && self.typed(value, &store.operand_ty);
+                        closed || dispatched
+                    })
                 })
             })
     }
@@ -7823,8 +7925,9 @@ impl BodyShape<'_> {
     }
 
     /// The subscript `place` of a writable `self` or of one of its fields,
-    /// of a closed type, read through a closed value getter and written back
-    /// through a setter that takes the element by value.
+    /// read through a value getter and written back through a setter that
+    /// takes the element by value. Both change per instance only in their
+    /// targets and, by substitution, their types.
     fn through_setter(&self, place: &Expr) -> bool {
         let ExprKind::Index { object, index } = &place.kind else {
             return false;
@@ -7834,14 +7937,11 @@ impl BodyShape<'_> {
             && (self.receiver_field(object) || self.receiver_itself(object))
             && self.argument(place, index)
             && self.facts.is_none_or(|facts| {
-                fact_at(&facts.expression_types, self.occurrence(object))
-                    .is_some_and(|ty| !mojito_types::types::is_symbolic(ty))
-                    && self
-                        .named_contract(facts, place, object, "__setitem__")
-                        .is_some_and(mojito_checked::templates::value_method_contract)
+                self.named_contract(facts, place, object, "__setitem__")
+                    .is_some_and(mojito_checked::templates::value_method_contract)
                     && fact_at(&facts.augmented_subscripts, id)
                         .and_then(|store| store.getter.as_ref())
-                        .is_some_and(mojito_checked::templates::closed_method_contract)
+                        .is_some_and(mojito_checked::templates::value_method_contract)
             });
         if admitted {
             self.subscript(id);

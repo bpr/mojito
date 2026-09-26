@@ -164,6 +164,86 @@ impl Checker {
         Ok(())
     }
 
+    /// Realize a call a store embeds that the template dispatched through
+    /// a bound (the in-place dunder of `self.items[i] += x` on a bare `T`),
+    /// on the instance's type of its receiver, returning the witness.
+    ///
+    /// The call has no occurrence of its own, so the witness rewrites only
+    /// the contract: its target, result, and parameter types, as
+    /// [`Self::realize_bound_dispatch`] writes them for a call at an
+    /// occurrence. A witness with binders of its own, or no nominal
+    /// struct's method, is the clone check's to judge.
+    pub(super) fn realize_embedded_dispatch(
+        &self,
+        types: &[(OccurrenceId, Ty)],
+        call: &mut TemplateCallContract,
+        receiver: &Ty,
+    ) -> Result<String, &'static str> {
+        let method = call
+            .contract
+            .target
+            .rsplit_once('.')
+            .and_then(|(_, method)| method.split('$').next())
+            .ok_or("an embedded dispatch names no method")?
+            .to_string();
+        let arguments = call
+            .contract
+            .arguments
+            .iter()
+            .map(|parameter| {
+                let value = call
+                    .arguments
+                    .iter()
+                    .find(|bound| bound.source == parameter.source)
+                    .map(|bound| bound.value)
+                    .ok_or("a dispatched argument has no occurrence")?;
+                let ty = fact_at(types, value)
+                    .cloned()
+                    .ok_or("a dispatched argument has no retained type")?;
+                Ok(DispatchedArgument {
+                    value,
+                    ty,
+                    parameter_ty: parameter.parameter_ty.clone(),
+                    convention: parameter.convention,
+                    requires_place: parameter.requires_place,
+                })
+            })
+            .collect::<Result<Vec<_>, &'static str>>()?;
+        let witness = self.bound_witness(
+            receiver,
+            call.contract.receiver_convention,
+            &method,
+            &arguments,
+        )?;
+        let BoundWitness::Method {
+            owner,
+            arguments: struct_arguments,
+            declared,
+            target,
+            binders,
+            request: None,
+            substitution,
+        } = witness
+        else {
+            return Err("an embedded dispatch's witness is no plain struct method");
+        };
+        if !binders.is_empty() {
+            return Err("an embedded dispatch's witness has binders of its own");
+        }
+        let receiver_ty = Ty::Struct(owner.to_string(), struct_arguments.to_vec());
+        let parameter_ty =
+            |ty: &Ty| self.witness_parameter_ty(ty, &receiver_ty, &substitution, &binders);
+        if declared.params.len() != call.contract.arguments.len() {
+            return Err("an embedded dispatch's witness takes other arguments");
+        }
+        call.contract.target.clone_from(&target);
+        call.contract.result_ty = parameter_ty(&declared.ret);
+        for (argument, declared) in call.contract.arguments.iter_mut().zip(&declared.params) {
+            argument.parameter_ty = parameter_ty(declared);
+        }
+        Ok(target)
+    }
+
     /// Realize every inverted write whose receiver the instance makes a
     /// nominal struct: the struct's own `write_to` (or `write_repr_to`) is
     /// selected instead, as `infer_method_call` selects it, and the call

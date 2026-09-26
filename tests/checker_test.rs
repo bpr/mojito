@@ -7043,3 +7043,27 @@ fn param_expr_types_compare_by_canonical_form() {
          def outer[n: Int](var x: Buf[n + 2]) -> Buf[n + 2]:\n    return inner[n + 1](x^)\n"
     ));
 }
+
+#[test]
+fn augmented_assignment_dispatches_through_a_bounds_inplace_dunder() {
+    // `a += b` on a bare `T` selects `__iadd__` through a bound that
+    // requires it, as the call `a.__iadd__(b)` does; a bound requiring none
+    // keeps the builtin operator, which a bare `T` does not have.
+    let accum = "trait Accum:\n    def __iadd__(mut self, rhs: Self):\n        ...\n\n";
+    ok_std(&format!(
+        "{accum}def add_in[T: Accum & ImplicitlyCopyable](mut a: T, b: T):\n    a += b\n"
+    ));
+    let mismatched = err_std(&format!(
+        "{accum}def add_in[T: Accum & ImplicitlyCopyable](mut a: T):\n    a += 1\n"
+    ));
+    assert!(
+        mismatched.to_string().contains("__iadd__"),
+        "unexpected error: {mismatched}"
+    );
+    let unbound =
+        err_std("def add_in[T: ImplicitlyCopyable & Writable](mut a: T, b: T):\n    a += b\n");
+    assert!(
+        matches!(unbound, TypeError::BadOperator { .. }),
+        "unexpected error: {unbound}"
+    );
+}

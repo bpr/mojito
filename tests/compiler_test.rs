@@ -1696,6 +1696,25 @@ fn template_method_subscript_stores_derive() {
 }
 
 #[test]
+fn template_method_parameter_built_stores_derive() {
+    // An augmented element store whose value getter reads a subscripted
+    // value built over the parameter, or whose element is the parameter
+    // itself and updates through its bound's `__iadd__`: the getter is
+    // realized on the instance's receiver and the dunder re-selected on the
+    // instance's element type.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_parameter_built_store.mojo"),
+        "2 2 6 9\n1 4 32 41\n3 21\n",
+        &[
+            ("Rack.bump_box", 2),
+            ("Rack.bump_self", 2),
+            ("Rack.accumulate", 2),
+            ("Rack.fold", 2),
+        ],
+    );
+}
+
+#[test]
 fn template_method_borrowed_parameters_derive() {
     // A `mut` or bare `ref` parameter is bound from its convention alone: a
     // `mut` one may be stored to, scalar or whole, and a `ref` one is read.

@@ -332,7 +332,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `template_certificate`, `method_certificate`, `record_template`).
   `realize_method_call` retargets a closed method call to the clone member
   `declarations.rs:method_clone_target` finds (the helper
-  `constructor_clone_target` shares), `realize_builtin_len` takes the `len`
+  `constructor_clone_target` shares; its `realize_method_contract` half also
+  realizes an element store's embedded value getter,
+  `realize_element_getters`, and `realize_element_dunders` re-selects an
+  embedded in-place dunder dispatched through a bound,
+  `bound_dispatch.rs:realize_embedded_dispatch`), `realize_builtin_len` takes the `len`
   witness, `realize_operator` repeats an operator's type-driven dispatch
   (through `operators.rs:struct_infix_dispatch`, the type-level half of
   `infer_infix`, and `operators.rs:scalar_operator_result`, its primitive

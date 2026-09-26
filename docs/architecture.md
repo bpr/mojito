@@ -1395,7 +1395,11 @@ as an `AugmentedInPlace` adjustment on the place, so lowering emits an ordinary
 receiver-committing `MethodCall` (the mutation writes back through the receiver's
 slot, alias, or reference handle) instead of a `BinOp` read-modify-write. There
 is no fall-through to `__add__`; a missing in-place dunder is a checker error.
-Native scalar targets keep the primitive `BinOp` path. A user-struct
+A value of a bare type parameter whose bound requires the dunder dispatches
+through the bound the same way, as the call `x.__iadd__(y)` would; a parameter
+whose bounds do not require it keeps the operator path. The call's result
+register takes the contract's `None` result, since a dispatched target names no
+declaration. Native scalar targets keep the primitive `BinOp` path. A user-struct
 nominal-subscript element dispatches the same way, recorded on the
 `CheckedAugmentedSubscript`: lowering materializes the element into a mutable
 temporary and sends the mutated result through `__setitem__` (value getter) or

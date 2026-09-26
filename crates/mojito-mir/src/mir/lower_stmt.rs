@@ -670,7 +670,7 @@ impl Flatten<'_> {
             mode: UseMode::BorrowMut,
         });
         self.emit_checked_call_boundary(contract, &span);
-        let dest = self.fresh(span.clone(), None);
+        let dest = self.fresh_typed(span.clone(), None, contract.result_ty.clone());
         self.emit(MirInstr::MethodCall {
             dest,
             recv,
@@ -725,7 +725,9 @@ impl Flatten<'_> {
         let (args, arg_places) =
             self.lower_call_arguments(std::slice::from_ref(rhs_expression), false);
         self.allow_argument_anchors = saved_anchor_permission;
-        let dest = self.fresh(place.source_span(), None);
+        // A dunder dispatched through a bound names no declaration to read
+        // the result from; the checker proved it returns `None`.
+        let dest = self.fresh_typed(place.source_span(), None, contract.result_ty.clone());
         self.emit_interior_invalidations(place, None);
         self.emit_checked_call_boundary(&contract, &place.source_span());
         let method = op

@@ -268,8 +268,21 @@ impl Checker {
         Ok(())
     }
 
+    /// Whether `ty` is a type parameter one of whose bounds requires the
+    /// in-place dunder of `op`, which `x OP= y` then dispatches through the
+    /// bound as the call `x.__iadd__(y)` would. A parameter whose bounds do
+    /// not keeps the builtin operator path.
+    pub(super) fn bound_inplace_operator(&self, ty: &Ty, op: InfixOp) -> bool {
+        let Ty::Param { bounds, .. } = ty else {
+            return false;
+        };
+        op.inplace_dunder()
+            .is_some_and(|dunder| !self.lookup_trait_methods(bounds, dunder, 1).is_empty())
+    }
+
     /// Select the in-place dunder (`__iadd__`, …) for `receiver OP= value` on a
-    /// user-defined `operand_ty`, returning its complete checked method-call
+    /// user-defined `operand_ty`, or on a type parameter whose bound requires
+    /// it, returning its complete checked method-call
     /// contract. The contract (and the call's effects/conversions) is keyed at
     /// `span`. A missing in-place dunder is a hard error: Mojo dispatches
     /// augmented assignment to the dedicated method and does not fall back to the
@@ -287,15 +300,14 @@ impl Checker {
             op: infix_symbol(op).to_string(),
             ty: operand_ty.to_string(),
         };
-        let Ty::Struct(name, _) = operand_ty else {
-            return Err(missing());
-        };
         let dunder = op.inplace_dunder().ok_or_else(missing)?;
-        let has_method = self
-            .structs
-            .get(name)
-            .and_then(|info| info.methods.get(dunder))
-            .is_some();
+        let has_method = match operand_ty {
+            Ty::Struct(name, _) => self
+                .structs
+                .get(name)
+                .is_some_and(|info| info.methods.contains_key(dunder)),
+            _ => self.bound_inplace_operator(operand_ty, op),
+        };
         if !has_method {
             return Err(missing());
         }
@@ -1073,9 +1085,9 @@ impl Checker {
                 // dedicated in-place dunder (`x += y` → `x.__iadd__(y)`), which
                 // mutates `mut self`; Mojo does not fall back to the binary
                 // operator. Native scalars keep the builtin operator path below.
-                if !nominal_subscript
-                    && matches!(&target, Ty::Struct(name, _) if self.structs.contains_key(name))
-                {
+                let inplace_operand = matches!(&target, Ty::Struct(name, _) if self.structs.contains_key(name))
+                    || self.bound_inplace_operator(&target, *op);
+                if !nominal_subscript && inplace_operand {
                     let contract = self.select_inplace_operator(
                         &place.source_span(),
                         place,
@@ -1096,9 +1108,7 @@ impl Checker {
                 // a native element keeps the binary operator + setter path. The
                 // mutated element keeps its own type, so `result` is the element
                 // type and the value-getter's `__setitem__` selection binds it.
-                let (result, inplace_contract) = if nominal_subscript
-                    && matches!(&target, Ty::Struct(name, _) if self.structs.contains_key(name))
-                {
+                let (result, inplace_contract) = if nominal_subscript && inplace_operand {
                     let contract =
                         self.select_subscript_inplace_operator(place, *op, value, &target)?;
                     (target.clone(), Some(contract))
