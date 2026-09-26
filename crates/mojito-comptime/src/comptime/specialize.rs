@@ -1397,9 +1397,11 @@ impl Elab<'_> {
             }
             member.value = materialize_expression(&member.value, &member_subs);
         }
+        let mangled = mangle(orig, vals)?;
         let mut specialized_methods = Vec::with_capacity(methods.len());
         let mut simd_clones = Vec::new();
         let mut members = Vec::new();
+        let leaf_traces = self.method_traces.borrow().len();
         for method in methods {
             let template_body = traced_template_body(method);
             let mut method = method.clone();
@@ -1411,7 +1413,14 @@ impl Elab<'_> {
                 simd_clones.extend(self.per_call_method_clones(
                     &method,
                     &requests,
-                    &PerCallBase::default(),
+                    &PerCallBase {
+                        owner: Some(PerCallOwner {
+                            name: &mangled,
+                            module: template.module.as_deref(),
+                            template: orig,
+                        }),
+                        ..PerCallBase::default()
+                    },
                     &env,
                 ));
                 method.body = vec![unspecialized_method_stub(orig, &method)];
@@ -1462,7 +1471,6 @@ impl Elab<'_> {
             specialized_methods.push(method);
         }
         specialized_methods.extend(simd_clones);
-        let mangled = mangle(orig, vals)?;
         let mut spec = mk(
             StmtKind::Struct {
                 name: mangled.clone(),
@@ -1488,6 +1496,7 @@ impl Elab<'_> {
         };
         mojito_ast::ast::stamp_source(std::slice::from_mut(&mut spec), &tag);
         spec.module = None;
+        self.restamp_leaf_traces(&spec, leaf_traces, &folded);
         self.trace_struct_members(
             &spec,
             &members,
@@ -2499,6 +2508,7 @@ impl Elab<'_> {
                     owner: Some(PerCallOwner {
                         name,
                         module: template.module.as_deref(),
+                        template: name,
                     }),
                 },
                 &consts,
@@ -2757,7 +2767,7 @@ impl Elab<'_> {
             .borrow_mut()
             .push(super::MethodInstanceTrace {
                 owner: owner.name.to_string(),
-                template_owner: owner.name.to_string(),
+                template_owner: owner.template.to_string(),
                 owner_module: owner.module.map(str::to_string),
                 clone_module: super::clone_source_tag(owner.module, owner.name, &clone.name),
                 clone_name: clone.name.clone(),
@@ -2775,6 +2785,29 @@ impl Elab<'_> {
                     .collect(),
                 pack_bindings,
             });
+    }
+
+    /// Complete the traces of the per-call leaves minted into a value-keyed
+    /// struct specialized whole, from `from` on: each leaf's source tag is
+    /// the specialization's, which stamping gave its body, and the struct's
+    /// folded values precede the leaf's own bindings.
+    fn restamp_leaf_traces(&self, spec: &Stmt, from: usize, folded: &[(String, CtValue)]) {
+        let StmtKind::Struct { name, methods, .. } = &spec.kind else {
+            return;
+        };
+        let mut traces = self.method_traces.borrow_mut();
+        for trace in traces.iter_mut().skip(from) {
+            let Some(module) = methods
+                .iter()
+                .find(|method| method.name == trace.clone_name)
+                .and_then(|method| method.body.first()?.module.clone())
+            else {
+                continue;
+            };
+            debug_assert_eq!(trace.owner, *name);
+            trace.clone_module = module;
+            trace.value_bindings.splice(0..0, folded.iter().cloned());
+        }
     }
 
     /// Record how each member of a struct specialized whole came from its
@@ -3255,11 +3288,14 @@ pub(super) struct PerCallBase<'a> {
     pub(super) owner: Option<PerCallOwner<'a>>,
 }
 
-/// The struct a traced per-call clone joins, and its module.
+/// The struct a traced per-call clone joins, its module, and the struct
+/// whose method is the clone's template: the same struct, except for a
+/// struct specialized whole (`AHasher$…`, whose template is `AHasher`).
 #[derive(Clone, Copy)]
 pub(super) struct PerCallOwner<'a> {
     pub(super) name: &'a str,
     pub(super) module: Option<&'a str>,
+    pub(super) template: &'a str,
 }
 
 /// One baked compile-time parameter of a per-call method clone: its name,

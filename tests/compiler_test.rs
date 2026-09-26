@@ -2177,6 +2177,93 @@ fn template_method_simd_leaf_derives() {
 }
 
 #[test]
+fn template_value_keyed_struct_members_derive() {
+    // A struct keyed on a `DType` or vector value is specialized whole per
+    // value; source validation checks its members once with the value
+    // symbolic, and every specialization's members derive, a sibling call
+    // naming the specialization's own member.
+    let source = include_str!("../assets/ok/template_value_keyed_struct.mojo");
+    let expected = "3 18 6\n2 20 10\n3751\n";
+    let compiler = Compiler::default();
+    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
+    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
+    assert_eq!(
+        compiler.execute(&derived).expect("execute").output,
+        expected
+    );
+    assert_eq!(
+        compiler.execute(&verified).expect("execute").output,
+        expected
+    );
+    let stats = derived.template_stats();
+    for member in [
+        "Tally$dint32;.add_twice",
+        "Tally$dfloat64;.mean",
+        "Salted$vuint64:2;[i1;i2;].__init__",
+        "Salted$vuint64:2;[i1;i2;].mix_pair",
+    ] {
+        assert!(
+            stats.derived.iter().any(|name| name == member),
+            "{member} derives; refused: {:?}",
+            stats.refused
+        );
+    }
+    assert!(
+        stats
+            .inferred_clones
+            .iter()
+            .all(|name| !name.starts_with("Tally$") && !name.starts_with("Salted$")),
+        "no member is inferred: {:?}",
+        stats.inferred_clones
+    );
+}
+
+#[test]
+fn template_value_keyed_struct_member_without_a_verdict_keeps_the_clone_check() {
+    // A member the symbolic check cannot type (`Pair64(3, 5)`, a vector
+    // alias called as a constructor) gets no verdict rather than an error,
+    // and one outside the method grammar (`Int(self.value)` over the
+    // symbolic lane) is not certified: both are checked per specialization.
+    let source = "comptime Pair64 = SIMD[DType.uint64, 2]\n\n\n\
+        struct Lane[dt: DType](Copyable, Movable):\n\
+        \x20   var value: Scalar[Self.dt]\n\n\
+        \x20   def __init__(out self, value: Int):\n\
+        \x20       self.value = Scalar[Self.dt](value)\n\n\
+        \x20   def widened(self) -> Int:\n\
+        \x20       return Int(self.value) * 2\n\n\n\
+        struct Seeded[key: Pair64](Copyable, Movable):\n\
+        \x20   var first: UInt64\n\n\
+        \x20   def __init__(out self):\n\
+        \x20       var mixed = Self.key ^ Pair64(3, 5)\n\
+        \x20       self.first = mixed[0]\n\n\n\
+        def main():\n\
+        \x20   print(Lane[DType.int16](21).widened())\n\
+        \x20   print(Seeded[Pair64(1, 2)]().first)\n";
+    let compiler = Compiler::default();
+    let program = compile_entry(&compiler.clone().with_template_verification(true), source);
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "42\n2\n"
+    );
+    let stats = program.template_stats();
+    assert!(
+        stats
+            .no_verdict
+            .iter()
+            .any(|(name, _)| name.ends_with("Seeded.__init__")),
+        "the vector alias constructor ends validation without a verdict: {:?}",
+        stats.no_verdict
+    );
+    for member in ["Lane$dint16;.widened", "Seeded$vuint64:2;[i1;i2;].__init__"] {
+        assert!(
+            stats.inferred_clones.iter().any(|name| name == member),
+            "{member} keeps the clone check: {:?}",
+            stats.inferred_clones
+        );
+    }
+}
+
+#[test]
 fn template_method_struct_binder_construction_keeps_the_clone_check() {
     // A struct binder's construction (`Self.H()`) builds another type under
     // each instance, so the body stays outside the class.

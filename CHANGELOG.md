@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct keyed on a `DType` or vector value, which the elaborator
+  specializes whole per value, now has every member checked once by source
+  validation with the value symbolic, and each specialization's members
+  reuse those facts, the bundled `AHasher`'s SIMD leaves and the ranges'
+  `__iter__` included. Such members used to be checked again per
+  specialization, since no template was kept for them.
 - A `Hasher`'s `_update_with_simd(mut self, value: SIMD[_, _])` is now
   checked once by source validation, with the wildcard parameter viewed as
   a lane-shaped vector, and every per-call leaf clone reuses those facts,

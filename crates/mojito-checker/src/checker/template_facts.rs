@@ -1098,8 +1098,16 @@ impl Checker {
                 }));
         let baked = ((trace.residual.is_empty() && !site.residual_binders) || kept_binders)
             && match class {
+                // A value-keyed struct specialized whole folds its own
+                // values, which `instance_substitution` binds; a method's own
+                // value binder is folded by no recipe.
                 TemplateClass::MethodScalarBody | TemplateClass::MethodBody(_) => {
                     trace.value_bindings.is_empty()
+                        || (matches!(&site.receiver_arguments, Some(arguments) if arguments.is_empty())
+                            && matches!(site.declaration, BodyDeclaration::Method(method)
+                            if trace.value_bindings.iter().all(|(name, _)| {
+                                method.type_params.iter().all(|binder| binder.name != *name)
+                            })))
                 }
                 // The folded values selected the arms, or are read as the
                 // literals each occurrence folded to (`folded_literals`). A
@@ -1474,8 +1482,10 @@ impl Checker {
             values,
         } = instance;
         // A closed public `Tuple` names the specialization the clone check
-        // selects for it (`canonicalize_public_tuple_types`).
-        let canonical = |ty: Ty| self.canonicalize_public_tuple_types(ty);
+        // selects for it (`canonicalize_public_tuple_types`), and so does a
+        // value-keyed struct at closed values (`specialized_value_structs`).
+        let canonical =
+            |ty: Ty| self.specialized_value_structs(&self.canonicalize_public_tuple_types(ty));
         let substitute = |ty: &Ty| {
             canonical(mojito_types::types::substitute_packs(
                 &fold_binder_views(ty, views),
@@ -1685,16 +1695,8 @@ impl Checker {
         Self::realize_comprehension_bindings(&mut facts, &substitute);
         Self::realize_nested_defs(&mut facts, &substitute);
         self.realize_tuple_unpacks(&mut facts, &substitute)?;
-        facts.struct_applications = template
-            .struct_applications
-            .iter()
-            .map(|(name, arguments)| {
-                (
-                    name.clone(),
-                    mojito_types::types::map_tyargs(arguments, &substitute),
-                )
-            })
-            .collect();
+        facts.struct_applications =
+            self.instance_struct_applications(template, instance, &substitute);
         // A call through a bound is realized first: a built-in instance
         // drops it from the calls, and a struct instance gives it a nominal
         // target the closed-call recipe then leaves as it stands.
@@ -1822,6 +1824,83 @@ impl Checker {
         leaves.extend_from_slice(&self.hash_leaf_demands.borrow()[demands..]);
         facts.hash_leaves = canonical_hash_leaves(leaves);
         Ok(facts)
+    }
+
+    /// The generic-struct applications a template reached, substituted for
+    /// an instance. A value-keyed struct's application at the instance's
+    /// values names the specialization the elaborator minted, which the
+    /// clone check records no application of.
+    fn instance_struct_applications(
+        &self,
+        template: &CheckedBodyFacts,
+        InstanceSubstitution {
+            types,
+            packs,
+            values,
+            ..
+        }: &InstanceSubstitution,
+        substitute: &dyn Fn(&Ty) -> Ty,
+    ) -> Vec<(String, Vec<mojito_types::types::TyArg>)> {
+        template
+            .struct_applications
+            .iter()
+            .filter(|(name, arguments)| {
+                let application = mojito_types::types::substitute_packs(
+                    &Ty::Struct(name.clone(), arguments.clone()),
+                    types,
+                    packs,
+                    values,
+                );
+                !matches!(self.specialized_value_structs(&application),
+                    Ty::Struct(specialization, _) if specialization != *name)
+            })
+            .map(|(name, arguments)| {
+                (
+                    name.clone(),
+                    mojito_types::types::map_tyargs(arguments, substitute),
+                )
+            })
+            .collect()
+    }
+
+    /// `ty` with every application of a value-keyed struct at closed values
+    /// (`_StridedRange[DType.int]`) named as the specialization the
+    /// elaborator minted for it (`_StridedRange$dint;`), which is the type
+    /// the clone check reads. An application with no minted specialization
+    /// is left as it is.
+    fn specialized_value_structs(&self, ty: &Ty) -> Ty {
+        struct Specialized<'a>(&'a Checker);
+
+        impl mojito_types::types::TyRewrite for Specialized<'_> {
+            fn whole(&mut self, ty: &Ty) -> Option<Ty> {
+                let Ty::Struct(name, arguments) = ty else {
+                    return None;
+                };
+                let values = arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        mojito_types::types::TyArg::Val(value) => Some(value.clone()),
+                        _ => None,
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .filter(|values| !values.is_empty())?;
+                let mangled = mojito_symbol::symbol::mangle(name, &values).ok()?;
+                self.0
+                    .structs
+                    .contains_key(&mangled)
+                    .then(|| Ty::Struct(mangled, Vec::new()))
+            }
+
+            fn expr(
+                &mut self,
+                expr: &mojito_types::param_expr::ParamExpr,
+            ) -> Result<mojito_types::param_expr::ParamExpr, mojito_types::param_expr::ParamError>
+            {
+                Ok(expr.clone())
+            }
+        }
+
+        mojito_types::types::rewrite_ty(ty, &mut Specialized(self)).unwrap_or_else(|_| ty.clone())
     }
 
     /// A retained type under an instance's arguments, naming the generated
@@ -2116,7 +2195,8 @@ impl Checker {
 
     /// Rewrite one method call's contract for an instance whose receiver is
     /// the struct `owner` under `arguments`: the target is the instance's
-    /// clone of the selected declaration, where one exists, and the result,
+    /// clone of the selected declaration, where one exists, or the copy a
+    /// struct specialized whole holds of it, and the result,
     /// raised, parameter, and referent types substitute. `None` where the template
     /// already selected the receiver's clone, whose contract stands.
     fn realize_method_contract(
@@ -2137,6 +2217,15 @@ impl Checker {
             .get(method)
             .ok_or("a called method is missing")?;
         let self_ty = self.self_instance_ty(owner);
+        // A struct specialized whole (`AHasher$…`) holds its own copy of
+        // each member the template selected on the template struct
+        // (`AHasher._update`).
+        let selected_owner = selected
+            .split_once('.')
+            .map(|(selected_owner, _)| selected_owner)
+            .filter(|selected_owner| {
+                *selected_owner != owner && owner.starts_with(&format!("{selected_owner}$"))
+            });
         let clone_name =
             mojito_symbol::symbol::instance_method_clone_name(method, &info.decls, arguments);
         // A receiver whose type was already closed in the template (`List[Pair]`)
@@ -2153,7 +2242,7 @@ impl Checker {
                 .iter()
                 .find(|member| {
                     super::overload_support::method_lowered_name(
-                        owner,
+                        selected_owner.unwrap_or(owner),
                         method,
                         member,
                         self_ty.as_ref(),
@@ -2220,7 +2309,27 @@ impl Checker {
                     return Err("a called method is unavailable at the instance");
                 }
             }
-            selected.clone()
+            match selected_owner.and_then(|selected_owner| selected.strip_prefix(selected_owner)) {
+                Some(member) => {
+                    let target = format!("{owner}{member}");
+                    let declared_here = match family.as_slice() {
+                        [_] => target == format!("{owner}.{method}"),
+                        members => members.iter().any(|candidate| {
+                            super::overload_support::method_lowered_name(
+                                owner,
+                                method,
+                                candidate,
+                                self_ty.as_ref(),
+                            ) == target
+                        }),
+                    };
+                    if !declared_here {
+                        return Err("a specialized struct does not declare the selected member");
+                    }
+                    target
+                }
+                None => selected.clone(),
+            }
         };
         // The callee has no binders of its own, so its parameter types were
         // recorded at the receiver's arguments: in the caller's binder scope,
@@ -3459,6 +3568,10 @@ impl Checker {
         // the struct is specialized whole, its receiver's arguments are the
         // pack's elements, and an element the body reads by loop index is
         // fixed by the unrolling. Only source validation checks such a body.
+        // A `DType` or vector value binder (`_SequentialRange[dtype]`,
+        // `AHasher[key]`) keys a struct specialized whole: only source
+        // validation checks its members, and each specialization's member
+        // folds the values its trace names.
         let plain_struct = decls.iter().all(|decl| {
             matches!(
                 decl,
@@ -3477,6 +3590,9 @@ impl Checker {
                     }
                 ))
                 || matches!(decl, ParamDecl::Value { ty, variadic: false, .. } if closed_scalar(ty))
+                || (self.source_validation
+                    && matches!(decl, ParamDecl::Value { ty, variadic: false, .. }
+                        if matches!(**ty, Ty::Dtype | Ty::Simd { .. })))
         });
         if !plain_struct {
             return outside("a struct parameter is not a plain type or scalar value parameter");

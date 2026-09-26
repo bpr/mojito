@@ -90,7 +90,11 @@ pub fn check_program(stmts: &[Stmt]) -> Result<mojito_checked::checked::CheckedP
 /// holding a `rebind` is checked the same way and for the same reason — it
 /// too is stubbed as a template, and its target is taken on faith here,
 /// asserted on each clone (`rebind::rebind_keyed_bodies`, scanned before the
-/// erasure removes the calls). Bodies with neither are declared (so the
+/// erasure removes the calls). Every method body of a struct keyed on a
+/// `DType` or vector value (`_SequentialRange[dtype]`, `AHasher[key]`) is
+/// checked too, since the elaborator specializes such a struct whole and
+/// drops its template; one this check cannot type gets no verdict, and its
+/// specializations keep their own check. Other bodies are declared (so the
 /// validated bodies can call them) but not checked here — the executable
 /// check covers them.
 ///
@@ -100,9 +104,8 @@ pub fn check_program(stmts: &[Stmt]) -> Result<mojito_checked::checked::CheckedP
 /// is the only place its abandoned values are seen with `T` symbolic.
 ///
 /// Validation produces no other checked facts: the checker it runs is
-/// discarded, so nothing recorded for an untaken arm can reach lowering. Bodies that
-/// only check concretely — one keyed on a `DType`/vector value parameter, or
-/// one reading a reflection handle — keep their per-instantiation check. A
+/// discarded, so nothing recorded for an untaken arm can reach lowering. A body
+/// reading a reflection handle keeps its per-instantiation check. A
 /// member of a template-shell struct (a `DType`-keyed `Vec[DType.float64](…)`)
 /// has no symbolic signature here, so reaching one ends validation without a
 /// verdict and leaves the program to the executable check.

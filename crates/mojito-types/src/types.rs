@@ -2379,7 +2379,8 @@ pub fn struct_argument_substitution(decls: &[ParamDecl], arguments: &[TyArg]) ->
 /// the argument list it spreads. A dependent type is replaced under every
 /// binding — a pack's elements, a value binder such as an unrolled `comptime
 /// for`'s index — and folds to the type it then denotes, so `Ts[i]` at
-/// `Ts = [Int, Bool]`, `i = 1` is `Bool`.
+/// `Ts = [Int, Bool]`, `i = 1` is `Bool`. A lane slot or a struct's value
+/// argument naming a value binder closes the same way.
 pub fn substitute_packs<S: std::hash::BuildHasher>(
     ty: &Ty,
     subst: &TySubst,
@@ -3383,10 +3384,23 @@ fn expand_packs<S: std::hash::BuildHasher>(
             |elements| Ty::Tuple(elements.clone()),
         ),
         Ty::Struct(name, arguments) => {
-            let arguments = match pack_spread_argument(arguments).and_then(elements_of) {
+            let mut arguments = match pack_spread_argument(arguments).and_then(elements_of) {
                 Some(elements) => elements.iter().cloned().map(TyArg::Ty).collect(),
                 None => map_tyargs(arguments, recurse),
             };
+            // A value argument naming a folded value binder closes
+            // (`_StridedRange[dtype]` at `dtype = DType.int`).
+            if !values.is_empty() {
+                let context = ParamContext::detached();
+                let bindings = pack_bindings(&context, subst, packs, values);
+                for argument in &mut arguments {
+                    if let TyArg::Val(value) = argument
+                        && let Ok(closed) = replace_value_parameters(&context, value, &bindings)
+                    {
+                        *value = closed;
+                    }
+                }
+            }
             Ty::Struct(name.clone(), arguments)
         }
         Ty::Tuple(list) => Ty::Tuple(expand(list)),

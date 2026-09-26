@@ -25,25 +25,28 @@ pub(super) struct ForwardedPack {
 
 impl Checker {
     /// Check the method bodies of a struct that hold compile-time control
-    /// flow, each with `self` bound at the struct's own parameters.
+    /// flow, each with `self` bound at the struct's own parameters, and
+    /// every method body of a value-keyed struct (`value_keyed_struct`).
     pub(super) fn validate_comptime_method_bodies(
         &mut self,
         declaration: &StructDeclaration<'_>,
         self_ty: &Ty,
     ) -> Result<(), TypeError> {
         let mut overload_indices = HashMap::<String, usize>::new();
+        let value_keyed = value_keyed_struct(&self.self_decls);
         for (method_index, m) in declaration.methods.iter().enumerate() {
             let method_name = lifecycle_method_name(m).to_string();
             let overload_index = *overload_indices.entry(method_name.clone()).or_default();
             *overload_indices
                 .get_mut(&method_name)
                 .expect("inserted above") += 1;
-            if !validates_body(
+            let validated = validates_body(
                 declaration.type_params,
                 &m.type_params,
                 &m.body,
                 body_keys_rebind(&m.body, &self.rebind_keyed_bodies),
-            ) {
+            );
+            if !(validated || value_keyed) {
                 continue;
             }
             let scopes = self.scopes.len();
@@ -56,6 +59,15 @@ impl Checker {
                 method_index,
                 overload_index,
             );
+            // A value-keyed member is validated only to produce its
+            // template: each specialization is still checked, or derived,
+            // so a body the symbolic check cannot type gets no verdict.
+            let checked = match checked {
+                Err(error) if !validated && !matches!(error, TypeError::SymbolicBoundary(_)) => {
+                    Err(TypeError::SymbolicBoundary(error.to_string()))
+                }
+                checked => checked,
+            };
             self.symbolic_verdict(
                 &format!("{}.{method_name}", declaration.name),
                 &m.body,
@@ -1124,6 +1136,40 @@ pub(super) fn count_template_classes(stmts: &[Stmt], rebind_keyed: &HashSet<Sour
             _ => None,
         })
         .collect();
+    // A module alias of a vector type (`comptime U256 = SIMD[...]`) types a
+    // vector value parameter as the spelled `SIMD` does.
+    let vector_aliases: HashSet<&str> = stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            StmtKind::Comptime {
+                name,
+                type_params,
+                value,
+                ..
+            } if type_params.is_empty()
+                && matches!(&value.kind, ExprKind::TypeApply { name, .. } if name == "SIMD") =>
+            {
+                Some(name.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    let value_keyed = |type_params: &[mojito_ast::ast::TypeParam]| {
+        let keyed = |parameter: &mojito_ast::ast::TypeParam| {
+            matches!(parameter.bounds.as_slice(), [only]
+                if only == "DType" || vector_aliases.contains(only.as_str()))
+                || matches!(&parameter.value_type,
+                    Some(mojito_ast::ast::Type::Named(name, _)) if name == "SIMD")
+        };
+        let scalar = |parameter: &mojito_ast::ast::TypeParam| {
+            matches!(parameter.bounds.as_slice(), [only]
+                if matches!(only.as_str(), "Int" | "UInt" | "Bool" | "Float64"))
+        };
+        type_params.iter().any(keyed)
+            && type_params
+                .iter()
+                .all(|parameter| keyed(parameter) || scalar(parameter))
+    };
     let body_class = |enclosing: &[mojito_ast::ast::TypeParam],
                       type_params: &[mojito_ast::ast::TypeParam],
                       body: &[Stmt]| {
@@ -1159,6 +1205,8 @@ pub(super) fn count_template_classes(stmts: &[Stmt], rebind_keyed: &HashSet<Sour
                 for method in methods {
                     let class = if shell {
                         TemplateClass::ConcreteOnly
+                    } else if value_keyed(type_params) {
+                        TemplateClass::ValidatedKeyed
                     } else {
                         body_class(type_params, &method.type_params, &method.body)
                     };
@@ -1243,6 +1291,25 @@ pub(super) fn validates_body(
         || is_variadic_template(type_params)
         || is_variadic_template(enclosing)
         || type_params.iter().any(simd_wildcard_binder)
+}
+
+/// Whether a struct's binders are all compile-time values and one is a
+/// `DType` or a vector (`_SequentialRange[dtype: DType]`,
+/// `AHasher[key: U256]`): the elaborator specializes such a struct whole per
+/// value and drops its template, so source validation checks every method
+/// body with the values symbolic.
+pub(super) fn value_keyed_struct(decls: &[ParamDecl]) -> bool {
+    decls.iter().all(|decl| {
+        matches!(
+            decl,
+            ParamDecl::Value {
+                variadic: false,
+                ..
+            }
+        )
+    }) && decls.iter().any(|decl| {
+        matches!(decl, ParamDecl::Value { ty, .. } if matches!(**ty, Ty::Dtype | Ty::Simd { .. }))
+    })
 }
 
 /// Whether a block holds a `comptime if`/`comptime for` anywhere below it,

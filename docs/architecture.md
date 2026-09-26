@@ -438,7 +438,11 @@ selected — so a type error in an untaken arm rejects as upstream rejects it,
 a guard such as `T == Int` narrows nothing, and an unused template still
 checks. A `rebind` takes its target on faith here, where the operand's type
 is still symbolic, exactly as upstream does; the equality is asserted on each
-clone. Bodies without such constructs are declared but left to the
+clone. Every method body of a struct keyed on a `DType` or vector value
+(`value_keyed_struct`), which the elaborator specializes whole and drops, is
+checked the same way, to produce its template only: a body this check cannot
+type gets no verdict, and its specializations keep their own check. Bodies
+without such constructs are declared but left to the
 executable check; a struct keyed on a struct-typed value parameter registers
 as a template shell and keeps its per-instantiation check. Validation then runs the
 explicit-destruction analysis over exactly those bodies
@@ -1492,7 +1496,8 @@ and its soundness argument, is
   mechanism through one `BodySite` (`check_def_body`, `check_method_body`).
 - **One producer per body.** The executable check retains the template of a
   trait-bound generic that survives elaboration. Source validation retains
-  the template of a body it checks and the elaborator then stubs.
+  the template of a body it checks and the elaborator then stubs or drops,
+  a member of a struct keyed on a `DType` or vector value among them.
 - **Capture is total or it refuses.** `FactTable` enumerates every
   occurrence-keyed fact table. A body that recorded into a table without a
   derivation recipe, keyed a fact outside its own occurrences, grew a store

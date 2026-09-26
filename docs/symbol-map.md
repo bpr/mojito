@@ -286,7 +286,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `bind_local_comptime` binds function-local `comptime` aliases and
   compile-time-only values, `struct_valued_template` and `validates_body`
   draw the per-instantiation boundary (struct-value template shells; a
-  body keyed on the `Hasher` wildcard vector binder is validated),
+  body keyed on the `Hasher` wildcard vector binder is validated), and
+  `value_keyed_struct` names a struct keyed on a `DType` or vector value,
+  every member of which is validated, with no verdict where it cannot be
+  typed,
   `conformance_arm_assumptions` collects what a `comptime if`'s
   `conforms_to` atoms prove for the arm `statements.rs:check_conditional`
   guards with them, and `is_template_shell_member_error` names the errors
@@ -353,9 +356,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   lane-shaped vector, `instance_substitution` folds a wildcard vector
   binder's hidden slots (`simd_binder_values`, `fold_binder_views`), and
   `realize_simd_intrinsics` records each instance's reinterpretation and
-  lane-count shapes.
+  lane-count shapes. `specialized_value_structs` names a value-keyed struct
+  at closed values as the specialization the elaborator minted.
   `realize_method_call` retargets a closed method call to the clone member
-  `declarations.rs:method_clone_target` finds (the helper
+  `declarations.rs:method_clone_target` finds, or to the copy a struct
+  specialized whole holds of the member the template selected (the helper
   `constructor_clone_target` shares; its `realize_method_contract` half also
   realizes an element store's embedded value getter,
   `realize_element_getters`, and `realize_element_dunders` re-selects an
@@ -462,7 +467,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   and `MethodInstanceTrace`, recorded by `generate_instance_clones`, by
   `per_call_method_clones` (`trace_per_call_clone`) for a per-call clone,
   and by `generate_struct_spec` and `generate_value_struct_spec`
-  (`trace_struct_members`) for a member of a struct specialized whole;
+  (`trace_struct_members`) for a member of a struct specialized whole, the
+  latter completing its per-call leaves' traces (`restamp_leaf_traces`);
   `GeneratedDeclarations` lists what an elaboration generated; the
   occurrence-level trace is `ast.rs:rekey_syntax`'s `SyntaxOrigins` (which
   traces a `mojito-common` `token.rs:SyntaxId::derived` node through its
