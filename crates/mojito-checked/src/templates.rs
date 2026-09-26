@@ -917,6 +917,10 @@ impl MethodFeatures {
     /// lane count are the instance's substituted shape, which it records
     /// itself where the template's stayed open.
     pub const SIMD_INTRINSICS: Self = Self(1 << 37);
+    /// A scalar value binder of the method's own (`scaled[n: Int]`): every
+    /// per-call clone folds it to a literal, which keeps the identifier's
+    /// identity and takes a literal's facts, as a value-keyed `def`'s does.
+    pub const VALUE_BINDERS: Self = Self(1 << 38);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {

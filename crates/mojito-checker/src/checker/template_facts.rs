@@ -250,6 +250,10 @@ struct InstanceSubstitution {
     /// Each folded value binder's value, which a lane dtype or width the
     /// template left open takes (`SIMD[DType.int32, w]`).
     values: Vec<(mojito_types::param_expr::ParamId, mojito_types::ct::CtValue)>,
+    /// The method's own value binders a per-instantiation clone keeps
+    /// symbolic (`VALUE_BINDERS`): an occurrence reading one is bound to
+    /// the clone's own compile-time parameter of that name.
+    kept_values: Vec<String>,
 }
 
 /// The loop index each pack-element occurrence of an instance was copied
@@ -1084,23 +1088,32 @@ impl Checker {
         // binder, or folds a value, is outside them.
         // An origin binder and a trait-bounded type binder are the
         // exceptions: a clone keeps each, bound symbolically as the
-        // template's is, and no fact substitutes it.
+        // template's is, and no fact substitutes it. So is a method's own
+        // scalar value binder (`VALUE_BINDERS`), which the parser spells as
+        // a bound (`n: Int`): a per-instantiation clone keeps it, and an
+        // occurrence reading it is bound to the clone's own parameter.
         let kept_binders = matches!(class, TemplateClass::MethodBody(features)
                 if features.contains(MethodFeatures::ORIGIN_PARAMETERS)
-                    || features.contains(MethodFeatures::BOUND_BINDERS))
+                    || features.contains(MethodFeatures::BOUND_BINDERS)
+                    || features.contains(MethodFeatures::VALUE_BINDERS))
             && matches!(site.declaration, BodyDeclaration::Method(method)
-            if method
-                .type_params
-                .iter()
-                .all(|binder| origin_binder(binder) || bound_binder(binder))
+            if method.type_params.iter().all(|binder| {
+                origin_binder(binder) || bound_binder(binder)
+            })
                 && trace.residual.iter().all(|name| {
                     method.type_params.iter().any(|binder| binder.name == *name)
                 }));
         let baked = ((trace.residual.is_empty() && !site.residual_binders) || kept_binders)
             && match class {
                 // A value-keyed struct specialized whole folds its own
-                // values, which `instance_substitution` binds; a method's own
-                // value binder is folded by no recipe.
+                // values, and a per-call clone its method's own, which
+                // `instance_substitution` binds and the occurrences read as
+                // the literals they folded to (`folded_literals`).
+                TemplateClass::MethodBody(features)
+                    if features.contains(MethodFeatures::VALUE_BINDERS) =>
+                {
+                    true
+                }
                 TemplateClass::MethodScalarBody | TemplateClass::MethodBody(_) => {
                     trace.value_bindings.is_empty()
                         || (matches!(&site.receiver_arguments, Some(arguments) if arguments.is_empty())
@@ -1331,6 +1344,7 @@ impl Checker {
                 packs,
                 views,
                 values,
+                kept_values: Vec::new(),
             });
         };
         if site.role == BodyRole::Template {
@@ -1339,6 +1353,7 @@ impl Checker {
                 packs: HashMap::new(),
                 views: Vec::new(),
                 values: Vec::new(),
+                kept_values: Vec::new(),
             });
         }
         let unresolved = || {
@@ -1349,7 +1364,7 @@ impl Checker {
         // The declarations are the struct's binders followed by the method's
         // own. A per-instantiation clone keeps its own symbolic
         // (`BOUND_BINDERS`); a per-call clone bakes them, and its trace
-        // names the source type or element list written for each. A member
+        // names the source type, element list, or value written for each. A member
         // of a variadic struct specialized whole (`Tuple$t2[String, Int]`)
         // has the pack's elements as its receiver's arguments, as many as its
         // trace names; a specialization whose receiver carries none (a user
@@ -1378,6 +1393,7 @@ impl Checker {
         let mut packs = HashMap::new();
         let mut views = Vec::new();
         let mut values = Vec::new();
+        let mut kept_values = Vec::new();
         match struct_decls {
             [
                 ParamDecl::Type {
@@ -1441,6 +1457,20 @@ impl Checker {
             {
                 let elements = sources.iter().map(resolve).collect::<Result<_, _>>()?;
                 packs.insert(decl.id().clone(), elements);
+            } else if let Some((_, value)) = trace
+                .value_bindings
+                .iter()
+                .find(|(bound, _)| bound == name)
+                .filter(|_| matches!(decl, ParamDecl::Value { .. }))
+            {
+                values.push((decl.id().clone(), value.clone()));
+            } else if matches!(decl, ParamDecl::Value { .. })
+                && site
+                    .declaration
+                    .type_params()
+                    .is_some_and(|binders| binders.iter().any(|binder| binder.name == name))
+            {
+                kept_values.push(name.to_string());
             } else if !matches!(decl, ParamDecl::Type { bounds, .. } if !bounds.is_empty()) {
                 return Err(unresolved());
             }
@@ -1450,6 +1480,7 @@ impl Checker {
             packs,
             views,
             values,
+            kept_values,
         })
     }
 
@@ -1480,6 +1511,7 @@ impl Checker {
             packs,
             views,
             values,
+            kept_values,
         } = instance;
         // A closed public `Tuple` names the specialization the clone check
         // selects for it (`canonicalize_public_tuple_types`), and so does a
@@ -1656,7 +1688,7 @@ impl Checker {
         }
         facts.truthiness_conditions = truthiness;
         renumber_locals(&mut facts)?;
-        let folded = |owner: &TemplateOwner| matches!(owner, TemplateOwner::CompileTimeParam(_));
+        let folded = |owner: &TemplateOwner| matches!(owner, TemplateOwner::CompileTimeParam(name) if !kept_values.contains(name));
         if facts
             .expression_bindings
             .iter()
@@ -3127,6 +3159,7 @@ impl Checker {
                     ParamDecl::Type { .. } => None,
                 })
                 .collect(),
+            struct_values: Vec::new(),
             print_calls: RefCell::new(Vec::new()),
             nested_depth: std::cell::Cell::new(0),
             borrowed_params: Vec::new(),
@@ -3548,7 +3581,17 @@ impl Checker {
         // baked by every clone; only source validation sees its body, with
         // the parameter viewed as a lane-shaped vector (`simd_binder_view`),
         // and the elaborated program holds a trap stub in its place.
+        // A scalar value binder of the method's own (`[n: Int]`) is folded
+        // by every per-call clone, as a value-keyed `def`'s is.
         let simd_binders = method.type_params.iter().any(simd_wildcard_binder);
+        let Some(value_binders) =
+            method_value_binders(method, &decls[self.self_decls.len().min(decls.len())..])
+        else {
+            return outside("a method's own value binder is not an 'Int' or 'Bool'");
+        };
+        let bound_type_binder = |binder: &mojito_ast::ast::TypeParam| {
+            bound_binder(binder) && !value_binders.contains(&binder.name.as_str())
+        };
         if !method.type_params.iter().all(|binder| {
             origin_binder(binder)
                 || bound_binder(binder)
@@ -3556,7 +3599,8 @@ impl Checker {
         }) || !(method.decorators.is_empty() || is_static)
         {
             return outside(
-                "the method has binders other than origins and bounded types, or decorators",
+                "the method has binders other than origins, bounded types, and scalar values, \
+                 or decorators",
             );
         }
         let raises = method.raises || method.raises_type.is_some();
@@ -3630,7 +3674,7 @@ impl Checker {
                 .params
                 .iter()
                 .any(|parameter| parameter.origin.is_some());
-        let bound_binders = method.type_params.iter().any(bound_binder);
+        let bound_binders = method.type_params.iter().any(bound_type_binder);
         let params_passed = |conventions: &[ArgConvention]| {
             method
                 .params
@@ -3677,9 +3721,8 @@ impl Checker {
                 .iter()
                 .any(|decl| matches!(decl, ParamDecl::Type { variadic: true, .. })),
             loop_vars: RefCell::new(Vec::new()),
-            // `derive` refuses a method clone that folds a value, so no
-            // method body reads one as a literal.
-            values: Vec::new(),
+            values: value_binders.clone(),
+            struct_values: Vec::new(),
             print_calls: RefCell::new(Vec::new()),
             nested_depth: std::cell::Cell::new(0),
             borrowed_params: params_passed(&[ArgConvention::Mut, ArgConvention::Ref]),
@@ -3708,6 +3751,11 @@ impl Checker {
                         .union(MethodFeatures::STATEMENTS)
                         .union(MethodFeatures::SIMD_BINDERS);
                 }
+                if !value_binders.is_empty() {
+                    features = features
+                        .union(MethodFeatures::STATEMENTS)
+                        .union(MethodFeatures::VALUE_BINDERS);
+                }
                 if raises {
                     features = features
                         .union(MethodFeatures::STATEMENTS)
@@ -3727,7 +3775,7 @@ impl Checker {
             binders: method
                 .type_params
                 .iter()
-                .filter(|binder| bound_binder(binder))
+                .filter(|binder| bound_type_binder(binder))
                 .map(|binder| binder.name.as_str())
                 .collect(),
             struct_binders: self.self_decls.iter().map(ParamDecl::id).collect(),
@@ -4749,9 +4797,12 @@ impl Checker {
             TemplateOwner::Receiver => param_owners
                 .receiver
                 .ok_or_else(|| corrupt("the receiver binding")),
-            TemplateOwner::CompileTimeParam(_) => {
-                Err(corrupt("the fold of a compile-time parameter"))
-            }
+            TemplateOwner::CompileTimeParam(name) => param_owners
+                .compile_time
+                .iter()
+                .find(|(kept, _)| kept == name)
+                .map(|(_, owner)| *owner)
+                .ok_or_else(|| corrupt("the fold of a compile-time parameter")),
             TemplateOwner::Local(index) => Ok(OwnerId(local_start + index)),
             TemplateOwner::Global(name) => self
                 .owner_scopes
@@ -6585,6 +6636,37 @@ fn bound_binder(binder: &mojito_ast::ast::TypeParam) -> bool {
         && !binder.infer_only
 }
 
+/// The names of a method's own scalar value binders (`[n: Int]`), given its
+/// own declarations, or `None` when one is not a plain `Int` or `Bool`. The
+/// parser spells such a binder's type as a bound (`n: Int`), so only its
+/// declaration tells it from a trait-bounded type binder ([`bound_binder`]).
+fn method_value_binders<'m>(
+    method: &'m mojito_ast::ast::Method,
+    own_decls: &[ParamDecl],
+) -> Option<Vec<&'m str>> {
+    method
+        .type_params
+        .iter()
+        .filter_map(|binder| {
+            own_decls
+                .iter()
+                .find(|decl| decl.name().trim_start_matches('*') == binder.name)
+                .filter(|decl| matches!(decl, ParamDecl::Value { .. }))
+                .map(|decl| (binder, decl))
+        })
+        .map(|(binder, decl)| {
+            matches!(decl, ParamDecl::Value {
+                ty,
+                default: None,
+                infer_only: false,
+                variadic: false,
+                ..
+            } if matches!(**ty, Ty::Int | Ty::Bool))
+            .then_some(binder.name.as_str())
+        })
+        .collect()
+}
+
 /// Whether every origin a type argument names sits in a struct origin tail
 /// bound to a binder (`Span[Int, __clone_origin0]`), with no pointer or
 /// reference beside it: the loans such a value carries are exactly those
@@ -7147,6 +7229,7 @@ fn substituted_facts(
         packs,
         views,
         values,
+        ..
     }: &InstanceSubstitution,
     indices: &ElementIndices,
     canonical: &dyn Fn(Ty) -> Ty,
@@ -7463,8 +7546,12 @@ struct BodyShape<'a> {
     /// The `comptime for` variables in scope, innermost last.
     loop_vars: RefCell<Vec<String>>,
     /// The declaration's scalar value parameters, which the elaborator
-    /// folds to a literal in every instance, as it folds a loop variable.
+    /// folds to a literal in every instance, as it folds a loop variable: a
+    /// `def`'s, or a method's own (`VALUE_BINDERS`).
     values: Vec<&'a str>,
+    /// The struct's scalar value binders a method body reads as
+    /// `Self.<value>` ([`Self::struct_value`]).
+    struct_values: Vec<&'a str>,
     /// The `print(...)` calls admitted, whose arguments an instance proves
     /// `Writable` at its own types.
     print_calls: RefCell<Vec<OccurrenceId>>,
@@ -9546,7 +9633,7 @@ impl BodyShape<'_> {
         self.receiver
             && matches!(&expr.kind, ExprKind::Member { object, field }
                 if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
-                    && self.values.contains(&field.as_str()))
+                    && self.struct_values.contains(&field.as_str()))
     }
 
     /// Whether `expr` is `self` itself in a method body.

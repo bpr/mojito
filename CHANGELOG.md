@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct method keyed on its own `Int` or `Bool` value binder
+  (`def scaled[n: Int](self)`) is now checked once with the value symbolic,
+  and every clone reuses those facts: a per-call clone reads the value as
+  the literal it was folded to, and a per-instantiation clone keeps the
+  binder as its own compile-time parameter. Such clones used to be checked
+  again per call and per instantiation.
 - A struct keyed on a `DType` or vector value, which the elaborator
   specializes whole per value, now has every member checked once by source
   validation with the value symbolic, and each specialization's members
