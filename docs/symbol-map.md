@@ -734,9 +734,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `clone_source_tag` stamps each method clone's body before it is walked, so
   its span-keyed requests find the checker's records for that
   instantiation), the
-  origin-slot guards (`ty_mentions_origin_slotted_struct` keeps such type
-  arguments abstract; `pack_element_source_type` spells erased slots as
-  `_`), and the free-function/`Mono` support code; `Elab`'s remaining
+  origin-slot guards (`ty_mentions_origin_slotted_struct` finds such type
+  arguments; `clone_binding` rebinds a user template's slots to the
+  `CloneOriginBinders` a clone declares, named by
+  `symbol::CLONE_ORIGIN_BINDER_PREFIX`, and `user_template_binds_origins`
+  keeps a bundled template's abstract; `pack_element_source_type` spells
+  erased slots as `_`), and the free-function/`Mono` support code; `Elab`'s remaining
   methods are split across `impl<'a> Elab<'a>` blocks in the submodules
   below (`comptime/elab.rs` holds the root driver's own cluster), and the
   root's helper clusters live in
@@ -773,7 +776,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `StructInstanceRequest`s and by the in-elaboration instance worklist
   `mono.rs` feeds through `instance_template`/`request_instance`; the clone
   carries `ast::Method::self_ty`, which the checker binds `self`/`Self` to
-  and records as `AnnotationSite::MethodSelf` for MIR).
+  and records as `AnnotationSite::MethodSelf` for MIR; the body check reads
+  that record back, and `MethodSig::receiver` keeps it so a call binds the
+  clone's origin binders from its receiver, `bind_clone_receiver_origins` in
+  `checker/origins/construct.rs`).
 - `comptime/nested.rs` owns the lexically scoped specialization of generic
   nested functions (`monomorphize_nested_program`, the `NestedMono` registry,
   its `NESTED_MARKER_INFIX` marker names, and the runtime-pack environment).

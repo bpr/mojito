@@ -57,6 +57,14 @@ pub const DIGITS_BUFFER_BYTES: u64 = 32;
 /// concrete type replaces at run time (`__trait_dispatch.copy$ov$`).
 pub const TRAIT_DISPATCH: &str = "__trait_dispatch";
 
+/// The name prefix of the origin binders a generated clone declares.
+///
+/// They spell the origin slots of a loan-carrying type argument
+/// (`__clone_origin0` and its mutability binder `__clone_origin_mut0` in
+/// `Bag[Span[Int, __clone_origin0]]`), and stand for origins inside the baked
+/// types, not for any template parameter.
+pub const CLONE_ORIGIN_BINDER_PREFIX: &str = "__clone_origin";
+
 /// Whether a `**` on these operand types calls [`POW_INT_SYMBOL`].
 ///
 /// Every pair the native lowering routes to its integer arms does, which is

@@ -1250,7 +1250,11 @@ pub enum TemplateObligation {
     /// loan, holds no reference, and mentions no callable.
     /// A clone check decides outward-store transfer effects, view-result
     /// borrows, and closure escapes on exactly those properties, and a
-    /// template, whose parameter is symbolic, records none of them.
+    /// template, whose parameter is symbolic, records none of them. One
+    /// exception: a clone whose only binders are the elaborator's origin
+    /// binders takes an argument whose loans ride in struct origin tails
+    /// bound to them (`Span[Int, __clone_origin0]`), whose transfers are the
+    /// template's own, replayed under [`Self::ReplayedTransfers`].
     PlainDataArguments,
     /// Every `^` transfer of a value whose type mentioned a parameter must be
     /// of a `Movable` type for the instance. A parameter is always movable

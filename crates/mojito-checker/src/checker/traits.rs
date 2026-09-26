@@ -231,6 +231,7 @@ impl Checker {
                     implicit: false,
                     parametric_origin_writes: Vec::new(),
                     origin_binders: vec![None; regular_params.len()],
+                    receiver: None,
                 };
                 let overloads = sigs.entry(m.name.clone()).or_default();
                 if overloads.iter().any(|existing| {
@@ -769,6 +770,10 @@ impl Checker {
             if let Some(saved) = saved_self_ty {
                 self.self_ty = saved;
             }
+            let signature = signature.map(|(all_types, mut sig)| {
+                sig.receiver.clone_from(&receiver_override);
+                (all_types, sig)
+            });
             if let Some(receiver) = receiver_override {
                 self.declaration_types.borrow_mut().insert(
                     mojito_checked::checked::AnnotationSite::MethodSelf {
@@ -956,10 +961,18 @@ impl Checker {
                 .expect("inserted above") += 1;
             // A per-instantiation clone checks with `self`/`Self` bound to its
             // declared receiver instance rather than the parametric struct.
+            // The signature pass resolved it with the clone's own origin
+            // binders in scope (`Bag[Span[Int, __clone_origin0]]`).
+            let receiver_site = mojito_checked::checked::AnnotationSite::MethodSelf {
+                module: declaration.module.clone(),
+                declaration: name.to_string(),
+                method: method_index,
+            };
+            let recorded_receiver = self.declaration_types.borrow().get(&receiver_site).cloned();
             let receiver_override = m
                 .self_ty
                 .as_ref()
-                .map(|ty| self.ty_from_anno(ty))
+                .map(|ty| recorded_receiver.map_or_else(|| self.ty_from_anno(ty), Ok))
                 .transpose()?;
             let method_self_ty = receiver_override.clone().unwrap_or_else(|| self_ty.clone());
             let method_self_ty_override = receiver_override.clone();
@@ -1136,6 +1149,7 @@ impl Checker {
                         implicit: req_sig.implicit,
                         parametric_origin_writes: req_sig.parametric_origin_writes.clone(),
                         origin_binders: req_sig.origin_binders.clone(),
+                        receiver: None,
                     };
                 if !got_sigs.iter().any(|got| {
                     self.method_satisfies_requirement_under(

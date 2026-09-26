@@ -1065,6 +1065,19 @@ impl Checker {
                             else {
                                 continue;
                             };
+                            let Ok(clone_origins) = self.bind_clone_receiver_origins(
+                                &format!("{sname}.{method}"),
+                                sig,
+                                &obj_ty,
+                                &params,
+                                args,
+                                kwargs,
+                            ) else {
+                                continue;
+                            };
+                            let params = clone_origins.substitute_all(&params);
+                            let variadic =
+                                variadic.map(|element| clone_origins.substitute(&element));
                             let instantiation =
                                 method_instantiation_arguments(sig, &method_arguments);
                             for (decl, argument) in info.decls.iter().zip(targs) {
@@ -1114,12 +1127,14 @@ impl Checker {
                                     keyword_element: kw_variadic.clone(),
                                     conventions: sig.conventions.clone(),
                                     self_convention: sig.self_convention,
-                                    return_type: self.close_pack_elements(
-                                        substitute(
-                                            &substitute_at(&sig.ret, info, targs),
-                                            &method_subst,
+                                    return_type: clone_origins.substitute(
+                                        &self.close_pack_elements(
+                                            substitute(
+                                                &substitute_at(&sig.ret, info, targs),
+                                                &method_subst,
+                                            ),
+                                            &method_arguments,
                                         ),
-                                        &method_arguments,
                                     ),
                                     result_adapter: None,
                                     raises: sig.raises,
@@ -1159,7 +1174,7 @@ impl Checker {
                                     parameter_names: sig.names.clone(),
                                     view_return_interior: sig.view_return_interior.clone(),
                                     view_return: sig.view_return.clone(),
-                                    declared_params: sig.params.clone(),
+                                    declared_params: clone_origins.substitute_all(&sig.params),
                                     param_types: params,
                                     param_decls: sig.decls.clone(),
                                 });

@@ -1098,6 +1098,82 @@ const fn rebuilt(source: &Stmt, kind: StmtKind) -> Stmt {
     }
 }
 
+/// The origin binders one generated clone declares so its baked type
+/// arguments spell their origin slots (`Span[Int, __clone_origin0]`): each an
+/// infer-only `Origin`, preceded by an infer-only `Bool` mutability binder
+/// unless the slot fixes its mutability. A binder's `OriginParamId` counts
+/// down from `u32::MAX`, far above any checker slot index, and spells as its
+/// own name wherever the bound type is spelled (`source_type_from_ty`).
+#[derive(Default)]
+pub(super) struct CloneOriginBinders {
+    count: u32,
+    params: Vec<TypeParam>,
+}
+
+impl CloneOriginBinders {
+    /// The declared binders, in the order a clone lists them first.
+    pub(super) fn params(&self) -> &[TypeParam] {
+        &self.params
+    }
+
+    /// The name a synthetic binder's id spells as.
+    fn name(id: mojito_types::origin::OriginParamId) -> Option<String> {
+        let index = u32::MAX - id.0;
+        (index < Self::LIMIT).then(|| {
+            format!(
+                "{}{index}",
+                mojito_symbol::symbol::CLONE_ORIGIN_BINDER_PREFIX
+            )
+        })
+    }
+
+    const LIMIT: u32 = 1 << 16;
+
+    fn fresh(&mut self, slot_mutability: Option<&Expr>) -> Option<mojito_types::origin::Origin> {
+        let index = self.count;
+        if index >= Self::LIMIT {
+            return None;
+        }
+        self.count += 1;
+        self.params.extend(Self::declared(index, slot_mutability));
+        Some(mojito_types::origin::Origin::Param(
+            mojito_types::origin::OriginParamId(u32::MAX - index),
+        ))
+    }
+
+    /// The binder `index` as declared: its `Bool` mutability binder unless
+    /// the slot fixes the mutability, then the `Origin` itself.
+    fn declared(index: u32, slot_mutability: Option<&Expr>) -> Vec<TypeParam> {
+        let prefix = mojito_symbol::symbol::CLONE_ORIGIN_BINDER_PREFIX;
+        let binder = |name: String, bound: &str, origin_mutability: Option<Expr>| TypeParam {
+            name,
+            bounds: vec![bound.to_string()],
+            value_type: None,
+            callable_bound: None,
+            origin_mutability,
+            infer_only: true,
+            default: None,
+            constraints: Vec::new(),
+        };
+        let mut declared = Vec::new();
+        let mutability = if let Some(ExprKind::Bool(fixed)) =
+            slot_mutability.map(|expression| &expression.kind)
+        {
+            Expr::new(ExprKind::Bool(*fixed), mojito_common::token::DUMMY_SPAN)
+        } else {
+            let name = format!("{prefix}_mut{index}");
+            declared.push(binder(name.clone(), "Bool", None));
+            Expr::new(ExprKind::Identifier(name), mojito_common::token::DUMMY_SPAN)
+        };
+        declared.push(binder(
+            format!("{prefix}{index}"),
+            "Origin",
+            Some(mutability),
+        ));
+        declared
+    }
+}
+
 fn mk(kind: StmtKind, span: Span) -> Stmt {
     Stmt {
         kind,
@@ -1504,6 +1580,15 @@ fn source_type_from_ty_with_origins(
                     // placeholder: a concrete place has no source spelling,
                     // and the slot infers again at the clone's own use sites.
                     TyArg::Origin(origin) => {
+                        // A clone's own origin binder spells as a bare type
+                        // name, which an origin slot reads as the binder: it
+                        // adds no expression the template did not check.
+                        if let mojito_types::origin::Origin::Param(id) = origin
+                            && !origin_names.contains_key(id)
+                            && let Some(binder) = CloneOriginBinders::name(*id)
+                        {
+                            return Some(ParamArg::Type(Type::Named(binder, Vec::new())));
+                        }
                         let spelling = match origin {
                             mojito_types::origin::Origin::Param(id) => origin_names
                                 .get(id)
@@ -1547,6 +1632,73 @@ fn source_type_from_ty_with_origins(
         }
         _ => return None,
     })
+}
+
+impl Elab<'_> {
+    /// Every clone binder `ty`'s struct origin tails name, with the
+    /// mutability its slot declares.
+    fn collect_clone_binders(&self, ty: &Ty, found: &mut Vec<(u32, Option<Expr>)>) {
+        let Ty::Struct(name, arguments) = ty else {
+            return;
+        };
+        let mut slots = self.explicit_origin_slots(name).into_iter();
+        for argument in arguments {
+            match argument {
+                TyArg::Ty(inner) => self.collect_clone_binders(inner, found),
+                TyArg::Origin(origin) => {
+                    let slot = slots.next();
+                    if let mojito_types::origin::Origin::Param(id) = origin
+                        && CloneOriginBinders::name(*id).is_some()
+                    {
+                        found.push((
+                            u32::MAX - id.0,
+                            slot.and_then(|slot| slot.origin_mutability.clone()),
+                        ));
+                    }
+                }
+                TyArg::Val(_) => {}
+            }
+        }
+    }
+
+    /// `ty` with every origin slot of an origin-slotted struct rebound to a
+    /// fresh clone binder; see [`Elab::clone_binding`].
+    fn bind_clone_origins(&self, ty: &Ty, binders: &mut CloneOriginBinders) -> Option<Ty> {
+        let Ty::Struct(name, arguments) = ty else {
+            return (!self.ty_mentions_origin_slotted_struct(ty)).then(|| ty.clone());
+        };
+        let slots = self.explicit_origin_slots(name);
+        let tail = arguments
+            .iter()
+            .filter(|argument| matches!(argument, TyArg::Origin(_)))
+            .count();
+        if tail != slots.len() {
+            return None;
+        }
+        let mut slots = slots.into_iter();
+        let arguments = arguments
+            .iter()
+            .map(|argument| match argument {
+                TyArg::Ty(inner) => self.bind_clone_origins(inner, binders).map(TyArg::Ty),
+                TyArg::Val(value) => (!matches!(value, CtValue::Tuple(elements)
+                    if elements.iter().any(|element| matches!(element,
+                        CtValue::Type(inner) if self.ty_mentions_origin_slotted_struct(inner)))))
+                .then(|| argument.clone()),
+                TyArg::Origin(
+                    mojito_types::origin::Origin::Param(_)
+                    | mojito_types::origin::Origin::SelfParam,
+                ) => None,
+                TyArg::Origin(_) => {
+                    let slot = slots.next()?;
+                    (slot.bounds == ["Origin"])
+                        .then(|| binders.fresh(slot.origin_mutability.as_ref()))
+                        .flatten()
+                        .map(TyArg::Origin)
+                }
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Ty::Struct(name.clone(), arguments))
+    }
 }
 
 fn ct_to_vm(value: &CtValue) -> Result<Value, ComptimeError> {
@@ -2800,30 +2952,100 @@ impl<'a> Elab<'a> {
     }
 
     /// Whether `name` declares an explicit (non-infer-only) `Origin`/
-    /// `OriginSet` parameter — a slot the checker erases from `Ty::Struct`,
-    /// so a type mentioning the struct cannot be spelled concretely in a
-    /// generated clone (`_ListIter[Int]` would omit `iterable_origin`).
+    /// `OriginSet` parameter — a slot a generated clone can spell only as a
+    /// binder of its own (`Elab::clone_binding`).
     pub(super) fn struct_has_explicit_origin_slots(&self, name: &str) -> bool {
-        self.structs.get(name).is_some_and(|declaration| {
-            declaration.source_params.iter().any(|parameter| {
-                !parameter.infer_only
-                    && matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
+        !self.explicit_origin_slots(name).is_empty()
+    }
+
+    /// The explicit (non-infer-only) `Origin`/`OriginSet` parameters of the
+    /// struct `name`, in the order of a `Ty::Struct`'s origin tail.
+    pub(super) fn explicit_origin_slots(&self, name: &str) -> Vec<&'a TypeParam> {
+        self.structs
+            .get(name)
+            .map(|declaration| {
+                declaration
+                    .source_params
+                    .iter()
+                    .filter(|parameter| {
+                        !parameter.infer_only
+                            && matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
+                    })
+                    .collect()
             })
-        })
+            .unwrap_or_default()
     }
 
     /// Whether a checked type mentions an origin-slotted struct applied to
-    /// non-origin arguments anywhere (`_ListIter[Int]`, `Named[Int]`): an
-    /// inferred type argument of that shape keeps its call on the abstract
-    /// path (origin-carrying references do the same), because its clone
-    /// spelling would be a partial application that omits the erased slot.
-    /// A struct whose only explicit parameters are origins (`RefIter`,
-    /// `RefBox`) spells bare, which infers per call, so it specializes.
+    /// non-origin arguments anywhere (`_ListIter[Int]`, `Named[Int]`,
+    /// `Span[Int, o]`): an inferred type argument of that shape spells its
+    /// slots only through a clone's own binders (`Elab::clone_binding`), and
+    /// otherwise keeps its call on the abstract path (origin-carrying
+    /// references do the same). A struct whose only explicit parameters are
+    /// origins (`RefIter`, `RefBox`) spells bare, which infers per call, so
+    /// it specializes.
     pub(super) fn ty_mentions_origin_slotted_struct(&self, ty: &Ty) -> bool {
         mojito_types::types::mentions(
             ty,
             &|candidate| matches!(candidate, Ty::Struct(name, arguments) if !arguments.is_empty() && self.struct_has_explicit_origin_slots(name)),
         )
+    }
+
+    /// Whether an instance of the struct template `name` may bind its
+    /// arguments' origin slots to clone binders (`Elab::clone_binding`): a
+    /// user template's clones check against the loan-carrying argument, while
+    /// a bundled template keeps its erased body, checked once with its
+    /// parameters abstract as upstream checks it. A concrete re-check of a
+    /// bundled body would judge call exclusivity on origins upstream never
+    /// sees there (`List.__imul__`'s `self.extend(orig.copy())`).
+    pub(super) fn user_template_binds_origins(&self, name: &str) -> bool {
+        self.program.iter().any(|statement| {
+            matches!(&statement.kind, StmtKind::Struct { name: template, .. } if template == name)
+                && !mojito_checker::checker::is_bundled_module_source(statement.module.as_deref())
+        })
+    }
+
+    /// The clone binders the bound values of a `def` clone name
+    /// (`Elab::clone_binding`), declared in binder order.
+    pub(super) fn clone_origin_binder_params(&self, values: &[CtValue]) -> Vec<TypeParam> {
+        let mut found = Vec::new();
+        for value in values {
+            if let CtValue::Type(ty) = value {
+                self.collect_clone_binders(ty, &mut found);
+            }
+        }
+        found.sort_by_key(|(index, _)| *index);
+        found.dedup_by_key(|(index, _)| *index);
+        found
+            .into_iter()
+            .flat_map(|(index, mutability)| {
+                CloneOriginBinders::declared(index, mutability.as_ref())
+            })
+            .collect()
+    }
+
+    /// A type argument a generated clone bakes, as the clone binds and
+    /// spells it. An origin-slotted struct applied with its origin tail
+    /// (`Span[Int, o]`) rebinds each slot to a fresh binder `binders` declares
+    /// on the clone (`Span[Int, __clone_origin0]`), inferred per call from the
+    /// clone's own parameters as the template's type parameter was: the
+    /// checker's instantiation records erase every place origin, so one clone
+    /// serves every origin of that shape. `None` keeps the erased path: a
+    /// struct applied without its tail (`_ListIter[Int]`), an `OriginSet`
+    /// slot, or a slot already bound to an enclosing declaration's origin
+    /// parameter has no binder to stand for it.
+    pub(super) fn clone_binding(
+        &self,
+        ty: &Ty,
+        binders: &mut CloneOriginBinders,
+    ) -> Option<(Ty, Type)> {
+        let bound = if self.ty_mentions_origin_slotted_struct(ty) {
+            self.bind_clone_origins(ty, binders)?
+        } else {
+            ty.clone()
+        };
+        let source = source_type_from_ty(&bound)?;
+        Some((bound, source))
     }
 
     /// Whether syntactically guessed pack element types are the whole truth:

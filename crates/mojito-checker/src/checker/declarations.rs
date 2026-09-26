@@ -432,6 +432,7 @@ impl Checker {
                 .iter()
                 .map(|param| self.reference_parameter_struct_binder(param.origin.as_deref()))
                 .collect(),
+            receiver: None,
         })
     }
 

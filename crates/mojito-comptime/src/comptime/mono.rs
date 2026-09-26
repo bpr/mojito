@@ -1493,6 +1493,7 @@ impl Elab<'_> {
             return None;
         };
         let mut vals = Vec::new();
+        let mut origin_binders = CloneOriginBinders::default();
         // The checker's origin tail has no elaborator slot: origins erase from
         // every clone.
         let mut cursor = arguments
@@ -1522,14 +1523,22 @@ impl Elab<'_> {
                     },
                     TyArg::Ty(ty),
                 ) => {
-                    // An origin-slotted struct argument (`_ListIter[Int]`,
-                    // `Named[Int]`) has no concrete source spelling: the call
-                    // keeps the abstract path rather than minting a clone
-                    // whose annotation would omit the erased slot.
+                    // An origin-slotted struct argument of a user template
+                    // binds its slots to the clone's own origin binders; one
+                    // with no binder to stand for a slot (`_ListIter[Int]`),
+                    // or a bundled template's, keeps the abstract path (see
+                    // `Elab::user_template_binds_origins`).
                     if self.ty_mentions_origin_slotted_struct(ty) {
-                        return None;
+                        if mojito_checker::checker::is_bundled_module_source(
+                            template.module.as_deref(),
+                        ) {
+                            return None;
+                        }
+                        let (bound, _) = self.clone_binding(ty, &mut origin_binders)?;
+                        CtValue::Type(Box::new(bound))
+                    } else {
+                        CtValue::Type(Box::new(ty.clone()))
                     }
-                    CtValue::Type(Box::new(ty.clone()))
                 }
                 (
                     ParamDecl::Value {

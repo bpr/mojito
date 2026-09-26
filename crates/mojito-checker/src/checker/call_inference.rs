@@ -1842,27 +1842,12 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<(Vec<Ty>, Vec<Ty>), TypeError> {
-        let names_origin_binder = |parameter: &Ty| {
-            mojito_types::types::mentions(parameter, &|candidate| match candidate {
-                Ty::Pointer {
-                    origin: mojito_types::origin::PointerOrigin::Param { .. },
-                    ..
-                } => true,
-                Ty::Ref(reference) => {
-                    matches!(reference.origin, mojito_types::origin::Origin::Param(_))
-                }
-                Ty::Struct(_, arguments) => arguments.iter().any(|argument| {
-                    matches!(
-                        argument,
-                        TyArg::Origin(mojito_types::origin::Origin::Param(_))
-                    )
-                }),
-                _ => false,
-            })
-        };
         let mut origin_bound: Vec<(usize, Ty)> = Vec::new();
         for (index, slot) in slots.iter().enumerate() {
-            if !params.get(index).is_some_and(names_origin_binder) {
+            if !params
+                .get(index)
+                .is_some_and(super::origins::names_origin_binder)
+            {
                 continue;
             }
             let argument = match slot {

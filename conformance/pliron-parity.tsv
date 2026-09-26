@@ -194,6 +194,7 @@ assets/ok/list_subscript_field_store_shapes.mojo	main	exe-differential	sanitized
 assets/ok/list_unsafe_ptr_multi_element.mojo	main	exe-differential	sanitized
 assets/ok/list_unsafe_uninit_length.mojo	main	exe-differential	sanitized
 assets/ok/live_pointer_ref_argument.mojo	main	exe-differential	sanitized
+assets/ok/loan_carrying_instance_clone.mojo	main	exe-differential	sanitized
 assets/ok/loop_binding_consuming_copy.mojo	main	exe-differential	sanitized
 assets/ok/mapping_key_iteration_reads.mojo	main	exe-differential	sanitized
 assets/ok/math_module_rounding.mojo	main	exe-differential	sanitized
@@ -216,6 +217,7 @@ assets/ok/nested.mojo	main	exe-differential	sanitized
 assets/ok/nested_comprehensions.mojo	main	exe-differential	sanitized
 assets/ok/nested_copy_lifecycle.mojo	main	exe-differential	sanitized
 assets/ok/nested_index_store.mojo	main	exe-differential	sanitized
+assets/ok/nested_origin_binder_not_captured.mojo	main	exe-differential	sanitized
 assets/ok/nested_recursive_call.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_affix.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_atof_rounding.mojo	main	exe-differential	sanitized
@@ -597,6 +599,7 @@ assets/ok/trait_method_binder_spelling.mojo	main	exe-differential	sanitized
 assets/ok/traits.mojo	main	exe-differential	sanitized
 assets/ok/transfer_into_read_parameter_borrows.mojo	main	exe-differential	sanitized
 assets/ok/transferred_carrier_keeps_source_alive.mojo	main	exe-differential	sanitized
+assets/ok/transferred_view_loan_stays_shared.mojo	main	exe-differential	sanitized
 assets/ok/try_break_continue.mojo	main	exe-differential	sanitized
 assets/ok/try_reassign_outer.mojo	main	exe-differential	sanitized
 assets/ok/try_region_drop_timing.mojo	main	exe-differential	sanitized

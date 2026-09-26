@@ -269,6 +269,63 @@ impl Checker {
         Ok(bindings)
     }
 
+    /// Bind a per-instantiation clone's own origin binders
+    /// (`push$y9:Span[Int]`, declared over `Bag[Span[Int, __clone_origin0]]`)
+    /// from the call's receiver and from the arguments filling the parameters
+    /// that name them, as [`Self::bind_callee_origins`] binds a free
+    /// function's. A method that is not such a clone binds nothing.
+    pub(in crate::checker) fn bind_clone_receiver_origins(
+        &self,
+        callee: &str,
+        sig: &MethodSig,
+        receiver: &Ty,
+        params: &[Ty],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Result<ConstructorOriginBindings, TypeError> {
+        let Some(declared) = sig.receiver.as_ref().filter(|ty| names_origin_binder(ty)) else {
+            return Ok(ConstructorOriginBindings::default());
+        };
+        let keyword_names: Vec<&str> = kwargs
+            .iter()
+            .filter(|argument| !argument.is_forwarded())
+            .map(|argument| argument.name.as_str())
+            .collect();
+        let matched = mojito_ast::call::match_call_slots(
+            &sig.names,
+            &sig.required,
+            sig.positional_only,
+            sig.keyword_only,
+            args.len(),
+            &keyword_names,
+            mojito_ast::call::CallVariadics {
+                positional: sig.variadic.is_some(),
+                keyword: sig.kw_variadic.is_some(),
+            },
+        )
+        .map_err(|error| error.into_type_error(callee))?;
+        let patterns: Vec<Ty> = std::iter::once(declared.clone())
+            .chain(params.iter().cloned())
+            .collect();
+        let names: Vec<String> = std::iter::once("self".to_string())
+            .chain(sig.names.iter().cloned())
+            .collect();
+        let mut actuals = vec![(0, receiver.clone())];
+        for (index, slot) in matched.slots.iter().enumerate() {
+            if !params.get(index).is_some_and(names_origin_binder) {
+                continue;
+            }
+            let expression = match slot {
+                ArgSlot::Positional(position) => &args[*position],
+                ArgSlot::Keyword(position) => &kwargs[*position].value,
+                ArgSlot::Default => continue,
+            };
+            actuals.push((index + 1, self.infer(expression)?));
+        }
+        let bound: Vec<(usize, &Ty)> = actuals.iter().map(|(index, ty)| (*index, ty)).collect();
+        Self::bind_callee_origins(callee, &names, &patterns, &bound)
+    }
+
     /// Bind a callable's own origin binders named by its pointer-typed
     /// parameters from the arguments filling those slots
     /// (`def peek[o: Origin](p: Pointer[Int, o])` called with `Pointer(to=x)`
@@ -511,6 +568,22 @@ impl Checker {
             _ => Ok(()),
         }
     }
+}
+
+/// Whether a parameter type names a callee origin binder: a `Pointer[T, o]`,
+/// a `ref[o]` referent, or a struct carrying `o` in its origin tail.
+pub(in crate::checker) fn names_origin_binder(parameter: &Ty) -> bool {
+    mojito_types::types::mentions(parameter, &|candidate| match candidate {
+        Ty::Pointer {
+            origin: PointerOrigin::Param { .. },
+            ..
+        } => true,
+        Ty::Ref(reference) => matches!(reference.origin, Origin::Param(_)),
+        Ty::Struct(_, arguments) => arguments
+            .iter()
+            .any(|argument| matches!(argument, TyArg::Origin(Origin::Param(_)))),
+        _ => false,
+    })
 }
 
 /// Bind the callee origin binders a parameter type's struct tails (and

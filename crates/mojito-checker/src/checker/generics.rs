@@ -133,20 +133,22 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<()
 /// becomes `Array[Int, 3]`, not `Array[Int, length]`.
 pub(super) fn substitute_at(ty: &Ty, info: &StructInfo, targs: &[TyArg]) -> Ty {
     let expanded = expand_bound_pack(ty, &info.decls, targs);
-    let ty = &expanded;
-    let substituted = substitute_assoc(
-        ty,
+    // The receiver's origin tail binds the struct's own origin binders in
+    // struct-typed positions (`other: Self`, `-> Self`, a `RefBox[Self.o]`
+    // parameter), so a member instantiated on `P[origin_of(xs)]` names that
+    // origin where its declaration names `Self.o`. It binds the declaration
+    // before the type arguments go in: a caller's origin binder inside a type
+    // argument (`Span[Span[Int, o], _]`) shares the id space of the struct's
+    // own slots, and must not be captured by them.
+    let bound = substitute_struct_origin_tails(&expanded, &info.tail_origin_bindings(targs));
+    substitute_assoc(
+        &bound,
         &AssocBindings {
             types: struct_subst(&info.decls, targs),
             values: solved_value_bindings(&info.decls, targs),
             origins: HashMap::new(),
         },
-    );
-    // The receiver's origin tail binds the struct's own origin binders in
-    // struct-typed positions (`other: Self`, `-> Self`, a `RefBox[Self.o]`
-    // parameter), so a member instantiated on `P[origin_of(xs)]` names that
-    // origin where its declaration names `Self.o`.
-    substitute_struct_origin_tails(&substituted, &info.tail_origin_bindings(targs))
+    )
 }
 
 /// Expand every spread of a variadic struct's pack in a member template type

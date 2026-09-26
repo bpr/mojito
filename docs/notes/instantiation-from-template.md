@@ -463,7 +463,13 @@ only `Movable` records nothing there, and its `Int` clone would.
     closure escapes on those properties, and a template, whose parameter is
     symbolic, records none of them. `type_may_carry_loans` is conservative for
     a struct whose declared fields have parameter types, so
-    `List[DictEntry[…]]` refuses today.
+    `List[DictEntry[…]]` refuses today. One exception: a clone whose only
+    binders are the origin binders the elaborator declared for a
+    loan-carrying argument (`Bag[Span[Int, __clone_origin0]]`) takes that
+    argument, whose loans are exactly those binders' and whose transfers
+    obligation 14 replays. The template's `self` and `var` parameters carry
+    loans symbolically already, so the clone check records the same
+    transfers.
 13. **Reference calls.** A `closed_reference_contract` is a
     `closed_method_contract` but for the reference it returns, on a receiver
     that needs a place. The reference's origin is the callee's declared origin
@@ -495,10 +501,11 @@ only `Movable` records nothing there, and its `Int` clone would.
     escape verdict `replay_transfer_effects` reaches is monotone in the
     sources, so an instance, whose sources are a subset of the template's,
     cannot fail where the template passed. `MOJITO_VERIFY_TEMPLATE_FACTS=1`
-    checks the identity case and the plain-data instances
-    (`assets/ok/template_method_transfer_replay.mojo`); a loan-carrying
-    instance is never cloned whole today (`docs/roadmap.md` §1), so the
-    per-source judgment there is exact by construction and unverified.
+    checks the identity case, the plain-data instances
+    (`assets/ok/template_method_transfer_replay.mojo`), and the loan-carrying
+    ones (`assets/ok/loan_carrying_instance_clone.mojo`): a `var value:
+    Span[Int, __clone_origin0]` parameter moved into `self` keeps its source,
+    the parameter's own place, exactly as the clone's own check records it.
 15. **Operators.** Each admitted operator is dispatched on the substituted
     operand type (`realize_operator`): a closed scalar records nothing, owing
     only that the primitive path has the operation and gives the type the

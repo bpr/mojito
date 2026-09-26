@@ -194,6 +194,7 @@ assets/ok/list_subscript_field_store_shapes.mojo	-	ineligible	no-scalar-entry-sh
 assets/ok/list_unsafe_ptr_multi_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_unsafe_uninit_length.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/live_pointer_ref_argument.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/loan_carrying_instance_clone.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/loop_binding_consuming_copy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mapping_key_iteration_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/math_module_rounding.mojo	-	ineligible	no-scalar-entry-shape
@@ -216,6 +217,7 @@ assets/ok/nested.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_comprehensions.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_copy_lifecycle.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_index_store.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/nested_origin_binder_not_captured.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_recursive_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nominal_string_affix.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nominal_string_atof_rounding.mojo	-	ineligible	no-scalar-entry-shape
@@ -597,6 +599,7 @@ assets/ok/trait_method_binder_spelling.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/traits.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/transfer_into_read_parameter_borrows.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/transferred_carrier_keeps_source_alive.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/transferred_view_loan_stays_shared.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_break_continue.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_reassign_outer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_region_drop_timing.mojo	-	ineligible	no-scalar-entry-shape

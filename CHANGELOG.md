@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An instance of a user template whose argument carries a loan through an
+  origin-slotted struct (`Bag[Span[Int, origin_of(xs)]]`), and a user
+  generic `def` over such an argument, are now cloned instead of keeping
+  the erased path; the instance's constructors stay erased. Each origin slot becomes an origin binder the
+  clone declares and infers per call from its receiver and arguments, and
+  the clones derive their facts from the checked template, replaying its
+  transfers on their own bindings.
+
 - A per-call method clone (`b.echo[String](x)` on `Box[Int]`, or a generic
   method of a non-generic struct) now leaves an expansion trace naming the
   struct's and the method's own baked parameters. A clone of a checked
@@ -27,6 +35,16 @@ to evolve under the `0.x` compatibility rules.
   `TemplateStats::carried` lists the carried bodies.
 
 ### Fixed
+
+- A view moved into a container (`views.append(Span(xs))`) no longer makes
+  the viewed list exclusive: reading `xs` while the container holds the view
+  used to fail with "conflicts with live reference". A forwarded value's
+  loans stay shared at the destination; only a borrowed parameter's own
+  place, or a mutable reference, is lent exclusively.
+- A call's own origin binder inside a type argument
+  (`Span[Span[Int, o], _]`) is no longer captured by the receiver struct's
+  origin slot at the same declaration index, which made
+  `out.append(views[0].copy())` fail with "no overload matches".
 
 - A generic body can construct a variadic struct from a nested variadic
   construction over its own parameters (`Outer[T, Int](Variant[T, Int](x^))`),

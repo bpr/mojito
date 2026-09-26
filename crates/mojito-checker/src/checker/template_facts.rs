@@ -176,6 +176,20 @@ enum BodyDeclaration<'a> {
     Method(&'a mojito_ast::ast::Method),
 }
 
+impl BodyDeclaration<'_> {
+    /// The declaration's own compile-time parameters.
+    fn type_params(&self) -> Option<&[mojito_ast::ast::TypeParam]> {
+        match self {
+            Self::Def(Stmt {
+                kind: StmtKind::Def { type_params, .. },
+                ..
+            }) => Some(type_params),
+            Self::Def(_) => None,
+            Self::Method(method) => Some(&method.type_params),
+        }
+    }
+}
+
 /// The facts a body takes instead of being inferred, with its occurrence
 /// spans by the identity each kept from the template, and the desugar of
 /// each of its `with` statements, built from the template's form.
@@ -292,7 +306,7 @@ impl Checker {
             decls,
             ret_ty,
             participates: module_level,
-            residual_binders: !type_params.is_empty(),
+            residual_binders: !type_params.iter().all(clone_origin_binder),
             declaration: BodyDeclaration::Def(stmt),
             receiver_arguments: None,
         };
@@ -361,7 +375,7 @@ impl Checker {
             decls: &decls,
             ret_ty,
             participates: true,
-            residual_binders: !m.type_params.is_empty(),
+            residual_binders: !m.type_params.iter().all(clone_origin_binder),
             declaration: BodyDeclaration::Method(m),
             receiver_arguments: match receiver {
                 Ty::Struct(_, arguments) => Some(arguments.clone()),
@@ -1069,11 +1083,24 @@ impl Checker {
         let Ok(substitution) = self.instance_substitution(site, checked, trace) else {
             return refuse("an instance argument does not resolve");
         };
+        // A clone whose only binders are the elaborator's origin binders
+        // (`Span[Int, __clone_origin0]`) carries exactly those binders' loans
+        // in its arguments; the transfer recipe judges each replayed source
+        // by its binding's substituted type.
+        let binder_clone = site
+            .declaration
+            .type_params()
+            .is_some_and(|binders| !binders.is_empty() && binders.iter().all(clone_origin_binder));
         if matches!(
             class,
             TemplateClass::MethodBody(_) | TemplateClass::FunctionBody(_)
-        ) && !substitution.types.values().all(|ty| self.plain_data(ty))
-        {
+        ) && !substitution.types.values().all(|ty| {
+            self.plain_data(ty)
+                || (binder_clone
+                    && binder_tail_loans(ty)
+                    && !self.type_contains_reference(ty)
+                    && !mentions_callable(ty))
+        }) {
             return refuse("an instance argument carries a loan, a reference, or a callable");
         }
         let Some(desugars) = self.instance_with_desugars(body, &checked.facts.with_forms) else {
@@ -1577,8 +1604,19 @@ impl Checker {
         }
         realize_boundary_conversions(&mut facts)?;
         self.realize_transfers(&mut facts, template, &substitute)?;
-        facts.struct_applications =
-            sorted_applications(std::mem::take(&mut facts.struct_applications));
+        // Kept with struct origin slots unbound, as capture keeps them: a
+        // loan-carrying argument substitutes a clone's origin binder there.
+        facts.struct_applications = sorted_applications(
+            std::mem::take(&mut facts.struct_applications)
+                .into_iter()
+                .map(|(name, arguments)| {
+                    match without_struct_origins(&Ty::Struct(name.clone(), arguments.clone())) {
+                        Ty::Struct(name, arguments) => (name, arguments),
+                        _ => (name, arguments),
+                    }
+                })
+                .collect(),
+        );
         facts.effect_free_callees.sort();
         let summaries_empty = facts.effect_free_callees.iter().all(|callee| {
             self.transfer_effects
@@ -2013,8 +2051,25 @@ impl Checker {
             if suffix.is_some_and(|suffix| info.methods.keys().any(|name| name.ends_with(suffix))) {
                 return Err("the instance has clones, but not of a called method");
             }
+            // The erased callee serves the instance too; its availability
+            // condition is judged at the instance's receiver arguments, as
+            // the clone check judges it.
             if !declared.availability.is_empty() && !substitution.is_empty() {
-                return Err("a called method has an availability condition and no clone");
+                let Ty::Struct(_, bound) = self.instance_ty(
+                    &Ty::Struct(owner.to_string(), arguments.to_vec()),
+                    substitution,
+                ) else {
+                    return Err("a called method has an availability condition and no clone");
+                };
+                let named: HashMap<String, mojito_types::types::TyArg> = info
+                    .decls
+                    .iter()
+                    .map(|decl| decl.name().trim_start_matches('*').to_string())
+                    .zip(bound)
+                    .collect();
+                if self.method_constraint_result(declared, &named).is_err() {
+                    return Err("a called method is unavailable at the instance");
+                }
             }
             selected.clone()
         };
@@ -6108,6 +6163,39 @@ fn bound_binder(binder: &mojito_ast::ast::TypeParam) -> bool {
         && binder.callable_bound.is_none()
         && binder.default.is_none()
         && !binder.infer_only
+}
+
+/// Whether every origin a type argument names sits in a struct origin tail
+/// bound to a binder (`Span[Int, __clone_origin0]`), with no pointer or
+/// reference beside it: the loans such a value carries are exactly those
+/// binders'. [`TemplateObligation::PlainDataArguments`] admits it for a
+/// clone whose only binders are the elaborator's origin binders.
+fn binder_tail_loans(ty: &Ty) -> bool {
+    use mojito_types::origin::Origin;
+    use mojito_types::types::TyArg;
+    let tail_binder = mojito_types::types::mentions(ty, &|candidate| {
+        matches!(candidate, Ty::Struct(_, arguments)
+            if arguments.iter().any(|argument| matches!(argument, TyArg::Origin(Origin::Param(_)))))
+    });
+    let other_origin = mojito_types::types::mentions(ty, &|candidate| {
+        match candidate {
+        Ty::Pointer { .. } | Ty::Ref(_) => true,
+        Ty::Struct(_, arguments) => arguments
+            .iter()
+            .any(|argument| matches!(argument, TyArg::Origin(origin) if !matches!(origin, Origin::Param(_)))),
+        _ => false,
+    }
+    });
+    tail_binder && !other_origin
+}
+
+/// Whether a clone's binder is one the elaborator declared for an origin
+/// slot of a loan-carrying type argument: it stands for no template
+/// parameter, so a clone keeping only such binders has baked every one.
+fn clone_origin_binder(binder: &mojito_ast::ast::TypeParam) -> bool {
+    binder
+        .name
+        .starts_with(mojito_symbol::symbol::CLONE_ORIGIN_BINDER_PREFIX)
 }
 
 fn origin_binder(binder: &mojito_ast::ast::TypeParam) -> bool {

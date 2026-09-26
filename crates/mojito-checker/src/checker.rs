@@ -2136,6 +2136,11 @@ struct MethodSig {
     /// check an explicitly applied origin against the argument filling that
     /// slot. `None` for every other parameter.
     origin_binders: Vec<Option<mojito_types::origin::PointerOrigin>>,
+    /// A per-instantiation clone's declared receiver instance, resolved with
+    /// the clone's own origin binders in scope
+    /// (`Bag[Span[Int, __clone_origin0]]`), so a call binds them from its
+    /// receiver as well as from its arguments. `None` for every other method.
+    receiver: Option<Ty>,
 }
 
 impl MethodSig {
@@ -2168,6 +2173,7 @@ impl MethodSig {
             implicit: false,
             parametric_origin_writes: Vec::new(),
             origin_binders: vec![None; len],
+            receiver: None,
         }
     }
 }

@@ -43,6 +43,6 @@ mod solve;
 mod subst;
 mod transfer;
 
-pub(in crate::checker) use construct::ConstructorOriginBindings;
+pub(in crate::checker) use construct::{ConstructorOriginBindings, names_origin_binder};
 pub(in crate::checker) use sig::*;
 pub(in crate::checker) use subst::*;

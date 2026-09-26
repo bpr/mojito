@@ -432,12 +432,22 @@ impl Checker {
                 }
             };
             // A `Bound` source is already a concrete caller-side origin.
+            // Only a borrowed parameter's own place, or a mutable reference
+            // value, lends exclusively: a forwarded value (`bag.push(Span(xs))`)
+            // carries the shared loans its construction took, and the
+            // destination keeps them shared.
+            let mut exclusive = effect.mutable;
             let mut sources = match &effect.src {
                 SigOrigin::Bound(origin) => vec![origin.clone()],
                 src => {
                     let Some(src_expr) = actual(src) else {
                         continue;
                     };
+                    let reference = self.infer_reference_value(src_expr);
+                    exclusive &= effect.src_is_place
+                        || reference.as_ref().is_some_and(|reference| {
+                            reference.mutability == mojito_types::origin::Mutability::Mutable
+                        });
                     // The caller-side origins of the source ACTUAL EXPRESSION
                     // — this covers moved temporaries (`RefBox(alias)`),
                     // whose loans root at the places their construction
@@ -446,7 +456,7 @@ impl Checker {
                     // A reference-valued source contributes its referent's
                     // origin; a plain moved value transfers ownership and
                     // adds no loan of its own storage.
-                    if let Some(reference) = self.infer_reference_value(src_expr)
+                    if let Some(reference) = reference
                         && !sources.contains(&reference.origin)
                     {
                         sources.push(reference.origin);
@@ -593,7 +603,7 @@ impl Checker {
                 dest,
                 dest_path,
                 sources,
-                mutable: effect.mutable,
+                mutable: exclusive,
             });
         }
         if !call_transfers.is_empty() {

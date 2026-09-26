@@ -215,9 +215,18 @@ impl Elab<'_> {
             let Some(info) = self.structs.get(template.as_str()) else {
                 continue;
             };
+            // A bundled template's body was checked once with its parameters
+            // abstract, as upstream checks it; an instance whose argument
+            // carries a loan keeps that erased body rather than re-checking a
+            // concrete clone (see `Elab::user_template_binds_origins`).
+            let binds_origins = self.user_template_binds_origins(template);
             for arguments in &self.instance_requests[template] {
-                let Some((values, _)) = self.method_request_values(info.source_params, arguments)
-                else {
+                let mut origin_binders = CloneOriginBinders::default();
+                let Some((values, _)) = self.method_request_values(
+                    info.source_params,
+                    arguments,
+                    binds_origins.then_some(&mut origin_binders),
+                ) else {
                     continue;
                 };
                 if mono.instances_done.insert(mangle(template, &values)?) {
@@ -1165,6 +1174,9 @@ impl Elab<'_> {
             .iter()
             .map(|parameter| parameter.name.clone())
             .collect();
+        // A loan-carrying type argument's origin slots spell the clone's own
+        // binders (`Span[Int, __clone_origin0]`), which it declares first.
+        kept_type_params.splice(0..0, self.clone_origin_binder_params(vals));
         let mut specialization = mk(
             StmtKind::Def {
                 name: output_name.clone(),
@@ -1955,7 +1967,7 @@ impl Elab<'_> {
                     })
                 {
                     let Some((values, bindings)) =
-                        self.method_request_values(&method.type_params, request.arguments())
+                        self.method_request_values(&method.type_params, request.arguments(), None)
                     else {
                         continue;
                     };
@@ -2165,11 +2177,14 @@ impl Elab<'_> {
     /// declaration order (type arguments as `CtValue::Type`, value
     /// arguments as themselves); callable-bounded and retained
     /// callable-value parameters stay symbolic; Origin binders have no
-    /// checker slot. `None` skips the request.
+    /// checker slot. `None` skips the request. With `origin_binders`, a type
+    /// argument mentioning an origin-slotted struct spells its slots as the
+    /// binders' names (see `Elab::clone_binding`); without, it skips.
     pub(super) fn method_request_values(
         &self,
         type_params: &[TypeParam],
         arguments: &[TyArg],
+        mut origin_binders: Option<&mut CloneOriginBinders>,
     ) -> Option<(Vec<CtValue>, Vec<MethodBinding>)> {
         let mut values = Vec::new();
         let mut bindings = Vec::new();
@@ -2205,15 +2220,16 @@ impl Elab<'_> {
                     {
                         return None;
                     }
-                    // See `Elab::ty_mentions_origin_slotted_struct`.
-                    if self.ty_mentions_origin_slotted_struct(ty) {
-                        return None;
-                    }
-                    let source = source_type_from_ty(ty)?;
+                    let (bound, source) = match origin_binders.as_deref_mut() {
+                        Some(binders) => self.clone_binding(ty, binders)?,
+                        // See `Elab::ty_mentions_origin_slotted_struct`.
+                        None if self.ty_mentions_origin_slotted_struct(ty) => return None,
+                        None => (ty.clone(), source_type_from_ty(ty)?),
+                    };
                     values.push(CtValue::Type(Box::new(ty.clone())));
                     bindings.push(MethodBinding {
                         name,
-                        value: CtValue::Type(Box::new(ty.clone())),
+                        value: CtValue::Type(Box::new(bound)),
                         source: Some(source),
                     });
                 }
@@ -2337,6 +2353,8 @@ impl Elab<'_> {
         // Bind each parameter; an instance whose argument violates a declared
         // bound, or does not round-trip to source syntax, keeps the erased path.
         let mut bindings = Vec::new();
+        let mut origin_binders = CloneOriginBinders::default();
+        let binds_origins = self.user_template_binds_origins(name);
         for (parameter, value) in type_params.iter().zip(values) {
             let CtValue::Type(ty) = value else {
                 return Ok(InstanceClones::default());
@@ -2348,16 +2366,15 @@ impl Elab<'_> {
             {
                 return Ok(InstanceClones::default());
             }
-            // See `Elab::ty_mentions_origin_slotted_struct`.
-            if self.ty_mentions_origin_slotted_struct(ty) {
+            if !binds_origins && self.ty_mentions_origin_slotted_struct(ty) {
                 return Ok(InstanceClones::default());
             }
-            let Some(source) = source_type_from_ty(ty) else {
+            let Some((bound, source)) = self.clone_binding(ty, &mut origin_binders) else {
                 return Ok(InstanceClones::default());
             };
             bindings.push(MethodBinding {
                 name: parameter.name.clone(),
-                value: value.clone(),
+                value: CtValue::Type(Box::new(bound)),
                 source: Some(source),
             });
         }
@@ -2423,9 +2440,14 @@ impl Elab<'_> {
             }
             // A bundled template keeps its lifecycle methods on the erased
             // path: its constructors carry the value-parameter reification
-            // the erased path relies on.
+            // the erased path relies on. So does an instance whose argument
+            // carries a loan: its constructor clone would mangle into the
+            // native monomorphizer's own constructor of the instance
+            // (`docs/roadmap.md` §2, the nested generic instance).
             let lifecycle = mojito_symbol::symbol::lifecycle_method_name(method);
-            if bundled && matches!(lifecycle, "__init__" | "__copyinit__" | "__moveinit__") {
+            if (bundled || !origin_binders.params().is_empty())
+                && matches!(lifecycle, "__init__" | "__copyinit__" | "__moveinit__")
+            {
                 continue;
             }
             clones.extend(self.per_call_method_clones(
@@ -2546,6 +2568,11 @@ impl Elab<'_> {
             }
         }
         clones.retain(|clone| !collapsed.contains(&clone.name));
+        for clone in &mut clones {
+            clone
+                .type_params
+                .splice(0..0, origin_binders.params().iter().cloned());
+        }
         Ok(InstanceClones {
             clones,
             field_types,
@@ -2601,7 +2628,7 @@ impl Elab<'_> {
                     .all(|(name, parameter)| *name == parameter.name)
         }) {
             let Some((call_values, call_bindings)) =
-                self.method_request_values(&method.type_params, request.arguments())
+                self.method_request_values(&method.type_params, request.arguments(), None)
             else {
                 continue;
             };
