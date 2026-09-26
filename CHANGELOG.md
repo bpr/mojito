@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `Bool` argument now binds a `Scalar[dt]` pattern's lane at
+  `DType.bool` (`kind(True)` against `def kind[dt: DType](a:
+  Scalar[dt])`), converting into `Scalar[DType.bool]` as the pinned Mojo
+  does; it used to report "cannot infer type parameter 'dt'". Beside a
+  bare `T` overload the conversion still loses to binding `T`.
+
 - An instance of a user template whose argument carries a loan through an
   origin-slotted struct (`Bag[Span[Int, origin_of(xs)]]`), and a user
   generic `def` over such an argument, are now cloned instead of keeping

@@ -229,8 +229,9 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
         // against `Scalar[DType.int32]` solves `dt`), and a numeric literal
         // binds it at the literal's default type (`kind(3)` solves
         // `DType.int`, `kind(2.5)` `DType.float64`), as upstream materializes
-        // it. The width slot never solves: upstream reads a dtype off the
-        // argument and leaves a width parameter unresolved.
+        // it. A `Bool` is no SIMD but converts into `Scalar[DType.bool]`, so
+        // it binds `DType.bool`. The width slot never solves: upstream reads
+        // a dtype off the argument and leaves a width parameter unresolved.
         (
             Ty::Simd {
                 dtype: SimdDtype::Expr(lane),
@@ -238,8 +239,12 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
             },
             _,
         ) => {
+            let dtype = match actual {
+                Ty::Bool => Some(Dtype::Bool),
+                _ => simd_slots(actual).and_then(|(dtype, _)| dtype.known()),
+            };
             if let Some(reference) = lane.as_decl_ref()
-                && let Some(dtype) = simd_slots(actual).and_then(|(dtype, _)| dtype.known())
+                && let Some(dtype) = dtype
             {
                 out.entry(reference.name.to_string())
                     .or_insert(CtValue::Dtype(dtype));

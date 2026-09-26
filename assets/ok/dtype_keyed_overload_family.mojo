@@ -28,8 +28,8 @@ def main():
     print(kind[DType.int32](Int32(4)))
     print(kind[Int](3))
     print(kind[Bool](True))
-    # A `Bool` has no lane: converting it into `Scalar[DType.bool]` costs
-    # what binding `T` does not.
+    # A `Bool` binds `DType.bool` only by converting into
+    # `Scalar[DType.bool]`, which costs what binding `T` does not.
     print(kind(True))
     # A `Float64` or a literal has one: the `Scalar[dt]` pattern wins the tie.
     var x: Float64 = 1.5

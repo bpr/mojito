@@ -102,6 +102,7 @@ assets/ok/docstrings.mojo	main	exe-differential	sanitized
 assets/ok/dtype_compile_time_values.mojo	main	exe-differential	sanitized
 assets/ok/dtype_default_param.mojo	main	exe-differential	sanitized
 assets/ok/dtype_float_queries.mojo	main	exe-differential	sanitized
+assets/ok/dtype_keyed_bool_lane.mojo	main	exe-differential	sanitized
 assets/ok/dtype_keyed_method.mojo	main	exe-differential	sanitized
 assets/ok/dtype_keyed_overload_beside_plain.mojo	main	exe-differential	sanitized
 assets/ok/dtype_keyed_overload_family.mojo	main	exe-differential	sanitized
