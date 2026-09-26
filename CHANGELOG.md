@@ -8,6 +8,9 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct method whose operator has a literal or closed scalar left operand
+  (`1 + self.low`, `n + self.low`), dispatching the right operand's reflected
+  dunder, now reuses the template's checked facts. Such methods used to be checked again per instance.
 - A struct method calling a method on a parameter holding a struct, or on
   its field (`self.item == value.head()`, `other.items.__len__()`), now
   reuses the template's checked facts. Such methods used to be checked again

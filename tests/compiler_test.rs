@@ -2554,6 +2554,27 @@ fn template_method_operator_operands_derives() {
 }
 
 #[test]
+fn template_method_reflected_operator_derives() {
+    // A literal or closed scalar left operand dispatches the right operand's
+    // reflected dunder: the template's `ReflectedOperator` adjustment
+    // stands, and each instance names the dunder again, an overloaded one
+    // by its key.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_reflected_operator.mojo"),
+        "2 4 2.5 7.5\n9 7 -0.5 -2.5\n3 7\n3 5 3 1\n",
+        &[
+            ("Gauge.raised", 2),
+            ("Gauge.scaled", 2),
+            ("Gauge.margin", 2),
+            ("Gauge.fraction", 2),
+            ("Gauge.doubled", 2),
+            ("Gauge.shifted", 2),
+            ("Gauge.based", 2),
+        ],
+    );
+}
+
+#[test]
 fn template_method_bounded_arithmetic_derives() {
     // `a + b` and `a / b` under arithmetic bounds: the template's result is
     // the operand's own type (`Float64` for `/`), so the operator is a

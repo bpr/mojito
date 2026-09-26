@@ -582,6 +582,7 @@ assets/ok/template_method_reference_call.mojo	main	exe-differential	sanitized
 assets/ok/template_method_reference_local.mojo	main	exe-differential	sanitized
 assets/ok/template_method_reference_receiver.mojo	main	exe-differential	sanitized
 assets/ok/template_method_reference_result.mojo	main	exe-differential	sanitized
+assets/ok/template_method_reflected_operator.mojo	main	exe-differential	sanitized
 assets/ok/template_method_sibling_view.mojo	main	exe-differential	sanitized
 assets/ok/template_method_simd_construction.mojo	main	exe-differential	sanitized
 assets/ok/template_method_simd_scalar.mojo	main	exe-differential	sanitized

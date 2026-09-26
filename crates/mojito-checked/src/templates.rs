@@ -212,6 +212,10 @@ pub fn derive_adjustment(
             Some(SemanticAdjustment::BorrowViewResult { materialized: None })
         }
         SemanticAdjustment::InvertedReprWrite => Some(SemanticAdjustment::InvertedReprWrite),
+        // A reflected operator names no type. Its target, the right
+        // operand's reflected dunder, is re-selected on the instance's
+        // types (`realize_operator`).
+        SemanticAdjustment::ReflectedOperator => Some(SemanticAdjustment::ReflectedOperator),
         // A `DType` member names one closed dtype under every instance.
         SemanticAdjustment::DtypeConstant { dtype } => {
             Some(SemanticAdjustment::DtypeConstant { dtype: *dtype })
@@ -277,7 +281,6 @@ pub fn derive_adjustment(
         | SemanticAdjustment::EraseCompileTimeArgument
         | SemanticAdjustment::ImplicitlyCopyConsumingReceiver
         | SemanticAdjustment::NegatedEquality
-        | SemanticAdjustment::ReflectedOperator
         | SemanticAdjustment::ReceiverFromFirstArgument { .. }
         | SemanticAdjustment::Truthiness
         | SemanticAdjustment::Move

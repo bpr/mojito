@@ -357,8 +357,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `bound_dispatch.rs:realize_embedded_dispatch`), `realize_builtin_len` takes the `len`
   witness, `realize_operator` repeats an operator's type-driven dispatch
   (through `operators.rs:struct_infix_dispatch`, the type-level half of
-  `infer_infix`, and `operators.rs:scalar_operator_result`, its primitive
-  half), `plain_data` is the instance-argument obligation of a
+  `infer_infix`, `operators.rs:struct_reflected_dispatch`, its reflected
+  half, and `operators.rs:scalar_operator_result`, its primitive half), `plain_data` is the instance-argument obligation of a
   `MethodBody` and `loan_free` its transfer obligation (`body_transfers`
   keeps each replayed transfer by template owner with its source's binding
   type, `transfer_residue` tells a replay from a residue no recipe covers,

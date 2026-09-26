@@ -336,47 +336,21 @@ impl Checker {
         // answers when the left operand has no operator method for the
         // pair: MIR swaps the operands and calls the recorded symbol.
         if let Some(span) = span
-            && let Some(reflected) = op.reflected_dunder()
-            && let Some((info, sig, targs)) =
-                self.struct_dunder_signature_for(&rt, reflected, &[&lt])
-            && let Ty::Struct(rname, _) = &rt
-            && self.value_coerces(&lt, &substitute_at(&sig.params[0], info, targs))
+            && let Some(target) = self.struct_reflected_dispatch(op, &lt, &rt)
         {
-            let environment: HashMap<String, TyArg> = info
-                .decls
-                .iter()
-                .map(|decl| decl.name().trim_start_matches('*').to_string())
-                .zip(targs.iter().cloned())
-                .chain(positional_pack_binding(&info.decls, targs))
-                .collect();
-            if self.method_constraint_result(sig, &environment).is_ok() {
-                // The symbol the backends dispatch: the overload key only
-                // when the reflected dunder is overloaded.
-                let target = if info
-                    .methods
-                    .get(reflected)
-                    .is_some_and(|sigs| sigs.len() > 1)
-                {
-                    method_lowered_name(
-                        rname,
-                        reflected,
-                        sig,
-                        self.self_instance_ty(rname).as_ref(),
-                    )
-                } else {
-                    format!("{rname}.{reflected}")
-                };
-                self.overload_targets
-                    .borrow_mut()
-                    .insert(span.clone(), target);
-                self.operation_adjustments.borrow_mut().insert(
-                    span,
-                    mojito_checked::checked::SemanticAdjustment::ReflectedOperator,
-                );
-                return self
-                    .struct_dunder(&rt, reflected, &[&lt])
-                    .expect("reflected dunder signature was resolved");
-            }
+            self.overload_targets
+                .borrow_mut()
+                .insert(span.clone(), target);
+            self.operation_adjustments.borrow_mut().insert(
+                span,
+                mojito_checked::checked::SemanticAdjustment::ReflectedOperator,
+            );
+            let reflected = op
+                .reflected_dunder()
+                .expect("a reflected dispatch has a dunder");
+            return self
+                .struct_dunder(&rt, reflected, &[&lt])
+                .expect("reflected dunder signature was resolved");
         }
         Err(TypeError::BadOperator {
             op: infix_symbol(op).to_string(),
@@ -514,6 +488,50 @@ impl Checker {
             struct_name: sname.clone(),
             struct_args: targs.to_vec(),
         }))
+    }
+
+    /// The symbol `lt OP rt` dispatches through the right operand's
+    /// reflected dunder (`rt.__radd__(lt)`), decided from the operand types
+    /// alone: what `infer_infix` records at the operator when the left
+    /// operand has no dunder for the pair, and what an instance of a checked
+    /// template realizes at its own types. The symbol is the overload key
+    /// only when the reflected dunder is overloaded.
+    ///
+    /// `None` when the right operand is not a struct whose reflected dunder
+    /// takes the left operand under its availability clause.
+    pub(super) fn struct_reflected_dispatch(
+        &self,
+        op: InfixOp,
+        lt: &Ty,
+        rt: &Ty,
+    ) -> Option<String> {
+        let reflected = op.reflected_dunder()?;
+        let (info, sig, targs) = self.struct_dunder_signature_for(rt, reflected, &[lt])?;
+        let Ty::Struct(rname, _) = rt else {
+            return None;
+        };
+        if !self.value_coerces(lt, &substitute_at(&sig.params[0], info, targs)) {
+            return None;
+        }
+        let environment: HashMap<String, TyArg> = info
+            .decls
+            .iter()
+            .map(|decl| decl.name().trim_start_matches('*').to_string())
+            .zip(targs.iter().cloned())
+            .chain(positional_pack_binding(&info.decls, targs))
+            .collect();
+        self.method_constraint_result(sig, &environment).ok()?;
+        Some(
+            if info
+                .methods
+                .get(reflected)
+                .is_some_and(|sigs| sigs.len() > 1)
+            {
+                method_lowered_name(rname, reflected, sig, self.self_instance_ty(rname).as_ref())
+            } else {
+                format!("{rname}.{reflected}")
+            },
+        )
     }
 
     /// Type a membership test `x in c` / `x not in c` → `Bool`. The container is

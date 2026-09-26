@@ -2285,10 +2285,13 @@ impl Checker {
     /// is what an arithmetic operator's bound promised. Anything else (a
     /// tuple, a vector, a pointer) is the clone check's to judge.
     ///
-    /// The reflected dunder has no arm because no admitted operator reaches
-    /// it: a comparison has no reflected form, the left operand of an
-    /// arithmetic one has the forward dunder its bound required, and a
-    /// literal is never the left operand.
+    /// A closed left operand (a literal, or a scalar such as `n` in
+    /// `n + self.bag`) is the one admitted operand without the forward
+    /// dunder: the template dispatched the right operand's reflected dunder
+    /// and adjusted the operator (`ReflectedOperator`), which the instance
+    /// keeps; `struct_reflected_dispatch` names the target again at the
+    /// instance's types. The left operand is passed as it stands, so it
+    /// records nothing.
     fn realize_operator(
         &self,
         facts: &mut CheckedBodyFacts,
@@ -2314,6 +2317,21 @@ impl Checker {
         let result = fact_at(&facts.expression_types, id)
             .ok_or("an operator has no retained result type")?
             .clone();
+        if fact_at(&facts.operation_adjustments, id)
+            == Some(&mojito_checked::checked::SemanticAdjustment::ReflectedOperator)
+        {
+            let target = self
+                .struct_reflected_dispatch(op, &left_ty, &right_ty)
+                .ok_or("the instance's type has no reflected dunder for the operator")?;
+            let reflected = op
+                .reflected_dunder()
+                .ok_or("the operator has no reflected dunder")?;
+            if self.struct_dunder(&right_ty, reflected, &[&left_ty]) != Some(Ok(result)) {
+                return Err("the reflected dunder's result is not the type the template kept");
+            }
+            set_fact(&mut facts.overload_targets, id, target);
+            return Ok(());
+        }
         if closed_scalar(&left_ty) {
             return if right_ty == left_ty
                 && super::operators::scalar_operator_result(op, &left_ty) == Some(result)
@@ -6167,6 +6185,9 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
     let direct_calls = method_direct_calls(facts);
     let nested_calls = nested_def_calls(facts);
     let static_calls = shape.static_calls.borrow();
+    // An admitted operator's target is its reflected dunder's
+    // ([`BodyShape::operator`]).
+    let operators = shape.operators.borrow();
     if !direct_calls.is_empty() {
         shape.holds(MethodFeatures::DIRECT_CALLS);
     }
@@ -6209,7 +6230,7 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
         || !facts
             .overload_targets
             .iter()
-            .all(|(id, _)| admitted_call(id))
+            .all(|(id, _)| admitted_call(id) || operators.contains(id))
         || !summary_callees(facts).all(|callee| {
             targets.contains(&callee.as_str())
                 || direct_calls.iter().any(|(_, direct)| direct == callee)
@@ -10007,8 +10028,11 @@ impl BodyShape<'_> {
     /// result or an operator's value is moved into the dunder, or dropped
     /// after it.
     ///
-    /// A literal is never the left operand, whose dispatch is the reflected
-    /// dunder's, recorded at the operator in the template too.
+    /// A closed left operand beside such a struct — a literal, or a closed
+    /// scalar with no dunder for the pair — dispatches the struct's
+    /// reflected dunder (`1 + self.bag` → `self.bag.__radd__(1)`), whose
+    /// target and `ReflectedOperator` adjustment the template recorded at
+    /// the operator; an instance names the target again at its own types.
     ///
     /// The result is the operand's own type for an arithmetic, bitwise, or
     /// shift operator, so it is not a scalar under every instance;
@@ -10032,28 +10056,45 @@ impl BodyShape<'_> {
             ExprKind::Infix(..) => self.operator_value(operand),
             _ => false,
         };
-        let literal = matches!(
-            right.kind,
-            ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Str(_) | ExprKind::Bool(_)
-        );
+        let literal = |operand: &Expr| {
+            matches!(
+                operand.kind,
+                ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Str(_) | ExprKind::Bool(_)
+            )
+        };
+        let right_literal = literal(right);
         let id = self.occurrence(expr);
         let admitted = !self.keyed
             && operator_dispatch(op)
-            && operand(left)
-            && (literal || operand(right))
+            && (literal(left) || operand(left))
+            && (right_literal || operand(right))
+            && !(literal(left) && right_literal)
             && self.facts.is_none_or(|facts| {
+                let targeted = facts.overload_targets.iter().any(|(site, _)| *site == id);
+                let adjustments: Vec<_> = facts
+                    .operation_adjustments
+                    .iter()
+                    .filter(|(site, _)| *site == id)
+                    .map(|(_, adjustment)| adjustment)
+                    .collect();
+                let reflected = matches!(
+                    adjustments.as_slice(),
+                    [mojito_checked::checked::SemanticAdjustment::ReflectedOperator]
+                );
                 let typed = fact_at(&facts.expression_types, self.occurrence(left))
                     .zip(fact_at(&facts.expression_types, self.occurrence(right)))
                     .is_some_and(|(left, right)| {
-                        mojito_types::types::is_symbolic(left)
-                            && (left == right || (literal && matches!(left, Ty::Struct(..))))
+                        if reflected {
+                            !mojito_types::types::is_symbolic(left)
+                                && mojito_types::types::is_symbolic(right)
+                                && matches!(right, Ty::Struct(..))
+                        } else {
+                            mojito_types::types::is_symbolic(left)
+                                && (left == right
+                                    || (right_literal && matches!(left, Ty::Struct(..))))
+                        }
                     });
-                typed
-                    && !facts.overload_targets.iter().any(|(site, _)| *site == id)
-                    && !facts
-                        .operation_adjustments
-                        .iter()
-                        .any(|(site, _)| *site == id)
+                typed && (targeted == reflected) && (reflected || adjustments.is_empty())
             });
         if admitted {
             let mut operators = self.operators.borrow_mut();
