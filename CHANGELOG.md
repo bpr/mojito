@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An initializer collecting `var *values` (`def __init__(out self, var
+  *values: Self.T)`), optionally beside a `None` default, now reuses the
+  template's checked facts, as do the bundled `List` and `Set` literal
+  initializers' templates. Such methods used to be checked again per
+  instance.
 - A `var self` method returning its receiver (`return self^`), such as the
   owned `List` iterator's `__iter__`, now reuses the template's checked
   facts, the transfer owing `Movable` at each instance's type. Such methods

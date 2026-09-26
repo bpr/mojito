@@ -1776,6 +1776,16 @@ fn template_method_var_self_derive() {
 }
 
 #[test]
+fn template_method_variadic_initializer_derive() {
+    // An initializer collecting `var *values`, with a `None` default.
+    assert_methods_derive(
+        include_str!("../conformance/fixtures/template_method_variadic_initializer.mojo"),
+        "3 2\n2 2\n",
+        &[("Bag.__init__", 2)],
+    );
+}
+
+#[test]
 fn template_method_reference_results_derive() {
     // A `ref self` accessor returning a field or a pointer slot as a handle,
     // behind a scalar guard or the bundled bounds check that aborts.

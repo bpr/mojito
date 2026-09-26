@@ -3038,9 +3038,11 @@ impl Checker {
     /// [`TemplateObligation::PlainDataArguments`] rules out, and what its
     /// caller owes lives in the signature, which is checked per clone. A `mut`
     /// parameter may be stored to; a bare `ref` one has parametric
-    /// mutability, and a write through it is refused below. The copy and move
-    /// initializers, a receiver or parameter origin, and binders stay
-    /// outside.
+    /// mutability, and a write through it is refused below. A `var *values`
+    /// collector is such a parameter too: its type is a pack of a
+    /// substituted type, and the body owns its binding. A `None` default is
+    /// the same value under every instance. The copy and move initializers,
+    /// a receiver or parameter origin, and binders stay outside.
     ///
     /// - `STATEMENTS`: a runtime statement is checked once whatever runs it,
     ///   so `if`, `while`, `break`, `continue`, and a bare `return` neither
@@ -3298,18 +3300,24 @@ impl Checker {
         // that declares an origin parameter is outside `plain_struct`, and no
         // clone is minted for one.
         let plain_params = method.params.iter().all(|parameter| {
-            parameter.kind == mojito_ast::ast::ParamKind::Regular
+            (parameter.kind == mojito_ast::ast::ParamKind::Regular
+                || (parameter.kind == mojito_ast::ast::ParamKind::Variadic
+                    && parameter.convention == Some(ArgConvention::Var)))
                 && matches!(
                     parameter.convention,
                     None | Some(ArgConvention::Var | ArgConvention::Mut | ArgConvention::Ref)
                 )
-                && parameter.default.is_none()
+                && parameter
+                    .default
+                    .as_ref()
+                    .is_none_or(|default| matches!(default.kind, ExprKind::None))
                 && (parameter.origin.is_none() || parameter.convention == Some(ArgConvention::Ref))
         });
         if !plain_params {
             return outside(
-                "a parameter has a default, an origin on a convention other than 'ref', or an \
-                 'out' or 'deinit' convention",
+                "a parameter has a default other than 'None', an origin on a convention other \
+                 than 'ref', a keyword pack, a variadic not taken 'var', or an 'out' or 'deinit' \
+                 convention",
             );
         }
         let origin_parameter = method.type_params.iter().any(origin_binder)

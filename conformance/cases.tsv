@@ -522,3 +522,4 @@ dtype-compile-time-values	run	assets/ok/dtype_compile_time_values.mojo
 float16-semantics	run	assets/ok/float16_semantics.mojo
 simd-dtype-alias	run	assets/ok/simd_dtype_alias.mojo
 dtype-float-queries	run	assets/ok/dtype_float_queries.mojo
+template-method-variadic-initializer	run	conformance/fixtures/template_method_variadic_initializer.mojo
