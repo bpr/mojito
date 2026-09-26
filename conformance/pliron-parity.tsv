@@ -520,6 +520,7 @@ assets/ok/struct_value_param_frozen.mojo	main	exe-differential	sanitized
 assets/ok/telemetry.mojo	main	exe-differential	sanitized
 assets/ok/tempfile_mkdtemp.mojo	main	exe-differential	sanitized
 assets/ok/template_def_converting_argument.mojo	main	exe-differential	sanitized
+assets/ok/template_def_value_local.mojo	main	exe-differential	sanitized
 assets/ok/template_folded_value.mojo	main	exe-differential	sanitized
 assets/ok/template_inner_request.mojo	main	exe-differential	sanitized
 assets/ok/template_loop_local.mojo	main	exe-differential	sanitized

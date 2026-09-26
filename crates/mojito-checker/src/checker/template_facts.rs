@@ -1052,7 +1052,8 @@ impl Checker {
                 | TemplateClass::FixedCalls
                 | TemplateClass::BoundedOperations
                 | TemplateClass::MethodScalarBody
-                | TemplateClass::MethodBody(_) => trace.value_bindings.is_empty(),
+                | TemplateClass::MethodBody(_)
+                | TemplateClass::FunctionBody(_) => trace.value_bindings.is_empty(),
                 // The folded values selected the arms; no retained
                 // occurrence names one. A folded loop index is read back
                 // from the copy it fixed.
@@ -1067,8 +1068,10 @@ impl Checker {
         let Ok(substitution) = self.instance_substitution(site, checked, trace) else {
             return refuse("an instance argument does not resolve");
         };
-        if matches!(class, TemplateClass::MethodBody(_))
-            && !substitution.types.values().all(|ty| self.plain_data(ty))
+        if matches!(
+            class,
+            TemplateClass::MethodBody(_) | TemplateClass::FunctionBody(_)
+        ) && !substitution.types.values().all(|ty| self.plain_data(ty))
         {
             return refuse("an instance argument carries a loan, a reference, or a callable");
         }
@@ -2545,6 +2548,11 @@ impl Checker {
             coverage,
             TemplateCoverage::Certified(TemplateClass::MethodBody(_))
         );
+        let whole_values = method_body
+            || matches!(
+                coverage,
+                TemplateCoverage::Certified(TemplateClass::FunctionBody(_))
+            );
         self.template_catalog.borrow_mut().record(CheckedTemplate {
             id: site.template_id.clone(),
             producer: if self.source_validation {
@@ -2566,7 +2574,7 @@ impl Checker {
                 TemplateObligation::Deletability,
                 TemplateObligation::ReferenceResultReads,
             ])
-            .chain(method_body.then_some(TemplateObligation::PlainDataArguments))
+            .chain(whole_values.then_some(TemplateObligation::PlainDataArguments))
             .chain(method_body.then_some(TemplateObligation::ReplayedTransfers))
             .chain(method_body.then_some(TemplateObligation::ConstructorSelection))
             .collect(),
@@ -2720,7 +2728,9 @@ impl Checker {
         }
         // A body returning nothing falls off its end: the grammar admits no
         // value `return` for it, and a bare `return` only in a runtime body.
-        if !closed_scalar(ret_ty) && *ret_ty != Ty::None {
+        // A runtime body may return a whole value of any type, which every
+        // `return` must move or copy at exactly the declared type.
+        if !closed_scalar(ret_ty) && *ret_ty != Ty::None && keyed {
             return outside("the return type is not a concrete scalar");
         }
         let packs: Vec<&str> = params
@@ -2756,7 +2766,10 @@ impl Checker {
             keyed,
             receiver: false,
             self_writable: false,
-            moved_result: None,
+            // A runtime body may hold a whole value of any type in a local
+            // or an argument, and iterate a place, as a method's may
+            // (`FunctionBody`); a keyed body keeps source validation's rules.
+            moved_result: (!keyed).then_some(ret_ty),
             reference_result: None,
             features: std::cell::Cell::default(),
             locals: RefCell::new(Vec::new()),
@@ -2783,6 +2796,14 @@ impl Checker {
             || !shape.repr_calls.borrow().is_empty()
         {
             return outside("the body is not scalar returns over direct calls and 'len'");
+        }
+        // The scalar classes argue for runtime statements over closed scalars
+        // (`STATEMENTS`); a body holding more is a `FunctionBody`, whose
+        // certificate argues for each feature `FUNCTION_FEATURES` names.
+        let features = shape.features.get();
+        let widened = !features.without(MethodFeatures::STATEMENTS).is_empty();
+        if !FUNCTION_FEATURES.contains(features) {
+            return outside("the body holds a construct outside the function classes");
         }
         let class = |class| {
             (
@@ -2861,6 +2882,8 @@ impl Checker {
             TemplateClass::PackElements
         } else if keyed {
             TemplateClass::ScalarBranches
+        } else if widened {
+            TemplateClass::FunctionBody(features)
         } else if !facts.builtin_len_calls.is_empty() {
             TemplateClass::BoundedOperations
         } else if !facts.call_parameters.is_empty() || !closed {
@@ -5050,6 +5073,17 @@ impl SpanKeyed for HashSet<SourceSpan> {
 
 /// Whether [`CheckedBodyFacts`] carries a table's entries. Every other table
 /// refuses a body that recorded into it.
+/// The features a [`TemplateClass::FunctionBody`] may hold: runtime
+/// statements, whole values moved or copied between a parameter, a local, an
+/// argument, and the result, a runtime `for` over a place, and a condition
+/// tested through `__bool__`. Each recipe is a method body's, on a body
+/// without a receiver.
+const FUNCTION_FEATURES: MethodFeatures = MethodFeatures::STATEMENTS
+    .union(MethodFeatures::OPAQUE_MOVES)
+    .union(MethodFeatures::VALUE_ARGUMENTS)
+    .union(MethodFeatures::ITERATION)
+    .union(MethodFeatures::TRUTHINESS);
+
 const fn derivable_table(table: FactTable) -> bool {
     match table {
         FactTable::ExpressionTypes
@@ -8777,10 +8811,41 @@ impl BodyShape<'_> {
                                 || on_self
                                 || self.receiver_field(argument)
                                 || self.value_local(argument)))
+                        || self.direct_call_value(argument)
                 })
             }
             _ => false,
         }
+    }
+
+    /// A whole value handed by value to a direct call in a function body
+    /// (`pick(kept)`): a `^` transfer, a place the template copied, or a
+    /// named place the call reads where it lies, with no conversion recorded
+    /// at it.
+    ///
+    /// The callee is selected once, and its parameter's type lives in the
+    /// callee's own binder scope: the argument bound it exactly with the
+    /// function's parameter symbolic, so it binds the substituted application
+    /// exactly too (`realize_direct_call`). The copy and the transfer are
+    /// owed again per instance; a method body's direct calls take closed
+    /// scalars only (`method_direct_calls`).
+    fn direct_call_value(&self, argument: &Expr) -> bool {
+        if self.receiver || self.keyed || self.moved_result.is_none() {
+            return false;
+        }
+        let id = self.occurrence(argument);
+        let named = matches!(&argument.kind, ExprKind::Identifier(name)
+            if self.declared(name) || self.params.contains(&name.as_str()));
+        let read_in_place = named
+            && self
+                .facts
+                .is_some_and(|facts| facts.borrowed_read_call_places.contains(&id));
+        let unconverted = self
+            .facts
+            .is_none_or(|facts| fact_at(&facts.conversions, id).is_none());
+        unconverted
+            && (read_in_place || self.whole_value(argument))
+            && self.holds(MethodFeatures::VALUE_ARGUMENTS)
     }
 
     /// A built-in scalar conversion of one value of a closed type

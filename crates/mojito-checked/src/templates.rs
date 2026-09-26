@@ -678,6 +678,12 @@ pub enum TemplateClass {
     /// its body holds is named by its [`MethodFeatures`], each of which the
     /// certificate argues for separately.
     MethodBody(MethodFeatures),
+    /// A module-level trait-bound function beyond [`Self::FixedCalls`]: a
+    /// runtime body holding a whole value of a parameter type in a local, an
+    /// argument, or a result, or a runtime `for`, named by its
+    /// [`MethodFeatures`] as a method's are. Its instances owe what a
+    /// [`Self::MethodBody`]'s owe, plain-data arguments among them.
+    FunctionBody(MethodFeatures),
 }
 
 impl TemplateClass {
@@ -692,7 +698,8 @@ impl TemplateClass {
             Self::ClosedScalarBody
             | Self::FixedCalls
             | Self::BoundedOperations
-            | Self::MethodScalarBody => false,
+            | Self::MethodScalarBody
+            | Self::FunctionBody(_) => false,
         }
     }
 }
@@ -869,6 +876,12 @@ impl MethodFeatures {
 
     pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
+    }
+
+    /// The features of `self` that `other` does not hold.
+    #[must_use]
+    pub const fn without(self, other: Self) -> Self {
+        Self(self.0 & !other.0)
     }
 
     pub const fn is_empty(self) -> bool {
@@ -1232,8 +1245,9 @@ pub enum TemplateObligation {
     /// Every place copied at a consuming position must be implicitly copyable
     /// at the instance's type, as `check_consuming` demands of a clone.
     ImplicitCopies,
-    /// Every argument of a [`TemplateClass::MethodBody`] instance is plain
-    /// data: it carries no loan, holds no reference, and mentions no callable.
+    /// Every argument of a [`TemplateClass::MethodBody`] or
+    /// [`TemplateClass::FunctionBody`] instance is plain data: it carries no
+    /// loan, holds no reference, and mentions no callable.
     /// A clone check decides outward-store transfer effects, view-result
     /// borrows, and closure escapes on exactly those properties, and a
     /// template, whose parameter is symbolic, records none of them.

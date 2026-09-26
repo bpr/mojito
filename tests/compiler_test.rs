@@ -2461,6 +2461,31 @@ fn template_def_with_a_scalar_local_keeps_the_symbolic_choice() {
 }
 
 #[test]
+fn template_def_with_a_value_local_derives() {
+    // A surviving trait-bound `def` holding a whole value of its parameter
+    // type — a local copied from the parameter, transferred into another or
+    // into the result, and handed by value to an overloaded direct call —
+    // and one iterating a `List[T]` parameter derive, so every instance
+    // inherits the overload the template bound rather than ranking the set
+    // again.
+    let (output, stats) = run_source(include_str!("../assets/ok/template_def_value_local.mojo"));
+    assert_eq!(output, "2\n2\n2\n3\n2\n5\nk\n");
+    for (template, instances) in [("outer$", 3), ("tally$", 2), ("keep$", 2)] {
+        assert_eq!(
+            stats
+                .derived
+                .iter()
+                .filter(|name| name.starts_with(template))
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            instances,
+            "every {template} instance derives; refused: {:?}",
+            stats.refused
+        );
+    }
+}
+
+#[test]
 fn template_def_converting_argument_derives() {
     // A direct call whose argument converts through an `@implicit`
     // constructor: the template's selection of the callee stands for every

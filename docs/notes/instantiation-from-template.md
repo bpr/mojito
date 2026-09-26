@@ -259,7 +259,8 @@ element.
 
 Every class shares a declaration shape: a module-level `def`, plain type
 parameters (plus scalar `Bool`/`Int` value parameters for a keyed body),
-immutable regular runtime parameters, a concrete scalar result, and no
+immutable regular runtime parameters, a concrete scalar result (a runtime
+body may return a whole value of any type, `FunctionBody` below), and no
 `raises`, captures, or decorators. An operator is admitted only over operands
 whose recorded types are closed scalars, so no operator dispatches through a
 bound. `BodyShape` is the grammar; `template_certificate` is the argument.
@@ -273,6 +274,7 @@ bound. `BodyShape` is the grammar; `template_certificate` is the argument.
 | `ScalarBranches` | source-validated bodies: `comptime if` arms, scalar `comptime for` loops, scalar locals and assignments, erased `rebind`s, and a loop variable or scalar value parameter read as a runtime value | Every arm was checked once. The instance keeps the occurrences the elaborator selected, and a folded name's literal takes a literal's facts. |
 | `PackElements` | a source-validated body keyed on a type pack (`*Ts`), collected by one variadic parameter: `comptime for` over the pack's indices, each element read as `pack[i]` into a `print` statement, beside what `ScalarBranches` admits; the result may be `None` | The element was checked once at the dependent `Ts[i]` through the pack's bound, and recorded as a place read where it lies. Each unrolled copy carries the folded index, so the instance fixes the element per copy; `print` selects no callee and records at an argument only what its syntax decides, and the instance proves the fixed element `Writable` again (`realize_print_call`). A pack forwarded whole and a local inside the loop stay out. |
 | `MethodBody(features)` | a method beyond `MethodScalarBody`; see below | One argument per feature. |
+| `FunctionBody(features)` | a runtime `def` body beyond the scalar classes: a whole value of any type copied or moved between a parameter, a local, a direct call's by-value argument, and the result (`OPAQUE_MOVES`, `VALUE_ARGUMENTS`), a runtime `for` over a parameter or a local (`ITERATION`), and a condition tested through `__bool__` (`TRUTHINESS`), beside `STATEMENTS`; `template_facts.rs:FUNCTION_FEATURES` is the allowlist | Each argument is `MethodBody`'s for the same feature, on a body with no receiver. A direct call's whole-value argument bound the callee's parameter exactly with the function's parameter symbolic, and the parameter's type lives in the callee's own binder scope, so the substituted application binds it exactly too and the template's selection stands; the copy or the transfer is owed again per instance, and every instance argument is plain data (obligation 12). |
 
 A body source validation did not produce (every class but `ScalarBranches`)
 may also hold runtime statements over closed scalars: scalar locals and
@@ -450,7 +452,7 @@ only `Movable` records nothing there, and its `Int` clone would.
     (`List[T]`, `View[T, o]`) answers from its own conformance under the
     instance's arguments (`is_deinitable`). A linear temporary stays one only
     while its type is still a parameter, which an instance's never is.
-12. **Plain-data arguments** (`MethodBody` only). Every instance argument
+12. **Plain-data arguments** (`MethodBody` and `FunctionBody`). Every instance argument
     carries no loan, holds no reference, and mentions no callable. A clone
     check decides outward-store transfer effects, view-result borrows, and
     closure escapes on those properties, and a template, whose parameter is
@@ -711,10 +713,11 @@ inherits the template's choice: a call through an overload set keeps the
 member whose lowered symbol the template recorded, and is never ranked again.
 
 An instance that still takes the clone check re-ranks. A `def` with a scalar
-local now derives (`assets/ok/template_overload_binding_local.mojo`); one that
-binds a local of a parameter type does not, and is the residue filed in
-roadmap section 3
-(`conformance/probes/template_overload_rebound_in_clone.mojo`).
+local derives (`assets/ok/template_overload_binding_local.mojo`), and so does
+one that binds a local of a parameter type and hands it to the call
+(`assets/ok/template_def_value_local.mojo`, class `FunctionBody`). A struct
+method calling a module-scope overload set is the residue filed in roadmap
+section 3.
 
 ## Reuse across passes
 
@@ -1064,9 +1067,11 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
   with a field of a parameter type (`DictEntry[K, V, H]`).
 - Per-call method clones and members of a struct specialized whole, which
   leave no trace.
-- A local of a parameter type, a `for` loop, or a non-scalar result in a
-  surviving trait-bound `def` template. Scalar locals and runtime `if` and
-  `while` are covered.
+- A surviving trait-bound `def` template whose body constructs a struct,
+  calls a bound builtin, or consumes a local through a method
+  (`hash_seeded`), or holds any feature outside `FUNCTION_FEATURES`. A local
+  of a parameter type, a `for` loop, and a whole-value result are covered
+  (`assets/ok/template_def_value_local.mojo`).
 - Any call that records a conversion, an adjustment, or an origin, and a
   transfer residue: a call-through residue that names a compile-time
   callable (`Tuple.deinit_with[elt_handler]`) or whose argument carries an

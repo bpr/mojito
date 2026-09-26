@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A surviving trait-bound module-level `def` whose body holds a whole value
+  of its parameter type — a local copied from a parameter, transferred into
+  another local or into a `-> T` result, or handed by value to a direct
+  call — or iterates a `List[T]` parameter now derives its instances from
+  the checked template instead of keeping the clone check. An overloaded
+  call inside such a body is therefore bound once, as the pinned Mojo binds
+  it: `outer(3)` with `var kept = x` and `return pick(kept)` prints 2 where
+  re-checking the `Int` instance used to rank the set again and print 1.
 - A method of a generic struct that reads a scalar element of a tuple-typed
   local at a literal index (`var start = bounds[0]`), including the tuple
   `slice.indices(n)` returns, now derives its instances from the checked

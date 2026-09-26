@@ -329,7 +329,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   from a certified template (`derivable_facts`, `realize_instance_facts`,
   `install_body_facts`), otherwise infers the body, and retains a
   module-level generic body's facts (`capture_body_facts`,
-  `template_certificate`, `method_certificate`, `record_template`).
+  `template_certificate` — whose `FUNCTION_FEATURES` allowlist bounds a
+  `FunctionBody` — `method_certificate`, `record_template`).
   `realize_method_call` retargets a closed method call to the clone member
   `declarations.rs:method_clone_target` finds (the helper
   `constructor_clone_target` shares; its `realize_method_contract` half also
