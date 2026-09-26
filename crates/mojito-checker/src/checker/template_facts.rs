@@ -2795,15 +2795,22 @@ impl Checker {
                     if arguments.is_empty()
                         && pack_binders.contains(&name.trim_start_matches('*')))
         };
+        // A `var` parameter of a runtime body is bound owned from its
+        // declared convention alone, and is rooted at its own binding under
+        // every instance, as a method's is.
+        let owned_param = |parameter: &mojito_ast::ast::FnParam| {
+            !keyed && parameter.convention == Some(mojito_ast::ast::ArgConvention::Var)
+        };
         let plain_params = params.iter().all(|parameter| {
             (parameter.kind == mojito_ast::ast::ParamKind::Regular || pack_collector(parameter))
-                && parameter.convention.is_none()
+                && (parameter.convention.is_none() || owned_param(parameter))
                 && parameter.default.is_none()
                 && parameter.origin.is_none()
         });
         if !plain_params {
-            return outside("a parameter is not an immutable regular parameter");
+            return outside("a parameter is not an immutable or 'var' regular parameter");
         }
+        let owned_params = params.iter().any(owned_param);
         if captures.is_some() || !decorators.is_empty() {
             return outside("the declaration captures or is decorated");
         }
@@ -2855,11 +2862,19 @@ impl Checker {
             // (`FunctionBody`); a keyed body keeps source validation's rules.
             moved_result: (!keyed).then_some(ret_ty),
             reference_result: None,
-            features: std::cell::Cell::new(if *raises || raises_type.is_some() {
-                MethodFeatures::STATEMENTS.union(MethodFeatures::RAISES)
-            } else {
-                MethodFeatures::default()
-            }),
+            // An owned parameter makes the body a `FunctionBody`, whose
+            // instances owe plain-data arguments.
+            features: std::cell::Cell::new(
+                [
+                    (*raises || raises_type.is_some(), MethodFeatures::RAISES),
+                    (owned_params, MethodFeatures::OWNED_PARAMETERS),
+                ]
+                .into_iter()
+                .filter(|(held, _)| *held)
+                .fold(MethodFeatures::default(), |features, (_, feature)| {
+                    features.union(MethodFeatures::STATEMENTS).union(feature)
+                }),
+            ),
             locals: RefCell::new(Vec::new()),
             handles: RefCell::new(Vec::new()),
             references: RefCell::new(Vec::new()),
@@ -2887,10 +2902,14 @@ impl Checker {
         }
         // The scalar classes argue for runtime statements over closed scalars
         // (`STATEMENTS`); a body holding more is a `FunctionBody`, whose
-        // certificate argues for each feature `FUNCTION_FEATURES` names.
+        // certificate argues for each feature `FUNCTION_FEATURES` names. With
+        // no facts the grammar reads a name by its syntax alone, so a feature
+        // it holds may be one the recorded types rule out (`ptr.unsafe_free()`
+        // on a local is a copied consuming call until its type names an
+        // untracked pointer).
         let features = shape.features.get();
         let widened = !features.without(MethodFeatures::STATEMENTS).is_empty();
-        if !FUNCTION_FEATURES.contains(features) {
+        if facts.is_some() && !FUNCTION_FEATURES.contains(features) {
             return outside("the body holds a construct outside the function classes");
         }
         let class = |class| {
@@ -2930,13 +2949,19 @@ impl Checker {
                 GrammarNotes::default(),
             );
         }
-        // Every call selected a module-scope declaration, every effect
-        // summary read belongs to one of those calls, and no application
-        // carries a pack.
+        // Every call selected a module-scope declaration or is a method call
+        // the grammar admitted (`CONSUMING_CALLS`), which records its (empty)
+        // parameters here too; every effect summary read belongs to one of
+        // those calls, and no application carries a pack.
         let callees: Option<Vec<&str>> = facts
             .call_parameters
             .iter()
-            .map(|(id, _)| template_callee(facts, *id))
+            .map(|(id, _)| {
+                fact_at(&facts.selected_calls, *id).map_or_else(
+                    || template_callee(facts, *id),
+                    |call| Some(call.contract.target.as_str()),
+                )
+            })
             .collect();
         let Some(callees) = callees else {
             return outside("a call's callee is not a module-scope declaration");
@@ -5220,7 +5245,10 @@ const FUNCTION_FEATURES: MethodFeatures = MethodFeatures::STATEMENTS
     .union(MethodFeatures::VALUE_ARGUMENTS)
     .union(MethodFeatures::ITERATION)
     .union(MethodFeatures::TRUTHINESS)
-    .union(MethodFeatures::RAISES);
+    .union(MethodFeatures::RAISES)
+    .union(MethodFeatures::OWNED_PARAMETERS)
+    .union(MethodFeatures::CONSUMING_CALLS)
+    .union(MethodFeatures::POINTER_SLOTS);
 
 const fn derivable_table(table: FactTable) -> bool {
     match table {

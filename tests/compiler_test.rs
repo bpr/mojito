@@ -1460,6 +1460,47 @@ fn template_folded_arithmetic_derives() {
 }
 
 #[test]
+fn template_def_var_parameter_derives() {
+    // A surviving trait-bound `def` taking a `var` parameter: consumed through
+    // a named destructor, transferred into a local, and the bundled
+    // `dealloc`, whose leaked pointer is freed as an untracked pointer local.
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compile_entry(
+            &compiler,
+            include_str!("../assets/ok/template_def_var_parameter.mojo"),
+        );
+        let stats = program.template_stats();
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        for template in [
+            "finish$",
+            "count_one$",
+            "weigh$",
+            "__module$std$memory$alloc$dealloc$",
+        ] {
+            let derived: std::collections::HashSet<&str> = served
+                .iter()
+                .map(String::as_str)
+                .filter(|name| name.starts_with(template))
+                .collect();
+            assert_eq!(
+                derived.len(),
+                2,
+                "every {template} instance derives: {stats:?}"
+            );
+        }
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "1 2\n5 6\n2 1\n"
+        );
+    }
+}
+
+#[test]
 fn template_value_keyed_def_derives() {
     // A `def` keyed on a type and a value, with no compile-time control
     // flow, is certified by the abstract check; each clone reads the value

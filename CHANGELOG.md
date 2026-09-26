@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A trait-bound module-level `def` taking a `var` parameter
+  (`def dealloc[T: AnyType](var allocation: Allocation[T], /)`) now reuses
+  the template's checked facts: the parameter may be consumed through a
+  method taking its receiver (`allocation^.unsafe_leak()`), transferred, or
+  handed on, and an untracked pointer local freed. Such bodies used to be
+  checked again per instance.
 - A `def` keyed on a type and a scalar value parameter with no compile-time
   control flow (`def scaled[T: Copyable, n: Int](x: T) -> Int`) now reuses
   the template's checked facts, each instance reading the value as the

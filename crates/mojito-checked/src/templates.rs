@@ -882,6 +882,11 @@ impl MethodFeatures {
     /// resolves (`.of(n)`), passing closed scalars: the struct, the member
     /// selected, and the resolved base are the same under every instance.
     pub const STATIC_CALLS: Self = Self(1 << 34);
+    /// A `var` parameter of a module-level function: it is bound owned from
+    /// its declared convention alone and rooted at its own binding under
+    /// every instance, and what the body does with it is argued by the
+    /// other features.
+    pub const OWNED_PARAMETERS: Self = Self(1 << 35);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
