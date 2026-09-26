@@ -554,6 +554,7 @@ assets/ok/template_method_copied_receiver.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/template_method_element_field_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_explicit_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_explicit_destroy_call.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_field_of_field.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_for_loop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_foreign_overload.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_generic_call.mojo	-	ineligible	no-scalar-entry-shape

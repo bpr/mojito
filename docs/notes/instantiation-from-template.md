@@ -338,6 +338,13 @@ clause is the declaration's constraint: `generate_instance_clones` mints a
 clone only where it evaluates true, a trace exists only for a minted clone, and
 a clone's signature no longer states it.
 
+A field the body reads is a field of `self`, of a field of `self` holding a
+struct (`self.scaler.base`), of a `var` local, or of a parameter holding a
+struct (`entry._hash`), or one read through a reference; a field it writes is
+one of `self`'s, at any depth, or of a `var` local. Each has its declared
+type under its base's recorded arguments, so every instance reaches the same
+path and only the base's binding changes.
+
 `MethodFeatures` names what the body holds. The features are independent, so
 they are a set, not a ladder.
 

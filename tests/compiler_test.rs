@@ -3040,3 +3040,25 @@ fn body_fact_carry_over_lowers_the_same_program() {
         );
     }
 }
+
+#[test]
+fn template_field_of_field_derives() {
+    // A field of a `self` field holding a struct, and a field of a struct
+    // parameter, is read and written at the same path under every instance.
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/template_method_field_of_field.mojo");
+    let source = std::fs::read_to_string(path).expect("fixture");
+    assert_methods_derive(
+        &source,
+        "10 20\n12 23\n20 40\n5 6 25 46\n1 s\n8 10\n6 8\n",
+        &[
+            ("Holder.base", 2),
+            ("Holder.offset", 2),
+            ("Holder.count", 2),
+            ("Holder.reset", 2),
+            ("Holder.item_copy", 2),
+            ("Holder.take", 2),
+            ("Holder.peek", 2),
+        ],
+    );
+}

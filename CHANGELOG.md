@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct method reading or writing a field of a field of `self`
+  (`self.scaler.base`, `self.inner.count += v`), or reading a field of a
+  struct parameter (`entry._hash`), now reuses the template's checked facts;
+  the bundled `Dict._append_new` and the owned `Set.__iter__` derive. Such
+  methods used to be checked again per instance.
 - A compile-time-keyed `def` constructing a `SIMD` value whose dtype or
   width names its own value binder (`SIMD[dt, w](v)`, `Scalar[dt](v)` under
   `comptime if`) now reuses the template's checked facts, each instance

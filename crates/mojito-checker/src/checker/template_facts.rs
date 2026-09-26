@@ -7861,6 +7861,7 @@ impl BodyShape<'_> {
             ExprKind::Member { .. } => {
                 self.receiver_field(place)
                     || self.local_field(place)
+                    || self.parameter_field(place)
                     || self.reference_member(place)
             }
             _ => false,
@@ -8963,11 +8964,15 @@ impl BodyShape<'_> {
         admitted && self.holds(MethodFeatures::REFERENCE_ARGUMENTS)
     }
 
-    /// Whether `expr` is `self.<field>` in a method body.
+    /// Whether `expr` is a field of `self` in a method body: `self.<field>`,
+    /// or a field of such a field holding a struct (`self.scaler.base`). A
+    /// field has its declared type under its base's recorded arguments, so
+    /// every instance reads the same path and only `self`'s binding changes.
     fn receiver_field(&self, expr: &Expr) -> bool {
         self.receiver
             && matches!(&expr.kind, ExprKind::Member { object, .. }
-                if matches!(&object.kind, ExprKind::Identifier(name) if name == "self"))
+                if matches!(&object.kind, ExprKind::Identifier(name) if name == "self")
+                    || (self.receiver_field(object) && self.nominal(object)))
     }
 
     /// Whether `expr` is `Self.<value>` in a method body, reading the
@@ -9037,6 +9042,20 @@ impl BodyShape<'_> {
             && matches!(&expr.kind, ExprKind::Member { object, .. } if self.value_local(object))
     }
 
+    /// Whether `expr` is a field of a parameter holding a struct, such as
+    /// `entry._hash` of a `var entry` parameter: the parameter is bound to
+    /// the instance's argument, and the field has its declared type under
+    /// the parameter's recorded arguments in a template and a clone alike.
+    fn parameter_field(&self, expr: &Expr) -> bool {
+        !self.keyed
+            && matches!(&expr.kind, ExprKind::Member { object, .. }
+                if matches!(&object.kind, ExprKind::Identifier(name)
+                    if self.params.contains(&name.as_str())
+                        && !self.callable_params.contains(&name.as_str())
+                        && self.local_kind(name).is_none())
+                    && self.nominal(object))
+    }
+
     /// Whether `name` is a `ref` local.
     fn reference_local(&self, name: &str) -> bool {
         self.local_kind(name) == Some(LocalKind::Reference)
@@ -9066,6 +9085,7 @@ impl BodyShape<'_> {
             ExprKind::Member { .. } => {
                 (self.receiver_field(expr)
                     || self.local_field(expr)
+                    || self.parameter_field(expr)
                     || self.reference_member(expr)
                     || self.struct_value(expr))
                     && self.scalar(expr)
@@ -9918,6 +9938,18 @@ impl BodyShape<'_> {
                 .expression_types
                 .iter()
                 .any(|(site, ty)| *site == id && !mojito_types::types::is_symbolic(ty))
+        })
+    }
+
+    /// Whether the recorded type of `expr` is a struct, whose fields a body
+    /// may read. With no facts yet, the syntax alone never rules it out.
+    fn nominal(&self, expr: &Expr) -> bool {
+        let id = self.occurrence(expr);
+        self.facts.is_none_or(|facts| {
+            facts
+                .expression_types
+                .iter()
+                .any(|(site, ty)| *site == id && matches!(ty, Ty::Struct(..)))
         })
     }
 
