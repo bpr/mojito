@@ -1,37 +1,39 @@
 #!/usr/bin/env python3
 """Run `docs/roadmap.md` tasks through Claude Code, one fresh session per task.
 
-Each unchecked entry carries a `Model:` bullet, `Opus|Fable, Planned|Not
-Planned`. The model word picks the Claude model. By default the loop only
-*plans*: each session investigates, writes its plan to a file at the repository
-root, touches nothing else, and leaves the entry on the roadmap. `--unplanned`
-carries out the entries whose bullet says `Not Planned`, taking each as-is with
-no plan file, and still only plans the ones marked `Planned`; `--execute`
-carries out every task as-is, whatever its bullet says. Every task is a new
-`claude -p` process, so no context carries over from one task to the next.
+The loop carries each task out: a session takes the entry as it stands, does
+the work, deletes the entry, and the loop commits what it left. Every task is a
+new `claude -p` process, so no context carries over from one task to the next.
+`--plan` asks for a plan file instead, leaving the entry and the code alone.
 
-A carried-out task gets its own commit, made by the loop once the session ends,
-with the session's `commit_msg.txt` as the message. The commit takes every
-tracked change plus the files the session created, except new files at the
-repository root (plan files, prompts, `commit_msg.txt`), which stay untracked.
-A planning session commits nothing, so the loop only refuses to start over
-uncommitted tracked changes when a task could be carried out; `--no-commit`
-leaves everything uncommitted.
+The loop never stops on a bad task. A session that fails, or that leaves its
+entry on the roadmap, is reported and committed as it stands, and the next task
+starts; the exit status is 1 if any task went that way. Uncommitted tracked
+changes present when the loop starts are committed on their own first, so no
+task's commit sweeps them up, and `--no-commit` leaves everything uncommitted.
+
+Each task's commit takes every tracked change plus the files the session
+created, except new files at the repository root (plan files, prompts,
+`commit_msg.txt`), which stay untracked. The message is the session's
+`commit_msg.txt`.
 
 A carried-out task deletes its entry and renumbers the section, so entries are
 tracked by title, not by number: `--until 1.5` resolves to the title 1.5 has
-when the loop starts and stops once that entry is gone. A planned task leaves
-its entry in place, and the loop moves on to the next one.
+when the loop starts and stops once that entry is gone.
+
+Each entry's `Model:` bullet, `Opus|Fable, Planned|Not Planned`, picks the
+Claude model; the `Planned` word only says whether the entry wanted a plan
+first, and a plan file already at the repository root is handed to the session
+that carries its task out.
 
 Usage:
   scripts/claude_loop.py --list [--section 1]
-  scripts/claude_loop.py                      # plan the first unchecked task
-  scripts/claude_loop.py -n 3                 # plan the next three
-  scripts/claude_loop.py --unplanned -n 0     # carry out every Not Planned entry
-  scripts/claude_loop.py --execute --start 1.4 --until 1.7
+  scripts/claude_loop.py                      # carry out the first unchecked task
+  scripts/claude_loop.py --start 1.1 --until 1.27
   scripts/claude_loop.py --section 3 -n 0     # every task in section 3
+  scripts/claude_loop.py --plan -n 3          # plan the next three instead
   scripts/claude_loop.py --dry-run -n 2       # print prompts, run nothing
-  scripts/claude_loop.py --execute --no-commit  # leave the work uncommitted
+  scripts/claude_loop.py --no-commit          # leave the work uncommitted
 """
 
 from __future__ import annotations
@@ -166,6 +168,11 @@ def build_prompt(task: Task, mode: str) -> str:
         "rule (cargo build plus `cargo run -- run` on the touched fixtures; no "
         "suite binaries, corpus filters, scripts/check, or manifest "
         "regeneration), and the documentation duties.\n"
+        "\nThis is a one-shot unattended session: it ends when your turn ends, "
+        "and nothing resumes it. Wait out every background command you start "
+        "instead of ending the turn while one is still running, and never "
+        "finish on an intention — \"I'll pick this up when it finishes\" picks "
+        "up nothing.\n"
     )
     if mode == "plan":
         return header + (
@@ -174,19 +181,33 @@ def build_prompt(task: Task, mode: str) -> str:
             "the repository root, sliced so each slice has a stop condition and "
             "names the files and symbols it touches. State what you verified "
             "against the code and what the entry gets wrong, if anything.\n"
-            "\nWork unattended and without checking in between steps; nobody "
-            "will answer a question. Reading the tree, and building or running "
+            "\nNobody will answer a question, so do not check in between "
+            "steps. Reading the tree, and building or running "
             "a probe to test a premise, is fine, but the plan file must be the "
             "only change you leave behind: revert any edit you made while "
             "probing, keep probe sources outside the repository, leave the "
             "roadmap entry in place, and touch neither docs/features.md, "
             "CHANGELOG.md, nor commit_msg.txt. Do not commit. If the task turns "
-            "out not to be doable, say so in the plan file and explain why.\n"
+            "out not to be doable, say so in the plan file and explain why. "
+            "The plan file is the only thing that makes this task count as "
+            "done, so write it before you finish whatever else is unresolved: "
+            "if a probe never came back, plan from what you already know and "
+            "say what stayed unverified.\n"
         )
-    return header + (
-        "\nCarry this task out as-is, with no plan file.\n"
-        "\nRun the task to completion without checking in between steps; this "
-        "session is unattended and nobody will answer a question. When the "
+    plan = plan_path(task)
+    opening = (
+        (
+            f"\nA plan for this task is already at `{plan.name}`, from an "
+            "earlier session. Read it first and follow it where it still holds "
+            "against the code; where it does not, do the right thing and say "
+            "so. Leave the plan file itself alone.\n"
+        )
+        if plan.exists()
+        else "\nCarry this task out as-is; there is no plan file for it.\n"
+    )
+    return header + opening + (
+        "\nRun the task to completion without checking in between steps; "
+        "nobody will answer a question. When the "
         "work lands, delete the entry from docs/roadmap.md and renumber the "
         "section (rechecking every number and every \"Depends on\"), record "
         "the outcome in docs/features.md and CHANGELOG.md, file any residue "
@@ -297,6 +318,20 @@ def read_commit_msg() -> str:
         return ""
 
 
+def commit_stray() -> None:
+    """Commit the tracked changes already in the tree, before the first task.
+
+    Nothing is discarded and no untracked file is touched; the changes simply
+    stop being something a task's own commit would sweep up.
+    """
+    git("add", "--update")
+    if git("diff", "--cached", "--name-only"):
+        git("commit", "--quiet", "--file", "-",
+            stdin="Work already in the tree when the loop started\n\n"
+                  "Committed by scripts/claude_loop.py so the first task's commit "
+                  "stays its own.\n")
+
+
 def commit_task(task: Task, untracked_before: set[str], msg_before: str, finished: bool) -> None:
     """Commit the session's work for `task` as one commit.
 
@@ -327,9 +362,7 @@ def model_for(args, task: Task) -> str:
 
 def mode_for(args, task: Task) -> str:
     """`"plan"` to write the plan file only, `"execute"` to carry the task out."""
-    if args.execute or (args.unplanned and task.planned is False):
-        return "execute"
-    return "plan"
+    return "plan" if args.plan else "execute"
 
 
 def main() -> int:
@@ -345,21 +378,13 @@ def main() -> int:
     p.add_argument("--opus-model", default=MODELS["Opus"])
     p.add_argument("--fable-model", default=MODELS["Fable"])
     p.add_argument("--default-model", choices=MODELS, default="Opus",
-                   help="model for an entry with no Model: bullet (--unplanned never takes "
-                        "such an entry as-is)")
-    plan = p.add_mutually_exclusive_group()
-    plan.add_argument("--unplanned", action="store_true",
-                      help="carry out the entries marked Not Planned, as-is and with no "
-                           "plan file; the ones marked Planned are still only planned")
-    plan.add_argument("--execute", "--no-plan", dest="execute", action="store_true",
-                      help="carry out every task as-is, whatever its entry says")
+                   help="model for an entry with no Model: bullet")
+    p.add_argument("--plan", action="store_true",
+                   help="write each task's plan file instead of carrying the task out")
     p.add_argument("--permission-mode", default="bypassPermissions")
     p.add_argument("--claude", default="claude", help="claude executable")
     p.add_argument("--claude-arg", action="append", default=[],
                    help="extra argument passed to claude (repeatable)")
-    p.add_argument("--keep-going", action="store_true",
-                   help="continue past a failed session or an entry left in place "
-                        "(committing whatever it left, so the next task's commit stays its own)")
     p.add_argument("--no-commit", action="store_true",
                    help="do not commit each finished task")
     args = p.parse_args()
@@ -375,10 +400,11 @@ def main() -> int:
         print("claude_loop: no unchecked tasks")
         return 0
 
-    commit = not (args.no_commit or args.dry_run) and (args.execute or args.unplanned)
+    commit = not (args.no_commit or args.dry_run) and not args.plan
     if commit and (dirty := tracked_changes()):
-        sys.exit("claude_loop: uncommitted tracked changes would be swept into the first "
-                 f"task's commit; commit or stash them, or pass --no-commit:\n{dirty}")
+        print("claude_loop: committing the changes already in the tree on their own, so "
+              f"the first task's commit stays its own:\n{dirty}", file=sys.stderr)
+        commit_stray()
 
     current = find_by_id(tasks, args.start) if args.start else tasks[0]
     until_title = find_by_id(tasks, args.until).title if args.until else None
@@ -386,6 +412,7 @@ def main() -> int:
         sys.exit(f"claude_loop: --until {args.until} comes before the start task {current.id}")
 
     done = 0
+    troubled: list[str] = []
     while current is not None:
         idx = tasks.index(current)
         successor = tasks[idx + 1].title if idx + 1 < len(tasks) else None
@@ -410,15 +437,15 @@ def main() -> int:
                           f"{plan_path(current).name}", file=sys.stderr)
             else:
                 landed = find_by_title(open_tasks(args.section), current.title) is None
-                if committing and ((ok and landed) or args.keep_going):
+                if committing:
                     commit_task(current, untracked_before, msg_before, ok and landed)
                 if ok and not landed:
                     print(f"claude_loop: entry \"{current.title}\" is still on the roadmap",
                           file=sys.stderr)
             if not ok:
                 print(f"claude_loop: session for \"{current.title}\" failed", file=sys.stderr)
-            if not (ok and landed) and not args.keep_going:
-                return 1
+            if not (ok and landed):
+                troubled.append(current.title)
 
         done += 1
         if current.title == until_title or (args.count and done >= args.count):
@@ -430,7 +457,12 @@ def main() -> int:
         if until_title and current is not None and find_by_title(tasks, until_title) is None:
             break
 
-    return 0
+    if troubled:
+        print(f"claude_loop: {done} tasks ran, {len(troubled)} left work behind:",
+              file=sys.stderr)
+        for title in troubled:
+            print(f"  {title}", file=sys.stderr)
+    return 1 if troubled else 0
 
 
 if __name__ == "__main__":
