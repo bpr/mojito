@@ -16,7 +16,9 @@ accepted.
 
 Every section is sorted by dependency first, then by how much the entry moves
 that section's goal. Entries are numbered `<section>.<n>`; the first unchecked
-box is the default next task. The **Model:** bullet is an estimate, not a
+box is the default next task. Every entry carries a **Depends on** bullet
+naming the entries it needs, or `nothing` — an entry that merely makes another
+one easier counts as a dependency. The **Model:** bullet is an estimate, not a
 sort key. Sections interleave: section 1 does not wait for the others, and
 section 3 reopens at every re-pin. Section 5's last entry is a release gate
 and stays last.
@@ -495,6 +497,8 @@ to section 3, however small.
   - The plan and the measurement design are the broadest scope in this document:
     they reopen the waist and the dialect policy. The A1 slice is built and
     measured once planned.
+  - Depends on nothing: the A1 slice is built and measured from
+    `docs/pliron-backend-pivot-plan.md` alone.
   - Model: Fable, Planned.
 
 ### 2. Native Backend
@@ -512,6 +516,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - The coercion rule itself is one site, but it fires at every field
     initialization, so the plan's job is to bound the overload-resolution and
     fixture fallout before the edit.
+  - Depends on nothing.
   - Model: Opus, Planned.
 
 - [ ] **2.2 Operator operands and the bundled `hash` body take lifecycle copies**
@@ -532,6 +537,7 @@ change that needs a new `MJRT_ABI_VERSION`.
     verified against the pin.
   - One recording site plus one stdlib body, but the plan bounds the fixture
     fallout of any `__eq__` that relied on the copy.
+  - Depends on nothing.
   - Model: Opus, Planned.
 
 - [ ] **2.3 A value argument forwarded from a caller's parameter is not a native
@@ -554,6 +560,8 @@ change that needs a new `MJRT_ABI_VERSION`.
     in the native parity set; the checker test
     `param_expr_residual_is_not_false` covers it.
   - It changes the MIR call contract and the text schema with it.
+  - Depends on nothing. Section 4's `Counter[Self.length]` residue is the
+    same missing native constant and closes with it.
   - Model: Fable, Planned.
 
 - [ ] **2.4 A struct instance over a generic instance, or with a variadic
@@ -661,6 +669,8 @@ change that needs a new `MJRT_ABI_VERSION`.
   - The signature classification changes the native calling convention itself,
     and the ABI version, `docs/native-abi.md`, the runtime, and the parity
     harness all move together.
+  - Depends on nothing. Every later change that needs an ABI bump joins this
+    entry instead of waiting on it.
   - Model: Fable, Planned.
 
 ### 3. Catch Up To Current Mojo *(recurring — reopens at every nightly re-pin)*
@@ -681,29 +691,15 @@ change that needs a new `MJRT_ABI_VERSION`.
   [`docs/mojo-nightly.md`](mojo-nightly.md) and are filed separately; the two
   divergences it found are checkboxes below.
 
-Sorted by how far the entry is from the pin's answer: a program Mojito runs
-to a wrong result or accepts where the pin rejects comes first, then one it
-rejects where the pin runs it, then a verdict that is right with the wrong
-words. The representation gap and the two standing ledgers are last.
+Sorted by dependency first: an entry another one needs comes before it,
+however small, and a cluster sits where its most important member would.
+Otherwise sorted by how far the entry is from the pin's answer: a program
+Mojito runs to a wrong result or accepts where the pin rejects comes first,
+then one it rejects where the pin runs it, then a verdict that is right with
+the wrong words. The representation gap and the two standing ledgers are
+last.
 
-- [ ] **3.1 A view returned by a method on a `List` element reads freed memory on
-  the VM**
-
-  Problem: `var v = ys[0].rstrip()` followed by `String(v)` fails with "use
-  after Pointer deallocation", where the pin prints the stripped text.
-  - The element receiver is an `Index` place: the view-result borrow in
-    `aggregate_origins` (`checker/origins/ref_params.rs`) lends only
-    identifier and field receivers, and MIR materializes only non-place
-    receivers, so nothing keeps the element's bytes alive for the view.
-  - The call-result aliasing rule already projects such a view through the
-    element place (`carried_argument_origins`), which is the origin the
-    borrow should carry.
-  - Pinned by `conformance/probes/list_element_view_method_result.mojo`.
-  - Lending an element place changes loans for every view-returning method on a
-    subscript, so the plan enumerates that fallout first.
-  - Model: Opus, Planned.
-
-- [ ] **3.2 A reference returned through an origin binder outlives its argument**
+- [ ] **3.1 A reference returned through an origin binder outlives its argument**
 
   Problem: `print(words.pick(w))` prints `None` at `w`'s last use, where
   `pick[o: Origin](self, ref[o] x: Self.T) -> ref[o] Self.T` returns its
@@ -720,112 +716,21 @@ words. The representation gap and the two standing ledgers are last.
     stay clear of it.
   - The plan must say where a call's inferred origin arguments become loans on
     its result.
+  - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.3 A returned reference may declare a wider origin than its place**
+- [ ] **3.2 Shift operators bind looser than the bitwise ones**
 
-  Problem: the pin compares a returned place's origin with the declared one
-  exactly, and Mojito accepts any declared origin the place lies within.
-  - `def peek(ref self) -> ref[origin_of(self)] Self.T` with `return
-    self.item` runs on Mojito. The pin reports "cannot return reference with
-    incompatible origin: 'origin_of(self.item)' vs 'origin_of(self)'".
-  - A `List` subscript is the same: the pin wants
-    `origin_of(self.items)._get_owned_interior["element"]`, and Mojito also
-    takes `origin_of(self.items)` and `origin_of(self)`.
-  - The lever is the return check's `origins/subst.rs:origin_is_within`
-    (`statements.rs`, `StmtKind::Return`).
-  - Pinned by `conformance/probes/reference_return_wider_origin.mojo`.
-  - Every fixture and bundled accessor that declares an owner's origin for a
-    field must be found and respelled first.
-  - Model: Opus, Planned.
-
-- [ ] **3.4 A store to a field of `self` under a live view of it is accepted**
-
-  Problem: in a `mut self` method, `var view = self.name.strip()` then
-  `self.name = String("q")` then `view.byte_length()` runs on Mojito, where
-  the pin reports "origin was invalidated here" at the store.
-  - The same store through a local (`h.name = …` in `main`) is rejected as
-    "access to 'h.name' conflicts with live reference 'view'", so only the
-    `self` root escapes the check.
-  - The view's origin is the receiver field's owned interior
-    (`ViewResultInteriors`), which the store should invalidate.
-  - It is the same with and without a struct parameter, so it predates the
-    template derivation of such views.
-  - Pinned by `conformance/probes/self_field_store_under_live_view.mojo`.
+  Problem: `a << 1 | b >> 1` parses as `(a << 1 | b) >> 1`, where Python and
+  Mojo bind `<<`/`>>` tighter than `&`, `^`, and `|`, so it prints `7` for
+  `Int32(6)` and `Int32(3)` where the pin prints `13`.
+  - Found by `assets/ok/simd_symbolic_surface.mojo`, whose `guarded`
+    parenthesizes around it.
+  - The lever is the infix precedence table in `crates/mojito-parser`.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.5 A comprehension element may transfer its owned binder**
-
-  Problem: `[x^ for x in items^]` runs on Mojito, where the pin reports
-  "expression does not designate a value with an origin" at `x^`.
-  - The pin takes the bare binder (`[x for x in items^]`), which both run.
-  - Mojito's comprehension check consumes the element as a whole value
-    (`check_consuming` in `check_comprehension`), and a `^` on an owned
-    binder passes as the move of a local.
-  - Pinned by `conformance/probes/comprehension_binder_transfer.mojo`.
-  - Model: Opus, Not Planned.
-
-- [ ] **3.6 A literal passed to a `ref` parameter stops at run time**
-
-  Problem: `look(3)` against `def look(ref other: Int)` is accepted and then
-  fails with "reference binding to a non-place expression".
-  - The pin materializes the literal and binds the parameter to the temporary.
-  - Probe: `conformance/probes/literal_to_ref_parameter.mojo`.
-  - Model: Opus, Planned.
-
-- [ ] **3.7 `hash` of a struct that overloads `__hash__` stops at run time**
-
-  Problem: `hash(Twin(1))` for a struct declaring `__hash__` for `Some[Hasher]`
-  and for a concrete `AHasher` passes the checker and then fails with "vm:
-  unknown method 'Twin.__hash__'", where the pin prints the hash.
-  - The call reaches the VM under the method's plain name, which no member
-    of the overload set is lowered under.
-  - Found while probing overloaded witnesses for a bound dispatch.
-  - Pinned by `conformance/probes/overloaded_hash_through_hash.mojo`.
-  - Model: Opus, Not Planned.
-
-- [ ] **3.8 A method called on a borrowed comprehension binder loses its
-  receiver**
-
-  Problem: `[item.get() for item in ps]` over a `List[P]` local passes the
-  checker and then stops with "call passed 0 args to 1-parameter function
-  'P.get'", where the pin prints the results.
-  - The same call in a runtime `for` over the list runs.
-  - `w.byte_length()` over a `List[String]` local runs, and over a
-    `List[String]` parameter fails the same way.
-  - The binder is a reference into the list, so the lever is how lowering
-    passes a comprehension binder's handle as a method receiver.
-  - Pinned by `conformance/probes/comprehension_binder_method_call.mojo`.
-  - Model: Opus, Not Planned.
-
-- [ ] **3.9 Unpacking a tuple with a `String` element frees the element twice**
-
-  Problem: `var t = (String("t"), 6)` then `var s, n = t` stops with "use
-  after Pointer deallocation" on the VM, where the pin prints `t 6`.
-  - The same unpack of a `Tuple[String, Int]` parameter runs on the VM and
-    stops with "double free of Pointer allocation" under `--backend pliron`.
-  - A `Tuple[Int, Int]` unpacks cleanly, and passing the tuple without
-    unpacking it runs on both backends.
-  - The element reads are the checker's `CheckedTupleUnpackElement` plan
-    (`StmtKind::Unpack` in `checker/statements.rs`), so the lever is how a
-    place element read through it is copied into the new binding.
-  - Pinned by `conformance/probes/tuple_unpack_string_element.mojo`.
-  - `assets/ok/template_method_tuple_unpack.mojo` keeps its `String`
-    instance to unpacks of a sibling call's result, which both backends run.
-  - Model: Opus, Planned.
-
-- [ ] **3.10 A generic struct's `Tuple` field over its parameter cannot be read**
-
-  Problem: a `Holder[T]` field `var pair: Tuple[Self.T, Int]` stops at
-  `some_int.pair[1]` with "cannot index Tuple$t2[y3:Inty3:Int]", where the
-  pin prints the element.
-  - A non-generic struct's `Tuple[Int, Int]` field indexes cleanly, and
-    the checker accepts both.
-  - The message is the VM's place projection (`backend/vm/places.rs`).
-  - Pinned by `conformance/probes/generic_struct_tuple_field.mojo`.
-  - Model: Opus, Not Planned.
-
-- [ ] **3.11 A local passed into a read type pack is destroyed before the call**
+- [ ] **3.3 A local passed into a read type pack is destroyed before the call**
 
   Problem: `show(y, 5)` against `show[*Ts: Writable](*a: *Ts)` runs
   `y.__del__` before `show`'s body, which then prints `y` anyway, where the
@@ -840,7 +745,7 @@ words. The representation gap and the two standing ledgers are last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.12 An owned pack's elements are destroyed after the first element's
+- [ ] **3.4 An owned pack's elements are destroyed after the first element's
   last use**
 
   Problem: `take(Noisy(1), Noisy(2))` against `take[*Ts](var *a: *Ts)`,
@@ -850,109 +755,11 @@ words. The representation gap and the two standing ledgers are last.
   - A top-level `def` and a method collector behave alike.
   - The unrolled `a[0]` read is taken as the whole pack's last use.
   - Probe: `conformance/probes/owned_pack_elements_destroyed_early.mojo`.
-  - Depends on nothing.
+  - Depends on 3.3, which settles what a pack argument's last use is on the
+    caller's side.
   - Model: Opus, Not Planned.
 
-- [ ] **3.13 A place passed to a `ref` parameter may alias a pack element**
-
-  Problem: `r(x, x)` against `r[*Ts](ref b: Int, *rest: *Ts)` prints `1` in
-  Mojito, while the pinned Mojo reports "aliasing values passed mutably to 'b'
-  argument and passed immutably to 'rest' argument".
-  - The pin infers the `ref` parameter mutable from the mutable place, and a
-    pack element is held by reference.
-  - With a regular `c: Int` in place of the pack both compilers accept the
-    call, because a trivial read parameter takes a copy.
-  - Mojito accepts a program the pin rejects, so this is a divergence.
-  - Pinned by `conformance/probes/ref_argument_aliases_pack_element.mojo`.
-  - The plan must say whether the within-call exclusivity check or the `ref`
-    mutability inference is what is missing.
-  - Model: Opus, Planned.
-
-- [ ] **3.14 A list literal beside a `List` parameter and a pack is not ambiguous**
-
-  Problem: `g(x, [1, 2], x)` against `g[*Ts](a: Int, *rest: *Ts)` beside
-  `g[*Ts](a: Int, b: List[Int], *rest: *Ts)` prints `2` in Mojito, while the
-  pinned Mojo reports "ambiguous call to 'g'".
-  - Mojito charges the literal's conversion to the second overload only. A
-    string literal is already charged on the pack side too
-    (`pack_element_conversion_count`).
-  - Charging a list literal one conversion on the pack side does not tie the
-    candidates, so the regular binding costs something else first.
-  - Mojito accepts a program the pin rejects, so this is a divergence.
-  - Pinned by `conformance/probes/pack_overload_list_literal_ambiguity.mojo`.
-  - Model: Opus, Not Planned.
-
-- [ ] **3.15 Methods cannot overload on the parameter convention alone**
-
-  Problem: `m(self, var a: String)` beside `m(self, a: String)` prints `2`
-  then `1` at the pin, while Mojito reports "'m' is already declared in this
-  scope". A free function accepts the same pair.
-  - `same_method_shape` (`checker/traits.rs`) compares parameter types and
-    ignores conventions, so the second declaration reads as a redeclaration.
-  - The lowered method name has no owned-parameter qualifier either, so the
-    two would collide even if the checker admitted them.
-  - Ranking already decides such a pair: the place costs the `var` candidate
-    a copy, and an owned argument selects it at the tie.
-  - Pinned by `conformance/probes/overload_convention_only_method.mojo`.
-  - The plan must say what the lowered name gains, and whether trait
-    requirements compare conventions the same way.
-  - Model: Opus, Planned.
-
-- [ ] **3.16 A trivial value handed to a `var` parameter beside a pack is always
-  ambiguous**
-
-  Problem: `g(x, x + 1, x)` against `g[*Ts](a: Int, *rest: *Ts)` beside
-  `g[*Ts](a: Int, var b: Int, *rest: *Ts)` prints `3` at the pin, while Mojito
-  reports an ambiguous call.
-  - The pin selects the first overload for `Int(2)`, `v^`, and `True`, the
-    second for `x + 1`, and calls a bare `2` ambiguous. No rule was recovered.
-  - `VariadicBinding::bind` marks the case undecided, and an undecided tie is
-    reported ambiguous, so Mojito never selects a different overload than the
-    pin.
-  - A place argument is settled: the implicit copy costs and both print `2`.
-  - Pinned by `conformance/probes/pack_overload_var_trivial_undecided.mojo`.
-  - The plan must find the rule with more probes, or move the entry to
-    `docs/non-goals.md` as a kept over-rejection.
-  - Model: Opus, Planned.
-
-- [ ] **3.17 A trivial rvalue handed to a `var` parameter beside a read overload is
-  accepted**
-
-  Problem: `q(x + 1)` against `q(var a: Int)` beside `q(a: Int)` is "ambiguous
-  call to 'q'" at the pin, while Mojito selects the `var` overload.
-  - The pin accepts the literal `q(7)`, the place `q(x)` and the transfer
-    `q(x^)` in the same program, so only the non-literal trivial rvalue is
-    ambiguous. No rule was recovered.
-  - This is the non-variadic sibling of 3.16, and the two
-    disagree: beside a pack the pin calls a bare literal ambiguous, here it
-    accepts one.
-  - `ArgumentBinding`'s `undecided` bit models the pack rule and is deliberately
-    kept off non-variadic candidates, since applying it would reject `q(7)`.
-  - Pinned by `conformance/probes/overload_var_trivial_rvalue.mojo`.
-  - The plan must find the rule with more probes, or move the entry to
-    `docs/non-goals.md` as a kept divergence.
-  - Model: Opus, Planned.
-
-- [ ] **3.18 An exact constructor overload loses to its generic sibling as
-  ambiguous**
-
-  Problem: `Tag[Int](3)` on a struct declaring `__init__(out self, n: Int)`
-  beside `__init__(out self, n: Self.T)` prints `int` at the pin, while
-  Mojito reports "invalid call to 'Tag': ambiguous overloaded constructor
-  call".
-  - Upstream picks the more specific signature. Mojito's construction
-    selection scores the substituted `Self.T` parameter as an equal match
-    (`select_method_overload`, `checker/declarations.rs`).
-  - The preference already exists one level down: a per-call clone of a
-    generic constructor wins over the template it was minted from
-    (`constructor_is_concrete`).
-  - Such a family is also the one shape that collapses on the instance, so
-    its constructor clone family stays withdrawn.
-  - Found while closing the overloaded-constructor-family item; no fixture
-    pins it yet.
-  - Model: Opus, Planned.
-
-- [ ] **3.19 A constructor overload set drops every generic candidate before it is
+- [ ] **3.5 A constructor overload set drops every generic candidate before it is
   ranked**
 
   Problem: `C(s)` for a struct with `__init__(out self, var a: String)` beside
@@ -968,47 +775,77 @@ words. The representation gap and the two standing ledgers are last.
   - Pinned by `conformance/probes/overload_var_copy_constructor.mojo`.
   - The plan must say how a clone is told from a declared overload — the minting
     record, or a marker on the clone.
-  - Model: Opus, Planned.
-
-- [ ] **3.20 A clone that is still checked re-ranks an overloaded call**
-
-  Problem: the pinned Mojo binds a call inside a generic body once, while it
-  checks the body, and Mojito ranks the overload set again for every
-  instantiation that takes the clone check.
-  - An instance derived from its checked template inherits the template's
-    choice (`assets/ok/template_overload_binding.mojo`,
-    `overload-bound-in-generic-body`), with a scalar local or a branch
-    (`assets/ok/template_overload_binding_local.mojo`), with a local of
-    the parameter type handed to the call
-    (`assets/ok/template_def_value_local.mojo`), and from a struct method
-    (`assets/ok/template_overload_binding_method.mojo`).
-  - What remains is any body still outside the derivation classes for
-    another reason: its instances are checked again, and rank the set
-    again. It closes as section 1 widens the classes.
-  - Model: Fable, Not Planned.
-
-- [ ] **3.21 A module-level `def` converts to a `def(...) capturing[_]` runtime
-  parameter**
-
-  Problem: `apply(handler: def(element: Int) capturing[_], /)` called as
-  `apply(show)` with a module-level `def show(element: Int)` runs in Mojito;
-  the pin rejects the call ("cannot be converted from `def show(element:
-  Int) thin -> None` to `def(element: Int) capturing thin -> None`") and
-  rejects a capturing closure there too ("capturing closures cannot be
-  materialized as runtime values"), so such a parameter has no valid
-  argument in the pin.
-  - Probe: `conformance/probes/callable_parameter_thin_to_capturing.mojo`.
-  - The pin does accept the same conversion into a generic struct's method
-    for an `Int` instantiation (`Cell[Int].visit(show_int)`) and rejects it
-    for `String`; the fixture that needed a callable parameter spells it
-    `thin` (`assets/ok/template_method_callable_parameter.mojo`).
-  - The bundled `List.deinit_with`, `Optional.deinit_with`, `Set.clear_with`,
-    `Dict.clear_with`, and `DictEntry.reap_with` declare such parameters and
-    are callable only through this conversion.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.22 A user `Hasher` cannot spell `update` the way the pin requires**
+- [ ] **3.6 A view returned by a method on a `List` element reads freed memory on
+  the VM**
+
+  Problem: `var v = ys[0].rstrip()` followed by `String(v)` fails with "use
+  after Pointer deallocation", where the pin prints the stripped text.
+  - The element receiver is an `Index` place: the view-result borrow in
+    `aggregate_origins` (`checker/origins/ref_params.rs`) lends only
+    identifier and field receivers, and MIR materializes only non-place
+    receivers, so nothing keeps the element's bytes alive for the view.
+  - The call-result aliasing rule already projects such a view through the
+    element place (`carried_argument_origins`), which is the origin the
+    borrow should carry.
+  - Pinned by `conformance/probes/list_element_view_method_result.mojo`.
+  - Lending an element place changes loans for every view-returning method on a
+    subscript, so the plan enumerates that fallout first.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **3.7 Unpacking a tuple with a `String` element frees the element twice**
+
+  Problem: `var t = (String("t"), 6)` then `var s, n = t` stops with "use
+  after Pointer deallocation" on the VM, where the pin prints `t 6`.
+  - The same unpack of a `Tuple[String, Int]` parameter runs on the VM and
+    stops with "double free of Pointer allocation" under `--backend pliron`.
+  - A `Tuple[Int, Int]` unpacks cleanly, and passing the tuple without
+    unpacking it runs on both backends.
+  - The element reads are the checker's `CheckedTupleUnpackElement` plan
+    (`StmtKind::Unpack` in `checker/statements.rs`), so the lever is how a
+    place element read through it is copied into the new binding.
+  - Pinned by `conformance/probes/tuple_unpack_string_element.mojo`.
+  - `assets/ok/template_method_tuple_unpack.mojo` keeps its `String`
+    instance to unpacks of a sibling call's result, which both backends run.
+  - Depends on nothing. The `named-tuple-unpack-copy` divergence in 3.73 is
+    the same unpack plan and closes with it.
+  - Model: Opus, Planned.
+
+- [ ] **3.8 A `^` transfer of a read parameter is accepted and frees the
+  caller's value**
+
+  Problem: `def ident(x: String) -> String: return x^` runs in Mojito and
+  fails with "use after Pointer deallocation" once the caller's `String` is
+  read again or dropped, while a read parameter cannot be transferred in
+  Mojo.
+  - The same body over a bare type parameter (`def ident[T: Movable](x: T)
+    -> T`) fails the same way for a `String` argument and prints for an
+    `Int` one.
+  - Pinned by `conformance/probes/read_parameter_transfer_returned.mojo`;
+    the pin's diagnostic is still to be observed by the sweep.
+  - The lever is the checker's transfer check on a parameter with no `var`
+    convention, which today admits the move and lets the callee's drop
+    free the caller's storage.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.9 A static call copies a place into a `var` parameter whatever its
+  type**
+
+  Problem: `Box.keep(self.item)` with `keep(var v: Self.T)` runs on Mojito
+  for a `String` instance and stops with "double free of Pointer
+  allocation". The pin rejects it ("value of type 'T' cannot be implicitly
+  copied").
+  - A method call's `var` argument demands `ImplicitlyCopyable` of a copied
+    place; the static path (`finish_static_call`) does not.
+  - Pinned by `conformance/probes/static_var_parameter_implicit_copy.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.10 A user `Hasher` cannot spell `update` the way the pin requires**
 
   Problem: the `26cfe94f40` pin's `Hasher` requires
   `update(mut self, value: ImmSpan[Byte, _])`, and Mojito requires
@@ -1032,9 +869,162 @@ words. The representation gap and the two standing ledgers are last.
     and `stdlib/std/hashlib/` (`hasher.mojo`, `_ahash.mojo`, `_fnv1a.mojo`
     plus every `hasher.update(...)` call site).
   - It changes a compiler-known trait's contract.
+  - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **3.23 `Layout` carries its alignment as a runtime field**
+- [ ] **3.11 Forwarding a named accessor's reference result is rejected**
+
+  Problem: `return self.items.unsafe_get(index)` under
+  `ref[origin_of(self.items)._get_owned_interior["element"]]` reports
+  "returned reference escapes storage outside its declared origin", where the
+  pin runs it.
+  - The subscript `return self.items[index]` under the same origin works.
+  - Only the subscript path records the interior generation the return check
+    compares (`indexing.rs`, `origins/interior.rs:record_interior_reference`).
+    A named call leaves the returned reference's place without it.
+  - Pinned by `conformance/probes/reference_return_forwarded_accessor.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **3.12 A returned reference may declare a wider origin than its place**
+
+  Problem: the pin compares a returned place's origin with the declared one
+  exactly, and Mojito accepts any declared origin the place lies within.
+  - `def peek(ref self) -> ref[origin_of(self)] Self.T` with `return
+    self.item` runs on Mojito. The pin reports "cannot return reference with
+    incompatible origin: 'origin_of(self.item)' vs 'origin_of(self)'".
+  - A `List` subscript is the same: the pin wants
+    `origin_of(self.items)._get_owned_interior["element"]`, and Mojito also
+    takes `origin_of(self.items)` and `origin_of(self)`.
+  - The lever is the return check's `origins/subst.rs:origin_is_within`
+    (`statements.rs`, `StmtKind::Return`).
+  - Pinned by `conformance/probes/reference_return_wider_origin.mojo`.
+  - Every fixture and bundled accessor that declares an owner's origin for a
+    field must be found and respelled first.
+  - Depends on 3.11: the bundled accessors this respelling touches forward
+    their result through a named call, which is rejected until that lands.
+  - Model: Opus, Planned.
+
+- [ ] **3.13 A store to a field of `self` under a live view of it is accepted**
+
+  Problem: in a `mut self` method, `var view = self.name.strip()` then
+  `self.name = String("q")` then `view.byte_length()` runs on Mojito, where
+  the pin reports "origin was invalidated here" at the store.
+  - The same store through a local (`h.name = …` in `main`) is rejected as
+    "access to 'h.name' conflicts with live reference 'view'", so only the
+    `self` root escapes the check.
+  - The view's origin is the receiver field's owned interior
+    (`ViewResultInteriors`), which the store should invalidate.
+  - It is the same with and without a struct parameter, so it predates the
+    template derivation of such views.
+  - Pinned by `conformance/probes/self_field_store_under_live_view.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.14 A place passed to a `ref` parameter may alias a pack element**
+
+  Problem: `r(x, x)` against `r[*Ts](ref b: Int, *rest: *Ts)` prints `1` in
+  Mojito, while the pinned Mojo reports "aliasing values passed mutably to 'b'
+  argument and passed immutably to 'rest' argument".
+  - The pin infers the `ref` parameter mutable from the mutable place, and a
+    pack element is held by reference.
+  - With a regular `c: Int` in place of the pack both compilers accept the
+    call, because a trivial read parameter takes a copy.
+  - Mojito accepts a program the pin rejects, so this is a divergence.
+  - Pinned by `conformance/probes/ref_argument_aliases_pack_element.mojo`.
+  - The plan must say whether the within-call exclusivity check or the `ref`
+    mutability inference is what is missing.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **3.15 A `var` of an opaque type is not required to be `Deinitable`**
+
+  Problem: `var v: FT = FT()` under `comptime if conforms_to(FT, Defaultable
+  & Writable):` validates at Mojito, while the pin reports "'v' abandoned
+  without being explicitly destroyed ... consider adding trait conformance
+  to Deinitable" until `Deinitable` is proved too.
+  - Mojito accepts a program the pin rejects, so this is a divergence; it
+    holds for every opaque parameter, not only a reflected field type.
+  - The abstract destruction walk (`explicit_destroy.rs`) does not ask the
+    view's bounds for `Deinitable`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.16 A comprehension element may transfer its owned binder**
+
+  Problem: `[x^ for x in items^]` runs on Mojito, where the pin reports
+  "expression does not designate a value with an origin" at `x^`.
+  - The pin takes the bare binder (`[x for x in items^]`), which both run.
+  - Mojito's comprehension check consumes the element as a whole value
+    (`check_consuming` in `check_comprehension`), and a `^` on an owned
+    binder passes as the move of a local.
+  - Pinned by `conformance/probes/comprehension_binder_transfer.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.17 Owned iteration of a variadic pack moves elements the pin copies**
+
+  Problem: `for var value in values^` over `var *values: Self.T` moves each
+  element out, so Mojito runs it for a `String` element; the pin iterates
+  the pack by copy and rejects it ("value of type 'T' cannot be implicitly
+  copied").
+  - Over an implicitly copyable element (`var *values: Int`) both run.
+  - The bundled `List`, `Set`, and `Array` literal initializers use this
+    spelling; upstream's consume the pack with `consume_elements`.
+  - Pinned by `conformance/probes/variadic_pack_owned_iteration.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.18 A module-level `def` converts to a `def(...) capturing[_]` runtime
+  parameter**
+
+  Problem: `apply(handler: def(element: Int) capturing[_], /)` called as
+  `apply(show)` with a module-level `def show(element: Int)` runs in Mojito;
+  the pin rejects the call ("cannot be converted from `def show(element:
+  Int) thin -> None` to `def(element: Int) capturing thin -> None`") and
+  rejects a capturing closure there too ("capturing closures cannot be
+  materialized as runtime values"), so such a parameter has no valid
+  argument in the pin.
+  - Probe: `conformance/probes/callable_parameter_thin_to_capturing.mojo`.
+  - The pin does accept the same conversion into a generic struct's method
+    for an `Int` instantiation (`Cell[Int].visit(show_int)`) and rejects it
+    for `String`; the fixture that needed a callable parameter spells it
+    `thin` (`assets/ok/template_method_callable_parameter.mojo`).
+  - The bundled `List.deinit_with`, `Optional.deinit_with`, `Set.clear_with`,
+    `Dict.clear_with`, and `DictEntry.reap_with` declare such parameters and
+    are callable only through this conversion.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **3.19 `@explicit_destroy` is accepted on a type that is `Deinitable`
+  unconditionally**
+
+  Problem: Mojito accepts `@explicit_destroy` on `struct Ticket(Movable)`,
+  while the pin rejects it: "@explicit_destroy is not valid on `struct` with
+  unconditional conformance to `Deinitable`".
+  - Mojito accepts a program the pin rejects, so this is a divergence.
+  - The pin wants a `Deinitable where False` conformance beside the
+    decorator, which every bundled explicit-destroy struct already spells.
+  - Probe: `conformance/probes/explicit_destroy_without_deinitable_opt_out.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.20 A subscript store on a struct with a setter and no getter is
+  accepted**
+
+  Problem: `s[0] = 3` on a struct that declares `__setitem__` but no
+  `__getitem__` runs in Mojito, while the pin refuses the store ("'Sink' has
+  '__setitem__' but no '__getitem__' method").
+  - The pin accepts the declaration itself while nothing subscripts it.
+  - The lever is the setter selection in `check_nominal_subscript_assignment`
+    (`checker/indexing.rs`), which never asks for a getter.
+  - Fixtures that declare a setter alone need a getter first; the fallout is
+    not enumerated.
+  - Pinned by `conformance/probes/setter_without_getter.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **3.21 `Layout` carries its alignment as a runtime field**
 
   Problem: `Layout[Int](count=1, alignment=16)` is a runtime keyword argument
   in Mojito, where the `26cfe94f40` pin takes alignment as a keyword-only
@@ -1052,9 +1042,109 @@ words. The representation gap and the two standing ledgers are last.
     `_RawAlloc`) plus the VM's reservation check.
   - Moving a field to a parameter changes every `Layout` value's type, so the
     plan must first find what depends on the field.
+  - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.24 `repr` of a sized scalar omits or misstates its type name**
+- [ ] **3.22 A trivial value handed to a `var` parameter beside a pack is always
+  ambiguous**
+
+  Problem: `g(x, x + 1, x)` against `g[*Ts](a: Int, *rest: *Ts)` beside
+  `g[*Ts](a: Int, var b: Int, *rest: *Ts)` prints `3` at the pin, while Mojito
+  reports an ambiguous call.
+  - The pin selects the first overload for `Int(2)`, `v^`, and `True`, the
+    second for `x + 1`, and calls a bare `2` ambiguous. No rule was recovered.
+  - `VariadicBinding::bind` marks the case undecided, and an undecided tie is
+    reported ambiguous, so Mojito never selects a different overload than the
+    pin.
+  - A place argument is settled: the implicit copy costs and both print `2`.
+  - Pinned by `conformance/probes/pack_overload_var_trivial_undecided.mojo`.
+  - The plan must find the rule with more probes, or move the entry to
+    `docs/non-goals.md` as a kept over-rejection.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **3.23 A trivial rvalue handed to a `var` parameter beside a read overload is
+  accepted**
+
+  Problem: `q(x + 1)` against `q(var a: Int)` beside `q(a: Int)` is "ambiguous
+  call to 'q'" at the pin, while Mojito selects the `var` overload.
+  - The pin accepts the literal `q(7)`, the place `q(x)` and the transfer
+    `q(x^)` in the same program, so only the non-literal trivial rvalue is
+    ambiguous. No rule was recovered.
+  - This is the non-variadic sibling of 3.22, and the two
+    disagree: beside a pack the pin calls a bare literal ambiguous, here it
+    accepts one.
+  - `ArgumentBinding`'s `undecided` bit models the pack rule and is deliberately
+    kept off non-variadic candidates, since applying it would reject `q(7)`.
+  - Pinned by `conformance/probes/overload_var_trivial_rvalue.mojo`.
+  - The plan must find the rule with more probes, or move the entry to
+    `docs/non-goals.md` as a kept divergence.
+  - Depends on 3.22, where the `undecided` rule is modelled: this one reuses
+    the rule that entry recovers, or is withdrawn with it.
+  - Model: Opus, Planned.
+
+- [ ] **3.24 A list literal beside a `List` parameter and a pack is not ambiguous**
+
+  Problem: `g(x, [1, 2], x)` against `g[*Ts](a: Int, *rest: *Ts)` beside
+  `g[*Ts](a: Int, b: List[Int], *rest: *Ts)` prints `2` in Mojito, while the
+  pinned Mojo reports "ambiguous call to 'g'".
+  - Mojito charges the literal's conversion to the second overload only. A
+    string literal is already charged on the pack side too
+    (`pack_element_conversion_count`).
+  - Charging a list literal one conversion on the pack side does not tie the
+    candidates, so the regular binding costs something else first.
+  - Mojito accepts a program the pin rejects, so this is a divergence.
+  - Pinned by `conformance/probes/pack_overload_list_literal_ambiguity.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.25 Each unrolled `comptime for` iteration shares the enclosing scope**
+
+  Problem: `comptime for i in range(2):` with `var v: Int = i` in its body
+  prints `0` then `1` at the pin, while Mojito reports "'v' is already
+  declared in this scope".
+  - The elaborator splices every unrolled copy of the body into the enclosing
+    block (`comptime/elab.rs`, the `ComptimeFor` arm), so the second copy
+    redeclares the first's locals; the validator checks the body once in its
+    own scope and accepts it.
+  - A `comptime n = names[i]` binding in the body fails the same way.
+  - Pinned by `conformance/probes/comptime_for_body_scope.mojo`.
+  - Each iteration needs its own scope, or its locals renamed.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **3.26 A reflection method call in a runtime position is rejected**
+
+  Problem: `comptime r = reflect[Point]` followed by `print(r.field_count())`
+  prints `2` at the pin, while Mojito reports "Undefined variable 'r'".
+  - Binding the result first works: `comptime count = r.field_count()` then
+    `print(count)`.
+  - The reflection handle erases before the executable check, so a method
+    call on it must fold to its compile-time value where it stands, as the
+    upstream materialization of an `Int` result does.
+  - A direct `reflect[Point].field_count()` in a runtime position fails too,
+    with "type 'reflect[…]' has no method 'field_count'".
+  - Found in the 2026-09-17 gate triage; no fixture pins it yet.
+  - The plan lists which handle results are implicitly materializable (an `Int`,
+    a `Bool`) and which still need an explicit crossing (a name list).
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **3.27 A field name under a symbolic index prints without `materialize`**
+
+  Problem: `print(names[i])` inside `comptime for i in range(len(names))`
+  over `comptime names = reflect[T].field_names()` prints at Mojito, while
+  the pin rejects it with "cannot materialize comptime value of type
+  'Array[StringSpan[...]]'" and needs `materialize[names[i]]()`.
+  - Mojito accepts a program the pin rejects, so this is a divergence.
+  - `materialize[names[i]]()` fails at the instance in turn ("Undefined
+    variable 'materialize'"): the elaborator's crossing takes a bare binding
+    only.
+  - Depends on 3.25 for the `comptime n = names[i]` workaround, and on 3.26
+    for which handle results may materialize at all.
+  - Model: Opus, Planned.
+
+- [ ] **3.28 `repr` of a sized scalar omits or misstates its type name**
 
   Problem: `repr(Float32(0.5))` and `repr(Int8(3))` print `Float32(0.5)` and
   `Int8(3)` at the pin, but `0.5` and `3` on the VM, and `Float64(0.5)` and
@@ -1066,32 +1156,96 @@ words. The representation gap and the two standing ledgers are last.
     scalar `Float64(`, `Float16` and `Float32` included.
   - The label is the scalar alias (`Dtype::scalar_alias`); the value text
     stays the float-format divergence the Dragonbox item owns.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.25 A call through a `ref` to a callable value is rejected**
+- [ ] **3.29 `hash` of a struct that overloads `__hash__` stops at run time**
 
-  Problem: `for f in fns: print(f(5))` and `ref g = fns[0]; print(g(1))` run at
-  the pin over a function display, while Mojito reports "'f' has type ref
-  def(Int) thin -> Int and is not callable".
-  - Both thin and capturing elements are affected.
-  - The indexed call `fns[0](5)` already works through element-call dispatch.
-    A `ref`-typed callee has no such path.
+  Problem: `hash(Twin(1))` for a struct declaring `__hash__` for `Some[Hasher]`
+  and for a concrete `AHasher` passes the checker and then fails with "vm:
+  unknown method 'Twin.__hash__'", where the pin prints the hash.
+  - The call reaches the VM under the method's plain name, which no member
+    of the overload set is lowered under.
+  - Found while probing overloaded witnesses for a bound dispatch.
+  - Pinned by `conformance/probes/overloaded_hash_through_hash.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.30 A bound call's result converted at an annotated binding fails
+  MIR verification**
+
+  Problem: `var x: Optional[T] = v.copy()` in a generic `def` reports
+  "register r1 has no checked type" for the `copy` call, where the pin runs
+  it.
+  - The same binding at a concrete type runs, and so does the result bound to
+    an unannotated local first and then converted.
+  - Probe: `conformance/probes/bound_call_result_converted_at_binding.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.31 Two type-pack `__init__` overloads cannot be constructed**
+
+  Problem: `H(x, x, x)` for a struct with `__init__[*Ts](out self, a: Int,
+  *rest: *Ts)` beside `__init__[*Ts](out self, a: Int, b: Int, *rest: *Ts)`
+  prints `3` at the pin and fails in Mojito with "checked constructor
+  'H.__init__$ov$…' is missing from MIR".
+  - The checker selects the same constructor the pin does. The selected clone
+    never reaches MIR.
+  - The rejection is safe, but it is a VM-phase message for a program the pin
+    runs.
+  - Pinned by `conformance/probes/pack_overload_constructor_missing_mir.mojo`.
+  - Free functions and methods are served from the checker's recorded selection;
+    the plan must find why constructors are not.
+  - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.26 Forwarding a named accessor's reference result is rejected**
+- [ ] **3.32 A tuple binding with a `Tuple[...]` annotation loses `reverse` and
+  `concat`**
 
-  Problem: `return self.items.unsafe_get(index)` under
-  `ref[origin_of(self.items)._get_owned_interior["element"]]` reports
-  "returned reference escapes storage outside its declared origin", where the
-  pin runs it.
-  - The subscript `return self.items[index]` under the same origin works.
-  - Only the subscript path records the interior generation the return check
-    compares (`indexing.rs`, `origins/interior.rs:record_interior_reference`).
-    A named call leaves the returned reference's place without it.
-  - Pinned by `conformance/probes/reference_return_forwarded_accessor.mojo`.
+  Problem: `var t: Tuple[Int, String] = (1, "x")` followed by `t.reverse()`
+  or `t.concat(Tuple(True))` runs at the pin, while Mojito reports "type
+  'Tuple$t2[y3:Inty6:String][Int, String]' has no method 'reverse'".
+  - The same calls work on an unannotated binding (`var t = (1, "x")`) and
+    on `var t = Tuple(1, "x")`.
+  - The annotation resolves to the minted `Tuple$t2[...]` struct, so method
+    lookup reports the missing member before the builtin tuple path
+    (`infer_tuple_method`, reached from `method_calls/mc_infer.rs`) or a
+    `TupleTransformRequest` for the clone is ever considered.
+  - Found in the 2026-09-17 gate triage; no fixture pins it yet.
+  - The plan decides whether the annotation should keep the public `Tuple`
+    spelling or the lookup should fall through, and lists the other members the
+    minted spelling hides.
+  - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.27 A generic method moving its `var` parameter into a sibling call's
+- [ ] **3.33 A generic struct's `Tuple` field over its parameter cannot be read**
+
+  Problem: a `Holder[T]` field `var pair: Tuple[Self.T, Int]` stops at
+  `some_int.pair[1]` with "cannot index Tuple$t2[y3:Inty3:Int]", where the
+  pin prints the element.
+  - A non-generic struct's `Tuple[Int, Int]` field indexes cleanly, and
+    the checker accepts both.
+  - The message is the VM's place projection (`backend/vm/places.rs`).
+  - Pinned by `conformance/probes/generic_struct_tuple_field.mojo`.
+  - Depends on 3.32, which decides whether such a field keeps the public
+    `Tuple` spelling the VM can project.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.34 A `String` element copied out of a `Span` fails**
+
+  Problem: `String(span[0])` or `span[0].copy()` over a `Span[String, _]`
+  traps in the VM with "invalid reference projection Field("_data") on
+  None", and a later use of the span is refused as "access to 'items'
+  conflicts with live reference 'span'"; the pin runs both.
+  - An `Int` span, `String(items[0])` on the list, and `span[0] + "y"` all
+    run, so the gap is a whole-value read of a nominal element through the
+    view.
+  - Pinned by `conformance/probes/span_string_element_copy.mojo`.
+  - Found while deriving an annotated view binding; not root-caused.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.35 A generic method moving its `var` parameter into a sibling call's
   `mut` local argument is rejected**
 
   Problem: `self.fill(extra, value^)` in a method of `Bag[T]`, where `fill`
@@ -1109,18 +1263,45 @@ words. The representation gap and the two standing ledgers are last.
     `try`/`finally`, and so under any `with` statement, from the template's
     own check even when the method is never called; without the `try` it
     runs. Pinned by `conformance/probes/generic_method_transfer_in_try.mojo`.
+  - Depends on nothing. The `moved-parameter-into-local-collection`
+    divergence in 3.73 is the same stand-in place and closes with it.
   - Model: Opus, Not Planned.
 
-- [ ] **3.28 A reference-returning `def` is not read through as a `print` argument**
+- [ ] **3.36 A value-returning body that ends in `abort(...)` is rejected**
 
-  Problem: `print(pick(w))` for a free `def pick[o: Origin](ref[o] x: String)
-  -> ref[o] String` reports that `ref String` does not conform to `Writable`.
-  - The pin reads through the reference, and so does Mojito for the same call
-    on a method.
-  - Probe: `conformance/probes/reference_result_print_argument.mojo`.
+  Problem: `def f(x: Int) -> Int` whose last statement is `abort("no")` runs
+  at the pin, while Mojito reports "'f' does not return a value on every
+  path".
+  - `conformance/probes/abort_ends_a_returning_body.mojo` pins it.
+  - The return analysis (`stmt_returns`, `checker/declarations.rs`) is
+    syntactic. It knows `return`, `raise`, and the compiler crossing
+    `_mojito_abort`, not a call to the bundled `std.os.abort` that wraps it.
+  - Under source validation a `comptime for` that holds a `return` defers the
+    verdict to the unrolled clone for the same reason: `Bag.get` in
+    `assets/ok/pack_element_rebind.mojo` ends in `abort(...)`. That deferral
+    can tighten once this is fixed.
+  - The lever is a checked fact that a callee never returns, read where the
+    call resolves, not a name test.
+  - The plan must say where the fact lives and what MIR emits after such a call.
+  - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.29 A binder is not inferred through a converting argument**
+- [ ] **3.37 A trait default body holding a `comptime if` never elaborates**
+
+  Problem: a trait whose default method holds `comptime if True:` reports
+  "unsupported feature: comptime if" for every conformer, where the pin
+  checks the default symbolically and runs it.
+  - The elaborator specializes struct methods and `def`s; a default body a
+    conformer inherits is never stubbed or selected, so the construct reaches
+    the executable check.
+  - The upstream reflective defaults (`Hashable.__hash__`, `Equatable.__eq__`)
+    are written as such bodies over `reflect[Self]`.
+  - The plan says where an inherited default is copied into a conformer today
+    and where its selection would run.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **3.38 A binder is not inferred through a converting argument**
 
   Problem: `boxed(value)` for `def boxed[U: Copyable & Deinitable](box:
   Wrapper[U])` and a `value: T` reports "cannot infer type parameter 'U' of
@@ -1131,21 +1312,73 @@ words. The representation gap and the two standing ledgers are last.
     whose binders are already fixed (a method's `Wrapper[Self.T]`, or a
     closed type).
   - Pinned by `conformance/probes/inferred_binder_through_conversion.mojo`.
+  - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.30 A bound call's result converted at an annotated binding fails
-  MIR verification**
+- [ ] **3.39 A list literal does not reach a `List` built over a binder**
 
-  Problem: `var x: Optional[T] = v.copy()` in a generic `def` reports
-  "register r1 has no checked type" for the `copy` call, where the pin runs
-  it.
-  - The same binding at a concrete type runs, and so does the result bound to
-    an unannotated local first and then converted.
-  - Probe: `conformance/probes/bound_call_result_converted_at_binding.mojo`.
+  Problem: `count([1, 2])` for `def count[T: …](extra: List[T])` reports
+  "cannot infer type parameter 'T' of 'count' from the arguments", and
+  `Bag[Int]([1, 2])` for a fieldwise `var extra: List[Self.T]` reports
+  "type mismatch for field 1 of 'Bag': expected List[Int], found List[T]";
+  the pin runs both.
+  - The literal is typed at the declared `List[T]` without its binder solved
+    or substituted, so the field case fails even with `T` given explicitly.
+  - Pinned by `conformance/probes/list_literal_to_generic_list.mojo`.
+  - Found while deriving another struct's overloaded method; not root-caused.
+  - Depends on 3.38, which lets a binder be solved through a conversion; the
+    literal's element type reaches `T` the same way.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.40 A reference-returning `def` is not read through as a `print` argument**
+
+  Problem: `print(pick(w))` for a free `def pick[o: Origin](ref[o] x: String)
+  -> ref[o] String` reports that `ref String` does not conform to `Writable`.
+  - The pin reads through the reference, and so does Mojito for the same call
+    on a method.
+  - Probe: `conformance/probes/reference_result_print_argument.mojo`.
+  - Depends on 3.1: reading through the result is only safe once the call
+    ties the result's origin to the argument it came from.
+  - Model: Opus, Planned.
+
+- [ ] **3.41 A literal passed to a `ref` parameter stops at run time**
+
+  Problem: `look(3)` against `def look(ref other: Int)` is accepted and then
+  fails with "reference binding to a non-place expression".
+  - The pin materializes the literal and binds the parameter to the temporary.
+  - Probe: `conformance/probes/literal_to_ref_parameter.mojo`.
+  - Depends on nothing. It materializes through the same fallback the
+    `ref-binding-register-value` divergence in 3.73 wants narrowed, so the
+    two answers must agree.
+  - Model: Opus, Planned.
+
+- [ ] **3.42 A call through a `ref` to a callable value is rejected**
+
+  Problem: `for f in fns: print(f(5))` and `ref g = fns[0]; print(g(1))` run at
+  the pin over a function display, while Mojito reports "'f' has type ref
+  def(Int) thin -> Int and is not callable".
+  - Both thin and capturing elements are affected.
+  - The indexed call `fns[0](5)` already works through element-call dispatch.
+    A `ref`-typed callee has no such path.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **3.43 A method called on a borrowed comprehension binder loses its
+  receiver**
+
+  Problem: `[item.get() for item in ps]` over a `List[P]` local passes the
+  checker and then stops with "call passed 0 args to 1-parameter function
+  'P.get'", where the pin prints the results.
+  - The same call in a runtime `for` over the list runs.
+  - `w.byte_length()` over a `List[String]` local runs, and over a
+    `List[String]` parameter fails the same way.
+  - The binder is a reference into the list, so the lever is how lowering
+    passes a comprehension binder's handle as a method receiver.
+  - Pinned by `conformance/probes/comprehension_binder_method_call.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.31 Constructing a struct's own type parameter fails in every instance
+- [ ] **3.44 Constructing a struct's own type parameter fails in every instance
   clone**
 
   Problem: `self.x = Self.T()` in a method of `struct Box[T: Copyable &
@@ -1160,24 +1393,73 @@ words. The representation gap and the two standing ledgers are last.
     pins it yet.
   - The plan names the substitution `specialize_method_clone` applies to
     expressions, not only to annotations.
+  - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.32 Two type-pack `__init__` overloads cannot be constructed**
+- [ ] **3.45 `Self(...)` does not construct inside a method**
 
-  Problem: `H(x, x, x)` for a struct with `__init__[*Ts](out self, a: Int,
-  *rest: *Ts)` beside `__init__[*Ts](out self, a: Int, b: Int, *rest: *Ts)`
-  prints `3` at the pin and fails in Mojito with "checked constructor
-  'H.__init__$ov$…' is missing from MIR".
-  - The checker selects the same constructor the pin does. The selected clone
-    never reaches MIR.
-  - The rejection is safe, but it is a VM-phase message for a program the pin
-    runs.
-  - Pinned by `conformance/probes/pack_overload_constructor_missing_mir.mojo`.
-  - Free functions and methods are served from the checker's recorded selection;
-    the plan must find why constructors are not.
+  Problem: `return Self(self.a, not self.b)` in a method of an
+  `@fieldwise_init` struct reports "Undefined variable 'Self'", and so does
+  the keyword form; the pin constructs the enclosing struct.
+  - Naming the struct (`P(...)`, `G(...)` in a generic struct) constructs,
+    by position or keyword, so the gap is resolving `Self` as a callee.
+  - Pinned by `conformance/probes/self_call_construction.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.46 Explicit type arguments on a static method of a non-parametric
+  struct are rejected**
+
+  Problem: `P.plain[Int](4)` on `@staticmethod def plain[T: Writable](x: T)`
+  prints `1` at the pin, while Mojito reports "Undefined variable 'P'".
+  - Any generic static on a struct without parameters is affected, whether
+    or not its body holds a `comptime if`.
+  - The inferred spelling `P.plain(4)` works.
+  - The explicit spelling parses as `Invoke` over `Member(P, plain)`. The
+    error is raised before the non-parametric static path in
+    `checker/method_calls/mc_infer.rs` sees the call.
+  - The plan must first find which pass infers the bare type name as a value.
+  - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.33 A `def`'s own type pack cannot be queried in a runtime position**
+- [ ] **3.47 An associated alias is not constructible through a parameterized
+  base**
+
+  Problem: `Holder[7].Same()` for `comptime Same = Sized[Self.n]` reports
+  `Undefined variable 'Holder'`, where the pin runs it.
+  - The annotation spelling works: `var made: Holder[7].Same = Sized[7]()`.
+  - The alias now binds the instance's value parameters
+    (`associated_type_from_base`), so only the call path is missing.
+  - Depends on 3.46, which finds the pass that reads a bare type name as a
+    value; the alias call needs the same answer.
+  - Model: Opus, Planned.
+
+- [ ] **3.48 A generic `def` cannot spell a static call's receiver with its
+  own binder**
+
+  Problem: `return Pair[T].keep(x.copy())` in `def make[T: ...](x: T)` fails
+  with "unknown type 'T'", where the pin runs it.
+  - The same spelling in a generic struct's method, `Pair[Self.T].keep(...)`,
+    runs on both.
+  - Pinned by `conformance/probes/generic_def_static_receiver_binder.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.49 A leading-dot static call cannot take its struct's parameters
+  from the expected type**
+
+  Problem: `return .start(n)` against an expected `Counter[Self.T]` fails
+  with "cannot infer type parameter 'T' of 'Counter' from the arguments",
+  where the pin runs it.
+  - The contextual root is rewritten to the expected type's head name alone
+    (`with_contextual_root`), so the call can solve the parameters only from
+    its arguments.
+  - Spelled `Counter[Self.T].start(n)` it runs on both.
+  - Pinned by `conformance/probes/contextual_static_expected_parameters.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.50 A `def`'s own type pack cannot be queried in a runtime position**
 
   Problem: `return 1 + Us.length` fails with "Undefined variable 'Us'", while
   the pinned Mojo runs it.
@@ -1196,157 +1478,50 @@ words. The representation gap and the two standing ledgers are last.
   - The binding site is known, but the plan must enumerate the clone paths that
     share it (free `def`, method-own pack, nested forwarding) and the
     materialization rewrite each one runs.
+  - Depends on nothing, and in particular not on section 1's symbolic pack
+    work, since the binding stays in the elaborator.
   - Model: Opus, Planned.
 
-- [ ] **3.34 A value-returning body that ends in `abort(...)` is rejected**
+- [ ] **3.51 An exact constructor overload loses to its generic sibling as
+  ambiguous**
 
-  Problem: `def f(x: Int) -> Int` whose last statement is `abort("no")` runs
-  at the pin, while Mojito reports "'f' does not return a value on every
-  path".
-  - `conformance/probes/abort_ends_a_returning_body.mojo` pins it.
-  - The return analysis (`stmt_returns`, `checker/declarations.rs`) is
-    syntactic. It knows `return`, `raise`, and the compiler crossing
-    `_mojito_abort`, not a call to the bundled `std.os.abort` that wraps it.
-  - Under source validation a `comptime for` that holds a `return` defers the
-    verdict to the unrolled clone for the same reason: `Bag.get` in
-    `assets/ok/pack_element_rebind.mojo` ends in `abort(...)`. That deferral
-    can tighten once this is fixed.
-  - The lever is a checked fact that a callee never returns, read where the
-    call resolves, not a name test.
-  - The plan must say where the fact lives and what MIR emits after such a call.
+  Problem: `Tag[Int](3)` on a struct declaring `__init__(out self, n: Int)`
+  beside `__init__(out self, n: Self.T)` prints `int` at the pin, while
+  Mojito reports "invalid call to 'Tag': ambiguous overloaded constructor
+  call".
+  - Upstream picks the more specific signature. Mojito's construction
+    selection scores the substituted `Self.T` parameter as an equal match
+    (`select_method_overload`, `checker/declarations.rs`).
+  - The preference already exists one level down: a per-call clone of a
+    generic constructor wins over the template it was minted from
+    (`constructor_is_concrete`).
+  - Such a family is also the one shape that collapses on the instance, so
+    its constructor clone family stays withdrawn.
+  - Found while closing the overloaded-constructor-family item; no fixture
+    pins it yet.
+  - Depends on 3.5, which teaches constructor selection to tell a clone from
+    a declared overload. Ranking by specificity means nothing while a
+    candidate is dropped before it is ranked.
   - Model: Opus, Planned.
 
-- [ ] **3.35 Explicit type arguments on a static method of a non-parametric
-  struct are rejected**
+- [ ] **3.52 Methods cannot overload on the parameter convention alone**
 
-  Problem: `P.plain[Int](4)` on `@staticmethod def plain[T: Writable](x: T)`
-  prints `1` at the pin, while Mojito reports "Undefined variable 'P'".
-  - Any generic static on a struct without parameters is affected, whether
-    or not its body holds a `comptime if`.
-  - The inferred spelling `P.plain(4)` works.
-  - The explicit spelling parses as `Invoke` over `Member(P, plain)`. The
-    error is raised before the non-parametric static path in
-    `checker/method_calls/mc_infer.rs` sees the call.
-  - The plan must first find which pass infers the bare type name as a value.
+  Problem: `m(self, var a: String)` beside `m(self, a: String)` prints `2`
+  then `1` at the pin, while Mojito reports "'m' is already declared in this
+  scope". A free function accepts the same pair.
+  - `same_method_shape` (`checker/traits.rs`) compares parameter types and
+    ignores conventions, so the second declaration reads as a redeclaration.
+  - The lowered method name has no owned-parameter qualifier either, so the
+    two would collide even if the checker admitted them.
+  - Ranking already decides such a pair: the place costs the `var` candidate
+    a copy, and an owned argument selects it at the tie.
+  - Pinned by `conformance/probes/overload_convention_only_method.mojo`.
+  - The plan must say what the lowered name gains, and whether trait
+    requirements compare conventions the same way.
+  - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.36 A compile-time-keyed `def` cannot be passed as a function value**
-
-  Problem: `apply(as_int, 3)`, where `as_int[T]` holds a `comptime if` or a
-  `rebind` and `apply` declares a callable bound, runs at the pin and reports
-  "Undefined variable 'as_int'" in Mojito.
-  - The template is dropped or stubbed, and only its `$`-mangled clones carry
-    a name; a bare reference resolves to neither.
-  - The rejection is safe (no wrong answer), but the message names nothing
-    the source wrote.
-  - The plan must say which clone a bare reference names, and what the rejection
-    says when none can be chosen.
-  - Model: Fable, Planned.
-
-- [ ] **3.37 An associated alias is not constructible through a parameterized
-  base**
-
-  Problem: `Holder[7].Same()` for `comptime Same = Sized[Self.n]` reports
-  `Undefined variable 'Holder'`, where the pin runs it.
-  - The annotation spelling works: `var made: Holder[7].Same = Sized[7]()`.
-  - The alias now binds the instance's value parameters
-    (`associated_type_from_base`), so only the call path is missing.
-  - Model: Opus, Planned.
-
-- [ ] **3.38 A member-led arithmetic type argument does not parse in an alias
-  body**
-
-  Problem: `comptime Next = Sized[Self.n + 1]` is a parse error (`Expected ']'
-  after a subscript`), where the pin accepts it.
-  - The bracket is parsed as a runtime subscript, whose index grammar stops at
-    the member access. `Sized[(Self.n + 1)]` and `Sized[0 + Self.n]` parse.
-  - The same expression in annotation position (`var x: Sized[Self.n + 1]`)
-    parses, and the checker already types it symbolically.
-  - It is the standing Index-versus-TypeApply split; the plan decides whether
-    the alias body re-parses as a type or the subscript grammar widens.
-  - Model: Opus, Planned.
-
-- [ ] **3.39 An arithmetic `where` operand compiles for `def`s and struct methods
-  only**
-
-  Problem: `where n + 1 == m` needs its declaration's value parameters in
-  scope when the clause compiles, and only a free `def` and a struct method
-  open that scope first.
-  - A trait method, a comptime alias, and a Bool-bodied predicate alias
-    report `unsupported generic constraint operand`, as every declaration did
-    before.
-  - The lever is `push_param_scope` around each remaining
-    `compile_where_clause` site (`checker/traits.rs`, `statements.rs`,
-    `conformance.rs`).
-  - The sites are known; the predicate alias also needs its substitution
-    (`substitute_predicate`) to carry an expression.
-  - Model: Opus, Planned.
-
-- [ ] **3.40 A tuple binding with a `Tuple[...]` annotation loses `reverse` and
-  `concat`**
-
-  Problem: `var t: Tuple[Int, String] = (1, "x")` followed by `t.reverse()`
-  or `t.concat(Tuple(True))` runs at the pin, while Mojito reports "type
-  'Tuple$t2[y3:Inty6:String][Int, String]' has no method 'reverse'".
-  - The same calls work on an unannotated binding (`var t = (1, "x")`) and
-    on `var t = Tuple(1, "x")`.
-  - The annotation resolves to the minted `Tuple$t2[...]` struct, so method
-    lookup reports the missing member before the builtin tuple path
-    (`infer_tuple_method`, reached from `method_calls/mc_infer.rs`) or a
-    `TupleTransformRequest` for the clone is ever considered.
-  - Found in the 2026-09-17 gate triage; no fixture pins it yet.
-  - The plan decides whether the annotation should keep the public `Tuple`
-    spelling or the lookup should fall through, and lists the other members the
-    minted spelling hides.
-  - Model: Opus, Planned.
-
-- [ ] **3.41 A reflection method call in a runtime position is rejected**
-
-  Problem: `comptime r = reflect[Point]` followed by `print(r.field_count())`
-  prints `2` at the pin, while Mojito reports "Undefined variable 'r'".
-  - Binding the result first works: `comptime count = r.field_count()` then
-    `print(count)`.
-  - The reflection handle erases before the executable check, so a method
-    call on it must fold to its compile-time value where it stands, as the
-    upstream materialization of an `Int` result does.
-  - A direct `reflect[Point].field_count()` in a runtime position fails too,
-    with "type 'reflect[…]' has no method 'field_count'".
-  - Found in the 2026-09-17 gate triage; no fixture pins it yet.
-  - The plan lists which handle results are implicitly materializable (an `Int`,
-    a `Bool`) and which still need an explicit crossing (a name list).
-  - Model: Opus, Planned.
-
-- [ ] **3.42 `reflect[T]` over a function's type parameter is rejected**
-
-  Problem: `def f[T: AnyType]()` holding `comptime r = reflect[T]` and
-  `comptime count = r.field_count()`, called as `f[Point]()`, prints the
-  field count at the pin, while Mojito reports "not a compile-time value:
-  'T' is not a compile-time type".
-  - The error fires even when `f` is never called, so the unspecialized
-    template body is evaluated with `T` unbound.
-  - The failing evaluation is `reflect[...]` in `comptime/eval.rs`, through
-    `param_arg_type`. A template body should defer it the way a `comptime
-    if` on `T` becomes a per-instantiation stub.
-  - `reflect[Point]` over a concrete type in a value-parameterized
-    `def f[n: Int]()` already works.
-  - Found in the 2026-09-17 gate triage; no fixture pins it yet.
-  - The plan names every elaborator path that evaluates a retained template
-    body.
-  - Model: Opus, Planned.
-
-- [ ] **3.43 `reflect[T]` of a non-struct type is rejected**
-
-  Problem: the pinned Mojo answers `reflect[Int].field_count()` with 0, and
-  Mojito rejects it with "requires a struct type".
-  - `comptime/eval.rs` raises it for every reflection method over a type that
-    is not a struct.
-  - `conformance/probes/template_fallback_reflection.mojo` records the
-    observation, made 2026-09-20.
-  - Which handle methods answer for a scalar, and with what, needs a probe per
-    method before the lever is chosen.
-  - Model: Opus, Planned.
-
-- [ ] **3.44 Upstream `DType` names with no Mojito dtype are rejected**
+- [ ] **3.53 Upstream `DType` names with no Mojito dtype are rejected**
 
   Problem: `print(DType.uint128)` runs at the pin (`uint128`), while Mojito
   reports "DType.uint128 is not supported yet"
@@ -1368,48 +1543,11 @@ words. The representation gap and the two standing ledgers are last.
     `Dtype::float_literal_lane`, and let the build's exhaustiveness errors
     list the rest. The native lowering matches with wildcards, so its sites
     need a manual `rg` pass.
+  - Depends on nothing. The bundled `struct DType` port in 3.72 rewrites the
+    same table, so this lands first or folds into it.
   - Model: Opus, Planned.
 
-- [ ] **3.45 A parametric nested `def` named as a value reports its marker**
-
-  Problem: `apply(inner, 3)` and `var g = inner`, for a nested
-  `def inner[U: Copyable]`, report `Undefined variable
-  'main$110$198$nested$0$inner'`. The pin rejects both too, so the verdict is
-  right and only the message is wrong.
-  - The lexical pass renames the declaration to its marker and rewrites every
-    reference to it, then deletes the template it could not instantiate,
-    leaving the renamed value reference dangling.
-  - The pin's texts are "cannot use parametric function as a runtime closure"
-    for the binding and an `invalid call to '__call__'` for the argument.
-  - Pre-existing for a nested `def` the pass already registered; the nested
-    compile-time-keyed work widened the class it reaches.
-  - Model: Opus, Not Planned.
-
-- [ ] **3.46 `String` always owns a heap buffer, where upstream's has three
-  representations**
-
-  Problem: `String(literal)` allocates and copies the literal's bytes, while
-  upstream points at the static bytes and copies only on the first mutation.
-  - Upstream packs a static-constant, an inline (up to 23 bytes), and a
-    reference-counted heap form into the same 24 bytes, flagged in
-    `_capacity_or_data`; Mojito's `{data, size, cap}` has only the heap form.
-  - No program output differs; allocation counts and `capacity()` do.
-  - Port the static form first: every mutator, `__del__`, copy, and move
-    must respect a non-owning flag, on both backends.
-  - Model: Opus, Planned.
-
-- [ ] **3.47 Shift operators bind looser than the bitwise ones**
-
-  Problem: `a << 1 | b >> 1` parses as `(a << 1 | b) >> 1`, where Python and
-  Mojo bind `<<`/`>>` tighter than `&`, `^`, and `|`, so it prints `7` for
-  `Int32(6)` and `Int32(3)` where the pin prints `13`.
-  - Found by `assets/ok/simd_symbolic_surface.mojo`, whose `guarded`
-    parenthesizes around it.
-  - The lever is the infix precedence table in `crates/mojito-parser`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **3.48 Small SIMD surface gaps the symbolic-lane probes found on concrete
+- [ ] **3.54 Small SIMD surface gaps the symbolic-lane probes found on concrete
   types**
 
   Problem: each of these runs at the pin on a concrete scalar or vector and
@@ -1428,81 +1566,11 @@ words. The representation gap and the two standing ledgers are last.
     an explicit target, and a `DType.bool` mask's `fill=` at a symbolic
     width are reported at the template rather than deferred to the
     instantiation.
-  - Depends on nothing.
   - One site each.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.49 Each unrolled `comptime for` iteration shares the enclosing scope**
-
-  Problem: `comptime for i in range(2):` with `var v: Int = i` in its body
-  prints `0` then `1` at the pin, while Mojito reports "'v' is already
-  declared in this scope".
-  - The elaborator splices every unrolled copy of the body into the enclosing
-    block (`comptime/elab.rs`, the `ComptimeFor` arm), so the second copy
-    redeclares the first's locals; the validator checks the body once in its
-    own scope and accepts it.
-  - A `comptime n = names[i]` binding in the body fails the same way.
-  - Pinned by `conformance/probes/comptime_for_body_scope.mojo`.
-  - Depends on nothing.
-  - Each iteration needs its own scope, or its locals renamed.
-  - Model: Opus, Planned.
-
-- [ ] **3.50 A trait default body holding a `comptime if` never elaborates**
-
-  Problem: a trait whose default method holds `comptime if True:` reports
-  "unsupported feature: comptime if" for every conformer, where the pin
-  checks the default symbolically and runs it.
-  - The elaborator specializes struct methods and `def`s; a default body a
-    conformer inherits is never stubbed or selected, so the construct reaches
-    the executable check.
-  - The upstream reflective defaults (`Hashable.__hash__`, `Equatable.__eq__`)
-    are written as such bodies over `reflect[Self]`.
-  - Depends on nothing.
-  - The plan says where an inherited default is copied into a conformer today
-    and where its selection would run.
-  - Model: Opus, Planned.
-
-- [ ] **3.51 A field name under a symbolic index prints without `materialize`**
-
-  Problem: `print(names[i])` inside `comptime for i in range(len(names))`
-  over `comptime names = reflect[T].field_names()` prints at Mojito, while
-  the pin rejects it with "cannot materialize comptime value of type
-  'Array[StringSpan[...]]'" and needs `materialize[names[i]]()`.
-  - Mojito accepts a program the pin rejects, so this is a divergence.
-  - `materialize[names[i]]()` fails at the instance in turn ("Undefined
-    variable 'materialize'"): the elaborator's crossing takes a bare binding
-    only.
-  - Depends on 3.49 for the `comptime n = names[i]` workaround.
-  - Model: Opus, Planned.
-
-- [ ] **3.52 `comptime assert` is not parsed**
-
-  Problem: upstream's `comptime assert conforms_to(FT, Hashable)` is a parse
-  error at Mojito.
-  - The pin treats the assertion as a proof: a preceding, same-block
-    `comptime assert conforms_to(X, T)` licenses `T` on `X` exactly as a
-    `comptime if conforms_to(X, T):` arm does (`docs/notes/param-expr-attributes.md`
-    §Reflection queries), and a failing one reports "constraint failed" at
-    the instance.
-  - The checker's arm licensing (`conformance_arm_assumptions`) is the lever;
-    the statement form would push the same atoms for the rest of its block.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
-- [ ] **3.53 A field's value cannot be read by reflection**
-
-  Problem: `reflect[T].field_ref[i](x)` — the value of field `i` of `x` — is
-  unsupported; the upstream hashing, equality, and writing defaults are
-  written with it.
-  - Mojito's defaults are Rust AST synthesis (`comptime/synth.rs`) and a
-    lowering (`mojito-pliron/src/lower/print.rs`), so no bundled body needs
-    it yet.
-  - Under validation the result's type is the opaque field type
-    (`types[i]`), which the arm-licensing rule already covers.
-  - Depends on 3.52 for the upstream spelling of the defaults.
-  - Model: Fable, Planned.
-
-- [ ] **3.54 `Int()` has no zero-argument constructor**
+- [ ] **3.55 `Int()` has no zero-argument constructor**
 
   Problem: `print(Int())` prints `0` at the pin, while Mojito reports "'Int'
   expects 1 argument(s), got 0"; `Float64()` likewise.
@@ -1511,40 +1579,7 @@ words. The representation gap and the two standing ledgers are last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.55 A `var` of an opaque type is not required to be `Deinitable`**
-
-  Problem: `var v: FT = FT()` under `comptime if conforms_to(FT, Defaultable
-  & Writable):` validates at Mojito, while the pin reports "'v' abandoned
-  without being explicitly destroyed ... consider adding trait conformance
-  to Deinitable" until `Deinitable` is proved too.
-  - Mojito accepts a program the pin rejects, so this is a divergence; it
-    holds for every opaque parameter, not only a reflected field type.
-  - The abstract destruction walk (`explicit_destroy.rs`) does not ask the
-    view's bounds for `Deinitable`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **3.56 A local compile-time type list is unknown in an instance's annotation**
-
-  Problem: `var v: types[i] = ...` over `comptime types =
-  reflect[T].field_types()` validates, but the instance reports "unknown
-  type 'types'".
-  - The elaborator resolves `f.T` over a bound handle (`resolve_reflected_type`,
-    `comptime/eval.rs`) and nothing else in an annotation; `comptime FT =
-    types[i]` then `var v: FT` is the working spelling.
-  - Depends on 3.49 when the annotation sits in a `comptime for` body.
-  - Model: Opus, Not Planned.
-
-- [ ] **3.57 A handle chain in a call's type argument is read as a value**
-
-  Problem: `_unqualified_type_name[reflect[T].field_at[i].T]()` reports
-  "expected a type, found a value" at the instance.
-  - The elaborator's `resolve_reflected_param_arg` rewrites a `ParamArg::Type`
-    only; the chain arrives as a value argument.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **3.58 A `mut self` witness does not conform to a read-`self`
+- [ ] **3.56 A `mut self` witness does not conform to a read-`self`
   requirement**
 
   Problem: a struct declaring `def __hash__(mut self, mut hasher:
@@ -1557,9 +1592,10 @@ words. The representation gap and the two standing ledgers are last.
     (`template_facts/bound_dispatch.rs:witness_binders`), and must judge the
     receiver again once a `mut` witness conforms.
   - Pinned by `conformance/probes/mut_self_hash_witness.mojo`.
+  - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.59 An imported alias in a generic struct's method signature is an
+- [ ] **3.57 An imported alias in a generic struct's method signature is an
   unknown type**
 
   Problem: `def feed(self, mut hasher: default_hasher)` on a generic struct
@@ -1570,92 +1606,10 @@ words. The representation gap and the two standing ledgers are last.
   - Workaround: spell the application (`AHasher[SIMD[DType.uint64, 4](0)]`),
     as `assets/ok/template_method_bound_witness_shapes.mojo` does.
   - Pinned by `conformance/probes/imported_alias_in_generic_method.mojo`.
-  - Model: Opus, Not Planned.
-
-- [ ] **3.60 A subscript store on a struct with a setter and no getter is
-  accepted**
-
-  Problem: `s[0] = 3` on a struct that declares `__setitem__` but no
-  `__getitem__` runs in Mojito, while the pin refuses the store ("'Sink' has
-  '__setitem__' but no '__getitem__' method").
-  - The pin accepts the declaration itself while nothing subscripts it.
-  - The lever is the setter selection in `check_nominal_subscript_assignment`
-    (`checker/indexing.rs`), which never asks for a getter.
-  - Fixtures that declare a setter alone need a getter first; the fallout is
-    not enumerated.
-  - Pinned by `conformance/probes/setter_without_getter.mojo`.
-  - Model: Opus, Planned.
-
-- [ ] **3.61 `@explicit_destroy` is accepted on a type that is `Deinitable`
-  unconditionally**
-
-  Problem: Mojito accepts `@explicit_destroy` on `struct Ticket(Movable)`,
-  while the pin rejects it: "@explicit_destroy is not valid on `struct` with
-  unconditional conformance to `Deinitable`".
-  - Mojito accepts a program the pin rejects, so this is a divergence.
-  - The pin wants a `Deinitable where False` conformance beside the
-    decorator, which every bundled explicit-destroy struct already spells.
-  - Probe: `conformance/probes/explicit_destroy_without_deinitable_opt_out.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.62 A `^` transfer of a read parameter is accepted and frees the
-  caller's value**
-
-  Problem: `def ident(x: String) -> String: return x^` runs in Mojito and
-  fails with "use after Pointer deallocation" once the caller's `String` is
-  read again or dropped, while a read parameter cannot be transferred in
-  Mojo.
-  - The same body over a bare type parameter (`def ident[T: Movable](x: T)
-    -> T`) fails the same way for a `String` argument and prints for an
-    `Int` one.
-  - Pinned by `conformance/probes/read_parameter_transfer_returned.mojo`;
-    the pin's diagnostic is still to be observed by the sweep.
-  - The lever is the checker's transfer check on a parameter with no `var`
-    convention, which today admits the move and lets the callee's drop
-    free the caller's storage.
-  - Model: Opus, Not Planned.
-
-- [ ] **3.63 `Self(...)` does not construct inside a method**
-
-  Problem: `return Self(self.a, not self.b)` in a method of an
-  `@fieldwise_init` struct reports "Undefined variable 'Self'", and so does
-  the keyword form; the pin constructs the enclosing struct.
-  - Naming the struct (`P(...)`, `G(...)` in a generic struct) constructs,
-    by position or keyword, so the gap is resolving `Self` as a callee.
-  - Pinned by `conformance/probes/self_call_construction.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **3.64 A list literal does not reach a `List` built over a binder**
-
-  Problem: `count([1, 2])` for `def count[T: …](extra: List[T])` reports
-  "cannot infer type parameter 'T' of 'count' from the arguments", and
-  `Bag[Int]([1, 2])` for a fieldwise `var extra: List[Self.T]` reports
-  "type mismatch for field 1 of 'Bag': expected List[Int], found List[T]";
-  the pin runs both.
-  - The literal is typed at the declared `List[T]` without its binder solved
-    or substituted, so the field case fails even with `T` given explicitly.
-  - Pinned by `conformance/probes/list_literal_to_generic_list.mojo`.
-  - Found while deriving another struct's overloaded method; not root-caused.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **3.65 A `String` element copied out of a `Span` fails**
-
-  Problem: `String(span[0])` or `span[0].copy()` over a `Span[String, _]`
-  traps in the VM with "invalid reference projection Field("_data") on
-  None", and a later use of the span is refused as "access to 'items'
-  conflicts with live reference 'span'"; the pin runs both.
-  - An `Int` span, `String(items[0])` on the list, and `span[0] + "y"` all
-    run, so the gap is a whole-value read of a nominal element through the
-    view.
-  - Pinned by `conformance/probes/span_string_element_copy.mojo`.
-  - Found while deriving an annotated view binding; not root-caused.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **3.66 An uncalled `rebind` method is checked for every instance**
+- [ ] **3.58 An uncalled `rebind` method is checked for every instance**
 
   Problem: a method whose `rebind` does not hold for one instance of its
   struct (`rebind[Int](self.value)` on `Box[String]`) is refused with "type
@@ -1669,7 +1623,7 @@ words. The representation gap and the two standing ledgers are last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.67 A value-keyed `def` cannot forward its value to a keyed `def`**
+- [ ] **3.59 A value-keyed `def` cannot forward its value to a keyed `def`**
 
   Problem: `def forward[n: Int](x: Int) -> Int: return keyed[n]() + x`, over
   a `keyed[n: Int]` holding a `comptime if`, fails elaboration with
@@ -1683,63 +1637,190 @@ words. The representation gap and the two standing ledgers are last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.68 Owned iteration of a variadic pack moves elements the pin copies**
+- [ ] **3.60 A compile-time-keyed `def` cannot be passed as a function value**
 
-  Problem: `for var value in values^` over `var *values: Self.T` moves each
-  element out, so Mojito runs it for a `String` element; the pin iterates
-  the pack by copy and rejects it ("value of type 'T' cannot be implicitly
-  copied").
-  - Over an implicitly copyable element (`var *values: Int`) both run.
-  - The bundled `List`, `Set`, and `Array` literal initializers use this
-    spelling; upstream's consume the pack with `consume_elements`.
-  - Pinned by `conformance/probes/variadic_pack_owned_iteration.mojo`.
+  Problem: `apply(as_int, 3)`, where `as_int[T]` holds a `comptime if` or a
+  `rebind` and `apply` declares a callable bound, runs at the pin and reports
+  "Undefined variable 'as_int'" in Mojito.
+  - The template is dropped or stubbed, and only its `$`-mangled clones carry
+    a name; a bare reference resolves to neither.
+  - The rejection is safe (no wrong answer), but the message names nothing
+    the source wrote.
+  - The plan must say which clone a bare reference names, and what the rejection
+    says when none can be chosen.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **3.61 A member-led arithmetic type argument does not parse in an alias
+  body**
+
+  Problem: `comptime Next = Sized[Self.n + 1]` is a parse error (`Expected ']'
+  after a subscript`), where the pin accepts it.
+  - The bracket is parsed as a runtime subscript, whose index grammar stops at
+    the member access. `Sized[(Self.n + 1)]` and `Sized[0 + Self.n]` parse.
+  - The same expression in annotation position (`var x: Sized[Self.n + 1]`)
+    parses, and the checker already types it symbolically.
+  - It is the standing Index-versus-TypeApply split; the plan decides whether
+    the alias body re-parses as a type or the subscript grammar widens.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **3.62 An arithmetic `where` operand compiles for `def`s and struct methods
+  only**
+
+  Problem: `where n + 1 == m` needs its declaration's value parameters in
+  scope when the clause compiles, and only a free `def` and a struct method
+  open that scope first.
+  - A trait method, a comptime alias, and a Bool-bodied predicate alias
+    report `unsupported generic constraint operand`, as every declaration did
+    before.
+  - The lever is `push_param_scope` around each remaining
+    `compile_where_clause` site (`checker/traits.rs`, `statements.rs`,
+    `conformance.rs`).
+  - The sites are known; the predicate alias also needs its substitution
+    (`substitute_predicate`) to carry an expression.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **3.63 `comptime assert` is not parsed**
+
+  Problem: upstream's `comptime assert conforms_to(FT, Hashable)` is a parse
+  error at Mojito.
+  - The pin treats the assertion as a proof: a preceding, same-block
+    `comptime assert conforms_to(X, T)` licenses `T` on `X` exactly as a
+    `comptime if conforms_to(X, T):` arm does (`docs/notes/param-expr-attributes.md`
+    §Reflection queries), and a failing one reports "constraint failed" at
+    the instance.
+  - The checker's arm licensing (`conformance_arm_assumptions`) is the lever;
+    the statement form would push the same atoms for the rest of its block.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **3.64 `reflect[T]` over a function's type parameter is rejected**
+
+  Problem: `def f[T: AnyType]()` holding `comptime r = reflect[T]` and
+  `comptime count = r.field_count()`, called as `f[Point]()`, prints the
+  field count at the pin, while Mojito reports "not a compile-time value:
+  'T' is not a compile-time type".
+  - The error fires even when `f` is never called, so the unspecialized
+    template body is evaluated with `T` unbound.
+  - The failing evaluation is `reflect[...]` in `comptime/eval.rs`, through
+    `param_arg_type`. A template body should defer it the way a `comptime
+    if` on `T` becomes a per-instantiation stub.
+  - `reflect[Point]` over a concrete type in a value-parameterized
+    `def f[n: Int]()` already works.
+  - Found in the 2026-09-17 gate triage; no fixture pins it yet.
+  - The plan names every elaborator path that evaluates a retained template
+    body.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **3.65 `reflect[T]` of a non-struct type is rejected**
+
+  Problem: the pinned Mojo answers `reflect[Int].field_count()` with 0, and
+  Mojito rejects it with "requires a struct type".
+  - `comptime/eval.rs` raises it for every reflection method over a type that
+    is not a struct.
+  - `conformance/probes/template_fallback_reflection.mojo` records the
+    observation, made 2026-09-20.
+  - Which handle methods answer for a scalar, and with what, needs a probe per
+    method before the lever is chosen.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **3.66 A field's value cannot be read by reflection**
+
+  Problem: `reflect[T].field_ref[i](x)` — the value of field `i` of `x` — is
+  unsupported; the upstream hashing, equality, and writing defaults are
+  written with it.
+  - Mojito's defaults are Rust AST synthesis (`comptime/synth.rs`) and a
+    lowering (`mojito-pliron/src/lower/print.rs`), so no bundled body needs
+    it yet.
+  - Under validation the result's type is the opaque field type
+    (`types[i]`), which the arm-licensing rule already covers.
+  - Depends on 3.63 for the upstream spelling of the defaults, and on 3.37,
+    the body shape they are written in.
+  - Model: Fable, Planned.
+
+- [ ] **3.67 A local compile-time type list is unknown in an instance's annotation**
+
+  Problem: `var v: types[i] = ...` over `comptime types =
+  reflect[T].field_types()` validates, but the instance reports "unknown
+  type 'types'".
+  - The elaborator resolves `f.T` over a bound handle (`resolve_reflected_type`,
+    `comptime/eval.rs`) and nothing else in an annotation; `comptime FT =
+    types[i]` then `var v: FT` is the working spelling.
+  - Depends on 3.25 when the annotation sits in a `comptime for` body.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.68 A handle chain in a call's type argument is read as a value**
+
+  Problem: `_unqualified_type_name[reflect[T].field_at[i].T]()` reports
+  "expected a type, found a value" at the instance.
+  - The elaborator's `resolve_reflected_param_arg` rewrites a `ParamArg::Type`
+    only; the chain arrives as a value argument.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.69 A static call copies a place into a `var` parameter whatever its
-  type**
+- [ ] **3.69 A clone that is still checked re-ranks an overloaded call**
 
-  Problem: `Box.keep(self.item)` with `keep(var v: Self.T)` runs on Mojito
-  for a `String` instance and stops with "double free of Pointer
-  allocation". The pin rejects it ("value of type 'T' cannot be implicitly
-  copied").
-  - A method call's `var` argument demands `ImplicitlyCopyable` of a copied
-    place; the static path (`finish_static_call`) does not.
-  - Pinned by `conformance/probes/static_var_parameter_implicit_copy.mojo`.
-  - Depends on nothing.
+  Problem: the pinned Mojo binds a call inside a generic body once, while it
+  checks the body, and Mojito ranks the overload set again for every
+  instantiation that takes the clone check.
+  - An instance derived from its checked template inherits the template's
+    choice (`assets/ok/template_overload_binding.mojo`,
+    `overload-bound-in-generic-body`), with a scalar local or a branch
+    (`assets/ok/template_overload_binding_local.mojo`), with a local of
+    the parameter type handed to the call
+    (`assets/ok/template_def_value_local.mojo`), and from a struct method
+    (`assets/ok/template_overload_binding_method.mojo`).
+  - What remains is any body still outside the derivation classes for
+    another reason: its instances are checked again, and rank the set
+    again. It closes as section 1 widens the classes.
+  - Depends on section 1: it closes as the derivation classes widen, and
+    nothing in this section moves it.
+  - Model: Fable, Not Planned.
+
+- [ ] **3.70 A parametric nested `def` named as a value reports its marker**
+
+  Problem: `apply(inner, 3)` and `var g = inner`, for a nested
+  `def inner[U: Copyable]`, report `Undefined variable
+  'main$110$198$nested$0$inner'`. The pin rejects both too, so the verdict is
+  right and only the message is wrong.
+  - The lexical pass renames the declaration to its marker and rewrites every
+    reference to it, then deletes the template it could not instantiate,
+    leaving the renamed value reference dangling.
+  - The pin's texts are "cannot use parametric function as a runtime closure"
+    for the binding and an `invalid call to '__call__'` for the argument.
+  - Pre-existing for a nested `def` the pass already registered; the nested
+    compile-time-keyed work widened the class it reaches.
+  - Depends on 3.60, which decides which clone a bare reference to a
+    parametric `def` names; the message follows from that.
   - Model: Opus, Not Planned.
 
-- [ ] **3.70 A generic `def` cannot spell a static call's receiver with its
-  own binder**
+- [ ] **3.71 `String` always owns a heap buffer, where upstream's has three
+  representations**
 
-  Problem: `return Pair[T].keep(x.copy())` in `def make[T: ...](x: T)` fails
-  with "unknown type 'T'", where the pin runs it.
-  - The same spelling in a generic struct's method, `Pair[Self.T].keep(...)`,
-    runs on both.
-  - Pinned by `conformance/probes/generic_def_static_receiver_binder.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **3.71 A leading-dot static call cannot take its struct's parameters
-  from the expected type**
-
-  Problem: `return .start(n)` against an expected `Counter[Self.T]` fails
-  with "cannot infer type parameter 'T' of 'Counter' from the arguments",
-  where the pin runs it.
-  - The contextual root is rewritten to the expected type's head name alone
-    (`with_contextual_root`), so the call can solve the parameters only from
-    its arguments.
-  - Spelled `Counter[Self.T].start(n)` it runs on both.
-  - Pinned by `conformance/probes/contextual_static_expected_parameters.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
+  Problem: `String(literal)` allocates and copies the literal's bytes, while
+  upstream points at the static bytes and copies only on the first mutation.
+  - Upstream packs a static-constant, an inline (up to 23 bytes), and a
+    reference-counted heap form into the same 24 bytes, flagged in
+    `_capacity_or_data`; Mojito's `{data, size, cap}` has only the heap form.
+  - No program output differs; allocation counts and `capacity()` do.
+  - Port the static form first: every mutator, `__del__`, copy, and move
+    must respect a non-owning flag, on both backends.
+  - Depends on nothing. It is the representation gap the section intro keeps
+    last.
+  - Model: Opus, Planned.
 
 - [ ] **3.72 Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
   any order)*
 
   Problem: parts of Mojito's stdlib lean on the Rust runtime where upstream
   is pure Mojo. Each is a candidate port, preferred over any new bridge
-  (2026-09-07 direction).
+  (2026-09-07 direction). Depends on nothing, and neither port depends on the
+  other. A bullet that waits on a numbered entry names it.
+
   - Float formatting in Rust: the float arm of the VM's `Display for Value`
     and the native `mjrt_fmt_f64`. Upstream formats `Float64` in Mojo
     (Dragonbox in `format_float`). Five corpus fixtures print different text
@@ -1770,7 +1851,8 @@ words. The representation gap and the two standing ledgers are last.
 
   Every new divergence lands here with a probe or a `cases.tsv`
   `mojito-only` / `output-diff` row, and leaves when its probe promotes to
-  an `assets/ok` fixture.
+  an `assets/ok` fixture. Depends on nothing as a ledger. A bullet that waits
+  on a numbered entry names it.
 
   Open today:
   - `len-over-pack-in-comptime-for-header`: `comptime for i in
@@ -1815,6 +1897,8 @@ words. The representation gap and the two standing ledgers are last.
       loans, so only the erased body with a local destination rejects.
     - The lever is what a moved source's stand-in place means once the
       source is gone: its loans outlive the move, the place does not.
+    - Depends on 3.35, the same stand-in place through a sibling call's
+      `mut` argument.
     - Model: Opus, Planned.
   - `trivially-movable-stdlib-types`: `IsTriviallyMovable[String]`,
     `IsTriviallyMovable[List[Int]]`, and the `MaybeUninit` conformances
@@ -1840,6 +1924,8 @@ words. The representation gap and the two standing ledgers are last.
     Pinned by `conformance/probes/ref_binding_register_value.mojo`.
     - The lever is named, but the rejection reaches wide fixture fallout, so it
       wants its own pass with the fallout enumerated first.
+    - Depends on 3.41, which wants the same fallback to materialize a literal
+      for a `ref` parameter: the two must agree on what it may materialize.
     - Model: Opus, Planned.
   - `tuple-element-write`: `t[0] = 9` on a `Tuple` runs upstream and prints
     `9`, while Mojito rejects it with "invalid assignment target: Tuple
@@ -1991,6 +2077,7 @@ words. The representation gap and the two standing ledgers are last.
     - Pinned by `conformance/probes/tuple_unpack_named_place_copies.mojo`.
     - The lever is the ImplicitCopy funnel, but the MIR and VM fallout of
       copying at the unpack is not enumerated.
+    - Depends on 3.7, the same unpack plan on an unnamed tuple.
     - Model: Opus, Planned.
   - `ref-field-return-origin-widening`: a view struct that stores its source
     in a direct `ref` field still widens a returned field view to a declared
@@ -2008,6 +2095,8 @@ words. The representation gap and the two standing ledgers are last.
       `ref_field_view_ref_yield.mojo`, `ref_field_view_method_return.mojo`,
       `ref_field_drain_mut_method.mojo`, and `ref_field_chained_view_call.mojo`.
     - The rule already exists; the gap is one constructor path.
+    - Depends on 3.12, which tightens the returned-origin comparison this
+      constructor path escapes.
     - Model: Opus, Planned.
   - `string-subscript-element`: `s[0]` on a `String` yields a character
     upstream and an `Int` in Mojito
@@ -2035,6 +2124,9 @@ words. The representation gap and the two standing ledgers are last.
     onto the methods.
     - Withdrawing the infix spelling is a leniency to remove, with fallout
       across the stdlib's SIMD bodies.
+    - Depends on section 4's scalar comparison methods: once the infix
+      spelling goes, `x.ne(y)` is the only ordered comparison left on a
+      scalar, and it does not resolve there yet.
     - Model: Fable, Planned.
   - `simd-element-narrowing` / `simd-inferred-width` / `float-literal-to-int`:
     three small constructor leniencies. Mojito narrows a SIMD element
@@ -2121,6 +2213,11 @@ words. The representation gap and the two standing ledgers are last.
   depends on a later one. Every bullet is a conscious, recorded limit, a
   task closes when its bullets are done, and a residue found inside a task
   moves to the task that owns its fix.
+
+  Depends on nothing as a whole, but two residues below are owned elsewhere:
+  the `var` collision across unrolled iterations is section 3's `comptime
+  for` scoping entry, and the non-constant value argument is section 2's
+  native constant entry.
 
   1. **Compile-time evaluation residues** — what VM CTFE can bind and
      resolve.
@@ -2230,7 +2327,8 @@ words. The representation gap and the two standing ledgers are last.
      - A lambda parameter annotated `String` (`lambda (s: String): print(s)`)
        reports `unknown type 'String'`, while a nested `def` with the same
        parameter runs. The lambda's hidden `def` apparently misses the
-       prelude qualification the other annotations get.     - A list display as an argument to an explicitly applied constructor
+       prelude qualification the other annotations get.
+     - A list display as an argument to an explicitly applied constructor
        at runtime (`Dict[String, Int](["a"], [1], None)`) takes no context
        from the parameterized `List[Self.K]` parameter and materializes as
        `Array`, so no overload matches. Spell the lists
@@ -2287,7 +2385,8 @@ words. The representation gap and the two standing ledgers are last.
 - [ ] **4.2 Filesystem and I/O residues**
 
   Behind the landed files, streams, paths, and tempfile stage
-  (`docs/features.md`).
+  (`docs/features.md`). Depends on nothing; the two destruction-order
+  divergences the stage found are section 3's.
 
   1. The remaining tail, each a small port:
      - public `stat` / `lstat` / `stat_result`, `realpath`, `symlink` /
@@ -2332,11 +2431,14 @@ words. The representation gap and the two standing ledgers are last.
     `s.ne(s)` is `False` for a NaN (ordered), while infix `s != s` is `True`.
   - Not a wrong answer, only a missing spelling. Until then, `x < y or x > y`
     is the ordered `ne`; infix `!=` answers `True` for a NaN.
+  - Depends on nothing. Section 3's `simd-infix-comparison` divergence waits
+    on it: withdrawing the infix spelling leaves `x.ne(y)` as the only
+    ordered comparison on a scalar.
 
 - [ ] **4.4 Time, random, and testing slices**
 
   Goal: deterministic testable cores, with host-dependent behavior behind
-  runtime services.
+  runtime services. Depends on nothing.
 
 ### 5. Packaging, Artifacts, And Developer Tooling
 
@@ -2353,6 +2455,7 @@ words. The representation gap and the two standing ledgers are last.
   - What is missing is scheduling, not safety: a way to run the heavy lane
     unattended when the machine is otherwise idle, and to surface its result
     where the morning triage already looks.
+  - Depends on nothing.
 
 - [ ] **5.2 Naming the bundled stdlib with `-I` breaks every program**
 
@@ -2376,6 +2479,7 @@ words. The representation gap and the two standing ledgers are last.
     copied root with it.
   - The default run with no `-I` is unaffected, which is why
     `tests/flat_stdlib_test.rs` passes.
+  - Depends on nothing.
 
 - [ ] **5.3 Compile-time performance**
 
@@ -2388,6 +2492,8 @@ words. The representation gap and the two standing ledgers are last.
   - `checked_var_types` scans the whole expression table per variable, and
     `explicit_destroy` re-derives deinitability per struct per pass.
   - Only then cache the elaborated/checked stdlib across processes.
+  - Depends on nothing. 5.4, 5.5, and 5.6 are named costs under the same
+    goal and land in any order.
 
 - [ ] **5.4 A carried checker pass still copies every fact it keeps**
 
@@ -2432,12 +2538,12 @@ words. The representation gap and the two standing ledgers are last.
 - [ ] **5.7 Feature and target options**
 
   Goal: checked CLI/build configuration recorded in artifacts and
-  diagnostics.
+  diagnostics. Depends on nothing.
 
 - [ ] **5.8 Compiled package artifacts**
 
   Goal: a versioned `.mojoc` representation (modules stay non-first-class).
-  Per-directory resolution order:
+  Depends on nothing. Per-directory resolution order:
   1. source package
   2. `.mojoc`
   3. source module
@@ -2446,17 +2552,18 @@ words. The representation gap and the two standing ledgers are last.
 - [ ] **5.9 Debugging metadata and inspection**
 
   Goal: stack/source diagnostics, MIR inspection, and debugger-oriented
-  value rendering.
+  value rendering. Depends on nothing.
 
 - [ ] **5.10 Testing tools**
 
   Goal: Mojito-native assertions, expected-error tests, and
-  differential-harness integration.
+  differential-harness integration. Depends on nothing.
 
 - [ ] **5.11 Distribution reproducibility gate** *(last)*
 
   Goal: the release check rebuilds, tests, documents, and reproduces
-  conformance from the crates.io archive alone.
+  conformance from the crates.io archive alone. Depends on every other entry
+  in this section, and stays last whatever else moves.
 
 ### 6. Code Organization Follow-Ups *(behavior-preserving)*
 
@@ -2468,17 +2575,21 @@ The 2026-09 module split (`docs/symbol-map.md`) removed every file over
   `mir/lower_expr/expr.rs` (about 2,090 lines) is one match over
   `ExprKind`.
   - Extract arm groups into `Flatten` methods.
+  - Depends on nothing.
 
 - [ ] **6.2 Split `infer_method_call`**
 
   `checker/method_calls/mc_infer.rs` (about 1,530 lines) is one method.
   - Extract receiver-family branches beside `selection`, `statics`, and
     `builtin_types`.
+  - Depends on nothing. It moves code several section 3 entries name as
+    their lever, so it lands between them rather than beside them.
 
 - [ ] **6.3 Split `verify_instruction`**
 
   `mir/verify/instr.rs` (about 1,320 lines) is one match over `MirInstr`.
   - Extract per-family check helpers.
+  - Depends on nothing.
 
 - [ ] **6.4 Shrink the 2 kloc band**
 
@@ -2489,6 +2600,8 @@ The 2026-09 module split (`docs/symbol-map.md`) removed every file over
     (2,395), `runtime.rs` (2,235), `checker.rs` (2,232),
     `comptime/rewrite.rs` (2,179), `checker/declarations.rs` (2,118),
     `mir/text/write.rs` (2,116), `backend/vm/exec.rs` (2,085).
+  - Depends on nothing. Split one of these only while touching it for
+    another task.
 
 ## Task Lifecycle Policy
 
@@ -2525,8 +2638,17 @@ Every entry is written for a human reader who has not seen the code.
 - Exception: every change that needs an `MJRT_ABI_VERSION` bump shares
   one checkbox, so the native runtime ABI is bumped once for all of them.
 - Entries are numbered `<section>.<n>` and sorted by dependency first, then by
-  how much the entry moves that section's goal. An entry that depends on
-  another names it. Renumber when one lands.
+  how much the entry moves that section's goal. Renumber when one lands.
+- Every checkbox carries a **Depends on** bullet, immediately before its
+  **Model:** bullet: the entries it needs, by number, or `Depends on
+  nothing.` Count an entry that merely makes another one easier as a
+  dependency, and name a dependency in another section by that section rather
+  than guess its number. An entry with no **Model:** bullet says it in its
+  goal paragraph instead, and a standing ledger says it in its intro and
+  again on any bullet that waits on a numbered entry.
+- A dependency is never below the entry that needs it. Where impact and
+  dependency disagree, the dependency wins, and the cluster sits where its
+  most important member would.
 - After renumbering, recheck every number and every reference to one. Each
   number appears once in its section, and each "Depends on" names the entry
   it meant, never the entry that carries it.
