@@ -2060,6 +2060,28 @@ fn template_method_parameter_receivers_derive() {
 }
 
 #[test]
+fn template_method_subscripted_receivers_derive() {
+    // A method called on a subscripted element: a bare parameter's
+    // requirement on `self.items[j]`, and a copy of an element's field
+    // through a read parameter (`other.entries[i].key.copy()`) beside the
+    // built-in `len` of that field, as `Dict.update` spells it.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_subscripted_receiver.mojo"),
+        "2 3 3 2\n22 2 11 1\n6 3 k 3\n2 3 2 2 y\n",
+        &[
+            ("Holder.dup", 2),
+            ("Holder.local_elem", 2),
+            ("Holder.bump_at", 2),
+            ("Holder.get_at", 2),
+            ("Holder.take", 2),
+            ("Table.other_key", 2),
+            ("Table.total", 2),
+            ("Dict.update", 2),
+        ],
+    );
+}
+
+#[test]
 fn template_method_element_field_results_derive() {
     // A reference result reached through a subscripted element's field,
     // read and written through, and `Dict.__getitem__`, which returns one.

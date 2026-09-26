@@ -7859,7 +7859,8 @@ impl BodyShape<'_> {
         admitted && self.holds(MethodFeatures::REFERENCE_RESULT)
     }
 
-    /// A reference-returning call on a field of `self`, passing scalars:
+    /// A reference-returning call on a field of `self` or of a parameter
+    /// holding a struct (`other.items[i]`), passing scalars:
     /// a subscript or a named accessor whose recorded contract is a
     /// `closed_reference_contract`. It is admitted as a returned place, a
     /// whole value read, a `ref` declaration's value, or the reference a
@@ -7884,7 +7885,10 @@ impl BodyShape<'_> {
         let on_self =
             self.receiver && matches!(&object.kind, ExprKind::Identifier(name) if name == "self");
         let admitted = !self.keyed
-            && (self.receiver_field(object) || on_self || self.value_local(object))
+            && (self.receiver_field(object)
+                || on_self
+                || self.value_local(object)
+                || self.parameter_field(object))
             && arguments
                 .iter()
                 .all(|argument| self.expression(argument) && self.scalar(argument))
@@ -9843,7 +9847,8 @@ impl BodyShape<'_> {
                 }
                 // The built-in `len` reads its operand in place and realizes
                 // its witness per instance, so a method may hand it a field of
-                // `self` or a `var` local of any type, not only a scalar one.
+                // `self`, a `var` local, or a parameter holding a struct or its
+                // field, of any type, not only a scalar one.
                 let builtin_len = self
                     .facts
                     .is_none_or(|facts| facts.builtin_len_calls.contains(&id));
@@ -9866,7 +9871,9 @@ impl BodyShape<'_> {
                             && (held
                                 || on_self
                                 || self.receiver_field(argument)
-                                || self.value_local(argument)))
+                                || self.value_local(argument)
+                                || self.parameter_receiver(argument)
+                                || self.parameter_field(argument)))
                         || self.direct_call_value(argument)
                         || self.generic_call_place(id, argument)
                 })
@@ -10487,6 +10494,9 @@ impl BodyShape<'_> {
     /// A method call on a place whose type is a bare struct parameter, which
     /// the template proves through the parameter's bound and an instance
     /// re-selects on its own type ([`Checker::realize_bound_dispatch`]).
+    /// The place may be the element a reference call yields
+    /// (`self.items[j].copy()`), which the call borrows through that
+    /// reference.
     ///
     /// The receiver is a place, so the template recorded at the call either
     /// the abstract contract (`__trait_dispatch.…`) or, for `write_to`, the
@@ -10522,7 +10532,7 @@ impl BodyShape<'_> {
                 self.params.contains(&name.as_str()) || self.local_kind(name).is_some()
             }
             ExprKind::Member { .. } => self.receiver_field(object) || self.reference_member(object),
-            ExprKind::Index { .. } => self.slot(object),
+            ExprKind::Index { .. } => self.slot(object) || self.reference_receiver(object),
             _ => transferred,
         };
         let named = |argument: &Expr| {

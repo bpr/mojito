@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct method calling a method on a subscripted element
+  (`self.items[i] = self.items[j].copy()`, `other.entries[i].key.copy()`),
+  or taking the built-in `len` of a parameter or its field, now reuses its
+  checked template's facts in every instance, so the bundled `Dict.update`
+  does too. Such methods used to be checked again per instance.
 - A struct method keyed on its own `Int` or `Bool` value binder
   (`def scaled[n: Int](self)`) is now checked once with the value symbolic,
   and every clone reuses those facts: a per-call clone reads the value as
