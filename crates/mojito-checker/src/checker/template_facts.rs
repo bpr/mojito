@@ -218,6 +218,8 @@ struct Occurrence {
     /// An admitted operator's kind, its operand occurrences, and whether
     /// its right operand is a place, which a consuming dunder copies.
     operator: Option<(mojito_ast::ast::InfixOp, SyntaxId, SyntaxId, bool)>,
+    /// A unary `-`'s operand occurrence.
+    negated: Option<SyntaxId>,
     /// Whether this is a `^` transfer.
     transfer: bool,
     /// Whether its checked type is the same under any expected type
@@ -3732,6 +3734,7 @@ impl Checker {
                     identifier: false,
                     method_call: None,
                     operator: None,
+                    negated: None,
                     transfer: false,
                     context_free: false,
                     literal: None,
@@ -3797,6 +3800,12 @@ impl Checker {
                             self.origins.origin(right.syntax_id),
                             super::places::is_place_expr(right),
                         )),
+                        _ => None,
+                    },
+                    negated: match &expr.kind {
+                        ExprKind::Prefix(mojito_ast::ast::PrefixOp::Neg, value) => {
+                            Some(self.origins.origin(value.syntax_id))
+                        }
                         _ => None,
                     },
                     transfer: matches!(expr.kind, ExprKind::Transfer(_)),
@@ -8960,21 +8969,26 @@ impl BodyShape<'_> {
                 kwargs,
             } => self.parameterized_call(expr, callee, param_args, args, kwargs),
             ExprKind::Prefix(_, value) => {
-                !self.folds(value) && self.expression(value) && self.scalar(value)
+                (self.folding(expr) || !self.folding(value))
+                    && self.expression(value)
+                    && self.scalar(value)
             }
-            // A folded operand is a literal in every instance, so its other
-            // operand holds a runtime value: over two literals the operator
-            // would fold, and yield a literal type the template never had.
+            // A folded operand is a literal in every instance. Over literals
+            // alone an operator folds too, which only integer arithmetic
+            // does to a literal the template's `Int` materializes
+            // ([`folded_literals`]); anything else keeps a runtime value on
+            // the operand's other side.
             ExprKind::Infix(op, left, right) => {
                 let runtime = |operand: &Expr| {
-                    !self.folds(operand)
+                    !self.folding(operand)
                         && self.facts.is_none_or(|facts| {
                             fact_at(&facts.expression_types, self.occurrence(operand))
                                 .is_some_and(grammar_scalar)
                         })
                 };
-                let folds =
-                    (!self.folds(left) || runtime(right)) && (!self.folds(right) || runtime(left));
+                let folds = self.folding(expr)
+                    || ((!self.folding(left) || runtime(right))
+                        && (!self.folding(right) || runtime(left)));
                 (folds
                     && self.expression(left)
                     && self.expression(right)
@@ -9305,6 +9319,31 @@ impl BodyShape<'_> {
                 && !self.params.contains(&name.as_str())
                 && ((self.keyed && self.values.contains(&name.as_str()))
                     || self.loop_vars.borrow().iter().any(|var| var == name)))
+    }
+
+    /// Whether every instance folds `expr` to an integer literal: a folded
+    /// value, or integer arithmetic or a negation over folded values and
+    /// literals that names at least one folded value.
+    fn folding(&self, expr: &Expr) -> bool {
+        fn literal_tree(shape: &BodyShape<'_>, expr: &Expr) -> Option<bool> {
+            use mojito_ast::ast::InfixOp::{
+                Add, BitAnd, BitOr, BitXor, FloorDiv, Mod, Mul, Pow, Shl, Shr, Sub,
+            };
+            match &expr.kind {
+                ExprKind::Int(_) => Some(false),
+                ExprKind::Identifier(_) => shape.folds(expr).then_some(true),
+                ExprKind::Prefix(mojito_ast::ast::PrefixOp::Neg, value) => {
+                    literal_tree(shape, value)
+                }
+                ExprKind::Infix(
+                    Add | Sub | Mul | FloorDiv | Mod | Pow | Shl | Shr | BitAnd | BitOr | BitXor,
+                    left,
+                    right,
+                ) => Some(literal_tree(shape, left)? | literal_tree(shape, right)?),
+                _ => None,
+            }
+        }
+        literal_tree(self, expr) == Some(true)
     }
 
     /// A folded compile-time value read where it stands, as an `Int` or a
@@ -9759,9 +9798,16 @@ fn folded_literals(
             .iter()
             .any(|(id, _)| id.syntax == occurrence.id.syntax)
     };
-    occurrences
+    let arithmetic = folded_arithmetic(template, occurrences, &named)?;
+    let mut literals: Vec<FoldedLiteral> = occurrences
         .iter()
-        .filter(|occurrence| occurrence.literal.is_some() && named(occurrence))
+        .filter(|occurrence| {
+            occurrence.literal.is_some()
+                && named(occurrence)
+                && !arithmetic
+                    .iter()
+                    .any(|literal| literal.occurrence == occurrence.id)
+        })
         .map(|occurrence| {
             let recorded = template
                 .expression_types
@@ -9788,7 +9834,123 @@ fn folded_literals(
                 unconsumed_temporary: read_temporary || printed.contains(&occurrence.id.syntax),
             })
         })
-        .collect()
+        .collect::<Option<_>>()?;
+    literals.extend(arithmetic);
+    Some(literals)
+}
+
+/// The integer arithmetic an instance folds where its template computed an
+/// `Int` from folded values: `i * 10 + j` over a `comptime for` variable
+/// is an `IntLiteral` in every instance. `None` when the fold leaves the
+/// literals, or its value does not fit the template's `Int`.
+///
+/// The outermost folded operator takes the literal type and materializes to
+/// the template's `Int`, where the template recorded nothing but that type
+/// and the temporary a read or `print` argument makes of it. Every operand
+/// below it is a literal typed as one and nothing else: a named value loses
+/// its binding and a literal its own materialization.
+fn folded_arithmetic(
+    template: &CheckedBodyFacts,
+    occurrences: &[Occurrence],
+    named: &impl Fn(&Occurrence) -> bool,
+) -> Option<Vec<FoldedLiteral>> {
+    use mojito_common::literal::IntLiteral;
+    use mojito_types::ct::CtValue;
+    use mojito_types::param_expr::fold::{fold_infix, fold_neg};
+    fn names<'a>(sites: impl IntoIterator<Item = &'a OccurrenceId>, id: OccurrenceId) -> bool {
+        sites.into_iter().any(|site| site.syntax == id.syntax)
+    }
+    let recorded = |id: OccurrenceId| {
+        template
+            .expression_types
+            .iter()
+            .find(|(site, _)| site.syntax == id.syntax)
+            .map(|(_, ty)| ty)
+    };
+    let operand = |id: OccurrenceId, syntax| OccurrenceId {
+        syntax,
+        copy: id.copy,
+    };
+    // Each occurrence's literal value, and whether it names a folded value;
+    // an operand follows its operator in pre-order.
+    let mut values: HashMap<OccurrenceId, (CtValue, bool)> = HashMap::new();
+    for occurrence in occurrences.iter().rev() {
+        let id = occurrence.id;
+        let value = match (&occurrence.literal, occurrence.operator, occurrence.negated) {
+            (Some(CtValue::Int(value)), _, _) => Some((
+                CtValue::IntLiteral(IntLiteral::from(*value)),
+                named(occurrence),
+            )),
+            (Some(literal @ CtValue::IntLiteral(_)), _, _) => {
+                Some((literal.clone(), named(occurrence)))
+            }
+            (None, Some((op, left, right, _)), _) => values
+                .get(&operand(id, left))
+                .zip(values.get(&operand(id, right)))
+                .and_then(|((left, left_named), (right, right_named))| {
+                    let value = fold_infix(op, left, right).ok()?;
+                    Some((value, *left_named || *right_named))
+                }),
+            (None, None, Some(value)) => values
+                .get(&operand(id, value))
+                .and_then(|(value, named)| Some((fold_neg(value).ok()?, *named))),
+            _ => None,
+        };
+        if let Some(value @ (CtValue::IntLiteral(_), _)) = value {
+            values.insert(id, value);
+        }
+    }
+    let operands = |occurrence: &Occurrence| {
+        let id = occurrence.id;
+        occurrence
+            .operator
+            .map(|(_, left, right, _)| vec![operand(id, left), operand(id, right)])
+            .or_else(|| occurrence.negated.map(|value| vec![operand(id, value)]))
+            .unwrap_or_default()
+    };
+    let folding = |occurrence: &Occurrence| {
+        !operands(occurrence).is_empty()
+            && values.get(&occurrence.id).is_some_and(|(_, named)| *named)
+    };
+    let mut inner: HashSet<OccurrenceId> = HashSet::new();
+    let mut literals = Vec::new();
+    for occurrence in occurrences {
+        let id = occurrence.id;
+        if inner.contains(&id) {
+            literals.push(FoldedLiteral {
+                occurrence: id,
+                ty: Ty::IntLiteral,
+                materialized: None,
+                read_temporary: false,
+                unconsumed_temporary: false,
+            });
+        } else if !folding(occurrence) {
+            continue;
+        } else {
+            let Some((CtValue::IntLiteral(value), _)) = values.get(&id) else {
+                return None;
+            };
+            let bare = !names(
+                template.operation_adjustments.iter().map(|(site, _)| site),
+                id,
+            ) && !names(template.overload_targets.iter().map(|(site, _)| site), id)
+                && !names(template.expression_effects.iter().map(|(site, _)| site), id);
+            if value.to_i64().is_none() || recorded(id) != Some(&Ty::Int) || !bare {
+                return None;
+            }
+            literals.push(FoldedLiteral {
+                occurrence: id,
+                ty: Ty::IntLiteral,
+                materialized: Some(Ty::Int),
+                read_temporary: names(&template.read_temporary_arguments, id),
+                unconsumed_temporary: names(&template.unconsumed_temporaries, id),
+            });
+        }
+        if folding(occurrence) || inner.contains(&id) {
+            inner.extend(operands(occurrence));
+        }
+    }
+    Some(literals)
 }
 
 /// A body's struct applications as one canonical ordered set, since a derived

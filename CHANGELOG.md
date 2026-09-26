@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Integer arithmetic over folded `comptime for` variables, value parameters,
+  and literals alone (`sum += i * 10 + j`, `acc += -i`) now reuses the
+  template's checked facts: the instance's whole expression is an
+  `IntLiteral` materialized to the template's `Int`. Such bodies used to be
+  checked again per instance.
 - A method or module-level `def` that raises a bare string literal, or calls
   a raising method or function, now reuses the template's checked facts; such
   bodies, and any module-level `def` that raises, used to be checked again

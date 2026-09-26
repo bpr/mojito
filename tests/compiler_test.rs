@@ -1422,16 +1422,39 @@ fn template_folded_values_derive() {
             "0\n39\n"
         );
     }
-    // Over two literals an operator folds, so a folded operand beside a
-    // literal keeps the clone check.
-    let folding = "def scaled[n: Int]() -> Int:\n    var acc = 0\n    comptime for i in range(n):\n        acc += i * 10\n    return acc\n\ndef main():\n    print(scaled[3]())\n";
-    let (output, stats) = run_source(folding);
-    assert_eq!(output, "30\n");
+}
+
+#[test]
+fn template_folded_arithmetic_derives() {
+    // Over folded values and literals alone an operator folds too: the
+    // outermost one is an `IntLiteral` materialized to the template's `Int`,
+    // and each operand below it a literal typed as one and nothing else.
+    let source = "def nested[n: Int, m: Int]() -> Int:\n    var sum = 0\n    comptime for i in range(n):\n        comptime for j in range(m):\n            sum += i * 10 + j\n    sum += -n\n    return sum\n\ndef main():\n    print(nested[2, 3]())\n";
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compiler.compile_unlinked(source).expect("compile");
+        let stats = program.template_stats();
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        assert!(
+            served.iter().any(|name| name.starts_with("nested$")),
+            "the instance derives: {stats:?}"
+        );
+        assert_eq!(compiler.execute(&program).expect("execute").output, "34\n");
+    }
+    // Literal division folds to a `FloatLiteral`, which the template's
+    // `Float64` does not record, so it keeps the clone check.
+    let dividing = "def halves[n: Int]() -> Float64:\n    var acc = 0.0\n    comptime for i in range(n):\n        acc += i / 2\n    return acc\n\ndef main():\n    print(halves[3]())\n";
+    let (output, stats) = run_source(dividing);
+    assert_eq!(output, "1.5\n");
     assert!(
         stats
             .derived
             .iter()
-            .all(|name| !name.starts_with("scaled$")),
+            .all(|name| !name.starts_with("halves$")),
         "{stats:?}"
     );
 }
