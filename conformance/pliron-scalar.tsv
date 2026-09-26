@@ -556,6 +556,7 @@ assets/ok/template_method_explicit_application.mojo	-	ineligible	no-scalar-entry
 assets/ok/template_method_explicit_destroy_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_for_loop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_foreign_overload.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_generic_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_generic_witness.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_getter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_hash_leaf.mojo	-	ineligible	no-scalar-entry-shape
@@ -599,6 +600,7 @@ assets/ok/template_method_view_result_interior.mojo	-	ineligible	no-scalar-entry
 assets/ok/template_method_with_statement.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_overload_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_overload_binding_local.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_overload_binding_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_pack_elements.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_raise_forms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_scalar_loop.mojo	-	ineligible	no-scalar-entry-shape

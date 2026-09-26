@@ -111,6 +111,7 @@ overload-var-copy-ranking	run	assets/ok/overload_var_copy_beside_generic.mojo
 overload-var-copy-method	run	assets/ok/overload_var_copy_method.mojo
 pack-overload-empty-collector-arity	run	assets/ok/pack_overload_empty_collector_arity.mojo
 overload-bound-in-generic-body	run	assets/ok/template_overload_binding.mojo
+overload-bound-in-generic-method	run	assets/ok/template_overload_binding_method.mojo
 variadic-constructor-dispatch	run	assets/ok/overloading_variadic_constructor.mojo
 set-variadic-constructor	run	assets/ok/set_variadic_constructor.mojo
 compile-time-if	run	conformance/fixtures/comptime_if.mojo

@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct method calling a generic module function on a value of the
+  struct's parameter type (`hash(e)` in `Set.__hash__`, `hash(self.value)`)
+  now reuses the template's checked facts, keeping the overload the template
+  bound. Such methods used to be checked again per instance, and an `Int`
+  instance could rank a concrete `pick(x: Int)` above the generic member
+  the pinned Mojo binds.
 - An initializer collecting `var *values` (`def __init__(out self, var
   *values: Self.T)`), optionally beside a `None` default, now reuses the
   template's checked facts, as do the bundled `List` and `Set` literal

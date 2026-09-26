@@ -556,6 +556,7 @@ assets/ok/template_method_explicit_application.mojo	main	exe-differential	saniti
 assets/ok/template_method_explicit_destroy_call.mojo	main	exe-differential	sanitized
 assets/ok/template_method_for_loop.mojo	main	exe-differential	sanitized
 assets/ok/template_method_foreign_overload.mojo	main	exe-differential	sanitized
+assets/ok/template_method_generic_call.mojo	main	exe-differential	sanitized
 assets/ok/template_method_generic_witness.mojo	main	exe-differential	sanitized
 assets/ok/template_method_getter.mojo	main	exe-differential	sanitized
 assets/ok/template_method_hash_leaf.mojo	main	exe-differential	sanitized
@@ -599,6 +600,7 @@ assets/ok/template_method_view_result_interior.mojo	main	exe-differential	saniti
 assets/ok/template_method_with_statement.mojo	main	exe-differential	sanitized
 assets/ok/template_overload_binding.mojo	main	exe-differential	sanitized
 assets/ok/template_overload_binding_local.mojo	main	exe-differential	sanitized
+assets/ok/template_overload_binding_method.mojo	main	exe-differential	sanitized
 assets/ok/template_pack_elements.mojo	main	exe-differential	sanitized
 assets/ok/template_raise_forms.mojo	main	exe-differential	sanitized
 assets/ok/template_scalar_loop.mojo	main	exe-differential	sanitized

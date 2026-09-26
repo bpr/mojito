@@ -1157,6 +1157,18 @@ fn template_overload_binding_keeps_the_symbolic_choice() {
 }
 
 #[test]
+fn template_method_keeps_the_symbolic_choice() {
+    // A struct method's call of a module-scope overload set on a value of the
+    // struct's parameter type is bound once, as the pinned Mojo binds it:
+    // the `Int` instance derives and inherits the generic overload.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_overload_binding_method.mojo"),
+        "2 2 2 2 1\n",
+        &[("Box.get", 2), ("Box.each", 2)],
+    );
+}
+
+#[test]
 fn template_inner_request_needs_no_outer_clone_inference() {
     let source = "def helper[T: Copyable](x: T) -> Int:\n    return 5\n\ndef outer[T: Copyable](x: T) -> Int:\n    return helper(x)\n\ndef main():\n    print(outer(3))\n    print(outer(True))\n";
     let (output, stats) = run_source(source);
@@ -2046,6 +2058,24 @@ fn template_method_hash_leaf_derives() {
         include_str!("../assets/ok/template_method_hash_leaf.mojo"),
         "True False\nFalse\nTrue False\nTrue False\n",
         &[("Lanes.__hash__", 3)],
+    );
+}
+
+#[test]
+fn template_method_generic_calls_derive() {
+    // A generic module function called on a value of the struct's parameter
+    // type, a field or a loop element, as the bundled `Set.__hash__` does:
+    // the template binds the selection and each instance re-keys the
+    // application.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_generic_call.mojo"),
+        "True True True\nTrue True\nTrue True\nTrue True\n",
+        &[
+            ("Bag.own", 3),
+            ("Bag.mixed", 3),
+            ("Bag.total", 3),
+            ("Set.__hash__", 2),
+        ],
     );
 }
 

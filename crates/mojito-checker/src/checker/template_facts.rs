@@ -6153,7 +6153,8 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
 }
 
 /// The direct calls a method body makes of a module-scope function that
-/// takes only closed scalars, each with its callee.
+/// takes only closed scalars, or reads a value at one of its own binders,
+/// each with its callee.
 ///
 /// The call selects the same declaration under every instance, or the same
 /// member of an overload set, which ranks only the closed argument types,
@@ -6162,18 +6163,24 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
 /// the template's arguments, which the instance substitutes, so an instance
 /// realizes it as a function template's direct call
 /// ([`Checker::realize_direct_call`]): the application's existing clone, or
-/// the one the elaborator retargeted the call to.
+/// the one the elaborator retargeted the call to. A read parameter typed by
+/// the callee's own binder (`hash(e)`) is declared in the callee's binder
+/// scope, which no substitution reaches: the argument binds it exactly, and
+/// only the application's argument changes per instance
+/// ([`BodyShape::generic_call_place`]).
 fn method_direct_calls(facts: &CheckedBodyFacts) -> Vec<(OccurrenceId, &str)> {
     facts
         .call_parameters
         .iter()
         .filter(|(id, parameters)| {
+            let application = fact_at(&facts.generic_instantiations, *id);
             !facts.selected_calls.iter().any(|(call, _)| call == id)
-                && fact_at(&facts.generic_instantiations, *id)
-                    .is_none_or(|application| application.variadic.is_none())
-                && parameters
-                    .iter()
-                    .all(|parameter| parameter.convention.is_none() && closed_scalar(&parameter.ty))
+                && application.is_none_or(|application| application.variadic.is_none())
+                && parameters.iter().all(|parameter| {
+                    parameter.convention.is_none()
+                        && (closed_scalar(&parameter.ty)
+                            || (application.is_some() && matches!(parameter.ty, Ty::Param { .. })))
+                })
         })
         .filter_map(|(id, _)| template_callee(facts, *id).map(|callee| (*id, callee)))
         .collect()
@@ -9097,10 +9104,38 @@ impl BodyShape<'_> {
                                 || self.receiver_field(argument)
                                 || self.value_local(argument)))
                         || self.direct_call_value(argument)
+                        || self.generic_call_place(id, argument)
                 })
             }
             _ => false,
         }
+    }
+
+    /// A named place a method body hands to a generic module function's
+    /// read parameter (`hash(e)`, `hash(self.value)`), which the call reads
+    /// where it lies.
+    ///
+    /// The template bound the callee's binder to the place's symbolic type
+    /// and selected the callee once; whether the call borrows the place is
+    /// decided by its syntax and the read convention, so an instance keeps
+    /// both and substitutes only the application (`method_direct_calls`).
+    fn generic_call_place(&self, call: OccurrenceId, argument: &Expr) -> bool {
+        let named = match &argument.kind {
+            ExprKind::Identifier(name) => {
+                self.declared(name)
+                    || self.params.contains(&name.as_str())
+                    || self.reference_local(name)
+            }
+            _ => self.receiver_field(argument),
+        };
+        let id = self.occurrence(argument);
+        named
+            && !self.keyed
+            && self.facts.is_none_or(|facts| {
+                fact_at(&facts.generic_instantiations, call).is_some()
+                    && facts.borrowed_read_call_places.contains(&id)
+                    && fact_at(&facts.conversions, id).is_none()
+            })
     }
 
     /// A whole value handed by value to a direct call in a function body
