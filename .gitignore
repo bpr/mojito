@@ -3,3 +3,4 @@ Cargo.lock
 tools/*/target/
 !tools/*/Cargo.lock
 dist/
+__pycache__/
