@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method of a generic struct whose operator takes a call's result, another
+  operator, or a right-hand literal as an operand (`self.first_value() ==
+  value`, `self.low + (self.high + self.low)`, `self.low + 5`) now derives its
+  instances from the checked template, dispatching the dunder again from both
+  operand types and keeping the copy or literal conversion the template's own
+  dispatch recorded. Such bodies used to keep the clone check because the
+  method grammar admitted an operator only over two places.
 - A method of a generic struct that calls a static method of a non-generic
   struct on its type — `Color.pick(n)`, or a leading-dot `.of(n)` the
   expected type resolves — now derives its instances from the checked

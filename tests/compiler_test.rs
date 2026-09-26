@@ -2114,6 +2114,29 @@ fn template_method_operator_dispatch_derives() {
 }
 
 #[test]
+fn template_method_operator_operands_derives() {
+    // A sibling call's result, a nested operator, and a right-hand literal
+    // as operands: a temporary records nothing in either check, a place
+    // under a consuming dunder is copied in the template already, and a
+    // literal reaches `Meter[Self.T]` through the template's own conversion.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_operator_operands.mojo"),
+        "True False True False\n1 5 6 8\nTrue False True False\n3 9 4 12\nFalse False True True\n",
+        &[
+            ("Pair.starts", 2),
+            ("Gauge.lowered", 2),
+            ("Gauge.bumped", 2),
+            ("Gauge.is_two", 2),
+            ("Gauge.below", 2),
+            ("Gauge.spanned", 2),
+            ("Gauge.chained", 2),
+            ("Gauge.balanced", 2),
+            ("Gauge.matches_sum", 2),
+        ],
+    );
+}
+
+#[test]
 fn template_method_bounded_arithmetic_derives() {
     // `a + b` and `a / b` under arithmetic bounds: the template's result is
     // the operand's own type (`Float64` for `/`), so the operator is a

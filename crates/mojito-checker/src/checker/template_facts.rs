@@ -200,8 +200,9 @@ struct Occurrence {
     identifier: bool,
     /// A method call's receiver occurrence and method name.
     method_call: Option<(SyntaxId, String)>,
-    /// An admitted operator's kind and operand occurrences.
-    operator: Option<(mojito_ast::ast::InfixOp, SyntaxId, SyntaxId)>,
+    /// An admitted operator's kind, its operand occurrences, and whether
+    /// its right operand is a place, which a consuming dunder copies.
+    operator: Option<(mojito_ast::ast::InfixOp, SyntaxId, SyntaxId, bool)>,
     /// Whether this is a `^` transfer.
     transfer: bool,
     /// The value of an integer or `Bool` literal, which may be a folded
@@ -1925,8 +1926,8 @@ impl Checker {
         Ok(())
     }
 
-    /// Realize one operator over two places of one type for an instance, as
-    /// `infer_infix` decides it on the substituted operand type.
+    /// Realize one admitted operator for an instance, as `infer_infix`
+    /// decides it on the substituted operand types.
     ///
     /// A closed scalar operates natively and records nothing, as the template
     /// did; it owes only that the primitive path has the operator and gives
@@ -1935,23 +1936,27 @@ impl Checker {
     /// dunder, whose selection `struct_infix_dispatch` makes from the types
     /// alone: the instance records the target it names, reaches the struct's
     /// application, and writes the three facts that dispatch carries and the
-    /// symbolic template could not — the implicit copy of a consumed operand,
-    /// the conversion of an adapted one, and the `NegatedEquality` adjustment
-    /// of a `!=` served by `__eq__`. The dunder's result must still be the
-    /// type the template kept, which is what an arithmetic operator's bound
-    /// promised. Anything else (a tuple, a vector, a pointer) is the clone
-    /// check's to judge.
+    /// symbolic template could not — the implicit copy of a consumed place
+    /// operand (a temporary one moves and records nothing), the conversion
+    /// of an adapted one, and the `NegatedEquality` adjustment of a `!=`
+    /// served by `__eq__`. A literal right operand is only ever beside a
+    /// struct built over a parameter, whose dunder the template dispatched
+    /// too: a conversion it recorded there is the instance's to select again.
+    /// The dunder's result must still be the type the template kept, which
+    /// is what an arithmetic operator's bound promised. Anything else (a
+    /// tuple, a vector, a pointer) is the clone check's to judge.
     ///
     /// The reflected dunder has no arm because no admitted operator reaches
-    /// it: a comparison has no reflected form, and the left operand of an
-    /// arithmetic one has the forward dunder its bound required.
+    /// it: a comparison has no reflected form, the left operand of an
+    /// arithmetic one has the forward dunder its bound required, and a
+    /// literal is never the left operand.
     fn realize_operator(
         &self,
         facts: &mut CheckedBodyFacts,
         id: OccurrenceId,
         occurrences: &[Occurrence],
     ) -> Result<(), &'static str> {
-        let (op, left, right) = occurrences
+        let (op, left, right, place) = occurrences
             .iter()
             .find(|occurrence| occurrence.id == id)
             .and_then(|occurrence| occurrence.operator)
@@ -1961,30 +1966,32 @@ impl Checker {
             copy: id.copy,
         };
         let (left, right) = (operand(left), operand(right));
-        let operand_ty = fact_at(&facts.expression_types, left)
-            .ok_or("an operand has no retained type")?
-            .clone();
-        if fact_at(&facts.expression_types, right) != Some(&operand_ty) {
-            return Err("an operator's operands differ for the instance");
-        }
+        let retained = |operand| {
+            fact_at(&facts.expression_types, operand)
+                .cloned()
+                .ok_or("an operand has no retained type")
+        };
+        let (left_ty, right_ty) = (retained(left)?, retained(right)?);
         let result = fact_at(&facts.expression_types, id)
             .ok_or("an operator has no retained result type")?
             .clone();
-        if closed_scalar(&operand_ty) {
-            return if super::operators::scalar_operator_result(op, &operand_ty) == Some(result) {
+        if closed_scalar(&left_ty) {
+            return if right_ty == left_ty
+                && super::operators::scalar_operator_result(op, &left_ty) == Some(result)
+            {
                 Ok(())
             } else {
                 Err("the operator is not the instance's scalar operation")
             };
         }
-        let Ty::Struct(name, arguments) = &operand_ty else {
+        let Ty::Struct(name, arguments) = &left_ty else {
             return Err("an operand is neither a scalar nor a struct");
         };
         if !self.structs.contains_key(name) {
             return Err("an operand is a built-in aggregate");
         }
         let dispatch = self
-            .struct_infix_dispatch(op, &operand_ty, &operand_ty)
+            .struct_infix_dispatch(op, &left_ty, &right_ty)
             .map_err(|_| "the operator is undefined for the instance's type")?
             .ok_or("the instance's type has no dunder for the operator")?;
         let dunder = if dispatch.negated_equality {
@@ -1992,14 +1999,20 @@ impl Checker {
         } else {
             op.dunder().ok_or("the operator dispatches no dunder")?
         };
-        if self.struct_dunder(&operand_ty, dunder, &[&dispatch.operand_ty]) != Some(Ok(result)) {
+        if self.struct_dunder(&left_ty, dunder, &[&dispatch.operand_ty]) != Some(Ok(result)) {
             return Err("the dunder's result is not the type the template kept");
         }
-        // `check_consuming_as` on a place operand: the copy, at the operand's
-        // own type rather than the converted one, and the demand the
+        // `check_consuming_as` on the right operand: a place is copied, at
+        // its own type rather than the converted one, under the demand the
         // bundle-wide check makes of every copy the template kept.
-        if dispatch.consumes {
-            if !(self.is_copyable(&operand_ty) && self.is_implicitly_copyable(&operand_ty)) {
+        // A copy the template's own dispatch recorded is kept, and the
+        // bundle-wide check has judged it already.
+        let copied = facts.copy_place_value_uses.contains(&right);
+        if copied && !dispatch.consumes {
+            return Err("the instance's dunder borrows an operand the template's consumed");
+        }
+        if dispatch.consumes && place && !copied {
+            if !(self.is_copyable(&right_ty) && self.is_implicitly_copyable(&right_ty)) {
                 return Err("a consumed operand is not implicitly copyable for the instance");
             }
             facts.copy_place_value_uses.push(right);
@@ -2007,7 +2020,11 @@ impl Checker {
         // The conversion `record_implicit_conversion` installs. Its
         // constructor is selected by [`Self::realize_conversion`], which runs
         // after every operator and inherits its refusals.
-        if dispatch.converted {
+        let kept = fact_at(&facts.conversions, right).is_some();
+        if kept && !dispatch.converted {
+            return Err("the instance reaches the dunder without the template's conversion");
+        }
+        if dispatch.converted && !kept {
             facts.conversions.push((
                 right,
                 mojito_checked::templates::TemplateConversion {
@@ -3452,6 +3469,7 @@ impl Checker {
                             *op,
                             self.origins.origin(left.syntax_id),
                             self.origins.origin(right.syntax_id),
+                            super::places::is_place_expr(right),
                         )),
                         _ => None,
                     },
@@ -8932,14 +8950,23 @@ impl BodyShape<'_> {
         }
     }
 
-    /// An operator over two places of one type that mentions a struct
-    /// parameter, which dispatches on the type alone.
+    /// An operator over two operands of one type that mentions a struct
+    /// parameter, which dispatches on the type alone, or over such an operand
+    /// and a literal the dunder of a struct built over the parameter accepts.
     ///
-    /// The template, whose type is symbolic, recorded nothing at it: a bound
-    /// (or a `where` assumption) proves the operator and the operands are
-    /// read where they lie. An instance decides the same operator on its
-    /// substituted type ([`Checker::realize_operator`]), and each operand
-    /// is a place, so the instance's check reads it where it lies too.
+    /// An operand is a place, a call result, or another admitted operator.
+    /// The template, whose type is symbolic, recorded nothing at the
+    /// operator: a bound (or a `where` assumption) proves it, or the dunder
+    /// the template dispatched on a struct built over the parameter answers,
+    /// with a literal operand converted into its parameter type where it
+    /// must be. An instance decides the same operator on its substituted
+    /// types ([`Checker::realize_operator`]). Neither check records anything
+    /// at a temporary operand: a place is read where it lies, and a call
+    /// result or an operator's value is moved into the dunder, or dropped
+    /// after it.
+    ///
+    /// A literal is never the left operand, whose dispatch is the reflected
+    /// dunder's, recorded at the operator in the template too.
     ///
     /// The result is the operand's own type for an arithmetic, bitwise, or
     /// shift operator, so it is not a scalar under every instance;
@@ -8951,7 +8978,7 @@ impl BodyShape<'_> {
         left: &Expr,
         right: &Expr,
     ) -> bool {
-        let place = |operand: &Expr| match &operand.kind {
+        let operand = |operand: &Expr| match &operand.kind {
             ExprKind::Identifier(name) => {
                 self.params.contains(&name.as_str()) || self.local_kind(name).is_some()
             }
@@ -8959,27 +8986,32 @@ impl BodyShape<'_> {
                 self.receiver_field(operand) || self.reference_member(operand)
             }
             ExprKind::Index { .. } => self.slot(operand),
+            ExprKind::MethodCall { .. } | ExprKind::Invoke { .. } => self.call_result(operand),
+            ExprKind::Infix(..) => self.operator_value(operand),
             _ => false,
         };
+        let literal = matches!(
+            right.kind,
+            ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Str(_) | ExprKind::Bool(_)
+        );
         let id = self.occurrence(expr);
         let admitted = !self.keyed
             && operator_dispatch(op)
-            && place(left)
-            && place(right)
+            && operand(left)
+            && (literal || operand(right))
             && self.facts.is_none_or(|facts| {
-                let same = fact_at(&facts.expression_types, self.occurrence(left))
+                let typed = fact_at(&facts.expression_types, self.occurrence(left))
                     .zip(fact_at(&facts.expression_types, self.occurrence(right)))
                     .is_some_and(|(left, right)| {
-                        left == right && mojito_types::types::is_symbolic(left)
+                        mojito_types::types::is_symbolic(left)
+                            && (left == right || (literal && matches!(left, Ty::Struct(..))))
                     });
-                same && !facts.overload_targets.iter().any(|(site, _)| *site == id)
+                typed
+                    && !facts.overload_targets.iter().any(|(site, _)| *site == id)
                     && !facts
                         .operation_adjustments
                         .iter()
                         .any(|(site, _)| *site == id)
-                    && !facts
-                        .copy_place_value_uses
-                        .contains(&self.occurrence(right))
             });
         if admitted {
             let mut operators = self.operators.borrow_mut();
