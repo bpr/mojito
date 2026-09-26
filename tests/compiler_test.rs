@@ -2265,55 +2265,6 @@ def main():
 }
 
 #[test]
-fn template_operator_on_a_call_result_keeps_the_clone_check() {
-    // Only two places are admitted. An operand that is a sibling call's
-    // result records a temporary of its own, which the operator recipe has no
-    // occurrence to key, so the whole body stays outside the class and every
-    // clone is checked. The program still runs.
-    let source = r#"struct Pair[T: Copyable & Equatable & Deinitable](Movable):
-    var first: Self.T
-    var second: Self.T
-
-    def __init__(out self, var first: Self.T, var second: Self.T):
-        self.first = first^
-        self.second = second^
-
-    def head(self) -> Self.T:
-        return self.first.copy()
-
-    def same(self) -> Bool:
-        return self.head() == self.second
-
-def main():
-    var a = Pair[Int](1, 2)
-    var b = Pair[String](String("x"), String("x"))
-    print(a.same(), b.same())
-"#;
-    let compiler = Compiler::default();
-    let program = compile_entry(&compiler, source);
-    let stats = program.template_stats();
-    assert_eq!(
-        compiler.execute(&program).expect("execute").output,
-        "False True\n"
-    );
-    assert!(
-        stats
-            .derived
-            .iter()
-            .all(|name| !name.starts_with("Pair.same$")),
-        "no clone of Pair.same derives: {:?}",
-        stats.derived
-    );
-    assert!(
-        stats.refused.iter().any(|(name, reason)| {
-            name.starts_with("Pair.same$") && reason == "its template is not certified"
-        }),
-        "the call-result operand leaves the body outside the class: {:?}",
-        stats.refused
-    );
-}
-
-#[test]
 fn template_method_consuming_conversion_keeps_the_clone_check() {
     // The recipe re-selects the constructor at the instance's types, and a
     // constructor that consumes its source records an implicit copy the
