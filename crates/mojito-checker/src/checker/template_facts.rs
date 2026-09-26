@@ -1971,7 +1971,7 @@ impl Checker {
     /// Rewrite one method call's contract for an instance whose receiver is
     /// the struct `owner` under `arguments`: the target is the instance's
     /// clone of the selected declaration, where one exists, and the result,
-    /// parameter, and referent types substitute. `None` where the template
+    /// raised, parameter, and referent types substitute. `None` where the template
     /// already selected the receiver's clone, whose contract stands.
     fn realize_method_contract(
         &self,
@@ -2082,6 +2082,10 @@ impl Checker {
         let contract = &mut call.contract;
         contract.target.clone_from(&target);
         contract.result_ty = self.instance_ty(&contract.result_ty, substitution);
+        contract.raises = contract
+            .raises
+            .as_ref()
+            .map(|raised| self.instance_ty(raised, substitution));
         for argument in &mut contract.arguments {
             argument.parameter_ty = self.instance_ty(&argument.parameter_ty, substitution);
         }
@@ -2654,10 +2658,12 @@ impl Checker {
 
     /// The certificate a freshly captured module-level generic function earns.
     ///
-    /// Both classes share a declaration shape: plain type parameters, immutable
-    /// regular runtime parameters, a concrete scalar result, and no `raises`,
-    /// captures, decorators, or `where` clauses, so the declaration's bounds —
+    /// Every class shares a declaration shape: plain type parameters, immutable
+    /// regular runtime parameters, a concrete scalar result, and no captures,
+    /// decorators, or `where` clauses, so the declaration's bounds —
     /// discharged where an instance is requested — are all an instance owes.
+    /// Only a [`TemplateClass::FunctionBody`] may raise
+    /// (`MethodFeatures::RAISES`).
     ///
     /// [`TemplateClass::ClosedScalarBody`] bodies name nothing: every fact is
     /// closed and inherited unchanged. [`TemplateClass::FixedCalls`] bodies also
@@ -2679,9 +2685,10 @@ impl Checker {
     ///   re-selects only in the arms the elaborator kept.
     /// - Binding conventions: borrows are decided from slots, conventions, and
     ///   argument shape, none of which mention a type.
-    /// - Effects: the callee does not raise, and its transfer and call-through
-    ///   summaries were empty; a realization re-reads them and installs the same
-    ///   fixpoint observation a clone check would.
+    /// - Effects: the callee raises only where the body may (`effect_derives`),
+    ///   and its transfer and call-through summaries were empty; a realization
+    ///   re-reads them and installs the same fixpoint observation a clone
+    ///   check would.
     /// - Requests: the retained application substitutes, and
     ///   `realize_instance_facts` repeats the clone check's only concrete
     ///   decision, whether that application's clone already exists.
@@ -2794,8 +2801,11 @@ impl Checker {
         if !plain_params {
             return outside("a parameter is not an immutable regular parameter");
         }
-        if *raises || raises_type.is_some() || captures.is_some() || !decorators.is_empty() {
-            return outside("the declaration raises, captures, or is decorated");
+        if captures.is_some() || !decorators.is_empty() {
+            return outside("the declaration captures or is decorated");
+        }
+        if keyed && (*raises || raises_type.is_some()) {
+            return outside("a keyed body raises");
         }
         // A body returning nothing falls off its end: the grammar admits no
         // value `return` for it, and a bare `return` only in a runtime body.
@@ -2842,7 +2852,11 @@ impl Checker {
             // (`FunctionBody`); a keyed body keeps source validation's rules.
             moved_result: (!keyed).then_some(ret_ty),
             reference_result: None,
-            features: std::cell::Cell::default(),
+            features: std::cell::Cell::new(if *raises || raises_type.is_some() {
+                MethodFeatures::STATEMENTS.union(MethodFeatures::RAISES)
+            } else {
+                MethodFeatures::default()
+            }),
             locals: RefCell::new(Vec::new()),
             handles: RefCell::new(Vec::new()),
             references: RefCell::new(Vec::new()),
@@ -2894,12 +2908,12 @@ impl Checker {
         if !facts.call_throughs.is_empty() || !facts.call_through_reads.is_empty() {
             return outside("the body calls or forwards a callable parameter");
         }
-        let effects_closed = facts
+        if !facts
             .expression_effects
             .iter()
-            .all(|(_, effects)| *effects == mojito_checked::checked::EffectFacts::default());
-        if !effects_closed {
-            return outside("a call has an effect");
+            .all(|(_, effects)| effect_derives(effects))
+        {
+            return outside("a call has an effect other than raising");
         }
         let adjustments_derive = facts
             .operation_adjustments
@@ -3086,9 +3100,11 @@ impl Checker {
     ///   constructor's `BorrowRefArguments` names the lending positions and
     ///   each loan's mutability, neither of which an instance changes
     ///   (`derive_adjustment`).
-    /// - `RAISES`: see [`BodyShape::raised`]. A `raise` records nothing of
-    ///   its own, and the judgment an instance repeats there holds under
-    ///   every substitution the template's holds under.
+    /// - `RAISES`: see [`BodyShape::raised`] and [`effect_derives`]. A
+    ///   `raise` records nothing of its own, a raising call's effect and
+    ///   contract carry the callee's error type, which substitutes, and the
+    ///   judgment an instance repeats at either holds under every
+    ///   substitution the template's holds under.
     /// - `CONSUMING_CALLS`: see [`BodyShape::consuming_call`] and
     ///   `consuming_nominal_contract`. The receiver's move is recorded at its
     ///   `^` transfer, and a named `deinit self` destructor's mark is the
@@ -3432,7 +3448,7 @@ impl Checker {
         let effects_closed = facts
             .expression_effects
             .iter()
-            .all(|(_, effects)| *effects == mojito_checked::checked::EffectFacts::default());
+            .all(|(_, effects)| effect_derives(effects));
         let binder_constructions = shape.binder_constructions.borrow();
         let adjustments_derive = facts.operation_adjustments.iter().all(|(id, adjustment)| {
             binder_constructions.contains(id) || adjustment_derives(adjustment)
@@ -5195,14 +5211,15 @@ impl SpanKeyed for HashSet<SourceSpan> {
 /// refuses a body that recorded into it.
 /// The features a [`TemplateClass::FunctionBody`] may hold: runtime
 /// statements, whole values moved or copied between a parameter, a local, an
-/// argument, and the result, a runtime `for` over a place, and a condition
-/// tested through `__bool__`. Each recipe is a method body's, on a body
-/// without a receiver.
+/// argument, and the result, a runtime `for` over a place, a condition
+/// tested through `__bool__`, and a `raises` declaration. Each recipe is a
+/// method body's, on a body without a receiver.
 const FUNCTION_FEATURES: MethodFeatures = MethodFeatures::STATEMENTS
     .union(MethodFeatures::OPAQUE_MOVES)
     .union(MethodFeatures::VALUE_ARGUMENTS)
     .union(MethodFeatures::ITERATION)
-    .union(MethodFeatures::TRUTHINESS);
+    .union(MethodFeatures::TRUTHINESS)
+    .union(MethodFeatures::RAISES);
 
 const fn derivable_table(table: FactTable) -> bool {
     match table {
@@ -6424,6 +6441,18 @@ fn converted_argument(
     }) && fact_at(&facts.conversions, id).is_some()
 }
 
+/// Whether a call's recorded effect derives: raising is the one it may
+/// carry.
+///
+/// The raised type substitutes (`substituted_facts`), and the judgment an
+/// instance repeats at the call — whether that type is the declared error
+/// type, or the handler's in a `with` desugar — compares two functions of the
+/// same parameters, so it holds under every substitution the template's
+/// holds under.
+const fn effect_derives(effects: &mojito_checked::checked::EffectFacts) -> bool {
+    !effects.may_suspend && !effects.diverges
+}
+
 /// Whether one adjustment has a derivation recipe, as a template's own
 /// symbolic facts can be judged.
 ///
@@ -7477,12 +7506,16 @@ impl BodyShape<'_> {
                     && fact_at(&facts.call_parameters, id).is_none()
                     && fact_at(&facts.expression_bindings, id).is_none()
             });
+        let literal = matches!(value.kind, ExprKind::Str(_))
+            && self.facts.is_none_or(|facts| {
+                fact_at(&facts.expression_types, id) == Some(&Ty::StringLiteral)
+            });
         let reraised = matches!(&value.kind, ExprKind::Identifier(name)
             if self.error_binders.borrow().contains(name))
             && self
                 .facts
                 .is_none_or(|facts| fact_at(&facts.expression_types, id) == Some(&Ty::Error));
-        error || reraised || self.construction(value)
+        error || literal || reraised || self.construction(value)
     }
 
     /// A nested `def` over closed scalars (`NESTED_DEFS`).
@@ -8581,7 +8614,8 @@ impl BodyShape<'_> {
 
     /// Whether the call at `expr` recorded a closed contract naming `method`
     /// on the receiver's own struct, and nothing a derivation lacks. A call
-    /// that is not trivial is a sibling call, which only a method body holds.
+    /// that is not trivial is a sibling call, which only a method body holds,
+    /// and which may raise (`raising_method_contract`).
     fn sibling_call(
         &self,
         facts: &CheckedBodyFacts,
@@ -8593,7 +8627,8 @@ impl BodyShape<'_> {
             .is_some_and(|call| {
                 mojito_checked::templates::trivial_method_contract(call)
                     || (!self.keyed
-                        && mojito_checked::templates::value_method_contract(call)
+                        && (mojito_checked::templates::value_method_contract(call)
+                            || mojito_checked::templates::raising_method_contract(call))
                         && self.holds(MethodFeatures::SIBLING_CALLS))
             })
     }

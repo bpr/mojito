@@ -2031,10 +2031,42 @@ fn template_method_value_parameter_templates_reuse() {
 }
 
 #[test]
-fn template_method_raised_string_keeps_the_clone_check() {
-    // A raised string literal is converted to `Error` by its type, which no
-    // recipe keeps yet, so the body stays outside the class and still runs.
-    let source = "struct Slot[T: Copyable & Deinitable](Movable):\n    var item: Self.T\n    var full: Bool\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n        self.full = False\n\n    def take(self) raises -> Self.T:\n        if not self.full:\n            raise \"empty\"\n        return self.item.copy()\n\n\ndef main():\n    try:\n        print(Slot[Int](1).take())\n    except e:\n        print(e)\n";
+fn template_raise_forms_derive() {
+    // A raised string literal, and a call of a raising sibling method or
+    // module function, in a method and in a module-level `def` that raises.
+    let source = include_str!("../assets/ok/template_raise_forms.mojo");
+    assert_methods_derive(
+        source,
+        "7 seven\nerror: empty slot\nerror: not ready\nerror: SlotError\n2 2\nerror: refused\n",
+        &[
+            ("Slot.take", 2),
+            ("Slot.relay", 2),
+            ("Slot.ready", 2),
+            ("Slot.check", 2),
+            ("Slot.checked", 2),
+        ],
+    );
+    let (_, stats) = run_source(source);
+    for (template, instances) in [("refuse$", 3), ("forward$", 3)] {
+        assert_eq!(
+            stats
+                .derived
+                .iter()
+                .filter(|name| name.starts_with(template))
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            instances,
+            "every {template} instance derives; refused: {:?}",
+            stats.refused
+        );
+    }
+}
+
+#[test]
+fn template_method_raised_built_message_keeps_the_clone_check() {
+    // `Error` of a built `String` is no form `BodyShape::raised` names, so
+    // the body stays outside the class and still runs.
+    let source = "struct Slot[T: Copyable & Deinitable](Movable):\n    var item: Self.T\n    var full: Bool\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n        self.full = False\n\n    def take(self) raises -> Self.T:\n        if not self.full:\n            raise Error(String(\"em\") + \"pty\")\n        return self.item.copy()\n\n\ndef main():\n    try:\n        print(Slot[Int](1).take())\n    except e:\n        print(e)\n";
     let compiler = Compiler::default();
     let program = compile_entry(&compiler, source);
     let stats = program.template_stats();
@@ -2046,7 +2078,7 @@ fn template_method_raised_string_keeps_the_clone_check() {
         stats.refused.iter().any(|(name, reason)| {
             name.starts_with("Slot.take$") && reason == "its template is not certified"
         }),
-        "the raised string leaves the body outside the class: {:?}",
+        "the built message leaves the body outside the class: {:?}",
         stats.refused
     );
 }

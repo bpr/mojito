@@ -371,7 +371,7 @@ pub fn trivial_method_contract(call: &TemplateCallContract) -> bool {
 /// callee's declaration, which an instance's clone keeps. Every field is
 /// named, so a new one must be given a rule here before this crate builds.
 pub fn closed_method_contract(call: &TemplateCallContract) -> bool {
-    call.reference_result.is_none() && closed_contract(call, None, false)
+    call.reference_result.is_none() && closed_contract(call, None, false, false)
 }
 
 /// Whether a method call's contract is a [`closed_method_contract`] but for
@@ -387,7 +387,19 @@ pub fn closed_method_contract(call: &TemplateCallContract) -> bool {
 /// temporary) is recorded at that expression and is for the body's grammar
 /// to admit.
 pub fn value_method_contract(call: &TemplateCallContract) -> bool {
-    call.reference_result.is_none() && closed_contract(call, None, true)
+    call.reference_result.is_none() && closed_contract(call, None, true, false)
+}
+
+/// Whether a method call's contract is a [`value_method_contract`] but for
+/// the error type its callee raises.
+///
+/// The raised type is the callee's declared one at the receiver's arguments,
+/// so an instance substitutes it as it does the result type
+/// (`realize_method_contract`).
+pub fn raising_method_contract(call: &TemplateCallContract) -> bool {
+    call.contract.raises.is_some()
+        && call.reference_result.is_none()
+        && closed_contract(call, None, true, true)
 }
 
 /// Whether a method call's contract is a [`closed_method_contract`] but for
@@ -403,7 +415,12 @@ pub fn value_method_contract(call: &TemplateCallContract) -> bool {
 pub fn closed_reference_contract(call: &TemplateCallContract) -> bool {
     call.reference_result.is_some()
         && call.contract.receiver_requires_place
-        && closed_contract(call, Some(mojito_ast::ast::ArgConvention::Ref), false)
+        && closed_contract(
+            call,
+            Some(mojito_ast::ast::ArgConvention::Ref),
+            false,
+            false,
+        )
 }
 
 /// Whether a method call's contract is a [`closed_method_contract`] but for
@@ -419,7 +436,7 @@ pub fn consuming_method_contract(call: &TemplateCallContract) -> bool {
     call.reference_result.is_none()
         && matches!(convention, Some(ArgConvention::Var | ArgConvention::Deinit))
         && !call.contract.receiver_requires_place
-        && closed_contract(call, convention, false)
+        && closed_contract(call, convention, false, false)
 }
 
 /// Whether a method call's contract is a [`value_method_contract`] but for
@@ -436,7 +453,7 @@ pub fn consuming_nominal_contract(call: &TemplateCallContract) -> bool {
         && matches!(convention, Some(ArgConvention::Var | ArgConvention::Deinit))
         && !call.contract.receiver_requires_place
         && call.invalidations.is_empty()
-        && closed_contract(call, convention, true)
+        && closed_contract(call, convention, true, false)
 }
 
 /// Whether a call keeps the caller's place for this argument: what a `mut`
@@ -458,12 +475,13 @@ pub const fn kept_place_argument(argument: &crate::checked::CheckedCallArgument)
 /// What [`closed_method_contract`], [`value_method_contract`],
 /// [`closed_reference_contract`], and [`consuming_method_contract`] share.
 /// `receiver` is the one convention beyond a read or `mut` receiver the call
-/// may take, and `values` admits a by-value parameter of any type, which then
-/// takes no adjustment at all.
+/// may take, `values` admits a by-value parameter of any type, which then
+/// takes no adjustment at all, and `raising` admits a callee that raises.
 fn closed_contract(
     call: &TemplateCallContract,
     receiver: Option<mojito_ast::ast::ArgConvention>,
     values: bool,
+    raising: bool,
 ) -> bool {
     use mojito_ast::ast::ArgConvention;
     let TemplateCallContract {
@@ -495,7 +513,7 @@ fn closed_contract(
         invalidations: _,
     } = call;
     let closed_scalar = |ty: &Ty| matches!(ty, Ty::Int | Ty::UInt | Ty::Bool | Ty::Float64);
-    raises.is_none()
+    (raising || raises.is_none())
         && result_adapter.is_none()
         && !receiver_elided
         && (matches!(
@@ -790,9 +808,10 @@ impl MethodFeatures {
     /// it lies by a read parameter, copied into a `var` one, or kept by a
     /// `mut` or `ref` one.
     pub const REFERENCE_ARGUMENTS: Self = Self(1 << 20);
-    /// A `raises` declaration, and a `raise` of a construction or of
-    /// `Error("…")`: whether the operand matches the declared error type,
-    /// and whether it is a string, hold alike under every instance.
+    /// A `raises` declaration, a `raise` of a construction, of `Error("…")`,
+    /// or of a string literal, and a call of a raising callee: whether the
+    /// raised type matches the declared error type, and whether it is a
+    /// string, hold alike under every instance.
     pub const RAISES: Self = Self(1 << 21);
     /// A method call on the `^` transfer of a named place whose callee
     /// consumes its receiver (`var self`, or a named `deinit self`

@@ -596,6 +596,7 @@ assets/ok/template_method_with_statement.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_overload_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_overload_binding_local.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_pack_elements.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_raise_forms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_scalar_loop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_two_arms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_two_types.mojo	-	ineligible	no-scalar-entry-shape

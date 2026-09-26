@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A method or module-level `def` that raises a bare string literal, or calls
+  a raising method or function, now reuses the template's checked facts; such
+  bodies, and any module-level `def` that raises, used to be checked again
+  as a clone per instance.
+
 - A method returning a field of a subscripted element as a reference
   (`return self.entries[i].value`, as `Dict.__getitem__` does) now reuses the
   template's checked facts; it used to be checked again as a clone per
