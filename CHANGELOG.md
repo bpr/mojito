@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `def` keyed on a type and a scalar value parameter with no compile-time
+  control flow (`def scaled[T: Copyable, n: Int](x: T) -> Int`) now reuses
+  the template's checked facts, each instance reading the value as the
+  literal it folded to. Such bodies used to be checked again per instance.
 - A `rebind`-keyed method of a generic struct (`rebind[Int](self.value)`
   under `comptime if Self.T == Int`) now reuses the template's checked facts,
   each instance discharging the `rebind`'s equality at its own type. Such

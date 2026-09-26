@@ -1460,6 +1460,34 @@ fn template_folded_arithmetic_derives() {
 }
 
 #[test]
+fn template_value_keyed_def_derives() {
+    // A `def` keyed on a type and a value, with no compile-time control
+    // flow, is certified by the abstract check; each clone reads the value
+    // as the literal it folded to.
+    let source = "def bump(x: Int) -> Int:\n    return x + 1\n\ndef scaled[T: ImplicitlyCopyable & Deinitable, n: Int](x: T, base: Int) -> Int:\n    var kept = x\n    var acc = base * n\n    acc += bump(n)\n    acc += n * 10 + 1\n    return acc\n\ndef main():\n    print(scaled[Int, 3](7, 2), scaled[String, 1](\"s\", 5))\n";
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compiler.compile_unlinked(source).expect("compile");
+        let stats = program.template_stats();
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        let derived: std::collections::HashSet<&str> = served
+            .iter()
+            .map(String::as_str)
+            .filter(|name| name.starts_with("scaled$"))
+            .collect();
+        assert_eq!(derived.len(), 2, "every instance derives: {stats:?}");
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "41 18\n"
+        );
+    }
+}
+
+#[test]
 fn template_per_call_method_clones_derive() {
     // A per-call clone bakes the method's own bounded binder beside the
     // struct's; its trace names both, so it derives from the checked

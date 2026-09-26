@@ -265,13 +265,21 @@ element.
 ## Certificate classes
 
 Every class shares a declaration shape: a module-level `def`, plain type
-parameters (plus scalar `Bool`/`Int` value parameters for a keyed body),
-immutable regular runtime parameters, a concrete scalar result (a runtime
+parameters and scalar `Bool`/`Int` value parameters, immutable regular
+runtime parameters, a concrete scalar result (a runtime
 body may return a whole value of any type, `FunctionBody` below), and no
 captures or decorators. Only `FunctionBody` may declare `raises` (feature
 `RAISES`). An operator is admitted only over operands
 whose recorded types are closed scalars, so no operator dispatches through a
 bound. `BodyShape` is the grammar; `template_certificate` is the argument.
+
+A value-keyed body with no compile-time control flow and no `rebind` is
+never source-validated, so its producer is the abstract check, as for a
+trait-bound one: the elaborator folds the value in each clone
+(`scaled[T, n: Int]` minting `scaled$y3:Int$i3;`), and a runtime class's
+instance reads it as the literal it folded to (`folded_literals`), exactly
+as a keyed body's does (`assets/ok/template_value_keyed_def.mojo`). A method's
+own value binder stays outside (roadmap 1.3): its `BodyShape` names no value.
 
 | Class | Body | Why an instance needs no inference |
 |---|---|---|
@@ -1157,10 +1165,8 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
   pin's `update` takes bytes), so no fixture exercises it.
 - A generic module function called from a method (`hash(e)` in
   `Set.__hash__`), whose instantiation the grammar refuses.
-- A folded name beside a literal (`i * 10`) or under a prefix (`-i`), which
-  the instance's check folds to one literal; a value parameter of a body
-  with no compile-time control flow, which source validation never checks;
-  and a folded name lent to an owned parameter.
+- A folded name in a division, a comparison, or `~`, which the instance's
+  check folds to a literal the template's type does not record.
 - A local declared inside a `comptime for`.
 - A pack forwarded whole (`print(*a)`), a pack-keyed struct's methods (a
   pack binder fails the method certificate's plain-struct rule, and a

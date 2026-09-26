@@ -1068,16 +1068,18 @@ impl Checker {
                 }));
         let baked = ((trace.residual.is_empty() && !site.residual_binders) || kept_binders)
             && match class {
+                TemplateClass::MethodScalarBody | TemplateClass::MethodBody(_) => {
+                    trace.value_bindings.is_empty()
+                }
+                // The folded values selected the arms, or are read as the
+                // literals each occurrence folded to (`folded_literals`). A
+                // folded loop index is read back from the copy it fixed.
                 TemplateClass::ClosedScalarBody
                 | TemplateClass::FixedCalls
                 | TemplateClass::BoundedOperations
-                | TemplateClass::MethodScalarBody
-                | TemplateClass::MethodBody(_)
-                | TemplateClass::FunctionBody(_) => trace.value_bindings.is_empty(),
-                // The folded values selected the arms; no retained
-                // occurrence names one. A folded loop index is read back
-                // from the copy it fixed.
-                TemplateClass::ScalarBranches | TemplateClass::PackElements => true,
+                | TemplateClass::ScalarBranches
+                | TemplateClass::PackElements
+                | TemplateClass::FunctionBody(_) => true,
             };
         if !template && !baked {
             return refuse("the clone keeps or folds a compile-time parameter");
@@ -2774,14 +2776,13 @@ impl Checker {
         }
         // One producer per body: source validation owns every body it
         // checks (keyed by compile-time control flow or a `rebind`), the
-        // executable check the surviving ones.
+        // executable check the surviving ones, a value-keyed body with
+        // neither among them.
         let keyed = self.source_validation;
         if !keyed
             && (!pack_binders.is_empty()
-                || decls
-                    .iter()
-                    .any(|decl| matches!(decl, ParamDecl::Value { .. }))
-                || body.iter().any(holds_comptime_if))
+                || body.iter().any(holds_comptime_if)
+                || super::rebind::body_keys_rebind(body, &self.rebind_keyed_bodies))
         {
             return outside("a compile-time-keyed body is source validation's to certify");
         }
@@ -3335,13 +3336,9 @@ impl Checker {
             static_calls: RefCell::new(Vec::new()),
             packs: Vec::new(),
             loop_vars: RefCell::new(Vec::new()),
-            values: decls
-                .iter()
-                .filter_map(|decl| match decl {
-                    ParamDecl::Value { name, .. } => Some(name.as_str()),
-                    ParamDecl::Type { .. } => None,
-                })
-                .collect(),
+            // `derive` refuses a method clone that folds a value, so no
+            // method body reads one as a literal.
+            values: Vec::new(),
             print_calls: RefCell::new(Vec::new()),
             nested_depth: std::cell::Cell::new(0),
             borrowed_params: params_passed(&[ArgConvention::Mut, ArgConvention::Ref]),
@@ -9306,13 +9303,13 @@ impl BodyShape<'_> {
     }
 
     /// Whether `expr` names a compile-time value the elaborator folds to a
-    /// literal in every instance: a `comptime for` variable, or a keyed
-    /// body's value parameter, that no local shadows.
+    /// literal in every instance: a `comptime for` variable, or a value
+    /// parameter, that no local shadows.
     fn folds(&self, expr: &Expr) -> bool {
         matches!(&expr.kind, ExprKind::Identifier(name)
             if self.local_kind(name).is_none()
                 && !self.params.contains(&name.as_str())
-                && ((self.keyed && self.values.contains(&name.as_str()))
+                && (self.values.contains(&name.as_str())
                     || self.loop_vars.borrow().iter().any(|var| var == name)))
     }
 
