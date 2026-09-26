@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A member of a struct the elaborator specializes whole (`Tuple$t2[…]`, a
+  `DType`-keyed range, a keyed `AHasher`) is now traced to its template, and
+  the bundled `Tuple`'s `__len__`, comparisons, `__hash__`, and `write_to`
+  reuse the template's checked facts, each instance reading its elements at
+  its own types. Such members used to be checked again per instance, with
+  no refusal counted.
 - A struct method whose operator has a literal or closed scalar left operand
   (`1 + self.low`, `n + self.low`), dispatching the right operand's reflected
   dunder, now reuses the template's checked facts. Such methods used to be checked again per instance.

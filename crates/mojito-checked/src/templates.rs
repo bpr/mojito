@@ -2264,8 +2264,21 @@ impl TemplateCatalog {
     /// Replace the clone traces with those of the elaboration about to be
     /// checked. Traces never outlive their elaboration: the next round names
     /// its own clones.
+    ///
+    /// A name traced twice is traced to neither template: two members that
+    /// share a name and a first statement (`Tuple`'s per-element
+    /// `__contains__` overloads) cannot be told apart.
     pub fn set_traces(&mut self, traces: Vec<(InstanceName, InstanceTrace)>) {
-        self.traces = traces.into_iter().collect();
+        let mut seen = std::collections::HashSet::new();
+        let ambiguous: std::collections::HashSet<InstanceName> = traces
+            .iter()
+            .filter(|(name, _)| !seen.insert(name.clone()))
+            .map(|(name, _)| name.clone())
+            .collect();
+        self.traces = traces
+            .into_iter()
+            .filter(|(name, _)| !ambiguous.contains(name))
+            .collect();
     }
 
     /// Replace the generated-declaration list with that of the elaboration
@@ -2276,6 +2289,11 @@ impl TemplateCatalog {
 
     pub fn generated_def(&self, name: &str) -> bool {
         self.generated.defs.contains(name)
+    }
+
+    /// Whether `owner` is a struct specialized whole.
+    pub fn generated_struct(&self, owner: &str) -> bool {
+        self.generated.structs.contains(owner)
     }
 
     /// Whether `owner.method` is generated: a member of a struct specialized

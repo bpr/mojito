@@ -1500,7 +1500,8 @@ and its soundness argument, is
 - **The trace is explicit.** The elaborator records which prepared declaration
   each `def` clone instantiates and what each compile-time parameter became
   (`DefInstanceTrace`), the same for each per-instantiation and per-call
-  method clone (`MethodInstanceTrace`), and everything it generated
+  method clone and each member of a struct it specialized whole
+  (`MethodInstanceTrace`), and everything it generated
   (`GeneratedDeclarations`). Only that list, or a clone's explicit receiver
   type, says a declaration is generated: a module-qualified source name
   carries a `$` too. A clone node keeps the syntax identity of the template

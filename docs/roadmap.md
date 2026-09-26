@@ -37,33 +37,30 @@ parameters symbolic, or deriving an instantiation from a checked template. A
 defect found on the way is filed by its kind; a divergence from the pin goes
 to section 3, however small.
 
-- [ ] **1.1 A member of a struct specialized whole leaves no trace**
+- [ ] **1.1 Most of `Tuple`'s members keep the clone check**
 
-  Problem: the elaborator traces a `def` clone, a per-instantiation method
-  clone, and a per-call method clone to their templates, but not a member of
-  a struct it specializes whole (`Tuple$…`, a `DType`-keyed range, a
-  vector-keyed `AHasher`).
-  - Such a member comes from a template whose validated body is never
-    certified: a `DType` binder fails `template_certificate`'s plain-binder
-    rule (`checker/template_facts.rs`), and a pack binder fails
-    `method_certificate`'s plain-struct rule.
-  - So all 19 keyed templates source validation checks in `stdlib_heavy`
-    (`TString.write_to`, `Tuple.write_to`, …) stay refused there.
-  - The pack recipe a `def` uses — a pack bound to its element list in the
-    trace, a folded loop index read back per copy
-    (`TemplateClass::PackElements`) — is what that class would reuse, together
-    with an element read `self.storage[i]` and a `__getitem_param__[i]()` call
-    on the pack's `Tuple[*Self.Ts]` storage.
-  - A per-call clone minted into such a struct (a SIMD-keyed leaf of
-    `AHasher[…]`) is untraced for the same reason, as is one minted into the
-    CTFE subprogram.
-  - Hello World's 498 generated body inferences are 437 such members, 36
-    SIMD-keyed leaves (1.2), and 25 `def` clones.
-  - An untraced body keeps the `$`-name test for its `rebind` selection
-    (`template_facts.rs:mark_symbolic_selection`); a traced one keeps the
-    selection only when its template was validated.
+  Problem: a `Tuple` specialized whole derives only its instance
+  `__len__`, its comparisons, `__hash__`, and `write_to`; its other members
+  are inferred per instance.
+  - They are 255 of Hello World's 411 generated body inferences.
+  - The static `__len__` returns `Self.Ts.length`, a folded pack length the
+    method grammar has no rule for.
+  - `__init__` forwards its pack whole (`__RuntimeTuple(*args^)`).
+  - `__getitem_param__[index]` is unrolled per element into
+    `__getitem_param__$k` and a value twin, each with no template of its
+    own.
+  - `__contains__` is split into one overload per distinct element type,
+    and the overloads share a name and a first statement, so their traces
+    are dropped as ambiguous (`TemplateCatalog::set_traces`).
+  - `copy` is synthesized, with no source body to trace.
+  - `write_repr_to` needs `_unqualified_type_name[Self]` and `repr` over a
+    pack element, whose argument the call keeps as a place.
+  - `consume_elements` and `deinit_with` take a callable binder
+    (`elt_handler: def[index: Int](...)`), which `method_certificate` refuses.
+  - An unavailable member (`__lt__` over `Optional[Int]`) is a trap stub,
+    inferred but never traced.
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **1.2 A SIMD-keyed hasher leaf keeps the clone check**
 
@@ -79,10 +76,32 @@ to section 3, however small.
     are the only per-call clones either program mints.
   - A symbolic check would need the `SIMD[dt, w]` binder pair the upstream
     spelling infers, with `to_bits` and `.length` over it.
+  - The 36 leaves Hello World mints into the specialized `AHasher[…]` are
+    not traced at all: `generate_value_struct_spec` mints them with no owner
+    (`PerCallBase::default()`), under the whole struct's source tag rather
+    than `clone_source_tag`.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **1.3 A method's own value binder keeps the clone check**
+- [ ] **1.3 A value-keyed struct specialized whole has no template**
+
+  Problem: the members of a struct the elaborator specializes per value
+  (`_SequentialRange[dtype]`, `_StridedRange`, `_ZeroStartingRange`,
+  `AHasher[key]`) are traced now, and every one is refused with "its template
+  has no retained facts".
+  - This is the struct half of 1.23: the elaborator drops the template when
+    it rebuilds the program, and source validation checks none of these
+    bodies, since they hold no compile-time control flow, `rebind`, or pack.
+  - Hello World infers 59 such members; the leaves minted into `AHasher`
+    are 1.2's.
+  - `count_template_classes` counts these methods as
+    `templates.surviving_trait_bound`, although they never survive.
+  - The substitution half exists: `instance_substitution` binds a value
+    struct's folded values from the member's trace.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.4 A method's own value binder keeps the clone check**
 
   Problem: `method_certificate` admits only origin binders and trait-bounded
   type binders of the method itself, so `def scaled[n: Int](self) -> Int`
@@ -100,7 +119,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.4 A method forwarding its own `DType` parameter to a keyed `def`
+- [ ] **1.5 A method forwarding its own `DType` parameter to a keyed `def`
   is rejected**
 
   Problem: `def make[dt: DType](self, x: Int) -> Scalar[dt]` whose body
@@ -114,7 +133,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.5 A `DType`-keyed method whose signature spells the struct's value
+- [ ] **1.6 A `DType`-keyed method whose signature spells the struct's value
   parameter is never cloned**
 
   Problem: `def rep[dt: DType](self, a: SIMD[dt, Self.n]) -> SIMD[dt,
@@ -128,7 +147,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.6 A method called on a subscripted element keeps the clone
+- [ ] **1.7 A method called on a subscripted element keeps the clone
   check**
 
   Problem: `self.items[i] = self.items[j].copy()` calls `copy` on an element,
@@ -144,7 +163,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.7 An augmented assignment to a place through its in-place dunder
+- [ ] **1.8 An augmented assignment to a place through its in-place dunder
   keeps the clone check**
 
   Problem: `self.total += x` on a `T` whose bound requires `__iadd__`, or
@@ -158,7 +177,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.8 A tuple element read as a whole value keeps the clone check**
+- [ ] **1.9 A tuple element read as a whole value keeps the clone check**
 
   Problem: the method grammar reads a tuple element only as a scalar, so a
   body binding or returning an element of a parameter type
@@ -174,7 +193,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.9 A surviving `def` template that builds and consumes a hasher keeps
+- [ ] **1.10 A surviving `def` template that builds and consumes a hasher keeps
   the clone check**
 
   Problem: `hash_seeded[T: Hashable](value: T, seed: U256)` constructs a
@@ -192,7 +211,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.10 A bundled template's instance over a loan-carrying argument
+- [ ] **1.11 A bundled template's instance over a loan-carrying argument
   keeps its erased body**
 
   Problem: `List[Span[Int, origin_of(xs)]]` mints no clones, so its methods
@@ -211,7 +230,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.11 A per-call method clone over a loan-carrying argument keeps the
+- [ ] **1.12 A per-call method clone over a loan-carrying argument keeps the
   erased path**
 
   Problem: a generic method called with a loan-carrying argument of its own
@@ -224,7 +243,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.12 A frame effect whose source is not a single binding refuses
+- [ ] **1.13 A frame effect whose source is not a single binding refuses
   capture**
 
   Problem: a template's frame transfer effect is captured only when its
@@ -239,7 +258,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.13 Native monomorphization binds type parameters by spelling**
+- [ ] **1.14 Native monomorphization binds type parameters by spelling**
 
   Problem: `Bindings.types` and `Specializer.enclosing_types`
   (`crates/mojito-native/src/native/mono`) are keyed by a binder's name, so a
@@ -256,7 +275,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **1.14 A `where`-clause operand names its binder by spelling**
+- [ ] **1.15 A `where`-clause operand names its binder by spelling**
 
   Problem: a compiled `where` clause names its binder by spelling
   (`GenericConstraint::{Conforms, ConformsPack, PackPredicate,
@@ -268,11 +287,11 @@ to section 3, however small.
     type parameter and a value reference by identity (2026-09-26). These
     operands are what still reads a spelling there.
   - The constraints are serialized in MIR text, so batch the schema change
-    with 1.13's.
+    with 1.14's.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **1.15 Two overloads of one generic method share their binders**
+- [ ] **1.16 Two overloads of one generic method share their binders**
 
   Problem: a method's binders are owned by `Struct.method`
   (`method_binder_owner`), so two overloads of one method whose slots agree
@@ -288,7 +307,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.16 The elaborator's binders have no owner**
+- [ ] **1.17 The elaborator's binders have no owner**
 
   Problem: every binder the elaborator classifies is
   `ParamId { owner: "$elaborated", slot }` (`comptime/params.rs`,
@@ -300,7 +319,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.17 An overloaded witness ranked past its conversions keeps the
+- [ ] **1.18 An overloaded witness ranked past its conversions keeps the
   clone check**
 
   Problem: a call through a bound derives for an instance whose type
@@ -319,7 +338,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.18 A hasher leaf under a method's own hasher binder disagrees
+- [ ] **1.19 A hasher leaf under a method's own hasher binder disagrees
   with its clone check**
 
   Problem: `MOJITO_VERIFY_TEMPLATE_FACTS=1` fails on
@@ -338,7 +357,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.19 `os.removedirs` keeps the clone check**
+- [ ] **1.20 `os.removedirs` keeps the clone check**
 
   Problem: a module-level `def` that raises derives, but the function grammar
   still refuses `os.removedirs` and the bundled bodies it calls.
@@ -355,7 +374,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.20 A folded name in a division, comparison, or `~` keeps the clone
+- [ ] **1.21 A folded name in a division, comparison, or `~` keeps the clone
   check**
 
   Problem: over folded values and literals alone, only integer arithmetic
@@ -374,7 +393,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.21 A `print` statement in a runtime body keeps the clone check**
+- [ ] **1.22 A `print` statement in a runtime body keeps the clone check**
 
   Problem: `BodyShape::statement` admits `print(...)` only in a keyed
   `def` shape, so a runtime `def` or any method body that prints keeps the
@@ -388,7 +407,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.22 A `DType`- or lane-keyed `def` without compile-time control flow
+- [ ] **1.23 A `DType`- or lane-keyed `def` without compile-time control flow
   has no template**
 
   Problem: `def lane[dt: DType](v: Int) -> Int` constructing `Scalar[dt](v)`
@@ -405,7 +424,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.23 A value built by a value-shaped construction is not a grammar
+- [ ] **1.24 A value built by a value-shaped construction is not a grammar
   scalar**
 
   Problem: in a keyed `def`, `var lanes = SIMD[DType.int64, w](v)` derives,
@@ -419,7 +438,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.24 A borrowed iterator built from a cast pointer keeps the clone
+- [ ] **1.25 A borrowed iterator built from a cast pointer keeps the clone
   check**
 
   Problem: the `ref self` overload of `Set.__iter__` builds its iterator
@@ -432,7 +451,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.25 A method call leaving a defaulted parameter to its default keeps
+- [ ] **1.26 A method call leaving a defaulted parameter to its default keeps
   the clone check**
 
   Problem: `self.name.find("y")` is refused by the method grammar, while
@@ -446,7 +465,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.26 A nested `def` with a parameter convention, a default, or
+- [ ] **1.27 A nested `def` with a parameter convention, a default, or
   `raises` keeps the clone check**
 
   Problem: `BodyShape::nested_def` admits only regular read parameters with
@@ -458,7 +477,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.27 An overloaded static method of a generic struct keeps the clone
+- [ ] **1.28 An overloaded static method of a generic struct keeps the clone
   check**
 
   Problem: `BodyShape::static_call` admits a generic struct's static only
@@ -477,7 +496,35 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.28 The Pliron pivot has no falsifiable proof yet**
+- [ ] **1.29 A variadic struct specialized whole other than `Tuple` cannot
+  bind its pack**
+
+  Problem: a member of `TString$…` or of a user variadic struct
+  (`Pair$t2[…]`) is traced, but its receiver type carries no arguments, so
+  `instance_substitution` cannot bind the pack and refuses it.
+  - Only `Tuple`'s specializations keep their element types as receiver
+    arguments (`generated_tuple_arguments`), and only a closed `Tuple` is
+    canonicalized to its generated name (`canonicalize_public_tuple_types`).
+  - Resolving the trace's source element types instead would bind the pack,
+    but the template's `Self` would still substitute to the unspecialized
+    struct.
+  - `TString.write_to` also binds each element with a `ref` local over a
+    `Tuple` accessor, which the method grammar refuses.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.30 A clone minted for compile-time evaluation is never derived**
+
+  Problem: the CTFE subprogram is checked by `check_program` on a fresh
+  template catalog (`ctfe.rs`), so a per-call clone minted there
+  (`PerCallBase::default()`) has neither a trace nor a template to derive
+  from.
+  - Serving it would need the compilation's catalog threaded into the CTFE
+    check.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.31 The Pliron pivot has no falsifiable proof yet**
 
   Problem: [`docs/pliron-backend-pivot-plan.md`](pliron-backend-pivot-plan.md)
   stages a migration to a required Pliron IR framework, but its Stage A1 slice
@@ -626,7 +673,21 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **2.7 Native runtime ABI bump: land every change that needs a new
+- [ ] **2.7 A one-element tuple does not compile natively**
+
+  Problem: any use of `(7,)` fails the native backend's IR verification
+  ("argument 1 type mismatch: expected llvm.ptr, got builtin.integer i64"),
+  and `one == (7,)` fails with "unsupported read of undefined aggregate
+  register"; the VM prints the pin's answers.
+  - Declaring `var one = (7,)` and printing it, taking its `len`, or hashing
+    it is enough.
+  - Found while writing `assets/ok/template_method_pack_struct.mojo`
+    (2026-09-26), which keeps to two- and three-element tuples; no `ok`
+    fixture declares a one-element tuple.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **2.8 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
 
   Problem: each item below changes the native runtime ABI, so it needs an
@@ -810,7 +871,7 @@ last.
   - Pinned by `conformance/probes/tuple_unpack_string_element.mojo`.
   - `assets/ok/template_method_tuple_unpack.mojo` keeps its `String`
     instance to unpacks of a sibling call's result, which both backends run.
-  - Depends on nothing. The `named-tuple-unpack-copy` divergence in 3.73 is
+  - Depends on nothing. The `named-tuple-unpack-copy` divergence in 3.74 is
     the same unpack plan and closes with it.
   - Model: Opus, Planned.
 
@@ -1264,7 +1325,7 @@ last.
     own check even when the method is never called; without the `try` it
     runs. Pinned by `conformance/probes/generic_method_transfer_in_try.mojo`.
   - Depends on nothing. The `moved-parameter-into-local-collection`
-    divergence in 3.73 is the same stand-in place and closes with it.
+    divergence in 3.74 is the same stand-in place and closes with it.
   - Model: Opus, Not Planned.
 
 - [ ] **3.36 A value-returning body that ends in `abort(...)` is rejected**
@@ -1348,7 +1409,7 @@ last.
   - The pin materializes the literal and binds the parameter to the temporary.
   - Probe: `conformance/probes/literal_to_ref_parameter.mojo`.
   - Depends on nothing. It materializes through the same fallback the
-    `ref-binding-register-value` divergence in 3.73 wants narrowed, so the
+    `ref-binding-register-value` divergence in 3.74 wants narrowed, so the
     two answers must agree.
   - Model: Opus, Planned.
 
@@ -1543,7 +1604,7 @@ last.
     `Dtype::float_literal_lane`, and let the build's exhaustiveness errors
     list the rest. The native lowering matches with wildcards, so its sites
     need a manual `rg` pass.
-  - Depends on nothing. The bundled `struct DType` port in 3.72 rewrites the
+  - Depends on nothing. The bundled `struct DType` port in 3.73 rewrites the
     same table, so this lands first or folds into it.
   - Model: Opus, Planned.
 
@@ -1781,7 +1842,22 @@ last.
     nothing in this section moves it.
   - Model: Fable, Not Planned.
 
-- [ ] **3.70 A parametric nested `def` named as a value reports its marker**
+- [ ] **3.70 Ordering a tuple of mixed element types is rejected**
+
+  Problem: `(1, String("b")) < (1, String("c"))` reports "operator '<' is
+  not defined for Tuple[Int, String] and Tuple[Int, String]"; the pin prints
+  `True`.
+  - The checker decides tuple ordering structurally
+    (`operators.rs`, `tuple_order_compatible`) instead of dispatching
+    `Tuple.__lt__`, and that rule refuses most element mixes:
+    `(Tag(2), 1)` over a user `Comparable` struct and `(2.0, String("x"))`
+    fail too, while `(String("b"), 1)` and homogeneous tuples pass.
+  - Calling `p.__lt__(q)` directly works, and so does the derived
+    `Tuple.__lt__` behind it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.71 A parametric nested `def` named as a value reports its marker**
 
   Problem: `apply(inner, 3)` and `var g = inner`, for a nested
   `def inner[U: Copyable]`, report `Undefined variable
@@ -1798,7 +1874,7 @@ last.
     parametric `def` names; the message follows from that.
   - Model: Opus, Not Planned.
 
-- [ ] **3.71 `String` always owns a heap buffer, where upstream's has three
+- [ ] **3.72 `String` always owns a heap buffer, where upstream's has three
   representations**
 
   Problem: `String(literal)` allocates and copies the literal's bytes, while
@@ -1813,7 +1889,7 @@ last.
     last.
   - Model: Opus, Planned.
 
-- [ ] **3.72 Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
+- [ ] **3.73 Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
   any order)*
 
   Problem: parts of Mojito's stdlib lean on the Rust runtime where upstream
@@ -1846,7 +1922,7 @@ last.
   Four runtime services are deliberately not on that list; they are in
   [`docs/non-goals.md`](non-goals.md).
 
-- [ ] **3.73 Behavioral divergences from the pinned Mojo — burn to zero**
+- [ ] **3.74 Behavioral divergences from the pinned Mojo — burn to zero**
   *(standing)*
 
   Every new divergence lands here with a probe or a `cases.tsv`

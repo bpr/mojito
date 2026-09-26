@@ -633,7 +633,8 @@ pub struct Elaborated {
     pub unserved_template_uses: Vec<UnservedTemplateUse>,
     /// How each generated `def` clone came from its template.
     pub def_traces: Vec<DefInstanceTrace>,
-    /// How each per-instantiation method clone came from its template.
+    /// How each per-instantiation or per-call method clone, and each member
+    /// of a struct specialized whole, came from its template.
     pub method_traces: Vec<MethodInstanceTrace>,
     /// Every declaration this elaboration generated rather than kept: a
     /// consumer asks this list, never a `$` in a name, since a
@@ -663,10 +664,16 @@ pub struct GeneratedDeclarations {
 /// tag stamped on its body, and the byte range of its own body's first
 /// statement — same-name overloads clone under one name and one tag, and a
 /// `Method` has no range of its own. A member of a struct specialized whole
-/// (`Tuple$…`) is not traced.
+/// (`Tuple$t2[…]`, `_SequentialRange$dint;`) is traced the same way, its
+/// `owner` the specialized struct and its `template_owner` the template.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MethodInstanceTrace {
+    /// The struct the clone is a method of.
     pub owner: String,
+    /// The struct whose method the clone instantiates: `owner` itself for a
+    /// per-instantiation or per-call clone.
+    pub template_owner: String,
+    /// The template struct's module.
     pub owner_module: Option<String>,
     pub clone_name: String,
     /// The source tag stamped on every node of the clone's body.
@@ -681,10 +688,11 @@ pub struct MethodInstanceTrace {
     /// The struct's type parameters, then a per-call clone's own, with the
     /// source type written for each.
     pub type_bindings: Vec<(String, Type)>,
-    /// A per-call clone's own value parameters, folded into its body.
+    /// A per-call clone's own value parameters, or a value-keyed struct's,
+    /// folded into its body.
     pub value_bindings: Vec<(String, CtValue)>,
-    /// A per-call clone's own type packs, each with the source element types
-    /// written in its signature.
+    /// A per-call clone's own type packs, or a variadic struct's, each with
+    /// the source element types written in its signature.
     pub pack_bindings: Vec<(String, Vec<Type>)>,
 }
 

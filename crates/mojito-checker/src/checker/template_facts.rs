@@ -420,16 +420,22 @@ impl Checker {
 
     /// Record on the body's transfer frame (pushed by its inner checker
     /// before the site is entered) whether selections made under source
-    /// validation stand (`TransferFrame::keeps_symbolic_selection`): its
-    /// trace names a validated template, or, for a body no trace covers (a
-    /// member of a struct specialized whole, a seam without the elaborator's
-    /// traces), a clone's name marks it.
+    /// validation stand (`TransferFrame::keeps_symbolic_selection`): a
+    /// member of a struct specialized whole always keeps them, as does a
+    /// body no trace covers (a seam without the elaborator's traces) whose
+    /// name marks it a clone; any other traced body keeps them when its
+    /// template was validated.
     fn mark_symbolic_selection(&self, site: &BodySite<'_>) {
         let keeps = {
             let catalog = self.template_catalog.borrow();
+            let whole_struct = site
+                .instance
+                .owner
+                .as_deref()
+                .is_some_and(|owner| catalog.generated_struct(owner));
             match catalog.trace(&site.instance) {
-                Some(trace) => catalog.validated(&trace.template),
-                None => site.display.contains('$'),
+                Some(trace) if !whole_struct => catalog.validated(&trace.template),
+                _ => site.display.contains('$'),
             }
         };
         if let Some(frame) = self.transfer_frames.borrow_mut().last_mut() {
@@ -1115,13 +1121,18 @@ impl Checker {
         if matches!(
             class,
             TemplateClass::MethodBody(_) | TemplateClass::FunctionBody(_)
-        ) && !substitution.types.values().all(|ty| {
-            self.plain_data(ty)
-                || (binder_clone
-                    && binder_tail_loans(ty)
-                    && !self.type_contains_reference(ty)
-                    && !mentions_callable(ty))
-        }) {
+        ) && !substitution
+            .types
+            .values()
+            .chain(substitution.packs.values().flatten())
+            .all(|ty| {
+                self.plain_data(ty)
+                    || (binder_clone
+                        && binder_tail_loans(ty)
+                        && !self.type_contains_reference(ty)
+                        && !mentions_callable(ty))
+            })
+        {
             return refuse("an instance argument carries a loan, a reference, or a callable");
         }
         let Some(desugars) = self.instance_with_desugars(body, &checked.facts.with_forms) else {
@@ -1316,22 +1327,86 @@ impl Checker {
         // The declarations are the struct's binders followed by the method's
         // own. A per-instantiation clone keeps its own symbolic
         // (`BOUND_BINDERS`); a per-call clone bakes them, and its trace
-        // names the source type or element list written for each.
-        let (struct_decls, own) = template
+        // names the source type or element list written for each. A member
+        // of a variadic struct specialized whole (`Tuple$t2[String, Int]`)
+        // has the pack's elements as its receiver's arguments, as many as its
+        // trace names; a specialization whose receiver carries none (a user
+        // struct's `Pair$t2[…]`) does not resolve.
+        let struct_owner = template
+            .id
+            .owner
+            .as_deref()
+            .map(super::annotations::binder_owner);
+        let struct_count = template
             .param_decls
-            .split_at_checked(arguments.len())
-            .ok_or_else(unresolved)?;
-        let mut types: TySubst = struct_decls
             .iter()
-            .zip(arguments)
-            .map(|(decl, argument)| match (decl, argument) {
-                (ParamDecl::Type { id, .. }, mojito_types::types::TyArg::Ty(ty)) => {
-                    Ok((id.clone(), ty.clone()))
-                }
-                _ => Err(unresolved()),
-            })
-            .collect::<Result<_, _>>()?;
+            .take_while(|decl| struct_owner.as_deref() == Some(&*decl.id().owner))
+            .count();
+        let (struct_decls, own) = template.param_decls.split_at(struct_count);
+        let resolved_arguments = || {
+            arguments
+                .iter()
+                .map(|argument| match argument {
+                    mojito_types::types::TyArg::Ty(ty) => Ok(ty.clone()),
+                    _ => Err(unresolved()),
+                })
+                .collect::<Result<Vec<_>, _>>()
+        };
+        let mut types = TySubst::new();
         let mut packs = HashMap::new();
+        let mut values = Vec::new();
+        match struct_decls {
+            [
+                ParamDecl::Type {
+                    id,
+                    name,
+                    variadic: true,
+                    ..
+                },
+            ] => {
+                let traced = trace
+                    .pack_bindings
+                    .iter()
+                    .find(|(bound, _)| bound == name.trim_start_matches('*'))
+                    .map(|(_, elements)| elements.len());
+                if arguments.is_empty() || traced != Some(arguments.len()) {
+                    return Err(unresolved());
+                }
+                packs.insert(id.clone(), resolved_arguments()?);
+            }
+            _ if struct_decls.len() == arguments.len() => {
+                for (decl, ty) in struct_decls.iter().zip(resolved_arguments()?) {
+                    match decl {
+                        ParamDecl::Type {
+                            id,
+                            variadic: false,
+                            ..
+                        } => {
+                            types.insert(id.clone(), ty);
+                        }
+                        _ => return Err(unresolved()),
+                    }
+                }
+            }
+            // A value-keyed struct specialized whole folds its values, which
+            // its members' traces name.
+            _ if arguments.is_empty() => {
+                for decl in struct_decls {
+                    let value = match decl {
+                        ParamDecl::Value {
+                            variadic: false, ..
+                        } => trace
+                            .value_bindings
+                            .iter()
+                            .find(|(name, _)| name == decl.name())
+                            .map(|(_, value)| value.clone()),
+                        _ => None,
+                    };
+                    values.push((decl.id().clone(), value.ok_or_else(unresolved)?));
+                }
+            }
+            _ => return Err(unresolved()),
+        }
         for decl in own {
             let name = decl.name().trim_start_matches('*');
             if let Some((_, source)) = trace.type_bindings.iter().find(|(bound, _)| bound == name) {
@@ -1348,7 +1423,7 @@ impl Checker {
         Ok(InstanceSubstitution {
             types,
             packs,
-            values: Vec::new(),
+            values,
         })
     }
 
@@ -2912,6 +2987,7 @@ impl Checker {
                 .map(|parameter| parameter.name.as_str())
                 .collect(),
             packs,
+            pack_struct: false,
             loop_vars: RefCell::new(Vec::new()),
             values: decls
                 .iter()
@@ -3349,7 +3425,11 @@ impl Checker {
         // A struct's origin binder is erased from its declarations, and a
         // scalar value binder (`Array[T, length: Int]`) is read in the body
         // as `Self.length`, a runtime read of the reified parameter on the
-        // erased path every such struct keeps: neither is substituted.
+        // erased path every such struct keeps: neither is substituted. A
+        // type pack (`Tuple[*Ts]`) is fixed per instance as a type binder is:
+        // the struct is specialized whole, its receiver's arguments are the
+        // pack's elements, and an element the body reads by loop index is
+        // fixed by the unrolling. Only source validation checks such a body.
         let plain_struct = decls.iter().all(|decl| {
             matches!(
                 decl,
@@ -3358,7 +3438,16 @@ impl Checker {
                     callable_bound: None,
                     ..
                 }
-            ) || matches!(decl, ParamDecl::Value { ty, variadic: false, .. } if closed_scalar(ty))
+            ) || (self.source_validation
+                && matches!(
+                    decl,
+                    ParamDecl::Type {
+                        variadic: true,
+                        callable_bound: None,
+                        ..
+                    }
+                ))
+                || matches!(decl, ParamDecl::Value { ty, variadic: false, .. } if closed_scalar(ty))
         });
         if !plain_struct {
             return outside("a struct parameter is not a plain type or scalar value parameter");
@@ -3439,6 +3528,9 @@ impl Checker {
             callable_calls: RefCell::new(Vec::new()),
             static_calls: RefCell::new(Vec::new()),
             packs: Vec::new(),
+            pack_struct: decls
+                .iter()
+                .any(|decl| matches!(decl, ParamDecl::Type { variadic: true, .. })),
             loop_vars: RefCell::new(Vec::new()),
             // `derive` refuses a method clone that folds a value, so no
             // method body reads one as a literal.
@@ -7069,6 +7161,10 @@ struct BodyShape<'a> {
     /// The variadic parameters collecting a type pack of the declaration's
     /// own, whose elements the body may read by loop index.
     packs: Vec<&'a str>,
+    /// Whether the method's struct declares a type pack, whose storage
+    /// field (`self.storage`, `other.storage`) the body may read by loop
+    /// index.
+    pack_struct: bool,
     /// The `comptime for` variables in scope, innermost last.
     loop_vars: RefCell<Vec<String>>,
     /// The declaration's scalar value parameters, which the elaborator
@@ -9725,7 +9821,8 @@ impl BodyShape<'_> {
     }
 
     /// `pack[i]`: an element of a pack-typed parameter at the innermost
-    /// `comptime for` variable.
+    /// `comptime for` variable, or of a pack struct's storage field read on
+    /// `self` or on a parameter of the struct (`other.storage[i]`).
     ///
     /// The template typed the element once, as the dependent `Ts[i]` over
     /// the loop's own binder, and recorded nothing else there: no place, no
@@ -9733,11 +9830,28 @@ impl BodyShape<'_> {
     /// literal in each unrolled copy, which the instance reads back to fix
     /// the element ([`Checker::realize_instance_facts`]).
     fn pack_element(&self, expr: &Expr) -> bool {
+        self.pack_element_read(expr, false)
+    }
+
+    /// [`Self::pack_element`] handed to a checker builtin that reads it
+    /// where it lies (`writer.write(self.storage[i])`): the builtin's borrow
+    /// of the element is decided by its syntax, as a named place's is.
+    fn lent_pack_element(&self, expr: &Expr) -> bool {
+        self.pack_element_read(expr, true)
+    }
+
+    fn pack_element_read(&self, expr: &Expr, lent: bool) -> bool {
         let ExprKind::Index { object, index } = &expr.kind else {
             return false;
         };
-        let named = matches!(&object.kind, ExprKind::Identifier(name)
-                if self.packs.contains(&name.as_str()))
+        let collection = match &object.kind {
+            ExprKind::Identifier(name) => self.packs.contains(&name.as_str()),
+            ExprKind::Member { .. } => {
+                self.pack_struct && (self.receiver_field(object) || self.parameter_field(object))
+            }
+            _ => false,
+        };
+        let named = collection
             && matches!(&index.kind, ExprKind::Identifier(name)
                 if self.loop_vars.borrow().last() == Some(name));
         named
@@ -9758,7 +9872,7 @@ impl BodyShape<'_> {
                         .is_none_or(|place| Some(place) == ty)
                     && fact_at(&facts.operation_adjustments, id).is_none()
                     && !facts.call_place_uses.contains(&id)
-                    && !facts.borrowed_read_call_places.contains(&id)
+                    && (lent || !facts.borrowed_read_call_places.contains(&id))
             })
     }
 
@@ -10004,7 +10118,11 @@ impl BodyShape<'_> {
             ExprKind::Member { .. } => {
                 self.receiver_field(argument) || self.reference_member(argument)
             }
-            ExprKind::Index { .. } => self.slot(argument) || self.reference_call(argument),
+            ExprKind::Index { .. } => {
+                self.slot(argument)
+                    || self.reference_call(argument)
+                    || self.lent_pack_element(argument)
+            }
             ExprKind::MethodCall { .. } => {
                 self.reference_call(argument)
                     || (self.expression(argument) && self.scalar(argument))
@@ -10051,7 +10169,7 @@ impl BodyShape<'_> {
             ExprKind::Member { .. } => {
                 self.receiver_field(operand) || self.reference_member(operand)
             }
-            ExprKind::Index { .. } => self.slot(operand),
+            ExprKind::Index { .. } => self.slot(operand) || self.pack_element(operand),
             ExprKind::MethodCall { .. } | ExprKind::Invoke { .. } => self.call_result(operand),
             ExprKind::Infix(..) => self.operator_value(operand),
             _ => false,

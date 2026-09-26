@@ -30,7 +30,7 @@ HIR or MIR.
 | Re-selection of a call through a bound (`bound_witness`, `realize_bound_dispatch`, `realize_inverted_writes`, `realize_bound_builtin`) | `crates/mojito-checker/src/checker/template_facts/bound_dispatch.rs` |
 | Body entry points | `template_facts.rs:Checker::check_def_body` (from `statements.rs:check_def_inner`) and `check_method_body` (from `declarations.rs:bind_and_check_method`), both over one `BodySite` |
 | Occurrence-level trace | `crates/mojito-ast/src/ast.rs:rekey_syntax` returning `SyntaxOrigins` |
-| Declaration-level trace | `crates/mojito-comptime/src/comptime.rs:DefInstanceTrace` (`specialize.rs:generate_def_spec`) and `MethodInstanceTrace` (`generate_instance_clones`, `specialize.rs:per_call_method_clones`) |
+| Declaration-level trace | `crates/mojito-comptime/src/comptime.rs:DefInstanceTrace` (`specialize.rs:generate_def_spec`) and `MethodInstanceTrace` (`generate_instance_clones`, `specialize.rs:per_call_method_clones`, and `specialize.rs:trace_struct_members` for a struct specialized whole) |
 | What the elaborator generated | `comptime.rs:GeneratedDeclarations`, carried as `templates.rs:GeneratedNames` |
 | Statement identity through elaboration | `comptime.rs:rebuilt` |
 | Catalog lifetime, trace hand-over, one finalization | `src/compiler.rs:compile_linked`, `instance_traces` |
@@ -216,8 +216,22 @@ symbol.
   bindings name the struct's binders and then the method's own, with the
   method's folded values and expanded packs beside them. The checker
   substitutes the method's own binders from the trace and the struct's from
-  the receiver. A clone minted into a struct specialized whole, or into the
-  CTFE subprogram, is not traced.
+  the receiver.
+- **Declaration level, a struct specialized whole.** `generate_struct_spec`
+  (a pack: `Tuple$t2[…]`) and `generate_value_struct_spec` (a value:
+  `_SequentialRange$dint;`, `AHasher$…`) trace each member elaborated from a
+  template method with a body of its own (`trace_struct_members`). The trace's
+  `owner` is the specialized struct and its `template_owner` the template,
+  which is the `TemplateId`'s owner; its pack or value bindings are the
+  struct's. A member the specializer unrolled (`__getitem_param__$k` and its
+  value twin), split per element (`Tuple.__contains__`), synthesized
+  (`copy`, the default constructor, the transforms), or stubbed (an
+  unavailable member, a SIMD-keyed method, one constructing at its own lane)
+  is not traced, nor is a per-call clone minted inside the specialization or
+  into the CTFE subprogram. Two traces under one `InstanceName` cannot be told
+  apart, so `TemplateCatalog::set_traces` drops both. A traced member of a
+  struct specialized whole keeps its source-validated `rebind` selections as
+  an untraced one did (`mark_symbolic_selection`).
 - **What was generated.** `GeneratedDeclarations` lists every `def` clone,
   every struct specialized whole (`Tuple$…`), and every per-call method clone.
   That list, or an explicit receiver type, is the only test for "generated": a
@@ -280,7 +294,7 @@ trait-bound one: the elaborator folds the value in each clone
 (`scaled[T, n: Int]` minting `scaled$y3:Int$i3;`), and a runtime class's
 instance reads it as the literal it folded to (`folded_literals`), exactly
 as a keyed body's does (`assets/ok/template_value_keyed_def.mojo`). A method's
-own value binder stays outside (roadmap 1.3): its `BodyShape` names no value.
+own value binder stays outside (roadmap 1.4): its `BodyShape` names no value.
 
 | Class | Body | Why an instance needs no inference |
 |---|---|---|
@@ -376,7 +390,7 @@ they are a set, not a ladder.
 | `COPIED_RECEIVERS` | a method call whose callee consumes its receiver, on a named place the call copies first rather than on a `^` transfer: a parameter, a `var` local, or a field of `self`, of a parameter, or of a local (`slice.start.or_else(0)`, `self.limit.or_else(n)`), on a nominal struct as `CONSUMING_CALLS` admits it or through a bound to a `var self` requirement (`coin.spend()`) | `infer_method_call` copies such a place whatever its type, where the type is implicitly copyable, and rejects the program otherwise; the mark it records at the call (`ImplicitlyCopiedConsumingReceivers`) is decided by the receiver's syntax and the callee's convention, so an instance inherits it and owes the copy at its own type (obligation 3). The contract is a consuming call's, and nothing moves out of the place. Through a bound, the instance's witness must itself take `var self` or `deinit self`, or the derivation refuses (`realize_bound_dispatch`). |
 | `DIRECT_CALLS` | a direct call of a module-scope function that takes only closed scalars by value (`check_slice_bounds(start, end, self.size)`, a member of an overload set such as `range(n)`, which may also be a `for` or comprehension iterable, or a generic callee applied to type arguments, `unsafe_alloc[Self.T](n)`, whose result may be stored or bound whole; a generic callee's read parameter typed by its own binder takes a named place, `hash(self.value)`) | The call selects the same declaration, or the same overload member, under every instance: an overload set ranks only the argument types, and those are closed. It binds its arguments at types no substitution changes (a callee's own binder is in the callee's scope); the instance realizes it as a `FixedCalls` body's direct call (obligation 5), substituting a generic application's arguments and naming its clone, and re-reading the callee's empty effect summaries. |
 | `ITERATION` | a runtime `for` with no `else`, over `self`, a field of it, a parameter, a local, the `^` transfer of a place the body owns, or a sibling call's result; the loop variable is a local whose kind — a handle, a scalar, or a whole value — follows its recorded binding type | The protocol is selected from the iterable's type and resolved against the place the loop borrows and that binding's mutability, which are the loop's syntax and the declaration's. The template keeps those inputs (`TemplateIteration`), and the instance selects again from its substituted type (obligation 21). |
-| `SIMD_CONSTRUCTIONS` | a `SIMD`, `Scalar`, or scalar-alias construction from closed scalars (`UInt8(1)`, `SIMD[DType.uint8, 4](1, 2, 3, 4)`) whose dimensions the template recorded, handed to a checker builtin (`hasher._update_with_simd(UInt8(1))`), to a by-value parameter, or bound to a `var` local | Inference records a construction's dtype and width (`SimdConstructions`) only when both are closed, so a recorded entry is the same under every instance and is installed as it stands. The call selects no callee and converts nothing. A construction whose dtype or width names only the declaration's own value binders (`SIMD[dt, w](v)`, `Scalar[dt](v)`) records nothing in the template, and is admitted in a compile-time-keyed `def` (`BodyShape::value_shaped_simd`): the elaborator folds each binder, the instance substitutes the folded values into the recorded type, and its record is that type's `simd_shape` (`realize_value_shaped_constructions`). A `DType` binder of such a body is admitted for that use alone; the occurrence walk treats a `DType.<member>` constant as one occurrence, since the elaborator folds a binder to one under the name's identity. A method's own value binder (roadmap 1.3) and a struct specialized whole (roadmap 1.1) keep a symbolic construction out of the method grammar. The feature is one of `FUNCTION_FEATURES` too, so a surviving `def` constructing a closed value derives. |
+| `SIMD_CONSTRUCTIONS` | a `SIMD`, `Scalar`, or scalar-alias construction from closed scalars (`UInt8(1)`, `SIMD[DType.uint8, 4](1, 2, 3, 4)`) whose dimensions the template recorded, handed to a checker builtin (`hasher._update_with_simd(UInt8(1))`), to a by-value parameter, or bound to a `var` local | Inference records a construction's dtype and width (`SimdConstructions`) only when both are closed, so a recorded entry is the same under every instance and is installed as it stands. The call selects no callee and converts nothing. A construction whose dtype or width names only the declaration's own value binders (`SIMD[dt, w](v)`, `Scalar[dt](v)`) records nothing in the template, and is admitted in a compile-time-keyed `def` (`BodyShape::value_shaped_simd`): the elaborator folds each binder, the instance substitutes the folded values into the recorded type, and its record is that type's `simd_shape` (`realize_value_shaped_constructions`). A `DType` binder of such a body is admitted for that use alone; the occurrence walk treats a `DType.<member>` constant as one occurrence, since the elaborator folds a binder to one under the name's identity. A method's own value binder (roadmap 1.4) and a value-keyed struct specialized whole (roadmap 1.3) keep a symbolic construction out of the method grammar. The feature is one of `FUNCTION_FEATURES` too, so a surviving `def` constructing a closed value derives. |
 | `TRUTHINESS` | an `if` or `while` condition that reads a parameter, a local, or a field of `self` whole and tests it through `__bool__` (`if self._value:` in `OptionalReg.or_else`) | `expect_bool` marks such a condition (`TruthinessConditions`) from its type alone: a `Bool` is read as it stands, and a width-one bool lane or a struct whose `__bool__` returns `Bool` converts through `Bool(x)`. The read itself records only the place's type and binding, neither a copy nor a conversion. Obligation 22 below. |
 | `TUPLE_UNPACKS` | a tuple unpacked from a parameter, a `var` local, a field of `self`, or a sibling call's result into `_` and `var` locals, declared by the statement (`var v, n = t`) or before it (`v, n = t`); a declared target is a scalar or a whole-value local by its recorded binding type | The statement records one plan at the value (`TupleUnpackPlans`): each element's type and, for a generated Tuple, the accessor that reads it and the reference a place accessor yields. The plan is a function of the value's type and the reference the unpacked place yields, which the template keeps (`TemplateTupleUnpack`) beside the named targets. Obligation 23 below. The checker judges no deletability at an unpacking's target, so realization judges none there either. |
 | `PARAMETERIZED_CALLS` | a method called with explicit compile-time arguments, each a literal or a type (`self.scaler.scaled[3](x)`, `self.scaler.show[Int](x)`), on a receiver a sibling call admits whose type is a non-generic struct | The call records the selected method's declared compile-time parameters (`ParameterizedMethodCalls`), which are the callee's declaration and are installed as they stand, and a per-call clone request (`MethodInstantiation`). Once that clone exists the contract names it (`Scaler.scaled$i3`) and declares no parameters, and the instance keeps the target (`realize_method_call`); before it exists the contract still carries the declared parameters, which the grammar refuses. A request that substitution would change (`show[Self.T]`), or one keyed by a generic receiver, refuses. |
@@ -385,6 +399,26 @@ they are a set, not a ladder.
 | `WITH_STATEMENTS` | a `with` statement, one item or several, each context a whole value, in any form the checker desugars: a plain `__exit__`, an error `__exit__` in a raising method, a consuming `__enter__` with or without `as`, or no `__exit__`; the body a block of the grammar | The checker desugars the statement into ordinary statements (`with_stmt.rs`), and the grammar judges that desugar in its place once the facts are captured: the manager a `var` local, its `__enter__` and `__exit__` sibling calls, the guarding `try`, the error handler's `raise` of its own binder, and the `_mojito_keep_alive` anchor, which selects nothing. The occurrence walk reads each desugar in its statement's place (`occurrences_over`). Which form the desugar takes is the manager struct's declared `__enter__` and `__exit__` members and the raising context, never a substituted type, so the template keeps the form (`WithForm`, from the `WithDesugars` table) and an instance builds its desugar again from its own syntax (`instance_with_desugars`, `with_stmt.rs:with_desugar`), which installation hands to the final splice. Obligation 25 below. |
 | `NESTED_DEFS` | a nested `def`, at any depth, with no compile-time parameters, decorators, `where`, or `raises`, taking regular read parameters with no default, of any recorded type and result (`def same(x: Self.T) -> Self.T`), with no capture list or one of any convention — `imm`, `mut`, `ref`, `var`, or transferred (`var item^`), listed or through a capture-all default — each naming a local, a parameter, or `self`; its body judged in place, its parameters locals read where they lie and a `return` a closed scalar or a whole value; called with closed scalars, or with whole values of a read parameter's exact type, read in place when named and temporaries otherwise | The declaration's check records its signature under the statement's own identity — parameter, return, and callable types, its (empty) compile-time parameters, its effect, each parameter's deletability — and its capture list at the statement; the template keeps them at the statement's occurrence (`TemplateNestedDef`), and the instance writes them again under its own statement. A capture names a binding and roots its origins at one, and so does the callable's environment and each call's `CallableCaptureAccesses`: all are kept by template owner and rebound to the instance's own bindings, the environment re-canonicalized. The parameters are locals the statement declares after its name. A call selects the declaration the body introduced, under every instance, and records its parameters and no contract. A nested body's effect reads are the enclosing body's too, so a clone check records the callees a nested body calls as its template does. Obligation 26 below. |
 | `STATIC_CALLS` | a static method of a struct called on its type with closed scalar arguments (a generic struct's also with whole values), spelled (`Color.pick(n)`) or through a leading-dot contextual root the expected type resolves (`.of(n)`, `return .red()`, `var c: Color = .of(n)`), as a scalar or a whole value | The receiver is a type, so the call records no contract, call parameters, or application: at most the overload member its closed arguments ranked, which no instance changes. A leading-dot root records the head of the expected struct type (`ContextualBases`), which HIR substitutes for the sentinel; an expected type that is a bare parameter refuses the form, so the head is the same under every instance and the instance inherits the entry. A static of a generic struct derives when it is the one declaration of its name, with no binders of its own, no availability condition, and no reference or variadic parameter: spelled with the struct's type arguments (`Counter[Self.T].start(n)`), inferring them (`Pair.keep(local^)`), or through a leading-dot root (`.twice(self.item)`). It records no overload target, the instance solves the struct's parameters at the substituted types (its struct application is substituted), and the retarget to the instance's clone of the static is recorded nowhere. Its arguments are closed scalars or whole values bound to parameters of their own types, unconverted, never kept as `mut` places (`BodyShape::static_argument`). An overloaded static of a generic struct stays outside. |
+
+A method of a struct declaring a type pack (`Tuple[*Ts]`) is certified only
+under source validation, which is the one check that sees its body: the
+elaborator specializes such a struct whole, so its members are traced to the
+template and never checked with the pack symbolic anywhere else. An instance
+binds the pack to its receiver's arguments, which for `Tuple$t2[String, Int]`
+are the element types, as many as the trace names
+(`instance_substitution`); a receiver with none (`TString$…`, a user
+`Pair$t2[…]`) does not resolve. The storage field read at the loop index
+(`self.storage[i]`, `other.storage[i]`) is a pack element as a collector's
+`args[i]` is (`BodyShape::pack_element`): the template typed it
+`Dependent(Ts[i])` and recorded no place, adjustment, or borrow there, and the
+instance fixes the element per unrolled copy from the literal the elaborator
+folded the index to. Such an element may be an operand of `OPERATOR_DISPATCH`
+(two elements of one dependent type, which the instance dispatches at the
+copy's element type, a builtin comparison or the element's dunder alike) and
+the argument of a bound builtin (`hasher.update`, `writer.write`), where the
+builtin's borrow of it is decided by its syntax (`lent_pack_element`). Every
+element type must be plain data (obligation 12), so
+`Tuple$t2[StringSpan, StringSpan]` keeps the clone check.
 
 The compiler-private trap `_mojito_abort("message")` is a statement of any
 non-keyed body: the built-in types its literal and selects nothing. A
@@ -482,7 +516,8 @@ only `Movable` records nothing there, and its `Int` clone would.
     closure escapes on those properties, and a template, whose parameter is
     symbolic, records none of them. `type_may_carry_loans` is conservative for
     a struct whose declared fields have parameter types, so
-    `List[DictEntry[…]]` refuses today. One exception: a clone whose only
+    `List[DictEntry[…]]` refuses today. A pack's elements are instance
+    arguments too. One exception: a clone whose only
     binders are the origin binders the elaborator declared for a
     loan-carrying argument (`Bag[Span[Int, __clone_origin0]]`) takes that
     argument, whose loans are exactly those binders' and whose transfers
@@ -1101,6 +1136,15 @@ tables. In short, for one debug-profile run each:
 - Hello World mints no per-instantiation clones at all. Its generated bodies
   are members of structs specialized whole and per-call clones, from
   concrete-only templates.
+  Tracing a member of a struct specialized whole (2026-09-26) and
+  certifying a pack struct's methods take Hello World from 498 generated body
+  inferences to 411, and `stdlib_heavy` from 607 to 520 (625 installed
+  derivations to 712): the instance `__len__`, the six comparisons,
+  `__hash__`, and `write_to` of every `Tuple` instance over plain-data
+  elements derive (`template_method_pack_struct.mojo`). Of Hello World's
+  remaining 411, 255 are `Tuple`'s other members and stubs, 59 members of
+  value-keyed specializations with no template, 72 SIMD-keyed hasher leaves,
+  and 25 `def` clones.
 - The census (`template_census.*`) says which table recipes come next: of
   the 244 clone bodies still inferred, 179 are capturable already, and the
   largest blockers left are a binding the grammar refuses (16, a local of a
@@ -1159,7 +1203,12 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
   `self[k.copy()] = v.copy()`) likewise.
 - An instance whose argument may carry a loan, which includes every struct
   with a field of a parameter type (`DictEntry[K, V, H]`).
-- Members of a struct specialized whole, which leave no trace; a per-call
+- A member of a struct specialized whole outside the pack grammar above
+  (`Tuple.__init__`, the static `__len__`, the unrolled accessors,
+  `write_repr_to`, the callable-binder teardowns), a member of `TString` or
+  of a user variadic struct, whose receiver carries no pack arguments, and a
+  member of a value-keyed one (the `DType`-keyed ranges, `AHasher`), whose
+  template no check retains; a per-call
   clone folding a method's own value binder (`scaled[n: Int]`), which the
   method grammar refuses; and a SIMD-keyed hasher leaf
   (`_update_with_simd(value: SIMD[_, _])`), whose template is a trap stub.
@@ -1188,9 +1237,7 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
 - A folded name in a division, a comparison, or `~`, which the instance's
   check folds to a literal the template's type does not record.
 - A local declared inside a `comptime for`.
-- A pack forwarded whole (`print(*a)`), a pack-keyed struct's methods (a
-  pack binder fails the method certificate's plain-struct rule, and a
-  whole-struct clone leaves no trace), a `rebind`-keyed method,
+- A pack forwarded whole (`print(*a)`), a `rebind`-keyed method,
   `DType` and vector parameters, reflection, struct-valued parameters, and
   anything a validation run that ended without a verdict reached.
 

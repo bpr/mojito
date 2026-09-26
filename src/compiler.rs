@@ -762,7 +762,7 @@ fn instance_traces(
             InstanceTrace {
                 template: TemplateId {
                     module: trace.owner_module,
-                    owner: Some(trace.owner),
+                    owner: Some(trace.template_owner),
                     name: trace.template_name,
                     declaration: trace.body,
                 },
