@@ -883,6 +883,15 @@ pub(super) fn select_method_overload(
         .into_iter()
         .filter(|candidate| candidate.conversion_score == best)
         .collect::<Vec<_>>();
+    // The `SIMD`-pattern tie-break of `select_callable_overload`, for methods:
+    // `s.kind(x)` over a `Float64` selects `kind[dt: DType](self, a:
+    // Scalar[dt])` beside `kind[T: Copyable](self, a: T)`.
+    let fewest_erasures = best_matches
+        .iter()
+        .map(|candidate| candidate.simd_erasures)
+        .min()
+        .unwrap_or(0);
+    best_matches.retain(|candidate| candidate.simd_erasures == fewest_erasures);
     if best_matches.len() == 1 {
         return Ok(best_matches.remove(0));
     }

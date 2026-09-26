@@ -1956,6 +1956,7 @@ impl Checker {
                     ) {
                         matches.push(MethodCallResolution {
                             conversion_score: scored.rank,
+                            simd_erasures: scored.simd_erasures,
                             slots: scored.slots,
                             positional_overflow: scored.positional_overflow,
                             keyword_overflow: scored.keyword_overflow,

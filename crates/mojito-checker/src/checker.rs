@@ -2542,6 +2542,9 @@ struct TransferFrame {
 
 struct MethodCallResolution {
     conversion_score: usize,
+    /// How many arguments with a lane the signature binds to a bare type
+    /// parameter; see `select_method_overload`.
+    simd_erasures: usize,
     slots: Vec<ArgSlot>,
     positional_overflow: Vec<usize>,
     keyword_overflow: Vec<usize>,
@@ -2826,6 +2829,7 @@ type MethodInstantiation = (
 
 struct MethodCallScore {
     rank: usize,
+    simd_erasures: usize,
     slots: Vec<ArgSlot>,
     positional_overflow: Vec<usize>,
     keyword_overflow: Vec<usize>,

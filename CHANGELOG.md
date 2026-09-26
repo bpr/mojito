@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A method overloaded on a `Scalar[dt]` pattern and a bare type parameter
+  (`def kind[dt: DType](self, a: Scalar[dt])` beside `def kind[T:
+  Copyable](self, a: T)`) now selects the pattern for an argument with a
+  lane, as a free call already did and the pinned Mojo does; the call used
+  to be ambiguous.
+
 - A `Bool` argument now binds a `Scalar[dt]` pattern's lane at
   `DType.bool` (`kind(True)` against `def kind[dt: DType](a:
   Scalar[dt])`), converting into `Scalar[DType.bool]` as the pinned Mojo

@@ -204,6 +204,7 @@ assets/ok/maybe_uninit_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/maybe_uninit_write.mojo	main	exe-differential	sanitized
 assets/ok/method_mut_param.mojo	main	exe-differential	sanitized
 assets/ok/method_result_pointer_field_write.mojo	main	exe-differential	sanitized
+assets/ok/method_simd_pattern_beside_bare.mojo	main	exe-differential	sanitized
 assets/ok/method_value_parameter_binding.mojo	main	exe-differential	sanitized
 assets/ok/movable_where_false_explicit_destroy.mojo	main	exe-differential	sanitized
 assets/ok/move_after_last_raise_in_try.mojo	main	exe-differential	sanitized

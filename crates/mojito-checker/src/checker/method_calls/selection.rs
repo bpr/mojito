@@ -376,6 +376,7 @@ impl Checker {
         }
         let (slots, overflow) = (matched.slots, matched.positional_overflow);
         let mut score = 0;
+        let mut simd_erasures = 0;
         for (index, slot) in slots.iter().enumerate() {
             let expression = match slot {
                 ArgSlot::Positional(position) => &args[*position],
@@ -397,6 +398,10 @@ impl Checker {
                 });
             }
             score += conversion_count(&actual, &params[index]);
+            simd_erasures += usize::from(
+                matches!(signature.params.get(index), Some(Ty::Param { .. }))
+                    && mojito_types::types::simd_shape(&actual).is_some(),
+            );
         }
         if let Some(element) = variadic {
             // A specialized heterogeneous pack (`Ty::RuntimePack`) checks each overflow
@@ -510,6 +515,7 @@ impl Checker {
                     kwargs,
                 )
                 .rank(),
+            simd_erasures,
             slots,
             positional_overflow: overflow,
             keyword_overflow,

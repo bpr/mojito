@@ -198,6 +198,7 @@ impl Checker {
                     candidate_sigs.push((sig, params.clone()));
                     matches.push(MethodCallResolution {
                         conversion_score: scored.rank,
+                        simd_erasures: scored.simd_erasures,
                         slots: scored.slots,
                         positional_overflow: scored.positional_overflow,
                         keyword_overflow: scored.keyword_overflow,
@@ -1120,6 +1121,7 @@ impl Checker {
                             ) {
                                 matches.push(MethodCallResolution {
                                     conversion_score: scored.rank,
+                                    simd_erasures: scored.simd_erasures,
                                     slots: scored.slots,
                                     positional_overflow: scored.positional_overflow,
                                     keyword_overflow: scored.keyword_overflow,
@@ -1284,6 +1286,7 @@ impl Checker {
                     };
                     matches.push(MethodCallResolution {
                         conversion_score: scored.rank,
+                        simd_erasures: scored.simd_erasures,
                         slots: scored.slots,
                         positional_overflow: scored.positional_overflow,
                         keyword_overflow: scored.keyword_overflow,
@@ -1364,6 +1367,7 @@ impl Checker {
                 }
                 Ok(Some(MethodCallResolution {
                     conversion_score: 0,
+                    simd_erasures: 0,
                     slots: vec![],
                     positional_overflow: vec![],
                     keyword_overflow: vec![],
@@ -1414,6 +1418,7 @@ impl Checker {
                 self.check_place(&args[0])?;
                 Ok(Some(MethodCallResolution {
                     conversion_score: 0,
+                    simd_erasures: 0,
                     slots: vec![mojito_ast::call::ArgSlot::Positional(0)],
                     positional_overflow: vec![],
                     keyword_overflow: vec![],
@@ -1460,6 +1465,7 @@ impl Checker {
                 }
                 Ok(Some(MethodCallResolution {
                     conversion_score: 0,
+                    simd_erasures: 0,
                     slots: (0..args.len())
                         .map(mojito_ast::call::ArgSlot::Positional)
                         .collect(),
@@ -1512,6 +1518,7 @@ impl Checker {
                 };
                 Ok(Some(MethodCallResolution {
                     conversion_score: 0,
+                    simd_erasures: 0,
                     conventions: vec![None; slots.len()],
                     param_types: if args.is_empty() {
                         vec![]
