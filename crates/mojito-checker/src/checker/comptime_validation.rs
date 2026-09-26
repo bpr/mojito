@@ -1225,9 +1225,12 @@ pub(super) fn struct_valued_template(
 
 /// Whether source validation checks a declaration's body: one holding
 /// compile-time control flow, a `rebind` over the declaration's own
-/// parameters (`keys_rebind`, from `rebind::rebind_keyed_bodies`), or keyed
+/// parameters (`keys_rebind`, from `rebind::rebind_keyed_bodies`), keyed
 /// on a variadic pack — the declaration's own, or that of the struct
-/// `enclosing` it — each leaves the template stubbed, so validation is the
+/// `enclosing` it — or keyed on the wildcard vector parameter a `Hasher`'s
+/// `_update_with_simd(mut self, value: SIMD[_, _])` desugars to
+/// (`simd_wildcard_binder`, checked over a lane-shaped view of the
+/// parameter) — each leaves the template stubbed, so validation is the
 /// only check it gets.
 pub(super) fn validates_body(
     enclosing: &[mojito_ast::ast::TypeParam],
@@ -1239,6 +1242,7 @@ pub(super) fn validates_body(
         || keys_rebind
         || is_variadic_template(type_params)
         || is_variadic_template(enclosing)
+        || type_params.iter().any(simd_wildcard_binder)
 }
 
 /// Whether a block holds a `comptime if`/`comptime for` anywhere below it,

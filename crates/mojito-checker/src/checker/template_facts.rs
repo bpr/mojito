@@ -13,7 +13,9 @@
 //! refuses a body instead of being dropped silently. The design record is
 //! `docs/notes/instantiation-from-template.md`.
 
+use super::annotations::{simd_binder_slots, simd_binder_view};
 use super::body_carry::ObservedEffects;
+use super::builtins::{SIMD_WILDCARD_BOUND, simd_wildcard_binder};
 use super::{
     Checker, EffectRead, callable_contract_target, callable_lowered_name, method_binder_owner,
 };
@@ -239,6 +241,12 @@ struct InstanceSubstitution {
     types: TySubst,
     /// Each baked type pack's element types.
     packs: HashMap<mojito_types::param_expr::ParamId, Vec<Ty>>,
+    /// Each wildcard vector binder's lane-shaped view (`simd_binder_view`)
+    /// with the closed vector type the clone bakes the binder to, which a
+    /// retained type equal to the whole view takes as it stands
+    /// (`fold_binder_views`): the native `UInt` has no lane form, so
+    /// folding its slots alone would spell it `SIMD[DType.uint64, 1]`.
+    views: Vec<(Ty, Ty)>,
     /// Each folded value binder's value, which a lane dtype or width the
     /// template left open takes (`SIMD[DType.int32, w]`).
     values: Vec<(mojito_types::param_expr::ParamId, mojito_types::ct::CtValue)>,
@@ -260,6 +268,8 @@ struct GrammarNotes {
     callable_calls: Vec<OccurrenceId>,
     repr_calls: Vec<OccurrenceId>,
     print_calls: Vec<OccurrenceId>,
+    simd_to_bits: Vec<(OccurrenceId, OccurrenceId)>,
+    simd_lengths: Vec<(OccurrenceId, OccurrenceId)>,
 }
 
 impl Checker {
@@ -1283,11 +1293,17 @@ impl Checker {
                     .iter()
                     .find(|decl| decl.name().trim_start_matches('*') == name)
             };
+            let mut values = Vec::new();
+            let mut views = Vec::new();
             let types = trace
                 .type_bindings
                 .iter()
                 .filter_map(|(name, source)| {
-                    decl_named(name).map(|decl| Ok((decl.id().clone(), resolve(source)?)))
+                    decl_named(name).map(|decl| {
+                        let ty = resolve(source)?;
+                        values.extend(simd_binder_values(decl, &ty, &mut views)?);
+                        Ok((decl.id().clone(), ty))
+                    })
                 })
                 .collect::<Result<_, _>>()?;
             let packs = trace
@@ -1299,16 +1315,13 @@ impl Checker {
                         .map(|decl| Ok((decl.id().clone(), elements.collect::<Result<_, _>>()?)))
                 })
                 .collect::<Result<_, _>>()?;
-            let values = trace
-                .value_bindings
-                .iter()
-                .filter_map(|(name, value)| {
-                    decl_named(name).map(|decl| (decl.id().clone(), value.clone()))
-                })
-                .collect();
+            values.extend(trace.value_bindings.iter().filter_map(|(name, value)| {
+                decl_named(name).map(|decl| (decl.id().clone(), value.clone()))
+            }));
             return Ok(InstanceSubstitution {
                 types,
                 packs,
+                views,
                 values,
             });
         };
@@ -1316,6 +1329,7 @@ impl Checker {
             return Ok(InstanceSubstitution {
                 types: HashMap::new(),
                 packs: HashMap::new(),
+                views: Vec::new(),
                 values: Vec::new(),
             });
         }
@@ -1354,6 +1368,7 @@ impl Checker {
         };
         let mut types = TySubst::new();
         let mut packs = HashMap::new();
+        let mut views = Vec::new();
         let mut values = Vec::new();
         match struct_decls {
             [
@@ -1410,7 +1425,9 @@ impl Checker {
         for decl in own {
             let name = decl.name().trim_start_matches('*');
             if let Some((_, source)) = trace.type_bindings.iter().find(|(bound, _)| bound == name) {
-                types.insert(decl.id().clone(), resolve(source)?);
+                let ty = resolve(source)?;
+                values.extend(simd_binder_values(decl, &ty, &mut views)?);
+                types.insert(decl.id().clone(), ty);
             } else if let Some((_, sources)) =
                 trace.pack_bindings.iter().find(|(bound, _)| bound == name)
             {
@@ -1423,6 +1440,7 @@ impl Checker {
         Ok(InstanceSubstitution {
             types,
             packs,
+            views,
             values,
         })
     }
@@ -1452,6 +1470,7 @@ impl Checker {
         let InstanceSubstitution {
             types: substitution,
             packs,
+            views,
             values,
         } = instance;
         // A closed public `Tuple` names the specialization the clone check
@@ -1459,7 +1478,7 @@ impl Checker {
         let canonical = |ty: Ty| self.canonicalize_public_tuple_types(ty);
         let substitute = |ty: &Ty| {
             canonical(mojito_types::types::substitute_packs(
-                ty,
+                &fold_binder_views(ty, views),
                 substitution,
                 packs,
                 values,
@@ -1468,6 +1487,7 @@ impl Checker {
         let demands = self.hash_leaf_demands.borrow().len();
         let mut facts = substituted_facts(template, instance, indices, &canonical)?;
         realize_value_shaped_constructions(template, &mut facts, occurrences)?;
+        realize_simd_intrinsics(template, &mut facts, occurrences)?;
         // A per-call request the template recorded names the caller's own
         // binders; an instance that closed it would retarget the call in the
         // clone check, which no recipe repeats.
@@ -2709,6 +2729,8 @@ impl Checker {
                         facts.callable_calls = notes.callable_calls;
                         facts.repr_calls = notes.repr_calls;
                         facts.print_calls = notes.print_calls;
+                        facts.simd_to_bits = notes.simd_to_bits;
+                        facts.simd_lengths = notes.simd_lengths;
                         (facts, coverage)
                     }
                     Err(reason) => (
@@ -3037,6 +3059,9 @@ impl Checker {
             callable_calls: RefCell::new(Vec::new()),
             static_calls: RefCell::new(Vec::new()),
             repr_calls: RefCell::new(Vec::new()),
+            lane_binders: Vec::new(),
+            simd_to_bits: RefCell::new(Vec::new()),
+            simd_lengths: RefCell::new(Vec::new()),
         };
         if !shape.block(body)
             || !shape.operators.borrow().is_empty()
@@ -3410,12 +3435,16 @@ impl Checker {
         // for a minted clone (`TemplateObligation::DeclarationConstraints`).
         // An origin binder and a trait-bounded type binder (`[H: Hasher]`)
         // are kept by every clone and bound symbolically as the template
-        // binds them, so no fact reads either.
-        if !method
-            .type_params
-            .iter()
-            .all(|binder| origin_binder(binder) || bound_binder(binder))
-            || !(method.decorators.is_empty() || is_static)
+        // binds them, so no fact reads either. The wildcard vector binder is
+        // baked by every clone; only source validation sees its body, with
+        // the parameter viewed as a lane-shaped vector (`simd_binder_view`),
+        // and the elaborated program holds a trap stub in its place.
+        let simd_binders = method.type_params.iter().any(simd_wildcard_binder);
+        if !method.type_params.iter().all(|binder| {
+            origin_binder(binder)
+                || bound_binder(binder)
+                || (self.source_validation && simd_wildcard_binder(binder))
+        }) || !(method.decorators.is_empty() || is_static)
         {
             return outside(
                 "the method has binders other than origins and bounded types, or decorators",
@@ -3558,6 +3587,11 @@ impl Checker {
                         .union(MethodFeatures::STATEMENTS)
                         .union(MethodFeatures::BOUND_BINDERS);
                 }
+                if simd_binders {
+                    features = features
+                        .union(MethodFeatures::STATEMENTS)
+                        .union(MethodFeatures::SIMD_BINDERS);
+                }
                 if raises {
                     features = features
                         .union(MethodFeatures::STATEMENTS)
@@ -3583,6 +3617,19 @@ impl Checker {
             struct_binders: self.self_decls.iter().map(ParamDecl::id).collect(),
             binder_constructions: RefCell::new(Vec::new()),
             repr_calls: RefCell::new(Vec::new()),
+            lane_binders: method
+                .type_params
+                .iter()
+                .filter(|binder| simd_wildcard_binder(binder))
+                .flat_map(|binder| {
+                    [
+                        format!("{}.dtype", binder.name),
+                        format!("{}.size", binder.name),
+                    ]
+                })
+                .collect(),
+            simd_to_bits: RefCell::new(Vec::new()),
+            simd_lengths: RefCell::new(Vec::new()),
         };
         if !shape.block(&method.body) {
             return outside("the body is outside the method grammar");
@@ -3603,6 +3650,8 @@ impl Checker {
                     callable_calls: shape.callable_calls.borrow().clone(),
                     repr_calls: shape.repr_calls.borrow().clone(),
                     print_calls: Vec::new(),
+                    simd_to_bits: shape.simd_to_bits.borrow().clone(),
+                    simd_lengths: shape.simd_lengths.borrow().clone(),
                 },
             )
         };
@@ -4378,13 +4427,6 @@ impl Checker {
             call_throughs,
             call_through_reads,
             conversions: self.body_conversions(&occurrences),
-            // The certificate fills these from the grammar.
-            operators: Vec::new(),
-            bound_builtins: Vec::new(),
-            constructions: Vec::new(),
-            callable_calls: Vec::new(),
-            repr_calls: Vec::new(),
-            print_calls: Vec::new(),
             method_instantiations: values(&occurrences, &self.method_instantiations.borrow()),
             hash_leaves: self.hash_leaves_since(baseline.hash_leaf_demands),
             locals: owner_end - baseline.owner_start,
@@ -4392,6 +4434,11 @@ impl Checker {
                 .into_iter()
                 .map(|occurrence| occurrence.id)
                 .collect(),
+            // The lists the certificate fills from the grammar (`operators`,
+            // `bound_builtins`, `constructions`, `callable_calls`,
+            // `repr_calls`, `print_calls`, `simd_to_bits`, `simd_lengths`)
+            // stay empty in a capture (`record_template`).
+            ..CheckedBodyFacts::default()
         })
     }
 
@@ -6850,6 +6897,129 @@ fn realize_value_shaped_constructions(
     Ok(())
 }
 
+/// The shape of each `to_bits` reinterpretation and `.length` read the
+/// template made over a lane-shaped receiver, which it left unrecorded: the
+/// instance's are its substituted result type's and receiver type's, as a
+/// closed read's are its recorded adjustment's. A reinterpretation's target
+/// must be at least as wide as the instance's lane, the one constraint
+/// `infer_method_call` checks only on a closed source; an instance whose
+/// lane is wider refuses, and the clone check reports it. The adjustment
+/// table keeps the body's occurrence order, as a capture writes it.
+fn realize_simd_intrinsics(
+    template: &CheckedBodyFacts,
+    facts: &mut CheckedBodyFacts,
+    occurrences: &[Occurrence],
+) -> Result<(), &'static str> {
+    use mojito_checked::checked::SemanticAdjustment;
+    let shape = |id: OccurrenceId| {
+        fact_at(&facts.expression_types, id).and_then(mojito_types::types::simd_shape)
+    };
+    let mut realized = Vec::new();
+    for (id, receiver) in &template.simd_to_bits {
+        let (dtype, width) = shape(*id)
+            .ok_or("a reinterpretation's lane dtype or width stays open in the instance")?;
+        let (source, _) = shape(*receiver)
+            .ok_or("a reinterpretation's source lane stays open in the instance")?;
+        if super::builtins::dtype_bit_width(dtype) < super::builtins::dtype_bit_width(source) {
+            return Err("a reinterpretation's target is narrower than the instance's lane");
+        }
+        realized.push((*id, SemanticAdjustment::SimdToBits { dtype, width }));
+    }
+    for (id, receiver) in &template.simd_lengths {
+        let (_, width) =
+            shape(*receiver).ok_or("a lane count's receiver width stays open in the instance")?;
+        realized.push((*id, SemanticAdjustment::SimdLength { width }));
+    }
+    if realized.is_empty() {
+        return Ok(());
+    }
+    facts.operation_adjustments.extend(realized);
+    let order = |id: OccurrenceId| occurrences.iter().position(|found| found.id == id);
+    facts
+        .operation_adjustments
+        .sort_by_key(|(id, _)| order(*id));
+    facts.simd_to_bits.clear();
+    facts.simd_lengths.clear();
+    Ok(())
+}
+
+/// The hidden dtype and width values a clone folds where its template
+/// viewed the wildcard vector binder `decl` as a lane-shaped vector
+/// (`simd_binder_view`): the slots of the closed vector type `ty` the clone
+/// bakes the binder to, with the whole view paired to `ty` in `views`.
+/// Empty for any other binder; an open slot does not resolve.
+fn simd_binder_values(
+    decl: &ParamDecl,
+    ty: &Ty,
+    views: &mut Vec<(Ty, Ty)>,
+) -> Result<Vec<(mojito_types::param_expr::ParamId, mojito_types::ct::CtValue)>, TypeError> {
+    use mojito_types::ct::CtValue;
+    let ParamDecl::Type {
+        id, name, bounds, ..
+    } = decl
+    else {
+        return Ok(Vec::new());
+    };
+    if !matches!(bounds.as_slice(), [bound] if bound == SIMD_WILDCARD_BOUND) {
+        return Ok(Vec::new());
+    }
+    let (dtype, width) = mojito_types::types::simd_shape(ty).ok_or_else(|| {
+        TypeError::InvariantViolation(format!(
+            "a per-call clone binds the wildcard vector binder '{name}' to '{ty}', which is not \
+             a closed vector"
+        ))
+    })?;
+    let binder = mojito_types::param_expr::ParamRef {
+        id: id.clone(),
+        name: name.as_str().into(),
+    };
+    let view = simd_binder_view(&Ty::Param {
+        binder: binder.clone(),
+        bounds: bounds.clone(),
+        callable_bound: None,
+    })
+    .ok_or_else(|| {
+        TypeError::InvariantViolation(format!(
+            "the wildcard vector binder '{name}' has no lane-shaped view"
+        ))
+    })?;
+    views.push((view, ty.clone()));
+    let (dtype_slot, size_slot) = simd_binder_slots(&binder);
+    Ok(vec![
+        (dtype_slot.id, CtValue::Dtype(dtype)),
+        (size_slot.id, CtValue::Int(width)),
+    ])
+}
+
+/// `ty` with every type equal to a wildcard vector binder's whole view
+/// replaced by the type the clone bakes the binder to, before its lane
+/// slots are folded ([`InstanceSubstitution::views`]).
+fn fold_binder_views(ty: &Ty, views: &[(Ty, Ty)]) -> Ty {
+    struct Folder<'a>(&'a [(Ty, Ty)]);
+
+    impl mojito_types::types::TyRewrite for Folder<'_> {
+        fn whole(&mut self, ty: &Ty) -> Option<Ty> {
+            self.0
+                .iter()
+                .find(|(view, _)| view == ty)
+                .map(|(_, baked)| baked.clone())
+        }
+
+        fn expr(
+            &mut self,
+            expr: &mojito_types::param_expr::ParamExpr,
+        ) -> Result<mojito_types::param_expr::ParamExpr, mojito_types::param_expr::ParamError>
+        {
+            Ok(expr.clone())
+        }
+    }
+
+    if views.is_empty() {
+        return ty.clone();
+    }
+    mojito_types::types::rewrite_ty(ty, &mut Folder(views)).unwrap_or_else(|_| ty.clone())
+}
+
 /// The template's facts with every retained type substituted for an
 /// instance, before any call is realized: an adjustment through its recipe,
 /// a type keyed by a pack-element occurrence under that copy's loop index,
@@ -6859,6 +7029,7 @@ fn substituted_facts(
     InstanceSubstitution {
         types: substitution,
         packs,
+        views,
         values,
     }: &InstanceSubstitution,
     indices: &ElementIndices,
@@ -6866,7 +7037,7 @@ fn substituted_facts(
 ) -> Result<CheckedBodyFacts, &'static str> {
     let substitute = |ty: &Ty| {
         canonical(mojito_types::types::substitute_packs(
-            ty,
+            &fold_binder_views(ty, views),
             substitution,
             packs,
             values,
@@ -6885,7 +7056,7 @@ fn substituted_facts(
                 (
                     *id,
                     canonical(mojito_types::types::substitute_packs(
-                        ty,
+                        &fold_binder_views(ty, views),
                         substitution,
                         packs,
                         &values,
@@ -7028,6 +7199,14 @@ const fn kept_apart(adjustment: &mojito_checked::checked::SemanticAdjustment) ->
         mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
             | mojito_checked::checked::SemanticAdjustment::CallableCaptureAccesses(_)
     )
+}
+
+/// Append `entry` unless the list already holds it: a grammar arm may judge
+/// one occurrence more than once.
+fn push_unique<V: PartialEq>(list: &mut Vec<V>, entry: V) {
+    if !list.contains(&entry) {
+        list.push(entry);
+    }
 }
 
 fn fact_at<V>(table: &[(OccurrenceId, V)], id: OccurrenceId) -> Option<&V> {
@@ -7175,6 +7354,18 @@ struct BodyShape<'a> {
     print_calls: RefCell<Vec<OccurrenceId>>,
     /// How many nested `def` bodies the statement being judged lies in.
     nested_depth: std::cell::Cell<u32>,
+    /// The hidden dtype and width binders of the method's wildcard vector
+    /// binders (`$simd.dtype`, `$simd.size`), which a lane-shaped type may
+    /// name and every clone folds ([`Self::lane_shaped_simd`]).
+    lane_binders: Vec<String>,
+    /// The `to_bits` reinterpretations admitted over a lane-shaped receiver,
+    /// each with its receiver occurrence, whose adjustment an instance
+    /// records from its substituted result.
+    simd_to_bits: RefCell<Vec<(OccurrenceId, OccurrenceId)>>,
+    /// The `.length` reads admitted over a lane-shaped receiver, each with
+    /// its receiver occurrence, whose adjustment an instance records from
+    /// the receiver's substituted type.
+    simd_lengths: RefCell<Vec<(OccurrenceId, OccurrenceId)>>,
 }
 
 /// What a local of a certified body is.
@@ -7270,7 +7461,8 @@ impl BodyShape<'_> {
             // binding wherever it is declared. An annotated local holds its
             // declared type, which the value may convert to.
             StmtKind::VarDecl { name, ty, value } if !self.keyed => {
-                let closed = self.expression(value) && self.scalar(value);
+                let closed =
+                    (self.expression(value) && self.scalar(value)) || self.lane_local_value(value);
                 let scalar = closed && (ty.is_none() || self.scalar_binding(value));
                 let moved = !scalar
                     && self.moved_result.is_some()
@@ -9352,10 +9544,13 @@ impl BodyShape<'_> {
                     || self.local_field(expr)
                     || self.parameter_field(expr)
                     || self.reference_member(expr)
-                    || self.struct_value(expr))
+                    || self.struct_value(expr)
+                    || self.simd_intrinsic(expr))
                     && self.scalar(expr)
             }
-            ExprKind::Index { .. } => self.tuple_element(expr) && self.scalar(expr),
+            ExprKind::Index { .. } => {
+                (self.tuple_element(expr) || self.simd_intrinsic(expr)) && self.scalar(expr)
+            }
             // A call of a method on `self`, on one of its fields, or on a
             // `var` local, passing scalars, whose recorded contract changes
             // per instance only in its target and its substituted result
@@ -9372,13 +9567,17 @@ impl BodyShape<'_> {
                     || self.consuming_call(expr, object, method, args, kwargs)
                     || self.bound_dispatch(expr, object, args, kwargs)
                     || self.bound_builtin(expr, object, method, args, kwargs)
+                    || self.simd_intrinsic(expr)
             }
             ExprKind::Invoke {
                 callee,
                 param_args,
                 args,
                 kwargs,
-            } => self.parameterized_call(expr, callee, param_args, args, kwargs),
+            } => {
+                self.parameterized_call(expr, callee, param_args, args, kwargs)
+                    || self.simd_intrinsic(expr)
+            }
             ExprKind::Prefix(_, value) => {
                 (self.folding(expr) || !self.folding(value))
                     && self.expression(value)
@@ -9611,6 +9810,212 @@ impl BodyShape<'_> {
                     && fact_at(&facts.operation_adjustments, id).is_none()
             });
         admitted && self.holds(MethodFeatures::SIMD_CONSTRUCTIONS)
+    }
+
+    /// A lane read on a vector the body holds: `v.to_bits[DType.<name>]()`
+    /// (an `Invoke` with a `Member` callee and one `DType` argument),
+    /// `v.to_bits()` or `v.reduce_*()` (a `MethodCall` without arguments),
+    /// `v.length` (a `Member`), or `v[i]` (an `Index` over a scalar), on a
+    /// receiver [`Self::lane_receiver`] admits: a parameter, a `var` local,
+    /// a field of `self`, or another lane read, of a closed vector type or a
+    /// lane-shaped one ([`Self::lane_shaped_simd`]).
+    ///
+    /// Each is a compiler-known operation on `Ty::Simd`: it selects no
+    /// callee, converts nothing, and records at most its shape, the
+    /// `SimdToBits` or `SimdLength` adjustment, which inference writes only
+    /// over a closed receiver and which is then the same under every
+    /// instance. Over a lane-shaped receiver the template records no
+    /// adjustment, and the instance records its own from the substituted
+    /// types (`realize_simd_intrinsics`). A lane read and a reduction stand
+    /// on a receiver whose dtype is closed, so their results are closed; a
+    /// reinterpretation's explicit target closes the result's dtype itself,
+    /// and a lane count is an `Int`.
+    fn simd_intrinsic(&self, expr: &Expr) -> bool {
+        use mojito_ast::ast::ParamArg;
+        use mojito_checked::checked::SemanticAdjustment;
+        let dtype_argument = |argument: &ParamArg| match argument {
+            ParamArg::Type(_) => true,
+            ParamArg::Value(value) => matches!(&value.kind, ExprKind::Member { object, .. }
+                if matches!(&object.kind, ExprKind::Identifier(name) if name == "DType")),
+            ParamArg::Named { .. } => false,
+        };
+        let reinterpretation = |method: &str| method == "to_bits";
+        let reduction = |method: &str| {
+            matches!(
+                method,
+                "reduce_add"
+                    | "reduce_mul"
+                    | "reduce_min"
+                    | "reduce_max"
+                    | "reduce_and"
+                    | "reduce_or"
+            )
+        };
+        let (receiver, closed_dtype) = match &expr.kind {
+            ExprKind::Invoke {
+                callee,
+                param_args,
+                args,
+                kwargs,
+            } => {
+                let ExprKind::Member { object, field } = &callee.kind else {
+                    return false;
+                };
+                if !reinterpretation(field)
+                    || !args.is_empty()
+                    || !kwargs.is_empty()
+                    || !matches!(param_args.as_slice(), [argument] if dtype_argument(argument))
+                {
+                    return false;
+                }
+                (object, false)
+            }
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+                kwargs,
+            } => {
+                if !(reinterpretation(method) || reduction(method))
+                    || !args.is_empty()
+                    || !kwargs.is_empty()
+                {
+                    return false;
+                }
+                (object, reduction(method))
+            }
+            ExprKind::Member { object, field } if field == "length" => (object, false),
+            ExprKind::Index { object, index } => {
+                if !(self.expression(index) && self.scalar(index)) {
+                    return false;
+                }
+                (object, true)
+            }
+            _ => return false,
+        };
+        if !self.lane_receiver(receiver, closed_dtype) {
+            return false;
+        }
+        let id = self.occurrence(expr);
+        let Some(facts) = self.facts else {
+            return self.holds(MethodFeatures::SIMD_INTRINSICS);
+        };
+        let Some(ty) = fact_at(&facts.expression_types, id) else {
+            return false;
+        };
+        let shaped = match &expr.kind {
+            ExprKind::Member { .. } => *ty == Ty::Int,
+            _ => {
+                mojito_types::types::simd_slots(ty).is_some()
+                    && (!mojito_types::types::is_symbolic(ty) || self.lane_shaped_simd(ty))
+            }
+        };
+        let adjustment = fact_at(&facts.operation_adjustments, id);
+        let adjusted = match (adjustment, &expr.kind) {
+            (None, _) => true,
+            (
+                Some(SemanticAdjustment::SimdToBits { .. }),
+                ExprKind::Invoke { .. } | ExprKind::MethodCall { .. },
+            ) => !mojito_types::types::is_symbolic(ty),
+            (Some(SemanticAdjustment::SimdLength { .. }), ExprKind::Member { .. }) => true,
+            _ => false,
+        };
+        let admitted = shaped
+            && adjusted
+            && fact_at(&facts.call_parameters, id).is_none()
+            && fact_at(&facts.selected_calls, id).is_none()
+            && fact_at(&facts.overload_targets, id).is_none()
+            && fact_at(&facts.generic_instantiations, id).is_none()
+            && fact_at(&facts.conversions, id).is_none()
+            && fact_at(&facts.parameterized_method_calls, id).is_none()
+            && fact_at(&facts.method_instantiations, id).is_none()
+            && fact_at(&facts.subscript_descriptors, id).is_none()
+            && !facts.copy_place_value_uses.contains(&id);
+        if admitted && adjustment.is_none() {
+            let read = (id, self.occurrence(receiver));
+            match &expr.kind {
+                ExprKind::Invoke { .. } => push_unique(&mut self.simd_to_bits.borrow_mut(), read),
+                ExprKind::MethodCall { method, .. } if reinterpretation(method) => {
+                    push_unique(&mut self.simd_to_bits.borrow_mut(), read);
+                }
+                ExprKind::Member { .. } => push_unique(&mut self.simd_lengths.borrow_mut(), read),
+                _ => {}
+            }
+        }
+        admitted && self.holds(MethodFeatures::SIMD_INTRINSICS)
+    }
+
+    /// The receiver of a lane read: a parameter, a `var` local, a field of
+    /// `self`, or another lane read, whose recorded type is a closed vector
+    /// or a lane-shaped one. With `closed_dtype`, the dtype slot must be
+    /// closed, so a lane or a reduction of it is a closed scalar.
+    fn lane_receiver(&self, expr: &Expr, closed_dtype: bool) -> bool {
+        let named = match &expr.kind {
+            ExprKind::Identifier(name) => {
+                (self.params.contains(&name.as_str())
+                    && !self.callable_params.contains(&name.as_str())
+                    && self.local_kind(name).is_none())
+                    || self.declared(name)
+            }
+            ExprKind::Member { .. } => self.receiver_field(expr),
+            _ => false,
+        };
+        let held = named || self.simd_intrinsic(expr);
+        held && self.facts.is_none_or(|facts| {
+            fact_at(&facts.expression_types, self.occurrence(expr)).is_some_and(|ty| {
+                let Some((dtype, _)) = mojito_types::types::simd_slots(ty) else {
+                    return false;
+                };
+                let symbolic = mojito_types::types::is_symbolic(ty);
+                // A native scalar (`Int`, `UInt`, `Float64`) has no lane
+                // reads: a lane-shaped receiver an instance may close to
+                // one keeps its dtype open, and a closed one with such a
+                // dtype closes to a vector only at a width above one.
+                let vector = match dtype {
+                    mojito_types::types::SimdDtype::Known(dtype) => {
+                        !symbolic
+                            || matches!(
+                                mojito_types::types::canonical_simd_ty(dtype, 1),
+                                Ty::Simd { .. }
+                            )
+                    }
+                    mojito_types::types::SimdDtype::Expr(_) => false,
+                };
+                (!symbolic || self.lane_shaped_simd(ty)) && (!closed_dtype || vector)
+            })
+        })
+    }
+
+    /// Whether `expr` is a lane read whose value a `var` local may hold as
+    /// a scalar: its recorded type is a closed vector or a lane-shaped one
+    /// whose dtype is closed (`var bits = value.to_bits[DType.uint64]()`),
+    /// so the local's own lane reads are closed scalars.
+    fn lane_local_value(&self, expr: &Expr) -> bool {
+        self.simd_intrinsic(expr)
+            && self.facts.is_none_or(|facts| {
+                fact_at(&facts.expression_types, self.occurrence(expr)).is_some_and(|ty| {
+                    grammar_scalar(ty)
+                        || (self.lane_shaped_simd(ty)
+                            && matches!(
+                                ty,
+                                Ty::Simd {
+                                    dtype: mojito_types::types::SimdDtype::Known(_),
+                                    ..
+                                }
+                            ))
+                })
+            })
+    }
+
+    /// A `SIMD` type whose open slots name only the hidden dtype and width
+    /// binders of the method's wildcard vector binders, which every clone
+    /// folds from its baked argument.
+    fn lane_shaped_simd(&self, ty: &Ty) -> bool {
+        let mut named = HashSet::new();
+        mojito_types::types::referenced_parameters(ty, &mut named);
+        matches!(ty, Ty::Simd { .. })
+            && !named.is_empty()
+            && named.iter().all(|name| self.lane_binders.contains(name))
     }
 
     /// A `SIMD` type whose open slots name only the declaration's own

@@ -1483,8 +1483,7 @@ impl Checker {
                 let simd_updates = info.methods.get("_update_with_simd").is_some_and(|methods| {
                     methods.iter().any(|method| {
                         method.self_convention == Some(ArgConvention::Mut)
-                            && matches!(method.params.as_slice(), [Ty::Param { bounds, .. }]
-                                if bounds.iter().any(|bound| bound == "$SIMD"))
+                            && matches!(method.params.as_slice(), [param] if simd_wildcard_param(param))
                             && method.ret == Ty::None
                     })
                 });
@@ -1802,7 +1801,7 @@ impl Checker {
                 "Movable" => self.is_movable(ty),
                 "Deinitable" => self.is_deinitable(ty),
                 "Hashable" => self.is_hashable(ty),
-                "$SIMD" => simd_valued_ty(ty),
+                SIMD_WILDCARD_BOUND => simd_valued_ty(ty),
                 "Writable" => {
                     // The discovery check runs before a `t"…"` occurrence's
                     // variadic `TString` specialization exists.  Preserve the
@@ -2162,7 +2161,7 @@ impl Checker {
         reason = "TODO: write! into the buffer instead"
     )]
     pub(super) fn trait_failure_reason(&self, ty: &Ty, tr: &str) -> Option<String> {
-        if tr == "$SIMD" {
+        if tr == SIMD_WILDCARD_BOUND {
             return Some(
                 "expected a SIMD value (a scalar or a `SIMD[dtype, width]` vector)".to_string(),
             );
@@ -2881,8 +2880,8 @@ impl Checker {
                 )),
                 ("_update_with_simd", 1) => Some((
                     Ty::Param {
-                        binder: synthetic_binder("$simd"),
-                        bounds: vec!["$SIMD".to_string()],
+                        binder: synthetic_binder(SIMD_WILDCARD_PARAM),
+                        bounds: vec![SIMD_WILDCARD_BOUND.to_string()],
                         callable_bound: None,
                     },
                     Ty::None,

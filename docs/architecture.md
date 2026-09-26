@@ -428,7 +428,9 @@ clone (pack qualification, the synthesized `copy`/`__hash__` methods, the
 SIMD-keyed method desugar, SIMD alias-bound folding). The checker then
 validates the prepared source (`validate_comptime_templates`,
 `checker/comptime_validation.rs`): every function or method body holding a
-`comptime if`/`comptime for`, or a `rebind` over its own parameters, is
+`comptime if`/`comptime for`, a `rebind` over its own parameters, or a
+`Hasher`'s wildcard vector parameter (`SIMD[_, _]`, viewed inside the body
+as a lane-shaped vector) is
 checked once with its declaration's parameters left symbolic — each condition typed as a compile-time `Bool`
 (a generic constraint over the parameters in scope, a concrete conformance,
 or a `Bool` value), each arm and loop body in its own scope, no arm assumed

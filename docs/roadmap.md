@@ -62,38 +62,22 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.2 A SIMD-keyed hasher leaf keeps the clone check**
-
-  Problem: every per-call clone of a hasher's `_update_with_simd(mut self,
-  value: SIMD[_, _])` is inferred, because its template never checks.
-  - The parameter desugars to an inferred `$simd: $SIMD` binder
-    (`synth.rs:desugar_simd_keyed_methods`), and the elaborator installs a
-    trap stub as the template's body, since `to_bits` and `.length` check
-    only on a concrete vector.
-  - The clones are traced now, and refused as "its template is not
-    certified".
-  - Hello World infers 36 of them on `Fnv1a` and `stdlib_heavy` 38. They
-    are the only per-call clones either program mints.
-  - A symbolic check would need the `SIMD[dt, w]` binder pair the upstream
-    spelling infers, with `to_bits` and `.length` over it.
-  - The 36 leaves Hello World mints into the specialized `AHasher[…]` are
-    not traced at all: `generate_value_struct_spec` mints them with no owner
-    (`PerCallBase::default()`), under the whole struct's source tag rather
-    than `clone_source_tag`.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
-- [ ] **1.3 A value-keyed struct specialized whole has no template**
+- [ ] **1.2 A value-keyed struct specialized whole has no template**
 
   Problem: the members of a struct the elaborator specializes per value
   (`_SequentialRange[dtype]`, `_StridedRange`, `_ZeroStartingRange`,
   `AHasher[key]`) are traced now, and every one is refused with "its template
   has no retained facts".
-  - This is the struct half of 1.23: the elaborator drops the template when
+  - This is the struct half of 1.22: the elaborator drops the template when
     it rebuilds the program, and source validation checks none of these
-    bodies, since they hold no compile-time control flow, `rebind`, or pack.
-  - Hello World infers 59 such members; the leaves minted into `AHasher`
-    are 1.2's.
+    bodies, since they hold no compile-time control flow, `rebind`, pack, or
+    wildcard vector parameter.
+  - Hello World infers 59 such members.
+  - The `_update_with_simd` leaves minted into `AHasher` are inferred for
+    the same reason and one more: `generate_value_struct_spec` mints them
+    with no trace, and the template's `U256` value parameter is outside
+    `method_certificate`'s `plain_struct` gate. A user hasher's leaves
+    derive (`assets/ok/template_method_simd_leaf.mojo`).
   - `count_template_classes` counts these methods as
     `templates.surviving_trait_bound`, although they never survive.
   - The substitution half exists: `instance_substitution` binds a value
@@ -101,7 +85,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.4 A method's own value binder keeps the clone check**
+- [ ] **1.3 A method's own value binder keeps the clone check**
 
   Problem: `method_certificate` admits only origin binders and trait-bounded
   type binders of the method itself, so `def scaled[n: Int](self) -> Int`
@@ -119,7 +103,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.5 A method forwarding its own `DType` parameter to a keyed `def`
+- [ ] **1.4 A method forwarding its own `DType` parameter to a keyed `def`
   is rejected**
 
   Problem: `def make[dt: DType](self, x: Int) -> Scalar[dt]` whose body
@@ -133,7 +117,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.6 A `DType`-keyed method whose signature spells the struct's value
+- [ ] **1.5 A `DType`-keyed method whose signature spells the struct's value
   parameter is never cloned**
 
   Problem: `def rep[dt: DType](self, a: SIMD[dt, Self.n]) -> SIMD[dt,
@@ -147,7 +131,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.7 A method called on a subscripted element keeps the clone
+- [ ] **1.6 A method called on a subscripted element keeps the clone
   check**
 
   Problem: `self.items[i] = self.items[j].copy()` calls `copy` on an element,
@@ -163,7 +147,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.8 An augmented assignment to a place through its in-place dunder
+- [ ] **1.7 An augmented assignment to a place through its in-place dunder
   keeps the clone check**
 
   Problem: `self.total += x` on a `T` whose bound requires `__iadd__`, or
@@ -177,7 +161,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.9 A tuple element read as a whole value keeps the clone check**
+- [ ] **1.8 A tuple element read as a whole value keeps the clone check**
 
   Problem: the method grammar reads a tuple element only as a scalar, so a
   body binding or returning an element of a parameter type
@@ -193,7 +177,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.10 A surviving `def` template that builds and consumes a hasher keeps
+- [ ] **1.9 A surviving `def` template that builds and consumes a hasher keeps
   the clone check**
 
   Problem: `hash_seeded[T: Hashable](value: T, seed: U256)` constructs a
@@ -211,7 +195,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.11 A bundled template's instance over a loan-carrying argument
+- [ ] **1.10 A bundled template's instance over a loan-carrying argument
   keeps its erased body**
 
   Problem: `List[Span[Int, origin_of(xs)]]` mints no clones, so its methods
@@ -230,7 +214,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.12 A per-call method clone over a loan-carrying argument keeps the
+- [ ] **1.11 A per-call method clone over a loan-carrying argument keeps the
   erased path**
 
   Problem: a generic method called with a loan-carrying argument of its own
@@ -243,7 +227,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.13 A frame effect whose source is not a single binding refuses
+- [ ] **1.12 A frame effect whose source is not a single binding refuses
   capture**
 
   Problem: a template's frame transfer effect is captured only when its
@@ -258,7 +242,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.14 Native monomorphization binds type parameters by spelling**
+- [ ] **1.13 Native monomorphization binds type parameters by spelling**
 
   Problem: `Bindings.types` and `Specializer.enclosing_types`
   (`crates/mojito-native/src/native/mono`) are keyed by a binder's name, so a
@@ -275,7 +259,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **1.15 A `where`-clause operand names its binder by spelling**
+- [ ] **1.14 A `where`-clause operand names its binder by spelling**
 
   Problem: a compiled `where` clause names its binder by spelling
   (`GenericConstraint::{Conforms, ConformsPack, PackPredicate,
@@ -287,11 +271,11 @@ to section 3, however small.
     type parameter and a value reference by identity (2026-09-26). These
     operands are what still reads a spelling there.
   - The constraints are serialized in MIR text, so batch the schema change
-    with 1.14's.
+    with 1.13's.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **1.16 Two overloads of one generic method share their binders**
+- [ ] **1.15 Two overloads of one generic method share their binders**
 
   Problem: a method's binders are owned by `Struct.method`
   (`method_binder_owner`), so two overloads of one method whose slots agree
@@ -307,7 +291,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.17 The elaborator's binders have no owner**
+- [ ] **1.16 The elaborator's binders have no owner**
 
   Problem: every binder the elaborator classifies is
   `ParamId { owner: "$elaborated", slot }` (`comptime/params.rs`,
@@ -319,7 +303,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.18 An overloaded witness ranked past its conversions keeps the
+- [ ] **1.17 An overloaded witness ranked past its conversions keeps the
   clone check**
 
   Problem: a call through a bound derives for an instance whose type
@@ -338,7 +322,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.19 A hasher leaf under a method's own hasher binder disagrees
+- [ ] **1.18 A hasher leaf under a method's own hasher binder disagrees
   with its clone check**
 
   Problem: `MOJITO_VERIFY_TEMPLATE_FACTS=1` fails on
@@ -357,7 +341,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.20 `os.removedirs` keeps the clone check**
+- [ ] **1.19 `os.removedirs` keeps the clone check**
 
   Problem: a module-level `def` that raises derives, but the function grammar
   still refuses `os.removedirs` and the bundled bodies it calls.
@@ -374,7 +358,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.21 A folded name in a division, comparison, or `~` keeps the clone
+- [ ] **1.20 A folded name in a division, comparison, or `~` keeps the clone
   check**
 
   Problem: over folded values and literals alone, only integer arithmetic
@@ -393,7 +377,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.22 A `print` statement in a runtime body keeps the clone check**
+- [ ] **1.21 A `print` statement in a runtime body keeps the clone check**
 
   Problem: `BodyShape::statement` admits `print(...)` only in a keyed
   `def` shape, so a runtime `def` or any method body that prints keeps the
@@ -407,7 +391,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.23 A `DType`- or lane-keyed `def` without compile-time control flow
+- [ ] **1.22 A `DType`- or lane-keyed `def` without compile-time control flow
   has no template**
 
   Problem: `def lane[dt: DType](v: Int) -> Int` constructing `Scalar[dt](v)`
@@ -421,6 +405,28 @@ to section 3, however small.
   - The derivation half exists: a keyed body's value-shaped construction
     derives (`assets/ok/template_value_shaped_construction.mojo`), so what is
     missing is a producer for the template.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.23 A hasher leaf spelled with the defaulted `to_bits()` keeps the
+  clone check**
+
+  Problem: an `_update_with_simd(mut self, value: SIMD[_, _])` body reading
+  `value.to_bits()` with no target dtype gets no verdict from source
+  validation, so its template is never certified and every per-call leaf
+  clone is inferred.
+  - The default target is the unsigned dtype of the source lane's width,
+    which the `to_bits` arm of `infer_method_call` (`mc_infer.rs`) cannot
+    spell over a symbolic dtype. Under validation the arm ends the body as a
+    `SymbolicBoundary`, as a reflected symbolic type does, and the clones
+    keep the clone check they always had.
+  - The explicit spelling `value.to_bits[DType.uint64]()`, which the bundled
+    hashers use, derives (`assets/ok/template_method_simd_leaf.mojo`).
+  - The pin accepts the defaulted spelling on a symbolic lane
+    (`conformance/probes/simd_wildcard_to_bits_default.mojo`).
+  - A symbolic default needs a parameter-expression form for "the unsigned
+    dtype of this lane's width", after which the lane grammar admits the
+    result as it admits the explicit form.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2273,6 +2279,15 @@ last.
       where a `ref self` call's interior reference meets a later mutable
       borrow of the same owner.
     - Found while deriving element-field reference results; not root-caused.
+    - Model: Opus, Not Planned.
+  - `wildcard-vector-parameter-on-a-def`: `def bits(value: SIMD[_, _])`
+    runs upstream, while Mojito rejects the parameter with "not a valid SIMD
+    element type: a non-DType argument". Pinned by
+    `conformance/probes/simd_wildcard_to_bits_default.mojo`.
+    - The `SIMD[_, _]` desugar (`synth.rs:desugar_simd_keyed_methods`) runs
+      over struct methods only, where the `Hasher` protocol needs it; a free
+      `def` keeps the wildcard spelling and resolves it as an annotation.
+    - Found while probing the defaulted `to_bits()` for 1.23.
     - Model: Opus, Not Planned.
 
   Five divergences are retained on purpose and re-probed rather than fixed;

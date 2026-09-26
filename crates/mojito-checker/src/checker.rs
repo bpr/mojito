@@ -2884,7 +2884,10 @@ mod calls;
 
 mod builtins;
 
-pub use builtins::{builtin_copy_is_value_read, callable_environment_coerces};
+pub use builtins::{
+    SIMD_WILDCARD_BOUND, SIMD_WILDCARD_PARAM, builtin_copy_is_value_read,
+    callable_environment_coerces,
+};
 
 mod operators;
 

@@ -2144,6 +2144,39 @@ fn template_method_vector_hash_leaf_derives() {
 }
 
 #[test]
+fn template_method_simd_leaf_derives() {
+    // A `Hasher`'s `_update_with_simd(mut self, value: SIMD[_, _])`: source
+    // validation checks the body with the wildcard parameter viewed as a
+    // lane-shaped vector, and every per-call leaf clone — the fourteen eager
+    // scalars and a demanded `SIMD[DType.uint8, 4]` — folds the dtype and
+    // width the template left open.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_simd_leaf.mojo"),
+        "12638128926439346813 8559387686524852476\n5808589858502755950 2298681937012504952\n\
+         12638149817160282822 11008053066886195656\n8026467504136239071 8296160167128612196\n\
+         True False\n13725386680924731485 17471\n620445648566982762 12768243554632580026\n\
+         10 20 2\n",
+        &[
+            ("FoldHasher._update_with_simd", 15),
+            ("PairHasher._update_with_simd", 15),
+        ],
+    );
+    let program = compile_entry(
+        &Compiler::default(),
+        include_str!("../assets/ok/template_method_simd_leaf.mojo"),
+    );
+    let stats = program.template_stats();
+    assert!(
+        stats
+            .refused
+            .iter()
+            .all(|(name, _)| !name.contains("._update_with_simd$")),
+        "no leaf clone is refused: {:?}",
+        stats.refused
+    );
+}
+
+#[test]
 fn template_method_struct_binder_construction_keeps_the_clone_check() {
     // A struct binder's construction (`Self.H()`) builds another type under
     // each instance, so the body stays outside the class.

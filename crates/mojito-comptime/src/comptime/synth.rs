@@ -196,11 +196,7 @@ pub(super) fn synthesize_hashable_hash(program: &mut [Stmt]) {
     }
 }
 
-/// The hidden vector parameter `_update_with_simd(mut self, value: SIMD[_, _])`
-/// desugars to — an infer-only type parameter bounded by the compiler's
-/// `$SIMD` (any SIMD-valued type). `$` keeps both names unspellable in source.
-pub(super) const SIMD_WILDCARD_PARAM: &str = "$simd";
-pub(super) const SIMD_WILDCARD_BOUND: &str = "$SIMD";
+pub(super) use mojito_checker::checker::{SIMD_WILDCARD_BOUND, SIMD_WILDCARD_PARAM};
 
 /// Whether a struct method carries the desugared wildcard vector parameter.
 pub(super) fn is_simd_keyed_method(method: &mojito_ast::ast::Method) -> bool {

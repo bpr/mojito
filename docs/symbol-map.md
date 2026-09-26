@@ -285,7 +285,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `check_comptime_for` checks a loop body under its element type,
   `bind_local_comptime` binds function-local `comptime` aliases and
   compile-time-only values, `struct_valued_template` and `validates_body`
-  draw the per-instantiation boundary (struct-value template shells),
+  draw the per-instantiation boundary (struct-value template shells; a
+  body keyed on the `Hasher` wildcard vector binder is validated),
   `conformance_arm_assumptions` collects what a `comptime if`'s
   `conforms_to` atoms prove for the arm `statements.rs:check_conditional`
   guards with them, and `is_template_shell_member_error` names the errors
@@ -348,6 +349,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   module-level generic body's facts (`capture_body_facts`,
   `template_certificate` — whose `FUNCTION_FEATURES` allowlist bounds a
   `FunctionBody` — `method_certificate`, `record_template`).
+  `BodyShape::simd_intrinsic` admits the lane reads of a closed or
+  lane-shaped vector, `instance_substitution` folds a wildcard vector
+  binder's hidden slots (`simd_binder_values`, `fold_binder_views`), and
+  `realize_simd_intrinsics` records each instance's reinterpretation and
+  lane-count shapes.
   `realize_method_call` retargets a closed method call to the clone member
   `declarations.rs:method_clone_target` finds (the helper
   `constructor_clone_target` shares; its `realize_method_contract` half also
@@ -558,9 +564,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   specialization.
 - `checker/declarations.rs` owns parameter classification and method/function
   signature and body checking.
-- `checker/annotations.rs` converts AST annotations into checked `Ty` values.
+- `checker/annotations.rs` converts AST annotations into checked `Ty` values;
+  `simd_binder_view` and `simd_binder_slots` give the `Hasher` wildcard
+  vector binder its lane-shaped body view (`declarations.rs:bind_and_check_method`).
 - `checker/builtins.rs` owns built-in typing/coercion rules and builtin
-  free-function inference (`print`/`len`/`range`/…).
+  free-function inference (`print`/`len`/`range`/…), and the names of the
+  desugared `Hasher` vector parameter (`SIMD_WILDCARD_PARAM`,
+  `SIMD_WILDCARD_BOUND`, `simd_wildcard_binder`), which the elaborator's
+  desugar imports.
 
 ### MIR
 
@@ -799,7 +810,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   desugar into its `TString` specialization's construction.
 - `comptime/rewrite.rs` owns AST substitution and value materialization.
 - `comptime/synth.rs` also owns the `SIMD[_, _]` parameter desugar
-  (`desugar_simd_keyed_methods`), the vector-alias bound fold, and the eager
+  (`desugar_simd_keyed_methods`, spelling the checker's `SIMD_WILDCARD_PARAM`
+  and `SIMD_WILDCARD_BOUND`), the vector-alias bound fold, and the eager
   per-leaf `_update_with_simd` clone requests (`hasher_leaf_requests`).
 - `crates/mojito-symbol/src/symbol.rs` owns specialization keys. `mangle`
   returns `Result<String, NonConstantSpecialization>`: `mangle_parts`

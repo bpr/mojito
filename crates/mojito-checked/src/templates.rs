@@ -220,6 +220,17 @@ pub fn derive_adjustment(
         SemanticAdjustment::DtypeConstant { dtype } => {
             Some(SemanticAdjustment::DtypeConstant { dtype: *dtype })
         }
+        // A reinterpretation or a lane count is recorded only over a closed
+        // receiver, whose dtype and width are the same under every instance;
+        // one over a lane-shaped receiver records nothing, and the instance
+        // records its own (`simd_to_bits`, `simd_lengths`).
+        SemanticAdjustment::SimdToBits { dtype, width } => Some(SemanticAdjustment::SimdToBits {
+            dtype: *dtype,
+            width: *width,
+        }),
+        SemanticAdjustment::SimdLength { width } => {
+            Some(SemanticAdjustment::SimdLength { width: *width })
+        }
         // A collection display or comprehension builds its target through
         // the target struct's own insert method, named by the struct, which
         // substitution keeps; only its arguments substitute.
@@ -289,8 +300,6 @@ pub fn derive_adjustment(
         | SemanticAdjustment::ConstructSimd { .. }
         | SemanticAdjustment::SizeOf { .. }
         | SemanticAdjustment::SimdCast { .. }
-        | SemanticAdjustment::SimdToBits { .. }
-        | SemanticAdjustment::SimdLength { .. }
         | SemanticAdjustment::DtypeFloatQuery { .. }
         | SemanticAdjustment::SimdShuffle { .. }
         | SemanticAdjustment::ConstructVariant { .. }
@@ -895,6 +904,19 @@ impl MethodFeatures {
     /// every instance, and what the body does with it is argued by the
     /// other features.
     pub const OWNED_PARAMETERS: Self = Self(1 << 35);
+    /// The wildcard vector binder a `Hasher`'s `_update_with_simd(mut self,
+    /// value: SIMD[_, _])` desugars to: source validation checked the body
+    /// with the parameter viewed as a lane-shaped vector whose dtype and
+    /// width are two hidden value binders, and every per-call clone bakes
+    /// the binder to one closed vector type, from which an instance folds
+    /// both slots.
+    pub const SIMD_BINDERS: Self = Self(1 << 36);
+    /// A lane read on a closed or lane-shaped vector: `v.to_bits[dt]()`,
+    /// `v.length`, `v[i]`, or a `reduce_*()`. Each selects no callee; the
+    /// dtype and width the clone check records at a reinterpretation or a
+    /// lane count are the instance's substituted shape, which it records
+    /// itself where the template's stayed open.
+    pub const SIMD_INTRINSICS: Self = Self(1 << 37);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
@@ -1486,6 +1508,16 @@ pub struct CheckedBodyFacts {
     /// construction. Only a closed construction records one, and its
     /// dimensions are the same in every instance.
     pub simd_constructions: Vec<(OccurrenceId, (mojito_ast::ast::Dtype, i64))>,
+    /// The `to_bits` reinterpretations whose result width the template left
+    /// open (a lane-shaped receiver), each with its receiver occurrence. An
+    /// instance records the `SimdToBits` adjustment from its substituted
+    /// result type, and owes that the target is no narrower than its own
+    /// lane (`realize_simd_intrinsics`); a closed one stands as recorded.
+    pub simd_to_bits: Vec<(OccurrenceId, OccurrenceId)>,
+    /// The `.length` reads whose receiver width the template left open, each
+    /// with its receiver occurrence. An instance records the `SimdLength`
+    /// adjustment from the receiver's substituted type.
+    pub simd_lengths: Vec<(OccurrenceId, OccurrenceId)>,
     /// The base type name each leading-dot contextual root (`.red()`)
     /// resolved to, at the root. It is the head of the expected struct type,
     /// which no substitution changes: an expected type that is a bare
@@ -1715,6 +1747,8 @@ impl CheckedBodyFacts {
             copyable_reference_result_reads,
             subscript_descriptors,
             simd_constructions,
+            simd_to_bits,
+            simd_lengths,
             contextual_bases,
             parameterized_method_calls,
             view_result_interiors,
@@ -1781,6 +1815,17 @@ impl CheckedBodyFacts {
         }
         let folded: Vec<OccurrenceId> = literals.iter().map(|literal| literal.occurrence).collect();
         let folded = folded.as_slice();
+        // A lane read keyed with its receiver, the receiver in the read's
+        // own copy.
+        let receivers = |table: &[(OccurrenceId, OccurrenceId)]| {
+            at(table, occurrences, folded)
+                .into_iter()
+                .map(|(id, mut receiver)| {
+                    receiver.copy = id.copy;
+                    (id, receiver)
+                })
+                .collect::<Vec<_>>()
+        };
         let literal = |occurrence: &OccurrenceId| {
             literals
                 .iter()
@@ -1899,6 +1944,8 @@ impl CheckedBodyFacts {
             copyable_reference_result_reads: flagged(&self.copyable_reference_result_reads),
             subscript_descriptors: at(&self.subscript_descriptors, occurrences, folded),
             simd_constructions: at(&self.simd_constructions, occurrences, folded),
+            simd_to_bits: receivers(&self.simd_to_bits),
+            simd_lengths: receivers(&self.simd_lengths),
             contextual_bases: at(&self.contextual_bases, occurrences, folded),
             parameterized_method_calls: at(&self.parameterized_method_calls, occurrences, folded),
             view_result_interiors: at(&self.view_result_interiors, occurrences, folded),
@@ -2005,6 +2052,8 @@ impl CheckedBodyFacts {
             + self.copyable_reference_result_reads.len()
             + self.subscript_descriptors.len()
             + self.simd_constructions.len()
+            + self.simd_to_bits.len()
+            + self.simd_lengths.len()
             + self.contextual_bases.len()
             + self.parameterized_method_calls.len()
             + self.view_result_interiors.len()

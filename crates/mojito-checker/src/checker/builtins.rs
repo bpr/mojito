@@ -9,6 +9,31 @@ pub use mojito_types::types::{
 
 pub(super) use mojito_types::types::default_literal;
 
+/// The inferred type parameter a `Hasher`'s wildcard vector parameter
+/// desugars to.
+///
+/// `_update_with_simd(mut self, value: SIMD[_, _])` becomes
+/// `_update_with_simd[$simd: $SIMD](mut self, value: $simd)`, the bound any
+/// SIMD-valued type (the native scalars are width-1 vectors). `$` keeps both
+/// names unspellable in source. The elaborator spells the desugar
+/// (`synth::desugar_simd_keyed_methods`); the checker owns the names, since
+/// it checks the template symbolically and proves the bound.
+pub const SIMD_WILDCARD_PARAM: &str = "$simd";
+/// The hidden bound of [`SIMD_WILDCARD_PARAM`].
+pub const SIMD_WILDCARD_BOUND: &str = "$SIMD";
+
+/// Whether a declaration's binder is the desugared wildcard vector
+/// parameter: infer-only, bounded by [`SIMD_WILDCARD_BOUND`] alone.
+pub(super) fn simd_wildcard_binder(binder: &mojito_ast::ast::TypeParam) -> bool {
+    binder.infer_only && matches!(binder.bounds.as_slice(), [bound] if bound == SIMD_WILDCARD_BOUND)
+}
+
+/// Whether `ty` is the wildcard vector binder itself, as the method's
+/// signature and the `Hasher` conformance check see it.
+pub(super) fn simd_wildcard_param(ty: &Ty) -> bool {
+    matches!(ty, Ty::Param { bounds, .. } if matches!(bounds.as_slice(), [bound] if bound == SIMD_WILDCARD_BOUND))
+}
+
 /// Whether `ty` is a non-numeric scalar value type — what `==`/`!=` compare once
 /// the numeric cases (handled by `common_numeric`) are out of the way.
 pub(super) const fn is_scalar(ty: &Ty) -> bool {

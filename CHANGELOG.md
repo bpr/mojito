@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `Hasher`'s `_update_with_simd(mut self, value: SIMD[_, _])` is now
+  checked once by source validation, with the wildcard parameter viewed as
+  a lane-shaped vector, and every per-call leaf clone reuses those facts,
+  folding the lane's dtype and width into the reinterpretation and lane
+  count the template left open. Such clones used to be checked again per
+  leaf type; a body spelling `value.to_bits()` with its default target
+  still is.
 - A member of a struct the elaborator specializes whole (`Tuple$t2[…]`, a
   `DType`-keyed range, a keyed `AHasher`) is now traced to its template, and
   the bundled `Tuple`'s `__len__`, comparisons, `__hash__`, and `write_to`

@@ -2596,6 +2596,12 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
 /// own binders mean; [`rewrite_ty`] visits every type, value argument,
 /// default, and aggregate child.
 pub trait TyRewrite {
+    /// The replacement for a whole type, if any, taken before its children
+    /// are rebuilt.
+    fn whole(&mut self, _ty: &Ty) -> Option<Ty> {
+        None
+    }
+
     /// The replacement for the type parameter `binder`, if any.
     fn param(&mut self, _binder: &ParamRef) -> Option<Ty> {
         None
@@ -2617,6 +2623,9 @@ pub trait TyRewrite {
 /// Rebuild `ty` through `rewrite`. Origins, conventions, and transfer effects
 /// pass through: they are checked decorations, not parameter positions.
 pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError> {
+    if let Some(replacement) = rewrite.whole(ty) {
+        return Ok(replacement);
+    }
     let all = |types: &[Ty], rewrite: &mut dyn TyRewrite| {
         types
             .iter()

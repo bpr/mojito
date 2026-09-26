@@ -307,7 +307,7 @@ pub(super) const BUILTIN_TRAITS: &[&str] = &[
     // `_update_with_simd(mut self, value: SIMD[_, _])` desugars to: any
     // SIMD-valued type (the native scalars are width-1 vectors). `$` keeps
     // it unspellable in source.
-    "$SIMD",
+    SIMD_WILDCARD_BOUND,
     "Identifiable",
     "Sized",
     "SizedRaising",

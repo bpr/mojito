@@ -407,8 +407,17 @@ impl Checker {
                     SimdDtype::Known(unsigned_dtype_of_width(dtype_bit_width(source)))
                 }
                 // The default target is the source lane's own width, which a
-                // symbolic dtype does not have yet.
+                // symbolic dtype does not have yet. Source validation reaches
+                // this with a `Hasher`'s wildcard vector parameter viewed as a
+                // lane-shaped vector: that is no verdict on the body, which
+                // keeps its per-instantiation check, where the lane is closed.
                 (None, None) => {
+                    if self.source_validation {
+                        return Err(TypeError::SymbolicBoundary(
+                            "'to_bits' with its default target on a symbolic source lane"
+                                .to_string(),
+                        ));
+                    }
                     return Err(TypeError::TypeMismatch {
                         expected: "an explicit target dtype for a symbolic source lane".to_string(),
                         found: obj_ty.to_string(),

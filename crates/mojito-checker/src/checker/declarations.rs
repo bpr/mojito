@@ -1373,7 +1373,10 @@ impl Checker {
                 mojito_ast::ast::ParamKind::KwVariadic => {
                     self.kwargs_collector_ty(pty, &format!("keyword collector '{}'", p.name))?
                 }
-                mojito_ast::ast::ParamKind::Regular => pty,
+                // The wildcard vector parameter is a lane-shaped vector
+                // inside the body (`simd_binder_view`); its signature keeps
+                // the bare binder.
+                mojito_ast::ast::ParamKind::Regular => simd_binder_view(&pty).unwrap_or(pty),
             };
             self.declare_with_mutability(
                 &p.name,
