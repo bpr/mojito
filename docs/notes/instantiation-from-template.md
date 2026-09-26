@@ -637,9 +637,13 @@ only `Movable` records nothing there, and its `Int` clone would.
     nor moved, so it stands at the binding without a copy. The grammar
     admits an annotation only where the value's recorded type is the
     declared one or a conversion is kept at the value
-    (`BodyShape::annotated_binding`): an annotation left to inference and a
-    view that borrows its source (`var span: Span[Self.T, _] = self.items`)
-    record neither, and stay out.
+    (`BodyShape::annotated_binding`). A view annotation whose origin is
+    left to inference (`var span: Span[Self.T, _] = self.items`) keeps its
+    conversion too: its `_` records nothing, since a storage annotation is
+    never lowered, and the instance's conversion must borrow the source
+    exactly as the template's did (`TemplateConversion::source_borrow`). A
+    named place is borrowed where it stands; a temporary's materialized
+    borrow owner is an adjustment with no recipe, and stays out.
 21. **Iteration protocols.** A loop's protocol is the `__iter__` chain and
     `__next__` selected from the iterable's type (named for the instance's
     clone family where one exists), the iterator's declared projection, and

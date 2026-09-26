@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A method binding a view annotated with an inferred origin
+  (`var span: Span[Self.T, _] = self.items`), or handing a place to a
+  sibling's view parameter, now reuses the template's checked facts; it used
+  to be checked again as a clone per instance.
+
 - A method calling a generic module function with explicit type arguments
   (`self.data = unsafe_alloc[Self.T](n)`), and a construction handed an
   untracked pointer field, now reuse the template's checked facts, so the

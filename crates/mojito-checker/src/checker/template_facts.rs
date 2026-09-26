@@ -2414,7 +2414,8 @@ impl Checker {
     /// it names — another member of the family, or a clone of the same one.
     /// A type that reaches the target by no conversion refuses, and so does
     /// one whose constructor consumes its source, which would record an
-    /// implicit copy the template did not. A conversion that kept no target
+    /// implicit copy the template did not, or borrows it otherwise than the
+    /// template's. A conversion that kept no target
     /// type is the nominal-string wrap, whose literal constructor is the same
     /// under every instance.
     ///
@@ -2447,10 +2448,13 @@ impl Checker {
             .map_err(|_| "the implicit conversion is ambiguous for the instance")?
             .ok_or("the instance's type reaches the target by no implicit conversion")?;
         // Each of these makes the recorder do more than fill the four tables:
-        // a consuming constructor copies its source, a raising one records a
-        // call effect, and a view one materializes a borrow owner and records
-        // an adjustment with no recipe.
-        if selected.consumes_source || selected.error.is_some() || selected.source_borrow.is_some()
+        // a consuming constructor copies its source, and a raising one records
+        // a call effect. A view one borrows its source, as the template's did
+        // when both borrow alike: a place is borrowed where it stands, and a
+        // temporary's materialized owner is an adjustment with no recipe.
+        if selected.consumes_source
+            || selected.error.is_some()
+            || selected.source_borrow != conversion.source_borrow
         {
             return Err("an implicit conversion consumes, raises, or borrows for the instance");
         }
@@ -8205,9 +8209,9 @@ impl BodyShape<'_> {
 
     /// Whether an annotated `var`'s value reaches the declared type either
     /// as it is or through a recorded conversion, which an instance selects
-    /// again at its own types. Any other relation the check accepted — an
-    /// annotation left to inference, a view borrowing its source — is a
-    /// fact no derivation carries.
+    /// again at its own types. A view conversion to an annotation whose
+    /// origin is left to inference (`Span[Self.T, _]`) is one: it borrows
+    /// the source place as the template's did.
     fn annotated_binding(&self, value: &Expr) -> bool {
         let id = self.occurrence(value);
         self.facts.is_none_or(|facts| {

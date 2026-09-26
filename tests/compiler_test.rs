@@ -2427,21 +2427,20 @@ fn template_method_consuming_conversion_keeps_the_clone_check() {
 }
 
 #[test]
-fn template_method_view_binding_keeps_the_clone_check() {
-    // An annotation left to inference takes the value's own type, and a
-    // view converted from its source borrows it: neither is a relation an
-    // instance derives, so the body stays outside the class and still runs.
-    let source = "struct Holder[T: Copyable & Deinitable](Deinitable, Movable):\n    var items: List[Self.T]\n\n    def __init__(out self, var item: Self.T):\n        self.items = List[Self.T]()\n        self.items.append(item^)\n\n    def viewed(self) -> Int:\n        var span: Span[Self.T, _] = self.items\n        return len(span)\n\ndef main():\n    var number = Holder[Int](5)\n    print(number.viewed())\n";
-    let compiler = Compiler::default();
-    let program = compile_entry(&compiler, source);
-    let stats = program.template_stats();
-    assert_eq!(compiler.execute(&program).expect("execute").output, "1\n");
-    assert!(
-        stats.refused.iter().any(|(name, reason)| {
-            name.starts_with("Holder.viewed$") && reason == "its template is not certified"
-        }),
-        "the view binding leaves the body outside the class: {:?}",
-        stats.refused
+fn template_method_view_bindings_derive() {
+    // An annotation left to inference takes the value's own type, and the
+    // view conversion, at a binding or at a sibling's argument, borrows its
+    // source place as the template's did: each instance re-selects the
+    // conversion and keeps the borrow, read or mutable.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_view_binding.mojo"),
+        "2 2\n2 2\n3 3\n3 3\n",
+        &[
+            ("Shelf.viewed", 2),
+            ("Shelf.counted", 2),
+            ("Shelf.grown", 2),
+            ("Shelf.measured", 2),
+        ],
     );
 }
 

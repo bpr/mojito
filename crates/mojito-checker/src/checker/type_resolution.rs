@@ -1064,7 +1064,8 @@ impl Checker {
     /// declared `Origin[mut=True]` rejects a provably immutable argument, and
     /// the accepted argument is marked erased — it is a compile-time fact, so
     /// at a constructor expression MIR must not emit it as a runtime value
-    /// register.
+    /// register. A storage annotation is never lowered, so its arguments
+    /// record nothing.
     fn accept_origin_argument(
         &self,
         struct_name: &str,
@@ -1095,7 +1096,9 @@ impl Checker {
         while let mojito_ast::ast::ParamArg::Named { value: inner, .. } = value {
             value = inner;
         }
-        if let mojito_ast::ast::ParamArg::Value(expression) = value {
+        if self.strict_storage_annotation.get() == super::StorageStrictness::Off
+            && let mojito_ast::ast::ParamArg::Value(expression) = value
+        {
             self.operation_adjustments.borrow_mut().insert(
                 expression.source_span(),
                 mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument,
