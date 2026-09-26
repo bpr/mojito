@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method of a generic struct that calls a static method of a non-generic
+  struct on its type — `Color.pick(n)`, or a leading-dot `.of(n)` the
+  expected type resolves — now derives its instances from the checked
+  template, which carries the leading-dot base across. Such bodies used to
+  keep the clone check because the method grammar admitted no static call
+  and the contextual base had no derivation recipe.
 - A method of a generic struct that declares and calls a nested `def` now
   derives its instances from the checked template: the nested signature is
   closed scalars, keyed by its statement, and each `imm`, `mut`, or `var`

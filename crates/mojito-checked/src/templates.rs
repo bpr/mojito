@@ -856,6 +856,11 @@ impl MethodFeatures {
     /// instance changes, and its captures are rooted at bindings an instance
     /// maps to its own.
     pub const NESTED_DEFS: Self = Self(1 << 33);
+    /// A static method of a non-generic struct called on its type, spelled
+    /// (`Color.of(n)`) or through a leading-dot root the expected type
+    /// resolves (`.of(n)`), passing closed scalars: the struct, the member
+    /// selected, and the resolved base are the same under every instance.
+    pub const STATIC_CALLS: Self = Self(1 << 34);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
@@ -1431,6 +1436,11 @@ pub struct CheckedBodyFacts {
     /// construction. Only a closed construction records one, and its
     /// dimensions are the same in every instance.
     pub simd_constructions: Vec<(OccurrenceId, (mojito_ast::ast::Dtype, i64))>,
+    /// The base type name each leading-dot contextual root (`.red()`)
+    /// resolved to, at the root. It is the head of the expected struct type,
+    /// which no substitution changes: an expected type that is a bare
+    /// parameter refuses the form, so an instance inherits the entry.
+    pub contextual_bases: Vec<(OccurrenceId, String)>,
     /// The compile-time parameters the selected method declares, at each
     /// call spelled `receiver.method[…](…)`. They are the callee's
     /// declaration, and a nominal receiver's method is selected alike under
@@ -1648,6 +1658,7 @@ impl CheckedBodyFacts {
             copyable_reference_result_reads,
             subscript_descriptors,
             simd_constructions,
+            contextual_bases,
             parameterized_method_calls,
             view_result_interiors,
             iterations,
@@ -1830,6 +1841,7 @@ impl CheckedBodyFacts {
             copyable_reference_result_reads: flagged(&self.copyable_reference_result_reads),
             subscript_descriptors: at(&self.subscript_descriptors, occurrences, folded),
             simd_constructions: at(&self.simd_constructions, occurrences, folded),
+            contextual_bases: at(&self.contextual_bases, occurrences, folded),
             parameterized_method_calls: at(&self.parameterized_method_calls, occurrences, folded),
             view_result_interiors: at(&self.view_result_interiors, occurrences, folded),
             iterations: at(&self.iterations, occurrences, folded),
@@ -1930,6 +1942,7 @@ impl CheckedBodyFacts {
             + self.copyable_reference_result_reads.len()
             + self.subscript_descriptors.len()
             + self.simd_constructions.len()
+            + self.contextual_bases.len()
             + self.parameterized_method_calls.len()
             + self.view_result_interiors.len()
             + self.iterations.len()

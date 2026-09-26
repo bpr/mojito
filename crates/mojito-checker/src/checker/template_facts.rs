@@ -2542,6 +2542,7 @@ impl Checker {
             binder_constructions: RefCell::new(Vec::new()),
             callable_params: Vec::new(),
             callable_calls: RefCell::new(Vec::new()),
+            static_calls: RefCell::new(Vec::new()),
             repr_calls: RefCell::new(Vec::new()),
         };
         if !shape.block(body)
@@ -2813,6 +2814,10 @@ impl Checker {
     ///   them again under its own statement and bindings
     ///   (`install_nested_defs`); a call of it selects the declaration the
     ///   body introduces, under every instance.
+    /// - `STATIC_CALLS`: see [`BodyShape::static_call`]. A static of a
+    ///   non-generic struct records at most its overload member and, behind
+    ///   a leading-dot root, the expected type's head, neither of which an
+    ///   instance changes, so it inherits both.
     ///
     /// Any other handle, borrowed receiver, reference result, interior
     /// reference, or copyable read in the body refuses it
@@ -2988,6 +2993,7 @@ impl Checker {
                 .map(|parameter| parameter.name.as_str())
                 .collect(),
             callable_calls: RefCell::new(Vec::new()),
+            static_calls: RefCell::new(Vec::new()),
             packs: Vec::new(),
             loop_vars: RefCell::new(Vec::new()),
             values: decls
@@ -3794,6 +3800,7 @@ impl Checker {
             linear_temporaries: keyed(&|span| self.linear_temporaries.borrow().contains(span)),
             subscript_descriptors: values(&occurrences, &self.subscript_descriptors.borrow()),
             simd_constructions: values(&occurrences, &self.simd_constructions.borrow()),
+            contextual_bases: values(&occurrences, &self.contextual_bases.borrow()),
             parameterized_method_calls: values(
                 &occurrences,
                 &self.parameterized_method_calls.borrow(),
@@ -4202,6 +4209,11 @@ impl Checker {
             self.simd_constructions
                 .borrow_mut()
                 .insert(span(id)?, *dimensions);
+        }
+        for (id, base) in &facts.contextual_bases {
+            self.contextual_bases
+                .borrow_mut()
+                .insert(span(id)?, base.clone());
         }
         for (id, decls) in &facts.parameterized_method_calls {
             self.parameterized_method_calls
@@ -4849,8 +4861,7 @@ const fn derivable_table(table: FactTable) -> bool {
         | FactTable::ComprehensionBindings
         | FactTable::WithDesugars
         | FactTable::CallTransfers => true,
-        FactTable::DeclarationCaptures => true,
-        FactTable::ContextualBases => false,
+        FactTable::DeclarationCaptures | FactTable::ContextualBases => true,
     }
 }
 
@@ -5651,6 +5662,7 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
     let callable_calls = shape.callable_calls.borrow();
     let direct_calls = method_direct_calls(facts);
     let nested_calls = nested_def_calls(facts);
+    let static_calls = shape.static_calls.borrow();
     if !direct_calls.is_empty() {
         shape.holds(MethodFeatures::DIRECT_CALLS);
     }
@@ -5660,6 +5672,7 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
             || callable_calls.contains(id)
             || direct_calls.iter().any(|(call, _)| call == id)
             || nested_calls.iter().any(|(call, _)| call == id)
+            || static_calls.iter().any(|(call, _)| call == id)
     };
     // A call through a bound reads the summaries of every conformer's
     // method of that name, one key per conformer (`Struct.method`, or the
@@ -5695,6 +5708,7 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
             targets.contains(&callee.as_str())
                 || direct_calls.iter().any(|(_, direct)| direct == callee)
                 || nested_calls.iter().any(|(_, nested)| nested == callee)
+                || static_calls.iter().any(|(_, member)| member == callee)
                 || conformer_copy(callee)
                 || shape.callable_params.contains(&callee.as_str())
         })
@@ -6387,6 +6401,9 @@ struct BodyShape<'a> {
     /// The `repr(value)` calls admitted, whose argument an instance proves
     /// `Writable` at its own type.
     repr_calls: RefCell<Vec<OccurrenceId>>,
+    /// The static calls admitted, each with the `Struct.method` whose
+    /// summaries it reads.
+    static_calls: RefCell<Vec<(OccurrenceId, String)>>,
     /// The variadic parameters collecting a type pack of the declaration's
     /// own, whose elements the body may read by loop index.
     packs: Vec<&'a str>,
@@ -7902,6 +7919,75 @@ impl BodyShape<'_> {
         admitted && self.holds(MethodFeatures::PARAMETERIZED_CALLS)
     }
 
+    /// A static method of a non-generic struct called on its type, passing
+    /// closed scalars: `Color.of(n)`, or `.of(n)` where the expected type
+    /// resolved the leading-dot root to such a struct (`ContextualBases`).
+    ///
+    /// The receiver is a type, so the call records no contract, no call
+    /// parameters, and no application; it records at most the overload
+    /// member the closed arguments ranked, and a contextual root records the
+    /// head of the expected struct type. None of these change per instance:
+    /// the struct declares no parameters, and an expected type that is a
+    /// bare parameter refuses the leading-dot form outright.
+    fn static_call(
+        &self,
+        expr: &Expr,
+        object: &Expr,
+        method: &str,
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> bool {
+        let ExprKind::Identifier(spelled) = &object.kind else {
+            return false;
+        };
+        let contextual = spelled == mojito_ast::ast::CONTEXTUAL_SENTINEL;
+        let base = if contextual {
+            match self.facts {
+                Some(facts) => match fact_at(&facts.contextual_bases, self.occurrence(object)) {
+                    Some(base) => base.as_str(),
+                    None => return false,
+                },
+                None => spelled.as_str(),
+            }
+        } else {
+            spelled.as_str()
+        };
+        let static_member = self
+            .structs
+            .get(base)
+            .filter(|info| info.decls.is_empty())
+            .and_then(|info| info.methods.get(method))
+            .is_some_and(|signatures| signatures.iter().all(|sig| !sig.has_self));
+        let shadowed =
+            self.local_kind(spelled).is_some() || self.params.contains(&spelled.as_str());
+        let id = self.occurrence(expr);
+        let admitted = !self.keyed
+            && !shadowed
+            && (static_member || (contextual && self.facts.is_none()))
+            && kwargs.is_empty()
+            && args
+                .iter()
+                .all(|argument| self.expression(argument) && self.scalar(argument))
+            && self.facts.is_none_or(|facts| {
+                fact_at(&facts.expression_types, id)
+                    .is_some_and(|ty| !mojito_types::types::is_symbolic(ty))
+                    && fact_at(&facts.call_parameters, id).is_none()
+                    && fact_at(&facts.selected_calls, id).is_none()
+                    && fact_at(&facts.generic_instantiations, id).is_none()
+                    && fact_at(&facts.method_instantiations, id).is_none()
+                    && fact_at(&facts.parameterized_method_calls, id).is_none()
+                    && args.iter().all(|argument| {
+                        fact_at(&facts.conversions, self.occurrence(argument)).is_none()
+                    })
+            });
+        if admitted {
+            self.static_calls
+                .borrow_mut()
+                .push((id, format!("{base}.{method}")));
+        }
+        admitted && self.holds(MethodFeatures::STATIC_CALLS)
+    }
+
     /// Whether the call at `expr` recorded a closed contract naming `method`
     /// on the receiver's own struct, and nothing a derivation lacks. A call
     /// that is not trivial is a sibling call, which only a method body holds.
@@ -8223,6 +8309,7 @@ impl BodyShape<'_> {
                 kwargs,
             } => {
                 self.method_call(expr, object, method, args, kwargs)
+                    || self.static_call(expr, object, method, args, kwargs)
                     || self.consuming_call(expr, object, method, args, kwargs)
                     || self.bound_dispatch(expr, object, args, kwargs)
                     || self.bound_builtin(expr, object, method, args, kwargs)
