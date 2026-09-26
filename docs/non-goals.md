@@ -189,3 +189,28 @@ Casting a tracked pointer to an untracked origin at its source's last use
 before the pointer is read.
 
 - Upstream does the same, so this is parity, not a defect.
+
+### A nested callable contract's binders are not told from its enclosing contract's
+
+Every anonymous callable contract declares its binders under the owner
+`$callable` and canonicalizes them to `$contract` slots, which is the
+alpha-equivalence contracts need at depth 0. A contract binder bounded by
+another contract that names the outer binder would collide one level down.
+
+- The pinned Mojo rejects every shape that reaches it (2026-09-26): a runtime
+  `f: def[U: Writable](U, T) -> None` fails with "value cannot be converted
+  from type value '$0' to an instance of '$0'", and the compile-time
+  `f: def[U: Writable](U, T) -> None` parameter with "missing required
+  argument: 'move'".
+- Revisit when the pin accepts a nested generic contract that names an
+  enclosing binder.
+
+### A schema 1.0/1.1 MIR artifact binds by spelling
+
+A binder record in a 1.0 or 1.1 artifact carries only its spelling, so the
+parser gives each spelling one identity (`$mir-1.1:<name>`) and the
+artifact's own uses still find their declaration.
+
+- Nothing else is recorded to recover: a later schema writes `owner`/`slot`.
+- Revisit only if a 1.0/1.1 artifact must be read with two same-spelled
+  binders told apart.

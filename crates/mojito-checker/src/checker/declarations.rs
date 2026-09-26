@@ -3249,8 +3249,6 @@ fn collector_takes_bound_pack(
     }
 }
 
-/// Whether a `return` occurs anywhere below. A nested function's own
-/// `return` counts too, which only defers more to the executable check.
 /// Whether an actual is a caller's whole pack, still a parameter, forwarded
 /// into the callee's collector.
 fn forwards_pack(actual: &Ty) -> bool {
@@ -3263,6 +3261,8 @@ fn binds_pack_itself(bound: &Ty, id: &mojito_types::param_expr::ParamId) -> bool
     matches!(bound, Ty::Param { binder, .. } if binder.id == *id)
 }
 
+/// Whether a `return` occurs anywhere below. A nested function's own
+/// `return` counts too, which only defers more to the executable check.
 fn block_holds_return(body: &[Stmt]) -> bool {
     struct Finder(bool);
     impl mojito_ast::visit::Visitor for Finder {

@@ -1158,13 +1158,12 @@ fn struct_instance_requests(checked: &DiscoveryResult) -> Vec<StructInstanceRequ
 /// origins erase from the runtime ABI, so neither gates replay. A residual
 /// parameter expression is neither: a symbolic value names no instance.
 fn closed_generic_argument(argument: &TyArg) -> bool {
-    static EMPTY: std::sync::OnceLock<std::collections::HashSet<String>> =
-        std::sync::OnceLock::new();
-    let empty = EMPTY.get_or_init(std::collections::HashSet::new);
     match argument {
         TyArg::Ty(ty) => tuple_specialization_type_is_closed(ty),
         TyArg::Val(CtValue::Deferred(_)) | TyArg::Origin(_) => true,
-        TyArg::Val(value) => tuple_specialization_value_is_closed_in(value, empty, empty),
+        TyArg::Val(value) => {
+            tuple_specialization_value_is_closed_in(value, &ClosingBinders::default())
+        }
     }
 }
 
@@ -1246,36 +1245,22 @@ fn closed_public_tuple_elements(ty: &Ty) -> Option<Vec<Ty>> {
 }
 
 fn tuple_specialization_type_is_closed(ty: &Ty) -> bool {
-    tuple_specialization_type_is_closed_in(
-        ty,
-        &std::collections::HashSet::default(),
-        &std::collections::HashSet::default(),
-    )
+    tuple_specialization_type_is_closed_in(ty, &ClosingBinders::default())
 }
 
-fn tuple_specialization_type_is_closed_in(
-    ty: &Ty,
-    type_binders: &std::collections::HashSet<String>,
-    value_binders: &std::collections::HashSet<String>,
-) -> bool {
+fn tuple_specialization_type_is_closed_in(ty: &Ty, binders: &ClosingBinders) -> bool {
     match ty {
         Ty::Infer | Ty::SelfType => false,
-        Ty::Param { binder, .. } => type_binders.contains(binder.name.trim_start_matches('*')),
-        Ty::Assoc { base, .. } => {
-            tuple_specialization_type_is_closed_in(base, type_binders, value_binders)
-        }
+        Ty::Param { binder, .. } => binders.ids.contains(&binder.id),
+        Ty::Assoc { base, .. } => tuple_specialization_type_is_closed_in(base, binders),
         Ty::Dependent(dependent) => {
-            tuple_specialization_ct_expr_is_closed(dependent.expr(), type_binders, value_binders)
+            tuple_specialization_ct_expr_is_closed(dependent.expr(), binders)
         }
         Ty::Struct(_, arguments) => arguments.iter().all(|argument| match argument {
-            TyArg::Ty(ty) => {
-                tuple_specialization_type_is_closed_in(ty, type_binders, value_binders)
-            }
+            TyArg::Ty(ty) => tuple_specialization_type_is_closed_in(ty, binders),
             // Origins erase from the runtime ABI and carry no type/value binder.
             TyArg::Origin(_) => true,
-            TyArg::Val(value) => {
-                tuple_specialization_value_is_closed_in(value, type_binders, value_binders)
-            }
+            TyArg::Val(value) => tuple_specialization_value_is_closed_in(value, binders),
         }),
         Ty::Func {
             params,
@@ -1285,18 +1270,19 @@ fn tuple_specialization_type_is_closed_in(
             error,
             ..
         } => {
-            params.iter().all(|parameter| {
-                tuple_specialization_type_is_closed_in(parameter, type_binders, value_binders)
-            }) && tuple_specialization_type_is_closed_in(ret, type_binders, value_binders)
-                && variadic.as_deref().is_none_or(|ty| {
-                    tuple_specialization_type_is_closed_in(ty, type_binders, value_binders)
-                })
-                && kw_variadic.as_deref().is_none_or(|ty| {
-                    tuple_specialization_type_is_closed_in(ty, type_binders, value_binders)
-                })
-                && error.as_deref().is_none_or(|ty| {
-                    tuple_specialization_type_is_closed_in(ty, type_binders, value_binders)
-                })
+            params
+                .iter()
+                .all(|parameter| tuple_specialization_type_is_closed_in(parameter, binders))
+                && tuple_specialization_type_is_closed_in(ret, binders)
+                && variadic
+                    .as_deref()
+                    .is_none_or(|ty| tuple_specialization_type_is_closed_in(ty, binders))
+                && kw_variadic
+                    .as_deref()
+                    .is_none_or(|ty| tuple_specialization_type_is_closed_in(ty, binders))
+                && error
+                    .as_deref()
+                    .is_none_or(|ty| tuple_specialization_type_is_closed_in(ty, binders))
         }
         Ty::GenericFunc {
             decls,
@@ -1307,44 +1293,31 @@ fn tuple_specialization_type_is_closed_in(
             error,
             ..
         } => {
-            let mut nested_types = type_binders.clone();
-            let mut nested_values = value_binders.clone();
-            for declaration in decls {
-                match declaration {
-                    crate::types::ParamDecl::Type { name, .. } => {
-                        nested_types.insert(name.trim_start_matches('*').to_string());
-                    }
-                    crate::types::ParamDecl::Value { name, .. } => {
-                        nested_values.insert(name.trim_start_matches('*').to_string());
-                    }
-                }
-            }
-            tuple_specialization_decls_are_closed(decls, &nested_types, &nested_values)
-                && params.iter().all(|parameter| {
-                    tuple_specialization_type_is_closed_in(parameter, &nested_types, &nested_values)
-                })
-                && tuple_specialization_type_is_closed_in(ret, &nested_types, &nested_values)
-                && variadic.as_deref().is_none_or(|ty| {
-                    tuple_specialization_type_is_closed_in(ty, &nested_types, &nested_values)
-                })
-                && kw_variadic.as_deref().is_none_or(|ty| {
-                    tuple_specialization_type_is_closed_in(ty, &nested_types, &nested_values)
-                })
-                && error.as_deref().is_none_or(|ty| {
-                    tuple_specialization_type_is_closed_in(ty, &nested_types, &nested_values)
-                })
+            let nested = binders.nested(decls);
+            tuple_specialization_decls_are_closed(decls, &nested)
+                && params
+                    .iter()
+                    .all(|parameter| tuple_specialization_type_is_closed_in(parameter, &nested))
+                && tuple_specialization_type_is_closed_in(ret, &nested)
+                && variadic
+                    .as_deref()
+                    .is_none_or(|ty| tuple_specialization_type_is_closed_in(ty, &nested))
+                && kw_variadic
+                    .as_deref()
+                    .is_none_or(|ty| tuple_specialization_type_is_closed_in(ty, &nested))
+                && error
+                    .as_deref()
+                    .is_none_or(|ty| tuple_specialization_type_is_closed_in(ty, &nested))
         }
         Ty::Overload(types) | Ty::Tuple(types) | Ty::RuntimePack(types) | Ty::Variant(types) => {
             types
                 .iter()
-                .all(|ty| tuple_specialization_type_is_closed_in(ty, type_binders, value_binders))
+                .all(|ty| tuple_specialization_type_is_closed_in(ty, binders))
         }
         Ty::ComptimeList(element) | Ty::VariadicPack(element) | Ty::Pointer { element, .. } => {
-            tuple_specialization_type_is_closed_in(element, type_binders, value_binders)
+            tuple_specialization_type_is_closed_in(element, binders)
         }
-        Ty::Ref(reference) => {
-            tuple_specialization_type_is_closed_in(&reference.referent, type_binders, value_binders)
-        }
+        Ty::Ref(reference) => tuple_specialization_type_is_closed_in(&reference.referent, binders),
         Ty::Simd { dtype, width } => !dtype.is_expr() && !width.is_expr(),
         Ty::Int
         | Ty::UInt
@@ -1362,31 +1335,28 @@ fn tuple_specialization_type_is_closed_in(
 
 fn tuple_specialization_value_is_closed_in(
     value: &crate::ct::CtValue,
-    type_binders: &std::collections::HashSet<String>,
-    value_binders: &std::collections::HashSet<String>,
+    binders: &ClosingBinders,
 ) -> bool {
     use crate::ct::CtValue;
     match value {
-        CtValue::Expr(expression) => {
-            tuple_specialization_ct_expr_is_closed(expression, type_binders, value_binders)
-        }
-        CtValue::Deferred(name) => value_binders.contains(name.trim_start_matches('*')),
+        CtValue::Expr(expression) => tuple_specialization_ct_expr_is_closed(expression, binders),
+        CtValue::Deferred(name) => binders.names_value(name),
         CtValue::Tuple(values)
         | CtValue::List(values)
         | CtValue::Set {
             elements: values, ..
-        } => values.iter().all(|value| {
-            tuple_specialization_value_is_closed_in(value, type_binders, value_binders)
-        }),
+        } => values
+            .iter()
+            .all(|value| tuple_specialization_value_is_closed_in(value, binders)),
         CtValue::Dict { entries, .. } => entries.iter().all(|(key, value)| {
-            tuple_specialization_value_is_closed_in(key, type_binders, value_binders)
-                && tuple_specialization_value_is_closed_in(value, type_binders, value_binders)
+            tuple_specialization_value_is_closed_in(key, binders)
+                && tuple_specialization_value_is_closed_in(value, binders)
         }),
-        CtValue::Struct { fields, .. } => fields.iter().all(|(_, value)| {
-            tuple_specialization_value_is_closed_in(value, type_binders, value_binders)
-        }),
+        CtValue::Struct { fields, .. } => fields
+            .iter()
+            .all(|(_, value)| tuple_specialization_value_is_closed_in(value, binders)),
         CtValue::Type(ty) | CtValue::Reflected(ty) => {
-            tuple_specialization_type_is_closed_in(ty, type_binders, value_binders)
+            tuple_specialization_type_is_closed_in(ty, binders)
         }
         CtValue::Int(_)
         | CtValue::UInt(_)
@@ -1402,8 +1372,7 @@ fn tuple_specialization_value_is_closed_in(
 
 fn tuple_specialization_decls_are_closed(
     declarations: &[crate::types::ParamDecl],
-    type_binders: &std::collections::HashSet<String>,
-    value_binders: &std::collections::HashSet<String>,
+    binders: &ClosingBinders,
 ) -> bool {
     declarations.iter().all(|declaration| match declaration {
         crate::types::ParamDecl::Type {
@@ -1412,13 +1381,15 @@ fn tuple_specialization_decls_are_closed(
             constraints,
             ..
         } => {
-            callable_bound.as_deref().is_none_or(|ty| {
-                tuple_specialization_type_is_closed_in(ty, type_binders, value_binders)
-            }) && default.as_deref().is_none_or(|ty| {
-                tuple_specialization_type_is_closed_in(ty, type_binders, value_binders)
-            }) && constraints.iter().all(|constraint| {
-                tuple_specialization_constraint_is_closed(constraint, type_binders, value_binders)
-            })
+            callable_bound
+                .as_deref()
+                .is_none_or(|ty| tuple_specialization_type_is_closed_in(ty, binders))
+                && default
+                    .as_deref()
+                    .is_none_or(|ty| tuple_specialization_type_is_closed_in(ty, binders))
+                && constraints.iter().all(|constraint| {
+                    tuple_specialization_constraint_is_closed(constraint, binders)
+                })
         }
         crate::types::ParamDecl::Value {
             ty,
@@ -1427,23 +1398,15 @@ fn tuple_specialization_decls_are_closed(
             constraints,
             ..
         } => {
-            tuple_specialization_type_is_closed_in(ty, type_binders, value_binders)
+            tuple_specialization_type_is_closed_in(ty, binders)
                 && default.as_ref().is_none_or(|expression| {
-                    tuple_specialization_ct_expr_is_closed(expression, type_binders, value_binders)
+                    tuple_specialization_ct_expr_is_closed(expression, binders)
                 })
                 && callable_default.as_ref().is_none_or(|default| {
-                    tuple_specialization_callable_default_is_closed(
-                        default,
-                        type_binders,
-                        value_binders,
-                    )
+                    tuple_specialization_callable_default_is_closed(default, binders)
                 })
                 && constraints.iter().all(|constraint| {
-                    tuple_specialization_constraint_is_closed(
-                        constraint,
-                        type_binders,
-                        value_binders,
-                    )
+                    tuple_specialization_constraint_is_closed(constraint, binders)
                 })
         }
     })
@@ -1451,22 +1414,15 @@ fn tuple_specialization_decls_are_closed(
 
 fn tuple_specialization_ct_expr_is_closed(
     expression: &crate::param_expr::ParamExpr,
-    type_binders: &std::collections::HashSet<String>,
-    value_binders: &std::collections::HashSet<String>,
+    binders: &ClosingBinders,
 ) -> bool {
     use crate::param_expr::ParamKind;
     let mut closed = true;
     expression.visit(&mut |node| {
         closed &= match node.kind() {
-            ParamKind::Constant(value) => {
-                tuple_specialization_value_is_closed_in(value, type_binders, value_binders)
-            }
-            ParamKind::DeclRef(reference) => {
-                value_binders.contains(reference.name.trim_start_matches('*'))
-            }
-            ParamKind::PackQuery { pack, .. } => {
-                type_binders.contains(pack.trim_start_matches('*'))
-            }
+            ParamKind::Constant(value) => tuple_specialization_value_is_closed_in(value, binders),
+            ParamKind::DeclRef(reference) => binders.ids.contains(&reference.id),
+            ParamKind::PackQuery { pack, .. } => binders.names_type(pack),
             // An element of a pack that is still a parameter, or a reflection
             // of a symbolic type, names no instance.
             ParamKind::Hole { .. } | ParamKind::ListGet { .. } | ParamKind::Reflect { .. } => false,
@@ -1479,7 +1435,7 @@ fn tuple_specialization_ct_expr_is_closed(
             ParamKind::TypeShape(_) | ParamKind::Select { .. } => node
                 .embedded_types()
                 .into_iter()
-                .all(|ty| tuple_specialization_type_is_closed_in(ty, type_binders, value_binders)),
+                .all(|ty| tuple_specialization_type_is_closed_in(ty, binders)),
         };
     });
     closed
@@ -1487,58 +1443,42 @@ fn tuple_specialization_ct_expr_is_closed(
 
 fn tuple_specialization_callable_default_is_closed(
     default: &crate::types::CallableDefault,
-    type_binders: &std::collections::HashSet<String>,
-    value_binders: &std::collections::HashSet<String>,
+    binders: &ClosingBinders,
 ) -> bool {
     use crate::types::CallableDefault;
     match default {
         CallableDefault::Symbol(_) => true,
-        CallableDefault::Parameter(name) => value_binders.contains(name.trim_start_matches('*')),
+        CallableDefault::Parameter(name) => binders.names_value(name),
         CallableDefault::If {
             condition,
             then_value,
             else_value,
         } => {
-            tuple_specialization_ct_expr_is_closed(condition, type_binders, value_binders)
-                && tuple_specialization_callable_default_is_closed(
-                    then_value,
-                    type_binders,
-                    value_binders,
-                )
-                && tuple_specialization_callable_default_is_closed(
-                    else_value,
-                    type_binders,
-                    value_binders,
-                )
+            tuple_specialization_ct_expr_is_closed(condition, binders)
+                && tuple_specialization_callable_default_is_closed(then_value, binders)
+                && tuple_specialization_callable_default_is_closed(else_value, binders)
         }
     }
 }
 
 fn tuple_specialization_constraint_is_closed(
     constraint: &crate::types::GenericConstraint,
-    type_binders: &std::collections::HashSet<String>,
-    value_binders: &std::collections::HashSet<String>,
+    binders: &ClosingBinders,
 ) -> bool {
     use crate::types::GenericConstraint;
     match constraint {
         GenericConstraint::WithMessage(condition, _) => {
-            tuple_specialization_constraint_is_closed(condition, type_binders, value_binders)
+            tuple_specialization_constraint_is_closed(condition, binders)
         }
         GenericConstraint::Conforms { param, .. }
         | GenericConstraint::ConformsPack { param, .. }
-        | GenericConstraint::PackPredicate { param, .. } => {
-            type_binders.contains(param.trim_start_matches('*'))
-        }
+        | GenericConstraint::PackPredicate { param, .. } => binders.names_type(param),
         GenericConstraint::PackContains { param, element } => {
-            type_binders.contains(param.trim_start_matches('*'))
-                && tuple_specialization_constraint_operand_is_closed(
-                    element,
-                    type_binders,
-                    value_binders,
-                )
+            binders.names_type(param)
+                && tuple_specialization_constraint_operand_is_closed(element, binders)
         }
         GenericConstraint::Trivial(_, operand) => {
-            tuple_specialization_constraint_operand_is_closed(operand, type_binders, value_binders)
+            tuple_specialization_constraint_operand_is_closed(operand, binders)
         }
         GenericConstraint::Eq(left, right)
         | GenericConstraint::Ne(left, right)
@@ -1546,46 +1486,71 @@ fn tuple_specialization_constraint_is_closed(
         | GenericConstraint::Le(left, right)
         | GenericConstraint::Gt(left, right)
         | GenericConstraint::Ge(left, right) => {
-            tuple_specialization_constraint_operand_is_closed(left, type_binders, value_binders)
-                && tuple_specialization_constraint_operand_is_closed(
-                    right,
-                    type_binders,
-                    value_binders,
-                )
+            tuple_specialization_constraint_operand_is_closed(left, binders)
+                && tuple_specialization_constraint_operand_is_closed(right, binders)
         }
         GenericConstraint::And(left, right) | GenericConstraint::Or(left, right) => {
-            tuple_specialization_constraint_is_closed(left, type_binders, value_binders)
-                && tuple_specialization_constraint_is_closed(right, type_binders, value_binders)
+            tuple_specialization_constraint_is_closed(left, binders)
+                && tuple_specialization_constraint_is_closed(right, binders)
         }
-        GenericConstraint::Not(value) => {
-            tuple_specialization_constraint_is_closed(value, type_binders, value_binders)
-        }
+        GenericConstraint::Not(value) => tuple_specialization_constraint_is_closed(value, binders),
         GenericConstraint::Bool(_) => true,
     }
 }
 
 fn tuple_specialization_constraint_operand_is_closed(
     operand: &crate::types::ConstraintOperand,
-    type_binders: &std::collections::HashSet<String>,
-    value_binders: &std::collections::HashSet<String>,
+    binders: &ClosingBinders,
 ) -> bool {
     match operand {
         crate::types::ConstraintOperand::Param(name) => {
-            type_binders.contains(name.trim_start_matches('*'))
-                || value_binders.contains(name.trim_start_matches('*'))
+            binders.names_type(name) || binders.names_value(name)
         }
         crate::types::ConstraintOperand::Value(value) => {
-            tuple_specialization_value_is_closed_in(value, type_binders, value_binders)
+            tuple_specialization_value_is_closed_in(value, binders)
         }
         crate::types::ConstraintOperand::Type(ty) => {
-            tuple_specialization_type_is_closed_in(ty, type_binders, value_binders)
+            tuple_specialization_type_is_closed_in(ty, binders)
         }
-        crate::types::ConstraintOperand::PackLength(name) => {
-            type_binders.contains(name.trim_start_matches('*'))
-        }
+        crate::types::ConstraintOperand::PackLength(name) => binders.names_type(name),
         crate::types::ConstraintOperand::Expr(expression) => {
-            tuple_specialization_ct_expr_is_closed(expression, type_binders, value_binders)
+            tuple_specialization_ct_expr_is_closed(expression, binders)
         }
+    }
+}
+
+/// The binders an enclosing callable contract declares, which a Tuple
+/// element type may mention and still be closed. A type parameter or a
+/// value reference names its binder by identity; a `where` operand, a
+/// deferred slot, and a callable default carry only a spelling.
+#[derive(Default, Clone)]
+struct ClosingBinders {
+    ids: std::collections::HashSet<crate::param_expr::ParamId>,
+    types: std::collections::HashSet<String>,
+    values: std::collections::HashSet<String>,
+}
+
+impl ClosingBinders {
+    /// These binders with a nested contract's own `decls` added.
+    fn nested(&self, decls: &[crate::types::ParamDecl]) -> Self {
+        let mut nested = self.clone();
+        for declaration in decls {
+            nested.ids.insert(declaration.id().clone());
+            let name = declaration.name().trim_start_matches('*').to_string();
+            match declaration {
+                crate::types::ParamDecl::Type { .. } => nested.types.insert(name),
+                crate::types::ParamDecl::Value { .. } => nested.values.insert(name),
+            };
+        }
+        nested
+    }
+
+    fn names_type(&self, name: &str) -> bool {
+        self.types.contains(name.trim_start_matches('*'))
+    }
+
+    fn names_value(&self, name: &str) -> bool {
+        self.values.contains(name.trim_start_matches('*'))
     }
 }
 

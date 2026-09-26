@@ -10,6 +10,7 @@ use mojito_types::types::TransferSet;
 impl Checker {
     pub fn check_program(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
         let phase = timing::span("declarations.tuple_prepass");
+        self.overload_sets = mojito_symbol::symbol::OverloadSets::scan(stmts);
         self.declared_structs
             .extend(stmts.iter().filter_map(|statement| match &statement.kind {
                 StmtKind::Struct { name, .. } => Some(name.clone()),
@@ -2200,7 +2201,14 @@ impl Checker {
         let kw_only = effective_keyword_only_index(params, *keyword_only, variadic_idx);
         let required = required_mask(&caller_regular, kw_only)?;
         self.validate_origin_signature(type_params, params, None)?;
-        let mut decls = self.classify_params(name, type_params)?;
+        // Two overloads of one name are two declarations, so each owns its
+        // binders under the symbol it lowers to.
+        let owner = if self.function_bases.is_empty() {
+            mojito_symbol::symbol::lowered_def_name(name, type_params, params, &self.overload_sets)
+        } else {
+            name.clone()
+        };
+        let mut decls = self.classify_params(&owner, type_params)?;
         let mut function_assumptions = HashSet::new();
         let mut erased_origin_constraints = Vec::new();
         // An arithmetic `where` operand names the declaration's own value

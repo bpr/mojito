@@ -713,7 +713,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `dtype_keyed_declaration`) that an overloaded name admits one declaration at
   a time, so one family may hold two classes, or two type packs, and
   `Elab::family_declaration` picks the declaration a request selected by its
-  parameter names, parameter types, and `symbol::VariadicKey`; `template_stub` in
+  parameter names, parameter types, and `symbol::VariadicKey`, and
+  `Elab::forwarded_family_target` (`comptime/mono.rs`) the one declaration a
+  clone's whole-pack forward to a sibling binds; `template_stub` in
   `comptime/specialize.rs` stands in for either deferred template;
   `Mono::retain_abstract` records each abstract reference and
   `Mono::record_method_edge` each by-name method call from an abstract body,
@@ -801,7 +803,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `crates/mojito-symbol/src/symbol.rs` owns the hasher leaf clone name
   (`simd_update_clone_name`) every backend's `__hash__` leaf dispatch
   computes, and the value-specialization demangler
-  (`demangle_specialization`, `unqualified_instance_name`) behind
+  (`demangle_specialization`, which rebuilds every key but a type or
+  reflected one, and `unqualified_instance_name`) behind
   `_unqualified_type_name`'s spelling of a minted clone.
 - `crates/mojito-symbol/src/symbol.rs` also owns the string identities
   (`is_stdlib_string_struct`/`is_stdlib_string_span_struct`, re-exported from

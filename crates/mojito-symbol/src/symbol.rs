@@ -26,6 +26,7 @@ use mojito_ast::ast::{
     ArgConvention, Expr, ExprKind, FnParam, Method, ParamArg, ParamKind, Stmt, StmtKind, Type,
     TypeParam,
 };
+use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_types::ct::{CtLane, CtValue};
 use mojito_types::types::{
     ParamDecl, Ty, TyArg, canonical_simd_ty, contains_string_literal, default_literal,
@@ -1917,8 +1918,8 @@ pub fn unqualified_instance_name(ty: &Ty) -> String {
 /// The inverse of [`mangle`] for a self-delimiting value suffix.
 ///
 /// The template name and the baked values, or `None` when the symbol carries
-/// no specialization suffix or one of the text-only codes (a type spelling
-/// cannot be rebuilt into a `Ty`). [`specialization_template`] answers for
+/// no specialization suffix or a type or reflected key (a type spelling
+/// cannot be rebuilt into a `Ty` here). [`specialization_template`] answers for
 /// those too, when the name alone is what is wanted.
 ///
 /// A module-qualified template (`__module$$ahash$AHasher$v…`) keeps its
@@ -1979,8 +1980,8 @@ fn decode_specialization_suffix(suffix: &str) -> Option<Vec<Option<CtValue>>> {
 /// its terminator.
 ///
 /// The value is `None` where the encoding is well formed but names something
-/// this crate cannot rebuild: a text-only code renders a `Ty` or a literal
-/// spelling, and no parser here reads one back. A container holding such a
+/// this crate cannot rebuild: a type or reflected key renders a `Ty`, and no
+/// parser here reads one back. A container holding such a
 /// value is `None` too, and still reports where it ends — which is all
 /// [`specialization_template`] needs.
 fn decode_specialization_value(text: &str, position: usize) -> Option<(Option<CtValue>, usize)> {
@@ -2018,15 +2019,22 @@ fn decode_specialization_value(text: &str, position: usize) -> Option<(Option<Ct
                 next,
             )
         }
-        // The text-only codes, all `{code}{length}:{spelling}`: `mangle`
-        // renders a `Ty` or a literal here, so the walk reports where the
-        // value ends and leaves rebuilding to a phase that can parse one.
+        // The length-prefixed codes, all `{code}{length}:{spelling}`. A
+        // string or a literal spelling reads back exactly; a type or a
+        // reflected type renders a `Ty`, so the walk reports where the value
+        // ends and leaves rebuilding to a phase that can parse one.
         b'y' | b'r' | b'I' | b'F' | b's' => {
             let (digits, after) = until(b':')?;
             let length: usize = digits.parse().ok()?;
             let end = after.checked_add(length)?;
-            text.get(after..end)?;
-            (None, end)
+            let spelling = text.get(after..end)?;
+            let value = match code {
+                b's' => Some(CtValue::Str(spelling.to_string())),
+                b'I' => IntLiteral::parse_radix(spelling, 10).map(CtValue::IntLiteral),
+                b'F' => FloatLiteral::parse_exact(spelling).map(CtValue::FloatLiteral),
+                _ => None,
+            };
+            (value, end)
         }
         b'v' => {
             let (dtype, after_dtype) = until(b':')?;

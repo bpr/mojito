@@ -585,6 +585,30 @@ fn a_template_name_is_recovered_from_a_key_whose_values_are_text_only() {
     );
     assert_eq!(specialization_template(&value_keyed), Some("Holder.take"));
 
+    // A string or a literal key reads back exactly.
+    let int_literal = mojito::literal::IntLiteral::from(-7_i64);
+    let float_literal = mojito::literal::FloatLiteral::parse_exact("157/50").expect("exact");
+    let literal_keyed = mangle(
+        "Named",
+        &[
+            CtValue::Str("a:b$c".into()),
+            CtValue::IntLiteral(int_literal.clone()),
+            CtValue::FloatLiteral(float_literal.clone()),
+        ],
+    )
+    .expect("a constant key");
+    assert_eq!(
+        demangle_specialization(&literal_keyed),
+        Some((
+            "Named",
+            vec![
+                CtValue::Str("a:b$c".into()),
+                CtValue::IntLiteral(int_literal),
+                CtValue::FloatLiteral(float_literal),
+            ]
+        ))
+    );
+
     // A type key renders a `Ty` no parser here reads back, so only the
     // template name is recoverable — and a binder belongs to the template.
     let type_keyed = mangle("List.__hash__", &[CtValue::Type(Box::new(mojito::Ty::Int))])

@@ -2659,6 +2659,7 @@ fn source_type_from_ty(ty: &Ty) -> Option<Type> {
 /// The concrete call-site information used to select one function-template
 /// specialization. Nested pack forwarding supplies its already-known element
 /// types; ordinary calls leave that field empty and infer from expressions.
+#[derive(Clone, Copy)]
 struct SpecRequest<'a> {
     param_args: &'a [ParamArg],
     call_args: &'a [Expr],

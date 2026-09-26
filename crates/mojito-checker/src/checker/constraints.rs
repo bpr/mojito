@@ -585,8 +585,8 @@ impl Checker {
         let Some(Ty::Struct(struct_name, _)) = &self.self_ty else {
             return false;
         };
-        mojito_symbol::symbol::demangle_specialization(struct_name)
-            .and_then(|(template, _)| self.structs.get(template))
+        mojito_symbol::symbol::specialization_template(struct_name)
+            .and_then(|template| self.structs.get(template))
             .is_some_and(|info| declares(&info.decls))
     }
 

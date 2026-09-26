@@ -482,6 +482,9 @@ pub struct Checker {
     /// checking. Concrete Tuple types can therefore select their generated
     /// implementation independent of declaration order.
     declared_structs: HashSet<String>,
+    /// The program's overloaded top-level names, so an overloaded `def` owns
+    /// its binders under the signature-qualified symbol MIR names it by.
+    overload_sets: mojito_symbol::symbol::OverloadSets,
     /// Top-level structs whose shell, member types, and method signatures were
     /// registered by `check_program`'s order-independent pre-passes. The
     /// source-order walk removes each entry and runs only the completion phase
@@ -961,6 +964,7 @@ impl Checker {
             capture_contexts: RefCell::new(Vec::new()),
             structs: HashMap::new(),
             declared_structs: HashSet::new(),
+            overload_sets: mojito_symbol::symbol::OverloadSets::default(),
             predeclared_structs: HashSet::new(),
             predeclared_traits: HashSet::new(),
             predeclared_generated_tuple_arguments: HashMap::new(),

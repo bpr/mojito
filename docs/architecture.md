@@ -599,7 +599,9 @@ second expression tree.
   monomorphization) folds it. The pin draws the same line.
 - A reference is owned by its declaration (`ParamId { owner, slot }`), so
   same-spelled parameters of unrelated declarations differ and a `$` clone
-  shares its template's. A type binder is the same identity: `ParamDecl`
+  shares its template's. An overloaded module-level `def` is owned by the
+  signature-qualified symbol MIR names it by (`tally$ov$…`), so two overloads
+  of one name never share a binder. A type binder is the same identity: `ParamDecl`
   carries its `id`, `Ty::Param { binder: ParamRef }` compares by it, and every
   type substitution is a `TySubst` keyed by it; a canonicalized callable
   contract's binders are `$contract` slots, so contracts differing only in
@@ -668,7 +670,12 @@ position among the regular parameters and its element key, which carries a
 pack's bounds — and last whether the request's own arguments bind the
 declaration's parameters at all. Two type-pack overloads of one name are
 therefore ordinary members of a family, never resolved against the first
-declaration.
+declaration. One call has no recorded instantiation to serve it: a clone
+forwarding its own specialized pack whole to a sibling (`tally(*rest)`),
+which the checker sees only once the spread is expanded.
+`forwarded_family_target` binds it to the one declaration whose positional
+collector the spread follows, with the whole-pack ABI; where several would
+bind it, the call stays on the abstract path.
 
 A family may mix specialization classes, because the class is a property of a
 *declaration* and not of a name: a keyed `def kind[T](a: T)` beside a type

@@ -21,6 +21,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- One overload of a type-pack `def` can forward its collected pack whole to
+  a same-named sibling (`def tally[*Ts](first: Int, *rest: *Ts)` returning
+  `first + tally(*rest)`), which used to fail with "no overload matches the
+  supplied arguments". The clone's forward binds the one declaration whose
+  collector the spread follows, as the pinned Mojo binds it when it checks
+  the template (`assets/ok/pack_overload_sibling_forward.mojo`).
+- Two overloads of one module-level generic `def` no longer share their
+  parameter binders: an overloaded `def` owns them under the symbol it lowers
+  to (`tally$ov$…`), which MIR text now spells as the binder's owner.
+- A specialization keyed by a string or a literal value (`s`, `I`, `F`) is
+  now rebuilt by `demangle_specialization`, so its unqualified spelling
+  expands the baked value and the conformance oracle consults its template.
+  The Tuple closedness check reads a type parameter or a value reference by
+  identity, so a nested contract's `T` no longer counts as bound by an
+  enclosing `T`.
 - A surviving trait-bound module-level `def` whose body holds a whole value
   of its parameter type — a local copied from a parameter, transferred into
   another local or into a `-> T` result, or handed by value to a direct

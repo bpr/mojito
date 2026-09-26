@@ -930,14 +930,35 @@ impl Elab<'_> {
                         // overload selection is the checker's. Inferred and
                         // explicit calls alike are served only from the
                         // checker's recorded instantiation.
-                        let Some((values, kept, decl)) =
-                            self.def_request_target(name, &source_span, param_args, mono)
-                        else {
+                        // A clone forwarding its own specialized pack
+                        // whole (`tally(*a)`) is the one call no check can
+                        // record: the checker sees the spread only once it
+                        // is expanded, so the collector the call binds
+                        // structurally is the declaration.
+                        let target =
+                            match self.def_request_target(name, &source_span, param_args, mono) {
+                                Some((values, kept, decl)) => Some((values, kept, decl, false)),
+                                None => self
+                                    .forwarded_family_target(
+                                        name,
+                                        SpecRequest {
+                                            param_args,
+                                            call_args: args,
+                                            kwargs,
+                                            consts,
+                                            request_site: &request_site,
+                                            forwarded_pack_types: None,
+                                        },
+                                        mono,
+                                    )
+                                    .map(|(values, kept, decl)| (values, kept, Some(decl), true)),
+                            };
+                        let Some((values, kept, decl, whole_pack_abi)) = target else {
                             mono.retain_abstract(name, &source_span, false);
                             return Ok(());
                         };
                         selected_decl = decl;
-                        (values, kept, false)
+                        (values, kept, whole_pack_abi)
                     } else if self.struct_template(name) {
                         // A struct specialization is fully concrete: every
                         // compile-time argument is baked into the mangled name.
@@ -1603,6 +1624,59 @@ impl Elab<'_> {
         };
         let kept = self.request_kept_param_args(template, name, param_args, &target.vals)?;
         Some((target.vals.clone(), kept, target.decl))
+    }
+
+    /// The one declaration of the overload family `name` whose positional
+    /// collector a whole forward of a specialized runtime pack binds
+    /// (`request.call_args` spreads it after exactly the fixed positional
+    /// prefix), with its specialization values. `None` when the call
+    /// forwards no specialized pack or when several declarations bind it,
+    /// which leaves the call to the checker's recorded instantiation.
+    fn forwarded_family_target(
+        &self,
+        name: &str,
+        request: SpecRequest<'_>,
+        mono: &Mono,
+    ) -> Option<(Vec<CtValue>, Vec<ParamArg>, usize)> {
+        let forwards_specialized_pack = request.call_args.iter().any(|argument| {
+            runtime_pack_spread_source(argument)
+                .is_some_and(|pack| mono.resolve_runtime_pack(pack).is_some())
+        });
+        if !forwards_specialized_pack {
+            return None;
+        }
+        let mut bound = self
+            .overload_families
+            .get(name)?
+            .iter()
+            .enumerate()
+            .filter(|(_, template)| {
+                top_level_whole_pack_forwarding_call(template, request.call_args)
+                    .is_ok_and(|forwards| forwards)
+            })
+            .filter_map(|(index, template)| {
+                let forwarded = top_level_forwarded_pack_types(
+                    template,
+                    name,
+                    request.call_args,
+                    request.kwargs,
+                    mono,
+                )
+                .ok()??;
+                let (values, kept) = self
+                    .resolve_spec_args_for(
+                        template,
+                        name,
+                        SpecRequest {
+                            forwarded_pack_types: Some(&forwarded),
+                            ..request
+                        },
+                    )
+                    .ok()?;
+                Some((values, kept, index))
+            });
+        let only = bound.next()?;
+        bound.next().is_none().then_some(only)
     }
 
     /// The source arguments a request-rewritten call retains: arguments bound

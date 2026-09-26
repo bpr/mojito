@@ -1496,7 +1496,9 @@ impl ParamOp {
 /// It is the declaration that owns the binder and the slot within it. The
 /// spelling is diagnostic metadata on
 /// [`ParamRef`], never identity, so two declarations that both spell `n` have
-/// different parameters and a `$` clone shares its template's.
+/// different parameters and a `$` clone shares its template's. An overloaded
+/// module-level `def` is owned by the signature-qualified symbol it lowers to
+/// (`tally$ov$…`), so two overloads of one name never share a binder.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ParamId {
     pub owner: Arc<str>,
