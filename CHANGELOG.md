@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct method binding or returning an element of a tuple-typed local
+  by value (`var head = entry[0]`, `return entry[0]` from a
+  `Tuple[Self.T, Int]`) now reuses its checked template's facts in every
+  instance, which owes the element's copy at its own type. Such methods
+  used to be checked again per instance.
 - A struct method updating a field or a `mut` parameter through its
   in-place dunder (`self.total += x` on a bound `T`, `self.meter +=
   Meter(1)`, `into += x`) now reuses its checked template's facts in every

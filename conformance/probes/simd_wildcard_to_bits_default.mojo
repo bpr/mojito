@@ -7,7 +7,7 @@
 # `wildcard-vector-parameter-on-a-def`). Inside a `Hasher`'s
 # `_update_with_simd`, where the desugar applies, Mojito accepts the same
 # `to_bits()` but source validation ends without a verdict on it, so the
-# method's leaf clones keep the clone check (docs/roadmap.md 1.17).
+# method's leaf clones keep the clone check (docs/roadmap.md 1.16).
 def bits(value: SIMD[_, _]) -> UInt64:
     return value.to_bits().cast[DType.uint64]().reduce_add()
 

@@ -5,8 +5,10 @@
 # type substitutes. Each instance reads the element through its own
 # generated Tuple's accessor for that position, whether the template's tuple
 # was closed (`Tuple[Int, Int]`) or built over the struct's parameter
-# (`Tuple[Self.T, Int]`). `List`'s strided slice reads `slice.indices(n)`
-# this way.
+# (`Tuple[Self.T, Int]`), and whether the element is a scalar operand or a
+# whole value bound to a `var` or returned (`var first = entry[0]`), which
+# each instance copies at its own element type. `List`'s strided slice reads
+# `slice.indices(n)` this way.
 @fieldwise_init
 struct Holder[T: ImplicitlyCopyable & Deinitable](
     Deinitable, ImplicitlyCopyable, Movable
@@ -30,6 +32,20 @@ struct Holder[T: ImplicitlyCopyable & Deinitable](
         var count = entry[1]
         return count * 10
 
+    def head(self) -> Self.T:
+        var entry = self.tagged()
+        var first = entry[0]
+        return first
+
+    def label(self) -> Self.T:
+        var entry = self.tagged()
+        var first: Self.T = entry[0]
+        return first
+
+    def front(self) -> Self.T:
+        var entry = self.tagged()
+        return entry[0]
+
     def width(self, stride: Slice) -> Int:
         var limits = stride.indices(self.size)
         var start = limits[0]
@@ -43,6 +59,8 @@ def main():
     var words = Holder[String]("w", 5)
     print(numbers.span(), words.span())
     print(numbers.tag(), words.tag())
+    print(numbers.head(), words.head(), numbers.label(), words.label())
+    print(numbers.front(), words.front())
     var every_other = slice(0, 4, 2)
     print(numbers.width(every_other), words.width(every_other))
     var xs: List[Int] = [1, 2, 3, 4, 5]

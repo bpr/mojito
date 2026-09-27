@@ -2049,7 +2049,8 @@ impl Checker {
     /// the template met depends on whether its own Tuple was declared yet,
     /// and on whether its type was closed, so the instance records the call
     /// afresh whatever the template recorded. The position is the literal
-    /// index, which no instance changes.
+    /// index, which no instance changes. The read is by copy, so an element
+    /// the instance cannot copy implicitly is left to the clone check.
     fn realize_tuple_elements(
         &self,
         facts: &mut CheckedBodyFacts,
@@ -2101,6 +2102,9 @@ impl Checker {
                 .ok_or("a tuple element's position is outside the tuple")?;
             if matches!(element, Ty::Ref(_)) {
                 return Err("a tuple element holds a reference");
+            }
+            if !self.is_implicitly_copyable(element) {
+                return Err("a tuple element read by value is not implicitly copyable");
             }
             let root = fact_at(&facts.expression_bindings, receiver)
                 .cloned()
@@ -7745,7 +7749,9 @@ impl BodyShape<'_> {
             StmtKind::Return(Some(value)) => {
                 (self.expression(value) && self.scalar(value))
                     || self.moved_result.is_some_and(|result| {
-                        (self.whole_value(value) || self.reference_read(value))
+                        (self.whole_value(value)
+                            || self.reference_read(value)
+                            || self.tuple_element_value(value))
                             && self.typed(value, result)
                     })
             }
@@ -7811,6 +7817,7 @@ impl BodyShape<'_> {
                         || self.whole_value(value)
                         || self.simd_value(value)
                         || self.reference_read(value)
+                        || self.tuple_element_value(value)
                         || (ty.is_some() && self.converted_place(value)))
                     && (ty.is_none() || self.annotated_binding(value));
                 let kind = if scalar {
@@ -8087,14 +8094,16 @@ impl BodyShape<'_> {
     }
 
     /// `local[k]`: an element of a tuple-typed `var` local at a literal
-    /// index, which every use site reads as a scalar.
+    /// index, read as a scalar operand or by value into a `var` or the
+    /// result ([`Self::tuple_element_value`]).
     ///
     /// The index is the element's position, which no instance changes, and
     /// the element's type substitutes. The template either typed the element
     /// from the tuple's arguments and recorded nothing else there, or
     /// selected the generated Tuple's accessor for that position
     /// (`__getitem_param__$k`) as a closed reference call read by copy, which
-    /// an instance re-keys to its own Tuple ([`Checker::realize_method_call`]).
+    /// an instance records again on its own Tuple
+    /// ([`Checker::realize_tuple_elements`]).
     fn tuple_element(&self, expr: &Expr) -> bool {
         let ExprKind::Index { object, index } = &expr.kind else {
             return false;
@@ -8129,6 +8138,15 @@ impl BodyShape<'_> {
             self.references.borrow_mut().push(id);
         }
         accessor && self.holds(MethodFeatures::REFERENCE_CALLS)
+    }
+
+    /// A tuple element read by value into a `var` or the result, whatever
+    /// its type. The template either typed it from the tuple's arguments or
+    /// selected the accessor as a copyable reference read, and an instance
+    /// records the accessor read again and owes the copy at its own element
+    /// type ([`Checker::realize_tuple_elements`]).
+    fn tuple_element_value(&self, expr: &Expr) -> bool {
+        self.tuple_element(expr) && self.holds(MethodFeatures::OPAQUE_MOVES)
     }
 
     /// Whether the references the check recorded are exactly the ones the
