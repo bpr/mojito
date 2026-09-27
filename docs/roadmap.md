@@ -470,37 +470,7 @@ to section 3, however small.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
-- [ ] **2.1 A struct instance over a generic instance, or with a variadic
-  initializer, mangles its constructor into an existing symbol**
-
-  Problem: `Bag[List[Int]](List[Int]())` runs on the VM and the native
-  backend refuses it: ``in `Bag.__init__`: unsupported concrete instance
-  symbol `Bag$mono$TList$u24$mono$u24$TInt$Int.__init__` collides with an
-  existing declaration``.
-  - The per-instantiation `__init__` clone and the monomorphized constructor
-    of the nested application mangle to one name.
-  - `Bag[Int]` and `Bag[String]` are fine; only an argument that is itself a
-    generic instance collides.
-  - An initializer collecting `var *values` collides at every instance,
-    `Bag[Int]` included (`Bag$mono$TInt.__init__`), with or without its
-    template derivation.
-    - The call keys its instance with the pack's length (`Value(Int(2))`)
-      and another site keys it with none; a lifecycle clone's symbol
-      (`lifecycle_clone_instance_symbol`) ignores the arguments, so both
-      keys name one symbol.
-    - `conformance/probes/native_variadic_initializer.mojo` pins it; the
-      pinned Mojo runs it.
-    - `conformance/fixtures/template_method_variadic_initializer.mojo`
-      moves to `assets/ok` once this lands.
-  - An instance over a loan-carrying argument (`Bag[Span[Int, o]]`) mints no
-    constructor clones for this reason (`generate_instance_clones`); lift
-    that guard once the names are apart.
-  - `conformance/probes/native_nested_generic_instance_ctor.mojo` pins it;
-    the pinned Mojo runs it.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
-- [ ] **2.2 A struct instance over a multi-lane vector mangles a fragment of
+- [ ] **2.1 A struct instance over a multi-lane vector mangles a fragment of
   its type argument into its constructor's name**
 
   Problem: `Box[SIMD[DType.float32, 2]](v)` runs on the VM and the native
@@ -516,7 +486,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **2.3 Consuming a field of a `deinit self` whose type has droppable
+- [ ] **2.2 Consuming a field of a `deinit self` whose type has droppable
   fields is refused natively**
 
   Problem: `self.lease^.release()` in a `deinit self` method runs on the VM,
@@ -532,7 +502,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **2.4 A one-element tuple does not compile natively**
+- [ ] **2.3 A one-element tuple does not compile natively**
 
   Problem: any use of `(7,)` fails the native backend's IR verification
   ("argument 1 type mismatch: expected llvm.ptr, got builtin.integer i64"),
@@ -540,13 +510,16 @@ change that needs a new `MJRT_ABI_VERSION`.
   register"; the VM prints the pin's answers.
   - Declaring `var one = (7,)` and printing it, taking its `len`, or hashing
     it is enough.
+  - A variadic struct's `Tuple[*Self.Ts]` storage at one element
+    (`Bag[Bool](True)`) fails the same way.
   - Found while writing `assets/ok/template_method_pack_struct.mojo`
-    (2026-09-26), which keeps to two- and three-element tuples; no `ok`
-    fixture declares a one-element tuple.
+    (2026-09-26), which keeps to two- and three-element tuples, as
+    `assets/ok/template_method_variadic_struct.mojo` now does (2026-09-27);
+    no `ok` fixture declares a one-element tuple.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **2.5 A nested generic `def`'s value argument built from its own
+- [ ] **2.4 A nested generic `def`'s value argument built from its own
   parameter is not a native constant**
 
   Problem: `scaled[k + 1]()` inside a nested `def inner[k: Int]()` runs on
@@ -563,7 +536,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **2.6 Native runtime ABI bump: land every change that needs a new
+- [ ] **2.5 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
 
   Problem: each item below changes the native runtime ABI, so it needs an
@@ -2449,7 +2422,7 @@ last.
     method at the last `.` (`rsplit_once('.')` in
     `mir/verify/subscripts.rs`), as several `mojito-symbol` helpers do.
   - `List[Int32]` is fine; only a width above one fails.
-  - 2.2's native mangling fragment is the same `DType.`-in-a-symbol shape.
+  - 2.1's native mangling fragment is the same `DType.`-in-a-symbol shape.
   - Found while probing literal splats (2026-09-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.

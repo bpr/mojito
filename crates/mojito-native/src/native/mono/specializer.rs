@@ -211,7 +211,13 @@ impl<'a> Specializer<'a> {
                 // A per-instantiation lifecycle clone is the instance's lifecycle
                 // body: it takes the plain symbol lowering composes by name
                 // (`Box$mono$TInt.__deinit__`), whichever site enqueues it first.
-                name
+                // A variadic initializer's clone is keyed by each call's pack
+                // length and only ever reached through its call sites.
+                if key.arguments.is_empty() {
+                    name
+                } else {
+                    mojito_symbol::symbol::instance_symbol(&name, &key.arguments)
+                }
             } else if let Some(owner) = &key.owner {
                 let base = mojito_symbol::symbol::retarget_method_symbol(template, owner)
                     .ok_or_else(|| {
@@ -1234,16 +1240,26 @@ impl<'a> Specializer<'a> {
                 }
                 // A closed instance whose clone of this lifecycle method
                 // exists runs that body, under the template-shaped symbol
-                // lowering composes for the instance.
+                // lowering composes for the instance. The clone was minted
+                // over the checker's spelling of the arguments, so a nested
+                // instance argument (`List$mono$TInt`) names its template.
                 let clone = mojito_symbol::symbol::instance_method_clone_name(
                     method,
                     &template.param_decls,
-                    &arguments,
+                    &template_spelled_arguments(&arguments),
                 )
                 .map(|clone| format!("{template_name}.{clone}"))
                 .filter(|symbol| self.functions.contains_key(symbol.as_str()));
                 if let Some(clone) = clone {
-                    self.enqueue(&clone, bindings.clone(), Vec::new())?;
+                    // A variadic initializer's clone needs a call-site arity;
+                    // those sites enqueue it.
+                    if !self
+                        .declarations
+                        .get(clone.as_str())
+                        .is_some_and(|decl| arity_keyed_variadic(decl))
+                    {
+                        self.enqueue(&clone, bindings.clone(), Vec::new())?;
+                    }
                     continue;
                 }
                 let base = format!("{template_name}.{method}");
@@ -1263,9 +1279,7 @@ impl<'a> Specializer<'a> {
                     };
                     // An unspecialized variadic overload cannot materialize
                     // without a call-site arity; those sites enqueue it.
-                    if matches!(&function_decl.variadic, Some(element)
-                        if !matches!(element, Ty::RuntimePack(_) | Ty::Tuple(_)))
-                    {
+                    if arity_keyed_variadic(function_decl) {
                         continue;
                     }
                     let Ok(mut method_arguments) =
@@ -1324,6 +1338,44 @@ impl<'a> Specializer<'a> {
             construct: construct.into(),
         }
     }
+}
+
+/// Whether `declaration` collects a variadic parameter whose element count a
+/// call site keys (`var *values: T`), rather than a runtime pack or a tuple.
+const fn arity_keyed_variadic(declaration: &MirFunctionDeclaration) -> bool {
+    matches!(&declaration.variadic, Some(element)
+        if !matches!(element, Ty::RuntimePack(_) | Ty::Tuple(_)))
+}
+
+/// `arguments` with every monomorphized struct (`List$mono$TInt[Int]`)
+/// respelled as its template application (`List[Int]`), the spelling the
+/// checker mangled its per-instantiation clones over.
+fn template_spelled_arguments(arguments: &[TyArg]) -> Vec<TyArg> {
+    struct TemplateSpelling;
+    impl mojito_types::types::TyRewrite for TemplateSpelling {
+        fn whole(&mut self, ty: &Ty) -> Option<Ty> {
+            let Ty::Struct(name, arguments) = ty else {
+                return None;
+            };
+            let template = nominal_template(name);
+            if template == name {
+                return None;
+            }
+            let arguments = mojito_types::types::rewrite_tyargs(arguments, self).ok()?;
+            Some(Ty::Struct(template.to_string(), arguments))
+        }
+
+        fn expr(
+            &mut self,
+            expr: &mojito_types::param_expr::ParamExpr,
+        ) -> Result<mojito_types::param_expr::ParamExpr, mojito_types::param_expr::ParamError>
+        {
+            Ok(expr.clone())
+        }
+    }
+    mojito_types::types::map_tyargs(arguments, |ty| {
+        mojito_types::types::rewrite_ty(ty, &mut TemplateSpelling).unwrap_or_else(|_| ty.clone())
+    })
 }
 
 /// The instance symbol a per-instantiation lifecycle clone is emitted under

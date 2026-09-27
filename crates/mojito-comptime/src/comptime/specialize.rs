@@ -2590,14 +2590,9 @@ impl Elab<'_> {
             }
             // A bundled template keeps its lifecycle methods on the erased
             // path: its constructors carry the value-parameter reification
-            // the erased path relies on. So does an instance whose argument
-            // carries a loan: its constructor clone would mangle into the
-            // native monomorphizer's own constructor of the instance
-            // (`docs/roadmap.md` §2, the nested generic instance).
+            // the erased path relies on.
             let lifecycle = mojito_symbol::symbol::lifecycle_method_name(method);
-            if (bundled || !origin_binders.params().is_empty())
-                && matches!(lifecycle, "__init__" | "__copyinit__" | "__moveinit__")
-            {
+            if bundled && matches!(lifecycle, "__init__" | "__copyinit__" | "__moveinit__") {
                 continue;
             }
             clones.extend(self.per_call_method_clones(

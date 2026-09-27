@@ -984,7 +984,11 @@ substituted field types into a whole-value drop or copy), and the native
 monomorphizer emits such a clone under the instance's plain lifecycle symbol
 (`lifecycle_clone_instance_symbol`), which is what the Pliron lowering
 composes by name — a signature-qualified constructor clone keeps its own
-symbol there, since its siblings answer to the same base name. A bundled
+symbol there, since its siblings answer to the same base name, and a
+variadic initializer's clone, keyed by each call's element count, appends
+that count as an ordinary instance suffix. Struct discovery finds the clone
+over the checker's spelling of the instance's arguments, so a nested
+instance argument (`List$mono$TInt`) names its template (`List[Int]`). A bundled
 template's constructors stay on the erased path (its `__deinit__` clones,
 which the elaborator already minted, are now reached like any other). An
 instantiation whose argument mentions `StringLiteral` mints no clones and

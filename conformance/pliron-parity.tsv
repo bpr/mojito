@@ -175,6 +175,7 @@ assets/ok/inplace_subscript_ref.mojo	main	exe-differential	sanitized
 assets/ok/inplace_subscript_value.mojo	main	exe-differential	sanitized
 assets/ok/inplace_var.mojo	main	exe-differential	sanitized
 assets/ok/input.mojo	main	exe-differential	sanitized
+assets/ok/instance_constructor_symbols.mojo	main	exe-differential	sanitized
 assets/ok/interior_dest_rebind_releases_loans.mojo	main	exe-differential	sanitized
 assets/ok/invert_operator.mojo	main	exe-differential	sanitized
 assets/ok/joint_map.mojo	main	exe-differential	sanitized
@@ -628,6 +629,7 @@ assets/ok/template_method_value_binder.mojo	main	exe-differential	sanitized
 assets/ok/template_method_value_parameter.mojo	main	exe-differential	sanitized
 assets/ok/template_method_vanishing_transfer.mojo	main	exe-differential	sanitized
 assets/ok/template_method_var_self.mojo	main	exe-differential	sanitized
+assets/ok/template_method_variadic_initializer.mojo	main	exe-differential	sanitized
 assets/ok/template_method_variadic_struct.mojo	main	exe-differential	sanitized
 assets/ok/template_method_vector_hash_leaf.mojo	main	exe-differential	sanitized
 assets/ok/template_method_vector_key.mojo	main	exe-differential	sanitized

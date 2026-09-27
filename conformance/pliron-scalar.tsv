@@ -175,6 +175,7 @@ assets/ok/inplace_subscript_ref.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/inplace_subscript_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/inplace_var.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/input.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/instance_constructor_symbols.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/interior_dest_rebind_releases_loans.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/invert_operator.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/joint_map.mojo	-	ineligible	no-scalar-entry-shape
@@ -628,6 +629,7 @@ assets/ok/template_method_value_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_value_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_vanishing_transfer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_var_self.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_variadic_initializer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_variadic_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_vector_hash_leaf.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_vector_key.mojo	-	ineligible	no-scalar-entry-shape

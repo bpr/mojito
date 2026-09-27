@@ -30,6 +30,6 @@ def main():
     var b = Bag[Int, String](1, "a")
     b.bump()
     print(b.count, len(b), b.bumped().count)
-    var c = Bag[Bool](True)
+    var c = Bag[Bool, Int](True, 2)
     c.bump()
     print(c.twice())

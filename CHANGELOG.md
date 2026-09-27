@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct instance over a generic instance (`Bag[List[Int]](List[Int]())`)
+  and a struct whose initializer collects `var *values` (`Bag(1, 2)`) now
+  compile natively (`assets/ok/instance_constructor_symbols.mojo`,
+  `assets/ok/template_method_variadic_initializer.mojo`). Both ran on the VM
+  and the native backend refused their constructors as colliding with an
+  existing symbol. An instance over a loan-carrying argument
+  (`Bag[Span[Int, o]]`) now clones its constructors too.
 - A value argument built from the caller's own value parameters
   (`successor[n, 1 + n]()`, a method's `below[Self.n, k]()`,
   `Counter[Self.length](i)`) now compiles natively
