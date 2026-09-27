@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A generic body's outward store whose source is a union of its
+  parameters (a value borrowed through a `ref[origin_of(a, b)]` result) now
+  keeps that transfer for its instances, each dropping the parameters that
+  are plain data there. Such a transfer used to refuse capture; the one
+  known body that records it is still refused for its reference-typed call
+  result.
 - A bundled generic `def` called with a loan-carrying type argument
   (`alloc(Layout[Span[Int, origin_of(xs)]](count=2))`, `dealloc`) now gets
   its own clone, as a user function's call does, with the argument's origin

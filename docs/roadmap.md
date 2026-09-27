@@ -62,22 +62,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.2 A frame effect whose source is not a single binding refuses
-  capture**
-
-  Problem: a template's frame transfer effect is captured only when its
-  source is one parameter or the receiver, so an effect whose source
-  abstracts to anything else leaves the template with no retained facts.
-  - `body_transfers` judges an effect by the binding type of its source; a
-    source such as a union of places (`abstract_body_origin` over a value
-    built from two loans) has none.
-  - No failing program is known: a value built from two moved parameters
-    (`Two(a^, b^)` stored into `self`) records each parameter as its own
-    source and derives.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.3 Native monomorphization binds type parameters by spelling**
+- [ ] **1.2 Native monomorphization binds type parameters by spelling**
 
   Problem: `Bindings.types` and `Specializer.enclosing_types`
   (`crates/mojito-native/src/native/mono`) are keyed by a binder's name, so a
@@ -94,7 +79,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **1.4 A `where`-clause operand names its binder by spelling**
+- [ ] **1.3 A `where`-clause operand names its binder by spelling**
 
   Problem: a compiled `where` clause names its binder by spelling
   (`GenericConstraint::{Conforms, ConformsPack, PackPredicate,
@@ -106,11 +91,11 @@ to section 3, however small.
     type parameter and a value reference by identity (2026-09-26). These
     operands are what still reads a spelling there.
   - The constraints are serialized in MIR text, so batch the schema change
-    with 1.3's.
+    with 1.2's.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **1.5 Two overloads of one generic method share their binders**
+- [ ] **1.4 Two overloads of one generic method share their binders**
 
   Problem: a method's binders are owned by `Struct.method`
   (`method_binder_owner`), so two overloads of one method whose slots agree
@@ -126,7 +111,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.6 The elaborator's binders have no owner**
+- [ ] **1.5 The elaborator's binders have no owner**
 
   Problem: every binder the elaborator classifies is
   `ParamId { owner: "$elaborated", slot }` (`comptime/params.rs`,
@@ -138,7 +123,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.7 An overloaded witness ranked past its conversions keeps the
+- [ ] **1.6 An overloaded witness ranked past its conversions keeps the
   clone check**
 
   Problem: a call through a bound derives for an instance whose type
@@ -157,7 +142,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.8 A hasher leaf under a method's own hasher binder disagrees
+- [ ] **1.7 A hasher leaf under a method's own hasher binder disagrees
   with its clone check**
 
   Problem: `MOJITO_VERIFY_TEMPLATE_FACTS=1` fails on
@@ -173,6 +158,23 @@ to section 3, however small.
     way on `b061efb`, before explicit applications derived.
   - Either the derivation must record the call the clone check would, or
     verify mode must accept the leaf as equivalent.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.8 `List.pop` over a struct holding a reference disagrees with its
+  clone check**
+
+  Problem: `MOJITO_VERIFY_TEMPLATE_FACTS=1` fails on
+  `assets/ok/interior_dest_rebind_releases_loans.mojo`: the derived facts of
+  `List.pop$y6:RefBox` materialize an integer literal the clone's own check
+  does not.
+  - The derived bundle records `MaterializeLiteral(Int)` at one literal of
+    `pop`'s body (`self.size - 1` or `i + 1`); the clone check records no
+    adjustment there.
+  - The ordinary run is unaffected, and the failure predates the union-source
+    frame effects (checked on `35f36e0`).
+  - Either the derivation must drop the adjustment the clone check does not
+    make, or the clone check must make it too.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -601,6 +603,25 @@ to section 3, however small.
     `docs/pliron-backend-pivot-plan.md` alone.
   - Model: Fable, Planned.
 
+- [ ] **1.36 A reference-typed call result in a method keeps the clone
+  check**
+
+  Problem: a method storing a value it read through a reference-returning
+  call (`var r = pick(a, b, first)`, then `self.value = r^`, with `pick`
+  returning `ref[origin_of(a, b)] T`) is refused capture, so its instances
+  are checked again.
+  - The call's expression type is a `ref T` whose origin names the method's
+    parameters; the expression-type table admits no reference type
+    (`template_facts.rs`, the `ExternalBinding` check beside
+    `rooted_reference`).
+  - This is the only known body whose frame effect has a union source (the
+    store's `Union([Param(0), Param(1)])`), which capture now keeps member by
+    member, so that path has no end-to-end program until this lands.
+  - A `ref r = ...` binding is outside the method grammar, and `.copy()` on
+    the call result is rejected ("type 'ref T' has no method 'copy'").
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### 2. Native Backend
 
 The ABI-bump collector is last whatever else moves, because it batches every
@@ -828,6 +849,10 @@ last.
   - Probe: `conformance/probes/origin_binder_result_keeps_argument.mojo`.
     `assets/ok/template_method_origin_parameter.mojo` reads `w` afterwards to
     stay clear of it.
+  - The same `None` shows with no binder: `var r = pick(x, y, False)` then
+    `print(r)`, for `def pick(ref a: Int, ref b: Int, first: Bool) ->
+    ref[origin_of(a, b)] Int`, where the single-origin `ref[origin_of(a)]`
+    prints correctly and an intervening `r += 10` does too.
   - The plan must say where a call's inferred origin arguments become loans on
     its result.
   - Depends on nothing.

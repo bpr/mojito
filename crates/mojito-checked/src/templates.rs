@@ -1068,16 +1068,28 @@ pub enum TemplateTransferDest {
 
 /// One effect a replay derived on the body's own frame.
 ///
-/// The effect names signature origins, so only the type of the parameter or
-/// receiver its source names is instance-dependent; the template's type of
-/// that binding is kept beside it. A latent effect, one the body records
-/// for a store of a symbolic value without publishing it, keeps the stored
-/// type: an instance publishes the effect where that type carries a loan.
+/// The effect names signature origins, so only the types of the parameters
+/// or receiver its source names are instance-dependent; each such binding is
+/// kept beside it, one per member of a union source in the union's order. A
+/// latent effect, one the body records for a store of a symbolic value
+/// without publishing it, keeps the stored type: an instance publishes the
+/// effect where that type carries a loan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TemplateTransferEffect {
     pub effect: mojito_types::types::TransferEffect,
-    pub src_ty: Ty,
+    pub sources: Vec<TemplateEffectSource>,
     pub latent: Option<Ty>,
+}
+
+/// The binding one member of a [`TemplateTransferEffect`]'s source names.
+///
+/// `is_place` says whether a loan rooted there is on the caller's storage
+/// (the receiver, or a `mut`/`ref` parameter): the effect's `src_is_place`
+/// should the member be its only one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplateEffectSource {
+    pub ty: Ty,
+    pub is_place: bool,
 }
 
 /// Which retained type table a [`TypedOrigins`] entry completes.

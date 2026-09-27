@@ -24,10 +24,10 @@ use mojito_checked::templates::{
     BoundBuiltin, CallParameterFact, CheckedBodyFacts, CheckedTemplate, FactTable, FoldedLiteral,
     IncompleteReason, InstanceName, InstanceTrace, MethodFeatures, OccurrenceId,
     TemplateArgumentBoundary, TemplateAugmentedSubscript, TemplateCallContract,
-    TemplateCallResultOrigin, TemplateCallTransfer, TemplateClass, TemplateCoverage, TemplateId,
-    TemplateInvalidation, TemplateObligation, TemplateOrigin, TemplateOwner, TemplatePlace,
-    TemplateProducer, TemplateReference, TemplateTransferDest, TemplateTransferEffect,
-    TemplateTransferSource, TypedOrigins, TypedTable, WithForm,
+    TemplateCallResultOrigin, TemplateCallTransfer, TemplateClass, TemplateCoverage,
+    TemplateEffectSource, TemplateId, TemplateInvalidation, TemplateObligation, TemplateOrigin,
+    TemplateOwner, TemplatePlace, TemplateProducer, TemplateReference, TemplateTransferDest,
+    TemplateTransferEffect, TemplateTransferSource, TypedOrigins, TypedTable, WithForm,
 };
 use mojito_common::error::TypeError;
 use mojito_common::timing;
@@ -743,9 +743,10 @@ impl Checker {
     /// the call transfers at its occurrences, the origins the replays merged
     /// (the store's growth over the baseline), the effects on the body's own
     /// frame, and the summaries read. Each source is judged by the type of
-    /// the binding it is rooted at; an effect whose source is not a single
-    /// parameter or the receiver, and a merge into a binding outside the
-    /// body, have no such judgment and refuse.
+    /// the binding it is rooted at, a frame effect's union source member by
+    /// member; an effect with a source member that is not a parameter or the
+    /// receiver, and a merge into a binding outside the body, have no such
+    /// judgment and refuse.
     fn body_transfers(
         &self,
         occurrences: &[Occurrence],
@@ -836,23 +837,36 @@ impl Checker {
         if frames.last().is_some_and(|frame| frame.latent_escapes) {
             return Err(refuse);
         }
+        let param_borrowed = frames
+            .last()
+            .map(|frame| frame.param_borrowed.as_slice())
+            .unwrap_or_default();
         let transfer_effects = frames
             .last()
             .map(|frame| frame.recorded.as_slice())
             .unwrap_or_default()
             .iter()
             .map(|(effect, latent)| {
-                let src_owner = match &effect.src {
-                    SigOrigin::Self_ => param_owners.receiver,
-                    SigOrigin::Param(index) => param_owners.runtime.get(*index).copied().flatten(),
-                    _ => None,
-                };
-                let src_ty = src_owner
-                    .and_then(|owner| self.owner_binding_type(owner))
-                    .ok_or_else(|| refuse.clone())?;
+                let sources = sig_origin_members(&effect.src)
+                    .iter()
+                    .map(|member| {
+                        let (owner, is_place) = match member {
+                            SigOrigin::Self_ => (param_owners.receiver, true),
+                            SigOrigin::Param(index) => (
+                                param_owners.runtime.get(*index).copied().flatten(),
+                                param_borrowed.get(*index).copied().unwrap_or(false),
+                            ),
+                            _ => (None, false),
+                        };
+                        owner
+                            .and_then(|owner| self.owner_binding_type(owner))
+                            .map(|ty| TemplateEffectSource { ty, is_place })
+                            .ok_or_else(|| refuse.clone())
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
                 Ok(TemplateTransferEffect {
                     effect: effect.clone(),
-                    src_ty,
+                    sources,
                     latent: latent.clone(),
                 })
             })
@@ -964,13 +978,41 @@ impl Checker {
                 (!sources.is_empty()).then(|| (dest.clone(), sources))
             })
             .collect();
-        // A latent effect is published where its stored type now carries a
-        // loan, stays latent while that type is still symbolic, and vanishes
-        // otherwise, as the instance's own check of the store decides.
+        // A source member whose binding is plain data vanishes, as the
+        // instance's own check abstracts only the origins a loan-carrying
+        // value holds: an effect left with no member vanishes, and one left
+        // with a single member takes that member's own place flag, or
+        // vanishes where it is the destination. A latent effect is published
+        // where its stored type now carries a loan, stays latent while that
+        // type is still symbolic, and vanishes otherwise, as the instance's
+        // own check of the store decides.
         facts.transfer_effects = template
             .transfer_effects
             .iter()
-            .filter(|effect| !self.loan_free(&substitute(&effect.src_ty)))
+            .filter_map(|effect| {
+                let (members, sources): (Vec<_>, Vec<_>) = sig_origin_members(&effect.effect.src)
+                    .into_iter()
+                    .zip(effect.sources.iter().map(|source| TemplateEffectSource {
+                        ty: substitute(&source.ty),
+                        is_place: source.is_place,
+                    }))
+                    .filter(|(_, source)| !self.loan_free(&source.ty))
+                    .unzip();
+                let src_is_place = match sources.as_slice() {
+                    [only] => only.is_place,
+                    _ => false,
+                };
+                let src = mojito_types::origin::SigOrigin::union(members);
+                (!sources.is_empty() && src != effect.effect.dest).then(|| TemplateTransferEffect {
+                    effect: mojito_types::types::TransferEffect {
+                        src,
+                        src_is_place,
+                        ..effect.effect.clone()
+                    },
+                    sources,
+                    latent: effect.latent.clone(),
+                })
+            })
             .filter_map(|effect| {
                 let latent = match effect.latent.as_ref().map(substitute) {
                     None => None,
@@ -983,11 +1025,7 @@ impl Checker {
                     }
                     Some(_) => return None,
                 };
-                Some(TemplateTransferEffect {
-                    effect: effect.effect.clone(),
-                    src_ty: substitute(&effect.src_ty),
-                    latent,
-                })
+                Some(TemplateTransferEffect { latent, ..effect })
             })
             .collect();
         let (empty, replayed): (Vec<_>, Vec<_>) = std::mem::take(&mut facts.transfer_reads)
@@ -11414,4 +11452,15 @@ const fn grammar_scalar_or_literal(ty: &Ty) -> bool {
 
 const fn holds_comptime_if(statement: &Stmt) -> bool {
     matches!(statement.kind, StmtKind::ComptimeIf { .. })
+}
+
+/// The members of a transfer effect's source: a union's, in its order, or
+/// the source alone.
+fn sig_origin_members(
+    origin: &mojito_types::origin::SigOrigin,
+) -> Vec<mojito_types::origin::SigOrigin> {
+    match origin {
+        mojito_types::origin::SigOrigin::Union(members) => members.clone(),
+        single => vec![single.clone()],
+    }
 }
