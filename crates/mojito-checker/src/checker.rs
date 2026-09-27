@@ -2157,6 +2157,9 @@ struct MethodSig {
     /// A synthesized trait default ([`mojito_ast::ast::Method::is_synthesized_default`]):
     /// the elaborator mints no per-instance clone of it.
     synthesized_default: bool,
+    /// A clone's template's declared result type, whose type parameters the
+    /// clone's own `ret` has substituted. `None` for every other method.
+    template_ret: Option<Ty>,
 }
 
 impl MethodSig {
@@ -2192,6 +2195,7 @@ impl MethodSig {
             receiver: None,
             clone_origins: false,
             synthesized_default: false,
+            template_ret: None,
         }
     }
 }
@@ -2630,6 +2634,11 @@ struct MethodCallResolution {
     view_return_interior: Vec<String>,
     /// See [`MethodSig::view_return`].
     view_return: Vec<ViewReturnOrigin>,
+    /// The selected struct member's declared result type, with the struct's
+    /// and the method's parameters abstract; `None` when the result has no
+    /// separate declaration. Loans the result carries only through a type
+    /// argument (`List[RefBox[o]].pop()`) are not a view of the receiver.
+    declared_return: Option<Ty>,
     /// The selected signature's declared parameter types, with type
     /// parameters abstract: the origins a parameter *names* (as opposed to
     /// receives through a type argument) drive the argument exclusivity rule.

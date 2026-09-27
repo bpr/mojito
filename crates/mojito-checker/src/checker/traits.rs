@@ -236,6 +236,7 @@ impl Checker {
                     receiver: None,
                     clone_origins: false,
                     synthesized_default: false,
+                    template_ret: None,
                 };
                 let overloads = sigs.entry(m.name.clone()).or_default();
                 if overloads.iter().any(|existing| {
@@ -801,6 +802,7 @@ impl Checker {
                 sig.parametric_origin_writes =
                     parametric_origin_writes_in_body(&m.body, &info.fields);
             }
+            sig.template_ret = self.clone_template_return(declaration, m);
             for (param, ty) in all_types.iter().enumerate() {
                 self.declaration_types.borrow_mut().insert(
                     mojito_checked::checked::AnnotationSite::MethodParam {
@@ -866,6 +868,40 @@ impl Checker {
             overloads.push(sig);
         }
         Ok(())
+    }
+
+    /// The declared result of the template a method clone was elaborated
+    /// from, when that template is a sibling registered before it.
+    fn clone_template_return(
+        &self,
+        declaration: &StructDeclaration<'_>,
+        m: &mojito_ast::ast::Method,
+    ) -> Option<Ty> {
+        let first = m.body.first()?;
+        let catalog = self.template_catalog.borrow();
+        let template = &catalog
+            .trace(&mojito_checked::templates::InstanceName {
+                module: first.module.clone(),
+                owner: Some(declaration.name.to_string()),
+                name: m.name.clone(),
+                body: Some(first.span),
+            })?
+            .template;
+        let method = declaration.methods.iter().position(|sibling| {
+            sibling.name == template.name
+                && sibling
+                    .body
+                    .first()
+                    .is_some_and(|statement| statement.span == template.declaration)
+        })?;
+        self.declaration_types
+            .borrow()
+            .get(&mojito_checked::checked::AnnotationSite::MethodReturn {
+                module: declaration.module.clone(),
+                declaration: declaration.name.to_string(),
+                method,
+            })
+            .cloned()
     }
 
     /// Verify declared conformances, select the callable target, and check
@@ -1157,6 +1193,7 @@ impl Checker {
                         receiver: None,
                         clone_origins: false,
                         synthesized_default: false,
+                        template_ret: None,
                     };
                 if !got_sigs.iter().any(|got| {
                     self.method_satisfies_requirement_under(

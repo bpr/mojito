@@ -350,6 +350,7 @@ impl Checker {
                     parameter_names: sig.names.clone(),
                     view_return_interior: sig.view_return_interior.clone(),
                     view_return: sig.view_return.clone(),
+                    declared_return: None,
                     declared_params: clone_origins.substitute_all(&sig.params),
                 });
             }

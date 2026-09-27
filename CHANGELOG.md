@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A method result whose loans arrive only through a type argument, such as
+  `List.pop()` over `List[Span[Int, o]]` or `List[RefBox[o]]`, no longer
+  borrows its receiver: the list may be used again while the popped value
+  lives, where it was rejected as a conflict with a live reference. A
+  per-instantiation clone judges a sibling clone's result by its template's
+  declared type, and a call through a bound whose witness returns a view now
+  derives that view, so `MOJITO_VERIFY_TEMPLATE_FACTS=1` agrees on
+  `List.pop` and `List._get_copy` over such elements
+  (`assets/ok/interior_dest_rebind_releases_loans.mojo`).
 - A `hasher.update(x)` or `hasher._update_with_simd(x)` call in a generic
   method whose own `H: Hasher` an instance binds to a nominal hasher such as
   `AHasher` now derives as the struct's own method call, as the instance's

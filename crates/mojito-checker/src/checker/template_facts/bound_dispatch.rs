@@ -1123,6 +1123,24 @@ impl Checker {
             .collect();
         let result_ty =
             self.witness_parameter_ty(&declared.ret, &receiver_ty, substitution, binders);
+        // A witness whose own declared result carries loans hands back a view
+        // of its receiver, as `infer_method_call` records it.
+        let view_result = declared.ref_return.is_none()
+            && !matches!(
+                declared.self_convention,
+                Some(ArgConvention::Var | ArgConvention::Deinit)
+            )
+            && matches!(result_ty, Ty::Struct(..))
+            && self.type_carries_loans(&result_ty)
+            && self.type_carries_loans(declared.template_ret.as_ref().unwrap_or(&declared.ret));
+        if view_result {
+            if !declared.view_return_interior.is_empty() || !declared.view_return.is_empty() {
+                return Err("a witness's view result binds origin slots of its own");
+            }
+            if !self.type_carries_loans(&receiver_ty) {
+                return Err("a witness's view result needs its owning receiver materialized");
+            }
+        }
         let source = occurrences
             .iter()
             .find(|occurrence| occurrence.id == id)
@@ -1215,6 +1233,16 @@ impl Checker {
                 .collect(),
         );
         set_fact(&mut facts.overload_targets, id, target.clone());
+        if view_result && fact_at(&facts.operation_adjustments, id).is_none() {
+            facts.operation_adjustments.push((
+                id,
+                SemanticAdjustment::BorrowViewResult { materialized: None },
+            ));
+            let order = |id: &OccurrenceId| occurrences.iter().position(|found| found.id == *id);
+            facts
+                .operation_adjustments
+                .sort_by_key(|(site, _)| order(site));
+        }
         for (argument, invalidations) in arguments.iter().zip(invalidations) {
             if !argument.requires_place {
                 continue;

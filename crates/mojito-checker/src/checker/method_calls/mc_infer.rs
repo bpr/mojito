@@ -251,6 +251,7 @@ impl Checker {
                         parameter_names: sig.names.clone(),
                         view_return_interior: Vec::new(),
                         view_return: Vec::new(),
+                        declared_return: None,
                         declared_params: Vec::new(),
                     });
                 }
@@ -1197,6 +1198,9 @@ impl Checker {
                                     parameter_names: sig.names.clone(),
                                     view_return_interior: sig.view_return_interior.clone(),
                                     view_return: sig.view_return.clone(),
+                                    declared_return: Some(
+                                        sig.template_ret.clone().unwrap_or_else(|| sig.ret.clone()),
+                                    ),
                                     declared_params: clone_origins.substitute_all(&sig.params),
                                     param_types: params,
                                     param_decls: sig.decls.clone(),
@@ -1361,6 +1365,7 @@ impl Checker {
                         parameter_names: Vec::new(),
                         view_return_interior: Vec::new(),
                         view_return: Vec::new(),
+                        declared_return: None,
                         declared_params: Vec::new(),
                     });
                 }
@@ -1414,6 +1419,7 @@ impl Checker {
                     parameter_names: Vec::new(),
                     view_return_interior: Vec::new(),
                     view_return: Vec::new(),
+                    declared_return: None,
                     declared_params: Vec::new(),
                 }))
             }
@@ -1465,6 +1471,7 @@ impl Checker {
                     parameter_names: Vec::new(),
                     view_return_interior: Vec::new(),
                     view_return: Vec::new(),
+                    declared_return: None,
                     declared_params: Vec::new(),
                 }))
             }
@@ -1514,6 +1521,7 @@ impl Checker {
                     parameter_names: Vec::new(),
                     view_return_interior: Vec::new(),
                     view_return: Vec::new(),
+                    declared_return: None,
                     declared_params: Vec::new(),
                 }))
             }
@@ -1569,6 +1577,7 @@ impl Checker {
                     parameter_names: Vec::new(),
                     view_return_interior: Vec::new(),
                     view_return: Vec::new(),
+                    declared_return: None,
                     declared_params: Vec::new(),
                 }))
             }
@@ -2313,12 +2322,18 @@ impl Checker {
             // result, exactly as a view-typed subscript does: the loan keeps
             // the source alive while the view does and rejects source
             // mutation. Capture-carrying calls keep their capture adjustment;
-            // reference results already carry their own loan channel.
+            // reference results already carry their own loan channel. A
+            // result whose loans arrive only through a type argument
+            // (`List[Span[Int, o]].pop()`) is an element, not a view.
             if reference_result.is_none()
                 && captures.is_empty()
                 && !resolved.consumes_receiver
                 && matches!(return_type, Ty::Struct(..))
                 && self.type_carries_loans(&return_type)
+                && resolved
+                    .declared_return
+                    .as_ref()
+                    .is_none_or(|declared| self.type_carries_loans(declared))
             {
                 self.operation_adjustments
                     .borrow_mut()

@@ -442,6 +442,7 @@ impl Checker {
                     .starts_with(mojito_symbol::symbol::CLONE_ORIGIN_BINDER_PREFIX)
             }),
             synthesized_default: method.synthesized,
+            template_ret: None,
         })
     }
 
@@ -2015,6 +2016,7 @@ impl Checker {
                             parameter_names: sig.names.clone(),
                             view_return_interior: sig.view_return_interior.clone(),
                             view_return: Vec::new(),
+                            declared_return: None,
                             declared_params: sig.params.clone(),
                         });
                     }
