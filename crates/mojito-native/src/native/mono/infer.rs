@@ -85,10 +85,9 @@ impl Specializer<'_> {
         // same-element-type indexes onto one body — and binds for the
         // instance body's value-parameter reads.
         for (decl, param_arg) in call.param_decls.iter().zip(&call.param_arg_regs) {
-            let ParamDecl::Value { name, .. } = decl else {
-                continue;
-            };
-            if bindings.values.contains_key(name.as_str()) {
+            if !matches!(decl, ParamDecl::Value { .. })
+                || bindings.values.contains_key(&decl.binder())
+            {
                 continue;
             }
             let value = param_arg
@@ -97,7 +96,7 @@ impl Specializer<'_> {
             let Some(value) = value else {
                 return Ok(());
             };
-            bindings.values.insert(name.clone(), value.clone());
+            bindings.values.insert(decl.binder(), value.clone());
             arguments.push(InstanceArg::Value(value));
         }
         call.target = self.enqueue(&target, bindings, arguments)?;
@@ -257,10 +256,6 @@ impl Specializer<'_> {
                     self.callable_targets.get(&actual_reg.0)
                     && *captures_are_empty
                 {
-                    bindings.values.insert(
-                        declaration.param_names[index].clone(),
-                        CtValue::Str(callable.clone()),
-                    );
                     bindings
                         .callables
                         .insert(declaration.param_names[index].clone(), callable.clone());

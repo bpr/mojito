@@ -8,8 +8,13 @@ use super::*;
 /// holds no arithmetic of its own.
 pub(super) fn eval_ct(expr: &ParamExpr, bindings: &Bindings) -> Result<CtValue, MonoError> {
     let context = ParamContext::detached();
-    let named = ParamBindings::from_named_values(&context, &bindings.values);
-    let replaced = context.replace(expr, &named).map_err(|error| MonoError {
+    let mut bound = ParamBindings::new();
+    for (binder, value) in &bindings.values {
+        if let Ok(value) = context.constant(value.clone()) {
+            bound.bind(binder.id.clone(), value);
+        }
+    }
+    let replaced = context.replace(expr, &bound).map_err(|error| MonoError {
         function: None,
         construct: error.to_string(),
     })?;

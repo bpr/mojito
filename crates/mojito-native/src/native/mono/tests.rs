@@ -409,7 +409,13 @@ fn substitution_resolves_nested_type_and_value_arguments() {
         ..Bindings::default()
     };
     bindings.types.insert(test_binder("T"), Ty::UInt);
-    bindings.values.insert("n".into(), CtValue::Int(4));
+    bindings.values.insert(
+        mojito_types::param_expr::ParamRef {
+            id: mojito_types::param_expr::ParamId::new("Holder", 1),
+            name: "n".into(),
+        },
+        CtValue::Int(4),
+    );
     let ty = Ty::Struct(
         "Buffer".into(),
         vec![
@@ -433,6 +439,40 @@ fn substitution_resolves_nested_type_and_value_arguments() {
     };
     assert!(name.contains("$mono$"));
     assert_eq!(args, vec![TyArg::Ty(Ty::UInt), TyArg::Val(CtValue::Int(4))]);
+}
+
+#[test]
+fn value_binders_sharing_a_spelling_keep_their_own_solutions() {
+    let mut bindings = Bindings {
+        generic_templates: Rc::new(HashSet::from(["Grid".to_string()])),
+        ..Bindings::default()
+    };
+    let binder = |owner: &str| mojito_types::param_expr::ParamRef {
+        id: mojito_types::param_expr::ParamId::new(owner, 0),
+        name: "n".into(),
+    };
+    bindings.values.insert(binder("Grid"), CtValue::Int(4));
+    bindings
+        .values
+        .insert(binder("Grid.resize"), CtValue::Int(9));
+    let reference = |owner: &str| {
+        TyArg::Val(CtValue::Expr(ParamContext::detached().decl_ref(
+            mojito_types::param_expr::ParamId::new(owner, 0),
+            "n",
+            mojito_types::param_expr::MetaTy::int(),
+        )))
+    };
+    let ty = Ty::Struct(
+        "Grid".into(),
+        vec![reference("Grid.resize"), reference("Grid")],
+    );
+    let Ty::Struct(_, args) = substitute_ty(&ty, &bindings).unwrap() else {
+        panic!()
+    };
+    assert_eq!(
+        args,
+        vec![TyArg::Val(CtValue::Int(9)), TyArg::Val(CtValue::Int(4))]
+    );
 }
 
 #[test]

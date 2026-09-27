@@ -199,7 +199,7 @@ pub(super) fn owner_covered_prefix(
     if struct_params
         .iter()
         .zip(method_params)
-        .all(|(s, m)| s.name() == m.name())
+        .all(|(s, m)| s.id() == m.id())
     {
         struct_params.len()
     } else {

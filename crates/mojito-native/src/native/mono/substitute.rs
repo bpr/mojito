@@ -4,18 +4,23 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
+/// Substitute `bindings` through `function`, whose declaration declares the
+/// compile-time parameters in `scope`.
 pub(super) fn substitute_function(
     function: &mut MirFunction,
     bindings: &Bindings,
+    scope: &[ParamDecl],
 ) -> Result<(), MonoError> {
+    let locals = bound_parameter_locals(scope, bindings);
     substitute_value_parameter_reads(
         &mut function.blocks,
         &function.var_names,
         &function.var_tys,
-        bindings,
+        &locals,
+        &bindings.callables,
     )?;
     for (var, name) in function.var_names.iter().enumerate() {
-        if let Some(value) = bindings.values.get(name) {
+        if let Some(value) = locals.get(name.as_str()) {
             let ty = match value {
                 CtValue::Int(_) => Ty::Int,
                 CtValue::Bool(_) => Ty::Bool,
@@ -186,22 +191,19 @@ pub(super) fn substitute_value_parameter_reads(
     blocks: &mut [MirBlock],
     var_names: &[String],
     var_tys: &HashMap<u32, Ty>,
-    bindings: &Bindings,
+    locals: &HashMap<String, &CtValue>,
+    callables: &HashMap<String, String>,
 ) -> Result<(), MonoError> {
     for block in blocks {
         for instruction in &mut block.instrs {
-            // A promoted callable parameter is a runtime parameter of this
-            // instance: its reads stay reads of the closure the caller
-            // passed, since folding the name in would discard the
-            // environment the body calls through.
             if let MirInstr::UseVar { dest, var, .. } = instruction
                 && let Some(name) = var_names.get(*var as usize)
-                && !bindings.runtime_callables.contains(name)
-                && let Some(value) = bindings.values.get(name)
+                && (callables.contains_key(name) || locals.contains_key(name))
             {
-                let constant = if let Some(callable) = bindings.callables.get(name) {
+                let constant = if let Some(callable) = callables.get(name) {
                     Const::Function(callable.clone())
                 } else {
+                    let value = locals[name];
                     match value {
                         CtValue::Int(value) => Const::Int(*value),
                         CtValue::Bool(value) => Const::Bool(*value),
@@ -234,15 +236,21 @@ pub(super) fn substitute_value_parameter_reads(
                 ..
             } = instruction
             {
-                substitute_value_parameter_reads(body, var_names, var_tys, bindings)?;
+                substitute_value_parameter_reads(body, var_names, var_tys, locals, callables)?;
                 if let Some((_, blocks)) = handler {
-                    substitute_value_parameter_reads(blocks, var_names, var_tys, bindings)?;
+                    substitute_value_parameter_reads(
+                        blocks, var_names, var_tys, locals, callables,
+                    )?;
                 }
                 if let Some(blocks) = orelse {
-                    substitute_value_parameter_reads(blocks, var_names, var_tys, bindings)?;
+                    substitute_value_parameter_reads(
+                        blocks, var_names, var_tys, locals, callables,
+                    )?;
                 }
                 if let Some(blocks) = finalbody {
-                    substitute_value_parameter_reads(blocks, var_names, var_tys, bindings)?;
+                    substitute_value_parameter_reads(
+                        blocks, var_names, var_tys, locals, callables,
+                    )?;
                 }
             }
         }
@@ -737,4 +745,24 @@ pub(super) fn substitute_arg(arg: &TyArg, bindings: &Bindings) -> Result<TyArg, 
 }
 pub(super) fn sub_types(types: &[Ty], bindings: &Bindings) -> Result<Vec<Ty>, MonoError> {
     types.iter().map(|ty| substitute_ty(ty, bindings)).collect()
+}
+
+/// The constant each compile-time parameter's local reads. MIR names a
+/// value binder's local by its spelling, which the declaration's `scope`
+/// resolves to the binder: a signature declares a spelling once. A callable
+/// promoted to a runtime parameter keeps its reads.
+fn bound_parameter_locals<'a>(
+    scope: &[ParamDecl],
+    bindings: &'a Bindings,
+) -> HashMap<String, &'a CtValue> {
+    scope
+        .iter()
+        .filter(|decl| matches!(decl, ParamDecl::Value { .. }))
+        .map(ParamDecl::binder)
+        .filter(|binder| !bindings.runtime_callables.contains(binder))
+        .filter_map(|binder| {
+            let value = bindings.values.get(&binder)?;
+            Some((binder.name.trim_start_matches('*').to_string(), value))
+        })
+        .collect()
 }

@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Native monomorphization now solves and substitutes a value binder by its
+  declaration's identity, as it does a type binder, so two value binders
+  sharing a spelling keep their own solutions. A body's read of a
+  value-parameter local resolves through its declaration's own binders.
 - Most members of a `Tuple` specialization now reuse their template's
   checked facts: the static `__len__`, the initializer, every unrolled
   element accessor and its value twin, the synthesized `copy`, each

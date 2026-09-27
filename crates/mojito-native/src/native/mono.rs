@@ -65,7 +65,11 @@ struct Bindings {
     /// Each type binder's solution, keyed by the binder's identity: two
     /// binders sharing a spelling are two entries.
     types: HashMap<ParamRef, Ty>,
-    values: HashMap<String, CtValue>,
+    /// Each value binder's solution, keyed by identity as `types` is.
+    values: HashMap<ParamRef, CtValue>,
+    /// The callee a retained callable runtime parameter's argument names,
+    /// keyed by the parameter: a runtime parameter is a local of the
+    /// signature, not a binder.
     callables: HashMap<String, String>,
     associated: HashMap<String, Ty>,
     /// When materializing a generic struct's method: the owner's template name
@@ -85,7 +89,7 @@ struct Bindings {
     /// The environment survives no name, so the instance takes the closure as
     /// a runtime parameter and its body keeps the indirect call, instead of
     /// folding the callable's name into a direct one.
-    runtime_callables: Vec<String>,
+    runtime_callables: Vec<ParamRef>,
 }
 
 struct Specializer<'a> {

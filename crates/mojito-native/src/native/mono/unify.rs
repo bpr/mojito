@@ -49,9 +49,11 @@ pub(super) fn ordered_arguments(
                     .get(&decl.binder())
                     .cloned()
                     .map(InstanceArg::Ty),
-                ParamDecl::Value { name, .. } => {
-                    bindings.values.get(name).cloned().map(InstanceArg::Value)
-                }
+                ParamDecl::Value { .. } => bindings
+                    .values
+                    .get(&decl.binder())
+                    .cloned()
+                    .map(InstanceArg::Value),
             }
             .ok_or_else(|| MonoError {
                 function: Some(target.to_string()),
@@ -132,7 +134,7 @@ pub(super) fn bind_explicit_value_arguments(
                                 "value parameter `{name}` is not compile-time constant"
                             ),
                         })?;
-                bindings.values.insert(name.clone(), value);
+                bindings.values.insert(declaration.binder(), value);
             }
             // A supplied constructible type argument (`hash[Fnv1a](x)`)
             // reifies as a string register naming the bound struct; an
@@ -176,13 +178,11 @@ pub(super) fn apply_defaults(
                     .insert(decl.binder(), substitute_ty(default, bindings)?);
             }
             ParamDecl::Value {
-                name,
                 default: Some(default),
                 ..
-            } if !bindings.values.contains_key(name) => {
-                bindings
-                    .values
-                    .insert(name.clone(), eval_ct(default, bindings)?);
+            } if !bindings.values.contains_key(&decl.binder()) => {
+                let value = eval_ct(default, bindings)?;
+                bindings.values.insert(decl.binder(), value);
             }
             _ => {}
         }
@@ -198,8 +198,8 @@ pub(super) fn bind_ty_args(
     for (decl, arg) in decls.iter().zip(args) {
         match (decl, arg) {
             (ParamDecl::Type { .. }, TyArg::Ty(ty)) => bind_type(&decl.binder(), ty, bindings)?,
-            (ParamDecl::Value { name, .. }, TyArg::Val(value)) => {
-                bind_value(name, value, bindings)?;
+            (ParamDecl::Value { .. }, TyArg::Val(value)) => {
+                bind_value(&decl.binder(), value, bindings)?;
             }
             (_, TyArg::Origin(_)) => {}
             _ => {
@@ -368,7 +368,7 @@ pub(super) fn unify_arg(
         // A direct reference binds; any other residual must already agree
         // with the actual once the environment closes it.
         (TyArg::Val(CtValue::Expr(expr)), TyArg::Val(value)) => match expr.as_decl_ref() {
-            Some(reference) => bind_value(&reference.name, value, bindings),
+            Some(reference) => bind_value(reference, value, bindings),
             None => match eval_ct(expr, bindings) {
                 Ok(closed) if mojito_types::param_expr::identity_eq(&closed, value) => Ok(()),
                 Ok(_) => Err("generic application arguments disagree".to_string()),
@@ -418,17 +418,18 @@ pub(super) fn bind_type(binder: &ParamRef, ty: &Ty, bindings: &mut Bindings) -> 
 }
 
 pub(super) fn bind_value(
-    name: &str,
+    binder: &ParamRef,
     value: &CtValue,
     bindings: &mut Bindings,
 ) -> Result<(), String> {
+    let name = &binder.name;
     if matches!(
         value,
         CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)
     ) {
         return Err(format!("solution for `{name}` is not constant"));
     }
-    match bindings.values.get(name) {
+    match bindings.values.get(binder) {
         // As in `bind_type`, `Display` can collapse distinct values (an Int
         // and a UInt render alike), so the conflict text carries the
         // structural forms.
@@ -437,7 +438,7 @@ pub(super) fn bind_value(
         )),
         Some(_) => Ok(()),
         None => {
-            bindings.values.insert(name.to_string(), value.clone());
+            bindings.values.insert(binder.clone(), value.clone());
             Ok(())
         }
     }

@@ -262,7 +262,7 @@ impl<'a> Specializer<'a> {
         &self,
         target: &str,
         param_args: &[mojito_mir::mir::MirParamArg],
-    ) -> Vec<(String, Reg)> {
+    ) -> Vec<(ParamRef, Reg)> {
         let Some(declaration) = self.declarations.get(target) else {
             return Vec::new();
         };
@@ -274,7 +274,7 @@ impl<'a> Specializer<'a> {
             })
             .filter_map(|(decl, reg, _)| {
                 let (_, captures_are_empty) = self.callable_targets.get(&reg.0)?;
-                (!captures_are_empty).then(|| (decl.name().to_string(), reg))
+                (!captures_are_empty).then(|| (decl.binder(), reg))
             })
             .collect()
     }
@@ -296,7 +296,11 @@ impl<'a> Specializer<'a> {
                 )
             })?
             .clone();
-        substitute_function(&mut function, bindings).map_err(|mut e| {
+        let scope = self
+            .declarations
+            .get(key.template.as_str())
+            .map_or(&[][..], |declaration| &declaration.param_decls);
+        substitute_function(&mut function, bindings, scope).map_err(|mut e| {
             e.function.get_or_insert_with(|| key.template.clone());
             e
         })?;
@@ -307,8 +311,8 @@ impl<'a> Specializer<'a> {
             .runtime_callables
             .iter()
             .filter_map(|parameter| {
-                promote_to_runtime_parameter(&mut function, parameter)
-                    .map(|ty| (parameter.clone(), ty))
+                promote_to_runtime_parameter(&mut function, &parameter.name)
+                    .map(|ty| (parameter.name.to_string(), ty))
             })
             .collect();
         self.constant_values = function_constant_values(&function);
@@ -711,7 +715,7 @@ impl<'a> Specializer<'a> {
                         // closure here as an ordinary argument.
                         let capturing = self.capturing_callable_arguments(&target, param_arg_regs);
                         bindings.runtime_callables =
-                            capturing.iter().map(|(name, _)| name.clone()).collect();
+                            capturing.iter().map(|(binder, _)| binder.clone()).collect();
                         func.0 = self.enqueue(&target, bindings, arguments)?;
                         for param_arg in param_arg_regs.iter_mut() {
                             param_arg.value = None;
