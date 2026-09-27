@@ -2994,6 +2994,23 @@ fn template_method_tuple_elements_derive() {
 }
 
 #[test]
+fn template_method_discarded_values_derive() {
+    // A whole value of the struct's parameter type discarded with `_ =`: a
+    // local bound from a tuple element or a field, a field of `self`, a
+    // parameter, and a local transferred out with `^`.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_discarded_value.mojo"),
+        "3 5\n4 6\n5 7\n6 8\n",
+        &[
+            ("Holder.head", 2),
+            ("Holder.field", 2),
+            ("Holder.param", 2),
+            ("Holder.moved", 2),
+        ],
+    );
+}
+
+#[test]
 fn tuple_members_derive_from_their_templates() {
     // A `Tuple` specialized whole takes each member from its checked
     // template: the static `__len__` over its folded pack length, the

@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A whole value discarded with `_ =` in a method (`_ = first` over a local
+  of the struct's parameter type, `_ = first^`, `_ = self.items.pop(i)`) now
+  derives from the method's checked template
+  (`assets/ok/template_method_discarded_value.mojo`), and so do `Set.remove`
+  and `Set.discard`. The method grammar's discard arm admitted only a closed
+  scalar, so such bodies were checked again per instance.
 - A module `def` updating a `mut` parameter through its in-place dunder
   (`def add_in[T: Accum](mut a: T, b: T): a += b`) now derives each instance
   from its checked template

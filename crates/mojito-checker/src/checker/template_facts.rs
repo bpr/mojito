@@ -8839,8 +8839,14 @@ impl BodyShape<'_> {
                     || (self.print_call(value)
                         && (self.keyed || self.holds(MethodFeatures::STATEMENTS)))
             }
+            // A discarded value: a closed scalar, or a whole value copied or
+            // moved out as any other ([`Self::whole_value`]) and destroyed
+            // at the instance's type as any temporary is.
             StmtKind::Assign { name, value } if name == "_" => {
-                self.expression(value) && self.scalar(value)
+                (self.expression(value) && self.scalar(value))
+                    || (!self.keyed
+                        && self.whole_value(value)
+                        && self.holds(MethodFeatures::STATEMENTS))
             }
             // A scalar local takes a closed scalar. Any `var` local may be
             // rebound whole to a value of its own type: the old value's
