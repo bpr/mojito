@@ -2203,11 +2203,12 @@ impl Checker {
             ));
         }
         let named_result = out_params.first().copied();
-        // Source validation checks a module-level body only when it holds
-        // compile-time control flow; every other module-level body is
-        // declared here and checked by the executable pass. A nested body
-        // is always checked with its enclosing validated body.
-        let check_body = !self.source_validation
+        // Source validation checks a module-level body when it holds
+        // compile-time control flow, or when the def is value-keyed and so
+        // specialized per call (`value_keyed_def`); every other module-level
+        // body is declared here and checked by the executable pass. A nested
+        // body is always checked with its enclosing validated body.
+        let validated = !self.source_validation
             || !self.function_bases.is_empty()
             || validates_body(
                 &[],
@@ -2215,6 +2216,8 @@ impl Checker {
                 body,
                 body_keys_rebind(body, &self.rebind_keyed_bodies),
             );
+        let value_keyed = !validated && value_keyed_def(stmt);
+        let check_body = validated || value_keyed;
         if named_result.is_some() && ret_anno.is_some() {
             return Err(TypeError::Unsupported(
                 "a function cannot declare both a named result and '->' return type".to_string(),
@@ -2772,6 +2775,18 @@ impl Checker {
                         self.pack_element_views.borrow_mut().clear();
                     }
                     let checked = self.check_def_body(stmt, &decls, &ret_ty, module_level);
+                    // A value-keyed def is validated only to produce its
+                    // template: each specialization is still checked, or
+                    // derived, so a body the symbolic check cannot type
+                    // gets no verdict.
+                    let checked = match checked {
+                        Err(error)
+                            if value_keyed && !matches!(error, TypeError::SymbolicBoundary(_)) =>
+                        {
+                            Err(TypeError::SymbolicBoundary(error.to_string()))
+                        }
+                        checked => checked,
+                    };
                     result = self.symbolic_verdict(name, body, scopes, checked);
                 }
                 self.named_result_context.pop();

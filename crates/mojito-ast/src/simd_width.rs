@@ -1,13 +1,15 @@
 //! Layout-dependent parameter detection: SIMD-width usage scans over
-//! types, statements, and expressions.
+//! types, statements, and expressions. The elaborator specializes such a
+//! declaration per call, and source validation checks its template.
 
-#[allow(clippy::wildcard_imports, reason = "page of one split module")]
-use super::*;
+use crate::ast::{Expr, ExprKind, ParamArg, Stmt, StmtKind, Type};
 
-/// Whether a generic `def` uses one of its parameters where checking or
-/// execution requires a concrete target layout: as a `SIMD`/`Scalar` width or
-/// as the operand of `size_of`. Such a declaration must specialize per call.
-pub(super) fn def_uses_layout_dependent_param(statement: &Stmt) -> bool {
+/// Whether a generic `def` uses one of its parameters as a lane width.
+///
+/// That is a use where checking or execution requires a concrete target
+/// layout: as a `SIMD`/`Scalar` width or as the operand of `size_of`. Such a
+/// declaration must specialize per call.
+pub fn def_uses_layout_dependent_param(statement: &Stmt) -> bool {
     let StmtKind::Def {
         type_params,
         params,
@@ -36,11 +38,12 @@ pub(super) fn def_uses_layout_dependent_param(statement: &Stmt) -> bool {
             .any(|inner| stmt_uses_param_simd_width(inner, &names))
 }
 
-/// Whether a generic struct uses one of its own parameters as a `SIMD`/
-/// `Scalar` width (`SIMD[DType.int64, Self.length]`) in a field, a method
-/// signature, or a method body. An erased body has no lane count for it, so
-/// such a struct specializes per application.
-pub(super) fn struct_uses_layout_dependent_param(statement: &Stmt) -> bool {
+/// Whether a generic struct uses one of its own parameters as a lane width.
+///
+/// That is a `SIMD`/`Scalar` width (`SIMD[DType.int64, Self.length]`) in a
+/// field, a method signature, or a method body. An erased body has no lane
+/// count for it, so such a struct specializes per application.
+pub fn struct_uses_layout_dependent_param(statement: &Stmt) -> bool {
     let StmtKind::Struct {
         type_params,
         fields,
@@ -76,7 +79,7 @@ pub(super) fn struct_uses_layout_dependent_param(statement: &Stmt) -> bool {
         })
 }
 
-pub(super) fn type_uses_param_simd_width(ty: &Type, names: &[&str]) -> bool {
+fn type_uses_param_simd_width(ty: &Type, names: &[&str]) -> bool {
     match ty {
         Type::Named(name, arguments) => arguments
             .iter()
@@ -98,11 +101,7 @@ pub(super) fn type_uses_param_simd_width(ty: &Type, names: &[&str]) -> bool {
     }
 }
 
-pub(super) fn param_arg_uses_simd_width(
-    width_position: bool,
-    argument: &ParamArg,
-    names: &[&str],
-) -> bool {
+fn param_arg_uses_simd_width(width_position: bool, argument: &ParamArg, names: &[&str]) -> bool {
     match argument {
         // A struct's own parameter in a width slot is spelled `Self.<name>`.
         ParamArg::Type(Type::SelfParam(name)) => width_position && names.contains(&name.as_str()),
@@ -115,7 +114,7 @@ pub(super) fn param_arg_uses_simd_width(
     }
 }
 
-pub(super) fn stmt_uses_param_simd_width(statement: &Stmt, names: &[&str]) -> bool {
+fn stmt_uses_param_simd_width(statement: &Stmt, names: &[&str]) -> bool {
     let block = |stmts: &[Stmt]| stmts.iter().any(|s| stmt_uses_param_simd_width(s, names));
     let expr = |e: &Expr| expr_uses_param_simd_width(e, names);
     match &statement.kind {
@@ -163,7 +162,7 @@ pub(super) fn stmt_uses_param_simd_width(statement: &Stmt, names: &[&str]) -> bo
     }
 }
 
-pub(super) fn expr_uses_param_simd_width(e: &Expr, names: &[&str]) -> bool {
+fn expr_uses_param_simd_width(e: &Expr, names: &[&str]) -> bool {
     let expr = |inner: &Expr| expr_uses_param_simd_width(inner, names);
     let args_use = |width_position: bool, arguments: &[ParamArg]| {
         arguments

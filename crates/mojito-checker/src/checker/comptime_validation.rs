@@ -1199,7 +1199,11 @@ pub(super) fn count_template_classes(stmts: &[Stmt], rebind_keyed: &HashSet<Sour
                 body,
                 ..
             } if !type_params.is_empty() => {
-                let class = body_class(&[], type_params, body);
+                let class = if value_keyed_def(statement) {
+                    TemplateClass::ValidatedKeyed
+                } else {
+                    body_class(&[], type_params, body)
+                };
                 timing::count(class.counter(), 1);
                 timing::note(class.counter(), || name.clone());
             }
@@ -1333,6 +1337,18 @@ pub(super) fn value_keyed_struct(decls: &[ParamDecl]) -> bool {
     }) && decls.iter().any(|decl| {
         matches!(decl, ParamDecl::Value { ty, .. } if matches!(**ty, Ty::Dtype | Ty::Simd { .. }))
     })
+}
+
+/// Whether a module-level `def` keys a lane on a `DType` binder of its own
+/// or uses a parameter as a lane width (`Scalar[dt](v)`, `SIMD[DType.int32,
+/// w]`): the elaborator specializes such a def per call and drops its
+/// template, so source validation checks its body with the parameters
+/// symbolic.
+pub(super) fn value_keyed_def(statement: &Stmt) -> bool {
+    matches!(&statement.kind, StmtKind::Def { type_params, .. }
+    if type_params.iter().any(|parameter| {
+        matches!(parameter.bounds.as_slice(), [only] if only == "DType")
+    })) || mojito_ast::simd_width::def_uses_layout_dependent_param(statement)
 }
 
 /// Whether a block holds a `comptime if`/`comptime for` anywhere below it,

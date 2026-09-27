@@ -627,6 +627,7 @@ assets/ok/template_scalar_loop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_two_arms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_two_types.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_value_keyed_def.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_value_keyed_lane_def.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_value_keyed_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_value_shaped_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_view_over_loan_carrying_argument.mojo	-	ineligible	no-scalar-entry-shape

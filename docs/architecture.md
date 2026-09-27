@@ -316,7 +316,9 @@ policy or data-model responsibilities to focused children:
 - `comptime.rs` runs elaboration and specialization;
   `comptime/rewrite.rs` owns AST substitution and value materialization, and
   the root's extracted clusters live in
-  `comptime/{elab,synth,ctfe_calls,packs,params,simd_width}.rs`.
+  `comptime/{elab,synth,ctfe_calls,packs,params}.rs`;
+  the lane-width scan it shares with source validation lives in
+  `mojito-ast/simd_width.rs`.
 
 Child modules expose only the phase-internal operations their coordinator needs.
 The public entry points for each compiler phase remain in its root module.

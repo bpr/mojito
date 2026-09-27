@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `def` keyed on a `DType` binder, or using a parameter as a lane width,
+  with no compile-time control flow (`def lane[dt: DType](v: Int)`
+  constructing `Scalar[dt](v)`) now has its body checked once by source
+  validation with the parameters symbolic, and each per-call instance reuses
+  those facts (`assets/ok/template_value_keyed_lane_def.mojo`). Such
+  instances used to be checked again per call, their template dropped.
 - A `print` statement in a runtime `def` or a struct method (`print(n)`,
   `print("count", self.count, extra)`) now reuses the template's checked
   facts, as it already did in a compile-time-keyed body; each instance proves

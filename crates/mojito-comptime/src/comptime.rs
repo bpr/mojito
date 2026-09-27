@@ -1079,18 +1079,16 @@ mod elab;
 mod pack_qualification;
 mod packs;
 mod params;
-mod simd_width;
 mod synth;
 mod unparse;
 
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use ctfe_calls::*;
+use mojito_ast::simd_width::{def_uses_layout_dependent_param, struct_uses_layout_dependent_param};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use packs::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use params::*;
-#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
-use simd_width::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use synth::*;
 

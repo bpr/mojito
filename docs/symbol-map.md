@@ -291,7 +291,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   body keyed on the `Hasher` wildcard vector binder is validated), and
   `value_keyed_struct` names a struct keyed on a `DType` or vector value,
   every member of which is validated, with no verdict where it cannot be
-  typed,
+  typed, as is the body `value_keyed_def` names (a `def` keyed on a
+  `DType` binder or using a parameter as a lane width, which the elaborator
+  specializes per call — `mojito_ast::simd_width::def_uses_layout_dependent_param`,
+  shared with the elaborator, is the lane-width scan),
   `conformance_arm_assumptions` collects what a `comptime if`'s
   `conforms_to` atoms prove for the arm `statements.rs:check_conditional`
   guards with them, and `is_template_shell_member_error` names the errors
@@ -782,7 +785,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   methods are split across `impl<'a> Elab<'a>` blocks in the submodules
   below (`comptime/elab.rs` holds the root driver's own cluster), and the
   root's helper clusters live in
-  `comptime/{synth,ctfe_calls,packs,params,simd_width}.rs`.
+  `comptime/{synth,ctfe_calls,packs,params}.rs`.
 - `comptime/pack_qualification.rs` owns upstream's spelling rule for a
   variadic struct's own pack (`qualify_struct_packs`, the first step of
   `elaborate_with_requests`): a member naming the pack bare reports
@@ -880,6 +883,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 |---|---|---|
 | Syntax or AST shape | [`grammar.md`](grammar.md), `parser.rs`, `ast.rs` | Parser tests, `frontend.md`, feature matrix. |
 | Argument binding | `call.rs` | Checker/VM adapters and call-parity tests. |
+| Which declarations use a parameter as a lane width | `mojito-ast/simd_width.rs` | The elaborator's per-call specialization (`comptime.rs`) and `checker/comptime_validation.rs:value_keyed_def`. |
 | An AST walk (read-only `Visitor`, in-place `MutVisitor`) | `mojito-ast/visit.rs` | `comptime/pack_qualification.rs`, `ast::stamp_source`, `checker/rebind.rs`. |
 | Overload identity | `symbol.rs` | Checker selection, MIR declarations, symbol/rejection tests. |
 | Type rules | `checker.rs` or focused checker child | `CheckedProgram`, negative checker tests. |

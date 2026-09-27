@@ -1656,6 +1656,34 @@ fn template_value_shaped_construction_derives() {
 }
 
 #[test]
+fn template_value_keyed_lane_def_derives() {
+    // A `DType`- or lane-keyed `def` with no compile-time control flow is
+    // specialized per call; source validation checks its template, so every
+    // instance derives from it.
+    let source = "def lane[dt: DType](v: Int) -> Int:\n    var one = Scalar[dt](v)\n    return len(one) + v\n\ndef wide[w: Int](v: Int) -> Int:\n    var lanes = SIMD[DType.int32, w](v)\n    return len(lanes)\n\ndef main():\n    print(lane[DType.int16](2), lane[DType.float32](9), wide[4](2))\n";
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compiler.compile_unlinked(source).expect("compile");
+        let stats = program.template_stats();
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        let derived: std::collections::HashSet<&str> = served
+            .iter()
+            .map(String::as_str)
+            .filter(|name| name.starts_with("lane$") || name.starts_with("wide$"))
+            .collect();
+        assert_eq!(derived.len(), 3, "every instance derives: {stats:?}");
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "3 10 4\n"
+        );
+    }
+}
+
+#[test]
 fn template_per_call_method_clones_derive() {
     // A per-call clone bakes the method's own bounded binder beside the
     // struct's; its trace names both, so it derives from the checked
