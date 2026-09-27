@@ -450,6 +450,7 @@ assets/ok/rebind_assignment.mojo	main	exe-differential	sanitized
 assets/ok/rebind_augmented_assignment.mojo	main	exe-differential	sanitized
 assets/ok/rebind_generic_body.mojo	main	exe-differential	sanitized
 assets/ok/rebind_overloaded_def.mojo	main	exe-differential	sanitized
+assets/ok/receiver_origin_iterator_argument.mojo	main	exe-differential	sanitized
 assets/ok/ref_binding_projected_field_offset.mojo	main	exe-differential	sanitized
 assets/ok/ref_binding_temporary_source.mojo	main	exe-differential	sanitized
 assets/ok/ref_param.mojo	main	exe-differential	sanitized

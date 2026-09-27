@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An iterator a method returned over a loan-carrying list (`it =
+  l.__iter__()` over `List[Span[Int, origin_of(xs)]]`) now gets its own
+  clone of `next` or of a user generic `def` it is handed to
+  (`assets/ok/receiver_origin_iterator_argument.mojo`). The checker records
+  its origin slot as the method's receiver origin, which the elaborator
+  refused to bind, so such a call kept the erased body.
+- The native backend now runs an explicit `l.__iter__()` over a
+  loan-carrying list. The iterator instance was rejected as an identity
+  collision because its `ref` field's referent differed only in an origin.
 - A generic `def` whose loan-carrying type argument reaches only its result
   (`unsafe_alloc[Span[Int, origin_of(xs)]](n)`, a user `make[T](n) ->
   Pointer[T, MutUntrackedOrigin]`) now gets its own clone

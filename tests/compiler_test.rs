@@ -3745,6 +3745,37 @@ fn unspelled_loan_carrying_type_argument_clones() {
 }
 
 #[test]
+fn receiver_origin_iterator_argument_clones() {
+    // An iterator recorded with its method's receiver origin
+    // (`l.__iter__()` over a loan-carrying list) binds that slot to a clone
+    // binder, so `next` and a user generic `def` each get a clone.
+    let compiler = Compiler::default();
+    let compiled = compile_entry(
+        &compiler,
+        include_str!("../assets/ok/receiver_origin_iterator_argument.mojo"),
+    );
+    assert_eq!(
+        compiler.execute(&compiled).expect("execute").output,
+        "3 4\n6\n5\n"
+    );
+    let defs: Vec<&str> = compiled
+        .checked()
+        .statements()
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            mojito::ast::StmtKind::Def { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    for clone in [
+        "next$y50:__module$std$collections$list$_ListIter[Span[Int]]",
+        "advance$y50:__module$std$collections$list$_ListIter[Span[Int]]",
+    ] {
+        assert!(defs.contains(&clone), "{clone} is minted: {defs:?}");
+    }
+}
+
+#[test]
 fn template_symbolic_store_keeps_a_latent_transfer_for_its_instances() {
     // `self.item = value^` over a symbolic `T` publishes no transfer in the
     // template, which records it as latent. The loan-carrying instance

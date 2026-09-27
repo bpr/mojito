@@ -450,6 +450,7 @@ assets/ok/rebind_assignment.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/rebind_augmented_assignment.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/rebind_generic_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/rebind_overloaded_def.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/receiver_origin_iterator_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_binding_projected_field_offset.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_binding_temporary_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_param.mojo	-	ineligible	no-scalar-entry-shape

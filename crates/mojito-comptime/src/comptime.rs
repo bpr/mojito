@@ -1787,10 +1787,7 @@ impl Elab<'_> {
                     if elements.iter().any(|element| matches!(element,
                         CtValue::Type(inner) if self.ty_mentions_origin_slotted_struct(inner)))))
                 .then(|| argument.clone()),
-                TyArg::Origin(
-                    mojito_types::origin::Origin::Param(_)
-                    | mojito_types::origin::Origin::SelfParam,
-                ) => None,
+                TyArg::Origin(mojito_types::origin::Origin::Param(_)) => None,
                 TyArg::Origin(_) => {
                     let slot = slots.next()?;
                     (slot.bounds == ["Origin"])
@@ -3139,10 +3136,13 @@ impl<'a> Elab<'a> {
     /// on the clone (`Span[Int, __clone_origin0]`), inferred per call from the
     /// clone's own parameters as the template's type parameter was: the
     /// checker's instantiation records erase every place origin, so one clone
-    /// serves every origin of that shape. `None` keeps the erased path: a
-    /// struct applied without its tail (`_ListIter[Int]`), an `OriginSet`
-    /// slot, or a slot already bound to an enclosing declaration's origin
-    /// parameter has no binder to stand for it.
+    /// serves every origin of that shape. A slot still naming a method's
+    /// receiver origin (`l.__iter__()` recorded as `_ListIter[T,
+    /// origin_of(self)]`) names some caller place, so it binds as one.
+    /// `None` keeps the erased path: a struct applied without its tail
+    /// (`_ListIter[Int]`), an `OriginSet` slot, or a slot already bound to an
+    /// enclosing declaration's origin parameter has no binder to stand for
+    /// it.
     pub(super) fn clone_binding(
         &self,
         ty: &Ty,

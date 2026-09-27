@@ -6,7 +6,8 @@ use super::*;
 
 /// Field-list equivalence for name-colliding struct instances: strict
 /// structural equality except that pointer types collapse (one opaque
-/// target word, drop-inert), recursing through nested aggregate shapes.
+/// target word, drop-inert) and origins erase, recursing through nested
+/// aggregate shapes and reference referents.
 pub(super) fn fields_equivalent(a: &[(String, Ty)], b: &[(String, Ty)]) -> bool {
     a.len() == b.len()
         && a.iter()
@@ -17,6 +18,10 @@ pub(super) fn fields_equivalent(a: &[(String, Ty)], b: &[(String, Ty)]) -> bool 
 pub(super) fn ty_equivalent(a: &Ty, b: &Ty) -> bool {
     match (a, b) {
         (Ty::Pointer { .. }, Ty::Pointer { .. }) => true,
+        // A reference is one target word whatever its origin.
+        (Ty::Ref(a), Ty::Ref(b)) => {
+            a.mutability == b.mutability && ty_equivalent(&a.referent, &b.referent)
+        }
         (Ty::Struct(a_name, a_args), Ty::Struct(b_name, b_args)) => {
             a_name == b_name
                 && a_args.len() == b_args.len()
