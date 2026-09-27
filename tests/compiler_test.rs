@@ -1592,6 +1592,42 @@ fn template_value_keyed_def_derives() {
 }
 
 #[test]
+fn template_print_statement_derives() {
+    // A `print` statement in a runtime `def` or a method selects no callee;
+    // each instance proves its arguments `Writable` again.
+    let source = "def shown[T: ImplicitlyCopyable & Deinitable, n: Int](x: T, base: Int) -> Int:\n    var kept = x\n    print(n, base)\n    return base * n\n\ndef plain[T: ImplicitlyCopyable & Deinitable](x: T, v: Int) -> Int:\n    var kept = x\n    if v > 2:\n        print(\"big\", v)\n    return v\n\nstruct Box[T: ImplicitlyCopyable & Deinitable](Movable):\n    var item: Self.T\n    var count: Int\n\n    def __init__(out self, var item: Self.T, count: Int):\n        self.item = item\n        self.count = count\n\n    def report(self, extra: Int) -> Int:\n        print(\"count\", self.count, extra)\n        return self.count + extra\n\ndef main():\n    print(shown[Int, 3](7, 2), shown[String, 1](\"s\", 5))\n    print(plain[Int](1, 3), plain[String](\"s\", 1))\n    var a = Box[Int](1, 4)\n    var b = Box[String](\"x\", 9)\n    print(a.report(2), b.report(3))\n";
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compiler
+            .compile_source(
+                source,
+                std::path::Path::new("/tmp/mojito_template_print_statement.mojo"),
+            )
+            .expect("compile");
+        let stats = program.template_stats();
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        let derived: std::collections::HashSet<&str> = served
+            .iter()
+            .map(String::as_str)
+            .filter(|name| {
+                ["shown$", "plain$", "Box.report$"]
+                    .iter()
+                    .any(|p| name.starts_with(p))
+            })
+            .collect();
+        assert_eq!(derived.len(), 6, "every instance derives: {stats:?}");
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "3 2\n1 5\n6 5\nbig 3\n3 1\ncount 4 2\ncount 9 3\n6 12\n"
+        );
+    }
+}
+
+#[test]
 fn template_value_shaped_construction_derives() {
     // A keyed `def` constructing a `SIMD` whose dtype or width names its own
     // value binder records no dimensions in its template; each instance's

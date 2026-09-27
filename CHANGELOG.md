@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `print` statement in a runtime `def` or a struct method (`print(n)`,
+  `print("count", self.count, extra)`) now reuses the template's checked
+  facts, as it already did in a compile-time-keyed body; each instance proves
+  its arguments `Writable` again (`assets/ok/template_print_statement.mojo`).
+  Such bodies used to be checked again per instance.
 - A division, a comparison, or a `~` over folded `comptime for` variables,
   value parameters, and literals alone (`print(~i, i * 2 < 5)`, `acc += i /
   2`, `if n > 2:` in a runtime `def`) now reuses the template's checked

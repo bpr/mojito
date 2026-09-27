@@ -3970,7 +3970,7 @@ impl Checker {
                     constructions: shape.constructions.borrow().clone(),
                     callable_calls: shape.callable_calls.borrow().clone(),
                     repr_calls: shape.repr_calls.borrow().clone(),
-                    print_calls: Vec::new(),
+                    print_calls: shape.print_calls.borrow().clone(),
                     simd_to_bits: shape.simd_to_bits.borrow().clone(),
                     simd_lengths: shape.simd_lengths.borrow().clone(),
                 },
@@ -8103,7 +8103,8 @@ impl BodyShape<'_> {
                 call || (self.moved_result.is_some() && self.pointer_statement(value))
                     || (!self.keyed && self.abort(value))
                     || (self.desugar_depth.get() > 0 && self.keep_alive(value))
-                    || (self.keyed && self.print_call(value))
+                    || (self.print_call(value)
+                        && (self.keyed || self.holds(MethodFeatures::STATEMENTS)))
             }
             StmtKind::Assign { name, value } if name == "_" => {
                 self.expression(value) && self.scalar(value)
@@ -10718,8 +10719,8 @@ impl BodyShape<'_> {
         admitted && self.holds(MethodFeatures::STRING_BUILTINS)
     }
 
-    /// `print(...)` as a statement of a keyed body: a checker builtin that
-    /// selects no callee, over closed scalars and pack elements.
+    /// `print(...)` as a statement: a checker builtin that selects no
+    /// callee, over closed scalars, pack elements, and string literals.
     ///
     /// What the builtin records at an argument its syntax decides (an
     /// unconsumed temporary, a literal's materialization); what it proves,
@@ -10746,7 +10747,13 @@ impl BodyShape<'_> {
             && param_args.is_empty()
             && kwargs.is_empty()
             && args.iter().all(|argument| {
-                (self.expression(argument) && self.scalar(argument)) || self.pack_element(argument)
+                (self.expression(argument) && self.scalar(argument))
+                    || self.pack_element(argument)
+                    || (matches!(argument.kind, ExprKind::Str(_))
+                        && self.facts.is_none_or(|facts| {
+                            fact_at(&facts.expression_types, self.occurrence(argument))
+                                == Some(&Ty::StringLiteral)
+                        }))
             });
         if admitted {
             let mut calls = self.print_calls.borrow_mut();
