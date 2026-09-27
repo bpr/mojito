@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An augmented assignment through an in-place dunder that a parameter's
+  bound declares raising (`self.total += x` on a `T: Checked`) now derives
+  from the method's checked template, whether the instance's witness raises
+  or not (`assets/ok/template_method_inplace_place.mojo`). The method grammar
+  refused a raising dunder dispatched through a bound, so the body was checked
+  again per instance.
 - An augmented assignment to a `var` local through its in-place dunder
   (`var m = self.meter; m += Meter(3)`) now derives from the method's checked
   template (`assets/ok/template_method_inplace_place.mojo`). The method

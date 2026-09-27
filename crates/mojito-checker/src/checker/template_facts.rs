@@ -2588,8 +2588,9 @@ impl Checker {
     /// Realize the in-place dunder each augmented assignment to a place
     /// selects, on the instance's type of the place. One the template
     /// dispatched through the place's bound is re-selected there, and the
-    /// witness's parameters are recorded at the place, as the checker's own
-    /// selection records them ([`Self::realize_embedded_dispatch`]). A
+    /// witness's parameters and raised type are recorded at the place, as
+    /// the checker's own selection records them
+    /// ([`Self::realize_embedded_dispatch`]). A
     /// nominal one is the place's struct's own method, realized as any call
     /// on that struct is ([`Self::realize_method_contract`]).
     fn realize_inplace_updates(
@@ -2599,6 +2600,7 @@ impl Checker {
     ) -> Result<(), &'static str> {
         let mut realized = Vec::new();
         let mut parameters = Vec::new();
+        let mut effects = Vec::new();
         for (id, call) in &mut facts.inplace_updates {
             let place = fact_at(&facts.expression_types, *id)
                 .ok_or("an updated place has no retained type")?;
@@ -2606,6 +2608,7 @@ impl Checker {
             if mojito_symbol::symbol::is_trait_dispatch_symbol(&selected) {
                 let witness =
                     self.realize_embedded_dispatch(&facts.expression_types, call, place)?;
+                effects.push((*id, call.contract.raises.clone()));
                 parameters.push((*id, witness.parameters));
                 realized.push((selected, witness.target));
                 continue;
@@ -2639,6 +2642,20 @@ impl Checker {
         }
         for (id, parameters) in parameters {
             upsert(&mut facts.call_parameters, id, parameters);
+        }
+        for (id, raises) in effects {
+            match raises {
+                Some(raises) => upsert(
+                    &mut facts.expression_effects,
+                    id,
+                    mojito_checked::checked::EffectFacts {
+                        raises: Some(raises),
+                        may_suspend: false,
+                        diverges: false,
+                    },
+                ),
+                None => facts.expression_effects.retain(|(site, _)| *site != id),
+            }
         }
         for (selected, target) in realized {
             note_realized_callee(facts, &selected, &target);
@@ -10477,10 +10494,11 @@ impl BodyShape<'_> {
     /// local holding a whole value, or a `mut` parameter.
     ///
     /// The contract is kept at the place in `inplace_updates`, and the
-    /// operand is judged against it as a method call's argument. A struct's
-    /// own dunder may raise in a method declared `raises`. A dunder
-    /// dispatched through a bare parameter's bound is re-selected on the
-    /// instance's type of the place ([`Checker::realize_embedded_dispatch`]).
+    /// operand is judged against it as a method call's argument. The dunder
+    /// may raise in a method declared `raises`. A dunder dispatched through a
+    /// bare parameter's bound is re-selected on the instance's type of the
+    /// place ([`Checker::realize_embedded_dispatch`]), whose witness of a
+    /// raising requirement may not raise.
     /// A struct's own dunder is realized as any method call on that struct
     /// is, which names the instance's clone of a struct built over the
     /// parameter (`realize_inplace_updates`).
@@ -10496,8 +10514,7 @@ impl BodyShape<'_> {
                 fact_at(&facts.inplace_updates, id).is_some_and(|call| {
                     let dispatched =
                         mojito_symbol::symbol::is_trait_dispatch_symbol(&call.contract.target);
-                    let raising = !dispatched
-                        && mojito_checked::templates::raising_method_contract(call)
+                    let raising = mojito_checked::templates::raising_method_contract(call)
                         && self.holds(MethodFeatures::RAISES);
                     (mojito_checked::templates::value_method_contract(call) || raising)
                         && match fact_at(&facts.expression_types, id) {

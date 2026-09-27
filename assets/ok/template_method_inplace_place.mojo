@@ -5,9 +5,15 @@
 # re-selected on the instance's type, and a field of a closed struct or of
 # one built over the parameter through that struct's own dunder, the
 # instance's clone where it has one, which may raise in a method declared
-# `raises`. A `mut` parameter or a `var` local updates the same way.
+# `raises`, as may a dunder its bound declares raising, whose witness may
+# not raise. A `mut` parameter or a `var` local updates the same way.
 trait Accum:
     def __iadd__(mut self, rhs: Self):
+        ...
+
+
+trait Checked:
+    def __iadd__(mut self, rhs: Self) raises:
         ...
 
 
@@ -31,7 +37,7 @@ struct Gauge(Accum, ImplicitlyCopyable):
         self.v += rhs.v * 10
 
 
-struct Strict(ImplicitlyCopyable):
+struct Strict(Checked, ImplicitlyCopyable):
     var n: Int
 
     def __init__(out self, n: Int):
@@ -41,6 +47,16 @@ struct Strict(ImplicitlyCopyable):
         if rhs.n < 0:
             raise "negative"
         self.n += rhs.n
+
+
+struct Loose(Checked, ImplicitlyCopyable):
+    var n: Int
+
+    def __init__(out self, n: Int):
+        self.n = n
+
+    def __iadd__(mut self, rhs: Self):
+        self.n += rhs.n * 2
 
 
 # A struct built over the parameter, whose dunder takes a closed operand.
@@ -110,6 +126,24 @@ struct Rack[T: Accum & ImplicitlyCopyable & Deinitable]:
         return self.total
 
 
+struct Ledger[T: Checked & ImplicitlyCopyable & Deinitable]:
+    var total: Self.T
+
+    def __init__(out self, start: Self.T):
+        self.total = start
+
+    def add(mut self, x: Self.T) raises:
+        self.total += x
+
+    def absorb(self, mut into: Self.T, x: Self.T) raises:
+        into += x
+
+    def summed(self, x: Self.T) raises -> Self.T:
+        var t = self.total
+        t += x
+        return t
+
+
 def main() raises:
     var meters = Rack[Meter](Meter(1))
     meters.add(Meter(5))
@@ -139,3 +173,17 @@ def main() raises:
     gauges.bump_checked(3)
     print(gauges.strict.n, gauges.result().v, gauges.meter.n, gauges.tick.count, gauges.inner.meter.n, g.v)
     print(gauges.bumped(4), gauges.meter.n, gauges.summed(Gauge(2)).v, gauges.result().v)
+    var strict = Ledger[Strict](Strict(1))
+    strict.add(Strict(4))
+    var k = Strict(2)
+    strict.absorb(k, Strict(3))
+    print(strict.total.n, k.n, strict.summed(Strict(2)).n)
+    try:
+        strict.add(Strict(-1))
+    except e:
+        print(e, strict.total.n)
+    var loose = Ledger[Loose](Loose(1))
+    loose.add(Loose(4))
+    var l = Loose(2)
+    loose.absorb(l, Loose(3))
+    print(loose.total.n, l.n, loose.summed(Loose(2)).n)

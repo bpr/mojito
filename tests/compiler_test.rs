@@ -2239,12 +2239,13 @@ fn template_method_parameter_built_stores_derive() {
 #[test]
 fn template_method_inplace_places_derive() {
     // An augmented assignment to a field, a `mut` parameter, or a `var`
-    // local through its in-place dunder: one dispatched through the bare parameter's bound is
-    // re-selected on the instance's type, and a struct's own dunder, raising
-    // or not, is realized on that struct, its clone where it has one.
+    // local through its in-place dunder: one dispatched through the bare
+    // parameter's bound, raising or not, is re-selected on the instance's
+    // type, and a struct's own dunder, raising or not, is realized on that
+    // struct, its clone where it has one.
     assert_methods_derive(
         include_str!("../assets/ok/template_method_inplace_place.mojo"),
-        "6 5 6 2 17\n8 5 8 6\nnegative 8\n5 21 1 9 4 31\n5 1 41 21\n",
+        "6 5 6 2 17\n8 5 8 6\nnegative 8\n5 21 1 9 4 31\n5 1 41 21\n5 5 7\nnegative 5\n9 8 13\n",
         &[
             ("Rack.add", 2),
             ("Rack.bump_meter", 2),
@@ -2255,6 +2256,9 @@ fn template_method_inplace_places_derive() {
             ("Rack.absorb", 2),
             ("Rack.bumped", 2),
             ("Rack.summed", 2),
+            ("Ledger.add", 2),
+            ("Ledger.absorb", 2),
+            ("Ledger.summed", 2),
         ],
     );
 }

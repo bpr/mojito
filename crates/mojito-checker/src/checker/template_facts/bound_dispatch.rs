@@ -154,6 +154,7 @@ impl Checker {
             &ty,
             receiver_convention,
             receiver_transferred,
+            false,
             &method,
             &arguments,
         )? {
@@ -208,8 +209,10 @@ impl Checker {
     /// receiver, returning the witness.
     ///
     /// The call is not selected at an occurrence, so the witness rewrites
-    /// only the contract: its target, result, and parameter types, as
-    /// [`Self::realize_bound_dispatch`] writes them for a selected call. The
+    /// only the contract: its target, result, raised, and parameter types,
+    /// as [`Self::realize_bound_dispatch`] writes them for a selected call. A
+    /// requirement declared `raises` admits a witness that raises or one that
+    /// does not, whose contract then raises nothing. The
     /// witness's parameters are returned for a statement that records them
     /// at its place, as `install_witness` does. A witness with binders of
     /// its own, or no nominal struct's method, is the clone check's to
@@ -256,6 +259,7 @@ impl Checker {
             receiver,
             call.contract.receiver_convention,
             false,
+            call.contract.raises.is_some(),
             &method,
             &arguments,
         )?;
@@ -282,6 +286,9 @@ impl Checker {
         }
         call.contract.target.clone_from(&target);
         call.contract.result_ty = parameter_ty(&declared.ret);
+        call.contract.raises = declared
+            .raises
+            .then(|| declared.error.as_deref().map_or(Ty::Error, &parameter_ty));
         for (argument, declared) in call.contract.arguments.iter_mut().zip(&declared.params) {
             argument.parameter_ty = parameter_ty(declared);
         }
@@ -361,7 +368,7 @@ impl Checker {
                 ranked: false,
                 owned: false,
             }];
-            let witness = self.bound_witness(&ty, None, false, method, &arguments)?;
+            let witness = self.bound_witness(&ty, None, false, false, method, &arguments)?;
             let BoundWitness::Method { .. } = &witness else {
                 return Err("an inverted write's receiver selects no method");
             };
@@ -489,6 +496,7 @@ impl Checker {
         receiver: &'a Ty,
         receiver_convention: Option<ArgConvention>,
         receiver_transferred: bool,
+        raising: bool,
         method: &str,
         arguments: &[DispatchedArgument],
     ) -> Result<BoundWitness<'a>, &'static str> {
@@ -524,6 +532,7 @@ impl Checker {
                     declared,
                     receiver,
                     receiver_convention,
+                    raising,
                     &substitution,
                     arguments,
                 )?,
@@ -543,6 +552,7 @@ impl Checker {
                     selected,
                     receiver,
                     receiver_convention,
+                    raising,
                     &substitution,
                     arguments,
                 )
@@ -604,6 +614,7 @@ impl Checker {
                     declared,
                     receiver,
                     receiver_convention,
+                    raising,
                     &substitution,
                     arguments,
                 )?;
@@ -693,7 +704,8 @@ impl Checker {
     /// How one declaration of the requirement's name binds the recorded
     /// arguments, if it is a witness of the requirement's shape: a read
     /// `self`, one parameter per argument bound with the recorded
-    /// convention, and no variadic, default, `raises`, or reference result.
+    /// convention, and no variadic, default, or reference result, raising
+    /// only where the template's call may (`raising`).
     /// Each parameter's type, under `Self`, the struct's arguments, and the
     /// witness's own binders, is the argument's recorded type or a bounded
     /// parameter the argument's type satisfies. A binder of the witness is
@@ -705,6 +717,7 @@ impl Checker {
         declared: &MethodSig,
         receiver: &Ty,
         receiver_convention: Option<ArgConvention>,
+        raising: bool,
         substitution: &TySubst,
         arguments: &[DispatchedArgument],
     ) -> Result<TySubst, &'static str> {
@@ -714,7 +727,7 @@ impl Checker {
             && declared.required.iter().all(|required| *required)
             && declared.variadic.is_none()
             && declared.kw_variadic.is_none()
-            && !declared.raises
+            && (raising || !declared.raises)
             && declared.ref_return.is_none()
             && declared.view_return.is_empty()
             && declared.parametric_origin_writes.is_empty();
@@ -1034,8 +1047,14 @@ impl Checker {
                 return Err("a hasher argument's place is unbound or overlaps the receiver");
             }
         }
-        let witness =
-            self.bound_witness(ty, Some(ArgConvention::Mut), false, method, &arguments)?;
+        let witness = self.bound_witness(
+            ty,
+            Some(ArgConvention::Mut),
+            false,
+            false,
+            method,
+            &arguments,
+        )?;
         let BoundWitness::Method { .. } = &witness else {
             return Err("a hasher receiver selects no method");
         };
