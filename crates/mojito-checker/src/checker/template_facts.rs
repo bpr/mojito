@@ -287,6 +287,7 @@ struct GrammarNotes {
     simd_to_bits: Vec<(OccurrenceId, OccurrenceId)>,
     simd_casts: Vec<(OccurrenceId, OccurrenceId)>,
     simd_lengths: Vec<(OccurrenceId, OccurrenceId)>,
+    pack_relocations: Vec<mojito_checked::templates::PackRelocation>,
 }
 
 impl Checker {
@@ -1253,6 +1254,19 @@ impl Checker {
         // keyed one keeps the arms the elaborator selected, once per loop
         // iteration it unrolled, and drops the rest, facts and all.
         let keyed = class.keyed();
+        // A relocated pack's spread and transfer have no instance occurrence.
+        let relocated: Vec<SyntaxId> = checked
+            .facts
+            .pack_relocations
+            .iter()
+            .flat_map(|relocation| [relocation.spread.syntax, relocation.transfer.syntax])
+            .collect();
+        let template_occurrences = checked
+            .facts
+            .occurrences
+            .iter()
+            .filter(|id| !relocated.contains(&id.syntax))
+            .count();
         let traced = occurrences.iter().all(|occurrence| {
             (keyed || occurrence.id.copy == 0)
                 && checked
@@ -1260,7 +1274,7 @@ impl Checker {
                     .occurrences
                     .iter()
                     .any(|id| id.syntax == occurrence.id.syntax)
-        }) && (keyed || occurrences.len() == checked.facts.occurrences.len());
+        }) && (keyed || occurrences.len() == template_occurrences);
         if !traced {
             timing::note("template_derivations.untraced", || {
                 let strangers: Vec<String> = occurrences
@@ -1286,17 +1300,23 @@ impl Checker {
             .iter()
             .filter_map(|occurrence| {
                 let (_, index) = occurrence.folded_index?;
-                let (_, binder) =
-                    checked
-                        .facts
-                        .expression_types
-                        .iter()
-                        .find_map(|(id, ty)| match ty {
-                            Ty::Dependent(dependent) if id.syntax == occurrence.id.syntax => {
-                                dependent.pack_element()
-                            }
-                            _ => None,
-                        })?;
+                let (_, binder) = checked
+                    .facts
+                    .expression_types
+                    .iter()
+                    .map(|(id, ty)| (id, ty))
+                    .chain(
+                        checked
+                            .facts
+                            .rebind_assertions
+                            .iter()
+                            .map(|(id, assertion)| (id, &assertion.operand)),
+                    )
+                    .filter(|(id, _)| id.syntax == occurrence.id.syntax)
+                    .find_map(|(_, ty)| match ty {
+                        Ty::Dependent(dependent) => dependent.pack_element(),
+                        _ => None,
+                    })?;
                 match binder.kind() {
                     mojito_types::param_expr::ParamKind::DeclRef(reference) => Some((
                         occurrence.id,
@@ -1306,7 +1326,26 @@ impl Checker {
                 }
             })
             .collect();
-        let selected = checked.facts.selected(&ids, &folded);
+        let mut selected = checked.facts.selected(&ids, &folded);
+        if !relocate_packs(&mut selected, &ids) {
+            return refuse("a relocated pack is not the instance's transfer");
+        }
+        // A reference accessor's value twin (`__getitem_param_value__$k`)
+        // returns by value what its template handed out as a reference.
+        let returns_reference = self
+            .return_ref_contracts
+            .last()
+            .is_some_and(Option::is_some);
+        if matches!(class, TemplateClass::MethodBody(features)
+            if features.contains(MethodFeatures::REFERENCE_RESULT))
+            && !returns_reference
+        {
+            let returned: Vec<SyntaxId> = returned_values(body)
+                .into_iter()
+                .map(|syntax| self.syntax_origins.origin(syntax))
+                .collect();
+            read_returns_by_value(&mut selected, &returned);
+        }
         match self.realize_instance_facts(&selected, &substitution, &indices, &occurrences) {
             Ok(facts) => Some(DerivedBody {
                 facts,
@@ -3099,6 +3138,7 @@ impl Checker {
                         facts.simd_to_bits = notes.simd_to_bits;
                         facts.simd_casts = notes.simd_casts;
                         facts.simd_lengths = notes.simd_lengths;
+                        facts.pack_relocations = notes.pack_relocations;
                         (facts, coverage)
                     }
                     Err(reason) => (
@@ -3383,7 +3423,7 @@ impl Checker {
                 .map(|parameter| parameter.name.as_str())
                 .collect(),
             packs,
-            pack_struct: false,
+            pack_struct: None,
             loop_vars: RefCell::new(Vec::new()),
             values: decls
                 .iter()
@@ -3438,6 +3478,7 @@ impl Checker {
             simd_to_bits: RefCell::new(Vec::new()),
             simd_casts: RefCell::new(Vec::new()),
             simd_lengths: RefCell::new(Vec::new()),
+            pack_relocations: RefCell::new(Vec::new()),
         };
         if !shape.block(body)
             || !shape.operators.borrow().is_empty()
@@ -3942,6 +3983,7 @@ impl Checker {
             .params
             .iter()
             .any(|parameter| parameter.convention.is_some());
+        let (pack_struct, packs) = struct_pack_collectors(method, decls);
         let desugars = self.with_desugars.borrow();
         let shape = BodyShape {
             origins: &self.syntax_origins,
@@ -3963,10 +4005,8 @@ impl Checker {
                 .collect(),
             callable_calls: RefCell::new(Vec::new()),
             static_calls: RefCell::new(Vec::new()),
-            packs: Vec::new(),
-            pack_struct: decls
-                .iter()
-                .any(|decl| matches!(decl, ParamDecl::Type { variadic: true, .. })),
+            packs,
+            pack_struct,
             loop_vars: RefCell::new(Vec::new()),
             values: value_binders.clone(),
             struct_values: Vec::new(),
@@ -4042,6 +4082,7 @@ impl Checker {
             simd_to_bits: RefCell::new(Vec::new()),
             simd_casts: RefCell::new(Vec::new()),
             simd_lengths: RefCell::new(Vec::new()),
+            pack_relocations: RefCell::new(Vec::new()),
         };
         if !shape.block(&method.body) {
             return outside("the body is outside the method grammar");
@@ -7047,6 +7088,39 @@ fn bound_binder(binder: &mojito_ast::ast::TypeParam) -> bool {
         && !binder.infer_only
 }
 
+/// The type pack a method's struct declares, and the method's variadic
+/// parameters collecting it (`var *args: *Self.Ts`).
+fn struct_pack_collectors<'m, 'd>(
+    method: &'m mojito_ast::ast::Method,
+    decls: &'d [ParamDecl],
+) -> (Option<&'d str>, Vec<&'m str>) {
+    let pack = decls.iter().find_map(|decl| match decl {
+        ParamDecl::Type {
+            name,
+            variadic: true,
+            ..
+        } => Some(name.trim_start_matches('*')),
+        _ => None,
+    });
+    let collectors = method
+        .params
+        .iter()
+        .filter(|parameter| {
+            let collected = match &parameter.ty {
+                mojito_ast::ast::Type::SelfParam(name) | mojito_ast::ast::Type::Named(name, _) => {
+                    name.strip_prefix('*')
+                }
+                _ => None,
+            };
+            parameter.kind == mojito_ast::ast::ParamKind::Variadic
+                && collected.is_some()
+                && collected == pack
+        })
+        .map(|parameter| parameter.name.as_str())
+        .collect();
+    (pack, collectors)
+}
+
 /// The names of a method's own scalar value binders (`[n: Int]`), given its
 /// own declarations, or `None` when one is not a plain `Int` or `Bool`. The
 /// parser spells such a binder's type as a bound (`n: Int`), so only its
@@ -7705,26 +7779,25 @@ fn substituted_facts(
             values,
         ))
     };
+    // A pack element's index binder is the copy's own at its occurrence.
+    let substitute_at = |id: &OccurrenceId, ty: &Ty| {
+        let values: Vec<_> = indices
+            .get(id)
+            .cloned()
+            .into_iter()
+            .chain(values.iter().cloned())
+            .collect();
+        canonical(mojito_types::types::substitute_packs(
+            &fold_binder_views(ty, views),
+            substitution,
+            packs,
+            &values,
+        ))
+    };
     let typed = |entries: &[(OccurrenceId, Ty)]| -> Vec<(OccurrenceId, Ty)> {
         entries
             .iter()
-            .map(|(id, ty)| {
-                let values: Vec<_> = indices
-                    .get(id)
-                    .cloned()
-                    .into_iter()
-                    .chain(values.iter().cloned())
-                    .collect();
-                (
-                    *id,
-                    canonical(mojito_types::types::substitute_packs(
-                        &fold_binder_views(ty, views),
-                        substitution,
-                        packs,
-                        &values,
-                    )),
-                )
-            })
+            .map(|(id, ty)| (*id, substitute_at(id, ty)))
             .collect()
     };
     let substituted_reference = |(id, reference): &(OccurrenceId, TemplateReference)| {
@@ -7788,8 +7861,8 @@ fn substituted_facts(
                 (
                     *id,
                     mojito_checked::templates::RebindAssertion {
-                        operand: substitute(&assertion.operand),
-                        dest: substitute(&assertion.dest),
+                        operand: substitute_at(id, &assertion.operand),
+                        dest: substitute_at(id, &assertion.dest),
                         by_value: assertion.by_value,
                     },
                 )
@@ -8004,10 +8077,10 @@ struct BodyShape<'a> {
     /// The variadic parameters collecting a type pack of the declaration's
     /// own, whose elements the body may read by loop index.
     packs: Vec<&'a str>,
-    /// Whether the method's struct declares a type pack, whose storage
-    /// field (`self.storage`, `other.storage`) the body may read by loop
-    /// index.
-    pack_struct: bool,
+    /// The type pack the method's struct declares, whose storage field
+    /// (`self.storage`, `other.storage`) the body may read by loop index,
+    /// and whose length (`Self.Ts.length`) every instance folds.
+    pack_struct: Option<&'a str>,
     /// The `comptime for` variables in scope, innermost last.
     loop_vars: RefCell<Vec<String>>,
     /// The declaration's scalar value parameters, which the elaborator
@@ -8038,6 +8111,9 @@ struct BodyShape<'a> {
     /// its receiver occurrence, whose adjustment an instance records from
     /// the receiver's substituted type.
     simd_lengths: RefCell<Vec<(OccurrenceId, OccurrenceId)>>,
+    /// The pack storages admitted ([`Self::pack_storage`]), which an
+    /// instance reads as its own relocation.
+    pack_relocations: RefCell<Vec<mojito_checked::templates::PackRelocation>>,
 }
 
 /// What a local of a certified body is.
@@ -8345,7 +8421,8 @@ impl BodyShape<'_> {
             || self.receiver_field(value)
             || self.slot(value)
             || self.reference_call(value)
-            || self.reference_member(value))
+            || self.reference_member(value)
+            || self.pack_element(value))
             && self
                 .reference_result
                 .is_some_and(|referent| self.typed(value, referent))
@@ -8517,6 +8594,7 @@ impl BodyShape<'_> {
             simd_to_bits: self.simd_to_bits.borrow().clone(),
             simd_casts: self.simd_casts.borrow().clone(),
             simd_lengths: self.simd_lengths.borrow().clone(),
+            pack_relocations: self.pack_relocations.borrow().clone(),
         }
     }
 
@@ -8969,6 +9047,8 @@ impl BodyShape<'_> {
                 (source(inner) && !borrowed(inner)) || self.call_result(inner)
             }
             _ if self.call_result(expr)
+                || self.pack_storage(expr)
+                || self.fieldwise_copy(expr)
                 || self.construction(expr)
                 || self.binder_construction(expr)
                 || self.operator_value(expr)
@@ -8997,6 +9077,68 @@ impl BodyShape<'_> {
             }
         };
         admitted && self.holds(MethodFeatures::OPAQUE_MOVES)
+    }
+
+    /// `__mojito_fieldwise_copy(self)`, the synthesized `copy`'s result: a
+    /// copy of the receiver whole, which the declaration's `Copyable`
+    /// clause guarantees every instance
+    /// ([`TemplateObligation::DeclarationConstraints`]).
+    fn fieldwise_copy(&self, expr: &Expr) -> bool {
+        matches!(&expr.kind, ExprKind::Call { name, param_args, args, kwargs }
+            if name == "__mojito_fieldwise_copy"
+                && param_args.is_empty()
+                && kwargs.is_empty()
+                && matches!(args.as_slice(), [receiver] if self.receiver_itself(receiver)))
+    }
+
+    /// `__RuntimeTuple(*args^)`: a pack struct's storage built from the
+    /// initializer's own pack collector, moved whole. The template typed
+    /// the storage and the collector over the symbolic pack, which an
+    /// instance substitutes element by element.
+    fn pack_storage(&self, expr: &Expr) -> bool {
+        let ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } = &expr.kind
+        else {
+            return false;
+        };
+        let [argument] = args.as_slice() else {
+            return false;
+        };
+        let ExprKind::Spread(transfer) = &argument.kind else {
+            return false;
+        };
+        let ExprKind::Transfer(pack) = &transfer.kind else {
+            return false;
+        };
+        let param = match &pack.kind {
+            ExprKind::Identifier(pack) if self.packs.contains(&pack.as_str()) => {
+                self.params.iter().position(|param| param == pack)
+            }
+            _ => None,
+        };
+        let Some(param) = param.filter(|_| {
+            name == "__RuntimeTuple"
+                && param_args.is_empty()
+                && kwargs.is_empty()
+                && self.pack_struct.is_some()
+        }) else {
+            return false;
+        };
+        push_unique(
+            &mut self.pack_relocations.borrow_mut(),
+            mojito_checked::templates::PackRelocation {
+                call: self.occurrence(expr),
+                spread: self.occurrence(argument),
+                transfer: self.occurrence(transfer),
+                pack: self.occurrence(pack),
+                param,
+            },
+        );
+        true
     }
 
     /// The iterable of a runtime `for`: a place the loop borrows (`self`, a
@@ -10433,13 +10575,14 @@ impl BodyShape<'_> {
             // A field of `self`, admitted where its recorded type is a closed
             // scalar: every use site of `expression` also demands `scalar`.
             ExprKind::Member { .. } => {
-                (self.receiver_field(expr)
-                    || self.local_field(expr)
-                    || self.parameter_field(expr)
-                    || self.reference_member(expr)
-                    || self.struct_value(expr)
-                    || self.simd_intrinsic(expr))
-                    && self.scalar(expr)
+                self.pack_length(expr)
+                    || (self.receiver_field(expr)
+                        || self.local_field(expr)
+                        || self.parameter_field(expr)
+                        || self.reference_member(expr)
+                        || self.struct_value(expr)
+                        || self.simd_intrinsic(expr))
+                        && self.scalar(expr)
             }
             ExprKind::Index { .. } => {
                 (self.tuple_element(expr) || self.simd_intrinsic(expr)) && self.scalar(expr)
@@ -11159,6 +11302,28 @@ impl BodyShape<'_> {
     /// A folded compile-time value read where it stands, as an `Int` or a
     /// `Bool`: the instance's literal materializes to exactly that type
     /// ([`folded_literals`]).
+    /// `Self.Ts.length` over the struct's own type pack, which the
+    /// elaborator folds to the instance's element count
+    /// (`folded_literals`): the template typed it `Int` and recorded nothing
+    /// an instance keeps.
+    fn pack_length(&self, expr: &Expr) -> bool {
+        let ExprKind::Member { object, field } = &expr.kind else {
+            return false;
+        };
+        let pack = matches!(&object.kind, ExprKind::Member { object, field: pack }
+            if matches!(&object.kind, ExprKind::Identifier(base) if base == "Self")
+                && self.pack_struct == Some(pack.as_str()));
+        field == "length"
+            && pack
+            && self.facts.is_none_or(|facts| {
+                let id = self.occurrence(expr);
+                fact_at(&facts.expression_types, id) == Some(&Ty::Int)
+                    && fact_at(&facts.operation_adjustments, id).is_none()
+            })
+            && self.holds(MethodFeatures::STATEMENTS)
+            && self.holds(MethodFeatures::COMPTIME_CONTROL)
+    }
+
     fn folded_value(&self, expr: &Expr) -> bool {
         self.folds(expr)
             && self.facts.is_none_or(|facts| {
@@ -11198,32 +11363,46 @@ impl BodyShape<'_> {
         let collection = match &object.kind {
             ExprKind::Identifier(name) => self.packs.contains(&name.as_str()),
             ExprKind::Member { .. } => {
-                self.pack_struct && (self.receiver_field(object) || self.parameter_field(object))
+                self.pack_struct.is_some()
+                    && (self.receiver_field(object) || self.parameter_field(object))
             }
             _ => false,
         };
+        // The innermost loop variable, or a method's own index binder
+        // (`__getitem_param__[index: Int]`), which every instance folds.
         let named = collection
             && matches!(&index.kind, ExprKind::Identifier(name)
-                if self.loop_vars.borrow().last() == Some(name));
+                if self.loop_vars.borrow().last() == Some(name)
+                    || (self.loop_vars.borrow().is_empty()
+                        && self.local_kind(name).is_none()
+                        && self.values.contains(&name.as_str())));
         named
             && self.facts.is_none_or(|facts| {
                 let id = self.occurrence(expr);
                 let ty = fact_at(&facts.expression_types, id);
-                let element = matches!(
-                    ty,
-                    Some(Ty::Dependent(dependent))
-                        if dependent.pack_element().is_some_and(|(_, index)| {
-                            matches!(index.kind(), mojito_types::param_expr::ParamKind::DeclRef(_))
-                        })
-                );
+                let dependent_element = |ty: &Ty| {
+                    matches!(ty, Ty::Dependent(dependent)
+                    if dependent.pack_element().is_some_and(|(_, index)| {
+                        matches!(index.kind(), mojito_types::param_expr::ParamKind::DeclRef(_))
+                    }))
+                };
+                // An erased `rebind[T](self.storage[i])` retypes the element
+                // to its target, and asserts the two equal
+                // (`TemplateObligation::RebindEqualities`).
+                let element = ty.is_some_and(dependent_element)
+                    || fact_at(&facts.rebind_assertions, id)
+                        .is_some_and(|assertion| dependent_element(&assertion.operand));
                 // The element is a place of the collector, read where it
-                // lies.
+                // lies. A lent one is kept by the builtin that reads it
+                // (`repr`), which admits the place it keeps
+                // ([`Self::references_recorded`]).
                 element
                     && fact_at(&facts.expression_place_types, id)
                         .is_none_or(|place| Some(place) == ty)
                     && fact_at(&facts.operation_adjustments, id).is_none()
-                    && !facts.call_place_uses.contains(&id)
-                    && (lent || !facts.borrowed_read_call_places.contains(&id))
+                    && (lent
+                        || (!facts.call_place_uses.contains(&id)
+                            && !facts.borrowed_read_call_places.contains(&id)))
             })
     }
 
@@ -11677,11 +11856,16 @@ fn folded_literals(
         })
         .flat_map(|occurrence| occurrence.arguments.iter().copied())
         .collect();
+    // A fold keeps the identity of the name, or of the use (`Self.Ts.length`)
+    // the template typed as the runtime `Int` it stands for.
     let named = |occurrence: &Occurrence| {
-        template
-            .expression_bindings
-            .iter()
-            .any(|(id, _)| id.syntax == occurrence.id.syntax)
+        let at = |id: &OccurrenceId| id.syntax == occurrence.id.syntax;
+        template.expression_bindings.iter().any(|(id, _)| at(id))
+            || (template
+                .expression_types
+                .iter()
+                .any(|(id, ty)| at(id) && *ty == Ty::Int)
+                && !template.operation_adjustments.iter().any(|(id, _)| at(id)))
     };
     let arithmetic = folded_arithmetic(template, occurrences, &named)?;
     let mut literals: Vec<FoldedLiteral> = occurrences
@@ -11722,6 +11906,80 @@ fn folded_literals(
         .collect::<Option<_>>()?;
     literals.extend(arithmetic);
     Some(literals)
+}
+
+/// The occurrence identities of the values a body's `return`s hand out.
+fn returned_values(body: &[Stmt]) -> Vec<SyntaxId> {
+    struct Returns(Vec<SyntaxId>);
+
+    impl mojito_ast::visit::Visitor for Returns {
+        fn visit_stmt(&mut self, statement: &Stmt) {
+            if let StmtKind::Return(Some(value)) = &statement.kind {
+                self.0.push(value.syntax_id);
+            }
+        }
+    }
+    let mut returns = Returns(Vec::new());
+    mojito_ast::visit::walk_block(&mut returns, body);
+    returns.0
+}
+
+/// Read each returned place the template handed out as a reference by
+/// value instead: the place is copied where it lies, which the instance
+/// owes at its own type (`realize_instance_facts`' copy check).
+fn read_returns_by_value(facts: &mut CheckedBodyFacts, returned: &[SyntaxId]) {
+    let (copied, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut facts.reference_value_uses)
+        .into_iter()
+        .partition(|(id, through)| !through && returned.contains(&id.syntax));
+    facts.reference_value_uses = kept;
+    for (id, _) in copied {
+        push_unique(&mut facts.copy_place_value_uses, id);
+    }
+}
+
+/// Lay each [`PackRelocation`](mojito_checked::templates::PackRelocation)
+/// over the instance's occurrences: the collector is read where it lies, as
+/// the moved place the call's value is, bound to its parameter. `false` when
+/// the instance holds no such read.
+fn relocate_packs(facts: &mut CheckedBodyFacts, order: &[OccurrenceId]) -> bool {
+    fn insert<V>(
+        table: &mut Vec<(OccurrenceId, V)>,
+        order: &[OccurrenceId],
+        at: OccurrenceId,
+        value: V,
+    ) {
+        let rank = |id: &OccurrenceId| order.iter().position(|entry| entry == id);
+        let position = table
+            .iter()
+            .position(|(id, _)| rank(id) > rank(&at))
+            .unwrap_or(table.len());
+        table.insert(position, (at, value));
+    }
+    for relocation in std::mem::take(&mut facts.pack_relocations) {
+        let pack = relocation.pack;
+        let Some(ty) = fact_at(&facts.expression_types, relocation.call).cloned() else {
+            return false;
+        };
+        if !order.contains(&pack) || fact_at(&facts.expression_types, pack).is_some() {
+            return false;
+        }
+        let rank = |id: &OccurrenceId| order.iter().position(|entry| entry == id);
+        let position = facts
+            .transfers
+            .iter()
+            .position(|id| rank(id) > rank(&relocation.call))
+            .unwrap_or(facts.transfers.len());
+        facts.transfers.insert(position, relocation.call);
+        insert(&mut facts.expression_types, order, pack, ty.clone());
+        insert(&mut facts.expression_place_types, order, pack, ty);
+        insert(
+            &mut facts.expression_bindings,
+            order,
+            pack,
+            mojito_checked::templates::TemplateOwner::Param(relocation.param),
+        );
+    }
+    true
 }
 
 /// The operators an instance folds where its template computed a value from

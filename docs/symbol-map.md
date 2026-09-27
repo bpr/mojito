@@ -483,14 +483,18 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (except those `generate_value_struct_spec` mints for a checker request
   on the value specialization, which are untraced),
   and by `generate_struct_spec` and `generate_value_struct_spec`
-  (`trace_struct_members`) for a member of a struct specialized whole, the
+  (`trace_struct_members`, each `TracedMember` with the index or element
+  type it baked) for a member of a struct specialized whole, the
   latter completing its per-call leaves' traces (`restamp_leaf_traces`);
   `GeneratedDeclarations` lists what an elaboration generated; the
   occurrence-level trace is `ast.rs:rekey_syntax`'s `SyntaxOrigins` (which
   traces a `mojito-common` `token.rs:SyntaxId::derived` node through its
   parent) plus
   `comptime.rs:rebuilt` and the identity a folded `comptime for` variable
-  keeps (`rewrite.rs:rewrite_expr`). `compiler.rs:instance_traces` carries
+  or pack `TypeList` use keeps (`rewrite.rs:rewrite_expr`). A pack struct's
+  `__RuntimeTuple(*args^)` initializer, which each instance writes as
+  `args^`, is laid over the instance by `template_facts.rs:relocate_packs`
+  from the template's `PackRelocation`. `compiler.rs:instance_traces` carries
   one to the other. A pack-keyed instance (`TemplateClass::PackElements`)
   substitutes per copy through `mojito-types`' `types.rs:substitute_packs`.
   The design record is `docs/notes/instantiation-from-template.md`.

@@ -995,6 +995,22 @@ pub struct OccurrenceId {
     pub copy: u32,
 }
 
+/// A pack struct's storage built from its initializer's own pack collector.
+///
+/// The elaborator writes `__RuntimeTuple(*args^)` as the whole relocation
+/// `args^` in every instance: the call keeps its identity, as the transfer,
+/// and its facts; the spread and the written transfer are gone; and the
+/// collector is read as the moved place.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackRelocation {
+    pub call: OccurrenceId,
+    pub spread: OccurrenceId,
+    pub transfer: OccurrenceId,
+    pub pack: OccurrenceId,
+    /// The collector's index among the declaration's runtime parameters.
+    pub param: usize,
+}
+
 /// A compile-time value an instance holds as a literal where its template
 /// read a value parameter or a `comptime for` variable by name.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1694,6 +1710,9 @@ pub struct CheckedBodyFacts {
     /// selects no callee; an instance owes that each argument is still
     /// `Writable` ([`TemplateObligation::PrintableArguments`]).
     pub print_calls: Vec<OccurrenceId>,
+    /// The pack storages the grammar admitted ([`PackRelocation`]), which
+    /// an instance reads as its own relocation.
+    pub pack_relocations: Vec<PackRelocation>,
     /// The implicit conversion selected at each occurrence that records one.
     /// An instance selects it again from its own types, so a clone whose
     /// source type changed names a different constructor.
@@ -1848,6 +1867,7 @@ impl CheckedBodyFacts {
             call_through_reads,
             repr_calls,
             print_calls,
+            pack_relocations,
             conversions,
             typed_origins,
             call_result_origins,
@@ -2058,6 +2078,7 @@ impl CheckedBodyFacts {
             call_through_reads: self.call_through_reads.clone(),
             repr_calls: flagged(&self.repr_calls),
             print_calls: flagged(&self.print_calls),
+            pack_relocations: self.pack_relocations.clone(),
             conversions: at(&self.conversions, occurrences, folded),
             // Table by table, as the capture keeps them.
             typed_origins: [
@@ -2401,8 +2422,8 @@ impl TemplateCatalog {
     /// its own clones.
     ///
     /// A name traced twice is traced to neither template: two members that
-    /// share a name and a first statement (`Tuple`'s per-element
-    /// `__contains__` overloads) cannot be told apart.
+    /// share a name, a source tag, and a first statement cannot be told
+    /// apart.
     pub fn set_traces(&mut self, traces: Vec<(InstanceName, InstanceTrace)>) {
         let mut seen = std::collections::HashSet::new();
         let ambiguous: std::collections::HashSet<InstanceName> = traces

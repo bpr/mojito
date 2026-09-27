@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Most members of a `Tuple` specialization now reuse their template's
+  checked facts: the static `__len__`, the initializer, every unrolled
+  element accessor and its value twin, the synthesized `copy`, each
+  per-element `__contains__` overload, and `write_repr_to`. Hello World's
+  generated body inferences fall from 336 to 200. Such members used to be
+  checked again per specialization.
 - A struct method calling an overloaded static of a generic struct whose
   members differ only in closed parameter types (`Pair[Self.T].pick(v, 1)`
   beside `pick(v: Self.T, f: Float64)`) now reuses its template's checked

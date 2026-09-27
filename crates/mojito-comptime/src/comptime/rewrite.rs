@@ -112,7 +112,10 @@ pub(super) fn substitute_type_bindings_in_expr(expr: &mut Expr, subs: TypeSubs) 
 }
 
 pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
-    if let Some(folded) = fold_pack_typelist_use(e, subs) {
+    if let Some(mut folded) = fold_pack_typelist_use(e, subs) {
+        // The fold keeps the use's identity, as a folded loop variable
+        // keeps its identifier's below.
+        folded.syntax_id = e.syntax_id;
         *e = folded;
         return;
     }

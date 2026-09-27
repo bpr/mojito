@@ -19,6 +19,7 @@ use super::*;
 pub(super) fn synthesize_copyable_copy(program: &mut [Stmt]) {
     for statement in program {
         let span = statement.span;
+        let module = statement.module.clone();
         let StmtKind::Struct {
             name,
             conforms,
@@ -75,6 +76,12 @@ pub(super) fn synthesize_copyable_copy(program: &mut [Stmt]) {
             })
             .map(|(_, condition)| vec![condition.clone()])
             .unwrap_or_default();
+        // The body keeps its struct's module, as a linked source body does,
+        // so a specialization traces its copy to this template.
+        let mut body = vec![mk(StmtKind::Return(Some(result)), span)];
+        if let Some(module) = &module {
+            mojito_ast::ast::stamp_source(&mut body, module);
+        }
         methods.push(mojito_ast::ast::Method {
             name: "copy".to_string(),
             type_params: Vec::new(),
@@ -90,7 +97,7 @@ pub(super) fn synthesize_copyable_copy(program: &mut [Stmt]) {
             ret: Some(Type::SelfType),
             where_clauses,
             self_ty: None,
-            body: vec![mk(StmtKind::Return(Some(result)), span)],
+            body,
             synthesized: true,
         });
     }

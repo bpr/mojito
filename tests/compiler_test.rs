@@ -2769,6 +2769,56 @@ fn template_method_tuple_elements_derive() {
 }
 
 #[test]
+fn tuple_members_derive_from_their_templates() {
+    // A `Tuple` specialized whole takes each member from its checked
+    // template: the static `__len__` over its folded pack length, the
+    // initializer relocating its pack whole, each unrolled element accessor
+    // and its value twin, the synthesized `copy`, every per-element
+    // `__contains__` overload, and `write_repr_to`. The consuming
+    // teardowns, which take a callable binder, keep the clone check.
+    let source = "def main():\n    var t = (1, String(\"a\"))\n    print(len(t), Tuple[Int, String].__len__())\n    print(t[0], t[1])\n    var c = t.copy()\n    print(c[1], 1 in t, String(\"b\") in t)\n    print(repr(t))\n";
+    let owner = "Tuple$t2[y3:Inty6:String].";
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compile_entry(&compiler, source);
+        let stats = program.template_stats();
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        let derived: std::collections::HashSet<&str> = served
+            .iter()
+            .filter_map(|name| name.strip_prefix(owner))
+            .collect();
+        for member in [
+            "__init__",
+            "__len__",
+            "__getitem_param__$0",
+            "__getitem_param_value__$1",
+            "copy",
+            "__contains__",
+            "write_repr_to",
+        ] {
+            assert!(derived.contains(member), "{member} derives: {stats:?}");
+        }
+        let inferred: std::collections::HashSet<&str> = stats
+            .inferred_clones
+            .iter()
+            .filter_map(|name| name.strip_prefix(owner))
+            .collect();
+        assert!(
+            inferred.contains("consume_elements") && inferred.contains("deinit_with"),
+            "a callable binder keeps the clone check: {stats:?}"
+        );
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "2 2\n1 a\na True False\nTuple[SIMD[DType.int, 1], String](Int(1), 'a')\n"
+        );
+    }
+}
+
+#[test]
 fn template_method_defaulted_destructor_keeps_the_clone_check() {
     // A destructor's defaulted argument is evaluated in the callee's scope,
     // which no recipe keeps yet, so the body stays outside the class.

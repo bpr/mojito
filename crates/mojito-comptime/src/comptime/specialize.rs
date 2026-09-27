@@ -1439,7 +1439,11 @@ impl Elab<'_> {
             if super::synth::constructs_at_own_lane(&method) {
                 method.body = vec![unspecialized_method_stub(orig, &method)];
             } else if let Some(body) = template_body {
-                members.push((specialized_methods.len(), method.name.clone(), body));
+                members.push(TracedMember::whole(
+                    specialized_methods.len(),
+                    &method.name,
+                    body,
+                ));
             }
             // A regular runtime parameter shadows a same-named compile-time
             // binding inside its own body.
@@ -1890,8 +1894,14 @@ impl Elab<'_> {
                     // (`rebind[T](...)`) bake out like a per-call clone's.
                     substitute_type_bindings_in_block(
                         &mut overload.body,
-                        &HashMap::from([(parameter_name.clone(), source_type)]),
+                        &HashMap::from([(parameter_name.clone(), source_type.clone())]),
                     );
+                    if let Some(body) = template_body {
+                        members.push(TracedMember {
+                            types: vec![(parameter_name.clone(), source_type)],
+                            ..TracedMember::whole(elaborated_methods.len(), &overload.name, body)
+                        });
+                    }
                     elaborated_methods.push(overload);
                 }
                 continue;
@@ -1994,8 +2004,26 @@ impl Elab<'_> {
                     } else {
                         None
                     };
+                    // The reference accessor is its template's instance at
+                    // this index; the value twin has no template of its own.
+                    if let Some(body) = template_body {
+                        members.push(TracedMember {
+                            values: vec![(index_name.clone(), CtValue::Int(k as i64))],
+                            ..TracedMember::whole(elaborated_methods.len(), &accessor_name, body)
+                        });
+                    }
                     elaborated_methods.push(unrolled);
                     if let Some(value_accessor) = value_accessor {
+                        if let Some(body) = template_body {
+                            members.push(TracedMember {
+                                values: vec![(index_name.clone(), CtValue::Int(k as i64))],
+                                ..TracedMember::whole(
+                                    elaborated_methods.len(),
+                                    &accessor_name,
+                                    body,
+                                )
+                            });
+                        }
                         elaborated_methods.push(value_accessor);
                     }
                 }
@@ -2076,7 +2104,11 @@ impl Elab<'_> {
                     Ok(elaborated) => {
                         method.body = materialize_block(elaborated, &subs, &self.struct_names);
                         if let Some(body) = template_body {
-                            members.push((elaborated_methods.len(), method.name.clone(), body));
+                            members.push(TracedMember::whole(
+                                elaborated_methods.len(),
+                                &method.name,
+                                body,
+                            ));
                         }
                     }
                     Err(_) => method.body = vec![unspecialized_method_stub(orig, &method)],
@@ -2092,7 +2124,11 @@ impl Elab<'_> {
             })?;
             method.body = materialize_block(elaborated, &subs, &self.struct_names);
             if let Some(body) = template_body {
-                members.push((elaborated_methods.len(), method.name.clone(), body));
+                members.push(TracedMember::whole(
+                    elaborated_methods.len(),
+                    &method.name,
+                    body,
+                ));
             }
             elaborated_methods.push(method);
         }
@@ -2152,6 +2188,19 @@ impl Elab<'_> {
         };
         mojito_ast::ast::stamp_source(std::slice::from_mut(&mut spec), &tag);
         if let StmtKind::Struct { methods, .. } = &mut spec.kind {
+            // Each per-element membership overload shares its name and body
+            // spans with the others: its own tag tells their facts and
+            // traces apart.
+            let mut overloads = 0;
+            for method in methods.iter_mut() {
+                if orig == "Tuple" && method.name == "__contains__" {
+                    mojito_ast::ast::stamp_source(
+                        &mut method.body,
+                        &format!("{tag}.__contains__${overloads}"),
+                    );
+                    overloads += 1;
+                }
+            }
             for method in methods {
                 if method.name.starts_with("__getitem__$")
                     || method.name.starts_with("__getitem_param__$")
@@ -2868,23 +2917,21 @@ impl Elab<'_> {
     }
 
     /// Record how each member of a struct specialized whole came from its
-    /// template: `members` lists each traced member's position in the
-    /// specialization's method list, with the template method's name and the
-    /// first statement of its body. A member the specializer unrolled,
-    /// split per element, synthesized, or stubbed is not listed, nor is a
+    /// template: `members` lists each traced member ([`TracedMember`]). A
+    /// member the specializer stubbed or synthesized is not listed, nor is a
     /// per-call clone minted inside the specialization.
     fn trace_struct_members(
         &self,
         spec: &Stmt,
-        members: &[(usize, String, Span)],
+        members: &[TracedMember],
         template: &StructTemplate<'_>,
     ) {
         let StmtKind::Struct { name, methods, .. } = &spec.kind else {
             return;
         };
         let mut traces = self.method_traces.borrow_mut();
-        for (index, template_name, body) in members {
-            let Some(member) = methods.get(*index) else {
+        for traced in members {
+            let Some(member) = methods.get(traced.index) else {
                 continue;
             };
             let Some((first, module)) = member
@@ -2900,11 +2947,16 @@ impl Elab<'_> {
                 owner_module: template.module.map(str::to_string),
                 clone_name: member.name.clone(),
                 clone_module: module,
-                template_name: template_name.clone(),
-                body: *body,
+                template_name: traced.template_name.clone(),
+                body: traced.body,
                 clone_body: first,
-                type_bindings: Vec::new(),
-                value_bindings: template.values.clone(),
+                type_bindings: traced.types.clone(),
+                value_bindings: template
+                    .values
+                    .iter()
+                    .chain(&traced.values)
+                    .cloned()
+                    .collect(),
                 pack_bindings: template.packs.clone(),
             });
         }
@@ -3514,6 +3566,33 @@ struct StructTemplate<'a> {
     module: Option<&'a str>,
     values: Vec<(String, CtValue)>,
     packs: Vec<(String, Vec<Type>)>,
+}
+
+/// A member of a struct specialized whole that instantiates one template
+/// method: its position in the specialization's method list, the template
+/// method's name and the first statement of its body, and what the member
+/// baked beyond the struct's own parameters — an unrolled accessor's index
+/// (`__getitem_param__$k`, and its value twin), or the element type a
+/// per-element overload (`Tuple.__contains__`) erased.
+struct TracedMember {
+    index: usize,
+    template_name: String,
+    body: Span,
+    values: Vec<(String, CtValue)>,
+    types: Vec<(String, Type)>,
+}
+
+impl TracedMember {
+    /// A member that bakes nothing of its own.
+    fn whole(index: usize, template_name: &str, body: Span) -> Self {
+        Self {
+            index,
+            template_name: template_name.to_string(),
+            body,
+            values: Vec::new(),
+            types: Vec::new(),
+        }
+    }
 }
 
 /// The first statement of a template method's body, which identifies it as a
