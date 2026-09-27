@@ -288,10 +288,18 @@ impl Decoder {
         }
     }
 
+    /// A parameter list. A `where` operand or a callable default older than
+    /// schema 1.4 names its binder by spelling, which is the binder of that
+    /// spelling in this list.
     pub(super) fn param_decls(&mut self, value: &Value) -> Vec<ParamDecl> {
-        self.list(value)
+        let decls: Vec<ParamDecl> = self
+            .list(value)
             .map(|values| values.iter().filter_map(|v| self.param_decl(v)).collect())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        decls
+            .iter()
+            .map(|decl| decl.bind_references(&[&decls]))
+            .collect()
     }
 
     pub(super) fn param_decl(&mut self, value: &Value) -> Option<ParamDecl> {
@@ -414,7 +422,7 @@ impl Decoder {
                     Some(GenericConstraint::WithMessage(condition, message))
                 }
                 "conforms" | "conforms_pack" => {
-                    let param = self.req(value, fields, "param", Self::symbol)?;
+                    let param = self.req(value, fields, "param", Self::constraint_binder)?;
                     let trait_name = self.req(value, fields, "trait", Self::symbol)?;
                     self.unknown(fields, &["param", "trait"]);
                     Some(if tag == "conforms" {
@@ -424,7 +432,7 @@ impl Decoder {
                     })
                 }
                 "pack_predicate" => {
-                    let param = self.req(value, fields, "param", Self::symbol)?;
+                    let param = self.req(value, fields, "param", Self::constraint_binder)?;
                     let predicate = self.req(value, fields, "predicate", Self::pack_predicate)?;
                     let all = self.req(value, fields, "all", Self::boolean)?;
                     self.unknown(fields, &["param", "predicate", "all"]);
@@ -435,7 +443,7 @@ impl Decoder {
                     })
                 }
                 "pack_contains" => {
-                    let param = self.req(value, fields, "param", Self::symbol)?;
+                    let param = self.req(value, fields, "param", Self::constraint_binder)?;
                     let element = self.req(value, fields, "element", Self::constraint_operand)?;
                     self.unknown(fields, &["param", "element"]);
                     Some(GenericConstraint::PackContains { param, element })
@@ -481,13 +489,24 @@ impl Decoder {
         }
     }
 
+    /// The binder a `where` operand or a callable default names: a `binder`
+    /// record, or the bare spelling of an artifact older than schema 1.4.
+    fn constraint_binder(&mut self, value: &Value) -> Option<ParamRef> {
+        if matches!(&value.kind, ValueKind::Record(tag, _) if tag == "binder") {
+            return self.binder_ref(value);
+        }
+        self.symbol(value).map(|name| ParamRef::unbound(&name))
+    }
+
     pub(super) fn constraint_operand(&mut self, value: &Value) -> Option<ConstraintOperand> {
         let (tag, inner) = self.positional_value(value)?;
         match tag {
-            "operand_param" => self.symbol(inner).map(ConstraintOperand::Param),
+            "operand_param" => self.constraint_binder(inner).map(ConstraintOperand::Param),
             "operand_value" => self.ct_value(inner).map(ConstraintOperand::Value),
             "operand_type" => self.ty(inner).map(ConstraintOperand::Type),
-            "operand_pack_length" => self.symbol(inner).map(ConstraintOperand::PackLength),
+            "operand_pack_length" => self
+                .constraint_binder(inner)
+                .map(ConstraintOperand::PackLength),
             "operand_expr" => self.param_expr(inner).map(ConstraintOperand::Expr),
             other => {
                 self.error(value.span, format!("unknown constraint operand `{other}`"));
@@ -524,7 +543,9 @@ impl Decoder {
         match &value.kind {
             ValueKind::Positional(tag, inner) => match tag.as_str() {
                 "default_symbol" => self.symbol(inner).map(CallableDefault::Symbol),
-                "default_parameter" => self.symbol(inner).map(CallableDefault::Parameter),
+                "default_parameter" => self
+                    .constraint_binder(inner)
+                    .map(CallableDefault::Parameter),
                 other => {
                     self.error(value.span, format!("unknown callable default `{other}`"));
                     None

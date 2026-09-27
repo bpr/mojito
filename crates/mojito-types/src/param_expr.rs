@@ -1514,11 +1514,30 @@ impl ParamId {
     }
 }
 
+/// The owner spelling every [`ParamRef::unbound`] reference starts with.
+pub const UNBOUND_BINDER_PREFIX: &str = "$unbound:";
+
 /// A reference to a declared parameter, with its source spelling attached.
 #[derive(Debug, Clone)]
 pub struct ParamRef {
     pub id: ParamId,
     pub name: Arc<str>,
+}
+
+impl ParamRef {
+    /// A reference no declaration in scope binds, identified by its spelling
+    /// alone. It equals only another unbound reference of the same spelling
+    /// and is bound by no environment.
+    pub fn unbound(name: &str) -> Self {
+        Self {
+            id: ParamId::new(&format!("{UNBOUND_BINDER_PREFIX}{name}"), 0),
+            name: Arc::from(name),
+        }
+    }
+
+    pub fn is_unbound(&self) -> bool {
+        self.id.owner.starts_with(UNBOUND_BINDER_PREFIX)
+    }
 }
 
 impl PartialEq for ParamRef {
@@ -1528,6 +1547,12 @@ impl PartialEq for ParamRef {
 }
 
 impl Eq for ParamRef {}
+
+impl fmt::Display for ParamRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.name)
+    }
+}
 
 impl Hash for ParamRef {
     fn hash<H: Hasher>(&self, state: &mut H) {

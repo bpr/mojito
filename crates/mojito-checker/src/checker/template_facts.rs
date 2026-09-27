@@ -2473,7 +2473,10 @@ impl Checker {
                     .map(|decl| decl.name().trim_start_matches('*').to_string())
                     .zip(bound)
                     .collect();
-                if self.method_constraint_result(declared, &named).is_err() {
+                if self
+                    .method_constraint_result(declared, &info.decls, &named)
+                    .is_err()
+                {
                     return Err("a called method is unavailable at the instance");
                 }
             }

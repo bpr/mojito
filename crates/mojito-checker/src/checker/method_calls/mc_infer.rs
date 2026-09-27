@@ -182,7 +182,9 @@ impl Checker {
                 };
                 let params = clone_origins.substitute_all(&params);
                 let variadic = variadic.map(|element| clone_origins.substitute(&element));
-                if let Err(failure) = self.method_constraint_result(sig, &method_arguments) {
+                if let Err(failure) =
+                    self.method_constraint_result(sig, &info.decls, &method_arguments)
+                {
                     if single_candidate
                         && availability_failure.is_none()
                         && self
@@ -1111,7 +1113,7 @@ impl Checker {
                             }
                             method_arguments.extend(positional_pack_binding(&info.decls, targs));
                             if let Err(failure) =
-                                self.method_constraint_result(sig, &method_arguments)
+                                self.method_constraint_result(sig, &info.decls, &method_arguments)
                             {
                                 // A candidate the arguments would have
                                 // selected reports its failed availability
@@ -1278,7 +1280,9 @@ impl Checker {
                     else {
                         continue;
                     };
-                    if let Err(failure) = self.method_constraint_result(&sig, &method_arguments) {
+                    if let Err(failure) =
+                        self.method_constraint_result(&sig, &[], &method_arguments)
+                    {
                         if single_candidate
                             && availability_failure.is_none()
                             && self

@@ -260,6 +260,29 @@ pub(super) fn method_satisfies_requirement(got: &MethodSig, required: &MethodSig
     got.error == required.error
 }
 
+/// A method's availability clauses with its own binders named by their
+/// position, as [`canonical_method_shape`] names them in its signature.
+pub(super) fn canonical_availability(method: &MethodSig) -> Vec<GenericConstraint> {
+    let canonical = |reference: &ParamRef| {
+        method
+            .decls
+            .iter()
+            .position(|decl| decl.id() == &reference.id)
+            .map_or_else(
+                || reference.clone(),
+                |index| ParamRef {
+                    id: ParamId::new(mojito_types::types::CONTRACT_BINDER_OWNER, index),
+                    name: format!("${index}").into(),
+                },
+            )
+    };
+    method
+        .availability
+        .iter()
+        .map(|constraint| constraint.map(&canonical, &ConstraintOperand::clone))
+        .collect()
+}
+
 pub(super) fn method_callable_ty(method: &MethodSig) -> Ty {
     Ty::Func {
         environment: mojito_types::origin::CallableEnvironment::Default,

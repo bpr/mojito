@@ -899,7 +899,7 @@ impl Checker {
                         argument.clone(),
                     );
                 }
-                if !self.method_constraints_apply(signature, &method_arguments) {
+                if !self.method_constraints_apply(signature, &info.decls, &method_arguments) {
                     continue;
                 }
                 let Ok(scored) = self.score_method_call(

@@ -1170,23 +1170,30 @@ impl Checker {
     pub(super) fn method_constraints_apply(
         &self,
         signature: &MethodSig,
+        struct_decls: &[ParamDecl],
         arguments: &HashMap<String, TyArg>,
     ) -> bool {
-        self.method_constraint_result(signature, arguments).is_ok()
+        self.method_constraint_result(signature, struct_decls, arguments)
+            .is_ok()
     }
 
     /// Evaluate method availability, keeping what a call diagnostic needs:
     /// the retained `(condition, "message")` text, or the violated clause
-    /// itself, which may explain a sole-candidate call failure.
+    /// itself, which may explain a sole-candidate call failure. `arguments`
+    /// are the call's, under the spellings of the method's own parameters and
+    /// of `struct_decls`, its struct's.
     pub(super) fn method_constraint_result<'signature>(
         &self,
         signature: &'signature MethodSig,
+        struct_decls: &[ParamDecl],
         arguments: &HashMap<String, TyArg>,
     ) -> Result<(), ConstraintFailure<'signature>> {
-        let borrowed: HashMap<&str, &TyArg> = arguments
-            .iter()
-            .map(|(name, argument)| (name.as_str(), argument))
-            .collect();
+        let borrowed = ConstraintEnvironment::named(
+            &[&signature.decls, struct_decls],
+            arguments
+                .iter()
+                .map(|(name, argument)| (name.as_str(), argument)),
+        );
         for constraint in &signature.availability {
             if !self.eval_generic_constraint(constraint, &borrowed) {
                 return Err(match constraint {

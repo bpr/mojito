@@ -687,6 +687,54 @@ impl Checker {
     /// diagnostic carried by current Mojo's `(condition, "message")` form.
     /// Only the outer clause may carry a message; tuple expressions nested
     /// inside a proposition remain unsupported constraint syntax.
+    /// `constraint` with each operand [`Self::compile_where_clause`] left
+    /// unbound bound to its binder: one of `own`, the declaration the clause
+    /// belongs to, else the innermost open scope's, else the enclosing
+    /// struct's.
+    pub(super) fn bind_constraint(
+        &self,
+        constraint: &GenericConstraint,
+        own: &[ParamDecl],
+    ) -> GenericConstraint {
+        constraint.map(
+            &|reference| self.bind_binder(reference, own),
+            &ConstraintOperand::clone,
+        )
+    }
+
+    /// [`Self::bind_constraint`] over the clauses of every declaration of
+    /// `decls`, and their callable defaults bound within `decls`.
+    pub(super) fn bind_declared_constraints(&self, decls: &[ParamDecl]) -> Vec<ParamDecl> {
+        decls
+            .iter()
+            .map(|decl| {
+                let mut decl = decl.bind_references(&[decls]);
+                match &mut decl {
+                    ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
+                        for constraint in constraints {
+                            *constraint = self.bind_constraint(constraint, &[]);
+                        }
+                    }
+                }
+                decl
+            })
+            .collect()
+    }
+
+    /// A condition of the declaration owning `decls` (a struct's conditional
+    /// conformance), compiled and bound to those binders alone.
+    pub(super) fn compile_condition(
+        &self,
+        decls: &[ParamDecl],
+        condition: &Expr,
+    ) -> Result<GenericConstraint, TypeError> {
+        self.compile_where_clause(condition)
+            .map(|constraint| constraint.bind(&[decls]))
+    }
+
+    /// Compile a `where` clause. An operand names its parameter unbound
+    /// ([`ParamRef::unbound`]), except `Self.<name>`, which is the enclosing
+    /// struct's; [`Self::bind_constraint`] binds the rest.
     pub(super) fn compile_where_clause(&self, expr: &Expr) -> Result<GenericConstraint, TypeError> {
         let ExprKind::TupleLit(elements) = &expr.kind else {
             return self.compile_generic_constraint(expr);
@@ -791,10 +839,10 @@ impl Checker {
                 name, args, kwargs, ..
             } if name == "conforms_to" && kwargs.is_empty() && args.len() == 2 => {
                 let (param, pack) = match (pack_values_projection(&args[0]), &args[0].kind) {
-                    (Some(pack), _) => (pack.to_string(), true),
-                    (None, ExprKind::Identifier(param)) => (param.clone(), false),
+                    (Some(pack), _) => (ParamRef::unbound(pack), true),
+                    (None, ExprKind::Identifier(param)) => (ParamRef::unbound(param), false),
                     (None, ExprKind::Member { object, field }) if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
-                        (field.clone(), false)
+                        (self.self_binder(field), false)
                     }
                     _ => {
                         return Err(TypeError::Unsupported(
@@ -967,16 +1015,18 @@ impl Checker {
         &self,
         expr: &Expr,
     ) -> Result<Option<TypeListReceiver>, TypeError> {
-        let enclosing_pack = |name: &str| {
+        let is_enclosing_pack = |name: &str| {
             self.enclosing_type_params
                 .iter()
                 .any(|parameter| parameter.name.strip_prefix('*') == Some(name))
-                .then(|| TypeListReceiver::Pack(name.to_string()))
         };
         match &expr.kind {
-            ExprKind::Identifier(name) => Ok(enclosing_pack(name)),
+            ExprKind::Identifier(name) => Ok(
+                is_enclosing_pack(name).then(|| TypeListReceiver::Pack(ParamRef::unbound(name)))
+            ),
             ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
-                Ok(enclosing_pack(field))
+                Ok(is_enclosing_pack(field)
+                    .then(|| TypeListReceiver::Pack(self.self_binder(field))))
             }
             ExprKind::Call {
                 name,
@@ -994,7 +1044,7 @@ impl Checker {
                         "TypeList[...] takes a pack projection ('Ts.values')".to_string(),
                     ));
                 };
-                Ok(Some(TypeListReceiver::Pack(pack.to_string())))
+                Ok(Some(TypeListReceiver::Pack(ParamRef::unbound(pack))))
             }
             ExprKind::Invoke {
                 callee,
@@ -1111,9 +1161,10 @@ impl Checker {
                 }
                 _ => error,
             })?;
-        let declared: HashSet<&str> = decls
+        let constraint = constraint.bind(&[decls]);
+        let declared: HashSet<&ParamId> = decls
             .iter()
-            .map(mojito_types::types::ParamDecl::name)
+            .map(mojito_types::types::ParamDecl::id)
             .collect();
         validate_predicate_params(&constraint, &declared)?;
         Ok(constraint)
@@ -1182,7 +1233,7 @@ impl Checker {
         let (decls, template) = (decls.to_vec(), template.clone());
         let mut bindings = HashMap::new();
         for (decl, argument) in decls.iter().zip(args) {
-            bindings.insert(decl.name().to_string(), self.predicate_operand(argument)?);
+            bindings.insert(decl.id().clone(), self.predicate_operand(argument)?);
         }
         self.substitute_predicate(&template, &bindings)
     }
@@ -1193,14 +1244,14 @@ impl Checker {
     fn substitute_predicate(
         &self,
         constraint: &GenericConstraint,
-        bindings: &HashMap<String, ConstraintOperand>,
+        bindings: &HashMap<ParamId, ConstraintOperand>,
     ) -> Result<GenericConstraint, TypeError> {
         use GenericConstraint::{
             And, Bool, Conforms, ConformsPack, Eq, Ge, Gt, Le, Lt, Ne, Not, Or, PackContains,
             PackPredicate, Trivial, WithMessage,
         };
         let operand = |operand: &ConstraintOperand| match operand {
-            ConstraintOperand::Param(param) => bindings.get(param).cloned().ok_or_else(|| {
+            ConstraintOperand::Param(param) => bindings.get(&param.id).cloned().ok_or_else(|| {
                 TypeError::Unsupported(format!(
                     "a Bool-bodied comptime alias may reference only its own parameters \
                      ('{param}' is not declared)"
@@ -1266,7 +1317,7 @@ impl Checker {
             mojito_ast::ast::ParamArg::Value(expr) => self.constraint_operand(expr)?,
             mojito_ast::ast::ParamArg::Type(SourceType::Named(name, args)) if args.is_empty() => {
                 scalar_type_name(name).map_or_else(
-                    || ConstraintOperand::Param(name.clone()),
+                    || ConstraintOperand::Param(ParamRef::unbound(name)),
                     ConstraintOperand::Type,
                 )
             }
@@ -1309,11 +1360,11 @@ impl Checker {
         }
         Ok(match &expr.kind {
             ExprKind::Identifier(name) => scalar_type_name(name).map_or_else(
-                || ConstraintOperand::Param(name.clone()),
+                || ConstraintOperand::Param(ParamRef::unbound(name)),
                 ConstraintOperand::Type,
             ),
             ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
-                ConstraintOperand::Param(field.clone())
+                ConstraintOperand::Param(self.self_binder(field))
             }
             ExprKind::Int(value) => ConstraintOperand::Value(CtValue::IntLiteral(value.clone())),
             ExprKind::Bool(value) => ConstraintOperand::Value(CtValue::Bool(*value)),
@@ -1367,11 +1418,7 @@ impl Checker {
         decls: &[ParamDecl],
         arguments: &[TyArg],
     ) -> Result<(), TypeError> {
-        let environment: HashMap<&str, &TyArg> = decls
-            .iter()
-            .zip(arguments)
-            .map(|(decl, argument)| (decl.name().trim_start_matches('*'), argument))
-            .collect();
+        let environment = ConstraintEnvironment::declared(decls, arguments);
         for constraint in decls.iter().flat_map(|decl| match decl {
             ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
                 constraints.as_slice()
@@ -1388,11 +1435,7 @@ impl Checker {
     /// conformance assumptions about to be pushed, so the same pop closes it.
     pub(super) fn assume_declared_propositions(&mut self, decls: &[ParamDecl]) {
         let arguments = params_as_args(decls);
-        let environment: HashMap<&str, &TyArg> = decls
-            .iter()
-            .zip(&arguments)
-            .map(|(decl, argument)| (decl.name().trim_start_matches('*'), argument))
-            .collect();
+        let environment = ConstraintEnvironment::declared(decls, &arguments);
         let mut assumed = Vec::new();
         for constraint in decls.iter().flat_map(|decl| match decl {
             ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
@@ -1416,18 +1459,15 @@ impl Checker {
         method_decls: &[ParamDecl],
     ) {
         let struct_decls = self.self_decls.clone();
-        let mut arguments = params_as_args(&struct_decls);
-        arguments.extend(params_as_args(method_decls));
-        let environment: HashMap<&str, &TyArg> = struct_decls
-            .iter()
-            .chain(method_decls)
-            .zip(&arguments)
-            .map(|(decl, argument)| (decl.name().trim_start_matches('*'), argument))
-            .collect();
+        let struct_arguments = params_as_args(&struct_decls);
+        let method_arguments = params_as_args(method_decls);
+        let mut environment = ConstraintEnvironment::declared(&struct_decls, &struct_arguments);
+        environment.bind_declared(method_decls, &method_arguments);
         let assumed = method
             .where_clauses
             .iter()
             .filter_map(|condition| self.compile_where_clause(condition).ok())
+            .map(|constraint| self.bind_constraint(&constraint, method_decls))
             .filter_map(
                 |constraint| match self.constraint_verdict(&constraint, &environment) {
                     Ok(ConstraintVerdict::Residual(proposition)) => Some(conjuncts(&proposition)),
@@ -1473,7 +1513,7 @@ impl Checker {
         &self,
         name: &str,
         constraint: &GenericConstraint,
-        environment: &HashMap<&str, &TyArg>,
+        environment: &ConstraintEnvironment<'_>,
     ) -> Result<(), TypeError> {
         let reason = match self.constraint_verdict(constraint, environment)? {
             ConstraintVerdict::Proven => return Ok(()),
@@ -1506,7 +1546,7 @@ impl Checker {
         name: &str,
         constraint: &GenericConstraint,
     ) -> Result<(), TypeError> {
-        self.validate_constraint_in_environment(name, constraint, &HashMap::new())
+        self.validate_constraint_in_environment(name, constraint, &ConstraintEnvironment::default())
     }
 
     /// Whether `constraint` is proven under `environment`. A residual is not
@@ -1515,7 +1555,7 @@ impl Checker {
     pub(super) fn eval_generic_constraint(
         &self,
         constraint: &GenericConstraint,
-        environment: &HashMap<&str, &TyArg>,
+        environment: &ConstraintEnvironment<'_>,
     ) -> bool {
         self.constraint_verdict(constraint, environment)
             .is_ok_and(|verdict| verdict.is_proven())
@@ -1525,7 +1565,7 @@ impl Checker {
     pub(super) fn constraint_verdict(
         &self,
         constraint: &GenericConstraint,
-        environment: &HashMap<&str, &TyArg>,
+        environment: &ConstraintEnvironment<'_>,
     ) -> Result<ConstraintVerdict, TypeError> {
         self.constraint_proposition(constraint, environment)
             .map(ConstraintVerdict::from)
@@ -1540,7 +1580,7 @@ impl Checker {
     fn constraint_proposition(
         &self,
         constraint: &GenericConstraint,
-        environment: &HashMap<&str, &TyArg>,
+        environment: &ConstraintEnvironment<'_>,
     ) -> Result<ParamExpr, ParamError> {
         use GenericConstraint::{
             And, Bool, Conforms, ConformsPack, Eq, Ge, Gt, Le, Lt, Ne, Not, Or, PackContains,
@@ -1552,15 +1592,15 @@ impl Checker {
         // false; only a parameter with no binding at all is unknown.
         // A pack bound to another declaration's pack that is still a
         // parameter (`Tuple[*Self.Ts]`): its elements are that pack's.
-        let forwarded = |param: &str| match environment.get(param) {
+        let forwarded = |param: &ParamRef| match environment.get(param) {
             Some(TyArg::Ty(pack @ Ty::Param { binder, .. })) if binder.name.starts_with('*') => {
                 Some(pack)
             }
             _ => None,
         };
-        let pack = |param: &str, holds: &dyn Fn(&[Ty]) -> bool| match (
+        let pack = |param: &ParamRef, holds: &dyn Fn(&[Ty]) -> bool| match (
             bound_pack_types(environment, param),
-            environment.contains_key(param),
+            environment.get(param).is_some(),
         ) {
             (Some(types), _) => context.boolean(holds(&types)),
             (None, true) if forwarded(param).is_some() => unknown(),
@@ -1585,7 +1625,7 @@ impl Checker {
                     self.constraint_proposition(right, environment)?,
                 ],
             )?,
-            Conforms { param, trait_name } => match environment.get(param.as_str()) {
+            Conforms { param, trait_name } => match environment.get(param) {
                 Some(TyArg::Ty(ty)) => context.boolean(self.conforms_to(ty, trait_name)),
                 Some(TyArg::Val(_) | TyArg::Origin(_)) => context.boolean(false),
                 None => unknown(),
@@ -1676,29 +1716,30 @@ impl Checker {
         })
     }
 
-    pub(super) fn constraint_value<'b>(
+    pub(super) fn constraint_value(
         &self,
-        operand: &'b ConstraintOperand,
-        environment: &HashMap<&str, &'b TyArg>,
+        operand: &ConstraintOperand,
+        environment: &ConstraintEnvironment<'_>,
     ) -> Option<TyArg> {
         match operand {
-            ConstraintOperand::Param(name) => {
-                environment.get(name.as_str()).map(|value| (*value).clone())
-            }
+            ConstraintOperand::Param(param) => environment.get(param).cloned(),
             ConstraintOperand::Value(value) => Some(TyArg::Val(value.clone())),
             ConstraintOperand::Type(ty) => Some(TyArg::Ty(ty.clone())),
             ConstraintOperand::PackLength(param) => bound_pack_types(environment, param)
                 .map(|types| TyArg::Val(CtValue::Int(types.len() as i64))),
-            // Replacement binds the application's values by name and re-folds;
-            // what stays symbolic is returned residual.
+            // Replacement binds the application's values and re-folds; what
+            // stays symbolic is returned residual.
             ConstraintOperand::Expr(expression) => {
                 let context = &self.param_context;
                 let mut bindings = mojito_types::param_expr::ParamBindings::new();
-                for (name, argument) in environment {
+                for (id, argument) in &environment.bound {
                     if let TyArg::Val(value) = argument
                         && let Ok(value) = context.constant(value.clone())
                     {
-                        bindings.bind_name(name, value);
+                        match id.owner.strip_prefix(UNBOUND_BINDER_PREFIX) {
+                            Some(erased) => bindings.bind_name(erased, value),
+                            None => bindings.bind(id.clone(), value),
+                        }
                     }
                 }
                 // As for a type argument, an opaque atom stays unfolded: the
@@ -1729,14 +1770,63 @@ impl Checker {
                     return false;
                 };
                 let bindings =
-                    HashMap::from([(only.name().to_string(), ConstraintOperand::Type(ty.clone()))]);
+                    HashMap::from([(only.id().clone(), ConstraintOperand::Type(ty.clone()))]);
                 let template = template.clone();
                 self.substitute_predicate(&template, &bindings)
                     .is_ok_and(|constraint| {
-                        self.eval_generic_constraint(&constraint, &HashMap::new())
+                        self.eval_generic_constraint(&constraint, &ConstraintEnvironment::default())
                     })
             }
         }
+    }
+
+    /// The enclosing struct's binder `Self.<name>` names.
+    fn self_binder(&self, name: &str) -> ParamRef {
+        mojito_types::types::bind_reference(&ParamRef::unbound(name), &[&self.self_decls])
+    }
+
+    fn bind_binder(&self, reference: &ParamRef, own: &[ParamDecl]) -> ParamRef {
+        if !reference.is_unbound() {
+            return reference.clone();
+        }
+        let bound = mojito_types::types::bind_reference(reference, &[own]);
+        if !bound.is_unbound() {
+            return bound;
+        }
+        self.binder_in_scope(&reference.name).map_or_else(
+            || mojito_types::types::bind_reference(reference, &[&self.self_decls]),
+            |id| ParamRef {
+                id,
+                name: reference.name.clone(),
+            },
+        )
+    }
+
+    /// The binder a bare name denotes in the open parameter scopes,
+    /// innermost first: a type parameter, a value parameter, or a pack.
+    fn binder_in_scope(&self, name: &str) -> Option<ParamId> {
+        let spelling = name.trim_start_matches('*');
+        let declared = |expression: &ParamExpr| match expression.kind() {
+            mojito_types::param_expr::ParamKind::DeclRef(reference) => Some(reference.id.clone()),
+            _ => None,
+        };
+        (0..self.tparams.len()).rev().find_map(|level| {
+            let types = &self.tparams[level];
+            types
+                .get(spelling)
+                .or_else(|| types.get(&format!("*{spelling}")))
+                .and_then(|ty| match ty {
+                    Ty::Param { binder, .. } => Some(binder.id.clone()),
+                    _ => None,
+                })
+                .or_else(|| self.vparams.get(level)?.get(spelling).and_then(declared))
+                .or_else(|| {
+                    self.pack_params
+                        .get(level)?
+                        .get(spelling)
+                        .and_then(declared)
+                })
+        })
     }
 }
 
@@ -1753,7 +1843,7 @@ fn conjuncts(proposition: &ParamExpr) -> Vec<ParamExpr> {
 }
 
 /// The element types of a pack parameter bound in a constraint environment.
-fn bound_pack_types(environment: &HashMap<&str, &TyArg>, param: &str) -> Option<Vec<Ty>> {
+fn bound_pack_types(environment: &ConstraintEnvironment<'_>, param: &ParamRef) -> Option<Vec<Ty>> {
     let TyArg::Val(CtValue::Tuple(values)) = environment.get(param)? else {
         return None;
     };
@@ -1766,10 +1856,73 @@ fn bound_pack_types(environment: &HashMap<&str, &TyArg>, param: &str) -> Option<
         .collect()
 }
 
+/// The arguments a constraint is judged under, each under the identity of
+/// the binder it binds. A binder erased from its declaration (an origin's
+/// mutability) has no identity of its own and is bound under its spelling's
+/// unbound reference.
+#[derive(Default)]
+pub(super) struct ConstraintEnvironment<'a> {
+    bound: HashMap<ParamId, &'a TyArg>,
+}
+
+impl<'a> ConstraintEnvironment<'a> {
+    /// `decls` bound to `arguments`, position by position.
+    pub(super) fn declared(decls: &[ParamDecl], arguments: &'a [TyArg]) -> Self {
+        let mut environment = Self::default();
+        environment.bind_declared(decls, arguments);
+        environment
+    }
+
+    /// The arguments a call site holds under their parameters' spellings,
+    /// each bound to the binder of that spelling in every one of `scopes`.
+    pub(super) fn named(
+        scopes: &[&[ParamDecl]],
+        arguments: impl IntoIterator<Item = (&'a str, &'a TyArg)>,
+    ) -> Self {
+        let mut environment = Self::default();
+        for (name, argument) in arguments {
+            environment.bind_named(scopes, name, argument);
+        }
+        environment
+    }
+
+    pub(super) fn bind_declared(&mut self, decls: &[ParamDecl], arguments: &'a [TyArg]) {
+        self.bound.extend(
+            decls
+                .iter()
+                .zip(arguments)
+                .map(|(decl, argument)| (decl.id().clone(), argument)),
+        );
+    }
+
+    pub(super) fn bind_named(&mut self, scopes: &[&[ParamDecl]], name: &str, argument: &'a TyArg) {
+        let spelling = name.trim_start_matches('*');
+        let declared: Vec<&ParamId> = scopes
+            .iter()
+            .flat_map(|decls| decls.iter())
+            .filter(|decl| decl.name().trim_start_matches('*') == spelling)
+            .map(ParamDecl::id)
+            .collect();
+        if declared.is_empty() {
+            self.bound.insert(ParamRef::unbound(spelling).id, argument);
+        }
+        self.bound
+            .extend(declared.into_iter().map(|id| (id.clone(), argument)));
+    }
+
+    pub(super) fn get(&self, reference: &ParamRef) -> Option<&'a TyArg> {
+        self.bound.get(&reference.id).copied()
+    }
+
+    pub(super) fn arguments(&self) -> impl Iterator<Item = &'a TyArg> {
+        self.bound.values().copied()
+    }
+}
+
 /// A recognized `TypeList` receiver expression in a constraint position.
 pub(super) enum TypeListReceiver {
     /// The pack adapter `TypeList[Ts.values]()`, naming the pack parameter.
-    Pack(String),
+    Pack(ParamRef),
     /// The concrete constructor `TypeList.of[...]()`, with resolved elements.
     Concrete(Vec<Ty>),
 }
@@ -1859,14 +2012,14 @@ fn unsupported_assoc_body() -> TypeError {
 /// `ConformsPack` form cannot carry a substituted single-type binding.
 fn validate_predicate_params(
     constraint: &GenericConstraint,
-    declared: &HashSet<&str>,
+    declared: &HashSet<&ParamId>,
 ) -> Result<(), TypeError> {
     use GenericConstraint::{
         And, Bool, Conforms, ConformsPack, Eq, Ge, Gt, Le, Lt, Ne, Not, Or, PackContains,
         PackPredicate, Trivial, WithMessage,
     };
-    let check_param = |param: &str| {
-        if declared.contains(param) {
+    let check_param = |param: &ParamRef| {
+        if declared.contains(&param.id) {
             Ok(())
         } else {
             Err(TypeError::Unsupported(format!(

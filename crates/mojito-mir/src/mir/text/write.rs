@@ -1718,11 +1718,11 @@ fn constraint(value: &GenericConstraint) -> String {
         ),
         GenericConstraint::Conforms { param, trait_name } => record(
             "conforms",
-            &[("param", symbol(param)), ("trait", symbol(trait_name))],
+            &[("param", binder_ref(param)), ("trait", symbol(trait_name))],
         ),
         GenericConstraint::ConformsPack { param, trait_name } => record(
             "conforms_pack",
-            &[("param", symbol(param)), ("trait", symbol(trait_name))],
+            &[("param", binder_ref(param)), ("trait", symbol(trait_name))],
         ),
         GenericConstraint::PackPredicate {
             param,
@@ -1731,7 +1731,7 @@ fn constraint(value: &GenericConstraint) -> String {
         } => record(
             "pack_predicate",
             &[
-                ("param", symbol(param)),
+                ("param", binder_ref(param)),
                 ("predicate", pack_predicate(predicate)),
                 ("all", all.to_string()),
             ],
@@ -1739,7 +1739,7 @@ fn constraint(value: &GenericConstraint) -> String {
         GenericConstraint::PackContains { param, element } => record(
             "pack_contains",
             &[
-                ("param", symbol(param)),
+                ("param", binder_ref(param)),
                 ("element", constraint_operand(element)),
             ],
         ),
@@ -1782,10 +1782,12 @@ fn logical(tag: &str, left: &GenericConstraint, right: &GenericConstraint) -> St
 
 fn constraint_operand(value: &ConstraintOperand) -> String {
     match value {
-        ConstraintOperand::Param(value) => positional("operand_param", &symbol(value)),
+        ConstraintOperand::Param(value) => positional("operand_param", &binder_ref(value)),
         ConstraintOperand::Value(value) => positional("operand_value", &ct_value(value)),
         ConstraintOperand::Type(value) => positional("operand_type", &ty_value(value)),
-        ConstraintOperand::PackLength(value) => positional("operand_pack_length", &symbol(value)),
+        ConstraintOperand::PackLength(value) => {
+            positional("operand_pack_length", &binder_ref(value))
+        }
         ConstraintOperand::Expr(value) => positional("operand_expr", &param_expr(value)),
     }
 }
@@ -1808,7 +1810,7 @@ const fn lifecycle(value: TrivialLifecycle) -> &'static str {
 fn callable_default_value(value: &CallableDefault) -> String {
     match value {
         CallableDefault::Symbol(v) => positional("default_symbol", &symbol(v)),
-        CallableDefault::Parameter(v) => positional("default_parameter", &symbol(v)),
+        CallableDefault::Parameter(v) => positional("default_parameter", &binder_ref(v)),
         CallableDefault::If {
             condition,
             then_value,

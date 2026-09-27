@@ -166,6 +166,7 @@ impl ConformanceOracle {
                     .structs
                     .get_mut(name)
                     .expect("struct was registered by the loop above");
+                let constraint = constraint.bind(&[&info.decls]);
                 if let Some(last) = info.decls.last_mut() {
                     match last {
                         ParamDecl::Type { constraints, .. }

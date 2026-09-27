@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.3
+# Mojito Textual MIR Format, Version 1.4
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.3 is implemented end to end for inspection and loading: canonical
+Version 1.4 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -20,10 +20,10 @@ corpus fixture by the `roundtrip::*` group of `tests/corpus_test.rs`, and
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.3
+mojito-mir 1.4
 ```
 
-The writer emits 1.3. The reader accepts 1.0 through 1.3; *Schema 1.0*
+The writer emits 1.4. The reader accepts 1.0 through 1.4; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -57,6 +57,16 @@ binder the argument forwards (`hash[Self.H](key)`). A 1.2 consumer rejects both 
 unknown fields, which is the intended failure. A 1.3 consumer reads an older
 `type.construct` by its destination register's type (*Binder identity* under
 *Types*), and an older `param_arg` as forwarding no recorded binder.
+
+Minor version 4 carries that identity on the operands of a `where` clause and
+on a callable default's parameter. The `param` field of `conforms`,
+`conforms_pack`, `pack_predicate`, and `pack_contains`, and the operand of
+`operand_param`, `operand_pack_length`, and `default_parameter`, is a
+`binder { owner, slot, name }` record where it was a bare symbol. A 1.3
+consumer rejects the record, which is the intended failure. A 1.4 consumer
+reads an older bare symbol as the binder of that spelling in the parameter
+list declaring the clause, or as an unbound reference when that list declares
+none (*Binder identity* under *Types*).
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -367,6 +377,12 @@ which is what a 1.1 artifact meant. A `type.construct` without `owner` and
 `slot` constructs the binder its destination register is typed by, when that
 binder carries the spelling, and reads as a 1.1 binder otherwise.
 
+A `where` operand or a callable default names its binder by a
+`binder { owner, slot, name }` record. An operand no declaration binds — an
+origin's mutability parameter, which is erased from its declaration's
+parameter list, or an associated member's own parameter — is an unbound
+reference: owner `$unbound:<name>`, slot `0`, identified by its spelling.
+
 `GenericConstraint` is a prefix tree. Its tags map one-to-one to the public
 variants: `with_message { condition, message }`, `conforms`, `conforms_pack`,
 `pack_predicate` (whose predicate is `predicate_trivial` or
@@ -517,7 +533,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.3
+mojito-mir 1.4
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

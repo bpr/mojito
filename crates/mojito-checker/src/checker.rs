@@ -24,6 +24,7 @@ use builtins::*;
 use calls::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use comptime_validation::*;
+use constraints::ConstraintEnvironment;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use declarations::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
@@ -60,7 +61,7 @@ use mojito_common::token::SourceSpan;
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{
     ConstraintVerdict, HoleKind, MetaTy, ParamContext, ParamError, ParamExpr, ParamId, ParamOp,
-    ParamRef,
+    ParamRef, UNBOUND_BINDER_PREFIX,
 };
 use mojito_types::types::{
     CallableDefault, ConstraintOperand, DependentType, GenericConstraint, ParamDecl, SimdDtype,

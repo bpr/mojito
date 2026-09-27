@@ -216,5 +216,10 @@ artifact's own uses still find their declaration.
   binder either. Native monomorphization resolves it when exactly one
   enclosing binder carries the spelling, and leaves the slot to its default
   otherwise.
+- A `where` operand or a callable default's parameter older than schema 1.4
+  is a spelling as well. It reads as the binder of that spelling in the
+  parameter list declaring it, and as an unbound reference when that list
+  declares none, so an operand naming an enclosing declaration's binder is
+  bound by nothing.
 - Revisit only if a 1.0/1.1 artifact must be read with two same-spelled
   binders told apart.

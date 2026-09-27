@@ -737,7 +737,7 @@ impl Checker {
                 argument.clone(),
             );
         }
-        if !self.method_constraints_apply(signature, &arguments) {
+        if !self.method_constraints_apply(signature, &info.decls, &arguments) {
             return None;
         }
         // A receiver's value parameter is not a type substitution, so a lane

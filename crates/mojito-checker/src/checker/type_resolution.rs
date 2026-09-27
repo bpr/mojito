@@ -1463,18 +1463,8 @@ impl Checker {
                             member: name.to_string(),
                         })?;
                 if let Some(constraints) = info.associated_constraints.get(name) {
-                    let environment: HashMap<&str, &TyArg> = info
-                        .decls
-                        .iter()
-                        .zip(targs)
-                        .map(|(declaration, argument)| {
-                            (declaration.name().trim_start_matches('*'), argument)
-                        })
-                        .collect();
-                    if !environment
-                        .values()
-                        .any(|argument| tyarg_is_symbolic(argument))
-                    {
+                    let environment = ConstraintEnvironment::declared(&info.decls, targs);
+                    if !environment.arguments().any(tyarg_is_symbolic) {
                         for constraint in constraints {
                             self.validate_constraint_in_environment(
                                 &format!("{base}.{name}"),
@@ -1631,25 +1621,18 @@ impl Checker {
             }
         }
         if !member.availability.is_empty() {
-            let mut environment: HashMap<&str, &TyArg> = struct_decls
-                .iter()
-                .zip(struct_targs)
-                .map(|(declaration, argument)| {
-                    (declaration.name().trim_start_matches('*'), argument)
-                })
-                .collect();
+            let mut environment = ConstraintEnvironment::declared(struct_decls, struct_targs);
+            // A member's own parameters are not classified declarations, so
+            // its clause names them by spelling.
             for (parameter, argument) in member
                 .params
                 .iter()
                 .filter(|parameter| !parameter.infer_only)
                 .zip(args)
             {
-                environment.insert(parameter.name.trim_start_matches('*'), argument);
+                environment.bind_named(&[], &parameter.name, argument);
             }
-            if !environment
-                .values()
-                .any(|argument| tyarg_is_symbolic(argument))
-            {
+            if !environment.arguments().any(tyarg_is_symbolic) {
                 for constraint in &member.availability {
                     self.validate_constraint_in_environment(
                         &format!("{base}.{name}"),

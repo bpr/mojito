@@ -282,7 +282,8 @@ impl Checker {
                     argument.clone(),
                 );
             }
-            if let Err(failure) = self.method_constraint_result(sig, &method_arguments) {
+            if let Err(failure) = self.method_constraint_result(sig, &info.decls, &method_arguments)
+            {
                 if single_candidate
                     && availability_failure.is_none()
                     && self

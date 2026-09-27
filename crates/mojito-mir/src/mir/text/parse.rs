@@ -18,7 +18,9 @@ use mojito_types::origin::{
     Mutability, Origin, OriginParamId, OriginPlace, OriginSeg, OwnerId, PointerOrigin, RefSig,
     RefTy, SigMutability, SigOrigin,
 };
-use mojito_types::param_expr::{MetaTy, PackQuery, ParamContext, ParamExpr, ParamId, ParamOp};
+use mojito_types::param_expr::{
+    MetaTy, PackQuery, ParamContext, ParamExpr, ParamId, ParamOp, ParamRef,
+};
 use mojito_types::types::{
     CallableDefault, ConstraintOperand, DependentType, GenericConstraint, PackPredicateRef,
     ParamDecl, SliceKind, TrivialLifecycle, Ty, TyArg,

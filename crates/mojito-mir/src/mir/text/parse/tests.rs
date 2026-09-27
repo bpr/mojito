@@ -152,12 +152,12 @@ fn type_families_reprint_byte_identically() {
                     GenericConstraint::WithMessage(
                         Box::new(GenericConstraint::And(
                             Box::new(GenericConstraint::Conforms {
-                                param: "T".into(),
+                                param: test_binder("T"),
                                 trait_name: "Movable".into(),
                             }),
                             Box::new(GenericConstraint::Trivial(
                                 TrivialLifecycle::Copyable,
-                                ConstraintOperand::Param("T".into()),
+                                ConstraintOperand::Param(test_binder("T")),
                             )),
                         )),
                         "T must copy".into(),
@@ -167,30 +167,30 @@ fn type_families_reprint_byte_identically() {
                             false,
                         )))),
                         Box::new(GenericConstraint::ConformsPack {
-                            param: "Ts".into(),
+                            param: test_binder("Ts"),
                             trait_name: "Movable".into(),
                         }),
                     ),
                     GenericConstraint::PackPredicate {
-                        param: "Ts".into(),
+                        param: test_binder("Ts"),
                         predicate: PackPredicateRef::Alias("IsNice".into()),
                         all: true,
                     },
                     GenericConstraint::PackPredicate {
-                        param: "Ts".into(),
+                        param: test_binder("Ts"),
                         predicate: PackPredicateRef::Trivial(TrivialLifecycle::Deinitable),
                         all: false,
                     },
                     GenericConstraint::PackContains {
-                        param: "Ts".into(),
+                        param: test_binder("Ts"),
                         element: ConstraintOperand::Type(Ty::Int),
                     },
                     GenericConstraint::Le(
                         ConstraintOperand::Value(CtValue::Int(3)),
-                        ConstraintOperand::PackLength("Ts".into()),
+                        ConstraintOperand::PackLength(test_binder("Ts")),
                     ),
                     GenericConstraint::Ne(
-                        ConstraintOperand::Param("T".into()),
+                        ConstraintOperand::Param(test_binder("T")),
                         ConstraintOperand::Type(Ty::Bool),
                     ),
                 ],
@@ -211,7 +211,7 @@ fn type_families_reprint_byte_identically() {
                 callable_default: Some(CallableDefault::If {
                     condition: constant(CtValue::Bool(true)),
                     then_value: Box::new(CallableDefault::Symbol("default_fn".into())),
-                    else_value: Box::new(CallableDefault::Parameter("F".into())),
+                    else_value: Box::new(CallableDefault::Parameter(test_binder("F"))),
                 }),
                 infer_only: false,
                 variadic: true,
@@ -1440,7 +1440,7 @@ fn binder_operands_round_trip_and_read_from_older_artifacts() {
     ));
 
     let older = text
-        .replacen("mojito-mir 1.3", "mojito-mir 1.2", 1)
+        .replacen("mojito-mir 1.4", "mojito-mir 1.2", 1)
         .replace(
             "type.construct { dest: %r0, owner: \"$test:H\", slot: 0, param: H }",
             "type.construct { dest: %r0, param: H }",
@@ -1449,7 +1449,7 @@ fn binder_operands_round_trip_and_read_from_older_artifacts() {
             ", binder: present(binder { owner: \"$test:H\", slot: 0, name: H })",
             "",
         );
-    assert_ne!(older.replacen("mojito-mir 1.2", "mojito-mir 1.3", 1), text);
+    assert_ne!(older.replacen("mojito-mir 1.2", "mojito-mir 1.4", 1), text);
     let parsed = artifact(older.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
     let read = &parsed.program.functions[0].1.blocks[0].instrs;
     assert!(matches!(
@@ -1460,4 +1460,110 @@ fn binder_operands_round_trip_and_read_from_older_artifacts() {
         &read[1],
         MirInstr::Call { param_arg_regs, .. } if param_arg_regs[0].binder.is_none()
     ));
+}
+
+/// Schema 1.4 carries a binder's identity on a `where` operand and on a
+/// callable default's parameter; an older artifact spells only its name,
+/// which is the binder of that spelling in the declaring parameter list.
+#[test]
+fn constraint_binders_round_trip_and_read_from_older_artifacts() {
+    let generic = Ty::GenericFunc {
+        environment: CallableEnvironment::Thin,
+        decls: vec![
+            ParamDecl::Type {
+                id: test_id("T"),
+                name: "T".into(),
+                bounds: vec!["AnyType".into()],
+                callable_bound: None,
+                default: None,
+                infer_only: false,
+                variadic: false,
+                constraints: Vec::new(),
+            },
+            ParamDecl::Value {
+                id: test_id("F"),
+                name: "F".into(),
+                ty: Box::new(Ty::Int),
+                default: None,
+                callable_default: Some(CallableDefault::Parameter(test_binder("T"))),
+                infer_only: false,
+                variadic: false,
+                constraints: vec![
+                    GenericConstraint::Conforms {
+                        param: test_binder("T"),
+                        trait_name: "Movable".into(),
+                    },
+                    GenericConstraint::Ne(
+                        ConstraintOperand::Param(test_binder("T")),
+                        ConstraintOperand::Param(mojito_types::param_expr::ParamRef::unbound(
+                            "Outer",
+                        )),
+                    ),
+                ],
+            },
+        ],
+        params: Vec::new(),
+        names: Vec::new(),
+        ret: Box::new(Ty::None),
+        required: Vec::new(),
+        variadic: None,
+        kw_variadic: None,
+        positional_only: None,
+        keyword_only: None,
+        raises: false,
+        error: None,
+        conventions: Vec::new(),
+        ref_params: Box::new(Vec::new()),
+        ref_return: None,
+        transfers: TransferSet(Vec::new()),
+    };
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(vec![generic], Vec::new()),
+    )]);
+    assert_reprints(&program);
+    let text = write::program(&program);
+    let read_decls = |text: &str| {
+        let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+        match &parsed.program.functions[0].1.reg_types[&0] {
+            Ty::GenericFunc { decls, .. } => decls.clone(),
+            other => panic!("expected a generic function type, read {other}"),
+        }
+    };
+    let assert_bound = |decls: &[ParamDecl]| {
+        let ParamDecl::Value {
+            callable_default,
+            constraints,
+            ..
+        } = &decls[1]
+        else {
+            panic!("expected a value parameter");
+        };
+        assert!(matches!(
+            callable_default,
+            Some(CallableDefault::Parameter(parameter)) if parameter.id == test_id("T")
+        ));
+        assert!(matches!(
+            &constraints[0],
+            GenericConstraint::Conforms { param, .. } if param.id == test_id("T")
+        ));
+        assert!(matches!(
+            &constraints[1],
+            GenericConstraint::Ne(
+                ConstraintOperand::Param(bound),
+                ConstraintOperand::Param(outer),
+            ) if bound.id == test_id("T") && outer.is_unbound()
+        ));
+    };
+    assert_bound(&read_decls(&text));
+
+    let older = text
+        .replacen("mojito-mir 1.4", "mojito-mir 1.3", 1)
+        .replace("binder { owner: \"$test:T\", slot: 0, name: T }", "T")
+        .replace(
+            "binder { owner: \"$unbound:Outer\", slot: 0, name: Outer }",
+            "Outer",
+        );
+    assert_ne!(older.replacen("mojito-mir 1.3", "mojito-mir 1.4", 1), text);
+    assert_bound(&read_decls(&older));
 }

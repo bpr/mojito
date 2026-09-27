@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A compiled `where` clause now names each operand by its declaration's
+  identity rather than its spelling, and is judged under arguments keyed by
+  binder, so a clause's `T` is the binder of the declaration it was written
+  on. A callable default naming an earlier parameter carries that identity
+  too. Both are written to MIR text by `owner` and `slot`, which moves the
+  textual format to schema 1.4; artifacts of schema 1.0 through 1.3 still
+  load, a spelled operand reading as the binder of that spelling in its own
+  parameter list.
 - Native monomorphization now solves and substitutes a type parameter by
   its declaration's identity, so two binders that share a spelling inside
   one instance no longer share a solution. MIR carries that identity on a

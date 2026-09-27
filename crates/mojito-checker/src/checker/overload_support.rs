@@ -117,7 +117,9 @@ pub(super) fn generic_constraint_implies(
     if let GenericConstraint::WithMessage(condition, _) = consequence {
         return generic_constraint_implies(premise, condition);
     }
-    if premise == consequence || matches!(consequence, GenericConstraint::Bool(true)) {
+    if same_proposition(premise, consequence)
+        || matches!(consequence, GenericConstraint::Bool(true))
+    {
         return true;
     }
     match (premise, consequence) {
@@ -193,7 +195,7 @@ pub(super) fn guaranteed_conformance_atoms(
             guaranteed_conformance_atoms(condition, output);
         }
         GenericConstraint::Conforms { param, trait_name } => {
-            let atom = (param.clone(), trait_name.clone());
+            let atom = (param.name.to_string(), trait_name.clone());
             if !output.contains(&atom) {
                 output.push(atom);
             }
@@ -203,7 +205,7 @@ pub(super) fn guaranteed_conformance_atoms(
         // body, recorded under the predicate's spelling.
         GenericConstraint::Trivial(kind, mojito_types::types::ConstraintOperand::Param(param)) => {
             let atom = (
-                param.clone(),
+                param.name.to_string(),
                 mojito_types::types::trivial_predicate_spelling(*kind).to_string(),
             );
             if !output.contains(&atom) {
@@ -213,7 +215,7 @@ pub(super) fn guaranteed_conformance_atoms(
         // `conforms_to(Ts.values, Trait)` and `Ts.all_conforms_to[Trait]()`
         // guarantee the trait of every element, recorded under the pack's name.
         GenericConstraint::ConformsPack { param, trait_name } => {
-            let atom = (param.clone(), trait_name.clone());
+            let atom = (param.name.to_string(), trait_name.clone());
             if !output.contains(&atom) {
                 output.push(atom);
             }
@@ -964,4 +966,26 @@ const fn is_literal(argument: &Expr) -> bool {
             | ExprKind::Str(_)
             | ExprKind::ListLit(_)
     )
+}
+
+/// Whether two propositions are one. A reference no declaration binds is
+/// identified by its spelling, so it is the binder of that spelling on the
+/// other side.
+fn same_proposition(left: &GenericConstraint, right: &GenericConstraint) -> bool {
+    if left == right {
+        return true;
+    }
+    let spelled = |constraint: &GenericConstraint| {
+        let unbound = std::cell::Cell::new(false);
+        let spelled = constraint.map(
+            &|reference| {
+                unbound.set(unbound.get() || reference.is_unbound());
+                ParamRef::unbound(reference.name.trim_start_matches('*'))
+            },
+            &ConstraintOperand::clone,
+        );
+        (spelled, unbound.get())
+    };
+    let ((left, left_unbound), (right, right_unbound)) = (spelled(left), spelled(right));
+    (left_unbound || right_unbound) && left == right
 }

@@ -560,7 +560,10 @@ impl Decoder {
         }
     }
 
-    fn binder_ref(&mut self, value: &Value) -> Option<mojito_types::param_expr::ParamRef> {
+    pub(super) fn binder_ref(
+        &mut self,
+        value: &Value,
+    ) -> Option<mojito_types::param_expr::ParamRef> {
         let fields = self.record(value, "binder").ok()?;
         let name = self.req(value, fields, "name", Self::symbol)?;
         let owner = self.req(value, fields, "owner", Self::string)?;

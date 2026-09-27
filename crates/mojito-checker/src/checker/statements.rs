@@ -2243,7 +2243,10 @@ impl Checker {
         self.push_param_scope(&decls);
         let compiled = where_clauses
             .iter()
-            .map(|condition| self.compile_where_clause(condition))
+            .map(|condition| {
+                self.compile_where_clause(condition)
+                    .map(|constraint| self.bind_constraint(&constraint, &decls))
+            })
             .collect::<Result<Vec<_>, _>>();
         self.tparams.pop();
         for constraint in compiled? {
@@ -3041,7 +3044,7 @@ impl Checker {
         }
         let mut decls = self.classify_params(name, type_params)?;
         for condition in where_clauses {
-            let constraint = self.compile_where_clause(condition)?;
+            let constraint = self.compile_where_clause(condition)?.bind(&[&decls]);
             let Some(last) = decls.last_mut() else {
                 return Err(TypeError::Unsupported(
                     "a where clause requires compile-time parameters".to_string(),

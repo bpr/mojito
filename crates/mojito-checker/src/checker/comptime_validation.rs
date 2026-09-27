@@ -938,8 +938,8 @@ impl Checker {
     /// reads any bare identifier as a parameter name.
     fn constraint_operands_resolve(&self, constraint: &GenericConstraint) -> Result<(), TypeError> {
         let operand = |operand: &ConstraintOperand| match operand {
-            ConstraintOperand::Param(name) | ConstraintOperand::PackLength(name) => {
-                self.comptime_name_resolves(name)
+            ConstraintOperand::Param(param) | ConstraintOperand::PackLength(param) => {
+                self.comptime_name_resolves(&param.name)
             }
             // An arithmetic operand resolved its names when it was compiled.
             ConstraintOperand::Value(_)
@@ -952,9 +952,11 @@ impl Checker {
             }
             GenericConstraint::Conforms { param, .. }
             | GenericConstraint::ConformsPack { param, .. }
-            | GenericConstraint::PackPredicate { param, .. } => self.comptime_name_resolves(param),
+            | GenericConstraint::PackPredicate { param, .. } => {
+                self.comptime_name_resolves(&param.name)
+            }
             GenericConstraint::PackContains { param, element } => {
-                self.comptime_name_resolves(param)?;
+                self.comptime_name_resolves(&param.name)?;
                 operand(element)
             }
             GenericConstraint::Trivial(_, value) => operand(value),

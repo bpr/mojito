@@ -1448,7 +1448,7 @@ fn tuple_specialization_callable_default_is_closed(
     use crate::types::CallableDefault;
     match default {
         CallableDefault::Symbol(_) => true,
-        CallableDefault::Parameter(name) => binders.names_value(name),
+        CallableDefault::Parameter(parameter) => binders.ids.contains(&parameter.id),
         CallableDefault::If {
             condition,
             then_value,
@@ -1472,9 +1472,9 @@ fn tuple_specialization_constraint_is_closed(
         }
         GenericConstraint::Conforms { param, .. }
         | GenericConstraint::ConformsPack { param, .. }
-        | GenericConstraint::PackPredicate { param, .. } => binders.names_type(param),
+        | GenericConstraint::PackPredicate { param, .. } => binders.ids.contains(&param.id),
         GenericConstraint::PackContains { param, element } => {
-            binders.names_type(param)
+            binders.ids.contains(&param.id)
                 && tuple_specialization_constraint_operand_is_closed(element, binders)
         }
         GenericConstraint::Trivial(_, operand) => {
@@ -1503,16 +1503,14 @@ fn tuple_specialization_constraint_operand_is_closed(
     binders: &ClosingBinders,
 ) -> bool {
     match operand {
-        crate::types::ConstraintOperand::Param(name) => {
-            binders.names_type(name) || binders.names_value(name)
-        }
+        crate::types::ConstraintOperand::Param(param)
+        | crate::types::ConstraintOperand::PackLength(param) => binders.ids.contains(&param.id),
         crate::types::ConstraintOperand::Value(value) => {
             tuple_specialization_value_is_closed_in(value, binders)
         }
         crate::types::ConstraintOperand::Type(ty) => {
             tuple_specialization_type_is_closed_in(ty, binders)
         }
-        crate::types::ConstraintOperand::PackLength(name) => binders.names_type(name),
         crate::types::ConstraintOperand::Expr(expression) => {
             tuple_specialization_ct_expr_is_closed(expression, binders)
         }
@@ -1520,9 +1518,9 @@ fn tuple_specialization_constraint_operand_is_closed(
 }
 
 /// The binders an enclosing callable contract declares, which a Tuple
-/// element type may mention and still be closed. A type parameter or a
-/// value reference names its binder by identity; a `where` operand, a
-/// deferred slot, and a callable default carry only a spelling.
+/// element type may mention and still be closed. A type parameter, a value
+/// reference, a `where` operand, and a callable default name their binder by
+/// identity; a deferred slot and a pack query carry only a spelling.
 #[derive(Default, Clone)]
 struct ClosingBinders {
     ids: std::collections::HashSet<crate::param_expr::ParamId>,

@@ -141,7 +141,9 @@ impl Checker {
                 let mut decls =
                     self.classify_params(&method_binder_owner(name, &m.name), &m.type_params)?;
                 for condition in &m.where_clauses {
-                    let constraint = self.compile_where_clause(condition)?;
+                    let constraint = self
+                        .compile_where_clause(condition)
+                        .map(|constraint| self.bind_constraint(&constraint, &decls))?;
                     let Some(last) = decls.last_mut() else {
                         return Err(TypeError::Unsupported(
                             "a where clause requires compile-time parameters".to_string(),
@@ -523,6 +525,7 @@ impl Checker {
                     .structs
                     .get_mut(name)
                     .expect("struct existence checked above");
+                let constraint = constraint.bind(&[&info.decls]);
                 if let Some(last) = info.decls.last_mut() {
                     match last {
                         ParamDecl::Type { constraints, .. }
@@ -1077,8 +1080,8 @@ impl Checker {
         let declared_condition = self
             .structs
             .get(name)
-            .and_then(|info| info.conformance_conditions.get(tr))
-            .map(|condition| self.compile_where_clause(condition))
+            .and_then(|info| Some((info, info.conformance_conditions.get(tr)?)))
+            .map(|(info, condition)| self.compile_condition(&info.decls, condition))
             .transpose()?;
         // The focused checker can recognize protocol bounds without linking the
         // implicit prelude, but a registered nominal trait is authoritative.
@@ -1098,7 +1101,7 @@ impl Checker {
         let conformance_assumption = struct_info
             .conformance_conditions
             .get(tr)
-            .map(|condition| self.compile_where_clause(condition))
+            .map(|condition| self.compile_condition(&struct_info.decls, condition))
             .transpose()?;
         for (mname, req_sigs) in &trait_info.methods {
             let got_sigs =
@@ -1306,14 +1309,19 @@ impl Checker {
         conformance_assumption: Option<&GenericConstraint>,
         allow_copyable_iterator_reference: bool,
     ) -> bool {
-        let availability_is_covered = got.availability.iter().all(|constraint| {
-            required
-                .availability
-                .iter()
-                .any(|premise| generic_constraint_implies(premise, constraint))
-                || conformance_assumption
-                    .is_some_and(|premise| generic_constraint_implies(premise, constraint))
-        });
+        // A witness may spell its own binders as it likes, so a clause names
+        // them by position on both sides.
+        let required_availability = canonical_availability(required);
+        let availability_is_covered = canonical_availability(got)
+            .iter()
+            .zip(&got.availability)
+            .all(|(canonical, constraint)| {
+                required_availability
+                    .iter()
+                    .any(|premise| generic_constraint_implies(premise, canonical))
+                    || conformance_assumption
+                        .is_some_and(|premise| generic_constraint_implies(premise, constraint))
+            });
         if !availability_is_covered {
             return false;
         }
@@ -1361,7 +1369,7 @@ impl Checker {
                         || self.trait_refines(bound, "Copyable")
                 }) || ["Copyable", "ImplicitlyCopyable"].iter().any(|required| {
                     let needed = GenericConstraint::Conforms {
-                        param: binder.name.trim_start_matches('*').to_string(),
+                        param: binder.clone(),
                         trait_name: (*required).to_string(),
                     };
                     assumption.is_some_and(|known| generic_constraint_implies(known, &needed))
@@ -1375,14 +1383,7 @@ impl Checker {
                     // Copyable proof strong enough to change a method ABI.
                     return false;
                 };
-                let environment: HashMap<&str, &TyArg> = info
-                    .decls
-                    .iter()
-                    .zip(arguments)
-                    .map(|(declaration, argument)| {
-                        (declaration.name().trim_start_matches('*'), argument)
-                    })
-                    .collect();
+                let environment = ConstraintEnvironment::declared(&info.decls, arguments);
                 if let Some(methods) = info.methods.get("__copyinit__") {
                     // A declared copy initializer suppresses the fieldwise copy
                     // path. Its method availability is therefore the real
@@ -1406,7 +1407,7 @@ impl Checker {
                     let Some(condition) = info.conformance_conditions.get(declared) else {
                         return true;
                     };
-                    let Ok(condition) = self.compile_where_clause(condition) else {
+                    let Ok(condition) = self.compile_condition(&info.decls, condition) else {
                         return false;
                     };
                     self.eval_constraint_under_assumption(
@@ -1584,7 +1585,7 @@ impl Checker {
         }
         if let Ty::Param { binder, .. } = ty {
             let needed = GenericConstraint::Conforms {
-                param: binder.name.to_string(),
+                param: binder.clone(),
                 trait_name: required.to_string(),
             };
             return assumption.is_some_and(|known| generic_constraint_implies(known, &needed));
@@ -1604,15 +1605,10 @@ impl Checker {
                 let Some(condition) = info.conformance_conditions.get(declared) else {
                     return true;
                 };
-                let Ok(condition) = self.compile_where_clause(condition) else {
+                let Ok(condition) = self.compile_condition(&info.decls, condition) else {
                     return false;
                 };
-                let environment: HashMap<&str, &TyArg> = info
-                    .decls
-                    .iter()
-                    .zip(args)
-                    .map(|(decl, argument)| (decl.name().trim_start_matches('*'), argument))
-                    .collect();
+                let environment = ConstraintEnvironment::declared(&info.decls, args);
                 self.eval_constraint_under_assumption(
                     &condition,
                     &environment,
@@ -1628,7 +1624,7 @@ impl Checker {
     pub(super) fn eval_constraint_under_assumption(
         &self,
         constraint: &GenericConstraint,
-        environment: &HashMap<&str, &TyArg>,
+        environment: &ConstraintEnvironment<'_>,
         assumption: Option<&GenericConstraint>,
         visiting: &mut HashSet<(String, String)>,
     ) -> bool {
@@ -1641,7 +1637,7 @@ impl Checker {
                 visiting,
             ),
             Conforms { param, trait_name } => environment
-                .get(param.as_str())
+                .get(param)
                 .is_some_and(|argument| match argument {
                     TyArg::Ty(ty) => self.conforms_to_under_assumption_inner(
                         ty,
@@ -1652,7 +1648,7 @@ impl Checker {
                     TyArg::Val(_) | TyArg::Origin(_) => false,
                 }),
             ConformsPack { param, trait_name } => environment
-                .get(param.as_str())
+                .get(param)
                 .is_some_and(|argument| match argument {
                     TyArg::Val(CtValue::Tuple(values)) => values.iter().all(|value| {
                         matches!(value, CtValue::Type(ty) if self.conforms_to_under_assumption_inner(
@@ -1987,23 +1983,34 @@ impl Checker {
             })
             .chain(pack.as_ref().map(|(name, list)| (name.as_str(), list)))
             .collect();
-        self.eval_conformance_predicate(expr, &arguments)
+        self.eval_conformance_predicate(expr, &info.decls, &arguments)
     }
 
+    /// Whether a conformance condition of the declaration owning `decls`
+    /// holds under `args`, the arguments by their parameters' spellings.
     pub(super) fn eval_conformance_predicate(
         &self,
         expr: &Expr,
+        decls: &[ParamDecl],
         args: &HashMap<&str, &TyArg>,
     ) -> bool {
+        let compiled = |constraint: &GenericConstraint| {
+            self.eval_generic_constraint(
+                &constraint.bind(&[decls]),
+                &ConstraintEnvironment::named(
+                    &[decls],
+                    args.iter().map(|(name, argument)| (*name, *argument)),
+                ),
+            )
+        };
         // A predicate-alias application inlines its compiled Bool body (with
         // the condition's spellings substituted), then evaluates it under the
         // same argument environment as the surrounding condition.
         if let Some((name, param_args)) = self.predicate_alias_application(expr) {
             let name = name.to_string();
-            return match self.apply_predicate_alias(&name, &param_args) {
-                Ok(constraint) => self.eval_generic_constraint(&constraint, args),
-                Err(_) => false,
-            };
+            return self
+                .apply_predicate_alias(&name, &param_args)
+                .is_ok_and(|constraint| compiled(&constraint));
         }
         match &expr.kind {
             ExprKind::TupleLit(elements)
@@ -2018,7 +2025,7 @@ impl Checker {
                     ]
                 ) =>
             {
-                self.eval_conformance_predicate(&elements[0], args)
+                self.eval_conformance_predicate(&elements[0], decls, args)
             }
             ExprKind::Bool(value) => *value,
             ExprKind::TypeApply {
@@ -2066,14 +2073,16 @@ impl Checker {
                     _ => false,
                 }
             }
-            ExprKind::Prefix(PrefixOp::Not, value) => !self.eval_conformance_predicate(value, args),
+            ExprKind::Prefix(PrefixOp::Not, value) => {
+                !self.eval_conformance_predicate(value, decls, args)
+            }
             ExprKind::Infix(InfixOp::And, left, right) => {
-                self.eval_conformance_predicate(left, args)
-                    && self.eval_conformance_predicate(right, args)
+                self.eval_conformance_predicate(left, decls, args)
+                    && self.eval_conformance_predicate(right, decls, args)
             }
             ExprKind::Infix(InfixOp::Or, left, right) => {
-                self.eval_conformance_predicate(left, args)
-                    || self.eval_conformance_predicate(right, args)
+                self.eval_conformance_predicate(left, decls, args)
+                    || self.eval_conformance_predicate(right, decls, args)
             }
             ExprKind::Infix(op, left, right)
                 if matches!(
@@ -2109,7 +2118,7 @@ impl Checker {
                 if super::constraints::pack_values_projection(&operands[0]).is_some() {
                     return self
                         .compile_generic_constraint(expr)
-                        .is_ok_and(|constraint| self.eval_generic_constraint(&constraint, args));
+                        .is_ok_and(|constraint| compiled(&constraint));
                 }
                 let ExprKind::Identifier(type_name) = &operands[0].kind else {
                     return false;
@@ -2123,13 +2132,10 @@ impl Checker {
             // `Ts.all_conforms_to[Trait]()` over a pack the application binds.
             _ => pack_conformance_atom(expr).is_some_and(|(pack, trait_name)| {
                 args.contains_key(pack)
-                    && self.eval_generic_constraint(
-                        &mojito_types::types::GenericConstraint::ConformsPack {
-                            param: pack.to_string(),
-                            trait_name: trait_name.to_string(),
-                        },
-                        args,
-                    )
+                    && compiled(&GenericConstraint::ConformsPack {
+                        param: ParamRef::unbound(pack),
+                        trait_name: trait_name.to_string(),
+                    })
             }),
         }
     }

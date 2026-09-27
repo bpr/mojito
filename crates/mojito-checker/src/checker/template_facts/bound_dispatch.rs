@@ -632,7 +632,10 @@ impl Checker {
                     .map(|decl| decl.name().trim_start_matches('*').to_string())
                     .zip(struct_arguments.iter().cloned())
                     .collect();
-                if self.method_constraint_result(declared, &named).is_err() {
+                if self
+                    .method_constraint_result(declared, &info.decls, &named)
+                    .is_err()
+                {
                     return Err("the instance's witness is unavailable at the instance");
                 }
             }

@@ -973,7 +973,8 @@ pub enum ParamDecl {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CallableDefault {
     Symbol(String),
-    Parameter(String),
+    /// An earlier callable parameter of the same declaration.
+    Parameter(ParamRef),
     If {
         condition: ParamExpr,
         then_value: Box<Self>,
@@ -981,14 +982,36 @@ pub enum CallableDefault {
     },
 }
 
+impl CallableDefault {
+    /// This default with each unbound parameter reference bound in `scopes`
+    /// ([`GenericConstraint::bind`]).
+    #[must_use]
+    pub fn bind(&self, scopes: &[&[ParamDecl]]) -> Self {
+        match self {
+            Self::Symbol(_) => self.clone(),
+            Self::Parameter(reference) => Self::Parameter(bind_reference(reference, scopes)),
+            Self::If {
+                condition,
+                then_value,
+                else_value,
+            } => Self::If {
+                condition: condition.clone(),
+                then_value: Box::new(then_value.bind(scopes)),
+                else_value: Box::new(else_value.bind(scopes)),
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ConstraintOperand {
-    Param(String),
+    /// A parameter, named by its declaration's identity.
+    Param(ParamRef),
     Value(CtValue),
     Type(Ty),
     /// `TypeList[Ts.values]().length` over a symbolic pack parameter,
     /// resolving to the bound pack's element count.
-    PackLength(String),
+    PackLength(ParamRef),
     /// An arithmetic operand over value parameters (`n + 1` in `where n + 1 ==
     /// m`), in canonical form. It is retained symbolically and discharged by
     /// replacement at each application.
@@ -1052,24 +1075,24 @@ pub enum GenericConstraint {
     /// through the wrapped condition.
     WithMessage(Box<Self>, String),
     Conforms {
-        param: String,
+        param: ParamRef,
         trait_name: String,
     },
     ConformsPack {
-        param: String,
+        param: ParamRef,
         trait_name: String,
     },
     /// `TypeList[Ts.values]().any[P]()` / `.all[P]()` over a symbolic pack
     /// parameter: `P` holds for at least one / every element type.
     PackPredicate {
-        param: String,
+        param: ParamRef,
         predicate: PackPredicateRef,
         all: bool,
     },
     /// `TypeList[Ts.values]().contains[T]()`: the operand type equals some
     /// element of the bound pack.
     PackContains {
-        param: String,
+        param: ParamRef,
         element: ConstraintOperand,
     },
     /// `IsTrivially{Movable,Copyable,Deinitable}[operand]`.
@@ -1084,6 +1107,71 @@ pub enum GenericConstraint {
     Or(Box<Self>, Box<Self>),
     Not(Box<Self>),
     Bool(bool),
+}
+
+impl GenericConstraint {
+    /// This constraint with every binder reference replaced by `binder` and
+    /// every other operand by `operand`.
+    #[must_use]
+    pub fn map(
+        &self,
+        binder: &dyn Fn(&ParamRef) -> ParamRef,
+        operand: &dyn Fn(&ConstraintOperand) -> ConstraintOperand,
+    ) -> Self {
+        let recurse = |inner: &Self| Box::new(inner.map(binder, operand));
+        let leaf = |leaf: &ConstraintOperand| match leaf {
+            ConstraintOperand::Param(param) => ConstraintOperand::Param(binder(param)),
+            ConstraintOperand::PackLength(param) => ConstraintOperand::PackLength(binder(param)),
+            other => operand(other),
+        };
+        match self {
+            Self::WithMessage(inner, message) => Self::WithMessage(recurse(inner), message.clone()),
+            Self::Conforms { param, trait_name } => Self::Conforms {
+                param: binder(param),
+                trait_name: trait_name.clone(),
+            },
+            Self::ConformsPack { param, trait_name } => Self::ConformsPack {
+                param: binder(param),
+                trait_name: trait_name.clone(),
+            },
+            Self::PackPredicate {
+                param,
+                predicate,
+                all,
+            } => Self::PackPredicate {
+                param: binder(param),
+                predicate: predicate.clone(),
+                all: *all,
+            },
+            Self::PackContains { param, element } => Self::PackContains {
+                param: binder(param),
+                element: leaf(element),
+            },
+            Self::Trivial(kind, inner) => Self::Trivial(*kind, leaf(inner)),
+            Self::Eq(a, b) => Self::Eq(leaf(a), leaf(b)),
+            Self::Ne(a, b) => Self::Ne(leaf(a), leaf(b)),
+            Self::Lt(a, b) => Self::Lt(leaf(a), leaf(b)),
+            Self::Le(a, b) => Self::Le(leaf(a), leaf(b)),
+            Self::Gt(a, b) => Self::Gt(leaf(a), leaf(b)),
+            Self::Ge(a, b) => Self::Ge(leaf(a), leaf(b)),
+            Self::And(a, b) => Self::And(recurse(a), recurse(b)),
+            Self::Or(a, b) => Self::Or(recurse(a), recurse(b)),
+            Self::Not(inner) => Self::Not(recurse(inner)),
+            Self::Bool(value) => Self::Bool(*value),
+        }
+    }
+
+    /// This constraint with each reference no declaration binds yet
+    /// ([`ParamRef::unbound`]) bound to the binder of that spelling in
+    /// `scopes`, innermost scope first. A reference no scope declares stays
+    /// unbound.
+    #[must_use]
+    pub fn bind(&self, scopes: &[&[ParamDecl]]) -> Self {
+        self.map(
+            &|reference| bind_reference(reference, scopes),
+            &ConstraintOperand::clone,
+        )
+    }
 }
 
 impl fmt::Display for GenericConstraint {
@@ -1157,6 +1245,28 @@ impl ParamDecl {
         match self {
             Self::Type { id, .. } | Self::Value { id, .. } => id,
         }
+    }
+
+    /// This declaration with each unbound reference of its `where` clauses
+    /// and its callable default bound in `scopes`
+    /// ([`GenericConstraint::bind`]).
+    #[must_use]
+    pub fn bind_references(&self, scopes: &[&[Self]]) -> Self {
+        let mut bound = self.clone();
+        match &mut bound {
+            Self::Type { constraints, .. } => bind_constraints(constraints, scopes),
+            Self::Value {
+                constraints,
+                callable_default,
+                ..
+            } => {
+                bind_constraints(constraints, scopes);
+                if let Some(default) = callable_default {
+                    *default = default.bind(scopes);
+                }
+            }
+        }
+        bound
     }
 
     /// The reference a use of this binder carries: its identity with its
@@ -2229,7 +2339,7 @@ pub fn canonical_generic_signature(
             .collect()
     };
     let mut subst = TySubst::new();
-    let mut binder_names: HashMap<String, String> = HashMap::new();
+    let mut binders: HashMap<ParamId, ParamRef> = HashMap::new();
     // A binder's references become signature slots — a type binder the
     // contract-owned identity `($contract, index)`, a value binder an index
     // reference — so two contracts that differ only in their binders'
@@ -2241,7 +2351,7 @@ pub fn canonical_generic_signature(
         .map(|(index, decl)| match decl {
             ParamDecl::Type {
                 id,
-                name,
+                name: _,
                 bounds,
                 callable_bound,
                 default: _,
@@ -2268,9 +2378,12 @@ pub fn canonical_generic_signature(
                         callable_bound: canonical_callable_bound.clone(),
                     },
                 );
-                binder_names.insert(
-                    name.trim_start_matches('*').to_string(),
-                    canonical_name.clone(),
+                binders.insert(
+                    id.clone(),
+                    ParamRef {
+                        id: canonical_id.clone(),
+                        name: canonical_name.as_str().into(),
+                    },
                 );
                 ParamDecl::Type {
                     id: canonical_id,
@@ -2287,7 +2400,7 @@ pub fn canonical_generic_signature(
                 }
             }
             ParamDecl::Value {
-                id: _,
+                id,
                 name,
                 ty,
                 default: _,
@@ -2297,6 +2410,7 @@ pub fn canonical_generic_signature(
                 constraints,
             } => {
                 let canonical_name = format!("${index}");
+                let canonical_id = ParamId::new(CONTRACT_BINDER_OWNER, index);
                 let canonical_ty = bind_signature_slots(&substitute(ty, &subst), &value_slots);
                 value_slots.bind_name(
                     name,
@@ -2306,12 +2420,15 @@ pub fn canonical_generic_signature(
                         crate::param_expr::MetaTy::value((**ty).clone()),
                     ),
                 );
-                binder_names.insert(
-                    name.trim_start_matches('*').to_string(),
-                    canonical_name.clone(),
+                binders.insert(
+                    id.clone(),
+                    ParamRef {
+                        id: canonical_id.clone(),
+                        name: canonical_name.as_str().into(),
+                    },
                 );
                 ParamDecl::Value {
-                    id: ParamId::new(CONTRACT_BINDER_OWNER, index),
+                    id: canonical_id,
                     name: canonical_name,
                     ty: Box::new(canonical_ty),
                     default: None,
@@ -2340,12 +2457,7 @@ pub fn canonical_generic_signature(
                 *constraints = constraints
                     .iter()
                     .map(|constraint| {
-                        rename_constraint_parameters(
-                            constraint,
-                            &binder_names,
-                            &subst,
-                            &value_slots,
-                        )
+                        rename_constraint_parameters(constraint, &binders, &subst, &value_slots)
                     })
                     .collect();
             }
@@ -2990,34 +3102,49 @@ pub fn map_tyargs(args: &[TyArg], mut f: impl FnMut(&Ty) -> Ty) -> Vec<TyArg> {
         .collect()
 }
 
+/// `reference` bound to the binder of its spelling in `scopes`, innermost
+/// scope first, when no declaration binds it yet.
+pub fn bind_reference(reference: &ParamRef, scopes: &[&[ParamDecl]]) -> ParamRef {
+    if !reference.is_unbound() {
+        return reference.clone();
+    }
+    let spelling = reference.name.trim_start_matches('*');
+    scopes
+        .iter()
+        .find_map(|decls| {
+            decls
+                .iter()
+                .find(|decl| decl.name().trim_start_matches('*') == spelling)
+        })
+        .map_or_else(
+            || reference.clone(),
+            |decl| ParamRef {
+                id: decl.id().clone(),
+                name: reference.name.clone(),
+            },
+        )
+}
+
 /// Alpha-rename the binder references inside one canonicalized constraint.
 ///
-/// `param`-shaped fields rename through `binder_names` (falling back to the
-/// pack-trimmed spelling), and embedded types canonicalize exactly like
-/// signature types.
+/// A reference to one of the contract's own binders takes that binder's
+/// canonical identity from `binders`, and embedded types canonicalize exactly
+/// like signature types.
 #[allow(clippy::implicit_hasher, reason = "TODO: generalize over BuildHasher")]
 pub fn rename_constraint_parameters(
     constraint: &GenericConstraint,
-    binder_names: &HashMap<String, String>,
+    binders: &HashMap<ParamId, ParamRef>,
     subst: &TySubst,
     value_slots: &ParamBindings,
 ) -> GenericConstraint {
-    let rename = |name: &str| -> String {
-        if let Some(canonical) = binder_names.get(name) {
-            return canonical.clone();
-        }
-        let trimmed = name.trim_start_matches('*');
-        if let Some(canonical) = binder_names.get(trimmed) {
-            return canonical.clone();
-        }
-        name.to_string()
-    };
-    let operand = |operand: &crate::types::ConstraintOperand| -> crate::types::ConstraintOperand {
-        use crate::types::ConstraintOperand;
-        match operand {
-            ConstraintOperand::Param(name) => ConstraintOperand::Param(rename(name)),
-            ConstraintOperand::PackLength(name) => ConstraintOperand::PackLength(rename(name)),
-            ConstraintOperand::Value(value) => ConstraintOperand::Value(value.clone()),
+    constraint.map(
+        &|reference| {
+            binders
+                .get(&reference.id)
+                .cloned()
+                .unwrap_or_else(|| reference.clone())
+        },
+        &|operand| match operand {
             ConstraintOperand::Expr(expr) => ConstraintOperand::Expr(
                 ParamContext::detached()
                     .replace(expr, value_slots)
@@ -3026,54 +3153,9 @@ pub fn rename_constraint_parameters(
             ConstraintOperand::Type(ty) => {
                 ConstraintOperand::Type(bind_signature_slots(&substitute(ty, subst), value_slots))
             }
-        }
-    };
-    let recurse = |inner: &GenericConstraint| {
-        rename_constraint_parameters(inner, binder_names, subst, value_slots)
-    };
-    match constraint {
-        GenericConstraint::WithMessage(inner, message) => {
-            GenericConstraint::WithMessage(Box::new(recurse(inner)), message.clone())
-        }
-        GenericConstraint::Conforms { param, trait_name } => GenericConstraint::Conforms {
-            param: rename(param),
-            trait_name: trait_name.clone(),
+            other => other.clone(),
         },
-        GenericConstraint::ConformsPack { param, trait_name } => GenericConstraint::ConformsPack {
-            param: rename(param),
-            trait_name: trait_name.clone(),
-        },
-        GenericConstraint::PackPredicate {
-            param,
-            predicate,
-            all,
-        } => GenericConstraint::PackPredicate {
-            param: rename(param),
-            predicate: predicate.clone(),
-            all: *all,
-        },
-        GenericConstraint::PackContains { param, element } => GenericConstraint::PackContains {
-            param: rename(param),
-            element: operand(element),
-        },
-        GenericConstraint::Trivial(kind, inner) => {
-            GenericConstraint::Trivial(*kind, operand(inner))
-        }
-        GenericConstraint::Eq(a, b) => GenericConstraint::Eq(operand(a), operand(b)),
-        GenericConstraint::Ne(a, b) => GenericConstraint::Ne(operand(a), operand(b)),
-        GenericConstraint::Lt(a, b) => GenericConstraint::Lt(operand(a), operand(b)),
-        GenericConstraint::Le(a, b) => GenericConstraint::Le(operand(a), operand(b)),
-        GenericConstraint::Gt(a, b) => GenericConstraint::Gt(operand(a), operand(b)),
-        GenericConstraint::Ge(a, b) => GenericConstraint::Ge(operand(a), operand(b)),
-        GenericConstraint::And(a, b) => {
-            GenericConstraint::And(Box::new(recurse(a)), Box::new(recurse(b)))
-        }
-        GenericConstraint::Or(a, b) => {
-            GenericConstraint::Or(Box::new(recurse(a)), Box::new(recurse(b)))
-        }
-        GenericConstraint::Not(inner) => GenericConstraint::Not(Box::new(recurse(inner))),
-        GenericConstraint::Bool(value) => GenericConstraint::Bool(*value),
-    }
+    )
 }
 
 pub fn callable_convention_accepts(
@@ -3276,6 +3358,12 @@ impl TyRewrite for Replacer<'_> {
     fn exit_signature(&mut self) {
         self.scopes.pop();
         self.depth -= 1;
+    }
+}
+
+fn bind_constraints(constraints: &mut [GenericConstraint], scopes: &[&[ParamDecl]]) {
+    for constraint in constraints {
+        *constraint = constraint.bind(scopes);
     }
 }
 

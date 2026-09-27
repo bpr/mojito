@@ -443,7 +443,7 @@ impl Checker {
             .chain(positional_pack_binding(&info.decls, targs))
             .collect();
         if self
-            .method_constraint_result(selected, &environment)
+            .method_constraint_result(selected, &info.decls, &environment)
             .is_err()
         {
             return Err(TypeError::BadOperator {
@@ -520,7 +520,8 @@ impl Checker {
             .zip(targs.iter().cloned())
             .chain(positional_pack_binding(&info.decls, targs))
             .collect();
-        self.method_constraint_result(sig, &environment).ok()?;
+        self.method_constraint_result(sig, &info.decls, &environment)
+            .ok()?;
         Some(
             if info
                 .methods

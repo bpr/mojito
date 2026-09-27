@@ -35,10 +35,10 @@ impl Checker {
             return true;
         }
         let owned = Self::erased_origin_constraint_environment(signature, bindings);
-        let environment = owned
-            .iter()
-            .map(|(name, value)| (name.as_str(), value))
-            .collect::<HashMap<_, _>>();
+        let environment = ConstraintEnvironment::named(
+            &[],
+            owned.iter().map(|(name, value)| (name.as_str(), value)),
+        );
         signature
             .availability
             .iter()
@@ -53,10 +53,10 @@ impl Checker {
         bindings: &HashMap<usize, bool>,
     ) -> Option<String> {
         let owned = Self::erased_origin_constraint_environment(signature, bindings);
-        let environment = owned
-            .iter()
-            .map(|(name, value)| (name.as_str(), value))
-            .collect::<HashMap<_, _>>();
+        let environment = ConstraintEnvironment::named(
+            &[],
+            owned.iter().map(|(name, value)| (name.as_str(), value)),
+        );
         signature
             .availability
             .iter()
@@ -79,10 +79,10 @@ impl Checker {
             return Ok(());
         }
         let owned = Self::erased_origin_constraint_environment(signature, bindings);
-        let environment = owned
-            .iter()
-            .map(|(name, value)| (name.as_str(), value))
-            .collect::<HashMap<_, _>>();
+        let environment = ConstraintEnvironment::named(
+            &[],
+            owned.iter().map(|(name, value)| (name.as_str(), value)),
+        );
         for constraint in &signature.availability {
             self.validate_constraint_in_environment(name, constraint, &environment)?;
         }

@@ -154,7 +154,9 @@ impl Checker {
                         )
                     })
                     .collect();
-                if !substitution.is_empty() && !self.method_constraints_apply(declared, &bound) {
+                if !substitution.is_empty()
+                    && !self.method_constraints_apply(declared, &info.decls, &bound)
+                {
                     return Err("a constructor's availability condition fails for the instance");
                 }
             }

@@ -536,7 +536,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`is_specializable_declaration_in`, `collect_comptime_generic_templates`,
   and the method stub in `comptime/elab.rs`).
 - `checker/constraints.rs` owns compile-time evaluation and generic-constraint
-  compilation/evaluation. Its evaluators resolve names and delegate operator
+  compilation/evaluation. `compile_where_clause` compiles a clause,
+  `bind_constraint`/`bind_declared_constraints`/`compile_condition` bind its
+  operands to their binders (`GenericConstraint::bind`), and
+  `ConstraintEnvironment` is the identity-keyed argument environment every
+  verdict reads. Its evaluators resolve names and delegate operator
   semantics to `param_expr::fold`; `compile_dependent_ct_expr` builds a
   `ParamExpr` through the compilation's `ParamContext`
   (`Checker::param_context`, handed over by `TemplateCatalog::param_context`),

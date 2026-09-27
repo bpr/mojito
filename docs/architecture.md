@@ -612,7 +612,14 @@ second expression tree.
   type substitution is a `TySubst` keyed by it; a canonicalized callable
   contract's binders are `$contract` slots, so contracts differing only in
   spelling are one identity and a trait witness may spell its binder as it
-  likes.
+  likes. A `where` operand and a callable default's parameter are `ParamRef`s
+  as well: `compile_where_clause` leaves an operand unbound
+  (`ParamRef::unbound`), `Checker::bind_constraint` binds it at the
+  declaration — its own binders, then the open scopes, then the enclosing
+  struct's — and a clause is judged under a `ConstraintEnvironment` keyed by
+  `ParamId`. An operand no classified declaration binds (an origin's
+  mutability parameter, an associated member's own parameter) stays unbound
+  and is identified by its spelling.
 - `param_expr::fold` is the one implementation of compile-time scalar
   operators; the checker, the elaborator, and native monomorphization call it.
 

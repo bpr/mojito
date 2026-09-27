@@ -359,12 +359,15 @@ impl Checker {
             effective_keyword_only_index(&method.params, method.keyword_only, variadic_idx);
         let regular_params: Vec<&FnParam> = regular.iter().map(|(_, param)| *param).collect();
         Ok(MethodSig {
-            decls,
             availability: method
                 .where_clauses
                 .iter()
-                .map(|condition| self.compile_where_clause(condition))
+                .map(|condition| {
+                    self.compile_where_clause(condition)
+                        .map(|constraint| self.bind_constraint(&constraint, &decls))
+                })
                 .collect::<Result<_, _>>()?,
+            decls,
             has_self: method.has_self,
             params: regular
                 .iter()
@@ -484,7 +487,7 @@ impl Checker {
         self.push_param_scope(&[]);
         let classified = self.classify_params_in_scope(owner, tps);
         self.tparams.pop();
-        classified
+        classified.map(|decls| self.bind_declared_constraints(&decls))
     }
 
     fn classify_params_in_scope(
@@ -769,7 +772,10 @@ impl Checker {
         // binders resolve, exactly like a named def's trailing clauses.
         let compiled: Result<Vec<_>, TypeError> = clauses
             .iter()
-            .map(|condition| self.compile_where_clause(condition))
+            .map(|condition| {
+                self.compile_where_clause(condition)
+                    .map(|constraint| self.bind_constraint(&constraint, &decls))
+            })
             .collect();
         self.tparams.pop();
         let checked = checked?;
@@ -904,7 +910,7 @@ impl Checker {
                     context: format!("default for callable parameter '{name}'"),
                 });
             }
-            return Ok(CallableDefault::Parameter(name.clone()));
+            return Ok(CallableDefault::Parameter(ParamRef::unbound(name)));
         }
 
         let (name, arguments) = match &expression.kind {

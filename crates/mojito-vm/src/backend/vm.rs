@@ -25,6 +25,7 @@ use mojito_mir::mir::{
     MirSubscriptArg, MirTerm, Proj, Reg,
 };
 use mojito_types::ct::CtValue;
+use mojito_types::param_expr::ParamId;
 use mojito_types::types::{CallableDefault, ParamDecl, Ty};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use places::*;
@@ -900,12 +901,12 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
 
 fn resolve_callable_default(
     default: &CallableDefault,
-    runtime: &HashMap<String, Value>,
+    runtime: &HashMap<ParamId, Value>,
     comptime: &HashMap<String, CtValue>,
 ) -> Option<Value> {
     match default {
         CallableDefault::Symbol(symbol) => Some(Value::Function(symbol.clone())),
-        CallableDefault::Parameter(name) => runtime.get(name).cloned(),
+        CallableDefault::Parameter(parameter) => runtime.get(&parameter.id).cloned(),
         CallableDefault::If {
             condition,
             then_value,
@@ -953,6 +954,7 @@ fn resolve_value_parameter_slots(
     let mut comptime = HashMap::new();
     for (index, declaration) in declarations.iter().enumerate() {
         let ParamDecl::Value {
+            id,
             name,
             ty,
             default,
@@ -994,7 +996,7 @@ fn resolve_value_parameter_slots(
         let Some(value) = value else {
             continue;
         };
-        runtime.insert(name.clone(), value.clone());
+        runtime.insert(id.clone(), value.clone());
         if let Some(value) = runtime_value_as_ct(&value) {
             comptime.insert(name.clone(), value);
         }
