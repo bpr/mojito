@@ -1725,6 +1725,35 @@ fn template_value_shaped_operations_derive() {
 }
 
 #[test]
+fn template_struct_lane_members_derive() {
+    // A member of a `DType`-keyed struct specialized whole converts, builds,
+    // and combines values of the symbolic lane with literals, and derives at
+    // a vector lane and at the native `Int` and `Float64` lanes, where each
+    // literal beside a lane value materializes at the native scalar.
+    let source = "struct Lane[dtype: DType](Copyable, ImplicitlyCopyable, Movable):\n    var pos: Scalar[Self.dtype]\n\n    def __init__(out self, pos: Scalar[Self.dtype]):\n        var first = pos\n        if Int(first) < 0:\n            first = 0\n        self.pos = first\n\n    def bump(mut self):\n        self.pos += 1\n\n    def twice(self) -> Scalar[Self.dtype]:\n        return 2 * self.pos - 1\n\n    def at(self, idx: Int) -> Scalar[Self.dtype]:\n        return self.pos + Scalar[Self.dtype](idx)\n\ndef main():\n    var a = Lane[DType.int](3)\n    var b = Lane[DType.int16](-4)\n    var c = Lane[DType.float64](5)\n    a.bump()\n    b.bump()\n    c.bump()\n    print(a.twice(), b.at(2), c.twice(), c.at(1))\n";
+    let compiler = Compiler::default();
+    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
+    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
+    for program in [&derived, &verified] {
+        assert_eq!(
+            compiler.execute(program).expect("execute").output,
+            "7 3 11.0 7.0\n"
+        );
+    }
+    let stats = derived.template_stats();
+    for lane in ["dint", "dint16", "dfloat64"] {
+        for member in ["__init__", "bump", "twice", "at"] {
+            let name = format!("Lane${lane};.{member}");
+            assert!(stats.derived.contains(&name), "{name} derives: {stats:?}");
+            assert!(
+                !stats.inferred_clones.contains(&name),
+                "{name} is never inferred: {stats:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn template_value_keyed_lane_def_derives() {
     // A `DType`- or lane-keyed `def` with no compile-time control flow is
     // specialized per call; source validation checks its template, so every

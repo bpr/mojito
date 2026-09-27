@@ -223,6 +223,8 @@ struct Occurrence {
     operator: Option<(mojito_ast::ast::InfixOp, SyntaxId, SyntaxId, bool)>,
     /// A unary `-` or `~` and its operand occurrence.
     prefix: Option<(mojito_ast::ast::PrefixOp, SyntaxId)>,
+    /// An augmented assignment's place and value occurrences.
+    augmented: Option<(SyntaxId, SyntaxId)>,
     /// Whether this is a `^` transfer.
     transfer: bool,
     /// How the clone check ranks an overload member it is handed to.
@@ -901,6 +903,103 @@ impl Checker {
             transfer_effects,
             transfer_reads,
         })
+    }
+
+    /// The literals a body materialized at, or combined with, a struct's
+    /// symbolic lane type (`clamped = 0`, `remaining - 1` over a
+    /// `Scalar[Self.dtype]`), realized at the instance's folded lane.
+    ///
+    /// A materialization the template recorded at the symbolic lane has its
+    /// target substituted; the instance repeats the fit the template left to
+    /// it. An operator over a lane-typed operand and a literal records
+    /// nothing while the lane is a vector, and so does an augmented
+    /// assignment of one to a lane-typed place, but a lane folding to a native
+    /// scalar (`Scalar[DType.int]` is `Int`) takes the numeric path, which
+    /// materializes the literal at that scalar, as the clone check does.
+    fn realize_lane_literals(
+        &self,
+        template: &CheckedBodyFacts,
+        facts: &mut CheckedBodyFacts,
+        occurrences: &[Occurrence],
+    ) -> Result<(), &'static str> {
+        use mojito_checked::checked::SemanticAdjustment;
+        let fits = |id: OccurrenceId, target: &Ty| {
+            occurrences
+                .iter()
+                .find(|occurrence| occurrence.id == id)
+                .and_then(|occurrence| occurrence.literal.clone())
+                .map(|value| match value {
+                    mojito_types::ct::CtValue::Int(value) => {
+                        mojito_types::ct::CtValue::IntLiteral(value.into())
+                    }
+                    value => value,
+                })
+                .is_some_and(|value| self.literal_value_fits_target(&value, target))
+        };
+        for (id, adjustment) in &template.operation_adjustments {
+            if let SemanticAdjustment::MaterializeLiteral(target) = adjustment
+                && mojito_types::types::is_symbolic(target)
+            {
+                let Some(SemanticAdjustment::MaterializeLiteral(realized)) =
+                    fact_at(&facts.operation_adjustments, *id)
+                else {
+                    return Err("a lane literal's materialization is not realized");
+                };
+                if !fits(*id, realized) {
+                    return Err("a literal does not fit the instance's lane");
+                }
+            }
+        }
+        let open_lane = |id: OccurrenceId| {
+            fact_at(&template.expression_types, id).is_some_and(|ty| {
+                matches!(ty, Ty::Simd { .. }) && mojito_types::types::is_symbolic(ty)
+            })
+        };
+        let mut realized = Vec::new();
+        for occurrence in occurrences {
+            let Some((left, right)) = occurrence
+                .operator
+                .map(|(_, left, right, _)| (left, right))
+                .or(occurrence.augmented)
+            else {
+                continue;
+            };
+            let operand = |syntax| OccurrenceId {
+                syntax,
+                copy: occurrence.id.copy,
+            };
+            for (lane, literal) in [(left, right), (right, left)] {
+                let (lane, literal) = (operand(lane), operand(literal));
+                let literal_typed = fact_at(&template.expression_types, literal)
+                    .is_some_and(|ty| matches!(ty, Ty::IntLiteral | Ty::FloatLiteral));
+                if !open_lane(lane)
+                    || !literal_typed
+                    || fact_at(&template.operation_adjustments, literal).is_some()
+                {
+                    continue;
+                }
+                let Some(native) = fact_at(&facts.expression_types, lane)
+                    .filter(|ty| matches!(ty, Ty::Int | Ty::UInt | Ty::Float64))
+                else {
+                    continue;
+                };
+                if !fits(literal, native) {
+                    return Err("a literal does not fit the instance's lane");
+                }
+                realized.push((
+                    literal,
+                    SemanticAdjustment::MaterializeLiteral(native.clone()),
+                ));
+            }
+        }
+        if !realized.is_empty() {
+            facts.operation_adjustments.extend(realized);
+            let order = |id: OccurrenceId| occurrences.iter().position(|found| found.id == id);
+            facts
+                .operation_adjustments
+                .sort_by_key(|(id, _)| order(*id));
+        }
+        Ok(())
     }
 
     /// [`TemplateObligation::ReplayedTransfers`]: replay the template's
@@ -1677,6 +1776,7 @@ impl Checker {
         let mut facts = substituted_facts(template, instance, indices, &canonical)?;
         realize_value_shaped_constructions(template, &mut facts, occurrences)?;
         realize_simd_intrinsics(template, &mut facts, occurrences)?;
+        self.realize_lane_literals(template, &mut facts, occurrences)?;
         // A per-call request the template recorded names the caller's own
         // binders; an instance that closed it would retarget the call in the
         // clone check, which no recipe repeats.
@@ -3480,6 +3580,7 @@ impl Checker {
                 })
                 .collect(),
             struct_values: Vec::new(),
+            struct_lanes: Vec::new(),
             print_calls: RefCell::new(Vec::new()),
             nested_depth: std::cell::Cell::new(0),
             borrowed_params: Vec::new(),
@@ -4057,6 +4158,11 @@ impl Checker {
             loop_vars: RefCell::new(Vec::new()),
             values: value_binders.clone(),
             struct_values: Vec::new(),
+            struct_lanes: if self.source_validation {
+                struct_lane_binders(&self.self_decls)
+            } else {
+                Vec::new()
+            },
             print_calls: RefCell::new(Vec::new()),
             nested_depth: std::cell::Cell::new(0),
             borrowed_params: params_passed(&[ArgConvention::Mut, ArgConvention::Ref]),
@@ -4171,7 +4277,11 @@ impl Checker {
             .all(|(_, effects)| effect_derives(effects));
         let binder_constructions = shape.binder_constructions.borrow();
         let adjustments_derive = facts.operation_adjustments.iter().all(|(id, adjustment)| {
-            binder_constructions.contains(id) || adjustment_derives(adjustment)
+            binder_constructions.contains(id)
+                || adjustment_derives(adjustment)
+                || matches!(adjustment,
+                    mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(target)
+                        if shape.struct_lane_simd(target))
         });
         if !effects_closed || !adjustments_derive {
             return outside("an expression has an effect or an adjustment with no recipe");
@@ -4471,6 +4581,14 @@ impl Checker {
             fn visit_stmt(&mut self, statement: &Stmt) {
                 let id = self.next_copy(statement.syntax_id);
                 self.push_plain(id, statement.source_span());
+                if let StmtKind::AugAssign { place, value, .. } = &statement.kind
+                    && let Some(occurrence) = self.found.last_mut()
+                {
+                    occurrence.augmented = Some((
+                        self.origins.origin(place.syntax_id),
+                        self.origins.origin(value.syntax_id),
+                    ));
+                }
             }
 
             fn visit_expr(&mut self, expr: &Expr) {
@@ -4522,6 +4640,7 @@ impl Checker {
                     type_receiver: None,
                     operator: None,
                     prefix: None,
+                    augmented: None,
                     transfer: false,
                     ranking: ArgumentRanking::default(),
                     literal: None,
@@ -4537,6 +4656,12 @@ impl Checker {
                     && matches!(&object.kind, ExprKind::Identifier(name) if name == "DType")
                 {
                     self.constant_objects.insert(object.syntax_id);
+                    // The constant the elaborator writes for a type-position
+                    // binder (`Scalar[Self.dtype]`) takes a fresh identity:
+                    // the template spelled a type there, not an occurrence.
+                    if self.origins.origin(expr.syntax_id).is_fresh() {
+                        return;
+                    }
                 }
                 let id = self.next_copy(expr.syntax_id);
                 self.found.push(Occurrence {
@@ -4616,6 +4741,7 @@ impl Checker {
                         ) => Some((*op, self.origins.origin(value.syntax_id))),
                         _ => None,
                     },
+                    augmented: None,
                     transfer: matches!(expr.kind, ExprKind::Transfer(_)),
                     ranking: ArgumentRanking {
                         context_free: context_free(expr),
@@ -7224,6 +7350,23 @@ fn struct_pack_collectors<'m, 'd>(
     (pack, collectors)
 }
 
+/// The names of a struct's `DType` binders, which key a struct specialized
+/// whole and name its members' symbolic lane (`Scalar[Self.dtype]`).
+fn struct_lane_binders(decls: &[ParamDecl]) -> Vec<&str> {
+    decls
+        .iter()
+        .filter_map(|decl| match decl {
+            ParamDecl::Value {
+                name,
+                ty,
+                variadic: false,
+                ..
+            } if **ty == Ty::Dtype => Some(name.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
 /// The names of a method's own scalar value binders (`[n: Int]`), given its
 /// own declarations, or `None` when one is not a plain `Int` or `Bool`. The
 /// parser spells such a binder's type as a bound (`n: Int`), so only its
@@ -8193,6 +8336,10 @@ struct BodyShape<'a> {
     /// The struct's scalar value binders a method body reads as
     /// `Self.<value>` ([`Self::struct_value`]).
     struct_values: Vec<&'a str>,
+    /// The `DType` binders of a struct specialized whole
+    /// (`_SequentialRange[dtype]`), which a validated member's lane types
+    /// name and every specialization folds ([`Self::value_shaped_scalar`]).
+    struct_lanes: Vec<&'a str>,
     /// The `print(...)` calls admitted, whose arguments an instance proves
     /// `Writable` at its own types.
     print_calls: RefCell<Vec<OccurrenceId>>,
@@ -10982,7 +11129,26 @@ impl BodyShape<'_> {
                 let folds = self.folding(expr)
                     || ((!self.folding(left) || runtime(right))
                         && (!self.folding(right) || runtime(left)));
+                // A comparison over a value-shaped operand is a
+                // `SIMD[DType.bool, 1]` mask while the lane is a vector, but
+                // a `Bool` where it folds to a native scalar
+                // (`Scalar[DType.int]` is `Int`).
+                let lane_comparison = matches!(
+                    op,
+                    mojito_ast::ast::InfixOp::Lt
+                        | mojito_ast::ast::InfixOp::Gt
+                        | mojito_ast::ast::InfixOp::Le
+                        | mojito_ast::ast::InfixOp::Ge
+                        | mojito_ast::ast::InfixOp::Eq
+                        | mojito_ast::ast::InfixOp::Ne
+                ) && [left, right].iter().any(|operand| {
+                    self.facts.is_some_and(|facts| {
+                        fact_at(&facts.expression_types, self.occurrence(operand))
+                            .is_some_and(|ty| self.value_shaped_scalar(ty))
+                    })
+                });
                 (folds
+                    && !lane_comparison
                     && self.expression(left)
                     && self.expression(right)
                     && self.scalar(left)
@@ -11254,7 +11420,7 @@ impl BodyShape<'_> {
                 let recorded = fact_at(&facts.simd_constructions, id).is_some();
                 fact_at(&facts.expression_types, id).is_some_and(|ty| {
                     (recorded && !mojito_types::types::is_symbolic(ty))
-                        || (!recorded && self.value_shaped_simd(ty))
+                        || (!recorded && (self.value_shaped_simd(ty) || self.struct_lane_simd(ty)))
                 }) && fact_at(&facts.call_parameters, id).is_none()
                     && fact_at(&facts.overload_targets, id).is_none()
                     && fact_at(&facts.generic_instantiations, id).is_none()
@@ -12215,7 +12381,20 @@ impl BodyShape<'_> {
     /// nothing its dimensions decide, so the instance's facts are the
     /// template's under the folded dimensions.
     fn value_shaped_scalar(&self, ty: &Ty) -> bool {
-        self.keyed && self.value_shaped_simd(ty)
+        (self.keyed && self.value_shaped_simd(ty)) || self.struct_lane_simd(ty)
+    }
+
+    /// A `SIMD` type whose open slots name only the struct's `DType`
+    /// binders, which every specialization of a struct specialized whole
+    /// folds, as a keyed body's own binders are folded.
+    fn struct_lane_simd(&self, ty: &Ty) -> bool {
+        let mut named = HashSet::new();
+        mojito_types::types::referenced_parameters(ty, &mut named);
+        matches!(ty, Ty::Simd { .. })
+            && !named.is_empty()
+            && named
+                .iter()
+                .all(|name| self.struct_lanes.contains(&name.as_str()))
     }
 
     /// Whether the recorded type of `expr` is a value-shaped vector a keyed

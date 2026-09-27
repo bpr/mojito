@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A member of a struct specialized whole on a `DType` binder that holds
+  values of its symbolic lane (`Scalar[Self.dtype]`) — converting them,
+  constructing one, storing them, and combining them with literals — now
+  derives from its checked template at every dtype, including the native
+  `Int` and `Float64` lanes (`assets/ok/template_method_struct_lane.mojo`).
+  The bundled integer ranges' members used to be checked again per
+  specialization.
 - A per-call clone minted for compile-time evaluation — a hasher's
   `_update_with_simd` leaf in the VM-CTFE subprogram of `comptime CT =
   hash(...)`, or a leaf of the `AHasher` specialization it carries — now

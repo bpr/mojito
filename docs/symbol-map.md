@@ -361,7 +361,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   lane-shaped vector, `instance_substitution` folds a wildcard vector
   binder's hidden slots (`simd_binder_values`, `fold_binder_views`), and
   `realize_simd_intrinsics` records each instance's reinterpretation and
-  lane-count shapes. `specialized_value_structs` names a value-keyed struct
+  lane-count shapes. `BodyShape::struct_lane_simd` admits a `DType`-keyed
+  struct's symbolic lane (`Scalar[Self.dtype]`) as a scalar, and
+  `realize_lane_literals` materializes a literal beside such a lane where an
+  instance folds it to `Int` or `Float64`. `specialized_value_structs` names a value-keyed struct
   at closed values as the specialization the elaborator minted.
   `realize_method_call` retargets a closed method call to the clone member
   `declarations.rs:method_clone_target` finds, or to the copy a struct

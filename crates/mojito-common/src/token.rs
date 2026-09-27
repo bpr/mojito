@@ -25,6 +25,11 @@ impl SyntaxId {
         Self((1_u64 << 63) | NEXT.fetch_add(1, Ordering::Relaxed))
     }
 
+    /// Whether this identity came from [`Self::fresh`].
+    pub const fn is_fresh(self) -> bool {
+        self.0 >> 63 == 1
+    }
+
     /// The identity of the `ordinal`-th node synthesized from the node
     /// `parent`: the same pair always yields the same identity, so a desugar
     /// rebuilt for one statement names the same occurrences each time. The
