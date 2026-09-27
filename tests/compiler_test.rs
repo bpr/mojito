@@ -2993,21 +2993,36 @@ fn template_method_same_arity_witness_overloads_derive() {
 }
 
 #[test]
-fn template_method_operator_argument_witness_keeps_the_clone_check() {
-    // An operator's type may come from the parameter it is handed to, so
-    // the recorded type does not rank the two `total` members and the
-    // instance is checked as a clone.
-    let source = "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total(self, by: String) -> Int:\n        return self.count\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n    var step: Int\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n        self.step = 2\n\n    def sum(self) -> Int:\n        return self.entry.total(self.step + 1)\n\n\ndef main():\n    print(Ledger[Counter](Counter(2)).sum())\n";
+fn template_method_ranked_witness_overloads_derive() {
+    // Each instance ranks every `total` member of the arguments' arity on
+    // the recorded types with the clone check's later terms: an operator's
+    // or a call's type is its own, a defaulted `Float64` member needs a
+    // conversion, a generic member ties on conversions and loses on its
+    // binder, and a `var` one also copies a place argument.
+    assert_methods_derive(
+        "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n    var name: String\n\n    def __init__(out self, count: Int):\n        self.count = count\n        self.name = String(\"n\")\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total(self, by: String) -> Int:\n        return self.count\n\n    def total[U: Writable](self, by: U) -> Int:\n        return -1\n\n    def total(self, by: Float64, scale: Int = 3) -> Int:\n        return -2\n\n    def total[U: Copyable & Deinitable & Intable](self, var by: U) -> Int:\n        return -4\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n    var step: Int\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n        self.step = 2\n\n    def sum(self) -> Int:\n        return self.entry.total(self.step + 1)\n\n    def plain(self) -> Int:\n        return self.entry.total(self.step)\n\n    def doubled(self) -> Int:\n        return self.step * 2\n\n    def called(self) -> Int:\n        return self.entry.total(self.doubled())\n\n\ndef main():\n    var ledger = Ledger[Counter](Counter(2))\n    print(ledger.sum(), ledger.plain(), ledger.called())\n",
+        "5 4 6\n",
+        &[("Ledger.sum", 1), ("Ledger.plain", 1), ("Ledger.called", 1)],
+    );
+}
+
+#[test]
+fn template_method_nested_binder_witness_rival_keeps_the_clone_check() {
+    // A rival whose own binder sits inside a parameter type is inferred by
+    // the clone check alone, so the instance is checked as a clone.
     let compiler = Compiler::default();
-    let program = compile_entry(&compiler, source);
+    let program = compile_entry(
+        &compiler,
+        "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total[U: Copyable & Deinitable](self, by: List[U]) -> Int:\n        return -1\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n    var step: Int\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n        self.step = 2\n\n    def plain(self) -> Int:\n        return self.entry.total(self.step)\n\n\ndef main():\n    print(Ledger[Counter](Counter(2)).plain())\n",
+    );
     let stats = program.template_stats();
-    assert_eq!(compiler.execute(&program).expect("execute").output, "5\n");
+    assert_eq!(compiler.execute(&program).expect("execute").output, "4\n");
     assert!(
         stats.refused.iter().any(|(name, reason)| {
-            name.starts_with("Ledger.sum$")
-                && reason == "the instance's overloaded witness needs ranking by type"
+            name.starts_with("Ledger.plain$")
+                && reason == "a member's own binder is not inferred from one argument's type"
         }),
-        "the operator argument refuses the derivation: {:?}",
+        "the nested binder refuses the derivation: {:?}",
         stats.refused
     );
 }

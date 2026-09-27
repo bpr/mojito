@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call through a bound whose instance type overloads the requirement at
+  one arity now derives wherever the clone check's own ranking decides it on
+  the recorded argument types: past the conversion count, the copies a
+  `var` parameter makes of a place, a member's own binders, and the
+  `SIMD`-pattern and receiver tie-breaks now rank, and an operator's or a
+  call's argument is ranked on its own type. A rival the recorded types
+  cannot rank still keeps the clone check.
 - A pack query (`ParamKind::PackQuery`) now names its pack by the binder's
   identity rather than its spelling, so the Tuple closedness check no longer
   counts it as bound by an enclosing pack that merely shares the spelling.

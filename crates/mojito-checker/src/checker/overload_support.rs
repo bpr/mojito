@@ -320,6 +320,12 @@ pub(super) fn place_root_name(expr: &Expr) -> Option<&str> {
     }
 }
 
+/// Whether an argument hands over a value the callee may own: an explicit
+/// transfer `x^` or an rvalue, never a place.
+pub(super) fn argument_is_owned(argument: &Expr) -> bool {
+    matches!(argument.kind, ExprKind::Transfer(_)) || place_root_name(argument).is_none()
+}
+
 pub(super) fn place_has_index(expr: &Expr) -> bool {
     match &expr.kind {
         ExprKind::Index { .. } | ExprKind::Slice { .. } | ExprKind::MultiIndex { .. } => true,
@@ -680,11 +686,29 @@ impl ArgumentBinding {
         trivial: bool,
         argument: &Expr,
     ) {
+        self.bind_value(
+            convention,
+            trivial,
+            argument_is_owned(argument),
+            is_literal(argument),
+        );
+    }
+
+    /// [`Self::bind`] for an argument known by whether it hands over a value
+    /// the callee may own ([`argument_is_owned`]) and whether it is a
+    /// literal, rather than by its expression.
+    pub(super) fn bind_value(
+        &mut self,
+        convention: Option<ArgConvention>,
+        trivial: bool,
+        owned: bool,
+        literal: bool,
+    ) {
         match convention {
             None | Some(ArgConvention::Imm) => self.by_value += usize::from(trivial),
-            Some(ArgConvention::Var) if !argument_is_owned(argument) => self.copies += 1,
+            Some(ArgConvention::Var) if !owned => self.copies += 1,
             Some(ArgConvention::Var) if trivial => self.undecided = true,
-            Some(ArgConvention::Var) => self.by_value += usize::from(!is_literal(argument)),
+            Some(ArgConvention::Var) => self.by_value += usize::from(!literal),
             Some(ArgConvention::Ref) => self.parametric_refs += 1,
             Some(ArgConvention::Mut | ArgConvention::Out | ArgConvention::Deinit) => {}
         }
@@ -929,12 +953,6 @@ const UNDECIDED_BINDING: usize = 1 << 1;
 /// The rank bits `ArgumentBinding::rank` owns below the signature length: the
 /// by-value, `ref`, undecided and generic terms.
 const BINDING_RANK_MASK: usize = SIGNATURE_LENGTH_RANK - 1;
-
-/// Whether an argument hands over a value the callee may own: an explicit
-/// transfer `x^` or an rvalue, never a place.
-fn argument_is_owned(argument: &Expr) -> bool {
-    matches!(argument.kind, ExprKind::Transfer(_)) || place_root_name(argument).is_none()
-}
 
 /// Whether the candidates that tie with the best one on every term above the
 /// binding's low word — the conversions, the variadic bit, the collector, the

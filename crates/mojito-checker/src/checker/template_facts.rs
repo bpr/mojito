@@ -222,15 +222,26 @@ struct Occurrence {
     negated: Option<SyntaxId>,
     /// Whether this is a `^` transfer.
     transfer: bool,
-    /// Whether its checked type is the same under any expected type
-    /// ([`context_free`]).
-    context_free: bool,
+    /// How the clone check ranks an overload member it is handed to.
+    ranking: ArgumentRanking,
     /// The value of an integer or `Bool` literal, which may be a folded
     /// compile-time value.
     literal: Option<mojito_types::ct::CtValue>,
     /// A subscript's index occurrence and value, when the elaborator folded
     /// it to an integer literal: the iteration a pack element was copied for.
     folded_index: Option<(SyntaxId, i64)>,
+}
+
+/// What the clone check's overload ranking reads of an argument's
+/// expression, beside its type.
+#[derive(Clone, Copy, Default)]
+struct ArgumentRanking {
+    /// Whether its checked type is the same under any expected type
+    /// ([`context_free`]).
+    context_free: bool,
+    /// Whether it hands over a value the callee may own rather than a place
+    /// the callee borrows or copies.
+    owned: bool,
 }
 
 /// What an instance's arguments stand for in its template's facts.
@@ -4302,7 +4313,7 @@ impl Checker {
                     operator: None,
                     negated: None,
                     transfer: false,
-                    context_free: false,
+                    ranking: ArgumentRanking::default(),
                     literal: None,
                     folded_index: None,
                 });
@@ -4383,7 +4394,10 @@ impl Checker {
                         _ => None,
                     },
                     transfer: matches!(expr.kind, ExprKind::Transfer(_)),
-                    context_free: context_free(expr),
+                    ranking: ArgumentRanking {
+                        context_free: context_free(expr),
+                        owned: super::overload_support::argument_is_owned(expr),
+                    },
                     literal: match &expr.kind {
                         ExprKind::Int(value) => Some(value.to_i64().map_or_else(
                             || mojito_types::ct::CtValue::IntLiteral(value.clone()),
@@ -6956,16 +6970,31 @@ fn method_call_at(occurrences: &[Occurrence], id: OccurrenceId) -> Option<(Occur
     ))
 }
 
-/// Whether an expression checks to one type under any expected type: a
-/// literal, a named value, a field read of one, or a transfer of one. A
-/// collection literal, a leading-dot member, or a call may take its type
-/// from the parameter it is handed to.
+/// Whether an expression checks to one type under any expected type other
+/// than a reference: everything `infer_with_expected` types without the
+/// expected type. A collection or tuple display, a leading-dot member chain,
+/// or an explicit application may take its type from the parameter it is
+/// handed to.
 fn context_free(expr: &Expr) -> bool {
-    match &expr.kind {
-        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Str(_) => true,
-        ExprKind::Identifier(name) => name != mojito_ast::ast::CONTEXTUAL_SENTINEL,
-        ExprKind::Member { object: value, .. } | ExprKind::Transfer(value) => context_free(value),
-        _ => false,
+    if matches!(
+        expr.kind,
+        ExprKind::ListLit(_)
+            | ExprKind::BraceLit(_)
+            | ExprKind::TupleLit(_)
+            | ExprKind::TypeApply { .. }
+    ) {
+        return false;
+    }
+    let mut current = expr;
+    loop {
+        match &current.kind {
+            ExprKind::Identifier(name) => return name != mojito_ast::ast::CONTEXTUAL_SENTINEL,
+            ExprKind::Member { object, .. }
+            | ExprKind::MethodCall { object, .. }
+            | ExprKind::Index { object, .. } => current = object,
+            ExprKind::Invoke { callee, .. } => current = callee,
+            _ => return true,
+        }
     }
 }
 
