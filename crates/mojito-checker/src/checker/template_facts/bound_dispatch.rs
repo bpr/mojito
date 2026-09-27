@@ -105,6 +105,18 @@ impl Checker {
         let ty = fact_at(&facts.expression_types, receiver)
             .cloned()
             .ok_or("a dispatched receiver has no retained type")?;
+        // A receiver typed by a binder the instance keeps (the method's own
+        // `value: Some[Hashable]`) is dispatched through its bound there
+        // too, as the template dispatched it, over the instance program's
+        // conformers, whose summaries must stay empty.
+        if let Ty::Param { bounds, .. } = &ty {
+            for conformer in self.dispatch_conformers(bounds, &method) {
+                if !facts.effect_free_callees.contains(&conformer) {
+                    facts.effect_free_callees.push(conformer);
+                }
+            }
+            return Ok(());
+        }
         let receiver_transferred = occurrences
             .iter()
             .any(|occurrence| occurrence.id == receiver && occurrence.transfer);

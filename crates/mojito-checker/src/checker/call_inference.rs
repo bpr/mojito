@@ -457,6 +457,9 @@ impl Checker {
                 "Bool" => return self.infer_conversion(&span, Ty::Bool, args),
                 "divmod" => return self.infer_divmod(args),
                 "SIMD" => return self.infer_simd_construction(param_args, args),
+                _ if param_args.is_empty() && self.vector_alias(name).is_some() => {
+                    return self.infer_vector_alias_construction(name, args);
+                }
                 "Scalar" => {
                     if param_args.len() != 1 {
                         return Err(TypeError::WrongTypeArgCount {

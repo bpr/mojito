@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The bundled `AHasher[key]`'s own members — both initializers, `_update`,
+  `_large_update`, `_update_with_bytes`, `update`, and `finish` — now derive
+  from their checked templates in every specialization
+  (`assets/ok/template_method_vector_key.mojo`). A struct keyed on a closed
+  vector reads `Self.key`, calls a vector alias as a constructor, reads a
+  module's integer constants, and hands closed values to a module function
+  within the method grammar; a lane read of a closed vector copied into a
+  local derives too. They used to be checked again per specialization.
 - A member of a struct specialized whole on a `DType` binder that holds
   values of its symbolic lane (`Scalar[Self.dtype]`) — converting them,
   constructing one, storing them, and combining them with literals — now

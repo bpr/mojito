@@ -235,6 +235,43 @@ struct Occurrence {
     /// A subscript's index occurrence and value, when the elaborator folded
     /// it to an integer literal: the iteration a pack element was copied for.
     folded_index: Option<(SyntaxId, i64)>,
+    /// A `SIMD[…](…)` construction's integer dimension occurrences.
+    dimensions: Vec<SyntaxId>,
+    /// A literal's kind.
+    literal_kind: Option<LiteralKind>,
+    /// What the elaborator wrote here for a vector the template spelled
+    /// otherwise ([`fold_vector_values`]).
+    vector_fold: Option<VectorFold>,
+}
+
+/// Syntax the elaborator writes for a vector the template spelled otherwise.
+enum VectorFold {
+    /// A dimension of a vector alias's construction (`U256(…)` as
+    /// `SIMD[DType.uint64, 4](…)`), which no check types.
+    Dimension,
+    /// The construction a struct's vector value binder folded to
+    /// (`Self.key`), under the name's identity.
+    Construction,
+    /// One lane of such a construction, a literal the template never had.
+    Lane(LiteralKind),
+}
+
+/// The kind of a literal, which decides its own type.
+#[derive(Clone, Copy)]
+enum LiteralKind {
+    Int,
+    Float,
+    Bool,
+}
+
+impl LiteralKind {
+    const fn ty(self) -> Ty {
+        match self {
+            Self::Int => Ty::IntLiteral,
+            Self::Float => Ty::FloatLiteral,
+            Self::Bool => Ty::Bool,
+        }
+    }
 }
 
 /// What the clone check's overload ranking reads of an argument's
@@ -1347,7 +1384,8 @@ impl Checker {
         let Some(desugars) = self.instance_with_desugars(body, &checked.facts.with_forms) else {
             return refuse("a `with` statement has no desugar form in its template");
         };
-        let occurrences = self.occurrences_over(body, &desugars);
+        let mut occurrences = self.occurrences_over(body, &desugars);
+        fold_vector_values(&mut occurrences, &checked.facts.occurrences);
         // Every occurrence of the body is one the template checked. A class
         // without compile-time control flow keeps them all, once each; a
         // keyed one keeps the arms the elaborator selected, once per loop
@@ -1360,20 +1398,46 @@ impl Checker {
             .iter()
             .flat_map(|relocation| [relocation.spread.syntax, relocation.transfer.syntax])
             .collect();
+        // A folded vector value drops the `Self` its name was read on, the
+        // template occurrence right after the name's in pre-order, and adds
+        // its lanes, which no template occurrence has.
+        let folded_selves: Vec<SyntaxId> = occurrences
+            .iter()
+            .filter(|occurrence| matches!(occurrence.vector_fold, Some(VectorFold::Construction)))
+            .filter_map(|occurrence| {
+                let order = &checked.facts.occurrences;
+                let at = order
+                    .iter()
+                    .position(|id| id.syntax == occurrence.id.syntax)?;
+                order.get(at + 1).map(|id| id.syntax)
+            })
+            .collect();
         let template_occurrences = checked
             .facts
             .occurrences
             .iter()
-            .filter(|id| !relocated.contains(&id.syntax))
+            .filter(|id| !relocated.contains(&id.syntax) && !folded_selves.contains(&id.syntax))
+            .count();
+        let elaborated = |occurrence: &Occurrence| {
+            matches!(
+                occurrence.vector_fold,
+                Some(VectorFold::Lane(_) | VectorFold::Dimension)
+            )
+        };
+        let lanes = occurrences
+            .iter()
+            .filter(|occurrence| elaborated(occurrence))
             .count();
         let traced = occurrences.iter().all(|occurrence| {
-            (keyed || occurrence.id.copy == 0)
-                && checked
-                    .facts
-                    .occurrences
-                    .iter()
-                    .any(|id| id.syntax == occurrence.id.syntax)
-        }) && (keyed || occurrences.len() == template_occurrences);
+            elaborated(occurrence)
+                || ((keyed || occurrence.id.copy == 0)
+                    && !folded_selves.contains(&occurrence.id.syntax)
+                    && checked
+                        .facts
+                        .occurrences
+                        .iter()
+                        .any(|id| id.syntax == occurrence.id.syntax))
+        }) && (keyed || occurrences.len() - lanes == template_occurrences);
         if !traced {
             timing::note("template_derivations.untraced", || {
                 let strangers: Vec<String> = occurrences
@@ -1428,6 +1492,9 @@ impl Checker {
         let mut selected = checked.facts.selected(&ids, &folded);
         if !relocate_packs(&mut selected, &ids) {
             return refuse("a relocated pack is not the instance's transfer");
+        }
+        if !construct_folded_vectors(&mut selected, &occurrences) {
+            return refuse("a folded vector value is not the template's closed vector");
         }
         // A reference accessor's value twin (`__getitem_param_value__$k`)
         // returns by value what its template handed out as a reference.
@@ -3565,6 +3632,8 @@ impl Checker {
             desugars: &desugars,
             desugar_depth: std::cell::Cell::new(0),
             error_binders: RefCell::new(Vec::new()),
+            constants: &self.comptimes,
+            vector_aliases: self.vector_aliases(),
             params: params
                 .iter()
                 .map(|parameter| parameter.name.as_str())
@@ -3581,6 +3650,7 @@ impl Checker {
                 .collect(),
             struct_values: Vec::new(),
             struct_lanes: Vec::new(),
+            struct_vectors: Vec::new(),
             print_calls: RefCell::new(Vec::new()),
             nested_depth: std::cell::Cell::new(0),
             borrowed_params: Vec::new(),
@@ -3947,6 +4017,16 @@ impl Checker {
     /// Any other handle, borrowed receiver, reference result, interior
     /// reference, or copyable read in the body refuses it
     /// ([`BodyShape::references_recorded`]).
+    /// The struct binders `select` picks for a member only source
+    /// validation checks: a struct specialized whole, whose clones fold them.
+    fn validated_struct_binders(&self, select: fn(&[ParamDecl]) -> Vec<&str>) -> Vec<&str> {
+        if self.source_validation {
+            select(&self.self_decls)
+        } else {
+            Vec::new()
+        }
+    }
+
     fn method_certificate(
         &self,
         method: &mojito_ast::ast::Method,
@@ -4140,6 +4220,8 @@ impl Checker {
             desugars: &desugars,
             desugar_depth: std::cell::Cell::new(0),
             error_binders: RefCell::new(Vec::new()),
+            constants: &self.comptimes,
+            vector_aliases: self.vector_aliases(),
             params: method
                 .params
                 .iter()
@@ -4158,11 +4240,8 @@ impl Checker {
             loop_vars: RefCell::new(Vec::new()),
             values: value_binders.clone(),
             struct_values: Vec::new(),
-            struct_lanes: if self.source_validation {
-                struct_lane_binders(&self.self_decls)
-            } else {
-                Vec::new()
-            },
+            struct_lanes: self.validated_struct_binders(struct_lane_binders),
+            struct_vectors: self.validated_struct_binders(struct_vector_binders),
             print_calls: RefCell::new(Vec::new()),
             nested_depth: std::cell::Cell::new(0),
             borrowed_params: params_passed(&[ArgConvention::Mut, ArgConvention::Ref]),
@@ -4645,6 +4724,9 @@ impl Checker {
                     ranking: ArgumentRanking::default(),
                     literal: None,
                     folded_index: None,
+                    dimensions: Vec::new(),
+                    literal_kind: None,
+                    vector_fold: None,
                 });
             }
 
@@ -4764,6 +4846,29 @@ impl Checker {
                         },
                         _ => None,
                     },
+                    dimensions: match &expr.kind {
+                        ExprKind::Call {
+                            name, param_args, ..
+                        } if name == "SIMD" => param_args
+                            .iter()
+                            .filter_map(|argument| match argument {
+                                mojito_ast::ast::ParamArg::Value(value)
+                                    if matches!(value.kind, ExprKind::Int(_)) =>
+                                {
+                                    Some(self.origins.origin(value.syntax_id))
+                                }
+                                _ => None,
+                            })
+                            .collect(),
+                        _ => Vec::new(),
+                    },
+                    literal_kind: match expr.kind {
+                        ExprKind::Int(_) => Some(LiteralKind::Int),
+                        ExprKind::Float(_) => Some(LiteralKind::Float),
+                        ExprKind::Bool(_) => Some(LiteralKind::Bool),
+                        _ => None,
+                    },
+                    vector_fold: None,
                 });
             }
         }
@@ -7254,7 +7359,7 @@ fn method_direct_calls(facts: &CheckedBodyFacts) -> Vec<(OccurrenceId, &str)> {
                 && application.is_none_or(|application| application.variadic.is_none())
                 && parameters.iter().all(|parameter| {
                     parameter.convention.is_none()
-                        && (closed_scalar(&parameter.ty)
+                        && (!mojito_types::types::is_symbolic(&parameter.ty)
                             || (application.is_some() && matches!(parameter.ty, Ty::Param { .. })))
                 })
         })
@@ -7362,6 +7467,22 @@ fn struct_lane_binders(decls: &[ParamDecl]) -> Vec<&str> {
                 variadic: false,
                 ..
             } if **ty == Ty::Dtype => Some(name.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A struct's vector value binders of a closed type (`key: U256`).
+fn struct_vector_binders(decls: &[ParamDecl]) -> Vec<&str> {
+    decls
+        .iter()
+        .filter_map(|decl| match decl {
+            ParamDecl::Value {
+                name,
+                ty,
+                variadic: false,
+                ..
+            } if grammar_scalar(ty) && matches!(**ty, Ty::Simd { .. }) => Some(name.as_str()),
             _ => None,
         })
         .collect()
@@ -8254,6 +8375,12 @@ struct BodyShape<'a> {
     /// may raise again.
     error_binders: RefCell<Vec<String>>,
     params: Vec<&'a str>,
+    /// The module's exact integer constants (`comptime MULTIPLE = 6364…`),
+    /// which a body reads by name as it would the literal they fold to.
+    constants: &'a HashMap<String, mojito_common::literal::IntLiteral>,
+    /// The module's vector aliases (`comptime U256 = SIMD[DType.uint64, 4]`),
+    /// which a body constructs as the `SIMD` they spell.
+    vector_aliases: Vec<&'a str>,
     /// The `mut` and `ref` parameters among them: a place the body borrows,
     /// so never the source of a `^` transfer.
     borrowed_params: Vec<&'a str>,
@@ -8340,6 +8467,10 @@ struct BodyShape<'a> {
     /// (`_SequentialRange[dtype]`), which a validated member's lane types
     /// name and every specialization folds ([`Self::value_shaped_scalar`]).
     struct_lanes: Vec<&'a str>,
+    /// The closed vector binders of a struct specialized whole
+    /// (`AHasher[key: U256]`), which a validated member reads as
+    /// `Self.<value>` ([`Self::struct_vector`]).
+    struct_vectors: Vec<&'a str>,
     /// The `print(...)` calls admitted, whose arguments an instance proves
     /// `Writable` at its own types.
     print_calls: RefCell<Vec<OccurrenceId>>,
@@ -10960,6 +11091,22 @@ impl BodyShape<'_> {
                     && self.struct_values.contains(&field.as_str()))
     }
 
+    /// `Self.<v>` of a closed vector value binder (`Self.key`), which every
+    /// specialization folds to its vector's construction under the name's
+    /// identity (`construct_folded_vectors`): the template typed it as that
+    /// closed vector and recorded nothing else there.
+    fn struct_vector(&self, expr: &Expr) -> bool {
+        matches!(&expr.kind, ExprKind::Member { object, field }
+            if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
+                && self.struct_vectors.contains(&field.as_str()))
+            && self.facts.is_none_or(|facts| {
+                let id = self.occurrence(expr);
+                fact_at(&facts.expression_bindings, id).is_none()
+                    && fact_at(&facts.operation_adjustments, id).is_none()
+                    && fact_at(&facts.expression_place_types, id).is_none()
+            })
+    }
+
     /// Whether `expr` is `self` itself in a method body.
     fn receiver_itself(&self, expr: &Expr) -> bool {
         self.receiver && matches!(&expr.kind, ExprKind::Identifier(name) if name == "self")
@@ -11062,7 +11209,11 @@ impl BodyShape<'_> {
             // use site of `expression` also demands.
             ExprKind::Identifier(name) => match self.local_kind(name) {
                 Some(kind) => !matches!(kind, LocalKind::Value | LocalKind::Callable),
-                None => self.params.contains(&name.as_str()) || self.folded_value(expr),
+                None => {
+                    self.params.contains(&name.as_str())
+                        || self.folded_value(expr)
+                        || self.module_constant(name)
+                }
             },
             // A field of `self`, admitted where its recorded type is a closed
             // scalar: every use site of `expression` also demands `scalar`.
@@ -11073,6 +11224,7 @@ impl BodyShape<'_> {
                         || self.parameter_field(expr)
                         || self.reference_member(expr)
                         || self.struct_value(expr)
+                        || self.struct_vector(expr)
                         || self.simd_intrinsic(expr))
                         && self.scalar(expr)
             }
@@ -11411,7 +11563,8 @@ impl BodyShape<'_> {
     ) -> bool {
         let admitted = (name == "SIMD"
             || name == "Scalar"
-            || mojito_ast::ast::Dtype::from_scalar_alias(name).is_some())
+            || mojito_ast::ast::Dtype::from_scalar_alias(name).is_some()
+            || self.vector_aliases.contains(&name))
             && kwargs.is_empty()
             && args
                 .iter()
@@ -11535,6 +11688,10 @@ impl BodyShape<'_> {
             }
         };
         let adjustment = fact_at(&facts.operation_adjustments, id);
+        // A closed lane read into a place is copied out of the vector, as
+        // it is under every instance.
+        let closed_lane =
+            matches!(expr.kind, ExprKind::Index { .. }) && !mojito_types::types::is_symbolic(ty);
         let source = fact_at(&facts.expression_types, self.occurrence(receiver));
         let open_source = source.is_some_and(mojito_types::types::is_symbolic);
         let adjusted = match (adjustment, &expr.kind) {
@@ -11566,7 +11723,7 @@ impl BodyShape<'_> {
             && fact_at(&facts.parameterized_method_calls, id).is_none()
             && fact_at(&facts.method_instantiations, id).is_none()
             && fact_at(&facts.subscript_descriptors, id).is_none()
-            && !facts.copy_place_value_uses.contains(&id);
+            && (!facts.copy_place_value_uses.contains(&id) || closed_lane);
         // A reinterpretation or cast the template recorded over an open
         // source lane is noted too: its closed shape stands, but the
         // instance checks its own source lane against it.
@@ -11847,6 +12004,7 @@ impl BodyShape<'_> {
             };
             match &expr.kind {
                 ExprKind::Int(_) => Some(false),
+                ExprKind::Identifier(name) if shape.module_constant(name) => Some(false),
                 ExprKind::Identifier(_) => shape.folds(expr).then_some(true),
                 ExprKind::Prefix(
                     mojito_ast::ast::PrefixOp::Neg | mojito_ast::ast::PrefixOp::Invert,
@@ -11887,6 +12045,15 @@ impl BodyShape<'_> {
             })
             && self.holds(MethodFeatures::STATEMENTS)
             && self.holds(MethodFeatures::COMPTIME_CONTROL)
+    }
+
+    /// A module's exact integer constant, read where no local or parameter
+    /// shadows it: its binding and its `IntLiteral` type are the same under
+    /// every instance, as a literal's are.
+    fn module_constant(&self, name: &str) -> bool {
+        self.local_kind(name).is_none()
+            && !self.params.contains(&name)
+            && self.constants.contains_key(name)
     }
 
     fn folded_value(&self, expr: &Expr) -> bool {
@@ -12015,9 +12182,17 @@ impl BodyShape<'_> {
             ExprKind::Index { .. } => self.slot(object) || self.reference_receiver(object),
             _ => transferred,
         };
+        // The receiver itself names a place too, as a `mut self` hasher
+        // handed to its value's `__hash__`.
+        let receiver_argument = |argument: &Expr| {
+            self.receiver
+                && self.self_convention == Some(mojito_ast::ast::ArgConvention::Mut)
+                && matches!(&argument.kind, ExprKind::Identifier(name) if name == "self")
+        };
         let named = |argument: &Expr| {
-            matches!(&argument.kind, ExprKind::Identifier(name)
-                if self.params.contains(&name.as_str()) || self.declared(name))
+            receiver_argument(argument)
+                || matches!(&argument.kind, ExprKind::Identifier(name)
+                    if self.params.contains(&name.as_str()) || self.declared(name))
         };
         let shape = !self.keyed
             && place
@@ -12036,9 +12211,14 @@ impl BodyShape<'_> {
                 // A named place handed to a bounded parameter of the
                 // requirement: its own bounds prove the parameter's, or its
                 // type is closed, the same in every instance, and the
-                // template's check proved it against the bound.
+                // template's check proved it against the bound. The receiver
+                // is an instance of the struct whose declared conformances
+                // proved it, which every specialization declares alike.
                 let bounded = |argument: &Expr, parameter: &Ty| {
                     let ty = fact_at(&facts.expression_types, self.occurrence(argument));
+                    if receiver_argument(argument) {
+                        return matches!((ty, parameter), (Some(Ty::Struct(..)), Ty::Param { .. }));
+                    }
                     match (ty, parameter) {
                         (Some(Ty::Param { bounds: given, .. }), Ty::Param { bounds, .. }) => {
                             bounds.iter().all(|bound| given.contains(bound))
@@ -12470,6 +12650,8 @@ fn folded_literals(
                     (Ty::IntLiteral, None)
                 }
                 (Some(CtValue::Int(_)), Some(Ty::Int)) => (Ty::IntLiteral, Some(Ty::Int)),
+                // A module's integer constant is an `IntLiteral` already.
+                (Some(CtValue::Int(_)), Some(Ty::IntLiteral)) => (Ty::IntLiteral, None),
                 (Some(CtValue::Bool(_)), Some(Ty::Bool)) => (Ty::Bool, None),
                 _ => return None,
             };
@@ -12487,7 +12669,78 @@ fn folded_literals(
         })
         .collect::<Option<_>>()?;
     literals.extend(arithmetic);
+    // A folded vector value's lanes are literals of its own.
+    literals.extend(occurrences.iter().filter_map(|occurrence| {
+        Some(FoldedLiteral {
+            occurrence: occurrence.id,
+            ty: match &occurrence.vector_fold {
+                Some(VectorFold::Lane(kind)) => kind.ty(),
+                _ => return None,
+            },
+            materialized: None,
+            read_temporary: false,
+            unconsumed_temporary: false,
+        })
+    }));
     Some(literals)
+}
+
+/// Tell the syntax the elaborator wrote for a vector apart from the
+/// template's: the dimensions it spelled for a vector alias's construction
+/// (`U256(…)` as `SIMD[DType.uint64, 4](…)`) are part of the type, which no
+/// check records anything at; and a struct's vector value binder it folded
+/// (`Self.key`) is a construction under the name's identity whose lanes are
+/// all its own.
+fn fold_vector_values(occurrences: &mut [Occurrence], template: &[OccurrenceId]) {
+    let checked = |syntax: &SyntaxId| template.iter().any(|id| id.syntax == *syntax);
+    let written: HashSet<SyntaxId> = occurrences
+        .iter()
+        .flat_map(|occurrence| occurrence.dimensions.iter().copied())
+        .filter(|dimension| !checked(dimension))
+        .collect();
+    let mut lanes: HashSet<SyntaxId> = HashSet::new();
+    for occurrence in occurrences.iter_mut() {
+        if occurrence.callee.as_deref() == Some("SIMD")
+            && checked(&occurrence.id.syntax)
+            && !occurrence.arguments.is_empty()
+            && !occurrence.arguments.iter().any(checked)
+        {
+            occurrence.vector_fold = Some(VectorFold::Construction);
+            lanes.extend(occurrence.arguments.iter().copied());
+        }
+    }
+    for occurrence in occurrences.iter_mut() {
+        if written.contains(&occurrence.id.syntax) {
+            occurrence.vector_fold = Some(VectorFold::Dimension);
+        } else if lanes.contains(&occurrence.id.syntax) {
+            occurrence.vector_fold = occurrence.literal_kind.map(VectorFold::Lane);
+        }
+    }
+}
+
+/// Record the construction each folded vector value is in the instance: the
+/// template typed the name as the closed vector the fold spells, and the
+/// instance's check records its dimensions there. `false` when the template
+/// typed it otherwise.
+fn construct_folded_vectors(facts: &mut CheckedBodyFacts, occurrences: &[Occurrence]) -> bool {
+    use mojito_types::types::{SimdDtype, SimdWidth};
+    for occurrence in occurrences
+        .iter()
+        .filter(|occurrence| matches!(occurrence.vector_fold, Some(VectorFold::Construction)))
+    {
+        let Some(Ty::Simd {
+            dtype: SimdDtype::Known(dtype),
+            width: SimdWidth::Known(width),
+        }) = fact_at(&facts.expression_types, occurrence.id)
+        else {
+            return false;
+        };
+        let dimensions = (*dtype, *width);
+        upsert(&mut facts.simd_constructions, occurrence.id, dimensions);
+    }
+    let order = |id: &OccurrenceId| occurrences.iter().position(|found| found.id == *id);
+    facts.simd_constructions.sort_by_key(|(id, _)| order(id));
+    true
 }
 
 /// The occurrence identities of the values a body's `return`s hand out.
@@ -12705,7 +12958,12 @@ fn folded_arithmetic(
                 read_temporary: false,
                 unconsumed_temporary: false,
             });
-        } else if !folding(occurrence) {
+        } else if !folding(occurrence)
+            || matches!(recorded(id), Some(Ty::IntLiteral | Ty::FloatLiteral))
+        {
+            // Arithmetic the template typed as a literal already reads a
+            // module constant, whose literal keeps the template's facts
+            // around it (`folded_literals`).
             continue;
         } else {
             let (ty, materialized) = match values.get(&id)? {

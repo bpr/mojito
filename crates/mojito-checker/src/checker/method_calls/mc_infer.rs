@@ -17,6 +17,40 @@ impl Checker {
             .map(|result| self.restore_pack_elements(result))
     }
 
+    /// The effect-summary keys of every conformer's `method` a call through
+    /// a parameter with `bounds` dispatches to, sorted: the whole-program
+    /// dispatch set whose effects the call replays.
+    pub(in crate::checker) fn dispatch_conformers(
+        &self,
+        bounds: &[String],
+        method: &str,
+    ) -> Vec<String> {
+        let mut conformers: Vec<String> = self
+            .structs
+            .iter()
+            .filter(|(_, info)| info.methods.contains_key(method))
+            .filter(|(name, info)| {
+                let implementation = Ty::Struct((*name).clone(), params_as_args(&info.decls));
+                bounds
+                    .iter()
+                    .all(|bound| self.conforms_to(&implementation, bound))
+            })
+            .flat_map(|(name, info)| {
+                let signatures = &info.methods[method];
+                if signatures.len() == 1 {
+                    return vec![format!("{name}.{method}")];
+                }
+                let self_ty = Ty::Struct(name.clone(), params_as_args(&info.decls));
+                signatures
+                    .iter()
+                    .map(|signature| method_lowered_name(name, method, signature, Some(&self_ty)))
+                    .collect()
+            })
+            .collect();
+        conformers.sort();
+        conformers
+    }
+
     /// Type a method call `object.method(args)`. On a generic struct value the
     /// method's parameter and return types are substituted at the receiver's
     /// type arguments; on a bounded type parameter (`x: T` with `T: SomeTrait`)
@@ -1737,32 +1771,7 @@ impl Checker {
             // syntactic (round-stable), and one observation per conformer
             // key keeps the two-phase pass exact even for conformers whose
             // effects commit in a later round.
-            let mut conformers: Vec<String> = self
-                .structs
-                .iter()
-                .filter(|(_, info)| info.methods.contains_key(method))
-                .filter(|(name, info)| {
-                    let implementation = Ty::Struct((*name).clone(), params_as_args(&info.decls));
-                    bounds
-                        .iter()
-                        .all(|bound| self.conforms_to(&implementation, bound))
-                })
-                .flat_map(|(name, info)| {
-                    let signatures = &info.methods[method];
-                    if signatures.len() == 1 {
-                        return vec![format!("{name}.{method}")];
-                    }
-                    let self_ty = Ty::Struct(name.clone(), params_as_args(&info.decls));
-                    signatures
-                        .iter()
-                        .map(|signature| {
-                            method_lowered_name(name, method, signature, Some(&self_ty))
-                        })
-                        .collect()
-                })
-                .collect();
-            conformers.sort();
-            for key in conformers {
+            for key in self.dispatch_conformers(bounds, method) {
                 self.apply_transfer_effects(&key, Some(object), args, &span)?;
                 self.apply_call_through_effects(
                     &key,

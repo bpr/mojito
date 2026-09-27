@@ -657,6 +657,49 @@ impl Checker {
         simd_of(dtype, width)
     }
 
+    /// The closed dimensions of a module vector alias
+    /// (`comptime U256 = SIMD[DType.uint64, 4]`), which a call constructs
+    /// as the spelled `SIMD[DType.uint64, 4](...)` does. The elaborator
+    /// writes that spelling in every clone; source validation meets the
+    /// alias itself.
+    pub(super) fn vector_alias(&self, name: &str) -> Option<(Dtype, i64)> {
+        let alias = self.comptime_aliases.get(name)?;
+        let AliasBody::Type(ty) = &alias.body else {
+            return None;
+        };
+        match **ty {
+            Ty::Simd {
+                dtype: SimdDtype::Known(dtype),
+                width: SimdWidth::Known(width),
+            } if alias.decls.is_empty() => Some((dtype, width)),
+            _ => None,
+        }
+    }
+
+    /// The names of every [`Self::vector_alias`] in scope.
+    pub(super) fn vector_aliases(&self) -> Vec<&str> {
+        self.comptime_aliases
+            .keys()
+            .map(String::as_str)
+            .filter(|name| self.vector_alias(name).is_some())
+            .collect()
+    }
+
+    /// Type a vector alias's construction `U256(a, b, c, d)` as the spelled
+    /// `SIMD[DType.uint64, 4](a, b, c, d)` ([`Self::vector_alias`]).
+    pub(super) fn infer_vector_alias_construction(
+        &self,
+        name: &str,
+        args: &[Expr],
+    ) -> Result<Ty, TypeError> {
+        let (dtype, width) = self
+            .vector_alias(name)
+            .ok_or_else(|| TypeError::UndefinedVariable(name.to_string()))?;
+        let (dtype, width) = (SimdDtype::Known(dtype), SimdWidth::Known(width));
+        self.check_simd_args(&dtype, &width, args)?;
+        simd_of(dtype, width)
+    }
+
     /// Type upstream's mask splat `SIMD[DType.bool, N](fill=b)`: `Bool` is not
     /// a `Scalar`, so a mask takes its one lane by keyword, not positionally.
     pub(super) fn infer_simd_fill(

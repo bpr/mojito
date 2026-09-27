@@ -223,8 +223,13 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
                         | CtValue::Deferred(_)
                         | CtValue::Marker(_)
                 )
-                && let Some(materialized) = value.materialize(e.span)
+                && let Some(mut materialized) = value.materialize(e.span)
             {
+                // A vector's construction keeps the name's identity, which
+                // the checked template typed; its lanes are the fold's own.
+                if matches!(value, CtValue::Simd { .. }) {
+                    materialized.syntax_id = e.syntax_id;
+                }
                 *e = materialized;
                 return;
             }

@@ -1754,6 +1754,54 @@ fn template_struct_lane_members_derive() {
 }
 
 #[test]
+fn template_vector_keyed_members_derive() {
+    // A struct keyed on a closed vector value, specialized whole as the
+    // bundled `AHasher` is, reads `Self.key`, constructs through the vector
+    // alias, copies a lane into a field, reads the module's integer
+    // constants, and calls a module function over closed values; every
+    // member derives at every key.
+    let source = "comptime Pair = SIMD[DType.uint64, 2]\ncomptime MULTIPLE = 6364136223846793005\ncomptime ROT = 23\n\ndef _mix(lhs: UInt64, rhs: UInt64) -> UInt64:\n    return (lhs * rhs) ^ (lhs >> UInt64(32))\n\nstruct Mixer[key: Pair](Movable):\n    var state: UInt64\n    var extra: UInt64\n\n    def __init__(out self):\n        var keyed = Self.key ^ Pair(0x243F6A8885A308D3, 0x13198A2E03707344)\n        self.state = keyed[0]\n        self.extra = keyed[1]\n\n    def feed(mut self, value: UInt64):\n        self.state = _mix(value ^ self.state, UInt64(MULTIPLE))\n\n    def rotate(mut self):\n        var mixed = self.state + self.extra\n        self.state = (mixed << UInt64(ROT)) | (mixed >> UInt64(64 - ROT))\n\n    def finish(var self) -> UInt64:\n        return self.state ^ self.extra\n\ndef main():\n    var zero = Mixer[Pair(0)]()\n    zero.feed(UInt64(7))\n    zero.rotate()\n    print(zero^.finish())\n    var keyed = Mixer[Pair(3, 4)]()\n    keyed.feed(UInt64(7))\n    keyed.rotate()\n    print(keyed^.finish())\n";
+    let compiler = Compiler::default();
+    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
+    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
+    for program in [&derived, &verified] {
+        assert_eq!(
+            compiler.execute(program).expect("execute").output,
+            "3689973725367583649\n8585631970048071827\n"
+        );
+    }
+    let stats = derived.template_stats();
+    for key in ["i0;i0;", "i3;i4;"] {
+        for member in ["__init__", "feed", "rotate", "finish"] {
+            let name = format!("Mixer$vuint64:2;[{key}].{member}");
+            assert!(stats.derived.contains(&name), "{name} derives: {stats:?}");
+            assert!(
+                !stats.inferred_clones.contains(&name),
+                "{name} is never inferred: {stats:?}"
+            );
+        }
+    }
+    // The bundled `AHasher`'s own members derive the same way; only the
+    // trap stub standing for its wildcard `_update_with_simd` is inferred.
+    let hashed = compile_entry(
+        &compiler,
+        "def main():\n    print(hash(String(\"hello\")))\n",
+    );
+    let stats = hashed.template_stats();
+    let own = |name: &String| {
+        name.starts_with("__module$$ahash$AHasher$") && !name.contains("._update_with_simd")
+    };
+    assert!(
+        stats.derived.iter().any(|name| own(name)),
+        "AHasher's members derive: {stats:?}"
+    );
+    assert!(
+        !stats.inferred_clones.iter().any(own),
+        "AHasher's members are never inferred: {stats:?}"
+    );
+}
+
+#[test]
 fn template_value_keyed_lane_def_derives() {
     // A `DType`- or lane-keyed `def` with no compile-time control flow is
     // specialized per call; source validation checks its template, so every

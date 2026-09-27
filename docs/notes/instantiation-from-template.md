@@ -1262,7 +1262,8 @@ it produced (3828 for Hello World) were wrong and are withdrawn.
   `AHasher`'s 36 per-call leaves (twelve per check pass) and the ranges'
   three `__iter__` derive in Hello World, whose generated body inferences
   drop from 375 to 336. The ranges' other members and `AHasher`'s own stay
-  outside the method grammar (see the 2026-09-27 range entry; roadmap 1.4).
+  outside the method grammar (see the 2026-09-27 range and `AHasher`
+  entries).
 - 2026-09-27, `Tuple`'s members: the static `__len__`, the initializer, the
   unrolled accessors and their value twins, the synthesized `copy`, the
   per-element `__contains__` overloads, and `write_repr_to` derive, and Hello
@@ -1276,6 +1277,28 @@ it produced (3828 for Hello World) were wrong and are withdrawn.
   from 190 to 151, none of them a range member. `_FloatStridedRange`'s
   initializer and `__next__`, which call `__ceil__` and `__fma__` on lane
   values, keep the clone check (roadmap 1.36).
+- 2026-09-27, `AHasher`'s own members: `__init__` (both overloads),
+  `_update`, `_large_update`, `_update_with_bytes`, `update`, and `finish`
+  derive, and Hello World's re-inferred clones drop from 154 to 141, the
+  three left of `AHasher` being the trap stub that stands for its wildcard
+  `_update_with_simd` (roadmap 1.4). Five recipes did it:
+  - A module's integer constant (`UInt64(MULTIPLE)`) reads as the literal
+    the elaborator folds it to; arithmetic the template typed as an
+    `IntLiteral` (`64 - ROT`) keeps its facts, since its operands are
+    literals in both.
+  - A vector alias's call (`U256(...)`) is typed as the `SIMD` it spells
+    under source validation too, and the dimensions the elaborator writes
+    for it in a clone are no occurrences.
+  - `Self.key` of a closed vector binder is typed as that vector once; the
+    elaborator folds it to a construction that keeps the name's identity,
+    whose lanes are the instance's own literals and whose dimensions the
+    instance records (`fold_vector_values`, `construct_folded_vectors`).
+  - A direct call may hand a module function any closed value
+    (`Span[Byte, _]`, `UInt64`), not only a closed scalar, and a closed lane
+    read may be copied into a place.
+  - `value.__hash__(self)` on the method's own `Some[Hashable]` stays a
+    dispatch through the bound in the instance, which reads every
+    conformer's summaries again (`Checker::dispatch_conformers`).
 
 ## What is not covered
 
@@ -1323,8 +1346,9 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
   `TString` or of a user variadic struct, whose receiver carries no pack
   arguments, and a member of a value-keyed one outside the method grammar
   (`_FloatStridedRange`'s `__ceil__` and `__fma__` on lane values, a
-  comparison over a lane value, `AHasher`'s module constants: roadmap 1.36,
-  1.37, 1.4); a SIMD-keyed hasher
+  comparison over a lane value: roadmap 1.36, 1.37), the trap stub standing
+  for a wildcard vector binder's method in a generic hasher's
+  specialization (roadmap 1.4); a SIMD-keyed hasher
   leaf whose body reads a lane of `value.to_bits()` with its defaulted
   target before casting it (roadmap 1.24).
 - A surviving trait-bound `def` template whose body constructs a struct,

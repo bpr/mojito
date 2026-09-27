@@ -81,20 +81,20 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.4 `AHasher`'s own members keep the clone check**
+- [ ] **1.4 A generic hasher's wildcard `_update_with_simd` stub keeps the
+  clone check**
 
-  Problem: of the bundled `AHasher[key]`'s members, only the
-  `_update_with_simd` leaves derive; the others are inferred per
-  specialization.
-  - Hello World infers 14 such bodies.
-  - `__init__` gets no verdict from source validation, which cannot call the
-    vector alias `U256(...)` as a constructor ("Undefined variable
-    '__module$$ahash$U256'").
-  - `_update`, `_large_update`, and `_update_with_bytes` read a module
-    `comptime` constant (`UInt64(MULTIPLE)`), which the method grammar does
-    not admit; the same body over a literal derives.
-  - `update` calls `value.__hash__(self)` on a `Some[Hashable]` parameter,
-    and `finish` makes a call the grammar counts as not trivial.
+  Problem: in each specialization of `AHasher[key]`, the member standing for
+  `_update_with_simd(mut self, new_data: SIMD[_, _])` is a trap stub that is
+  inferred in every checker pass and never traced.
+  - Hello World infers 3 such bodies; every other `AHasher` member and each
+    per-call leaf derives.
+  - `desugar_simd_keyed_methods` gives the wildcard binder a `$simd` binder,
+    and the elaborated program holds one `_mojito_abort("…")` call in its
+    place, whose clone carries no `MethodInstanceTrace`.
+  - Its facts name nothing the specialization binds, like the unavailable
+    members' stubs of 1.1, so one stub checked per template method could be
+    inherited.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -405,13 +405,14 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.25 A lane read copied into a local keeps the clone check**
+- [ ] **1.25 A value-shaped lane read copied into a local keeps the clone
+  check**
 
-  Problem: `var first = lanes[0]` in a keyed `def` refuses the template,
-  over a closed vector as well as a value-shaped one, while
-  `Int(lanes[0])` derives.
-  - Binding the lane copies a place, and `BodyShape::simd_intrinsic`
-    refuses any lane read with a `copy_place_value_uses` entry.
+  Problem: `var first = lanes[0]` in a keyed `def` refuses the template when
+  `lanes` is value-shaped (`SIMD[dt, 4]`), while `Int(lanes[0])` derives.
+  - Binding the lane copies a place, and `BodyShape::simd_intrinsic` admits
+    a lane read with a `copy_place_value_uses` entry only when its type is
+    closed; over a closed vector the copy derives (2026-09-27).
   - An instance already re-proves each copied place implicitly copyable
     at its own type, so the copy itself derives.
   - Depends on nothing.

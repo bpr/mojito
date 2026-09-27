@@ -364,7 +364,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   lane-count shapes. `BodyShape::struct_lane_simd` admits a `DType`-keyed
   struct's symbolic lane (`Scalar[Self.dtype]`) as a scalar, and
   `realize_lane_literals` materializes a literal beside such a lane where an
-  instance folds it to `Int` or `Float64`. `specialized_value_structs` names a value-keyed struct
+  instance folds it to `Int` or `Float64`. `BodyShape::struct_vector` admits a
+  closed vector binder read as `Self.key`, whose clone construction
+  `fold_vector_values` tells from the template's syntax and
+  `construct_folded_vectors` records; `operators.rs:vector_alias` types a
+  vector alias's call (`U256(...)`) as the `SIMD` it spells.
+  `specialized_value_structs` names a value-keyed struct
   at closed values as the specialization the elaborator minted.
   `realize_method_call` retargets a closed method call to the clone member
   `declarations.rs:method_clone_target` finds, or to the copy a struct
@@ -407,7 +412,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   scoring each member with `member_rank`), and retargeted to a baked binder's per-call clone, keyed by the
   instance too when the struct is generic), with
   `witness_binders` judging one declaration, `realize_bound_dispatch` rewrites the
-  abstract contract with it (and marks a witness that is a named `deinit self`
+  abstract contract with it (a receiver typed by a binder the instance keeps
+  stays a dispatch, reading the summaries of every conformer
+  `mc_infer.rs:dispatch_conformers` names) (and marks a witness that is a named `deinit self`
   destructor as an explicit-destroy call, refusing a copied receiver whose
   witness does not consume it), `realize_inverted_writes` turns an inverted
   `write_to` on a struct instance into that call, and

@@ -442,7 +442,9 @@ impl Checker {
                         .and_then(|dtype| dtype.known())
                         .map(|dtype| (dtype, 1))
                 } else {
-                    Dtype::from_scalar_alias(name).map(|dtype| (dtype, 1))
+                    Dtype::from_scalar_alias(name)
+                        .map(|dtype| (dtype, 1))
+                        .or_else(|| param_args.is_empty().then(|| self.vector_alias(name))?)
                 };
                 if let Some(dimensions) = dimensions {
                     self.simd_constructions
