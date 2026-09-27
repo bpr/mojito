@@ -2029,23 +2029,7 @@ impl Checker {
     }
 
     pub(super) fn trait_refines(&self, candidate: &str, required: &str) -> bool {
-        self.trait_refines_inner(candidate, required, &mut HashSet::new())
-    }
-
-    pub(super) fn trait_refines_inner(
-        &self,
-        candidate: &str,
-        required: &str,
-        visiting: &mut HashSet<String>,
-    ) -> bool {
-        if !visiting.insert(candidate.to_string()) {
-            return false;
-        }
-        self.traits.get(candidate).is_some_and(|info| {
-            info.refines.iter().any(|parent| {
-                parent == required || self.trait_refines_inner(parent, required, visiting)
-            })
-        })
+        refines_trait(&self.traits, candidate, required)
     }
 
     /// Explain the first actionable reason a built-in bound failed. This is
@@ -2899,6 +2883,29 @@ impl Checker {
                 _ => None,
             })
     }
+}
+
+/// Whether the declared trait `candidate` refines `required`, directly or
+/// through its parents.
+pub(super) fn refines_trait(
+    traits: &HashMap<String, TraitInfo>,
+    candidate: &str,
+    required: &str,
+) -> bool {
+    fn walk(
+        traits: &HashMap<String, TraitInfo>,
+        candidate: &str,
+        required: &str,
+        visiting: &mut HashSet<String>,
+    ) -> bool {
+        visiting.insert(candidate.to_string())
+            && traits.get(candidate).is_some_and(|info| {
+                info.refines
+                    .iter()
+                    .any(|parent| parent == required || walk(traits, parent, required, visiting))
+            })
+    }
+    walk(traits, candidate, required, &mut HashSet::new())
 }
 
 /// Origin parameters a method body writes through via a parametric-mut ref

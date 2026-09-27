@@ -3674,6 +3674,7 @@ impl Checker {
             origins: &self.syntax_origins,
             facts,
             structs: &self.structs,
+            traits: &self.traits,
             desugars: &desugars,
             desugar_depth: std::cell::Cell::new(0),
             error_binders: RefCell::new(Vec::new()),
@@ -4265,6 +4266,7 @@ impl Checker {
             origins: &self.syntax_origins,
             facts,
             structs: &self.structs,
+            traits: &self.traits,
             desugars: &desugars,
             desugar_depth: std::cell::Cell::new(0),
             error_binders: RefCell::new(Vec::new()),
@@ -7709,13 +7711,15 @@ fn tuple_element_accessor(target: &str) -> Option<&str> {
     Some(&target[start + 1..])
 }
 
-/// Whether the lowered callee `target` is `owner`'s `method`, or a clone or
-/// an overload of it.
 /// Whether an argument of the recorded type binds a parameter typed by the
 /// callee's existential `Some[…]` binder under every instance: the argument
-/// is a caller binder whose bounds name each of the existential's. A binder
-/// whose bound only refines one keeps the clone check.
-fn existential_argument(parameter: &Ty, argument: Option<&Ty>) -> bool {
+/// is a caller binder each of whose existential's bounds one of its own
+/// bounds names or refines, so every type an instance binds conforms.
+fn existential_argument(
+    traits: &HashMap<String, super::TraitInfo>,
+    parameter: &Ty,
+    argument: Option<&Ty>,
+) -> bool {
     match (parameter, argument) {
         (
             Ty::Param {
@@ -7724,11 +7728,19 @@ fn existential_argument(parameter: &Ty, argument: Option<&Ty>) -> bool {
                 ..
             },
             Some(Ty::Param { bounds: held, .. }),
-        ) => existential_binder(binder) && wanted.iter().all(|bound| held.contains(bound)),
+        ) => {
+            existential_binder(binder)
+                && wanted.iter().all(|bound| {
+                    held.iter()
+                        .any(|own| own == bound || super::traits::refines_trait(traits, own, bound))
+                })
+        }
         _ => false,
     }
 }
 
+/// Whether the lowered callee `target` is `owner`'s `method`, or a clone or
+/// an overload of it.
 fn names_method(target: &str, owner: &str, method: &str) -> bool {
     target
         .strip_prefix(owner)
@@ -8450,6 +8462,9 @@ struct BodyShape<'a> {
     facts: Option<&'a CheckedBodyFacts>,
     /// The declared structs, which a call may construct.
     structs: &'a HashMap<String, super::StructInfo>,
+    /// The declared traits, whose refinements an existential argument's
+    /// bounds may reach ([`existential_argument`]).
+    traits: &'a HashMap<String, super::TraitInfo>,
     /// Each checked `with` statement's desugar, which the grammar judges in
     /// the statement's place once the facts are captured.
     desugars: &'a HashMap<SourceSpan, super::with_stmt::WithDesugar>,
@@ -11011,8 +11026,8 @@ impl BodyShape<'_> {
     /// substitutes them in the contract and in the call's parameters alike.
     /// A parameter typed by the callee's existential `Some[…]` binder stays
     /// in the callee's scope under every instance: a whole value binds it
-    /// when its caller binder carries the existential's bounds, which the
-    /// instance's request discharged ([`existential_argument`]).
+    /// when its caller binder's bounds carry or refine the existential's,
+    /// which the instance's request discharged ([`existential_argument`]).
     fn argument(&self, call: &Expr, argument: &Expr) -> bool {
         let named = match &argument.kind {
             ExprKind::Identifier(name) => {
@@ -11072,6 +11087,7 @@ impl BodyShape<'_> {
                 && parameter.is_some_and(|parameter| {
                     converted
                         || existential_argument(
+                            self.traits,
                             &parameter.parameter_ty,
                             fact_at(&facts.expression_types, id),
                         )

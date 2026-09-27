@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A trait-bound `def` handing its `T: Titled` parameter to a method taking
+  `Some[Named]`, where `trait Titled(Named)`, now derives from its checked
+  template, as the same body over `T: Named` did
+  (`template_def_builds_hasher_derives`). The method grammar admitted the
+  existential only when the binder's bounds named its bounds literally, so
+  a refining bound kept the clone check.
 - A whole value discarded with `_ =` in a method (`_ = first` over a local
   of the struct's parameter type, `_ = first^`, `_ = self.items.pop(i)`) now
   derives from the method's checked template

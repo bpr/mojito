@@ -1556,8 +1556,8 @@ fn template_def_var_parameter_derives() {
 fn template_def_builds_hasher_derives() {
     // A surviving trait-bound `def` that constructs a struct and hands its
     // parameter to the struct's method taking an existential `Some[Trait]`,
-    // as `hash_seeded` builds an `AHasher` and feeds it `value`. A binder
-    // whose bound only refines the existential's keeps the clone check.
+    // as `hash_seeded` builds an `AHasher` and feeds it `value`, whether the
+    // binder's bound names the existential's or only refines it.
     let source = "from std.hashlib._ahash import U256, AHasher\n\ncomptime Z = AHasher[U256(0)]\n\ndef build_only[T: Hashable](value: T, seed: U256) -> UInt64:\n    var hasher = Z(seed)\n    return hasher^.finish()\n\ndef update_only[T: Hashable](value: T, var hasher: Z) -> UInt64:\n    hasher.update(value)\n    return hasher^.finish()\n\ndef full[T: Hashable](value: T, seed: U256) -> UInt64:\n    var hasher = Z(seed)\n    hasher.update(value)\n    return hasher^.finish()\n\ntrait Named:\n    def name(self) -> Int:\n        ...\n\n\ntrait Titled(Named):\n    def title(self) -> Int:\n        ...\n\n\n@fieldwise_init\nstruct P(Titled):\n    var n: Int\n\n    def name(self) -> Int:\n        return self.n\n\n    def title(self) -> Int:\n        return self.n * 2\n\n\n@fieldwise_init\nstruct Sink:\n    var total: Int\n\n    def take(mut self, value: Some[Named]):\n        self.total += value.name()\n\n    def read(self) -> Int:\n        return self.total\n\n\ndef plain[T: Named](value: T) -> Int:\n    var sink = Sink(1)\n    sink.take(value)\n    return sink.read()\n\n\ndef refined[T: Titled](value: T) -> Int:\n    var sink = Sink(1)\n    sink.take(value)\n    return sink.read()\n\n\ndef main():\n    print(build_only(Int(1), U256(1, 2, 3, 4)))\n    print(update_only(Int(1), Z(U256(1, 2, 3, 4))))\n    print(full(Int(1), U256(1, 2, 3, 4)))\n    print(full(String(\"hi\"), U256(1, 2, 3, 4)))\n    print(plain(P(3)), refined(P(4)))\n";
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
@@ -1573,7 +1573,7 @@ fn template_def_builds_hasher_derives() {
             ("update_only$", 1),
             ("full$", 2),
             ("plain$", 1),
-            ("refined$", 0),
+            ("refined$", 1),
         ] {
             let derived: std::collections::HashSet<&str> = served
                 .iter()
